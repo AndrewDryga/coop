@@ -443,6 +443,107 @@ func (d *Docker) VerifyLaunch(ctx context.Context) error {
 	return d.verifyLaunchIdentity(ctx)
 }
 
+// RunWorkload keeps a joining workload on its namespace owner's endpoint and
+// empty private CLI config, rather than re-reading mutable host proxy settings.
+func (d *Docker) RunWorkload(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
+	return d.runWorkload(ctx, false, stdin, stdout, stderr, args...)
+}
+
+// RunWorkloadInterruptible preserves the same binding while supervising cancellation.
+func (d *Docker) RunWorkloadInterruptible(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
+	return d.runWorkload(ctx, true, stdin, stdout, stderr, args...)
+}
+
+func (d *Docker) runWorkload(ctx context.Context, interruptible bool, stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
+	if len(args) == 0 || args[0] != "run" {
+		return -1, errors.New("invalid bound Docker workload")
+	}
+	if err := d.VerifyLaunch(ctx); err != nil {
+		return -1, err
+	}
+	argv := append([]string{"--config", d.clientConfig, "--host", d.endpoint}, args...)
+	cmd := exec.Command(d.binary, argv...)
+	cmd.Env = slices.Clone(d.env)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	if !interruptible {
+		return exitCode(d.binary, cmd.Run())
+	}
+	if attachedToTerminal(stdin, stdout, stderr) {
+		return runForegroundCommand(ctx, cmd)
+	}
+	return runInterruptibleCommand(ctx, cmd)
+}
+
+func (d *Docker) boundContainerIDs(ctx context.Context, filters ...string) ([]string, error) {
+	if err := d.Verify(ctx); err != nil {
+		return nil, err
+	}
+	args := []string{"container", "ls", "--all", "--no-trunc", "--format", "{{.ID}}"}
+	for _, filter := range filters {
+		args = append(args, "--filter", filter)
+	}
+	data, err := d.output(ctx, 64<<10, args...)
+	if err != nil {
+		return nil, err
+	}
+	ids := strings.Fields(string(data))
+	for _, id := range ids {
+		if !dockerHexID(id) {
+			return nil, errors.New("invalid exact Docker container inventory")
+		}
+	}
+	return ids, d.Verify(ctx)
+}
+
+// RemoveByLabels confirms absence of each selected immutable ID on this daemon.
+// A concurrent --rm is success only when exact absence can be observed.
+func (d *Docker) RemoveByLabels(ctx context.Context, labels map[string]string) (int, error) {
+	if len(labels) == 0 || len(labels) > 32 {
+		return 0, errors.New("invalid Docker cleanup labels")
+	}
+	keys := make([]string, 0, len(labels))
+	for key, value := range labels {
+		if !dockerToken(key, 128) || strings.Contains(key, "=") || !dockerToken(value, 512) {
+			return 0, errors.New("invalid Docker cleanup label")
+		}
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	filters := make([]string, 0, len(keys))
+	for _, key := range keys {
+		filters = append(filters, "label="+key+"="+labels[key])
+	}
+	ids, err := d.boundContainerIDs(ctx, filters...)
+	if err != nil {
+		return 0, err
+	}
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	removed := 0
+	for _, id := range ids {
+		if err := d.Verify(ctx); err != nil {
+			return removed, err
+		}
+		_, removeErr := d.output(ctx, 1024, "container", "rm", "--force", id)
+		for {
+			remaining, err := d.boundContainerIDs(ctx, "id="+id)
+			if err != nil {
+				return removed, errors.Join(removeErr, err)
+			}
+			if !slices.Contains(remaining, id) {
+				removed++
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return removed, errors.Join(removeErr, ctx.Err())
+			case <-ticker.C:
+			}
+		}
+	}
+	return removed, nil
+}
+
 func (d *Docker) verifyLaunchIdentity(ctx context.Context) error {
 	info, err := d.readInfo(ctx)
 	if err != nil {

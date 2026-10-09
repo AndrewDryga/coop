@@ -214,6 +214,7 @@ roles:
 		ConfigDir: configDir, RepoOverride: repo, HomeInBox: "/home/node", BoxHome: t.TempDir(),
 		BaseImage: "test-base", ImageOverride: "test-image", Homes: true, Egress: "none",
 	}
+	cfg.SetEgress("none")
 	signInCred(t, cfg, "gemini", "default")
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
@@ -516,9 +517,12 @@ func TestACPPlainInnerTargetDoesNotLoadPreset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	shared := filepath.Join(configDir, "claude", "acp-sessions", "projects") + ":/home/node/.claude/projects"
-	if !strings.Contains(string(args), shared) {
-		t.Fatalf("plain inner ACP did not request shared session history without a supervisor:\n%s", args)
+	shared, err := box.NativeHomePath(cfg, "claude", cfg.ActiveProfile("claude"), cfg.RepoOverride, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "source="+shared+",target=/home/node/.claude") || strings.Contains(string(args), "acp-sessions") {
+		t.Fatalf("plain inner ACP did not select a complete repository-local home:\n%s", args)
 	}
 }
 

@@ -620,7 +620,34 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	defer reapPool() // Stop held warm boxes on any exit path; the label sweep still reaps their containers
 	// Thread bindings outlive this process: a reopened thread's session/load must reach the provider and
 	// native session the conversation actually continued on, not the transcript stub its editor id names.
-	bindings := acpctl.OpenThreadBindings(acpctl.ThreadBindingsDir(a.cfg))
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return 1, err
+	}
+	ownedSessions := map[string]map[string]bool{}
+	for _, provider := range agents.Names() {
+		// Ownership lookup must not seed an unused provider or make its local
+		// preferences a prerequisite for starting the selected provider.
+		ownedSessions[provider], err = box.ACPRepositorySessions(a.cfg, provider, repo)
+		if err != nil {
+			return 1, err
+		}
+	}
+	legacy, err := acpctl.LegacyThreadBindings(acpctl.ThreadBindingsDir(a.cfg), func(binding acpproxy.SessionBinding) bool { return ownedSessions[binding.Provider][binding.AdapterID] })
+	if err != nil {
+		return 1, err
+	}
+	bindingsDir, err := box.ImportACPThreadBindings(ctx, a.cfg, repo, agents.NativeHistoryPlan{})
+	if err != nil {
+		return 1, err
+	}
+	bindings := acpctl.OpenThreadBindings(bindingsDir)
+	if err := bindings.Migrate(ctx, legacy, func(plan agents.NativeHistoryPlan) error {
+		_, err := box.ImportACPThreadBindings(ctx, a.cfg, repo, plan)
+		return err
+	}); err != nil {
+		return 1, err
+	}
 	// The parked boxes are independent of the active one, so they stop while it does; the deferred
 	// Reap then waits for that same teardown to finish.
 	stopping := func() { go reapPool() }

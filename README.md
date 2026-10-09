@@ -50,10 +50,10 @@ runs `coop doctor`. If not, install one and then run:
 coop build --egress open && coop doctor
 ```
 
-co:op runs on macOS and Linux with Docker. On macOS 26 and later, Apple's
-[`container`](https://github.com/apple/container) works too, with open networking only: filtered
-networking, which `coop init` turns on, needs Docker. co:op prefers Docker when both are present.
-The `coop` binary is static.
+co:op runs on macOS and Linux with Docker. Online provider runs use Docker's private network
+namespace to keep credentials outside the box. Apple's
+[`container`](https://github.com/apple/container) remains available for raw open-network workloads,
+not provider-brokered or filtered runs. co:op prefers Docker when both are present. The `coop` binary is static.
 
 `coop update` updates the binary and rebuilds the box on a newer base image. Each release carries
 the agent CLIs and ACP adapters it was tested with, so updating co:op updates them too. To build
@@ -130,6 +130,8 @@ coop run -- npm test                          # any command in the box
   `coop check-secrets` finds secrets inside your other files, and `.coopignore` hides more paths.
 - With filtered networking, the box reaches your AI provider and the domains you approve. Everything
   else is blocked, so your code can't go anywhere you haven't approved.
+- Native history and settings belong to the current repository; other projects' conversations stay
+  outside its provider homes. Provider credentials stay in host-only storage and a run-local broker.
 - There are no Git credentials inside. The agent commits in your name, and you decide what leaves
   your computer.
 

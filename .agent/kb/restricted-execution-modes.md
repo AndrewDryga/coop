@@ -3,7 +3,7 @@ name: restricted-execution-modes
 description: readonly and bare share one tmpfs-only filesystem profile; the provider is seeded through a read-only bind OUTSIDE the tmpfs home, because a bind under it would be root-owned; over ACP the provider's switches ride session/new, not the adapter's argv
 subsystem: box
 sources: [internal/box/restricted.go, internal/box/restricted_filtered_composition_test.go, internal/box/filtered.go, internal/box/filtered_cleanup.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/help.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/job.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go, internal/workerproto/job.go]
-updated: 2026-09-28
+updated: 2026-10-09
 ---
 
 `RunSpec.Mode` (`agents.ExecutionMode`: normal, readonly, bare; empty is normal) is fixed at
@@ -26,10 +26,10 @@ would leave `/home/node/.claude` root-owned and the provider unable to write bes
 ([[box-home-nested-mounts]] is the same mechanism under a real home). Hence the seed tree is
 bound OUTSIDE the home and copied in by a `sh -c 'cp -R /coop/seed/. "$1"/ && shift && exec "$@"'`
 prelude with positional parameters (`seedPrelude`) — no path or argument is shell-parsed. The
-seed holds the adapter's access-only credential projection (`LiveCredentials`, after `Prepare`
-renewed it for `RestrictedCredentialHorizon`), `EnsureDefaults` rendered into an EMPTY profile
-(so no hook or skill of the host profile travels), and the mode's instruction note. A profile
-with no marker seeds no credential and the scoped env file stays the login, as in normal mode.
+seed holds public native auth selectors, `EnsureDefaults` rendered into an EMPTY profile
+(so no hook or skill of the host profile travels), and the mode's instruction note. The run-local
+native broker owns real access grants; the canonical host authority renews throughout the run.
+Offline seeds contain no provider grants or broker entrance.
 
 Provider switches ride `Agent.RestrictedCommand(mode, cmd)`: claude adds `--strict-mcp-config
 --setting-sources user` (no project `.mcp.json`, no repo `.claude/settings.json` hooks) and, for
@@ -64,9 +64,8 @@ Historical live qualification (2026-09-10) on this host's Docker 29.4 with claud
 repo, root and seed writes fail with EROFS, `git commit` fails on `index.lock`, scratch writes and
 executables work, no `coop-cache`/`coop-asdf`, bare's cwd is an empty owned tmpfs with no host path
 present, readonly claude reads the repo and cannot write it, bare claude answers and states it has
-no tools. Expect one host-side change: a login whose access token expires inside the horizon is
-renewed in the host profile BEFORE projection ([[renew-before-access-only-projection]]), so
-`.credentials.json` on the host may change; the box still receives only the access-only shape.
+no tools. That older credential projection is superseded by the canonical host-only authority
+and run-local native broker; this historical probe does not qualify the new credential boundary.
 
 ## The session API half
 
@@ -118,9 +117,9 @@ projection in it) is removed only when the child's own run returns, so the first
 one `coop-seed-*` per turn in TMPDIR. A restricted child now gets the bounded stop grace a
 filtered one gets (`sessionACPRestrictedStopGrace`: the adapter exits on EOF within a second or
 two, then the seed goes) and runs under a `signal.NotifyContext`, so a signal still becomes a
-cancellation `runRestricted` cleans up after. The restricted box re-checks the seeded access-only token against
-`RestrictedCredentialHorizon` and holds no refresh authority, so `Run` projects a restricted
-session's credential for at least that horizon — a short `turn_timeout` is not a short token.
+cancellation `runRestricted` cleans up after. The current restricted box receives public native
+selectors, not access/refresh tokens. Host renewal and expiring private broker snapshots keep
+credential readiness independent of a turn timeout.
 No native session is ever bound for a restricted session (`process.restricted`): the transcript
 died with the tmpfs, so every turn is `session/new`, and a schema repair regenerates from the
 admitted prompt instead of re-prompting a session nothing can load. And the `<coop-output>`
@@ -130,6 +129,8 @@ a tool call. What the API half still does not do: register activity for a restri
 gemini or grok — each refuses by name until a live run proves its adapter's switch.
 
 ## Changelog
+- 2026-10-09 — reverified restricted launch composition: public seeds and run-local broker replace
+  access-only projection; scoped fake-daemon tests inspect actual mounts and environment.
 - 2026-09-28 — replaced references to the deleted session-policy validator with current job
   validation and controller-tool admission; checked the restricted job and session sources.
 - 2026-09-26 — reverified remote fork mounts and ACP cwd after stable per-box `/workspace` mapping; old native histories and local editor history remain host-path keyed.
@@ -172,8 +173,8 @@ The first composition attempt exposed five traps, now handled by the implementat
    launch check that `record.ProjectImage` is empty before using the managed client image.
 3. A non-nil filtered execution is registered for teardown before its preparation error is checked,
    because late preparation failures may already own gateway resources.
-4. Preparation and `prepareCredentialBroker` precede environment assembly. MCP token variables are
-   scrubbed; the box receives the provider key's substitute, never the reusable key. This permits
+4. Native planning and broker preparation precede environment assembly. MCP token variables are
+   scrubbed; the box receives public selectors, never reusable access or refresh grants. This permits
    direct Claude API-key readonly runs without qualifying other providers' restricted switches.
 5. Bare refuses filtered even with a supplied capture; it never falls back to the caller's cwd.
 

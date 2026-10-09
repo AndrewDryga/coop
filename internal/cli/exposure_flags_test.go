@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -40,30 +39,11 @@ func TestExtractExposureFlags(t *testing.T) {
 	}
 }
 
-// dockerShim is a runtime binary named docker whose every invocation is recorded, so the
-// restricted launch resolves the qualified runtime and the image check passes.
-func dockerShim(t *testing.T, recorder string) runtime.Runtime {
-	t.Helper()
-	shim := filepath.Join(t.TempDir(), "docker")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n"
-	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return runtime.Runtime{Name: shim}
-}
-
 func restrictedApp(t *testing.T, recorder string) *app {
 	t.Helper()
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", BaseImage: "coop-box", Homes: true, Egress: "open"}
-	profile := cfg.AgentDir("claude")
-	if err := os.MkdirAll(profile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	login := `{"claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference"],"refreshToken":"REFRESH_CANARY"}}`
-	if err := os.WriteFile(filepath.Join(profile, ".credentials.json"), []byte(login), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return &app{cfg: cfg, rt: dockerShim(t, recorder), rtSet: true}
+	signInCred(t, cfg, "claude", "default")
+	return &app{cfg: cfg, rt: nativeOnlineRuntime(t, recorder), rtSet: true}
 }
 
 func recordedRunLine(t *testing.T, recorder string) string {
@@ -196,7 +176,7 @@ func TestCmdACPBareServesTheAdapterWithoutAProject(t *testing.T) {
 			t.Errorf("bare ACP run missing %q:\n%s", want, line)
 		}
 	}
-	if !strings.HasSuffix(line, " coop-box sh -c cp -R /coop/seed/. \"$1\"/ && shift && exec \"$@\" coop-seed /home/node claude-agent-acp") {
+	if !strings.HasSuffix(line, " sh -c cp -R /coop/seed/. \"$1\"/ && shift && exec \"$@\" coop-seed /home/node claude-agent-acp") {
 		t.Errorf("bare ACP run must end in the plain adapter command:\n%s", line)
 	}
 	if strings.Contains(line, "--tools") || strings.Contains(line, "coop.sup=") || strings.Contains(line, "-it") {

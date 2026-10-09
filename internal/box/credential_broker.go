@@ -164,6 +164,18 @@ func selectCredentialPlanWithMarkers(cfg *config.Config, spec RunSpec, markers m
 	}
 	plan := &credentialPlan{}
 	for _, name := range credentialScope(cfg, spec) {
+		if spec.native.selected(name) {
+			continue
+		}
+		ag, _ := agents.Get(name)
+		if _, native, err := nativeNetworkBundle(cfg, ag, cfg.ActiveProfile(name), spec.networkClient()); err != nil {
+			return nil, err
+		} else if native {
+			if err := validateNativeOverrides(cfg, spec, ag); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		route, err := credentialBrokerCandidateFor(cfg, spec, name, cfg.ActiveProfile(name), markers)
 		if err != nil {
 			return nil, err
@@ -550,6 +562,20 @@ func launchAccounts(cfg *config.Config, spec RunSpec, plan *credentialPlan) []ac
 	var rows []accountRow
 	for _, name := range credentialScope(cfg, spec) {
 		account := cfg.ActiveProfile(name)
+		if spec.native != nil {
+			found := false
+			for _, selected := range spec.native.accounts {
+				if selected.agent.Name() == name {
+					state, _ := selected.inspect(selected.record)
+					rows = append(rows, accountRow{provider: name, account: selected.account, protected: state.APIKey})
+					found = true
+					break
+				}
+			}
+			if found {
+				continue
+			}
+		}
 		if _, route := plan.route(name); route != nil {
 			rows = append(rows, accountRow{provider: name, account: route.account, protected: true})
 		} else if ProfileAuthed(cfg, name, account) {

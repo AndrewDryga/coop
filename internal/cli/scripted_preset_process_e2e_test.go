@@ -319,7 +319,7 @@ func assertPresetMixedRoleWiring(t *testing.T, suite *directProcessSuite, event 
 	credentials := map[string]int{}
 	for _, mount := range event.Run.Mounts {
 		for _, provider := range suite.providers {
-			want := processTracePath(suite.layout.Root, filepath.Join(suite.layout.Config, provider, "profiles", "personal"))
+			want := processNativeHome(t, suite.layout, provider, "personal", suite.layout.Repo)
 			if mount.Source == want {
 				credentials[provider]++
 			}
@@ -361,7 +361,7 @@ func assertPresetCompositionRun(t *testing.T, suite *directProcessSuite, event *
 			}
 		}
 		for _, provider := range suite.providers {
-			want := processTracePath(suite.layout.Root, filepath.Join(suite.layout.Config, provider, "profiles", "personal"))
+			want := processNativeHome(t, suite.layout, provider, "personal", suite.layout.Repo)
 			if mount.Source == want && mount.Target == "<container>/home/node/."+provider && !mount.ReadOnly {
 				credentialCount[provider]++
 			}

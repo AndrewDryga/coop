@@ -75,12 +75,11 @@ func TestCodexRolloutSkipsALongLine(t *testing.T) {
 	}
 }
 
-// Codex keeps a session's rollout in the child's private profile for its account; the adapter
-// finds it there by the native session id, and nowhere else.
-func TestCodexFindsASessionsRolloutInItsPrivateProfile(t *testing.T) {
-	root := t.TempDir()
+// Only the selected complete home is searched, independent of the active account.
+func TestCodexFindsASessionsRolloutInItsNativeHome(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "codex", "acp-homes", "repository-key", "home")
 	native := "01a0e6b5-bd79-73d0-a1a5-2ccb9618e573"
-	dir := filepath.Join(root, "codex", "profiles", "default", "sessions", "2026", "09", "28")
+	dir := filepath.Join(root, "sessions", "2026", "09", "28")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -91,18 +90,18 @@ func TestCodexFindsASessionsRolloutInItsPrivateProfile(t *testing.T) {
 	if !ok {
 		t.Fatal("codex keeps no turn record")
 	}
-	whole, last, ok := record.LastTurnTokens(root, "default", native)
+	whole, last, ok := record.LastTurnTokens(root, native)
 	if !ok || whole.Input != 1_020_300 || last.Input != 106_085 {
 		t.Fatalf("read %+v %+v %v", whole, last, ok)
 	}
-	for _, missing := range [][3]string{
-		{root, "other", native},
-		{root, "default", "01a0e6b5-0000-0000-0000-000000000000"},
-		{"", "default", native},
-		{root, "..", native},
-		{root, "default", "*"},
+	for _, missing := range [][2]string{
+		{filepath.Join(root, "other"), native},
+		{root, "01a0e6b5-0000-0000-0000-000000000000"},
+		{"", native},
+		{"..", native},
+		{root, "*"},
 	} {
-		if _, _, ok := record.LastTurnTokens(missing[0], missing[1], missing[2]); ok {
+		if _, _, ok := record.LastTurnTokens(missing[0], missing[1]); ok {
 			t.Errorf("read a record for %q", missing)
 		}
 	}

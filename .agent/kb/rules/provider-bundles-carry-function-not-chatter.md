@@ -4,7 +4,7 @@ description: a provider bundle grants what the client needs to function; the cli
 scope: security
 sources: [internal/agent/network_bundle.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/locked_clients_test.go, internal/mcp/mcp.go, internal/cli/provider_network_live_e2e_test.go]
 check: "go test ./internal/agent -run 'TestProviderBundlesCarryFunctionNotChatter|TestManagedClientDefaultsAreBoxOnly'"
-updated: 2026-10-01
+updated: 2026-10-09
 ---
 
 # A provider bundle carries function; a managed client's chatter is switched off, not granted or hidden
@@ -55,21 +55,25 @@ talking to itself.
   is the case — with an API key it looked up chatgpt.com, github.com and api.github.com on every
   start (16 refusals a run), and only `features.plugins = false` silenced it, which would have
   taken a working, vendor-documented feature away. Coop instead fetches those PUBLIC bytes for it
-  through two `download` broker routes (`internal/agent/codex.go` `Downloads`): the featured list
+  through narrow native broker routes (`internal/agent/codex.go` `codexBrokerRoutes`): the featured list
   and one repository's git fetch, each an exact method and path, with no credential sent and any
   the box offers refused. The hosts stay OUT of the agent's policy, so a request the routes do not
-  name is still a real, visible refusal. Reach for this only when the capture proves the client can
-  be pointed at Coop (codex: `chatgpt_base_url` and a Coop-owned git `insteadOf` — its own git
-  child has `GIT_CONFIG_*` scrubbed, so a file is the only way in). Match the QUERY too, not just
+  name is still a real, visible refusal. Reach for this only when the capture proves the native
+  request can be mediated without broadening its destination authority. Match the QUERY too, not just
   the path: git's discovery path serves a fetch and a push by query alone. The tradeoff to state
   plainly: those routes are a narrow outbound channel to a host the box otherwise cannot reach, so
   keep the request lines exact and the request body small (1 MiB), and let every refusal on them be
-  recorded like any other.
+  recorded like any other. The native broker now intercepts only its declared original TLS
+  origins using a run-local CA; no base-URL override or Git rewrite is required. Unrelated
+  destinations retain the ordinary network policy.
 
 Background: [[restricted-networking]] (bundles are one of five layers),
 [[mcp-authority-projection]] (the overlays are projections of the host profile, never edits).
 
 ## Changelog
+- 2026-10-09 — swept native Codex routes and request validation after original-origin TLS
+  mediation replaced base-URL/Git rewrites. Public downloads remain credential-free and exact;
+  unrelated requests remain subject to the run's ordinary policy.
 - 2026-10-01 — removed the obsolete Gemini filtered-run exclusion after the strict network
   suite passed all four pinned providers, including Gemini prompt, resume, MCP and silence checks.
   Swept the four adapter bundles and the shared network verifier; no denial suppression added.

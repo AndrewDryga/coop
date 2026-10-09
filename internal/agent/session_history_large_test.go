@@ -19,6 +19,7 @@ const (
 	largeHistoryPersonalID  = "22222222-2222-4333-8444-555555555555"
 	largeHistoryWrongCwdID  = "33333333-2222-4333-8444-555555555555"
 	largeHistoryMalformedID = "44444444-2222-4333-8444-555555555555"
+	largeHistoryExecID      = "55555555-2222-4333-8444-555555555555"
 	largeHistoryMissingID   = "99999999-2222-4333-8444-555555555555"
 )
 
@@ -35,6 +36,9 @@ func TestSessionLookupLargeHistory(t *testing.T) {
 			assertLargeHistoryResume(t, ag, cfg, ws, largeHistoryMissingID, false)
 			assertLargeHistoryResume(t, ag, cfg, ws, largeHistoryWrongCwdID, false)
 			assertLargeHistoryResume(t, ag, cfg, ws, largeHistoryMalformedID, false)
+			if provider == "codex" {
+				assertLargeHistoryResume(t, ag, cfg, ws, largeHistoryExecID, true)
+			}
 			assertLargeHistoryResume(t, ag, cfg, ws+"-wrong", largeHistoryHitID, false)
 			if cmd := ag.StartSession(cfg, largeHistoryMissingID); len(cmd) == 0 || (ag.PresetSessionID() && !slices.Contains(cmd, largeHistoryMissingID)) {
 				t.Fatalf("fresh session command = %v, want a runnable command scoped to the new id", cmd)
@@ -67,19 +71,44 @@ func TestSessionLookupLargeHistory(t *testing.T) {
 	}
 }
 
-func TestGeminiRejectsOversizedCurrentMetadata(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir()}
-	ws := "/work/current-metadata-bound/repo"
-	id := "aaaaaaaa-2222-4333-8444-555555555555"
-	root := cfg.AgentProfileDir("gemini", config.DefaultProfile)
-	bucket := filepath.Join(root, "tmp", "current")
-	mustWriteSessionHistory(t, filepath.Join(bucket, ".project_root"), ws+"\n")
-	project := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
-	body := fmt.Sprintf(`{"sessionId":%q,"projectHash":%q,"padding":"`, id, project) +
-		strings.Repeat("x", geminiMetadataLimit) + `"}`
-	mustWriteSessionHistory(t, filepath.Join(bucket, "chats", "session.jsonl"), body+"\n")
-	ag, _ := Get("gemini")
-	assertLargeHistoryResume(t, ag, cfg, ws, id, false)
+func TestGeminiSessionLookupStreamsNativePayload(t *testing.T) {
+	for _, format := range []string{"json", "jsonl"} {
+		t.Run(format, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir()}
+			ws, id := "/work/native-payload/repo", largeHistoryHitID
+			bucket := filepath.Join(cfg.AgentProfileDir("gemini", config.DefaultProfile), "tmp", "retained-bucket")
+			mustWriteSessionHistory(t, filepath.Join(bucket, ".project_root"), ws+"\n")
+			project := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
+			body := fmt.Sprintf(`{"messages":[{"id":"message","type":"user","content":%q}],"sessionId":%q,"projectHash":%q}`, strings.Repeat("x", (1<<20)+17), id, project)
+			if format == "json" {
+				body = "{\n" + strings.TrimPrefix(body, "{")
+			}
+			path := filepath.Join(bucket, "chats", "session-2026-10-09T12-00-"+id[:8]+"."+format)
+			mustWriteSessionHistory(t, path, body+"\n")
+			ag, _ := Get("gemini")
+			assertLargeHistoryResume(t, ag, cfg, ws, id, true)
+			assertLargeHistoryResume(t, ag, cfg, ws+"-foreign", id, false)
+		})
+	}
+}
+func TestGeminiSessionMetadataRejectsOversizedOwnership(t *testing.T) {
+	for _, key := range []string{"sessionId", "projectHash"} {
+		t.Run(key, func(t *testing.T) {
+			id, project := largeHistoryHitID, "project"
+			if key == "sessionId" {
+				id = strings.Repeat("x", 65<<10)
+			} else {
+				project = strings.Repeat("x", 65<<10)
+			}
+			body := fmt.Sprintf(`{"sessionId":%q,"projectHash":%q}`, id, project)
+			for _, multiline := range []bool{false, true} {
+				gotID, gotProject := geminiSessionMetadata(strings.NewReader(body), multiline)
+				if gotID != "" || gotProject != "" {
+					t.Fatal("oversized ownership accepted")
+				}
+			}
+		})
+	}
 }
 
 func TestGeminiBucketCWD(t *testing.T) {
@@ -198,7 +227,7 @@ func seedLargeSessionHistory(tb testing.TB, cfg *config.Config, provider, accoun
 		mustWriteSessionHistory(tb, filepath.Join(sessions, "rollout-hit.jsonl"), codexHistoryLine(hitID, ws, "session_meta", "cli"))
 		mustWriteSessionHistory(tb, filepath.Join(sessions, "rollout-wrong-cwd.jsonl"), codexHistoryLine(largeHistoryWrongCwdID, ws+"-wrong", "session_meta", "cli"))
 		mustWriteSessionHistory(tb, filepath.Join(sessions, "rollout-malformed.jsonl"), codexHistoryLine(largeHistoryMalformedID, ws, "response_item", "cli"))
-		mustWriteSessionHistory(tb, filepath.Join(sessions, "rollout-exec.jsonl"), codexHistoryLine(largeHistoryMalformedID, ws, "session_meta", "exec"))
+		mustWriteSessionHistory(tb, filepath.Join(sessions, "rollout-exec.jsonl"), codexHistoryLine(largeHistoryExecID, ws, "session_meta", "exec"))
 	case "gemini":
 		for i := range entries {
 			bucketName := fmt.Sprintf("foreign-%04d", i)

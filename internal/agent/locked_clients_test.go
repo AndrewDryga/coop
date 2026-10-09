@@ -21,7 +21,7 @@ func TestLockedClientsAreCompletePinnedAndFresh(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(closure.Clients) != 8 || len(closure.Files) != 13 || closure.ClientRoot != "/opt/coop/clients" || len(closure.Digest) != 64 || closure.Digest == previous {
+		if len(closure.Clients) != 8 || len(closure.Files) != 21 || closure.ClientRoot != "/opt/coop/clients" || len(closure.Digest) != 64 || closure.Digest == previous {
 			t.Fatal("incomplete or platform-ambiguous closure", closure.Digest)
 		}
 		previous = closure.Digest
@@ -51,7 +51,8 @@ func TestLockedClientsAreCompletePinnedAndFresh(t *testing.T) {
 				t.Fatal(string(out), err)
 			}
 			for _, key := range client.UnsetEnv {
-				if !strings.Contains(script, " "+key+"\n") {
+				unset, _, _ := strings.Cut(strings.TrimPrefix(script, "#!/bin/sh\nset -eu\nunset "), "\n")
+				if !slices.Contains(strings.Fields(unset), key) {
 					t.Fatal("override survives", key)
 				}
 			}

@@ -140,7 +140,11 @@ func agentCommandProducesInteractiveSession(agent string, args []string) bool {
 func (a *app) lockInteractiveSession(agent, repo string) (func(), error) {
 	if ag, ok := agents.Get(agent); ok {
 		if _, discovers := ag.(agents.SessionDiscoverer); discovers {
-			return lockSessionProducer(a.cfg, agent, box.Workdir(a.cfg, repo))
+			home, err := a.sessionHome(agent, repo)
+			if err != nil {
+				return nil, err
+			}
+			return lockSessionProducer(a.cfg.WithNativeHomes(map[string]string{agent: home}), agent, box.Workdir(a.cfg, repo))
 		}
 	}
 	return func() {}, nil
@@ -154,7 +158,10 @@ func lockSessionProducer(cfg *config.Config, provider, cwd string) (func(), erro
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	profile := cfg.AgentDir(provider)
+	profile, err := cfg.AgentSettingsDir(provider)
+	if err != nil {
+		return nil, err
+	}
 	if resolved, err := filepath.EvalSymlinks(profile); err == nil {
 		profile = resolved
 	} else if absolute, absErr := filepath.Abs(profile); absErr == nil {
@@ -727,8 +734,14 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 		return a.loginWithHostCredential(ag, profile)
 	}
 	previousLogin := a.loginProvider
+	originalConfig := a.cfg
+	stagingConfig, stagingRoot, err := box.NativeSignInStage(originalConfig)
+	if err != nil {
+		return -1, err
+	}
+	a.cfg = stagingConfig
 	a.loginProvider = tool
-	defer func() { a.loginProvider = previousLogin }()
+	defer func() { a.loginProvider, a.cfg = previousLogin, originalConfig }()
 	code, err := a.runInBox(ag.Login(a.cfg), tool, nil) // mounts only the agent being logged in to
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -739,9 +752,15 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	case err != nil || code != 0:
 		return code, err // the box already reported how the command ended
 	}
+	if err := box.ImportNativeSignIn(context.Background(), originalConfig, tool, profile, stagingConfig.AgentDir(tool), a.rt); err != nil {
+		return -1, fmt.Errorf("sign-in was not published; native output retained at %s: %w", stagingRoot, err)
+	}
+	if err := os.RemoveAll(stagingRoot); err != nil {
+		return -1, fmt.Errorf("sign-in saved; temporary sign-in cleanup failed: %w", err)
+	}
 	// Exiting zero is not proof: the provider may have been dismissed without writing a usable
 	// credential, and a green ✓ over that would send the user into a failing run.
-	loginResult(tool, profile, box.ProfileCredentialReady(a.cfg, tool, profile, time.Now()))
+	loginResult(tool, profile, box.ProfileCredentialReady(originalConfig, tool, profile, time.Now()))
 	return 0, nil
 }
 
@@ -758,7 +777,7 @@ func (a *app) loginWithHostCredential(ag agents.Agent, profile string) (int, err
 		return -1, err
 	}
 	defer clear(secret)
-	if err := box.SaveHostCredential(a.cfg, ag, profile, secret); err != nil {
+	if err := box.SaveHostCredential(a.cfg, ag, profile, secret, a.rt); err != nil {
 		return -1, err
 	}
 	loginResult(ag.Name(), profile, box.ProfileCredentialReady(a.cfg, ag.Name(), profile, time.Now()))

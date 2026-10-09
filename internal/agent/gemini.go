@@ -1,23 +1,450 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/mcp"
+	"golang.org/x/crypto/scrypt"
 )
 
 type geminiAgent struct{}
+
+func checkGeminiBroker(files map[string][]byte, seed NativeBrokerSeed) error {
+	if data, exists := files["gemini-credentials.json"]; exists {
+		if err := checkGeminiEncryptedProviderServices(data, seed); err != nil {
+			return err
+		}
+	}
+	if _, exists := files["oauth_creds.json"]; exists {
+		return errNativeBrokerDiverged
+	}
+	if key, exists := files["api-key"]; exists && string(key) != seed.Marker {
+		return errNativeBrokerDiverged
+	}
+	if _, err := nativePublicObject(files["settings.json"]); err != nil {
+		return err
+	}
+	if data, exists := files["google_accounts.json"]; exists {
+		if _, err := nativePublicObject(data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type geminiNativeSelector struct {
+	Security struct {
+		Auth struct {
+			Selected string `json:"selectedType"`
+		} `json:"auth"`
+	} `json:"security"`
+}
+type geminiNativeIdentity struct {
+	Active string   `json:"active"`
+	Old    []string `json:"old"`
+}
+
+func (geminiAgent) NativeCredentials() NativeCredentialSpec {
+	return NativeCredentialSpec{Environment: func(selection, key, value string) (NativeCredentialState, error) {
+		if key == "GOOGLE_API_KEY" {
+			return NativeCredentialState{}, fmt.Errorf("native Gemini vertex-ai authentication is not supported by the native broker")
+		}
+		return nativeAPIEnvironment("gemini-api-key", "GEMINI_API_KEY")(selection, key, value)
+	}, Defaults: func(source string) (map[string][]byte, error) {
+		return nativeDefaultSettings(source, "settings.json", "GEMINI.md", map[string]string{"theme": "string", "ui.theme": "string", "security.folderTrust.enabled": "bool"})
+	}, LegacyGrants: []string{"oauth_creds.json", "api-key"}, Artifacts: []NativeCredentialArtifact{
+		{Name: "settings.json", Limit: 1 << 20, Required: true, Import: importGeminiSelector, AccessOnly: importGeminiSelector},
+		{Name: "oauth_creds.json", Limit: 1 << 20, Import: importGeminiOAuth, AccessOnly: projectGeminiOAuth},
+		{Name: "google_accounts.json", Limit: 1 << 20, Import: importGeminiIdentity, AccessOnly: importGeminiIdentity},
+		{Name: "api-key", Limit: 4 << 10, Import: importGeminiKey, AccessOnly: importGeminiKey},
+	}, LegacyCheck: checkGeminiLegacyCutover, Select: selectGeminiNative, Inspect: inspectGeminiNative, Renew: renewGeminiNative, Broker: NativeBrokerSpec{BindStorageIdentity: true, MergeJSON: []string{"settings.json"}, Seed: seedGeminiBroker, Env: geminiBrokerEnv, Routes: geminiBrokerRoutes, Check: checkGeminiBroker, CheckFiles: []NativeCredentialArtifact{{Name: "gemini-credentials.json", Limit: 1 << 20}}}}
+}
+
+func checkGeminiLegacyCutover(home string) error {
+	_, err := os.Lstat(filepath.Join(home, "gemini-credentials.json"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("legacy Gemini encrypted cache has no recorded storage identity; account and cache retained unchanged for explicit host recovery")
+}
+
+func seedGeminiBroker(selection string) (NativeBrokerSeed, error) {
+	out := publicNativeSeed("coop-native-gemini-v1")
+	out.Family = selection
+	if selection != "oauth-personal" && selection != "gemini-api-key" {
+		return out, fmt.Errorf("unsupported Gemini broker selection")
+	}
+	selector := geminiNativeSelector{}
+	selector.Security.Auth.Selected = "oauth-personal"
+	settings, err := nativeJSON(selector)
+	if err != nil {
+		return out, err
+	}
+	out.Files["settings.json"] = settings
+	if selection == "gemini-api-key" {
+		out.Env["GEMINI_API_KEY"] = out.Marker
+	} else {
+		out.Env["GOOGLE_GENAI_USE_GCA"] = "true"
+		out.Env["GOOGLE_CLOUD_ACCESS_TOKEN"] = out.Marker
+	}
+	identity, err := nativeJSON(geminiNativeIdentity{Active: nativeBrokerEmail, Old: []string{}})
+	out.Files["google_accounts.json"] = identity
+	return out, err
+}
+
+// The native encrypted cache may also hold MCP grants. Authenticate it with its
+// original public home identity, inspect provider services, and never rewrite it.
+func checkGeminiEncryptedProviderServices(data []byte, seed NativeBrokerSeed) error {
+	if len(data) == 0 || len(data) > 1<<20 || !validNativeIdentity(seed.StorageHostname) || !validNativeIdentity(seed.StorageUsername) {
+		return errNativeBrokerDiverged
+	}
+	parts := strings.Split(string(data), ":")
+	if len(parts) != 3 {
+		return errNativeBrokerDiverged
+	}
+	iv, e1 := hex.DecodeString(parts[0])
+	tag, e2 := hex.DecodeString(parts[1])
+	body, e3 := hex.DecodeString(parts[2])
+	if e1 != nil || e2 != nil || e3 != nil || (len(iv) != 12 && len(iv) != 16) || len(tag) != 16 {
+		return errNativeBrokerDiverged
+	}
+	key, err := scrypt.Key([]byte("gemini-cli-oauth"), []byte(seed.StorageHostname+"-"+seed.StorageUsername+"-gemini-cli"), 16384, 8, 1, 32)
+	if err != nil {
+		return errNativeBrokerDiverged
+	}
+	defer clear(key)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return errNativeBrokerDiverged
+	}
+	gcm, err := cipher.NewGCMWithNonceSize(block, len(iv))
+	if err != nil {
+		return errNativeBrokerDiverged
+	}
+	plain, err := gcm.Open(nil, iv, append(body, tag...), nil)
+	if err != nil {
+		return errNativeBrokerDiverged
+	}
+	defer clear(plain)
+	doc, err := nativePublicObject(plain)
+	if err != nil {
+		return err
+	}
+	for _, rule := range []struct{ service, account, kind string }{{"gemini-cli-oauth", "main-account", "Bearer"}, {"gemini-cli-api-key", "default-api-key", "ApiKey"}} {
+		raw, exists := doc[rule.service]
+		if !exists {
+			continue
+		}
+		var entries map[string]string
+		if json.Unmarshal(raw, &entries) != nil || entries == nil {
+			return errNativeBrokerDiverged
+		}
+		for account, password := range entries {
+			if account != rule.account {
+				return errNativeBrokerDiverged
+			}
+			credential, err := nativePublicObject([]byte(password))
+			if err != nil {
+				return err
+			}
+			server, err := nativePublicString(credential, "serverName")
+			if err != nil || server != account {
+				return errNativeBrokerDiverged
+			}
+			token, err := nativePublicObject(credential["token"])
+			if err != nil {
+				return err
+			}
+			access, err := nativePublicString(token, "accessToken")
+			if err != nil || access != seed.Marker {
+				return errNativeBrokerDiverged
+			}
+			for _, field := range []string{"refreshToken", "idToken"} {
+				value, err := nativePublicString(token, field)
+				if err != nil || value != "" {
+					return errNativeBrokerDiverged
+				}
+			}
+			kind, err := nativePublicString(token, "tokenType")
+			if err != nil || kind != "" && kind != rule.kind {
+				return errNativeBrokerDiverged
+			}
+		}
+	}
+	return nil
+}
+
+const geminiBrokerSettingsDir = "/etc/gemini-cli/native-broker"
+
+func geminiBrokerSettings(selection, effort string) string {
+	settings := map[string]any{"general": geminiNoUpdates}
+	if effort != "" {
+		_ = json.Unmarshal([]byte(geminiThinkingSettings(effort)), &settings)
+	}
+	settings["security"] = map[string]any{"auth": map[string]any{"selectedType": selection}}
+	return geminiSystemSettings(settings)
+}
+
+func geminiBrokerEnv(selection, effort string) (map[string]string, error) {
+	if selection != "oauth-personal" && selection != "gemini-api-key" {
+		return nil, fmt.Errorf("unsupported Gemini broker selection")
+	}
+	level := effort
+	if level == "" {
+		level = "default"
+	} else if _, ok := geminiThinking[effort]; !ok {
+		return nil, fmt.Errorf("gemini effort %q has no thinking setting; use low or high", effort)
+	}
+	dir := geminiBrokerSettingsDir + "/" + selection
+	return map[string]string{geminiThinkingEnv: dir, "GEMINI_CLI_SYSTEM_SETTINGS_PATH": dir + "/" + level + ".json"}, nil
+}
+
+func geminiBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
+	if selection == "gemini-api-key" {
+		var out []NativeBrokerRoute
+		for _, operation := range []string{"generateContent", "countTokens", "streamGenerateContent"} {
+			route := NativeBrokerRoute{Host: "generativelanguage.googleapis.com", Method: "POST", Path: "/v1beta/models/", Segment: "token", Suffix: ":" + operation, Header: "X-Goog-Api-Key"}
+			if operation == "streamGenerateContent" {
+				route.Query = "alt=sse"
+			}
+			out = append(out, route)
+		}
+		return out, nil
+	}
+	if selection != "oauth-personal" {
+		return nil, fmt.Errorf("unsupported Gemini broker selection")
+	}
+	var out []NativeBrokerRoute
+	add := func(method, path, query string) {
+		out = append(out, NativeBrokerRoute{Host: "cloudcode-pa.googleapis.com", Method: method, Path: path, Query: query, Header: "Authorization", HeaderPrefix: "Bearer "})
+	}
+	for _, operation := range []string{"loadCodeAssist", "onboardUser", "generateContent", "countTokens", "listExperiments", "fetchAdminControls", "retrieveUserQuota", "recordCodeAssistMetrics", "setCodeAssistGlobalUserSetting"} {
+		add("POST", "/v1internal:"+operation, "")
+	}
+	add("POST", "/v1internal:streamGenerateContent", "alt=sse")
+	add("GET", "/v1internal:getCodeAssistGlobalUserSetting", "")
+	out = append(out, NativeBrokerRoute{Host: "cloudcode-pa.googleapis.com", Method: "GET", Path: "/v1internal/operations/", Segment: "segments", Header: "Authorization", HeaderPrefix: "Bearer "})
+	out = append(out, NativeBrokerRoute{Host: "www.googleapis.com", Method: "GET", Path: "/oauth2/v2/userinfo", Header: "Authorization", HeaderPrefix: "Bearer "})
+	return out, nil
+}
+
+func selectGeminiNative(files map[string][]byte) (map[string][]byte, error) {
+	data, err := importGeminiSelector(files["settings.json"])
+	if err != nil {
+		return nil, err
+	}
+	var selector geminiNativeSelector
+	_ = json.Unmarshal(data, &selector)
+	out := map[string][]byte{"settings.json": data}
+	if selector.Security.Auth.Selected == "oauth-personal" {
+		out["oauth_creds.json"], out["google_accounts.json"] = files["oauth_creds.json"], files["google_accounts.json"]
+	} else {
+		out["api-key"] = files["api-key"]
+	}
+	return out, nil
+}
+
+func importGeminiSelector(data []byte) ([]byte, error) {
+	var selector geminiNativeSelector
+	if json.Unmarshal(data, &selector) != nil || selector.Security.Auth.Selected != "oauth-personal" && selector.Security.Auth.Selected != "gemini-api-key" {
+		return nil, fmt.Errorf("unsupported Gemini selected credential family")
+	}
+	return nativeJSON(selector)
+}
+
+func importGeminiIdentity(data []byte) ([]byte, error) {
+	var identity geminiNativeIdentity
+	if json.Unmarshal(data, &identity) != nil || !validNativeIdentity(identity.Active) {
+		return nil, fmt.Errorf("native Gemini selected native identity missing")
+	}
+	identity.Old = []string{}
+	return nativeJSON(identity)
+}
+
+func importGeminiKey(data []byte) ([]byte, error) {
+	if len(data) == 0 || len(data) > 4<<10 || !validNativeGrant(string(data)) {
+		return nil, fmt.Errorf("invalid Gemini API key")
+	}
+	return bytes.Clone(data), nil
+}
+
+func importGeminiOAuth(data []byte) ([]byte, error) {
+	var doc map[string]json.RawMessage
+	if len(data) == 0 || len(data) > 1<<20 || json.Unmarshal(data, &doc) != nil || doc == nil {
+		return nil, fmt.Errorf("invalid Gemini OAuth grant")
+	}
+	return nativeJSON(doc)
+}
+
+func projectGeminiOAuth(data []byte) ([]byte, error) {
+	var access struct {
+		Token  string `json:"access_token"`
+		Expiry int64  `json:"expiry_date"`
+		Type   string `json:"token_type,omitempty"`
+		Scope  string `json:"scope,omitempty"`
+	}
+	if err := json.Unmarshal(data, &access); err != nil {
+		return nil, errors.New("invalid Gemini access grant")
+	}
+	return nativeJSON(access)
+}
+
+func inspectGeminiNative(files map[string][]byte, now time.Time) (NativeCredentialState, error) {
+	var selector geminiNativeSelector
+	if json.Unmarshal(files["settings.json"], &selector) != nil {
+		return NativeCredentialState{}, fmt.Errorf("invalid Gemini selector")
+	}
+	switch selector.Security.Auth.Selected {
+	case "gemini-api-key":
+		key := files["api-key"]
+		if len(files["oauth_creds.json"]) != 0 || len(files["google_accounts.json"]) != 0 || len(key) == 0 || len(key) > 4<<10 || !validNativeGrant(string(key)) {
+			return NativeCredentialState{}, fmt.Errorf("invalid Gemini API-key inventory")
+		}
+		return NativeCredentialState{Selection: "gemini-api-key", Principal: "opaque-api-key", AccessToken: string(key), Ready: true, APIKey: true}, nil
+	case "oauth-personal":
+		if len(files["api-key"]) != 0 {
+			return NativeCredentialState{}, fmt.Errorf("conflicting Gemini authority")
+		}
+		var identity geminiNativeIdentity
+		if json.Unmarshal(files["google_accounts.json"], &identity) != nil || !validNativeIdentity(identity.Active) || len(identity.Old) != 0 {
+			return NativeCredentialState{}, fmt.Errorf("invalid Gemini selected identity")
+		}
+		var grant struct {
+			Access  string `json:"access_token"`
+			Refresh string `json:"refresh_token"`
+			Expiry  int64  `json:"expiry_date"`
+			IDToken string `json:"id_token"`
+			Kind    string `json:"token_type"`
+		}
+		if json.Unmarshal(files["oauth_creds.json"], &grant) != nil || grant.Expiry <= 0 || grant.Kind != "" && !strings.EqualFold(grant.Kind, "Bearer") {
+			return NativeCredentialState{}, fmt.Errorf("invalid Gemini native OAuth shape")
+		}
+		access, refreshable := validGeminiGrant(grant.Access), validGeminiGrant(grant.Refresh)
+		if !access && !refreshable || grant.Access != "" && !access || grant.Refresh != "" && !refreshable {
+			return NativeCredentialState{}, fmt.Errorf("invalid Gemini native grant")
+		}
+		if grant.IDToken != "" {
+			claims, err := nativeJWT(grant.IDToken)
+			if err != nil || claims.Email != "" && !strings.EqualFold(claims.Email, identity.Active) {
+				return NativeCredentialState{}, fmt.Errorf("native Gemini token/cache identity mismatch")
+			}
+		}
+		expiry := time.UnixMilli(grant.Expiry)
+		return NativeCredentialState{Selection: "oauth-personal", Principal: nativeTuple(identity.Active), AccountID: identity.Active,
+			AccessToken: grant.Access, ExpiresAt: expiry, Refreshable: refreshable, Ready: refreshable || access && expiry.After(now)}, nil
+	default:
+		return NativeCredentialState{}, fmt.Errorf("unsupported Gemini selected authority")
+	}
+}
+
+func renewGeminiNative(ctx context.Context, files map[string][]byte, deadline time.Time, retain func([]byte) error) (map[string][]byte, error) {
+	before, err := inspectGeminiNative(files, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if before.Selection != "oauth-personal" || !before.Refreshable {
+		return nil, fmt.Errorf("native Gemini authority needs host sign-in")
+	}
+	result, renewErr := renewGeminiAuthority(ctx, files["oauth_creds.json"], deadline, retain)
+	if len(result.Credential) == 0 {
+		return nil, renewErr
+	}
+	next := cloneNativeFiles(files)
+	next["oauth_creds.json"] = result.Credential
+	after, err := inspectGeminiNative(next, time.Now())
+	if err != nil || before.Principal != after.Principal || before.Selection != after.Selection {
+		return nil, fmt.Errorf("native Gemini issued identity invalid; retained for recovery")
+	}
+	return next, renewErr
+}
+
+func (geminiAgent) NativeHistory(source string, ownsCWD func(string) bool) (NativeHistoryPlan, error) {
+	s, err := openNativeHistory(source, ownsCWD)
+	if err != nil {
+		return NativeHistoryPlan{}, err
+	}
+	defer s.close()
+	for _, base := range []string{"tmp", "history"} {
+		s.walk(base, func(path string) {
+			if filepath.Base(path) != ".project_root" || filepath.Dir(filepath.Dir(path)) != base {
+				return
+			}
+			data, ok := s.small(path, geminiProjectRootLimit)
+			cwd := strings.TrimSpace(string(data))
+			if !ok || !s.owns(cwd) {
+				return
+			}
+			bucket := filepath.Dir(path)
+			s.add(path, cwd, "")
+			s.walk(bucket, func(child string) {
+				if child == path {
+					return
+				}
+				rel, _ := filepath.Rel(bucket, child)
+				if strings.HasPrefix(rel, "chats"+string(filepath.Separator)) {
+					if !strings.HasSuffix(child, ".jsonl") && !strings.HasSuffix(child, ".json") {
+						return
+					}
+					var id, project string
+					ok := s.inspect(child, func(reader io.Reader) error {
+						if err := nativeHistoryObjects(reader, []string{"sessionId", "projectHash"}, strings.HasSuffix(child, ".json"), func(fields map[string]string, _, _ int64) error {
+							for _, pair := range []struct {
+								value       string
+								destination *string
+							}{{fields["sessionId"], &id}, {fields["projectHash"], &project}} {
+								if pair.value == "" {
+									continue
+								}
+								if *pair.destination != "" && *pair.destination != pair.value {
+									return fmt.Errorf("native Gemini chat has conflicting ownership")
+								}
+								*pair.destination = pair.value
+							}
+							return nil
+						}); err != nil {
+							return err
+						}
+						if !ValidSessionID(id) || project != fmt.Sprintf("%x", sha256.Sum256([]byte(cwd))) {
+							return fmt.Errorf("native Gemini chat ownership does not match its project marker")
+						}
+						return nil
+					})
+					if ok {
+						s.add(child, cwd, id)
+						s.depend(child, path)
+					}
+					return
+				}
+				s.add(child, cwd, "")
+				s.depend(child, path)
+			})
+		})
+	}
+	return s.finish(), nil
+}
 
 func (geminiAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: geminiUsageQuota, HistoryDirs: []string{"tmp"},
@@ -136,6 +563,20 @@ func geminiUsageHistory(reader io.Reader) (UsageHistory, error) {
 }
 
 func geminiUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, error) {
+	if input.APIKey && input.ProfileDir == "" {
+		return UsageQuota{Auth: "API key"}, nil
+	}
+	if input.Current != nil {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
+		}
+		state, _, err := input.Current(ctx, deadline)
+		if err != nil || state.Selection != "oauth-personal" || state.AccessToken == "" {
+			return UsageQuota{}, ErrUsageSignIn
+		}
+		return geminiCanonicalQuota(ctx, state.AccessToken)
+	}
 	auth, _, err := geminiSelectedAuthType(input.ProfileDir)
 	if err != nil {
 		return UsageQuota{}, fmt.Errorf("cannot read selected authentication mode")
@@ -159,6 +600,42 @@ func geminiUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 	var raw geminiQuotaResponse
 	if len(data) > 1<<20 || json.Unmarshal(data, &raw) != nil || raw.Error != "" {
 		return UsageQuota{}, fmt.Errorf("native quota lookup unavailable")
+	}
+	return raw.quota(), nil
+}
+
+// The pinned native helper uses these two read-only Code Assist calls. Canonical
+// renewal stays on the host; no helper mounts a second refresh-token authority.
+func geminiCanonicalQuota(ctx context.Context, access string) (UsageQuota, error) {
+	header := http.Header{"Authorization": {"Bearer " + access}, "Content-Type": {"application/json"}}
+	var info struct {
+		Project string `json:"cloudaicompanionProject"`
+		Current *struct {
+			Name string `json:"name"`
+		} `json:"currentTier"`
+		Paid *struct {
+			Name string `json:"name"`
+		} `json:"paidTier"`
+	}
+	const endpoint = "https://cloudcode-pa.googleapis.com/v1internal:"
+	if err := readUsageQuota(ctx, http.MethodPost, endpoint+"loadCodeAssist", header,
+		strings.NewReader(`{"metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}`), &info); err != nil {
+		return UsageQuota{}, err
+	}
+	if info.Current == nil || info.Project == "" {
+		return UsageQuota{}, fmt.Errorf("native Code Assist account has no quota project")
+	}
+	body, err := json.Marshal(map[string]string{"project": info.Project})
+	if err != nil {
+		return UsageQuota{}, err
+	}
+	var raw geminiQuotaResponse
+	if err := readUsageQuota(ctx, http.MethodPost, endpoint+"retrieveUserQuota", header, bytes.NewReader(body), &raw); err != nil {
+		return UsageQuota{}, err
+	}
+	raw.Tier = info.Current.Name
+	if info.Paid != nil {
+		raw.Tier = info.Paid.Name
 	}
 	return raw.quota(), nil
 }
@@ -283,9 +760,6 @@ func (geminiAgent) ACP(cfg *config.Config) []string {
 	return withModel([]string{"gemini", "--acp"}, cfg.ModelFor("gemini"))
 }
 
-// ACPSessionDirs: gemini stores chats under ~/.gemini/tmp/<bucket>/chats (best-effort).
-func (geminiAgent) ACPSessionDirs() []string { return []string{"tmp"} }
-
 // ACPFinalChunk: every assistant chunk is answer text — gemini's adapter streams no separate commentary phase.
 func (geminiAgent) ACPFinalChunk(json.RawMessage) bool    { return true }
 func (geminiAgent) ACPProgressChunk(json.RawMessage) bool { return false }
@@ -309,10 +783,7 @@ func (a geminiAgent) Resume(cfg *config.Config, home, ws, id string) ([]string, 
 	return a.Interactive(cfg), false
 }
 
-const (
-	geminiProjectRootLimit = 4 << 10
-	geminiMetadataLimit    = 1 << 20
-)
+const geminiProjectRootLimit = 4 << 10
 
 // geminiHasSession matches both the Coop-owned id and Gemini's native sha256(cwd) projectHash.
 // Bucket names vary between Gemini releases, so scan every bucket whose .project_root owns ws.
@@ -344,7 +815,7 @@ func geminiHasSession(home, ws, id string) bool {
 			return false
 		}
 		matched := scanSessionDir(chatDir, func(entry os.DirEntry) bool {
-			if !strings.HasSuffix(entry.Name(), ".jsonl") {
+			if !strings.HasSuffix(entry.Name(), ".jsonl") && !strings.HasSuffix(entry.Name(), ".json") {
 				return false
 			}
 			path := filepath.Join(chats, entry.Name())
@@ -356,7 +827,7 @@ func geminiHasSession(home, ws, id string) bool {
 			if err != nil {
 				return false
 			}
-			sessionID, projectHash := geminiSessionMetadata(io.LimitReader(f, geminiMetadataLimit))
+			sessionID, projectHash := geminiSessionMetadata(f, strings.HasSuffix(entry.Name(), ".json"))
 			_ = f.Close()
 			return sessionID == id && projectHash == wantProject
 		})
@@ -391,18 +862,18 @@ func geminiBucketCWD(root *os.Root, bucket string) string {
 	return cwd
 }
 
-// geminiSessionMetadata decodes only the first JSONL record's two lookup keys. Callers bound that
-// record because encoding/json buffers one top-level value even when the target is narrow.
-func geminiSessionMetadata(r io.Reader) (sessionID, projectHash string) {
-	dec := json.NewDecoder(r)
-	var metadata struct {
-		SessionID   string `json:"sessionId"`
-		ProjectHash string `json:"projectHash"`
-	}
-	if err := dec.Decode(&metadata); err != nil {
+// Ownership strings are bounded; native messages stream without a payload-size limit.
+func geminiSessionMetadata(r io.Reader, multiline bool) (sessionID, projectHash string) {
+	done := errors.New("native Gemini session metadata read")
+	err := nativeHistoryObjects(r, []string{"sessionId", "projectHash"}, multiline,
+		func(fields map[string]string, _, _ int64) error {
+			sessionID, projectHash = fields["sessionId"], fields["projectHash"]
+			return done
+		})
+	if !errors.Is(err, done) {
 		return "", ""
 	}
-	return metadata.SessionID, metadata.ProjectHash
+	return sessionID, projectHash
 }
 
 func (geminiAgent) Login(*config.Config) []string { return []string{"gemini"} }
@@ -451,6 +922,15 @@ func (geminiAgent) UpdateControls() UpdateControls {
 	}
 	for _, effort := range []string{"low", "high"} {
 		files = append(files, SystemFile{Path: geminiThinkingDir + "/" + effort + ".json", Content: geminiThinkingSettings(effort)})
+	}
+	for _, selection := range []string{"oauth-personal", "gemini-api-key"} {
+		for _, level := range []string{"default", "low", "high"} {
+			effort := level
+			if level == "default" {
+				effort = ""
+			}
+			files = append(files, SystemFile{Path: geminiBrokerSettingsDir + "/" + selection + "/" + level + ".json", Content: geminiBrokerSettings(selection, effort)})
+		}
 	}
 	return UpdateControls{Files: files}
 }
@@ -640,7 +1120,11 @@ func (geminiAgent) StoredCredentialStatus(profileDir string, _ time.Time) Stored
 // come from the image. The host file is never written here; EnsureDefaults owns the one
 // host-side change (folder trust).
 func (geminiAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
-	gm, requiredEnv, err := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))
+	dir, err := cfg.AgentSettingsDir("gemini")
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	gm, requiredEnv, err := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(dir, "settings.json"))
 	if err != nil {
 		return MCPConfig{}, err
 	}
@@ -705,7 +1189,10 @@ func (geminiAgent) DefaultsPublication(*config.Config) ([]ConfigPublication, err
 // fail at launch) and turns off its folder-trust prompt — the box is the sandbox. An
 // existing choice is kept; a non-blank but unparseable file stops launch without being changed.
 func (a geminiAgent) EnsureDefaults(cfg *config.Config, _ string) error {
-	dir := cfg.AgentDir(a.Name())
+	dir, err := cfg.AgentSettingsDir(a.Name())
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create Gemini defaults directory %s: %w", dir, err)
 	}
@@ -958,4 +1445,120 @@ func geminiThinkingSettings(effort string) string {
 func geminiSystemSettings(settings map[string]any) string {
 	data, _ := json.MarshalIndent(settings, "", "  ") // internal literal settings: cannot fail
 	return string(append(data, '\n'))
+}
+
+// Public installed-client identifiers, not account secrets. Renewal remains host-only;
+// the caller retains the response before publishing canonical account authority.
+const geminiOAuthClientID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
+const geminiOAuthClientSecret = "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"
+const geminiOAuthTokenURL = "https://oauth2.googleapis.com/token"
+
+var geminiRenewClient = &http.Client{Timeout: 20 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+type geminiRenewal struct {
+	Credential []byte
+	// Received retains bounded native response bytes even when validation or later
+	// readiness fails. It is host-only recovery material, never serving authority.
+	Received []byte
+}
+
+// renewGeminiAuthority renews only plain native OAuth; it never initializes a global
+// keychain or encrypted fallback, and does not let native asynchronous writes replace
+// the caller's canonical transaction.
+func renewGeminiAuthority(ctx context.Context, original []byte, deadline time.Time,
+	retainReceived func([]byte) error) (geminiRenewal, error) {
+	var document map[string]json.RawMessage
+	if len(original) == 0 || len(original) > 1<<20 || json.Unmarshal(original, &document) != nil || document == nil {
+		return geminiRenewal{}, errors.New("invalid Gemini OAuth authority")
+	}
+	var access, refresh string
+	var expiry int64
+	if json.Unmarshal(document["access_token"], &access) != nil || json.Unmarshal(document["expiry_date"], &expiry) != nil {
+		return geminiRenewal{}, errors.New("invalid Gemini OAuth access state")
+	}
+	if validGeminiGrant(access) && expiry > deadline.UnixMilli() {
+		return geminiRenewal{Credential: bytes.Clone(original)}, nil
+	}
+	if json.Unmarshal(document["refresh_token"], &refresh) != nil || !validGeminiGrant(refresh) {
+		return geminiRenewal{}, errors.New("native Gemini OAuth authority needs host sign-in")
+	}
+	if retainReceived == nil {
+		return geminiRenewal{}, errors.New("native Gemini renewal needs durable response custody")
+	}
+	if !deadline.After(time.Now()) {
+		return geminiRenewal{}, errors.New("native Gemini renewal deadline expired")
+	}
+	values := url.Values{"client_id": {geminiOAuthClientID}, "client_secret": {geminiOAuthClientSecret},
+		"grant_type": {"refresh_token"}, "refresh_token": {refresh}}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, geminiOAuthTokenURL, strings.NewReader(values.Encode()))
+	if err != nil {
+		return geminiRenewal{}, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := geminiRenewClient.Do(request)
+	if err != nil {
+		return geminiRenewal{}, errors.New("native Gemini OAuth renewal request failed")
+	}
+	defer response.Body.Close()
+	raw, readErr := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	result := geminiRenewal{Received: bytes.Clone(raw[:min(len(raw), 1<<20)])}
+	// This happens before identity/readiness validation and ignores cancellation after
+	// issuance. Failure is not safe to retry: an old refresh grant may be consumed.
+	if len(result.Received) != 0 {
+		if err := retainReceived(result.Received); err != nil {
+			return result, fmt.Errorf("native Gemini renewal response received but custody unconfirmed: %w", err)
+		}
+	}
+	if readErr != nil || len(raw) == 0 || len(raw) > 1<<20 {
+		return result, errors.New("native Gemini OAuth renewal response incomplete; authority is uncertain, do not retry automatically")
+	}
+	if response.StatusCode != http.StatusOK {
+		return result, errors.New("native Gemini OAuth renewal refused")
+	}
+	var returned map[string]json.RawMessage
+	if json.Unmarshal(raw, &returned) != nil || returned == nil {
+		return result, errors.New("invalid Gemini OAuth renewal document")
+	}
+	var nextAccess string
+	var expires json.Number
+	if json.Unmarshal(returned["access_token"], &nextAccess) != nil || !validGeminiGrant(nextAccess) ||
+		json.Unmarshal(returned["expires_in"], &expires) != nil {
+		return result, errors.New("native Gemini OAuth renewal returned unusable access")
+	}
+	seconds, err := strconv.ParseInt(string(expires), 10, 64)
+	now := time.Now().UnixMilli()
+	if err != nil || seconds <= 0 || seconds > (math.MaxInt64-now)/1000 {
+		return result, errors.New("native Gemini OAuth renewal returned invalid expiry")
+	}
+	for _, field := range []string{"refresh_token", "scope", "token_type", "id_token"} {
+		value, present := returned[field]
+		if !present {
+			continue
+		}
+		var text string
+		if json.Unmarshal(value, &text) != nil || text == "" || strings.ContainsAny(text, "\x00\r\n") {
+			return result, errors.New("native Gemini OAuth renewal returned invalid native metadata")
+		}
+		if field == "refresh_token" && !validGeminiGrant(text) ||
+			field == "token_type" && !strings.EqualFold(text, "Bearer") {
+			return result, errors.New("native Gemini OAuth renewal returned unsupported native metadata")
+		}
+		document[field] = bytes.Clone(value)
+	}
+	document["access_token"], _ = json.Marshal(nextAccess)
+	document["expiry_date"], _ = json.Marshal(now + seconds*1000)
+	result.Credential, err = json.Marshal(document)
+	if err != nil || len(result.Credential) > 1<<20 {
+		return result, errors.New("native Gemini OAuth renewal serialization failed")
+	}
+	result.Credential = append(result.Credential, '\n')
+	if now+seconds*1000 <= deadline.UnixMilli() {
+		return result, errors.New("native Gemini OAuth renewed; access does not cover the requested deadline")
+	}
+	return result, nil
+}
+
+func validGeminiGrant(value string) bool {
+	return len(value) >= 8 && len(value) <= 32<<10 && !strings.ContainsAny(value, "\x00\r\n")
 }

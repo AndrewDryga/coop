@@ -15,7 +15,9 @@ import (
 	"testing"
 	"time"
 
-	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
 )
 
 type scriptedACP struct {
@@ -866,26 +868,17 @@ func startScriptedACPArgs(t *testing.T, coopBin, fixtureBin, repo, tmp, plan str
 
 func signInScriptedProfile(t *testing.T, tmp, provider, profile string) {
 	t.Helper()
-	profileDir := filepath.Join(tmp, "config", provider, "profiles", profile)
-	if err := os.MkdirAll(profileDir, 0o700); err != nil {
+	stage := t.TempDir()
+	if err := os.Chmod(stage, 0700); err != nil {
 		t.Fatal(err)
 	}
-	ag, ok := agents.Get(provider)
-	if !ok {
-		t.Fatalf("unknown scripted ACP provider %q", provider)
-	}
-	marker, _ := ag.AuthMarker()
-	body := map[string]string{
-		"claude": `{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`,
-		"codex":  `{"auth_mode":"chatgpt","tokens":{"refresh_token":"refresh"}}`,
-		"grok":   `{"issuer::id":{"key":"access","refresh_token":"refresh","expires_at":"2000-01-01T00:00:00Z","auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2000-01-01T00:00:00Z"}}`,
-	}[provider]
-	if provider == "gemini" {
-		if err := os.WriteFile(filepath.Join(profileDir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`), 0o600); err != nil {
+	for name, data := range nativeauth.Files(t, provider, profile) {
+		if err := os.WriteFile(filepath.Join(stage, name), data, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(profileDir, marker), []byte(body+"\n"), 0o600); err != nil {
+	cfg := &config.Config{ConfigDir: filepath.Join(tmp, "config")}
+	if err := box.ImportNativeSignIn(t.Context(), cfg, provider, profile, stage); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -1,5 +1,5 @@
 Permanently delete Codex account "old-work" along with its saved login
-and local session history?
+and ordinary repository history? Editor conversations will be kept.
 
 Continue? [y/N] n
 

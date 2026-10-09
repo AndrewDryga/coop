@@ -24,6 +24,208 @@ import (
 
 type grokAgent struct{}
 
+func checkGrokBroker(files map[string][]byte, seed NativeBrokerSeed) error {
+	data, exists := files["auth.json"]
+	if !exists {
+		return nil
+	}
+	doc, err := nativePublicObject(data)
+	if err != nil {
+		return err
+	}
+	if len(doc) != 1 || len(doc[grokNativeScope]) == 0 {
+		return errNativeBrokerDiverged
+	}
+	entry, err := nativePublicObject(doc[grokNativeScope])
+	if err != nil {
+		return err
+	}
+	for name, expected := range map[string]string{"key": seed.Marker, "auth_mode": "external", "oidc_issuer": grokIssuer, "refresh_token": "", "id_token": ""} {
+		value, err := nativePublicString(entry, name)
+		if err != nil || value != expected {
+			return errNativeBrokerDiverged
+		}
+	}
+	return nil
+}
+
+const grokNativeClientID = "b1a00492-073a-47ea-816f-4c329264a828"
+const grokNativeScope = grokIssuer + "::" + grokNativeClientID
+
+func (grokAgent) NativeCredentials() NativeCredentialSpec {
+	return NativeCredentialSpec{Defaults: func(source string) (map[string][]byte, error) {
+		return nativeDefaultSettings(source, "config.toml", "GROK.md", map[string]string{"model": "string"})
+	}, LegacyGrants: []string{"auth.json"}, LegacyLocks: []string{"auth.json.lock"}, Artifacts: []NativeCredentialArtifact{{Name: "auth.json", Limit: grokCredentialLimit, Required: true, Import: importGrokNative, AccessOnly: projectGrokCredential}},
+		Inspect: inspectGrokNative, Renew: renewGrokNative, Broker: NativeBrokerSpec{Seed: seedGrokBroker, Routes: grokBrokerRoutes, Check: checkGrokBroker}}
+}
+
+func seedGrokBroker(selection string) (NativeBrokerSeed, error) {
+	out := publicNativeSeed("coop-native-grok-v1")
+	out.Family = "oauth"
+	if selection != grokNativeScope {
+		return out, errors.New("unsupported Grok broker selection")
+	}
+	helper, err := nativeJSON(map[string]any{"access_token": out.Marker, "expires_in": 3600, "issuer": grokIssuer})
+	out.Helper = helper
+	out.Env["GROK_AUTH_PROVIDER_LABEL"] = "Coop broker - account selected in Coop"
+	return out, err
+}
+
+func grokBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
+	if selection != grokNativeScope {
+		return nil, errors.New("unsupported Grok broker selection")
+	}
+	var out []NativeBrokerRoute
+	add := func(method, path, query string) {
+		out = append(out, NativeBrokerRoute{Host: "cli-chat-proxy.grok.com", Method: method, Path: path, Query: query, Header: "Authorization", HeaderPrefix: "Bearer "})
+	}
+	add("POST", "/v1/responses", "")
+	for _, path := range []string{"/v1/user", "/v1/models", "/v1/settings", "/v1/bundle/archive", "/v1/subagents/bundle", "/v1/feedback/config"} {
+		add("GET", path, "")
+	}
+	add("GET", "/v1/billing", "format=credits")
+	out = append(out, NativeBrokerRoute{Host: "cli-chat-proxy.grok.com", Method: "GET", Path: "/v1/sessions/search", Header: "Authorization", HeaderPrefix: "Bearer ",
+		Queries: []NativeBrokerQuery{{Name: "limit", Values: []string{"100"}}, {Name: "query", Optional: true, MaxBytes: 4096}}})
+	out = append(out, NativeBrokerRoute{Host: "code.grok.com", Method: "DELETE", Path: "/sessions/", Segment: "uuid", Suffix: "/data", Header: "Authorization", HeaderPrefix: "Bearer "})
+	return out, nil
+}
+
+func importGrokNative(data []byte) ([]byte, error) {
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(data, &doc) != nil || len(doc[grokNativeScope]) == 0 {
+		return nil, errors.New("native Grok selected native scope missing")
+	}
+	out, err := nativeJSON(map[string]json.RawMessage{grokNativeScope: doc[grokNativeScope]})
+	if err != nil {
+		return nil, err
+	}
+	_, err = inspectGrokNative(map[string][]byte{"auth.json": out}, time.Now())
+	return out, err
+}
+
+func inspectGrokNative(files map[string][]byte, now time.Time) (NativeCredentialState, error) {
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(files["auth.json"], &doc) != nil || len(doc) != 1 {
+		return NativeCredentialState{}, errors.New("invalid Grok selected inventory")
+	}
+	var credential grokSourceCredential
+	if json.Unmarshal(doc[grokNativeScope], &credential) != nil || credential.OIDCIssuer != grokIssuer || credential.OIDCClientID != grokNativeClientID ||
+		!validNativeIdentity(credential.PrincipalType) || !validNativeIdentity(credential.PrincipalID) ||
+		!validNativeIdentity(credential.UserID) || credential.TeamID != "" && !validNativeIdentity(credential.TeamID) ||
+		(credential.AuthMode != "oidc" && credential.AuthMode != "oauth") || !validNativeGrant(credential.Key) {
+		return NativeCredentialState{}, errors.New("invalid Grok selected principal/grant")
+	}
+	expiry, err := time.Parse(time.RFC3339Nano, credential.ExpiresAt)
+	if err != nil {
+		return NativeCredentialState{}, errors.New("invalid Grok expiry")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, credential.CreateTime); err != nil {
+		return NativeCredentialState{}, errors.New("invalid Grok issuance time")
+	}
+	refreshable := validNativeGrant(credential.RefreshToken)
+	if credential.RefreshToken != "" && !refreshable {
+		return NativeCredentialState{}, errors.New("invalid Grok refresh grant")
+	}
+	return NativeCredentialState{Selection: grokNativeScope, Principal: nativeTuple(credential.PrincipalType, credential.PrincipalID, credential.UserID, credential.TeamID),
+		AccessToken: credential.Key, AccountID: credential.UserID, ExpiresAt: expiry, Refreshable: refreshable, Ready: refreshable || expiry.After(now)}, nil
+}
+
+func renewGrokNative(ctx context.Context, files map[string][]byte, deadline time.Time, retain func([]byte) error) (map[string][]byte, error) {
+	before, err := inspectGrokNative(files, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if !before.Refreshable {
+		return nil, errors.New("native Grok authority needs host sign-in")
+	}
+	var doc map[string]json.RawMessage
+	_ = json.Unmarshal(files["auth.json"], &doc)
+	var credential grokSourceCredential
+	_ = json.Unmarshal(doc[grokNativeScope], &credential)
+	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {credential.RefreshToken}, "client_id": {grokNativeClientID},
+		"principal_type": {credential.PrincipalType}, "principal_id": {credential.PrincipalID}}
+	raw, err := requestNativeRefresh(ctx, grokTokenURL, "application/x-www-form-urlencoded", []byte(form.Encode()), retain)
+	if err != nil {
+		return nil, err
+	}
+	var response grokRefreshResponse
+	if json.Unmarshal(raw, &response) != nil || !validNativeIssuedStrings(raw, "refresh_token") || !validNativeGrant(response.AccessToken) ||
+		response.RefreshToken != "" && !validNativeGrant(response.RefreshToken) || response.ExpiresIn <= 0 ||
+		response.ExpiresIn > int64(time.Duration(1<<63-1)/time.Second) {
+		return nil, errors.New("invalid Grok issued credential; retained for recovery")
+	}
+	entry, expiry, err := mergeGrokCredentialRefresh(doc[grokNativeScope], response)
+	if err != nil {
+		return nil, err
+	}
+	doc[grokNativeScope] = entry
+	out, err := nativeJSON(doc)
+	if err != nil {
+		return nil, err
+	}
+	next := cloneNativeFiles(files)
+	next["auth.json"] = out
+	after, err := inspectGrokNative(next, time.Now())
+	if err != nil || before.Principal != after.Principal || before.Selection != after.Selection {
+		return nil, errors.New("native Grok issued authority changed identity; retained for recovery")
+	}
+	if !expiry.After(deadline) {
+		return next, errors.New("native Grok renewed; access does not cover requested deadline")
+	}
+	return next, nil
+}
+
+func (grokAgent) NativeHistory(source string, ownsCWD func(string) bool) (NativeHistoryPlan, error) {
+	s, err := openNativeHistory(source, ownsCWD)
+	if err != nil {
+		return NativeHistoryPlan{}, err
+	}
+	defer s.close()
+	buckets := map[string]bool{}
+	s.walk("sessions", func(path string) {
+		rel, _ := filepath.Rel("sessions", path)
+		parts := strings.Split(rel, string(filepath.Separator))
+		if len(parts) >= 2 {
+			buckets[parts[0]] = true
+		}
+	})
+	for bucket := range buckets {
+		root := filepath.Join("sessions", bucket)
+		cwd, decodeErr := url.PathUnescape(bucket)
+		var marker string
+		if decodeErr != nil || !filepath.IsAbs(cwd) {
+			marker = filepath.Join(root, ".cwd")
+			data, ok := s.small(filepath.Join(root, ".cwd"), 4<<10)
+			if !ok {
+				continue
+			}
+			cwd = strings.TrimSpace(string(data))
+		}
+		if !s.owns(cwd) {
+			continue
+		}
+		s.walk(root, func(path string) {
+			rel, _ := filepath.Rel(root, path)
+			part := strings.Split(rel, string(filepath.Separator))[0]
+			id := nativeHistorySessionName(part)
+			var proofs []string
+			if marker != "" {
+				proofs = append(proofs, marker)
+			}
+			if id != "" {
+				summary := filepath.Join(root, part, "summary.json")
+				if !s.inspect(summary, nil) {
+					return
+				}
+				proofs = append(proofs, summary)
+			}
+			s.add(path, cwd, id)
+			s.depend(path, proofs...)
+		})
+	}
+	return s.finish(), nil
+}
+
 func (grokAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: grokUsageQuota, HistoryDirs: []string{"sessions"},
 		HistoryFile:   func(path string) bool { return filepath.Base(path) == "usage.json" },
@@ -130,30 +332,32 @@ func grokUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, err
 	if !ok {
 		return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
 	}
-	credentials, valid := readGrokCredentials(input.ProfileDir)
-	if !valid || len(credentials) == 0 {
-		return UsageQuota{}, ErrUsageSignIn
-	}
 	scope := grokIssuer + "::b1a00492-073a-47ea-816f-4c329264a828"
-	credential, found := credentials[scope]
-	if !found {
-		return UsageQuota{}, fmt.Errorf("limits unavailable for this stored authentication authority")
+	var state NativeCredentialState
+	if input.Current != nil {
+		var err error
+		state, _, err = input.Current(ctx, deadline)
+		if err != nil {
+			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+		}
+	} else {
+		if err := renewGrokCredentialScope(input.ProfileDir, deadline, scope); err != nil {
+			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+		}
+		credentials, valid := readGrokCredentials(input.ProfileDir)
+		credential, found := credentials[scope]
+		if !valid || !found || credential.OIDCIssuer != grokIssuer || credential.OIDCClientID != grokNativeClientID {
+			return UsageQuota{}, ErrUsageSignIn
+		}
+		state = NativeCredentialState{Selection: scope, AccessToken: credential.Key, AccountID: credential.UserID}
 	}
-	if err := renewGrokCredentialScope(input.ProfileDir, deadline, scope); err != nil {
-		return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
-	}
-	credentials, valid = readGrokCredentials(input.ProfileDir)
-	if !valid {
-		return UsageQuota{}, ErrUsageSignIn
-	}
-	credential, found = credentials[scope]
-	if !found || credential.OIDCIssuer != grokIssuer || credential.OIDCClientID != "b1a00492-073a-47ea-816f-4c329264a828" || credential.Key == "" || credential.UserID == "" {
+	if state.Selection != scope || state.AccessToken == "" || state.AccountID == "" {
 		return UsageQuota{}, ErrUsageSignIn
 	}
 	var raw grokQuotaResponse
 	err := readUsageQuota(ctx, http.MethodGet, "https://cli-chat-proxy.grok.com/v1/billing?format=credits", http.Header{
-		"Authorization": {"Bearer " + credential.Key}, "X-Xai-Token-Auth": {"xai-grok-cli"},
-		"X-Userid": {credential.UserID}, "X-Grok-Client-Version": {"1.0.44"}, "X-Grok-Client-Mode": {"headless"},
+		"Authorization": {"Bearer " + state.AccessToken}, "X-Xai-Token-Auth": {"xai-grok-cli"},
+		"X-Userid": {state.AccountID}, "X-Grok-Client-Version": {"1.0.44"}, "X-Grok-Client-Mode": {"headless"},
 	}, nil, &raw)
 	if err != nil {
 		return UsageQuota{}, err
@@ -293,11 +497,6 @@ func (grokAgent) ACP(cfg *config.Config) []string {
 	a := withEffort(withModel([]string{"grok", "agent"}, cfg.ModelFor("grok")), grokAgent{}, cfg.EffortFor("grok"))
 	return append(a, "stdio")
 }
-
-// ACPSessionDirs: grok persists sessions under ~/.grok/sessions/ (organized by working
-// directory, alongside a session_search.sqlite index). Share it so an ACP box keeps the
-// conversation across a credential switch.
-func (grokAgent) ACPSessionDirs() []string { return []string{"sessions"} }
 
 // ACPFinalChunk: every assistant chunk is answer text — grok's adapter streams no separate commentary phase.
 func (grokAgent) ACPFinalChunk(json.RawMessage) bool    { return true }
@@ -624,7 +823,11 @@ func (grokAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 	if cfg.MCPFile == "" {
 		return MCPConfig{}, nil
 	}
-	gx, requiredEnv, err := mcp.GenerateGrok(cfg.MCPFile, filepath.Join(cfg.AgentDir("grok"), "config.toml"))
+	dir, err := cfg.AgentSettingsDir("grok")
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	gx, requiredEnv, err := mcp.GenerateGrok(cfg.MCPFile, filepath.Join(dir, "config.toml"))
 	if err != nil {
 		return MCPConfig{}, err
 	}

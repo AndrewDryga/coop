@@ -4,7 +4,7 @@ description: "when shared state breaks concurrency, isolate the state; never loc
 scope: box
 sources: [internal/box/profiles.go, internal/box/run.go, internal/box/repo.go, internal/box/services.go, internal/forkspace/execution.go, internal/agent/codex.go]
 check: "none"
-updated: 2026-09-15
+updated: 2026-10-09
 ---
 
 # Isolate the state, don't serialize the users of it
@@ -29,15 +29,13 @@ left to lock.
   answer: isolate the per-consumer state, keep sharing the genuinely-common pieces.
 - **Check whether the tool already has a knob before building a mount dance.** The codex
   collision's real fix was one env var — codex exposes `CODEX_SQLITE_HOME` to relocate exactly
-  the single-writer sqlite off the shared home, so coop points it at a container-local path and
-  leaves the whole home (auth + its in-place refresh, sessions, config) shared and UNTOUCHED.
-  That beat the first working design (a private per-box home seeded from the profile with a
-  single-file `auth.json` bind): fewer moving parts, and it makes no assumption about how the
-  credential is written. Google the upstream issue tracker before inventing an isolation layer —
-  the community usually hit it first (here: per-`CODEX_HOME` isolation is the documented pattern,
-  and `sqlite_home`/`CODEX_SQLITE_HOME` the surgical one).
-- Prefer redirecting the STATE to isolating the whole HOME: the less you move off the shared
-  mount, the less can silently diverge (a credential refresh, a config edit).
+  the single-writer sqlite off the native home, so Coop keeps that state container-local.
+  Repository privacy now requires complete repository/provider/account homes, with a separate
+  account-independent ACP home. Never split native indexes/history into file-bind overlays.
+- Share one canonical host-only credential authority, not refresh-token copies per home. Short
+  renewal/publication locks protect that authority; shared home-use leases permit concurrent native
+  sessions. Exclusive migration leases only defer unsafe import, never serialize normal users.
+- Repository settings intentionally stay local after first seed; no implicit account-wide merge.
 - A guard that can fire on a respawn/retry path multiplies: fail-fast checks at spawn time
   interact with supervisor respawn loops (rapid-fail caps). If a guard is ever needed, it
   must be idempotent across generations of the same logical session.
@@ -46,6 +44,9 @@ left to lock.
   the short host-daemon mount boundary; it must not become ownership of the running stack.
 
 ## Changelog
+- 2026-10-09 — reverified native homes, account renewal and shared-use/exclusive-import leases.
+  Superseded whole shared-home guidance with the approved repository-privacy boundary; native
+  SQLite stays container-local and normal sessions remain concurrent.
 - 2026-09-15 — applied the rule to sibling services: isolated Compose ownership replaced the
   workspace-wide start refusal; only the unsafe daemon mount boundary is coordinated.
 - 2026-09-03 — re-verified after credential-root permission hardening: owner-only ancestors protect

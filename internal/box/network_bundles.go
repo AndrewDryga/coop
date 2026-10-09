@@ -1,6 +1,7 @@
 package box
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -129,6 +130,9 @@ func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress
 	if account == "" {
 		account = cfg.ActiveProfile(target.Provider)
 	}
+	if bundle, exists, err := nativeNetworkBundle(cfg, ag, account, client); exists || err != nil {
+		return bundle, err
+	}
 	if !ProfileCredentialReady(cfg, target.Provider, account, time.Now()) {
 		return egress.Bundle{}, fmt.Errorf("%s account %q is not ready for restricted networking", target.Provider, account)
 	}
@@ -190,6 +194,15 @@ func brokeredProviders(cfg *config.Config, spec RunSpec) (map[string]bool, error
 	for _, name := range networkCredentialScope(cfg, spec) {
 		brokered, plain := false, false
 		for _, target := range networkTargetsForProvider(cfg, spec, name) {
+			ag, _ := agents.Get(name)
+			_, native, err := nativeNetworkBundle(cfg, ag, target.Account(), spec.networkClient())
+			if err != nil {
+				return nil, err
+			}
+			if native {
+				brokered = true
+				continue
+			}
 			candidate, err := credentialBrokerCandidateFor(cfg, spec, name, target.Account(), nil)
 			if err != nil {
 				return nil, err
@@ -213,11 +226,43 @@ func brokeredProviders(cfg *config.Config, spec RunSpec) (map[string]bool, error
 	return result, nil
 }
 
-// AccountBrokersKey reports whether one account's credential is an API key the broker serves rather
-// than a sign-in — the two kinds one filtered policy cannot mix within a provider.
+// AccountBrokersKey reports whether an account uses host brokering. Despite the historical name,
+// canonical subscription credentials use the broker too; this is not an API-key family detector.
 func AccountBrokersKey(cfg *config.Config, provider, account string) (bool, error) {
+	ag, ok := agents.Get(provider)
+	if !ok {
+		return false, errors.New("unknown credential provider")
+	}
+	if _, exists, err := nativeNetworkBundle(cfg, ag, account, egress.ClientCLI); exists || err != nil {
+		return exists, err
+	}
 	route, err := credentialBrokerCandidateFor(cfg, RunSpec{Homes: true}, provider, account, nil)
 	return route != nil, err
+}
+
+// Preflight previews the same account authority as launch without migrating or
+// renewing it. Native protected origins belong only to the guard's policy.
+func nativeNetworkBundle(cfg *config.Config, ag agents.Agent, account string, client egress.Client) (egress.Bundle, bool, error) {
+	if account == "" {
+		account = cfg.ActiveProfile(ag.Name())
+	}
+	cfg = cfg.NativeAuthorityConfig()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	selection, exists, err := previewNativeAuthority(ctx, cfg, ag, account)
+	if err != nil || !exists {
+		return egress.Bundle{}, exists, err
+	}
+	native := ag.NativeCredentials()
+	seed, err := native.Broker.Seed(selection.state.Selection)
+	if err != nil {
+		return egress.Bundle{}, true, err
+	}
+	if _, err := native.Broker.Routes(selection.state.Selection); err != nil {
+		return egress.Bundle{}, true, err
+	}
+	return egress.Bundle{Provider: ag.Name(), Client: client, Backend: "native-broker", AuthMode: seed.Family,
+		Version: agents.NetworkBundleVersion}, true, nil
 }
 
 // NetworkMCPDependencies returns the automatic HTTP destinations of the trusted

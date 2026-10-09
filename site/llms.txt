@@ -330,7 +330,8 @@ Usage: coop credentials <agent> <account> rm [--yes]
 OPTIONS
   -y, --yes  skip confirmation
 
-  Removes the saved login and its local session history.
+  Removes the saved login and its ordinary repository history.
+  Account-independent editor conversations are kept.
   Choose another default before removing the current default account.
 
 EXAMPLE
@@ -424,8 +425,8 @@ EXAMPLES
   Shared editor history without an account binding is listed separately.
   Retained Coop turn aggregates are unpriced, never added to native totals.
 
-  Gemini's native OAuth quota helper needs Docker and the current Coop base image.
-  It uses the original plain-file login; busy credentials can be retried after the active run.
+  Canonical account quota reads use host-only credentials without a model prompt.
+  Before cutover, Gemini's original-store helper needs Docker; retry a busy account after its run.
   API-key/Vertex modes may have no subscription quota but retain token-history value.
 
 EXIT STATUS

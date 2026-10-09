@@ -142,14 +142,10 @@ func TestAccountSectionNamesEveryConnectedAccount(t *testing.T) {
 // credential at all is no account the launch connects.
 func TestLaunchAccountsComeFromTheRunsOwnScope(t *testing.T) {
 	cfg, _ := brokerFixture(t, "GEMINI_API_KEY=gemini-secret\n")
-	signIn := cfg.AgentProfileDir("claude", cfg.ActiveProfile("claude"))
-	if err := os.MkdirAll(signIn, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(signIn, ".credentials.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seedCanonicalFixture(t, cfg, "claude", "default")
+
 	spec := RunSpec{Agent: "gemini", AgentCommand: true, Homes: true, Peers: []agents.Target{{Provider: "claude"}, {Provider: "codex"}}}
+	spec.native = nativeBrokerPlanFixture(t, cfg, spec)
 	plan, err := selectCredentialPlan(cfg, spec)
 	if err != nil {
 		t.Fatal(err)

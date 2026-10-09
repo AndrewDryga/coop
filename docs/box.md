@@ -100,7 +100,8 @@ network approval and admission flow.
 
 The provider gets a seed instead of its home, copied into the tmpfs home before it starts:
 
-- the access-only projection of the selected login (refresh authority stays on the host);
+- public native auth selectors (real access and refresh grants stay outside the box);
+- the run-local provider broker entrance, with host-managed continuous renewal;
 - its first-run defaults;
 - a note stating the mode's contract.
 
@@ -584,7 +585,7 @@ instead, so it never triggers this.
 | Command | Base image | Result |
 | --- | --- | --- |
 | `coop build` (stable) | pinned to a specific digest | a rebuild gets the same OS and runtime every time |
-| `coop update` (fresh) | floated back to the `node:24-slim` tag (`golang:1.27.1-bookworm` for the Go image) and rebuilt with `--pull --no-cache` | the OS packages and the runtime move to their newest |
+| `coop update` (fresh) | floated back to the `node:24-slim` tag (`golang:1.27.2-bookworm` for the Go image) and rebuilt with `--pull --no-cache` | the OS packages and the runtime move to their newest |
 
 To move the pinned base permanently, bump `pinnedNodeImage` in `internal/box/image.go`.
 

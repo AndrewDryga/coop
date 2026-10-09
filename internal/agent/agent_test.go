@@ -605,8 +605,8 @@ func TestResume(t *testing.T) {
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "whole-file", ".project_root"), unsupportedGeminiWS+"\n")
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "whole-file", "chats", "session.json"),
 		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, wholeFileID, sha256.Sum256([]byte(unsupportedGeminiWS))))
-	if cmd, ok := gemini.Resume(cfg, cfg.AgentDir("gemini"), unsupportedGeminiWS, wholeFileID); ok {
-		t.Errorf("gemini Resume accepted a whole-file JSON session: %v", cmd)
+	if _, ok := gemini.Resume(cfg, cfg.AgentDir("gemini"), unsupportedGeminiWS, wholeFileID); !ok {
+		t.Error("gemini Resume rejected its supported legacy JSON session")
 	}
 	symlinkID := "22222222-2222-4333-8444-555555555555"
 	outside := filepath.Join(t.TempDir(), "outside.jsonl")

@@ -15,6 +15,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
 )
 
 func target(provider, account string) agents.Target {
@@ -49,51 +50,48 @@ func TestNetworkAdmissionSpecCoversEveryLadderRung(t *testing.T) {
 
 func TestLoopAdmissionBrokersAKeyBesideSignedInTeammates(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Homes: true, Egress: "filtered"}
-	if err := os.MkdirAll(filepath.Dir(cfg.EnvFile()), 0o700); err != nil {
+	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=inert-provider-secret\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=raw-provider-secret\n"), 0o600); err != nil {
-		t.Fatal(err)
+	seed := func(provider, account string) {
+		t.Helper()
+		stage := t.TempDir()
+		if err := os.Chmod(stage, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for name, data := range nativeauth.Files(t, provider, account) {
+			if err := os.WriteFile(filepath.Join(stage, name), data, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := box.ImportNativeSignIn(t.Context(), cfg, provider, account, stage); err != nil {
+			t.Fatal(err)
+		}
 	}
 	work := ladder.NewRotation([]agents.Target{target("claude", "default")})
 	spec := networkAdmissionSpec(cfg, "/repo", "img", "claude", nil, nil, work)
-	bundles, err := box.NetworkProviderBundles(cfg, spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, bundle := range bundles {
-		if bundle.Provider == "claude" {
-			t.Fatalf("brokered loop admitted Claude directly: %#v", bundles)
-		}
+	if bundles, err := box.NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 0 {
+		t.Fatalf("API-key origins escaped the broker: %#v, %v", bundles, err)
 	}
 
-	// A brokered lead with a signed-in peer is one policy: the peer's API is granted, the key's is
-	// the broker's alone.
-	codex := cfg.AgentProfileDir("codex", "default")
-	if err := os.MkdirAll(codex, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(codex, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"refresh"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// Subscription peers use the same host-only boundary: no provider API is
+	// granted directly to the workload, regardless of authentication family.
+	seed("codex", "default")
 	spec = networkAdmissionSpec(cfg, "/repo", "img", "claude", nil, []agents.Target{target("codex", "default")}, work)
-	if bundles, err = box.NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 1 || bundles[0].Provider != "codex" {
-		t.Fatalf("brokered loop with a signed-in peer = %#v, %v; want only the peer's API granted", bundles, err)
+	if bundles, err := box.NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 0 {
+		t.Fatalf("signed-in peer origins escaped the broker: %#v, %v", bundles, err)
 	}
 
-	// One provider cannot rotate between a key and a login under that one policy: the login needs
-	// the API granted that the key's broker needs withheld.
-	claude := cfg.AgentProfileDir("claude", "personal")
-	if err := os.MkdirAll(claude, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(claude, ".credentials.json"), []byte(`{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seed("claude", "personal")
 	mixed := ladder.NewRotation([]agents.Target{target("claude", "default"), target("claude", "personal")})
 	spec = networkAdmissionSpec(cfg, "/repo", "img", "claude", nil, nil, mixed)
-	if _, err := box.NetworkProviderBundles(cfg, spec); err == nil || !strings.Contains(err.Error(), "cannot mix API-key and signed-in accounts") {
-		t.Fatalf("a key and a login rotated under one policy: %v", err)
+	if bundles, err := box.NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 0 {
+		t.Fatalf("mixed families did not retain one broker boundary: %#v, %v", bundles, err)
+	}
+	missing := ladder.NewRotation([]agents.Target{target("claude", "missing")})
+	spec = networkAdmissionSpec(cfg, "/repo", "img", "claude", nil, nil, missing)
+	if _, err := box.NetworkProviderBundles(cfg, spec); err == nil {
+		t.Fatal("missing rotation account silently admitted")
 	}
 }
 

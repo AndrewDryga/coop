@@ -3,7 +3,6 @@ package box
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -59,29 +58,16 @@ func nestedAgentCommand(spec RunSpec, name string) bool {
 // roots) build from mountedWritables, so a new kind of mount can't skip a guard.
 type mountedWritable struct {
 	Host, Box string
-	Kind      string // "<agent> credential home", "<agent> session history" or "<agent> ACP session store"
-	acp       bool
-	history   bool // a per-repository history overlay inside a home (history.go)
-	file      bool // a single file, bound with --mount so a missing source fails instead of becoming a dir
+	Kind      string
 }
 
 func mountedWritables(cfg *config.Config, spec RunSpec) []mountedWritable {
 	var out []mountedWritable
 	scope := credentialScope(cfg, spec)
 	for _, name := range scope {
-		out = append(out, mountedWritable{Host: cfg.AgentDir(name), Box: cfg.HomeInBox + "/." + name, Kind: name + " credential home"})
-	}
-	for _, name := range scope {
-		if store := spec.historyStores[name]; store != "" {
-			out = append(out, historyOverlays(cfg, spec, name, store)...)
-		}
-	}
-	if primary := runPrimary(spec); spec.ShareACPSessions && primary != "" {
-		if ag, ok := agents.Get(primary); ok {
-			for _, dir := range ag.ACPSessionDirs() {
-				out = append(out, mountedWritable{Host: filepath.Join(acpSharedDir(cfg, primary), dir),
-					Box: cfg.HomeInBox + "/." + primary + "/" + dir, Kind: primary + " ACP session store", acp: true})
-			}
+		home, err := cfg.NativeHome(name)
+		if err == nil {
+			out = append(out, mountedWritable{Host: home, Box: cfg.HomeInBox + "/." + name, Kind: name + " repository native home"})
 		}
 	}
 	return out
@@ -244,10 +230,13 @@ func writeComposedEnvFile(parent string, projectEnv, profileEnv map[string]strin
 // precedence; named profiles always use their own stored key.
 func scopedHostCredentialEnv(cfg *config.Config, spec RunSpec, userEnv map[string]string) (map[string]string, error) {
 	values := map[string]string{}
-	if spec.Login {
+	if spec.Login || cfg.Egress == "none" {
 		return values, nil
 	}
 	for _, name := range credentialScope(cfg, spec) {
+		if spec.native.selected(name) {
+			continue
+		}
 		ag, ok := agents.Get(name)
 		if !ok {
 			continue

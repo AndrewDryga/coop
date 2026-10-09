@@ -1,30 +1,36 @@
 ---
 name: renew-before-access-only-projection
-description: refreshable credentials renew in trusted host storage before an access-only box projection
+description: refreshable credentials renew in one canonical host authority before and during brokered runs
 scope: security
-sources: [internal/agent/agent.go, internal/agent/codex.go, internal/agent/claude.go, internal/agent/grok.go, internal/sessionsvc/acp.go]
-check: "go test ./internal/agent -run 'TestCodexCredentialRenewal|TestClaudeCredentialRenewal|TestGrokCredentialRenewal|TestEveryProjectableCredentialCanBeRenewed'"
-updated: 2026-09-18
+sources: [internal/agent/agent.go, internal/agent/codex.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/account_renewal.go, internal/box/native_broker.go, internal/sessionsvc/acp.go]
+check: "go test ./internal/box -run 'TestAccountRenewalPersistsIntentResponseAndShortGrant|TestAccountRenewalUncertainResponseCannotRetryOrMutate|TestNativeRunPublishesGuardOnlyExpiringAccess|TestNativeHostSignInRecoversUncertainRenewal'"
+updated: 2026-10-09
 ---
 
-# Renew a refreshable credential before projecting it into a box
+# Renew credentials in one canonical host authority
 
-When an access token cannot outlive a turn, renew it while the complete credential remains in
-trusted host storage. Serialize renewal, persist rotated tokens atomically, and create the
-access-only sandbox projection only after renewal succeeds. Never copy refresh authority into the
-box, and never report a refreshable login as ready while leaving the turn unable to use it.
+Renew expiring grants before and throughout brokered runs. Serialize renewal and retain issued
+rotations durably before validation/publication, including uncertain responses. Never copy refresh
+authority into repository homes or workloads, and never replace continuous renewal with a turn-sized
+expiry check or forced restart. Private broker snapshots expire closed if host publication stops.
 
 **Why:** Responder surfaced `credential is not portable through the turn deadline` even though the
 managed Codex profile retained valid refresh authority. Readiness and execution had implemented
 different halves of the credential lifecycle.
 
-**How to apply:** Keep preparation adapter-owned through `LiveCredentialSpec.Prepare`. The session
-runner invokes it against the trusted source profile immediately before artifact projection. A
-revoked refresh token becomes one authentication failure; it is not retried as a process crash.
-Every adapter whose credential is refreshable owes a `Prepare`; declaring only `Portability` is
-the defect, not a lighter variant of it.
+**How to apply:** Keep credential parsing and renewal adapter-owned through `NativeCredentialSpec`.
+All coding/remote paths use the canonical host authority and public native selectors. Revocation
+invalidates the prior epoch; neither a stale profile nor an env token may revive it. A revoked or
+uncertain renewal is an authentication/recovery result, never a blind process-crash retry.
+
+Pre-cutover quota inspection may still renew the original legacy store under the same writer
+fences as cutover. It must never fork that authority, overlap canonical service, or fall back from
+a revoked canonical account. This narrow maintenance path is not a coding-home projection.
 
 ## Changelog
+- 2026-10-09 — swept all four adapters, native account renewal, run publication and remote startup.
+  Updated the mechanism to canonical host renewal and expiring broker snapshots; legacy renewal
+  checks remain applicable only to fenced pre-cutover quota maintenance.
 - 2026-09-18 — Grok had the defect this card names: `Portability` and no `Prepare`, so a remote
   session failed once its six-hour token aged until a local run happened to refresh the profile.
   Wired `renewGrokCredential`. The grant shape was captured from the pinned 1.0.25 binary against

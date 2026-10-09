@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Parse rather than grep so documentation and multiline examples remain prose,
@@ -42,7 +44,7 @@ func TestProviderDecisionsStayInAdapters(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch filepath.ToSlash(path) {
-			case "../agent", "../cli/testdata/providerfixture", "../acpproxy/testdata/acpfixture":
+			case "../agent", "../cli/testdata/providerfixture", "../acpproxy/testdata/acpfixture", "../testutil/nativeauth":
 				return filepath.SkipDir
 			}
 			return nil
@@ -61,6 +63,15 @@ func TestProviderDecisionsStayInAdapters(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNativeAuthFixtureCoversRegistry(t *testing.T) {
+	for _, name := range Names() {
+		ag, _ := Get(name)
+		if _, err := ag.NativeCredentials().Inspect(nativeauth.Files(t, name, "work"), time.Now()); err != nil {
+			t.Fatalf("%s canonical fixture is invalid: %v", name, err)
+		}
 	}
 }
 

@@ -4,7 +4,7 @@ description: "loop, editor ACP, and remote sessions share target rotation but ke
 scope: architecture
 sources: [internal/ladder/ladder.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/loop.go, internal/acpctl/control.go, internal/sessionsvc/acp.go, internal/session/store.go]
 check: "none"
-updated: 2026-09-27
+updated: 2026-10-09
 ---
 
 # Preserve each surface's session lifecycle when rotating targets
@@ -26,7 +26,8 @@ policy matches, but continuation and authentication behavior remain surface-owne
   surface the login repair instead.
 - The remote-session service owns a durable session row. A rate limit or an explicit target floor
   advances that recorded target transactionally, rewinds the turn delivery ledger, and clears a
-  provider-native session ID when the provider or account changes. When no rung is available it
+  provider-native session ID when the provider changes. Same-provider account rotation keeps the
+  native session because its complete ACP home belongs to the repository, not the account. When no rung is available it
   records a `rate_limited` turn result and leaves retry timing to the client. Expired or revoked
   credentials never rotate; they surface so an operator repairs them.
 
@@ -53,6 +54,10 @@ or durable replay behavior as if it were obsolete compatibility.
 Related: [[model-is-the-rotation-axis]] and [[credentials-not-profiles]].
 
 ## Changelog
+- 2026-10-09 — swept editor ACP and remote quota/floor/failback rotation after complete native
+  homes landed. Same-provider account changes now preserve native conversation state; provider
+  changes still reset it, and restricted turns remain ephemeral. Updated the former account-reset
+  instruction to match the targetChangeResetsNativeSession regression tests.
 - 2026-09-27 — swept the session runner's rotation overlay and MCP projection; updated the active binding name to controller tools. The same turn-scoped endpoint/token survives reloads without becoming durable session authority.
 - 2026-09-09 — two fresh live Responder checks lost state tools on quota failover and recovered only
   on semantic correction. Swept quota, floor and explicit-failback paths; the same session reload

@@ -306,7 +306,8 @@ func TestAuthorityMountGuardProtectsHostConfigAndStateSiblings(t *testing.T) {
 	t.Setenv(forkspace.GitViewRootEnv, gitViews)
 
 	cfg := &config.Config{ConfigDir: filepath.Join(root, "config"), BoxHome: boxHome, Homes: true}
-	selected := cfg.AgentDir("codex")
+	selected := filepath.Join(cfg.ConfigDir, "codex", "native-homes", "default", "repo", "home")
+	cfg = cfg.WithNativeHomes(map[string]string{"codex": selected})
 	unselected := cfg.AgentProfileDir("codex", "work")
 	hostCredentials := filepath.Join(cfg.ConfigDir, "host-credentials")
 	customMCP := filepath.Join(root, "operator-mcp", "servers.json")
@@ -333,7 +334,8 @@ func TestAuthorityMountGuardProtectsHostConfigAndStateSiblings(t *testing.T) {
 		source  string
 		allowed bool
 	}{
-		{"selected credential profile", selected, true},
+		{"selected native home", selected, true},
+		{"retired credential profile", cfg.AgentProfileDir("codex", "default"), false},
 		{"whole config tree", cfg.ConfigDir, false},
 		{"config parent", filepath.Dir(cfg.ConfigDir), false},
 		{"Coop host config home", cfg.BoxHome, false},
@@ -490,7 +492,8 @@ func TestAuthorityMountGuardAllowsOnlyOneRemoteSessionOutputSubtree(t *testing.T
 	stateRoot := filepath.Join(root, "session-state")
 	sessionID := "remote_1"
 	cfg := &config.Config{ConfigDir: filepath.Join(stateRoot, "acp", sessionID), Homes: true}
-	selected := cfg.AgentDir("codex")
+	selected := filepath.Join(cfg.ConfigDir, "codex", "acp-homes", "repo", "home")
+	cfg = cfg.WithNativeHomes(map[string]string{"codex": selected})
 	outputRoot := filepath.Join(stateRoot, "output", sessionID)
 	for _, dir := range []string{selected, outputRoot} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -510,7 +513,8 @@ func TestAuthorityMountGuardAllowsOnlyOneRemoteSessionOutputSubtree(t *testing.T
 		source  string
 		allowed bool
 	}{
-		{"selected credential profile", selected, true},
+		{"selected native home", selected, true},
+		{"retired credential profile", cfg.AgentProfileDir("codex", "default"), false},
 		{"this session output", outputRoot, true},
 		{"whole session state", stateRoot, false},
 		{"session database", filepath.Join(stateRoot, "sessions.db"), false},

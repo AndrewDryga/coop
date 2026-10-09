@@ -26,7 +26,8 @@ type Config struct {
 	HomeInBox string // COOP_HOME_IN_BOX — the box user's home
 	Shell     string // COOP_SHELL — `coop shell`'s shell
 
-	ConfigDir string // COOP_CONFIG_DIR — per-agent auth + settings folder
+	ConfigDir          string // COOP_CONFIG_DIR — per-agent auth + settings folder
+	nativeAuthorityDir string // daemon-child host reference; never a workload mount or credential copy
 
 	MCPFile  string // COOP_MCP_FILE — the one MCP source of truth
 	MCPInBox string // where MCPFile mounts in the box (Claude's --mcp-config)
@@ -78,6 +79,7 @@ type Config struct {
 
 	activeProfiles  map[string]string // per-run selected credential profile; AgentDir resolves to it
 	defaultProfiles map[string]string // per-agent default profile (from DefaultsFile), used when none is selected
+	nativeHomes     map[string]string // explicit runtime settings/history selection, separate from account authority
 
 	activeModels map[string]string // per-run explicit one-off model — the top tier
 	targetModels map[string]string // the active rotation target's model, below explicit
@@ -235,11 +237,12 @@ func Load() (*Config, error) {
 	}
 
 	c := &Config{
-		BaseImage: get("COOP_BASE_IMAGE", "coop-box"),
-		Workdir:   get("COOP_WORKDIR", ""),
-		HomeInBox: get("COOP_HOME_IN_BOX", "/home/node"),
-		Shell:     get("COOP_SHELL", "bash"),
-		ConfigDir: get("COOP_CONFIG_DIR", filepath.Join(boxHome, "agents")),
+		BaseImage:          get("COOP_BASE_IMAGE", "coop-box"),
+		Workdir:            get("COOP_WORKDIR", ""),
+		HomeInBox:          get("COOP_HOME_IN_BOX", "/home/node"),
+		Shell:              get("COOP_SHELL", "bash"),
+		ConfigDir:          get("COOP_CONFIG_DIR", filepath.Join(boxHome, "agents")),
+		nativeAuthorityDir: os.Getenv("COOP_NATIVE_AUTHORITY_DIR"),
 
 		RuntimeName:   get("COOP_RUNTIME", ""),
 		RepoOverride:  get("COOP_REPO", ""),
@@ -294,6 +297,9 @@ func Load() (*Config, error) {
 		}
 	}
 	c.defaultProfiles = loadDefaultsFile(c.DefaultsFile())
+	if c.nativeAuthorityDir != "" && (!filepath.IsAbs(c.nativeAuthorityDir) || filepath.Clean(c.nativeAuthorityDir) != c.nativeAuthorityDir) {
+		return nil, fmt.Errorf("invalid native account authority root")
+	}
 	return c, nil
 }
 
@@ -338,6 +344,59 @@ const (
 // credential + session dir (see AgentProfileDir). Defaults to the "default" profile.
 func (c *Config) AgentDir(agent string) string {
 	return c.AgentProfileDir(agent, c.activeProfile(agent))
+}
+
+// WithNativeHomes freezes runtime home selections without repointing host credential readers.
+// A non-nil empty selection is deliberate: it authorizes no native home.
+func (c *Config) WithNativeHomes(homes map[string]string) *Config {
+	out := c.Clone()
+	out.nativeHomes = make(map[string]string, len(homes))
+	for provider, home := range homes {
+		out.nativeHomes[provider] = home
+	}
+	return out
+}
+
+// NativeAuthorityConfig preserves the selected account while resolving its one
+// host authority. Session-private configuration/history must never fork grants.
+func (c *Config) NativeAuthorityConfig() *Config {
+	if c.nativeAuthorityDir == "" {
+		return c
+	}
+	out := c.Clone()
+	out.ConfigDir = c.nativeAuthorityDir
+	out.nativeAuthorityDir = ""
+	out.nativeHomes = nil
+	out.defaultProfiles = loadDefaultsFile(out.DefaultsFile())
+	return out
+}
+
+func (c *Config) WithNativeAuthorityRoot(root string) (*Config, error) {
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root {
+		return nil, fmt.Errorf("invalid native account authority root")
+	}
+	out := c.Clone()
+	out.nativeAuthorityDir = root
+	return out, nil
+}
+
+// NativeHome refuses an absent selection instead of exposing the account's host profile.
+func (c *Config) NativeHome(provider string) (string, error) {
+	if c != nil {
+		if home := c.nativeHomes[provider]; filepath.IsAbs(home) && filepath.Clean(home) == home {
+			return home, nil
+		}
+	}
+	return "", fmt.Errorf("%s has no selected repository native home", provider)
+}
+
+// AgentSettingsDir is used by adapter settings renderers, both host sign-in and runtime.
+// Once a run selects homes, even an unselected provider must not fall back to account state.
+func (c *Config) AgentSettingsDir(provider string) (string, error) {
+	if c.nativeHomes != nil {
+		return c.NativeHome(provider)
+	}
+	return c.AgentDir(provider), nil
 }
 
 // activeProfile resolves which profile AgentDir uses for agent: a per-run selection wins
@@ -1127,6 +1186,7 @@ func (c *Config) Clone() *Config {
 	out.explicit = maps.Clone(c.explicit)
 	out.activeProfiles = maps.Clone(c.activeProfiles)
 	out.defaultProfiles = maps.Clone(c.defaultProfiles)
+	out.nativeHomes = maps.Clone(c.nativeHomes)
 	out.activeModels = maps.Clone(c.activeModels)
 	out.targetModels = maps.Clone(c.targetModels)
 	out.activeEfforts = maps.Clone(c.activeEfforts)

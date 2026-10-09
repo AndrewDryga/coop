@@ -126,6 +126,8 @@ func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild,
 // before it is unpacked or run, the launchers in agents.LauncherDir, and every adapter's update
 // controls. The images differ only in PATH and the base's startup provisioning.
 func lockedClientParts(closure agents.ClientClosure) baseImageParts {
+	closure.Files["staticcheck/go.mod"] = staticcheckMod
+	closure.Files["staticcheck/go.sum"] = staticcheckSum
 	install := "/usr/local/bin/npm ci --prefix /opt/coop/clients --ignore-scripts --include=optional --omit=dev --no-audit --no-fund --registry=https://registry.npmjs.org --userconfig=/dev/null --globalconfig=/opt/coop/clients/global.npmrc --cache=/tmp/coop-client-npm-cache \\\n && rm -rf /tmp/coop-client-npm-cache"
 	native := map[string]bool{}
 	for _, client := range closure.Clients {

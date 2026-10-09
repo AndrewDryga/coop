@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -25,6 +26,326 @@ import (
 )
 
 type codexAgent struct{}
+
+func (codexAgent) NativeCredentials() NativeCredentialSpec {
+	return NativeCredentialSpec{
+		Environment: nativeAPIEnvironment("apikey", "OPENAI_API_KEY"),
+		Defaults: func(source string) (map[string][]byte, error) {
+			return nativeDefaultSettings(source, "config.toml", "AGENTS.md", map[string]string{"model": "string", "model_reasoning_effort": "string"})
+		},
+		LegacyGrants: []string{"auth.json"}, LegacyLocks: []string{"auth.json.refresh.lock"},
+		Artifacts: []NativeCredentialArtifact{{Name: "auth.json", Limit: codexCredentialLimit, Required: true, Import: importCodexNative, AccessOnly: projectCodexCredential}},
+		Inspect:   inspectCodexNative, Renew: renewCodexNative,
+		Broker: NativeBrokerSpec{Seed: seedCodexBroker, Routes: codexBrokerRoutes, Check: checkCodexBroker},
+	}
+}
+
+func checkCodexBroker(files map[string][]byte, seed NativeBrokerSeed) error {
+	want, err := nativePublicObject(seed.Files["auth.json"])
+	if err != nil {
+		return err
+	}
+	have, err := nativePublicObject(files["auth.json"])
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"agent_identity", "personal_access_token", "bedrock_api_key", "bedrock_access_keys"} {
+		if value, exists := have[name]; exists && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return errNativeBrokerDiverged
+		}
+	}
+	mode, err := nativePublicString(have, "auth_mode")
+	if err != nil {
+		return err
+	}
+	wantMode, _ := nativePublicString(want, "auth_mode")
+	key, err := nativePublicString(have, "OPENAI_API_KEY")
+	if err != nil {
+		return err
+	}
+	if wantMode == "apikey" {
+		if mode != "apikey" || key != seed.Marker || len(have["tokens"]) > 0 && !bytes.Equal(bytes.TrimSpace(have["tokens"]), []byte("null")) {
+			return errNativeBrokerDiverged
+		}
+		return nil
+	}
+	if mode != "chatgptAuthTokens" || key != "" {
+		return errNativeBrokerDiverged
+	}
+	tokens, err := nativePublicObject(have["tokens"])
+	if err != nil {
+		return err
+	}
+	wanted, err := nativePublicObject(want["tokens"])
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"access_token", "id_token", "refresh_token"} {
+		actual, err := nativePublicString(tokens, name)
+		if err != nil {
+			return err
+		}
+		expected, _ := nativePublicString(wanted, name)
+		if actual != expected {
+			return errNativeBrokerDiverged
+		}
+	}
+	account, err := nativePublicString(tokens, "account_id")
+	if err != nil || account != NativeBrokerAccount {
+		return errNativeBrokerDiverged
+	}
+	return nil
+}
+
+func seedCodexBroker(selection string) (NativeBrokerSeed, error) {
+	out := publicNativeSeed("coop-native-codex-v1")
+	out.Family = selection
+	if selection != "chatgpt" && selection != "apikey" {
+		return out, errors.New("unsupported Codex broker selection")
+	}
+	identity := map[string]any{"chatgpt_account_id": NativeBrokerAccount, "chatgpt_user_id": nativeBrokerUser}
+	id, err := brokerJWT(map[string]any{"email": nativeBrokerEmail, "sub": nativeBrokerUser, "https://api.openai.com/auth": identity})
+	if err != nil {
+		return out, err
+	}
+	out.Marker, err = brokerJWT(map[string]any{"exp": nativeBrokerExpiry, "https://api.openai.com/auth": identity, "coop_broker": true})
+	if err != nil {
+		return out, err
+	}
+	raw, err := nativeJSON(map[string]any{"auth_mode": "chatgptAuthTokens", "OPENAI_API_KEY": nil,
+		"tokens":       map[string]any{"id_token": id, "access_token": out.Marker, "refresh_token": "", "account_id": NativeBrokerAccount},
+		"last_refresh": "2026-01-01T00:00:00Z"})
+	out.Files["auth.json"] = raw
+	out.Env["COOP_NATIVE_CODEX_FAMILY"] = selection
+	if selection == "apikey" {
+		out.Marker = "coop-native-codex-v1"
+		out.Env["CODEX_API_KEY"] = out.Marker
+	}
+	return out, err
+}
+
+func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
+	out := []NativeBrokerRoute{
+		{CredentialFree: true, Host: "chatgpt.com", Method: "GET", Path: "/backend-api/plugins/featured", Query: "platform=codex"},
+	}
+	if selection == "apikey" {
+		for _, route := range []struct{ method, path string }{{"POST", "/v1/responses"}, {"GET", "/v1/responses"}, {"POST", "/v1/responses/compact"}} {
+			out = append(out, NativeBrokerRoute{Host: "api.openai.com", Method: route.method, Path: route.path, Header: "Authorization", HeaderPrefix: "Bearer "})
+		}
+		return out, nil
+	}
+	if selection != "chatgpt" {
+		return nil, errors.New("unsupported Codex broker selection")
+	}
+	add := func(method, path, query string) {
+		out = append(out, NativeBrokerRoute{Host: "chatgpt.com", Method: method, Path: path, Query: query, Header: "Authorization", HeaderPrefix: "Bearer ", AccountHeader: "Chatgpt-Account-Id"})
+	}
+	add("POST", "/backend-api/codex/responses", "")
+	add("POST", "/backend-api/codex/responses/compact", "")
+	add("GET", "/backend-api/codex/responses", "")
+	add("GET", "/backend-api/codex/models", "client_version=0.159.2")
+	for _, path := range []string{"/backend-api/wham/accounts/check", "/backend-api/wham/usage", "/backend-api/wham/settings/user", "/backend-api/ps/connectors/directory/list", "/backend-api/ps/connectors/directory/list_workspace"} {
+		add("GET", path, "")
+	}
+	add("POST", "/backend-api/codex/analytics-events/events", "")
+	add("POST", "/backend-api/ps/apps/batch", "")
+	for _, method := range []string{"GET", "POST", "DELETE"} {
+		add(method, "/backend-api/ps/mcp", "")
+	}
+	add("GET", "/backend-api/ps/plugins/installed", "limit=200")
+	add("GET", "/backend-api/ps/plugins/installed", "limit=200&includeDownloadUrls=true")
+	add("GET", "/backend-api/ps/plugins/list", "scope=GLOBAL&limit=200")
+	add("GET", "/backend-api/ps/plugins/suggested/codex", "scope=GLOBAL")
+	return out, nil
+}
+
+func importCodexNative(data []byte) ([]byte, error) {
+	var source codexSourceCredential
+	if json.Unmarshal(data, &source) != nil {
+		return nil, errors.New("invalid Codex credential")
+	}
+	if source.AuthMode == "" {
+		if source.Tokens != nil {
+			source.AuthMode = "chatgpt"
+		} else if source.OpenAIAPIKey != "" {
+			source.AuthMode = "apikey"
+		}
+	}
+	switch source.AuthMode {
+	case "chatgpt":
+		source.OpenAIAPIKey = ""
+	case "apikey":
+		source.Tokens, source.LastRefresh = nil, ""
+	default:
+		return nil, errors.New("unsupported Codex credential family")
+	}
+	out, err := nativeJSON(source)
+	if err != nil {
+		return nil, err
+	}
+	_, err = inspectCodexNative(map[string][]byte{"auth.json": out}, time.Now())
+	return out, err
+}
+
+func inspectCodexNative(files map[string][]byte, now time.Time) (NativeCredentialState, error) {
+	var source codexSourceCredential
+	if json.Unmarshal(files["auth.json"], &source) != nil {
+		return NativeCredentialState{}, errors.New("invalid Codex authority")
+	}
+	if source.AuthMode == "apikey" && validNativeGrant(source.OpenAIAPIKey) && source.Tokens == nil {
+		return NativeCredentialState{Selection: "apikey", Principal: "opaque-api-key", AccessToken: source.OpenAIAPIKey, Ready: true, APIKey: true}, nil
+	}
+	if source.AuthMode != "chatgpt" || source.Tokens == nil || source.OpenAIAPIKey != "" || source.LastRefresh == "" {
+		return NativeCredentialState{}, errors.New("invalid Codex ChatGPT authority")
+	}
+	id, err := nativeJWT(source.Tokens.IDToken)
+	if err != nil {
+		return NativeCredentialState{}, err
+	}
+	account := source.Tokens.AccountID
+	if account == "" {
+		account = id.Auth.AccountID
+	}
+	user := id.Auth.UserID
+	if user == "" {
+		user = id.Subject
+	}
+	if !validNativeIdentity(account) || !validNativeIdentity(user) || id.Auth.AccountID != "" && id.Auth.AccountID != account {
+		return NativeCredentialState{}, errors.New("native Codex principal/account mismatch")
+	}
+	access, err := nativeJWT(source.Tokens.AccessToken)
+	if err != nil {
+		return NativeCredentialState{}, err
+	}
+	if access.Expiry <= 0 {
+		return NativeCredentialState{}, errors.New("native Codex access token has no expiry")
+	}
+	// Local claim consistency is not JWT signature verification. The selected
+	// account never changes merely because a newly issued token names another.
+	if access.Auth.AccountID != "" && access.Auth.AccountID != account || access.Auth.UserID != "" && access.Auth.UserID != user {
+		return NativeCredentialState{}, errors.New("native Codex access principal/account mismatch")
+	}
+	refreshable, expiry := validNativeGrant(source.Tokens.RefreshToken), time.Unix(access.Expiry, 0)
+	if source.Tokens.RefreshToken != "" && !refreshable {
+		return NativeCredentialState{}, errors.New("invalid Codex refresh grant")
+	}
+	return NativeCredentialState{Selection: "chatgpt", Principal: nativeTuple(account, user), AccountID: account,
+		AccessToken: source.Tokens.AccessToken, ExpiresAt: expiry, Refreshable: refreshable,
+		Ready: refreshable || expiry.After(now)}, nil
+}
+
+func renewCodexNative(ctx context.Context, files map[string][]byte, deadline time.Time, retain func([]byte) error) (map[string][]byte, error) {
+	before, err := inspectCodexNative(files, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if before.Selection != "chatgpt" || !before.Refreshable {
+		return nil, errors.New("native Codex authority needs host sign-in")
+	}
+	var source codexSourceCredential
+	_ = json.Unmarshal(files["auth.json"], &source)
+	endpoint, clientID, err := codexRefreshEndpoint()
+	if err != nil {
+		return nil, err
+	}
+	body, _ := json.Marshal(codexRefreshRequest{ClientID: clientID, GrantType: "refresh_token", RefreshToken: source.Tokens.RefreshToken})
+	raw, err := requestNativeRefresh(ctx, endpoint, "application/json", body, retain)
+	if err != nil {
+		return nil, err
+	}
+	var response codexRefreshResponse
+	if json.Unmarshal(raw, &response) != nil || !validNativeGrant(response.AccessToken) || !validNativeIssuedStrings(raw, "refresh_token", "id_token") {
+		return nil, errors.New("invalid Codex issued credential")
+	}
+	if response.IDToken != "" {
+		source.Tokens.IDToken = response.IDToken
+	}
+	source.Tokens.AccessToken = response.AccessToken
+	if response.RefreshToken != "" {
+		if !validNativeGrant(response.RefreshToken) {
+			return nil, errors.New("invalid Codex issued refresh token")
+		}
+		source.Tokens.RefreshToken = response.RefreshToken
+	}
+	source.LastRefresh = time.Now().UTC().Format(time.RFC3339Nano)
+	out, err := nativeJSON(source)
+	if err != nil {
+		return nil, err
+	}
+	next := cloneNativeFiles(files)
+	next["auth.json"] = out
+	after, err := inspectCodexNative(next, time.Now())
+	if err != nil || before.Principal != after.Principal || before.Selection != after.Selection {
+		return nil, errors.New("native Codex issued authority changed identity; retained for recovery")
+	}
+	if !after.ExpiresAt.After(deadline) {
+		return next, errors.New("native Codex renewed; access does not cover the requested deadline")
+	}
+	return next, nil
+}
+
+func (codexAgent) NativeHistory(source string, ownsCWD func(string) bool) (NativeHistoryPlan, error) {
+	s, err := openNativeHistory(source, ownsCWD)
+	if err != nil {
+		return NativeHistoryPlan{}, err
+	}
+	defer s.close()
+	type rollout struct{ path, id, cwd string }
+	var owned []rollout
+	origins := map[string]string{}
+	for _, root := range []string{"sessions", "archived_sessions"} {
+		s.walk(root, func(path string) {
+			if !strings.HasSuffix(path, ".jsonl") {
+				return
+			}
+			var meta struct {
+				Type    string                   `json:"type"`
+				Payload struct{ ID, Cwd string } `json:"payload"`
+			}
+			ok := s.inspect(path, func(reader io.Reader) error {
+				line, readErr := bufio.NewReader(io.LimitReader(reader, codexSessionMetadataLimit+1)).ReadString('\n')
+				if len(line) > codexSessionMetadataLimit || readErr != nil && readErr != io.EOF ||
+					json.Unmarshal([]byte(line), &meta) != nil || meta.Type != "session_meta" ||
+					!ValidSessionID(meta.Payload.ID) || !filepath.IsAbs(meta.Payload.Cwd) {
+					return fmt.Errorf("invalid Codex session ownership metadata")
+				}
+				if !s.owns(meta.Payload.Cwd) {
+					return errNativeHistoryForeign
+				}
+				return nil
+			})
+			if ValidSessionID(meta.Payload.ID) && meta.Payload.Cwd != "" {
+				if previous, exists := origins[meta.Payload.ID]; exists && previous != meta.Payload.Cwd {
+					origins[meta.Payload.ID] = ""
+				} else if !exists {
+					origins[meta.Payload.ID] = meta.Payload.Cwd
+				}
+			}
+			if ok {
+				owned = append(owned, rollout{path, meta.Payload.ID, meta.Payload.Cwd})
+			}
+		})
+	}
+	sessions := map[string]string{}
+	for _, item := range owned {
+		if origins[item.id] != item.cwd {
+			s.skip(item.path, fmt.Errorf("native session ID has conflicting working folders"))
+			continue
+		}
+		s.add(item.path, item.cwd, item.id)
+		s.proofs[item.id] = append(s.proofs[item.id], item.path)
+		sessions[item.id] = item.cwd
+	}
+	// CLI, exec, ACP and archived rollouts retain their original IDs and bytes.
+	s.filter("history.jsonl", []string{"session_id"}, "", func(fields map[string]string) bool {
+		return sessions[fields["session_id"]] != ""
+	})
+	s.filter("session_index.jsonl", []string{"id"}, "id", func(fields map[string]string) bool {
+		return sessions[fields["id"]] != ""
+	})
+	s.companions([]string{"shell_snapshots"}, sessions)
+	return s.finish(), nil
+}
 
 func (codexAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: codexUsageQuota, HistoryDirs: []string{"sessions", "archived_sessions"},
@@ -178,28 +499,33 @@ func codexUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, er
 	if !ok {
 		return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
 	}
-	data, err := readCodexCredential(filepath.Join(input.ProfileDir, "auth.json"))
+	var state NativeCredentialState
+	var err error
+	if input.Current != nil {
+		state, _, err = input.Current(ctx, deadline)
+	} else {
+		if err := renewCodexCredential(input.ProfileDir, deadline); err != nil {
+			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+		}
+		data, readErr := readCodexCredential(filepath.Join(input.ProfileDir, "auth.json"))
+		if readErr != nil {
+			return UsageQuota{}, ErrUsageSignIn
+		}
+		state, err = inspectCodexNative(map[string][]byte{"auth.json": data}, time.Now())
+	}
 	if err != nil {
 		return UsageQuota{}, ErrUsageSignIn
 	}
-	var source codexSourceCredential
-	if json.Unmarshal(data, &source) != nil {
-		return UsageQuota{}, ErrUsageSignIn
-	}
-	if source.AuthMode == "apikey" || (source.Tokens == nil && source.OpenAIAPIKey != "") {
+	if state.APIKey {
 		return UsageQuota{Auth: "API key"}, nil
 	}
-	if err := renewCodexCredential(input.ProfileDir, deadline); err != nil {
-		return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
-	}
-	data, err = readCodexCredential(filepath.Join(input.ProfileDir, "auth.json"))
-	if err != nil || json.Unmarshal(data, &source) != nil || source.Tokens == nil || source.Tokens.AccessToken == "" || source.Tokens.AccountID == "" {
+	if state.AccessToken == "" || state.AccountID == "" {
 		return UsageQuota{}, ErrUsageSignIn
 	}
 	var raw codexQuotaResponse
 	err = readUsageQuota(ctx, http.MethodGet, "https://chatgpt.com/backend-api/wham/usage", http.Header{
-		"Authorization":      {"Bearer " + source.Tokens.AccessToken},
-		"Chatgpt-Account-Id": {source.Tokens.AccountID}, "User-Agent": {"codex_cli_rs/0.159.2"},
+		"Authorization":      {"Bearer " + state.AccessToken},
+		"Chatgpt-Account-Id": {state.AccountID}, "User-Agent": {"codex_cli_rs/0.159.2"},
 	}, nil, &raw)
 	if err != nil {
 		return UsageQuota{}, err
@@ -311,8 +637,8 @@ func (codexAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	}
 	native := lockedClientRoot + "/node_modules/@openai/codex-linux-" + cpu + "/vendor/" + target + "/bin/codex"
 	return []LockedClient{
-		{Client: egress.ClientCLI, Package: "@openai/codex", Version: "0.159.2", Binary: "codex", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@openai/codex/bin/codex.js"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.159.2-linux-" + cpu}}},
-		{Client: egress.ClientACP, Package: "@agentclientprotocol/codex-acp", Version: "2.0.1", Binary: "codex-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/codex-acp/dist/index.js"}, UnsetEnv: []string{"CODEX_PATH"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.159.2-linux-" + cpu}}},
+		{Client: egress.ClientCLI, Package: "@openai/codex", Version: "0.159.2", Binary: "codex", SetupFile: codexNativeCLISetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@openai/codex/bin/codex.js"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.159.2-linux-" + cpu}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/codex-acp", Version: "2.0.1", Binary: "codex-acp", SetupFile: codexNativeACPSetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/codex-acp/dist/index.js"}, UnsetEnv: []string{"CODEX_PATH", "DEFAULT_AUTH_REQUEST"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.159.2-linux-" + cpu}}},
 	}
 }
 
@@ -372,10 +698,6 @@ func (a codexAgent) HeadlessSession(cfg *config.Config, prompt, id string, resum
 func (codexAgent) ACP(*config.Config) []string {
 	return []string{"env", "INITIAL_AGENT_MODE=agent-full-access", "codex-acp"}
 }
-
-// ACPSessionDirs: codex stores rollouts under ~/.codex/sessions (best-effort — codex-acp's resume
-// story is weaker than claude's; sharing the dir is the most we can do without a preset-id).
-func (codexAgent) ACPSessionDirs() []string { return []string{"sessions"} }
 
 // ACPFinalChunk: codex-acp streams progress commentary and the final answer through the same
 // agent_message_chunk event and marks the host-owned phase in `_meta.jetbrains.air.phase`; only the final
@@ -464,11 +786,24 @@ func (a codexAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any
 const (
 	codexManagedConfig  = "/etc/codex/managed_config.toml"
 	codexNoUpdateChecks = "check_for_update_on_startup = false\n"
+	codexNativeCLISetup = "/etc/codex/native-cli.sh"
+	codexNativeACPSetup = "/etc/codex/native-acp.sh"
 )
 
 // UpdateControls: the managed layer keeps the update check off.
 func (codexAgent) UpdateControls() UpdateControls {
-	return UpdateControls{Files: []SystemFile{{Path: codexManagedConfig, Content: codexNoUpdateChecks}}}
+	return UpdateControls{Files: []SystemFile{
+		{Path: codexManagedConfig, Content: codexNoUpdateChecks},
+		{Path: codexNativeCLISetup, Content: `if [ "${COOP_NATIVE_CODEX_FAMILY:-}" = apikey ]; then
+  set -- -c 'cli_auth_credentials_store="ephemeral"' "$@"
+fi
+`},
+		{Path: codexNativeACPSetup, Content: `if [ "${COOP_NATIVE_CODEX_FAMILY:-}" = apikey ]; then
+  export CODEX_PATH=/opt/coop/bin/codex
+  export DEFAULT_AUTH_REQUEST='{"methodId":"api-key"}'
+fi
+`},
+	}}
 }
 
 // Models are common codex model ids. Illustrative — any id the CLI accepts works.
@@ -775,7 +1110,7 @@ func renewCodexCredentialLocked(path string, deadline time.Time) error {
 	if err != nil {
 		return err
 	}
-	if response.AccessToken == "" || !jwtExpiresAfter(response.AccessToken, deadline) {
+	if response.AccessToken == "" || !jwtExpiresAfter(response.AccessToken, time.Now()) {
 		return fmt.Errorf("codex credential refresh returned an unusable access token")
 	}
 
@@ -834,6 +1169,11 @@ func renewCodexCredentialLocked(path string, deadline time.Time) error {
 	if err := config.WriteFileAtomic(path, append(encoded, '\n')); err != nil {
 		return fmt.Errorf("persist refreshed Codex credential: %w", err)
 	}
+	// Rotation has already happened upstream. A valid grant that is too short for this
+	// caller still replaces the old authority, or the next attempt reuses a spent token.
+	if !jwtExpiresAfter(response.AccessToken, deadline) {
+		return fmt.Errorf("codex credential refreshed; access does not cover the requested deadline")
+	}
 	return nil
 }
 
@@ -841,18 +1181,27 @@ func readCodexCredential(path string) ([]byte, error) {
 	return ReadCredentialArtifact(path, codexCredentialLimit)
 }
 
-func requestCodexCredentialRefresh(refreshToken string, deadline time.Time) (codexRefreshResponse, error) {
+func codexRefreshEndpoint() (string, string, error) {
 	endpoint := strings.TrimSpace(os.Getenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE"))
 	if endpoint == "" {
 		endpoint = codexRefreshTokenURL
 	}
 	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !isLoopbackHost(parsed.Hostname())) {
-		return codexRefreshResponse{}, fmt.Errorf("codex credential refresh endpoint is unsafe")
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" ||
+		(parsed.Scheme != "https" && !(parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname()))) {
+		return "", "", fmt.Errorf("codex credential refresh endpoint is unsafe")
 	}
 	clientID := strings.TrimSpace(os.Getenv("CODEX_APP_SERVER_LOGIN_CLIENT_ID"))
 	if clientID == "" {
 		clientID = codexOAuthClientID
+	}
+	return endpoint, clientID, nil
+}
+
+func requestCodexCredentialRefresh(refreshToken string, deadline time.Time) (codexRefreshResponse, error) {
+	endpoint, clientID, err := codexRefreshEndpoint()
+	if err != nil {
+		return codexRefreshResponse{}, err
 	}
 	body, err := json.Marshal(codexRefreshRequest{
 		ClientID: clientID, GrantType: "refresh_token", RefreshToken: refreshToken,
@@ -963,7 +1312,11 @@ func codexCredentialPortability(profileDir string, deadline time.Time) Credentia
 // the environment names the box must carry: the pinned client resolves env_http_headers and
 // bearer_token_env_var itself, so no header value is written into the generated file.
 func (codexAgent) MCP(cfg *config.Config, workdir string) (MCPConfig, error) {
-	cx, requiredEnv, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))
+	dir, err := cfg.AgentSettingsDir("codex")
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	cx, requiredEnv, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(dir, "config.toml"))
 	if err != nil {
 		return MCPConfig{}, err
 	}
@@ -978,7 +1331,11 @@ func (codexAgent) MCP(cfg *config.Config, workdir string) (MCPConfig, error) {
 // features off (mcp.GenerateCodexControllerJob), so each of the job's sessions starts from the
 // same prompt instead of one listing whichever curated plugins had synced by then.
 func (codexAgent) ControllerJobMCP(cfg *config.Config, workdir string) (MCPConfig, error) {
-	cx, requiredEnv, err := mcp.GenerateCodexControllerJob(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))
+	dir, err := cfg.AgentSettingsDir("codex")
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	cx, requiredEnv, err := mcp.GenerateCodexControllerJob(cfg.MCPFile, filepath.Join(dir, "config.toml"))
 	if err != nil {
 		return MCPConfig{}, err
 	}
@@ -1055,7 +1412,10 @@ func (a codexAgent) EnsureDefaults(cfg *config.Config, workdir string) error {
 	if workdir == "" {
 		return nil
 	}
-	dir := cfg.AgentDir(a.Name())
+	dir, err := cfg.AgentSettingsDir(a.Name())
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create Codex defaults directory %s: %w", dir, err)
 	}
@@ -1119,11 +1479,11 @@ func hardenCodexSQLiteFeedbackLog(dir string) {
 	_ = exec.Command(sqlite, db, `CREATE TRIGGER IF NOT EXISTS block_log_inserts BEFORE INSERT ON logs BEGIN SELECT RAISE(IGNORE); END;`).Run()
 }
 
-// findCodexSession returns the exact requested CLI session for cwd. Codex stores JSONL by date
+// findCodexSession returns the exact requested native session for cwd. Codex stores JSONL by date
 // with first-line {type,payload:{id,cwd,source}} metadata.
 func findCodexSession(codexDir, cwd, id string) string {
 	if ValidSessionID(id) {
-		ids := codexSessionIDs(codexDir, cwd)
+		ids := codexSessionIDsIn(codexDir, cwd, []string{"sessions", "archived_sessions"}, "")
 		if slices.Contains(ids, id) {
 			return id
 		}
@@ -1136,42 +1496,48 @@ const codexSessionMetadataLimit = 64 << 10
 // codexSessionIDs returns the complete unique CLI-session ID set for cwd. Rollout metadata is
 // provider-writable, so only bounded regular JSONL files are inspected.
 func codexSessionIDs(codexDir, cwd string) []string {
-	root, err := openSessionRoot(filepath.Join(codexDir, "sessions"))
-	if err != nil {
-		return nil
-	}
-	defer root.Close()
+	return codexSessionIDsIn(codexDir, cwd, []string{"sessions"}, "cli")
+}
+
+func codexSessionIDsIn(codexDir, cwd string, directories []string, source string) []string {
 	ids := map[string]bool{}
-	_ = fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") || d.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return nil
-		}
-		f, err := root.Open(path)
+	for _, directory := range directories {
+		root, err := openSessionRoot(filepath.Join(codexDir, directory))
 		if err != nil {
+			continue
+		}
+		_ = fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") || d.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			info, err := d.Info()
+			if err != nil || !info.Mode().IsRegular() {
+				return nil
+			}
+			f, err := root.Open(path)
+			if err != nil {
+				return nil
+			}
+			line, readErr := bufio.NewReader(io.LimitReader(f, codexSessionMetadataLimit+1)).ReadString('\n')
+			_ = f.Close()
+			if len(line) > codexSessionMetadataLimit || (readErr != nil && readErr != io.EOF) {
+				return nil
+			}
+			var meta struct {
+				Type    string `json:"type"`
+				Payload struct {
+					ID, Cwd, Source string
+				} `json:"payload"`
+			}
+			if json.Unmarshal([]byte(line), &meta) != nil || meta.Type != "session_meta" ||
+				meta.Payload.Cwd != cwd || source != "" && meta.Payload.Source != source || !ValidSessionID(meta.Payload.ID) {
+				return nil
+			}
+			ids[meta.Payload.ID] = true
 			return nil
-		}
-		line, readErr := bufio.NewReader(io.LimitReader(f, codexSessionMetadataLimit+1)).ReadString('\n')
-		_ = f.Close()
-		if len(line) > codexSessionMetadataLimit || (readErr != nil && readErr != io.EOF) {
-			return nil
-		}
-		var meta struct {
-			Type    string `json:"type"`
-			Payload struct {
-				ID, Cwd, Source string
-			} `json:"payload"`
-		}
-		if json.Unmarshal([]byte(line), &meta) != nil || meta.Type != "session_meta" ||
-			meta.Payload.Cwd != cwd || meta.Payload.Source != "cli" || !ValidSessionID(meta.Payload.ID) {
-			return nil
-		}
-		ids[meta.Payload.ID] = true
-		return nil
-	})
+		})
+		_ = root.Close()
+	}
 	out := make([]string, 0, len(ids))
 	for id := range ids {
 		out = append(out, id)

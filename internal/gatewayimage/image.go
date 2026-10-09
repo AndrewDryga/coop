@@ -84,7 +84,7 @@ func sourcePath(name string) bool {
 		return false
 	}
 	switch path.Dir(name) {
-	case "cmd/coop-net", "internal/egress", "internal/networkgateway", "internal/networkview":
+	case "cmd/coop-net", "internal/egress", "internal/networkgateway", "internal/networkview", "internal/safefile":
 		return true
 	}
 	return false

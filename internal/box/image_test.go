@@ -211,8 +211,9 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 	// The FROM images are driven by build args so an update can float them.
 	for _, want := range []string{
 		"ARG NODE_IMAGE=node:24-slim", "FROM ${NODE_IMAGE}",
-		"ARG GO_IMAGE=golang:1.27.1-bookworm", "FROM ${GO_IMAGE} AS go-tools-builder",
-		"go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}",
+		"ARG GO_IMAGE=golang:1.27.2-bookworm", "FROM ${GO_IMAGE} AS go-tools-builder",
+		"COPY staticcheck/go.mod staticcheck/go.sum /staticcheck/",
+		"go -C /staticcheck install -mod=readonly honnef.co/go/tools/cmd/staticcheck",
 		"go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}",
 		"ARG JV_VERSION=v0.7.0",
 		"go install github.com/santhosh-tekuri/jsonschema/cmd/jv@${JV_VERSION}",
@@ -262,25 +263,31 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 }
 
 // The box ships Staticcheck because a repo's gate runs inside it — coop's own `make check` does,
-// and that gate now refuses any build but the pinned one. So the image's pin must equal the
-// Makefile's STATICCHECK_VERSION: a mismatch fails the gate in a box where an offline agent
-// can't `go install` its way out. Bump both together.
+// and that gate refuses any build but the pinned analyzer and importer. Both install from
+// the same module: a version-only check misses incompatible transitive dependencies.
 func TestBaseDockerfileStaticcheckMatchesGatePin(t *testing.T) {
-	b, err := os.ReadFile("../../Makefile")
+	files, err := baseImageDefinition(agents.ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pin := ""
-	for _, line := range strings.Split(string(b), "\n") {
-		if rest, ok := strings.CutPrefix(line, "STATICCHECK_VERSION := "); ok {
-			pin = strings.TrimSpace(rest)
+	for _, ext := range []string{"mod", "sum"} {
+		data, err := os.ReadFile("staticcheck." + ext)
+		if err != nil || string(files["staticcheck/go."+ext]) != string(data) {
+			t.Fatalf("box analyzer dependency graph differs from host: %s, %v", ext, err)
 		}
 	}
-	if pin == "" {
-		t.Fatal("Makefile no longer pins STATICCHECK_VERSION — the gate's single Staticcheck pin")
+	makefile, err := os.ReadFile("../../Makefile")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if want := "ARG STATICCHECK_VERSION=" + pin; !strings.Contains(baseDockerfile(t), want) {
-		t.Errorf("box ships a different Staticcheck than the gate pins — image.go needs %q", want)
+	for _, want := range []string{
+		"STATICCHECK_MODFILE := internal/box/staticcheck.mod",
+		"go install -modfile=$(STATICCHECK_MODFILE) -mod=readonly honnef.co/go/tools/cmd/staticcheck",
+		"staticcheck -debug.version",
+	} {
+		if !strings.Contains(string(makefile), want) {
+			t.Fatalf("gate does not use the embedded analyzer graph: missing %q", want)
+		}
 	}
 }
 

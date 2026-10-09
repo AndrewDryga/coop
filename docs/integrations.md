@@ -110,8 +110,10 @@ Tool calls never ask for permission. co:op runs every editor session in yolo mod
 provider's own settings say, and ignores any editor permission `mode` setting. The box is the
 boundary, so permission prompts would only slow the agent down.
 
-Editor threads keep their own history in `~/.config/coop/agents/<agent>/acp-sessions/`. All your
-accounts for that agent share it, so switching accounts mid-thread keeps the conversation.
+Editor threads keep their own complete native home in
+`~/.config/coop/agents/<agent>/acp-homes/<repository-key>/home/`. Accounts for that provider share
+this repository's home, so switching accounts mid-thread keeps the conversation without exposing
+another project's threads. Remote sessions use the same account-independent layout in their private state.
 Sessions from `coop <agent>` or `coop loop` aren't in it.
 
 co:op's proxy sits between the editor and the box and owns the session.
@@ -174,12 +176,12 @@ presets.
 | --- | --- |
 | Claude | its supported provider-native credentials, or an API key |
 | Codex | its supported provider-native credentials, or an API key |
-| Gemini | an API key; Gemini OAuth and Vertex AI are not qualified |
+| Gemini | an AI Studio API key or importable plain OAuth account; not Vertex |
 | Grok | its OAuth login |
 
-API keys stay on the host, behind co:op's broker. A session offers a provider's accounts of one
-kind, its API keys or its sign-ins, because one policy can't grant both. Vertex `GOOGLE_API_KEY` is
-refused in every network mode.
+API keys and native OAuth grants stay outside the workload behind co:op's broker. A provider's
+API-key and subscription accounts can both be offered; switching selects a fresh broker without
+changing that repository's editor home. Vertex `GOOGLE_API_KEY` is refused in every network mode.
 
 Switching providers never widens the session's network access. Explicitly asking for an
 unsupported provider or preset still fails before launch.

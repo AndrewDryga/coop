@@ -44,6 +44,7 @@ type LockedClient struct {
 	Client                   egress.Client
 	Package, Version, Binary string
 	Exec, UnsetEnv           []string
+	SetupFile                string
 	RequiredExecutables      []LockedExecutable
 	NativeArtifact           *LockedNativeArtifact
 }
@@ -141,7 +142,14 @@ func LockedClientClosure(platform ClientPlatform) (ClientClosure, error) {
 		for _, key := range client.UnsetEnv {
 			script += " " + key
 		}
-		script += "\nexec"
+		script += "\n"
+		if client.SetupFile != "" {
+			if path.Clean(client.SetupFile) != client.SetupFile || !strings.HasPrefix(client.SetupFile, "/etc/") || strings.ContainsAny(client.SetupFile, "'\n\r") || len(files["system"+client.SetupFile]) == 0 {
+				return ClientClosure{}, errors.New("invalid locked client setup")
+			}
+			script += ". '" + client.SetupFile + "'\n"
+		}
+		script += "exec"
 		for _, arg := range client.Exec {
 			script += " '" + arg + "'"
 		}

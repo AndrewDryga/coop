@@ -37,9 +37,9 @@ func TestSubscriptionExhaustionRotatesWithoutARetryAction(t *testing.T) {
 		t.Fatalf("session target = %q, want the configured backup", bound.Target)
 	}
 	methods := readSessionACPLog(t, fixture.childLog)
-	if countStrings(methods, "session/new") != 2 || countStrings(methods, "session/load") != 0 ||
+	if countStrings(methods, "session/new") != 1 || countStrings(methods, "session/load") != 1 ||
 		countStrings(methods, "session/prompt") != 2 {
-		t.Fatalf("credential rotation did not start exactly one fresh native session: %v", methods)
+		t.Fatalf("credential rotation did not preserve the account-independent native conversation: %v", methods)
 	}
 }
 

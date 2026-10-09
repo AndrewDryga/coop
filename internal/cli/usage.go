@@ -20,6 +20,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -219,7 +220,14 @@ func (a *app) usageCredentials(names []string, state string) ([]usageCredential,
 		}
 	}
 	for _, name := range names {
-		rows = append(rows, usageCredential{provider: name, account: "Unattributed ACP", shared: true, paths: []string{filepath.Join(a.cfg.ConfigDir, name, "acp-sessions")}})
+		paths := append([]string{filepath.Join(a.cfg.ConfigDir, name, "acp-sessions")}, box.ACPHistoryStores(a.cfg, name)...)
+		// Remote ACP homes also survive account switches. Do not charge their
+		// historical native events to whichever credential is selected today.
+		for _, id := range sessions {
+			privateCfg := &config.Config{ConfigDir: filepath.Join(state, "acp", id)}
+			paths = append(paths, box.ACPHistoryStores(privateCfg, name)...)
+		}
+		rows = append(rows, usageCredential{provider: name, account: "Unattributed ACP", shared: true, paths: paths})
 	}
 	a.sortUsageCredentials(rows)
 	return rows, partial

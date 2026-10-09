@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -199,49 +199,43 @@ func TestAFilteredSessionResolvesNoRealMCPSecrets(t *testing.T) {
 // the whole point: the box gets a substitute and the broker's address, and the secret is absent.
 func TestComposedRunKeepsABrokeredKeyOutOfTheBoxEnv(t *testing.T) {
 	const secret = "raw-provider-secret"
-	cfg, _ := brokerFixture(t, "ANTHROPIC_API_KEY="+secret+"\n")
+	cfg, _ := brokerFixture(t, "ANTHROPIC_API_KEY="+secret+"\nNORMAL=kept\n")
 	spec := RunSpec{Agent: "claude", AgentCommand: true, Homes: true, Mode: agents.ModeReadOnly}
-
-	plan, err := selectCredentialPlan(cfg, spec)
-	if err != nil || plan == nil || len(plan.routes) != 1 {
-		t.Fatalf("the key was not brokered under the gateway: %+v, %v", plan, err)
-	}
-
+	native := nativeBrokerPlanFixture(t, cfg, spec)
+	spec.native = native
+	assertNativePublicSeed(t, native.accounts[0].seed, secret)
 	f, _ := filteredFixture(t)
-	f.broker = &credentialBrokerRun{plan: plan}
+	native.runID, f.native = f.record.ID, native
+	_, snapshots := nativeBrokerPreparedFixture(t, native)
+	if snapshots["claude"].Credential != secret || snapshots["claude"].Revoked {
+		t.Fatal("guard-only key missing")
+	}
+	if !strings.Contains(string(mustReadFile(t, cfg.EnvFile())), secret) {
+		t.Fatal("host key lost")
+	}
 	artifacts := defaultCompositionArtifactOps()
 	artifacts.parent = f.runfiles
-	if err := f.prepareCredentialBroker(artifacts); err != nil {
-		t.Fatalf("prepare the broker: %v", err)
-	}
-
-	// The env file as assembled for the box, then rewritten by the broker.
 	envFile, _, err := prepareBoxEnvFile(cfg, spec, artifacts, nil)
 	if err != nil {
-		t.Fatalf("assemble the box env: %v", err)
-	}
-	raw, err := os.ReadFile(envFile)
-	if err != nil {
 		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), secret) {
-		t.Fatal("the fixture's key is not in the assembled env, so the rewrite below proves nothing")
 	}
 	brokered, err := f.credentialBrokerEnv(artifacts, envFile)
 	if err != nil {
-		t.Fatalf("rewrite the env for the broker: %v", err)
+		t.Fatal(err)
 	}
-	body, err := os.ReadFile(brokered)
+	if strings.Contains(string(mustReadFile(t, brokered)), secret) || EnvFileValues(brokered)["ANTHROPIC_API_KEY"] != "" || EnvFileValues(brokered)["NORMAL"] != "kept" {
+		t.Fatal("incorrect restricted environment")
+	}
+	args, err := native.agentArgs(artifacts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(body), secret) {
-		t.Errorf("the raw key rode into the box:\n%s", body)
+	rendered := strings.Join(args, "\n")
+	if strings.Contains(rendered, secret) || strings.Contains(rendered, native.dir) || !strings.Contains(rendered, "ANTHROPIC_API_KEY="+native.accounts[0].seed.Marker) || !strings.Contains(rendered, "HTTPS_PROXY=http://"+networkgateway.NativeProxyAddress) || strings.Contains(rendered, "ANTHROPIC_BASE_URL=") {
+		t.Fatal("public native entrance lost")
 	}
-	if !strings.Contains(string(body), "ANTHROPIC_API_KEY=") {
-		t.Errorf("the box was left with no key at all, brokered or otherwise:\n%s", body)
-	}
-	if !strings.Contains(string(body), "ANTHROPIC_BASE_URL=http://") {
-		t.Errorf("the box was not pointed at the broker:\n%s", body)
+	guard, controller := strings.Join(f.helperOptions("guard"), " "), strings.Join(f.helperOptions("controller"), " ")
+	if !strings.Contains(guard, native.dir) || !strings.Contains(guard, networkgateway.NativePrivateDirectory) || strings.Contains(controller, native.dir) || strings.Contains(controller, networkgateway.NativePrivateDirectory) {
+		t.Fatal("private native snapshot not guard-exclusive")
 	}
 }

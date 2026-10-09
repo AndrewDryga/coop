@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
@@ -29,6 +31,30 @@ func TestCacheVolumeNamesMatchNativeLinuxIdentity(t *testing.T) {
 	} {
 		if got := cacheVolumeForIdentity("coop-cache", tc.linux, tc.uid, tc.gid); got != tc.want {
 			t.Errorf("identity %t %d:%d: got %q, want %q", tc.linux, tc.uid, tc.gid, got, tc.want)
+		}
+	}
+}
+
+func TestParseBindMountKeepsNarrowRootBoundDialect(t *testing.T) {
+	root := canonicalTemp(t)
+	source := filepath.Join(root, "home,with-comma")
+	if err := os.Mkdir(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	spec := `type=bind,"source=` + source + `",target=/home/node/.codex,readonly`
+	got, err := parseBindMount(root, spec)
+	if err != nil || got.Source != source || got.Target != "/home/node/.codex" || !got.ReadOnly || got.Named {
+		t.Fatalf("complete bind = %+v, %v", got, err)
+	}
+	for _, bad := range []string{
+		spec + ",source=/outside", spec + ",bind-propagation=shared", spec + ",readonly=false",
+		"type=volume,source=named,target=/home/node/.codex",
+		"type=bind,source=/outside,target=/home/node/.codex",
+		"type=bind,source=relative,target=/home/node/.codex",
+		spec + "\ntype=bind,source=/outside,target=/elsewhere",
+	} {
+		if _, err := parseBindMount(root, bad); err == nil {
+			t.Errorf("accepted unsafe mount %q", bad)
 		}
 	}
 }
@@ -57,6 +83,49 @@ func TestParseRuntimeAcceptsTheNarrowRunDialect(t *testing.T) {
 	wantTail := []string{"claude", "--dangerously-skip-permissions"}
 	if strings.Join(got.Run.ProviderArgv, "\x00") != strings.Join(wantTail, "\x00") {
 		t.Fatalf("provider argv = %q, want %q", got.Run.ProviderArgv, wantTail)
+	}
+}
+
+func TestNativeHomeMountKeepsRepositoryIdentityBehindReviewDecoy(t *testing.T) {
+	root := canonicalTemp(t)
+	repo, other := filepath.Join(root, "repo"), filepath.Join(root, "other")
+	decoy := filepath.Join(root, "xdg", "config", "coop", "runfiles", "coop-run-1", "coop-decoy-dir-1")
+	for _, dir := range []string{repo, other, decoy} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	homeFor := func(dir string) string {
+		t.Helper()
+		home, err := box.NativeHomePath(&config.Config{ConfigDir: filepath.Join(root, "config")}, "codex", "work", dir, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(home, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return home
+	}
+	home, foreign := homeFor(repo), homeFor(other)
+	args := func(source, access, native string) []string {
+		return []string{"run", "-v", source + ":" + repo + access, "-v", native + ":/home/node/.codex", "-w", repo, "fixture-image", "codex", "exec"}
+	}
+	for _, source := range []string{repo, decoy} {
+		if _, err := parseRuntime(root, "fixture-image", args(source, ":ro", home), "codex"); err != nil {
+			t.Fatalf("valid same-repository continuation: %v", err)
+		}
+		if _, err := parseRuntime(root, "fixture-image", args(source, ":ro", foreign), "codex"); err == nil {
+			t.Fatal("accepted foreign repository history")
+		}
+	}
+	if _, err := parseRuntime(root, "fixture-image", args(decoy, "", home), "codex"); err == nil {
+		t.Fatal("accepted writable decoy as original repository identity")
+	}
+	if err := os.WriteFile(filepath.Join(decoy, "unexpected"), []byte("not empty"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseRuntime(root, "fixture-image", args(decoy, ":ro", home), "codex"); err == nil {
+		t.Fatal("accepted nonempty decoy as original repository identity")
 	}
 }
 

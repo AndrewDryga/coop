@@ -41,9 +41,9 @@ const (
 // process_group_live.go, behind the `cooplivetest` tag. The scan is tag-agnostic on purpose, so the
 // frozen graph never depends on which tags or GOOS the gate happens to run under.
 var allowedEdges = map[string][]string{
-	"acpctl":                {"acpproxy", "agent", "config", "ladder", "liveprocess", "preset", "processidentity"},
+	"acpctl":                {"acpproxy", "agent", "config", "ladder", "liveprocess", "preset", "processidentity", "safefile"},
 	"acpproxy":              nil,
-	"agent":                 {"config", "egress", "mcp"},
+	"agent":                 {"config", "egress", "mcp", "safefile"},
 	"box":                   {"agent", "config", "consult", "egress", "forkspace", "fsidentity", "gatewayimage", "mcp", "networkgateway", "networkreport", "networkstate", "networkview", "preset", "processidentity", "project", "runtime", "safefile", "secretscan", "shadowpath", "taskchannel", "ui"},
 	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "egress", "eval", "forkctl", "forkspace", "hostsurface", "ladder", "liveprocess", "loop", "loopcfg", "networkreport", "networkstate", "networkview", "preset", "project", "runtime", "scaffold", "secretscan", "session", "sessionsvc", "taskmcp", "tasks", "ui", "workerconnector", "workerproto"},
 	"config":                nil,
@@ -61,7 +61,7 @@ var allowedEdges = map[string][]string{
 	"loop":                  {"agent", "box", "config", "contextc", "forkspace", "ladder", "loopcfg", "preset", "project", "runtime", "taskmcp", "tasks", "ui"},
 	"loopcfg":               {"agent", "safefile"},
 	"mcp":                   nil,
-	"networkgateway":        {"egress", "networkview"},
+	"networkgateway":        {"egress", "networkview", "safefile"},
 	"networkreport":         {"networkstate", "networkview", "ui"},
 	"networkstate":          {"egress", "fsidentity", "networkview", "processidentity"},
 	"networkview":           {"egress"},
@@ -82,6 +82,8 @@ var allowedEdges = map[string][]string{
 	"testutil/gitrepo":      nil,
 	"testutil/liveprovider": {"agent", "box", "config", "liveprocess", "processidentity", "testutil/procharness"},
 	"testutil/dockersock":   nil,
+	"testutil/nativeauth":   nil,
+	"testutil/nativedocker": {"gatewayimage", "runtime", "testutil/dockersock"},
 	"testutil/procharness":  nil,
 	"testutil/wait":         nil,
 	"testutil/workertls":    nil,

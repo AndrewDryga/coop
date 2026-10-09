@@ -358,10 +358,10 @@ func (r *sessionTurnRunner) rotateOnLimit(
 	return true, nil
 }
 
-// Native provider sessions live inside one credential's profile directory. A model or effort
-// change on the same credential can resume its transcript; another credential cannot see it.
+// ACP native state belongs to the repository and provider, not its current account.
+// Restricted turns independently start fresh because their state is ephemeral.
 func targetChangeResetsNativeSession(current, next agents.Target) bool {
-	return current.Provider != next.Provider || current.Account() != next.Account()
+	return current.Provider != next.Provider
 }
 
 // providerBackoff is one rate-limit decision in the shape the event carries:
@@ -1548,6 +1548,16 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	if err := ensurePrivateDirectory(privateProfile); err != nil {
 		return projection, acpFailure(sessionACPCredentialError, "private credential account is unsafe")
 	}
+	// These are old daemon-owned, access-only projections, not native homes.
+	// Retire crash leftovers before starting the new authority-free child.
+	for _, artifact := range agent.LiveCredentials().Artifacts {
+		if !validArtifactName(artifact.Name) {
+			return projection, acpFailure(sessionACPCredentialError, "invalid legacy projection artifact")
+		}
+		if err := removeProjectedSessionFile(filepath.Join(privateProfile, artifact.Name)); err != nil {
+			return projection, acpFailure(sessionACPCredentialError, "legacy credential projection is unsafe")
+		}
+	}
 	instructionFile := agent.InstructionFile()
 	if !validArtifactName(instructionFile) {
 		return projection, acpFailure(sessionACPCredentialError, "provider instruction filename is invalid")
@@ -1559,31 +1569,22 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	// The box overlays the trusted generated instructions read-only. Keep the underlying
 	// session-private path absent so a prior turn cannot author its next trusted frame.
 	projection.files = append(projection.files, privateInstruction)
-	if err := ensureNoSymlinkPath(sourceProfile); err != nil {
-		return projection, acpFailure(sessionACPCredentialError, "source credential account is unsafe")
-	}
-
-	keyed, err := box.AccountBrokersKey(r.sourceCfg, target.Provider, account)
+	startupDeadline := boxCredentialDeadline(bound, deadline)
+	prepareCtx, cancel := context.WithDeadline(context.Background(), startupDeadline)
+	canonical, err := box.PrepareNativeAccount(prepareCtx, r.sourceCfg, r.rt, target.Provider, account, startupDeadline)
+	cancel()
 	if err != nil {
-		return projection, acpFailure(sessionACPCredentialError, "selected API key cannot be kept outside the box")
+		return projection, acpFailure(sessionACPCredentialError, "selected canonical account is unavailable")
 	}
-	envKey := false
-	if keyed {
-		// An API-key account has no login to project. Its key goes to the private config's
-		// host-side vault or env, never the profile the box mounts, and the child's filtered run
-		// brokers it.
-		if envKey, err = r.projectSessionKey(sourceRoot, account, agent, projection); err != nil {
-			return projection, err
-		}
-	} else if err := r.projectSessionLogin(sourceProfile, privateProfile, agent, deadline, projection); err != nil {
-		return projection, err
+	if !canonical {
+		return projection, acpFailure(sessionACPCredentialError, "selected account needs host sign-in")
 	}
 
 	// A target without @account means the source provider default. Bind that same default in the
 	// private config without copying the shared defaults file, so the child receives the exact
 	// selected account while the command remains the session's exact target string. An env-file
 	// key is the default account's alone, so it binds that account too.
-	if len(target.Accounts) == 0 || envKey {
+	{
 		defaults := filepath.Join(privateRoot, "defaults")
 		projection.files = append(projection.files, defaults)
 		if err := writePrivateDefaults(defaults, target.Provider, account); err != nil {
@@ -1591,102 +1592,6 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 		}
 	}
 	return projection, nil
-}
-
-// projectSessionLogin projects the selected account's native login: renewed first, reduced to what
-// a box may hold, and portable through the turn deadline.
-func (r *sessionTurnRunner) projectSessionLogin(sourceProfile, privateProfile string, agent agents.Agent, deadline time.Time, projection *sessionACPProjection) error {
-	live := agent.LiveCredentials()
-	if len(live.Artifacts) == 0 || live.Portability == nil {
-		return acpFailure(sessionACPCredentialError, "provider has no credential projection")
-	}
-	if live.Prepare != nil {
-		if err := live.Prepare(sourceProfile, deadline); err != nil {
-			return acpFailure(sessionACPCredentialError, "provider credential needs sign-in or renewal")
-		}
-	}
-	seen := make(map[string]bool, len(live.Artifacts))
-	primaryProjected := false
-	for _, artifact := range live.Artifacts {
-		if !validArtifactName(artifact.Name) || artifact.Project == nil || seen[artifact.Name] {
-			return acpFailure(sessionACPCredentialError, "provider credential projection is invalid")
-		}
-		seen[artifact.Name] = true
-		sourcePath := filepath.Join(sourceProfile, artifact.Name)
-		data, present, err := readCredentialArtifact(sourcePath)
-		if err != nil {
-			return acpFailure(sessionACPCredentialError, "source credential artifact is unsafe")
-		}
-		if !present {
-			if artifact.Primary {
-				return acpFailure(sessionACPCredentialError, "primary credential data is missing")
-			}
-			continue
-		}
-		projected, err := artifact.Project(data)
-		if err != nil {
-			return acpFailure(sessionACPCredentialError, "credential projection failed")
-		}
-		if projected == nil {
-			if artifact.Primary {
-				return acpFailure(sessionACPCredentialError, "primary credential data is missing")
-			}
-			continue
-		}
-		if len(projected) == 0 || len(projected) > sessionACPArtifactLimit || bytes.IndexByte(projected, 0) >= 0 {
-			return acpFailure(sessionACPCredentialError, "projected credential output is invalid")
-		}
-		destination := filepath.Join(privateProfile, artifact.Name)
-		projection.files = append(projection.files, destination)
-		if err := writeCredentialArtifact(destination, projected); err != nil {
-			return acpFailure(sessionACPCredentialError, "projected credential output is unsafe")
-		}
-		if artifact.Primary {
-			primaryProjected = true
-		}
-	}
-	if !primaryProjected {
-		return acpFailure(sessionACPCredentialError, "primary credential data is missing")
-	}
-	if status := live.Portability(privateProfile, deadline); status != agents.CredentialPortable {
-		return acpFailure(sessionACPCredentialError, "credential is not portable through the turn deadline")
-	}
-	return nil
-}
-
-// projectSessionKey hands the child the selected account's API key where a host keeps one: Coop's
-// vault, or the default account's line in the operator env file — which a policy may withhold, and
-// which may import the value from the daemon's own environment. A later assignment wins, so the
-// resolved line goes last. It reports whether the key came from the env file.
-func (r *sessionTurnRunner) projectSessionKey(sourceRoot, account string, agent agents.Agent, projection *sessionACPProjection) (bool, error) {
-	vault, err := box.ProjectHostCredential(r.sourceCfg, &config.Config{ConfigDir: projection.privateRoot}, agent, account)
-	if vault != "" {
-		projection.files = append(projection.files, vault)
-	}
-	if err != nil {
-		return false, acpFailure(sessionACPCredentialError, "API key projection failed")
-	}
-	if vault != "" {
-		return false, nil
-	}
-	key := agent.CredentialBroker().CredentialEnv
-	value := box.EnvFileValues(filepath.Join(sourceRoot, "env"))[key]
-	if value == "" || strings.ContainsAny(value, "\x00\r\n") {
-		return false, acpFailure(sessionACPCredentialError, "API key projection failed")
-	}
-	destination := filepath.Join(projection.privateRoot, "env")
-	data, _, err := readCredentialArtifact(destination)
-	if err != nil {
-		return false, acpFailure(sessionACPCredentialError, "private config is unsafe")
-	}
-	if len(data) != 0 && data[len(data)-1] != '\n' {
-		data = append(data, '\n')
-	}
-	projection.files = append(projection.files, destination)
-	if err := writeCredentialArtifact(destination, append(data, key+"="+value+"\n"...)); err != nil {
-		return false, acpFailure(sessionACPCredentialError, "private config projection failed")
-	}
-	return true, nil
 }
 
 func (r *sessionTurnRunner) captureSessionMCP(
@@ -2373,10 +2278,28 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 			return nil, err
 		}
 	}
+	var nativeHome string
+	if !mode.Restricted() {
+		stateRoot, rootErr := filepath.EvalSymlinks(r.stateRoot)
+		if rootErr != nil || privateRoot != filepath.Join(stateRoot, "acp", bound.ID) {
+			return nil, acpFailure(sessionACPProcessError, "private session history root is invalid")
+		}
+		privateCfg, configErr := r.sourceCfg.WithNativeAuthorityRoot(r.sourceCfg.ConfigDir)
+		if configErr != nil {
+			return nil, configErr
+		}
+		privateCfg.ConfigDir = privateRoot
+		nativeHome, err = box.PreparePrivateACPHome(ctx, privateCfg, r.rt, target.Provider, target.Account(), bound.Repository, func(cwd string) bool {
+			return cwd == bound.Workspace || cwd == workdir
+		})
+		if err != nil {
+			return nil, acpFailure(sessionACPProcessError, "session native home identity is invalid")
+		}
+	}
 	process, err := startSessionACPProcess(cmd)
 	if process != nil {
 		process.runID = runID
-		process.privateRoot = privateRoot
+		process.nativeHome = nativeHome
 		process.mcpServers = mcpServers
 		process.mcpHandoff = mcpHandoff
 		process.sessionMeta = sessionMeta
@@ -2398,18 +2321,11 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	return process, err
 }
 
-// boxCredentialDeadline is how long a projected credential must last in the box it goes to. A
-// restricted box re-checks the seeded access-only token against RestrictedCredentialHorizon and
-// holds no refresh authority to renew it with, so the host renews before projection for at least
-// that long — a short turn timeout is not a short token. A filtered child re-checks it too: its
-// network admission asks an access-only projection with no refresh token (Grok's) to outlive the
-// same horizon. The raise covers every provider of such a session; for one that renews on the host
-// it only means renewing up to an hour earlier.
-func boxCredentialDeadline(bound session.Session, deadline time.Time) time.Time {
-	if agents.ExecutionMode(bound.Mode).Restricted() || bound.NetworkMode == string(egress.Filtered) {
-		if horizon := time.Now().Add(box.RestrictedCredentialHorizon); deadline.Before(horizon) {
-			return horizon
-		}
+// The canonical broker renews throughout a turn, including while its child is warm.
+// Admission needs startup readiness, not a portable token covering the whole turn.
+func boxCredentialDeadline(_ session.Session, deadline time.Time) time.Time {
+	if horizon := time.Now().Add(2 * time.Minute); deadline.After(horizon) {
+		return horizon
 	}
 	return deadline
 }
@@ -2505,6 +2421,7 @@ func sessionACPChildEnvironment(
 		env = append(env, "COOP_RUNTIME="+runtimeName)
 	}
 	if cfg != nil {
+		env = append(env, "COOP_NATIVE_AUTHORITY_DIR="+cfg.NativeAuthorityConfig().ConfigDir)
 		stringsByKey := map[string]string{
 			"COOP_BASE_IMAGE":   cfg.BaseImage,
 			"COOP_WORKDIR":      cfg.Workdir,
@@ -2596,9 +2513,8 @@ type sessionACPProcess struct {
 	nextID          int64
 	initialized     bool
 	nativeSessionID string
-	// privateRoot is the session's private state on the host, where a Codex
-	// child writes its rollouts (codex_usage.go).
-	privateRoot            string
+	// nativeHome is the selected complete ACP home in session-private host state.
+	nativeHome             string
 	imageCapable           bool
 	embeddedContextCapable bool
 	stderr                 *sessionACPStderr
@@ -3236,11 +3152,7 @@ func (r *sessionTurnRunner) runACP(
 	// client's own record of every call. A restricted child keeps no record on
 	// the host.
 	if record, ok := turnRecordOf(limitProvider); ok && process != nil && !process.restricted {
-		account := limitTarget.Account()
-		if account == "" && r.sourceCfg != nil {
-			account = r.sourceCfg.DefaultProfileOf(limitProvider)
-		}
-		usage = wholeTurnUsage(ctx, record, process.privateRoot, account, nativeID, usage)
+		usage = wholeTurnUsage(ctx, record, process.nativeHome, nativeID, usage)
 	}
 	usage.CostUSD, usage.CostRecorded = cumulativeCostUSD, costRecorded
 	return string(assistant), outputArtifacts, usage, nil

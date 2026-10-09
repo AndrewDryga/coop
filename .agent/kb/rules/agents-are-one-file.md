@@ -4,7 +4,7 @@ description: "a coding agent is one self-registering file in `internal/agent`, n
 scope: architecture
 sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/provider_decisions_test.go, Makefile]
 check: "go test ./internal/agent -run 'TestRegistry|TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard'"
-updated: 2026-09-19
+updated: 2026-10-09
 ---
 
 # A coding agent is one file in internal/agent — never a switch elsewhere
@@ -27,12 +27,18 @@ adding an agent a single new file.
 - Need a new per-agent behavior → add a method to the `Agent` interface (the compiler then forces every adapter to implement it) and have the caller use `agents.Get(name).Method()`.
 - Never hard-code the provider set outside `internal/agent`. Validation is `agents.Valid`; the default agent is `agents.Default()`.
 - The narrow exceptions are the `testdata` process-test oracles — `internal/cli/testdata/providerfixture` (native provider argv/output) and `internal/acpproxy/testdata/acpfixture` (per-provider ACP scripts): each is an independent oracle that must enumerate provider shapes instead of reusing production adapter code. Their registry-completeness tests must fail when a new adapter has no oracle arm.
+- The shared inert credential oracle `internal/testutil/nativeauth` likewise enumerates independent
+  native file shapes for box/CLI tests. `TestNativeAuthFixtureCoversRegistry` validates every
+  registered adapter; the import DAG permits no production consumer of this fixture.
 - `make rules-check` runs the provider-decision guard. It parses Go sources, rejecting exact
   provider-name literals outside adapters while permitting comments and multiline examples.
   The recognized names come from the registry, not a second frozen provider list. Only Go
-  tests and the two independent process-test oracle directories above are exempt.
+  tests and the three independent oracle directories above are exempt.
 
 ## Changelog
+- 2026-10-09 — extracted duplicate canonical credential fixtures into a test-only oracle. Swept
+  all Go sources with the provider guard and added registry completeness; no production provider
+  decision moved outside adapters. The frozen import graph rejects production fixture consumers.
 - 2026-09-19 — re-verified against the registry: `agents.Packages()` and per-agent npm package lists
   are gone (every image installs the locked client closure); `LockedClients`/`UpdateControls` are
   the per-agent seams the images read.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,266 @@ import (
 )
 
 type claudeAgent struct{}
+
+func checkClaudeBroker(files map[string][]byte, seed NativeBrokerSeed) error {
+	if data, exists := files[".credentials.json"]; exists {
+		doc, err := nativePublicObject(data)
+		if err != nil {
+			return err
+		}
+		oauth, err := nativePublicObject(doc["claudeAiOauth"])
+		if err != nil {
+			return err
+		}
+		access, err := nativePublicString(oauth, "accessToken")
+		if err != nil || access != seed.Marker {
+			return errNativeBrokerDiverged
+		}
+		refresh, err := nativePublicString(oauth, "refreshToken")
+		if err != nil || refresh != "" {
+			return errNativeBrokerDiverged
+		}
+	} else if _, required := seed.Files[".credentials.json"]; required {
+		return errNativeBrokerDiverged
+	}
+	if data, exists := files[".claude.json"]; exists {
+		doc, err := nativePublicObject(data)
+		if err != nil {
+			return err
+		}
+		key, err := nativePublicString(doc, "primaryApiKey")
+		if err != nil || key != "" && key != seed.Marker {
+			return errNativeBrokerDiverged
+		}
+	} else if _, required := seed.Files[".claude.json"]; required {
+		return errNativeBrokerDiverged
+	}
+	return nil
+}
+
+type claudeNativeIdentity struct {
+	OAuth struct {
+		Account      string `json:"accountUuid"`
+		Organization string `json:"organizationUuid"`
+	} `json:"oauthAccount"`
+}
+
+func (claudeAgent) NativeCredentials() NativeCredentialSpec {
+	return NativeCredentialSpec{Environment: nativeAPIEnvironment("apikey", "ANTHROPIC_API_KEY"), Defaults: func(source string) (map[string][]byte, error) {
+		return nativeDefaultSettings(source, "settings.json", "CLAUDE.md", map[string]string{"theme": "string", "skipDangerousModePermissionPrompt": "bool", "sandbox.enabled": "bool", "sandbox.failIfUnavailable": "bool"})
+	}, LegacyGrants: []string{".credentials.json"}, LegacyLocks: []string{".credentials.json.refresh.lock"}, Artifacts: []NativeCredentialArtifact{
+		{Name: ".credentials.json", Limit: claudeCredentialLimit, Required: true, Import: importClaudeNative, AccessOnly: projectClaudeCredential},
+		{Name: ".claude.json", Limit: 1 << 20, Required: true, Import: importClaudeIdentity, AccessOnly: importClaudeIdentity},
+	}, Inspect: inspectClaudeNative, Renew: renewClaudeNative, Broker: NativeBrokerSpec{MergeJSON: []string{"settings.json", ".claude.json"}, Seed: seedClaudeBroker, Routes: claudeBrokerRoutes, Check: checkClaudeBroker}}
+}
+
+func seedClaudeBroker(selection string) (NativeBrokerSeed, error) {
+	out := publicNativeSeed("coop-native-claude-v1")
+	out.Family = selection
+	if selection == "apikey" {
+		out.Env["ANTHROPIC_API_KEY"] = out.Marker
+		return out, nil
+	}
+	if selection != "claude-oauth" {
+		return out, errors.New("unsupported Claude broker selection")
+	}
+	out.Env["CLAUDE_CODE_OAUTH_TOKEN"] = out.Marker
+	grant, err := nativeJSON(map[string]any{"claudeAiOauth": map[string]any{"accessToken": out.Marker, "expiresAt": nativeBrokerExpiry * 1000,
+		"scopes": []string{"user:profile", "user:inference", "user:sessions:claude_code", "user:mcp_servers", "user:file_upload"}}})
+	if err != nil {
+		return out, err
+	}
+	out.Files[".credentials.json"] = grant
+	identity, err := nativeJSON(map[string]any{"oauthAccount": map[string]any{
+		"accountUuid": "00000000-0000-4000-8000-000000000001", "organizationUuid": "00000000-0000-4000-8000-000000000002",
+		"emailAddress": nativeBrokerEmail, "displayName": "Coop broker - account selected in Coop"}})
+	out.Files[".claude.json"] = identity
+	return out, err
+}
+
+func claudeBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
+	if selection == "apikey" {
+		return []NativeBrokerRoute{{Host: "api.anthropic.com", Method: "POST", Path: "/v1/messages", Query: "beta=true", Header: "X-Api-Key"}}, nil
+	}
+	if selection != "claude-oauth" {
+		return nil, errors.New("unsupported Claude broker selection")
+	}
+	out := []NativeBrokerRoute{
+		{Host: "api.anthropic.com", Method: "POST", Path: "/v1/messages", Query: "beta=true"},
+		{Host: "api.anthropic.com", Method: "GET", Path: "/v1/mcp_servers", Query: "limit=1000&include_additional_installs=true"},
+		{Host: "api.anthropic.com", Method: "GET", Path: "/api/claude_code/policy_limits"},
+		{Host: "api.anthropic.com", Method: "GET", Path: "/api/oauth/profile"},
+	}
+	for _, method := range []string{"GET", "POST", "DELETE"} {
+		out = append(out, NativeBrokerRoute{Host: "mcp-proxy.anthropic.com", Method: method, Path: "/v1/mcp/mcpsrv_", Segment: "token"})
+	}
+	for i := range out {
+		out[i].Header = "Authorization"
+		out[i].HeaderPrefix = "Bearer "
+	}
+	return out, nil
+}
+
+func importClaudeIdentity(data []byte) ([]byte, error) {
+	var identity claudeNativeIdentity
+	if json.Unmarshal(data, &identity) != nil || !validNativeIdentity(identity.OAuth.Account) || !validNativeIdentity(identity.OAuth.Organization) {
+		return nil, errors.New("native Claude sign-in has no selected native identity")
+	}
+	return nativeJSON(identity)
+}
+
+func importClaudeNative(data []byte) ([]byte, error) {
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(data, &doc) != nil || len(doc["claudeAiOauth"]) == 0 {
+		return nil, errors.New("invalid Claude OAuth credential")
+	}
+	return nativeJSON(map[string]json.RawMessage{"claudeAiOauth": doc["claudeAiOauth"]})
+}
+
+func inspectClaudeNative(files map[string][]byte, now time.Time) (NativeCredentialState, error) {
+	var identity claudeNativeIdentity
+	if json.Unmarshal(files[".claude.json"], &identity) != nil || !validNativeIdentity(identity.OAuth.Account) || !validNativeIdentity(identity.OAuth.Organization) {
+		return NativeCredentialState{}, errors.New("native Claude native identity missing")
+	}
+	grant, err := parseClaudeSourceCredential(files[".credentials.json"])
+	if err != nil {
+		return NativeCredentialState{}, err
+	}
+	refreshable, access := validNativeGrant(grant.RefreshToken), validNativeGrant(grant.AccessToken)
+	if !refreshable && (!access || grant.ExpiresAt <= 0) {
+		return NativeCredentialState{}, errors.New("native Claude authority has no usable grant shape")
+	}
+	if grant.AccessToken != "" && !access || grant.RefreshToken != "" && !refreshable {
+		return NativeCredentialState{}, errors.New("invalid Claude native grant")
+	}
+	expiry := time.UnixMilli(grant.ExpiresAt)
+	return NativeCredentialState{Selection: "claude-oauth", Principal: nativeTuple(identity.OAuth.Account, identity.OAuth.Organization),
+		AccessToken: grant.AccessToken, AccountID: identity.OAuth.Account, ExpiresAt: expiry, Refreshable: refreshable,
+		Ready: slices.Contains(grant.Scopes, "user:inference") && (refreshable || access && expiry.After(now))}, nil
+}
+
+func renewClaudeNative(ctx context.Context, files map[string][]byte, deadline time.Time, retain func([]byte) error) (map[string][]byte, error) {
+	before, err := inspectClaudeNative(files, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	grant, err := parseClaudeSourceCredential(files[".credentials.json"])
+	if err != nil {
+		return nil, err
+	}
+	if !before.Refreshable {
+		return nil, errors.New("native Claude authority needs host sign-in")
+	}
+	body, err := json.Marshal(claudeRefreshRequest{GrantType: "refresh_token", RefreshToken: grant.RefreshToken,
+		ClientID: claudeOAuthClientID, Scope: strings.Join(grant.Scopes, " ")})
+	if err != nil {
+		return nil, err
+	}
+	raw, err := requestNativeRefresh(ctx, claudeRefreshTokenURL, "application/json", body, retain)
+	if err != nil {
+		return nil, err
+	}
+	var response claudeRefreshResponse
+	if json.Unmarshal(raw, &response) != nil || !validNativeIssuedStrings(raw, "refresh_token", "scope") {
+		return nil, errors.New("invalid Claude issued document")
+	}
+	if !validNativeGrant(response.AccessToken) || response.RefreshToken != "" && !validNativeGrant(response.RefreshToken) {
+		return nil, errors.New("invalid Claude issued grant; retained for recovery")
+	}
+	if response.ExpiresIn <= 0 || response.ExpiresIn > int64(time.Duration(1<<63-1)/time.Second) ||
+		response.RefreshTokenExpiresIn > int64(time.Duration(1<<63-1)/time.Second) {
+		return nil, errors.New("invalid Claude issued expiry; retained for recovery")
+	}
+	out, issued, err := mergeClaudeCredentialRefresh(files[".credentials.json"], grant, response)
+	if err != nil {
+		return nil, err
+	}
+	next := cloneNativeFiles(files)
+	next[".credentials.json"] = out
+	after, err := inspectClaudeNative(next, time.Now())
+	if err != nil || before.Principal != after.Principal {
+		return nil, errors.New("native Claude issued identity invalid; retained for recovery")
+	}
+	if !slices.Contains(issued.Scopes, "user:inference") {
+		return next, errors.New("native Claude renewed without inference scope")
+	}
+	if !time.UnixMilli(issued.ExpiresAt).After(deadline) {
+		return next, errors.New("native Claude renewed; access does not cover requested deadline")
+	}
+	return next, nil
+}
+
+func (claudeAgent) NativeHistory(source string, ownsCWD func(string) bool) (NativeHistoryPlan, error) {
+	s, err := openNativeHistory(source, ownsCWD)
+	if err != nil {
+		return NativeHistoryPlan{}, err
+	}
+	defer s.close()
+	type transcript struct{ path, id, cwd string }
+	var owned []transcript
+	origins := map[string]string{}
+	s.walk("projects", func(path string) {
+		if !strings.HasSuffix(path, ".jsonl") {
+			return
+		}
+		var cwd, id string
+		ok := s.inspect(path, func(reader io.Reader) error {
+			if err := nativeHistoryRows(reader, []string{"cwd", "sessionId"}, func(fields map[string]string, _, _ int64) error {
+				row := struct{ CWD, ID string }{fields["cwd"], fields["sessionId"]}
+				if row.CWD != "" {
+					if cwd != "" && cwd != row.CWD {
+						return fmt.Errorf("native Claude transcript has conflicting working folders")
+					}
+					cwd = row.CWD
+				}
+				if row.ID != "" {
+					if id != "" && id != row.ID {
+						return fmt.Errorf("native Claude transcript has conflicting session IDs")
+					}
+					id = row.ID
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			if cwd == "" || !ValidSessionID(id) {
+				return fmt.Errorf("native Claude transcript has no explicit native ownership")
+			}
+			if !s.owns(cwd) {
+				return errNativeHistoryForeign
+			}
+			return nil
+		})
+		if ValidSessionID(id) && cwd != "" {
+			if previous, exists := origins[id]; exists && previous != cwd {
+				origins[id] = ""
+			} else if !exists {
+				origins[id] = cwd
+			}
+		}
+		if ok {
+			owned = append(owned, transcript{path, id, cwd})
+		}
+	})
+	sessions := map[string]string{}
+	for _, item := range owned {
+		if origins[item.id] != item.cwd {
+			s.skip(item.path, errors.New("native session ID has conflicting working folders"))
+			continue
+		}
+		s.add(item.path, item.cwd, item.id)
+		s.proofs[item.id] = append(s.proofs[item.id], item.path)
+		sessions[item.id] = item.cwd
+	}
+	s.filter("history.jsonl", []string{"project", "sessionId"}, "", func(fields map[string]string) bool {
+		cwd, known := origins[fields["sessionId"]]
+		return ValidSessionID(fields["sessionId"]) && s.owns(fields["project"]) &&
+			(!known || cwd == fields["project"])
+	})
+	s.companions([]string{"session-env", "file-history", "todos", "debug", "shell-snapshots", "sessions"}, sessions)
+	// Process registrations and unattributed global plans/caches stay unmounted.
+	return s.finish(), nil
+}
 
 func (claudeAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: claudeUsageQuota, HistoryDirs: []string{"projects"},
@@ -125,10 +386,18 @@ func claudeUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 	if !ok {
 		return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
 	}
-	if err := renewClaudeCredential(input.ProfileDir, deadline); err != nil {
-		return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+	var data []byte
+	var err error
+	if input.Current != nil {
+		var files map[string][]byte
+		_, files, err = input.Current(ctx, deadline)
+		data = files[".credentials.json"]
+	} else {
+		if err := renewClaudeCredential(input.ProfileDir, deadline); err != nil {
+			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+		}
+		data, err = readClaudeCredential(filepath.Join(input.ProfileDir, ".credentials.json"))
 	}
-	data, err := readClaudeCredential(filepath.Join(input.ProfileDir, ".credentials.json"))
 	if err != nil {
 		return UsageQuota{}, ErrUsageSignIn
 	}
@@ -356,12 +625,6 @@ func (claudeAgent) ACP(*config.Config) []string { return []string{"claude-agent-
 // in ~/.cache/claude-cli-nodejs/<project>/mcp-logs-<server>/, where the shared cache volume would
 // show them to every other box.
 func (claudeAgent) CachePrivateDirs() []string { return []string{"claude-cli-nodejs"} }
-
-// ACPSessionDirs: claude stores the transcript in projects/ and a session index + aux state in
-// sessions/ (and session-env/, file-history/); session/load needs the index too, so share them all.
-func (claudeAgent) ACPSessionDirs() []string {
-	return []string{"projects", "sessions", "session-env", "file-history"}
-}
 
 // ACPFinalChunk: every assistant chunk is answer text — claude's adapter streams no separate commentary phase.
 func (claudeAgent) ACPFinalChunk(json.RawMessage) bool    { return true }
@@ -943,7 +1206,10 @@ func ClaudeProjectKey(ws string) string {
 // sandbox and ships no bubblewrap. Existing values are preserved; only missing flags
 // are filled, and a file is rewritten only when something changes.
 func (a claudeAgent) EnsureDefaults(cfg *config.Config, workdir string) error {
-	dir := cfg.AgentDir(a.Name())
+	dir, err := cfg.AgentSettingsDir(a.Name())
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create Claude defaults directory %s: %w", dir, err)
 	}
@@ -994,9 +1260,13 @@ func (a claudeAgent) EnsureDefaults(cfg *config.Config, workdir string) error {
 }
 
 func (a claudeAgent) DefaultsPublication(cfg *config.Config) ([]ConfigPublication, error) {
+	dir, err := cfg.AgentSettingsDir(a.Name())
+	if err != nil {
+		return nil, err
+	}
 	// settings.json may deliberately be overlaid by a project fallback; the
 	// mutable native account/trust document is always the selected profile's.
-	publication, err := snapshotJSONDefaults(filepath.Join(cfg.AgentDir(a.Name()), ".claude.json"), cfg.HomeInBox+"/."+a.Name()+"/.claude.json")
+	publication, err := snapshotJSONDefaults(filepath.Join(dir, ".claude.json"), cfg.HomeInBox+"/."+a.Name()+"/.claude.json")
 	if err != nil {
 		return nil, err
 	}

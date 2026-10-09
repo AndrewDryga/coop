@@ -48,6 +48,7 @@ type Controller struct {
 	agentUID            uint32
 	policy              egress.Snapshot
 	brokers             []CredentialBrokerRoute
+	nativeOrigins       []string
 	protected           []netip.Prefix
 	apply               ApplyRules
 	now                 func() BootInstant
@@ -235,7 +236,7 @@ func (c *Controller) Admit(ctx context.Context, lease Lease) (BootInstant, error
 func (c *Controller) AdmitBroker(ctx context.Context, lease Lease) (BootInstant, error) {
 	name, err := egress.NormalizeDomain(lease.Name, false)
 	route := func(r CredentialBrokerRoute) bool { return r.Upstream == name && r.Port == lease.Port }
-	if err != nil || name != lease.Name || !slices.ContainsFunc(c.brokers, route) ||
+	if err != nil || name != lease.Name || !(slices.ContainsFunc(c.brokers, route) || lease.Port == 443 && slices.Contains(c.nativeOrigins, name)) ||
 		!lease.Peer.Is4() || !egress.PublicAnswer(lease.Peer, c.protected) {
 		return 0, Failure("gateway_lease_refused")
 	}

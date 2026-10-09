@@ -42,6 +42,40 @@ func TestDockerImageTemplateAcceptsOmittedLabels(t *testing.T) {
 	}
 }
 
+func TestDockerWorkloadKeepsOwnerBindingAndPrivateConfig(t *testing.T) {
+	rt, file := fixtureDocker(t, dockerFixture{Container: dockerFixtureContainer()})
+	docker, err := BindDocker(t.Context(), rt, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer docker.Close()
+	poisoned := t.TempDir()
+	if err := os.WriteFile(filepath.Join(poisoned, "config.json"), []byte(`{"proxies":{"default":{"allProxy":"https://user:inert-secret@proxy.invalid"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKER_CONFIG", poisoned)
+	t.Setenv("DOCKER_CONTEXT", "different")
+	t.Setenv("DOCKER_HOST", "unix:///unrelated/daemon.sock")
+	for _, run := range []func(context.Context, io.Reader, io.Writer, io.Writer, ...string) (int, error){docker.RunWorkload, docker.RunWorkloadInterruptible} {
+		var output bytes.Buffer
+		if code, err := run(t.Context(), nil, &output, &output, "run", "--ordinary-binding-test"); err != nil || code != 0 || output.String() != "ordinary workload\n" {
+			t.Fatalf("bound launch = %d, %v, %q", code, err, output.String())
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if count, err := docker.RemoveByLabels(ctx, dockerFixtureRef().Labels); err != nil || count != 1 {
+		t.Fatalf("bound cleanup = %d, %v", count, err)
+	}
+	writeDockerFixture(t, file, dockerFixture{ID: "replacement-daemon"})
+	if _, err := docker.RunWorkload(t.Context(), nil, io.Discard, io.Discard, "run", "--ordinary-binding-test"); err == nil {
+		t.Fatal("daemon identity changed but workload launched")
+	}
+	if _, err := docker.RemoveByLabels(ctx, dockerFixtureRef().Labels); err == nil {
+		t.Fatal("cleanup followed replacement daemon")
+	}
+}
+
 type dockerFixture struct {
 	Mode, ID, Kernel, Context string
 	Container                 *DockerContainer
@@ -241,7 +275,11 @@ func TestDockerFixtureProcess(t *testing.T) {
 				os.Exit(1)
 			}
 			if fixture.Container != nil {
-				emit(map[string]string{"name": strings.TrimPrefix(fixture.Container.Name, "/"), "id": fixture.Container.ID})
+				if slices.Contains(args, "{{.ID}}") {
+					fmt.Println(fixture.Container.ID)
+				} else {
+					emit(map[string]string{"name": strings.TrimPrefix(fixture.Container.Name, "/"), "id": fixture.Container.ID})
+				}
 			}
 		case "start":
 			if fixture.Container == nil {

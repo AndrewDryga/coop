@@ -9,69 +9,55 @@ has short overviews of [credentials](https://coop.dryga.com/docs.html#credential
 
 ## Where agent settings live
 
-One box runs four agents. Each one reads its settings and session state from
-`~/.config/coop/agents/<name>/`. That directory lives outside any repo, so credentials never land in
-git. The folders appear on first run.
+Each provider has a complete native home for each repository and selected account. It is mounted
+at the provider's usual location, so native history, resume, settings and indexes stay together.
 
-co:op mounts the active profile into the box at the agent's usual home. Each tool's normal
-user-level config works there as is:
-
-| Agent | Home in the box | User-level config |
+| Provider | Home in the box | Settings inside that home |
 | --- | --- | --- |
-| Claude | `~/.claude` | `claude/settings.json` |
-| Codex | `~/.codex` | `codex/config.toml` |
-| Gemini | `~/.gemini` | `gemini/settings.json` |
-| Grok | `~/.grok` | `grok/config.toml` |
+| Claude | `~/.claude` | `settings.json` |
+| Codex | `~/.codex` | `config.toml` |
+| Gemini | `~/.gemini` | `settings.json` |
+| Grok | `~/.grok` | `config.toml` |
 
-Inside each agent's folder, every account has its own provider home:
+Under `~/.config/coop/agents/<agent>/`, co:op keeps these separate stores:
 
-| Path under `~/.config/coop/agents/<agent>/` | What it holds |
+| Path | What it holds |
 | --- | --- |
-| `profiles/<name>/` | the provider home for one account |
-| `host-credentials/<name>/` | Gemini keys that co:op manages, in a separate private tree |
+| `credentials/<name>/` | canonical host-only account authority |
+| `native-homes/<name>/<repository-key>/home/` | one repository's native state for that account |
+| `acp-homes/<repository-key>/home/` | editor state for one repository, independent of account switches |
+| `profiles/<name>/` | retained older history and host defaults, never mounted as a coding home |
 
-Gemini API keys you enter through `coop login` stay in that private sibling vault, outside the
-mounted profile. On a filtered run, co:op's network gateway uses the key without mounting it or
-placing it in the box environment.
-
-Provider-owned OAuth and access-token files are a separate credential family. Only the active
-account is mounted or projected, never the whole credential store.
+Reviewed host defaults seed a new home once. Later native settings edits stay in that repository;
+changing the defaults does not overwrite an existing home. Validated co:op forks share their parent
+repository's history domain. Unrelated repositories do not.
 
 ## What each run can see
 
-Each run gets only the launched agent's credential scope: `coop claude` may mount `~/.claude`,
-never the Codex or Gemini homes. Peers and presets add more, because you name them explicitly:
+The lead, named peers and preset roles receive only their selected providers' repository homes.
+Raw shell/run and maintenance boxes receive no provider homes. Sign-in uses a separate staging
+home for only the selected provider, without mounting a project.
 
-| Run | Agent credentials in the box |
-| --- | --- |
-| `coop <target> --peer <target>...`, including loops and forks | the lead's, plus the peers you name, so the lead can consult them read-only; never everyone signed in |
-| A preset | every signed-in provider named by a consult or delegate role ladder, mounted for that role; unavailable rungs are skipped |
-| `coop login <agent>` | only the agent being signed in |
-| Raw runs: `coop run`, `coop shell` | none |
-| Maintenance runs: the merge gate, `coop doctor` | none |
-
-API-key runs follow stricter rules, listed under [API keys](#api-keys).
+Reusable API keys and OAuth access/refresh grants stay outside coding boxes. A run-local broker
+authenticates the selected provider requests and the host renews expiring credentials while the
+run continues. The box holds public native auth selectors, not the reusable grants. All teammates
+of a provider in one box share its selected account's access; separate boxes are the boundary
+between mutually untrusted agents.
 
 ### Blast radius
 
-Provider-native OAuth and access-token state is still available through the selected account's
-mounted or projected home. Its credential directory is generally mounted read-write: the agent must
-write its session history, and OAuth refresh rewrites the token in place. So a prompt-injected
-agent can:
+A compromised agent can read and edit its current repository's native history and settings, and
+can use the selected account through that run's broker. A settings hook can persist into later
+boxes for this repository/account. Repository isolation does not make that local history or
+configuration untrusted-code-proof, nor does it limit the provider bill by itself.
 
-1. Read its own credentials and try to send them out. Set `COOP_EGRESS=none` to cut the box off the
-   network.
-2. Write config its CLI auto-loads on the next launch, such as a `settings.json` hook. That config
-   then runs in future boxes for that credential. It stays inside the container, so it isn't a host
-   escape, but it is a durable foothold.
-3. Read what you and it said in your other projects, including code and anything pasted there. The
-   same home holds that account's session history from every project it ran in: Claude's
-   `projects/` transcripts, Codex's `sessions/` and `history.jsonl`, Gemini's chats and Grok's
-   `sessions/`.
+It cannot read another repository's native home through the managed provider mounts. Open
+networking still allows arbitrary outbound traffic; use filtered networking for approved
+destinations or `COOP_EGRESS=none` for no network. Offline runs receive no provider grants.
 
-A fuller fix is planned: copy credentials into an ephemeral in-box location and persist nothing
-host-side. For now, `COOP_EGRESS=none` covers the first risk. To keep a project's sessions apart,
-give it its own account: `coop login claude@client`, then `coop claude@client`.
+Manage shared accounts with host `coop login` and `coop credentials … rm`, not a native
+in-box login/logout command. If local auth files diverge, the next launch refuses and preserves
+them for recovery instead of overwriting them. See [migration and recovery](../MIGRATING.md).
 
 ## Authentication
 
@@ -80,59 +66,44 @@ give it its own account: `coop login claude@client`, then `coop claude@client`.
 Sign in with `coop login`:
 
 ```bash
-coop login claude     # interactive login; the token persists in agents/claude/
+coop login claude     # interactive login; credentials stay in host-only storage
 coop login codex      # device-code login (the box has no browser for an OAuth redirect)
 coop login gemini     # hidden API-key prompt; stored outside the mounted Gemini home
 ```
 
 ### API keys
 
-You can also use one of the API keys co:op can broker in a filtered run. Put them in the shared env
-file:
+Supported API keys work with both open and filtered Docker networking. Put a key in the shared
+env file, or use the provider's host sign-in flow:
 
 ```bash
 install -d -m 700 ~/.config/coop/agents
 touch ~/.config/coop/agents/env
 chmod 600 ~/.config/coop/agents/env
-echo 'ANTHROPIC_API_KEY=sk-…'  >> ~/.config/coop/agents/env
-echo 'OPENAI_API_KEY=sk-…'      >> ~/.config/coop/agents/env
-echo 'GEMINI_API_KEY=AIza…'    >> ~/.config/coop/agents/env
+echo 'ANTHROPIC_API_KEY=sk-…' >> ~/.config/coop/agents/env
+echo 'OPENAI_API_KEY=sk-…'    >> ~/.config/coop/agents/env
+echo 'GEMINI_API_KEY=AIza…'   >> ~/.config/coop/agents/env
 ```
 
-co:op tightens the credential root to `0700` and this shared secret file to `0600` before it uses
-them. That includes installations created by older versions.
+co:op makes the credential root private (`0700`) and secret files private (`0600`).
 
-A supported API-key run must use `--egress filtered` ([restricted networking](networking.md)). The
-box gets a random, run-scoped substitute for each key, and the reusable key stays in the gateway.
-Unsupported keys and launch shapes stop before a box starts.
-
-Each agent recognizes these token keys:
-
-| Agent | Recognized token keys | API-key box behavior |
+| Provider | Supported key | Refused alternatives |
 | --- | --- | --- |
-| Claude | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` | `ANTHROPIC_API_KEY` is brokered; the alternates are refused |
-| Codex | `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN` | `OPENAI_API_KEY` is brokered; the alternates are refused |
-| Gemini | `GEMINI_API_KEY`, `GOOGLE_API_KEY` | `GEMINI_API_KEY` is brokered; Vertex `GOOGLE_API_KEY` is refused |
-| Grok | `XAI_API_KEY` | refused because the pinned Grok client has no qualified API base override |
+| Claude | `ANTHROPIC_API_KEY` | `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` |
+| Codex | `OPENAI_API_KEY` | `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN` |
+| Gemini | `GEMINI_API_KEY` | Vertex `GOOGLE_API_KEY` |
+| Grok | none | `XAI_API_KEY` |
 
-The brokered keys work in normal filtered runs:
+The same host-only boundary covers native subscription/OAuth accounts. Loops, peers, presets,
+editor sessions and remote sessions use the broker too. API-key and subscription accounts can
+alternate between runs without granting direct access to their credentials. Offline runs strip
+provider keys and do not start a broker.
 
-- a direct agent
-- loop workers and reviewers
-- peers
-- preset roles
-- consult and delegate helpers
-- editor (ACP) sessions
-- remote sessions
-
-Every teammate of that provider in the box uses the one key through the broker. Signed-in accounts
-of other providers mix freely. One filtered policy can't switch a provider between an API key and a
-sign-in. Direct Claude `--readonly --egress filtered` runs can also broker `ANTHROPIC_API_KEY`.
-
-co:op refuses API-key runs that use open or offline networking, login or bare mode. Remote-session
-jobs that use restricted modes still reject filtered networking. co:op never falls back to putting
-the reusable key in a box. Provider-native OAuth and access-token files keep their existing
-behavior, and co:op doesn't claim them as API-key brokered.
+The broker requires Docker's private network namespace; host networking, joining an arbitrary
+container's network and Apple's `container` runtime are not supported for online provider runs.
+Custom provider base URLs and unsupported credential families are refused. Native restricted modes
+remain Claude-only; remote restricted jobs still do not support filtered networking.
+See [provider networking](networking.md#provider-credentials-stay-outside-the-box).
 
 ### The env file
 
@@ -151,11 +122,11 @@ var and reaches every box.
 
 ### What the box receives
 
-A supported brokered run sees only the substitute, under the provider's canonical key name. co:op
+A supported brokered run sees public provider-native auth selectors and the run's private broker entrance. co:op
 filters the reusable key and every other provider token out of both the user and the project box
 environment before launch. Passing a provider credential through runtime `-e` is refused, because
 it would bypass that boundary. Sign-in boxes likewise receive none of the existing API keys from the
-shared env file or Gemini's host vault.
+shared env file or canonical account store.
 
 ### First run
 
@@ -567,9 +538,10 @@ each agent's global instruction path in the box:
 | Gemini | `~/.gemini/GEMINI.md` |
 | Grok | `~/.grok/AGENTS.md` |
 
-A per-agent file wins over the shared one. Drop a `CLAUDE.md` into the active account's folder,
-`~/.config/coop/agents/claude/profiles/<account>/` (or `AGENTS.md` into `codex/profiles/<account>/`,
-…), and that agent uses it instead.
+A provider-native instruction file in the selected repository home wins over the shared file.
+Host defaults from `profiles/<account>/` seed new homes only; editing them does not replace an
+existing repository home's instructions. Edit that repository's native instruction file when the
+change should stay local, or the shared `INSTRUCTIONS.md` for machine-wide fallback guidance.
 
 ### Skills and the .agent/ folder
 

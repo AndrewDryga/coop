@@ -32,6 +32,8 @@ func run() error {
 	switch os.Args[1] {
 	case "broker":
 		return networkgateway.RunOpenBroker(ctx, os.Stdin, os.Stdout)
+	case "native-broker":
+		return networkgateway.RunNativeBroker(ctx, os.Stdin, os.Stdout)
 	}
 	file, err := os.Open(networkgateway.LaunchConfigPath)
 	if err != nil {

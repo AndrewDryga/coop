@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 
-	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/safefile"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
@@ -31,16 +30,13 @@ func ConfigExposureRoots(cfg *config.Config) []string {
 		}
 	}
 	add(cfg.ConfigDir)
+	add(cfg.NativeAuthorityConfig().ConfigDir)
 	add(cfg.BoxHome)
 	if cfg.ConfigDir == "" {
 		return roots
 	}
-	for _, name := range agents.Names() {
-		ag, _ := agents.Get(name)
-		for _, subdir := range ag.ACPSessionDirs() {
-			add(filepath.Join(acpSharedDir(cfg, name), subdir))
-		}
-	}
+	// Native homes are strict complete directories below ConfigDir; there are
+	// no independent transcript mounts or provider-controlled source aliases.
 	return roots
 }
 

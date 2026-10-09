@@ -26,8 +26,12 @@ Resolve the argument into a concrete diff + file list, then read it yourself fir
 
 **Announce the resolved scope** (input mode + exact file list) and note what it touches — logic, user-facing surface, docs, config — which drives the hats.
 
-## 2. Run the gate first
-Run the repo's gate (`AGENTS.md` → "The gate"). A **red gate is an automatic BLOCKER** — reviewing code that doesn't build or pass is moot. If you can't run it (a historical commit/PR you can't build locally), record `gate: unverified` rather than guessing.
+## 2. Record validation without blocking review
+Inspect existing evidence for the exact inputs. Run the relevant checks under
+`.agent/kb/rules/batch-slow-gates-when-requested.md`; the repository gate is the final default,
+not a prerequisite to reading code. Review can proceed while it runs or with a red/unverified
+result. Report failures, missing evidence and their actual bearing on readiness. Do not restart
+unchanged slow suites or require a broad upstream-client certification for ordinary feature review.
 
 ## 3. Convene the hats the change earns
 **Standing — always, for any code change:**
@@ -53,7 +57,7 @@ Tell the security + rules hats to name the exact abuse case / the exact rule eac
 
 ## 5. Synthesize (you, the parent — don't just concatenate)
 - **Dedupe** overlaps (UX + a UI hat flag the same thing — merge, keep the sharpest wording).
-- **Rank** BLOCKER → MAJOR → MINOR → NIT. A **BLOCKER** ships the wrong thing, a security hole, data loss/leak, a documented-rule violation, a red gate, or a real correctness bug.
+- **Rank** BLOCKER → MAJOR → MINOR → NIT. A **BLOCKER** ships the wrong thing, a security hole, data loss/leak, a documented-rule violation, an unresolved required-check failure, or a real correctness bug. State whether it blocks implementation, merge readiness or deployment; none prevents source review itself.
 - **Resolve cross-hat conflicts explicitly** — PM wants it thin, security wants a gate: state the call + why.
 - One-line **verdict**: SHIP / SHIP-AFTER-BLOCKERS / RETHINK.
 

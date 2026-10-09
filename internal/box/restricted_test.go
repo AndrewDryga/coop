@@ -20,10 +20,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-// A stored Claude login good until 2100: the host renews nothing, and the projection must strip
-// the refresh token before the seed is built.
-const restrictedClaudeLogin = `{"claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference","account:read"],"refreshToken":"REFRESH_CANARY"}}`
-
 // dockerRecorder is a runtime whose binary is named docker — so restricted-mode support resolves
 // as it does on the qualified runtime — and records every invocation's exact argv, one line per
 // invocation with NUL-separated arguments, so an empty argument (`--tools ""`) survives.
@@ -60,11 +56,9 @@ func recordedRun(t *testing.T, recorder string) []string {
 func restrictedConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", BaseImage: "coop-box", Egress: "open"}
+	seedCanonicalFixture(t, cfg, "claude", "default")
 	profile := cfg.AgentDir("claude")
-	if err := os.MkdirAll(profile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(profile, ".credentials.json"), []byte(restrictedClaudeLogin), 0o600); err != nil {
+	if err := os.MkdirAll(profile, 0700); err != nil {
 		t.Fatal(err)
 	}
 	// A host-profile customization: a hook. It must NOT reach the seed.
@@ -96,6 +90,7 @@ const seedScript = `cp -R /coop/seed/. "$1"/ && shift && exec "$@"`
 func TestRunBareMountsOnlyScratchAndTheSeed(t *testing.T) {
 	t.Setenv("TZ", "America/Merida")
 	cfg := restrictedConfig(t)
+	cfg.Egress = "none" // filesystem/argv golden; online broker lifecycle is covered below.
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	spec := RunSpec{
 		Image: "coop-box", Cmd: []string{"claude", "--dangerously-skip-permissions"}, Agent: "claude", AgentCommand: true,
@@ -119,6 +114,7 @@ func TestRunBareMountsOnlyScratchAndTheSeed(t *testing.T) {
 		"-e", "COOP_CONFIG_PUBLICATION=",
 		"--label", "coop=box",
 		"-e", "COOP_BOX=1",
+		"--network", "none",
 		"-w", "/workspace",
 		"-v", seed + ":/coop/seed:ro",
 		"-e", "COOP_NO_ASDF=1",
@@ -280,6 +276,7 @@ func TestRunReadOnlyHoldsAuthorityMountWindowThroughRuntime(t *testing.T) {
 func TestRunBareACPKeepsTheAdapterCommandAndRunLabel(t *testing.T) {
 	t.Setenv("TZ", "America/Merida")
 	cfg := restrictedConfig(t)
+	cfg.Egress = "none" // filesystem/argv golden; online broker lifecycle is covered below.
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	spec := RunSpec{
 		Image: "coop-box", Cmd: []string{"claude-agent-acp"}, Agent: "claude", NetworkClient: egress.ClientACP,
@@ -303,6 +300,7 @@ func TestRunBareACPKeepsTheAdapterCommandAndRunLabel(t *testing.T) {
 		"--label", "coop=box",
 		"--label", "coop.run=" + spec.RunID,
 		"-e", "COOP_BOX=1",
+		"--network", "none",
 		"-w", "/workspace",
 		"-v", seed + ":/coop/seed:ro",
 		"-e", "COOP_NO_ASDF=1",
@@ -344,7 +342,12 @@ func TestRunReadOnlyRawCommandHasNoSeed(t *testing.T) {
 // host profile's hook never comes along), and the mode's note — nothing else.
 func TestBuildRestrictedSeedProjectsLoginAndDefaultsOnly(t *testing.T) {
 	cfg := restrictedConfig(t)
-	root, err := buildRestrictedSeed(cfg, "claude", agents.ModeReadOnly, "/workspace", compositionArtifactOps{parent: t.TempDir()})
+	ag, _ := agents.Get("claude")
+	seed, err := ag.NativeCredentials().Broker.Seed("claude-oauth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := buildRestrictedSeed(cfg, "claude", agents.ModeReadOnly, "/workspace", compositionArtifactOps{parent: t.TempDir()}, seed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,8 +365,8 @@ func TestBuildRestrictedSeedProjectsLoginAndDefaultsOnly(t *testing.T) {
 		t.Fatalf("seed files = %v, want %v", names, want)
 	}
 	credential, _ := os.ReadFile(filepath.Join(home, ".credentials.json"))
-	if strings.Contains(string(credential), "REFRESH_CANARY") || !strings.Contains(string(credential), `"accessToken":"access"`) {
-		t.Fatalf("seed must carry the access-only projection: %s", credential)
+	if strings.Contains(string(credential), "REFRESH_CANARY") || strings.Contains(string(credential), "ACCESS_CANARY") || !strings.Contains(string(credential), seed.Marker) {
+		t.Fatalf("seed must carry only the public native selector: %s", credential)
 	}
 	if info, _ := os.Stat(filepath.Join(home, ".credentials.json")); info.Mode().Perm() != 0o600 {
 		t.Fatalf("seeded credential mode = %o, want 600", info.Mode().Perm())
@@ -400,29 +403,25 @@ func TestBuildRestrictedSeedProjectsLoginAndDefaultsOnly(t *testing.T) {
 }
 
 // A login the adapter cannot make portable, or none at all, refuses before any runtime work.
-func TestBuildRestrictedSeedRefusesUnportableLogin(t *testing.T) {
+func TestBuildRestrictedSeedNeverReadsHostGrants(t *testing.T) {
 	cfg := restrictedConfig(t)
 	profile := cfg.AgentDir("claude")
-	// Refresh-only: no access token to project.
-	if err := os.WriteFile(filepath.Join(profile, ".credentials.json"), []byte(`{"claudeAiOauth":{"refreshToken":"r","scopes":["user:inference"]}}`), 0o600); err != nil {
+	changed := []byte("{\"claudeAiOauth\":{\"refreshToken\":\"REFRESH_CANARY\",\"scopes\":[\"user:inference\"]}}")
+	if err := os.WriteFile(filepath.Join(profile, ".credentials.json"), changed, 0600); err != nil {
 		t.Fatal(err)
 	}
-	// Renewal would reach for the provider; point it at a closed loopback port instead.
-	t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", "http://127.0.0.1:1/oauth/token")
-	if _, err := buildRestrictedSeed(cfg, "claude", agents.ModeBare, BareWorkdir, compositionArtifactOps{parent: t.TempDir()}); err == nil {
-		t.Fatal("a refresh-only login has no access-only projection to seed")
-	}
-	// No marker at all: nothing to seed, the env file (if any) is the login. The seed still renders.
-	if err := os.Remove(filepath.Join(profile, ".credentials.json")); err != nil {
-		t.Fatal(err)
-	}
+	// The seed renderer cannot refresh or copy credentials; admission belongs to
+	// the native account planner before any runtime work.
 	root, err := buildRestrictedSeed(cfg, "claude", agents.ModeBare, BareWorkdir, compositionArtifactOps{parent: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(root)
 	if _, err := os.Stat(filepath.Join(root, "home", ".claude", ".credentials.json")); !os.IsNotExist(err) {
-		t.Fatal("no marker must seed no credential")
+		t.Fatal("host grant copied without a public seed")
+	}
+	if string(mustReadFile(t, filepath.Join(profile, ".credentials.json"))) != string(changed) {
+		t.Fatal("host grant changed")
 	}
 }
 
@@ -612,6 +611,8 @@ func TestValidateRestrictedOptions(t *testing.T) {
 func TestAssembleArgsNormalModeGolden(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir, BaseImage: "coop-box", MCPFile: filepath.Join(dir, "mcp.json"), MCPInBox: "/home/node/.mcp.json", Egress: "open", ConsultTimeout: "30"}
+	home := filepath.Join(dir, "claude", "native-homes", "default", "repo", "home")
+	cfg = cfg.WithNativeHomes(map[string]string{"claude": home})
 	t.Setenv("TZ", "America/Merida")
 	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Agent: "claude", Homes: true, Cache: true, Network: true, Serve: true, RunID: "run-1", SuperviseDescendants: true, ExtraArgs: []string{"-e", "X=1"}, claudeMCPFile: cfg.MCPFile}
 	mounts := []Mount{{Kind: Bind, Source: "/repo", Target: "/workspace"}, {Kind: Decoy, Target: "/workspace/.env"}}
@@ -628,7 +629,7 @@ func TestAssembleArgsNormalModeGolden(t *testing.T) {
 		"--cap-drop", "ALL",
 		"-v", "/repo:/workspace",
 		"-v", "/d:/workspace/.env:ro",
-		"-v", cfg.AgentDir("claude") + ":/home/node/.claude",
+		"--mount", networkMount("bind", home, "/home/node/.claude", false),
 		"-v", "/tmp/s:/home/node/.claude/skills",
 		"-e", "COOP_PRIMARY=claude",
 		"-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
@@ -789,17 +790,7 @@ func TestRunReadOnlyRefusesAScratchPathDestination(t *testing.T) {
 // session's box needs: the image is present, the helper names the address it listens on and then
 // holds its stdin open, and every invocation's argv is recorded.
 func readOnlySessionShim(t *testing.T, calls, boxEnv string) runtime.Runtime {
-	t.Helper()
-	shim := filepath.Join(t.TempDir(), "docker")
-	writeRepoFile(t, shim, "#!/bin/sh\necho \"$@\" >> "+strconv.Quote(calls)+"\n"+
-		"case \"$1 $2\" in \"image inspect\") echo "+gatewayimage.Fingerprint()+"; exit 0 ;; esac\n"+
-		"case \"$*\" in *\" broker\") echo 172.18.0.5; cat > /dev/null; exit 0 ;; esac\n"+
-		"case \"$1\" in network) exit 1 ;; ps) exit 0 ;; esac\n"+
-		"prev=\nfor a in \"$@\"; do [ \"$prev\" = --env-file ] && cat \"$a\" > "+strconv.Quote(boxEnv)+"; prev=$a; done\n")
-	if err := os.Chmod(shim, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return runtime.Runtime{Name: shim}
+	return nativeOnlineRuntime(t, calls, boxEnv)
 }
 
 // readOnlySessionFixture is the child the session daemon launches for a read-only session: the
@@ -809,11 +800,7 @@ func readOnlySessionFixture(t *testing.T) (*config.Config, RunSpec) {
 	run := openBrokerFixtureWithEnv(t, openBrokerEnv)
 	cfg := run.cfg
 	cfg.BaseImage = "coop-box"
-	profile := cfg.AgentDir("claude")
-	if err := os.MkdirAll(profile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeRepoFile(t, filepath.Join(profile, ".credentials.json"), restrictedClaudeLogin)
+	seedCanonicalFixture(t, cfg, "claude", "default")
 	claude, _ := agents.Get("claude")
 	spec := run.spec
 	spec.Image, spec.Workdir, spec.Mode = cfg.BaseImage, "/workspace", agents.ModeReadOnly
@@ -834,11 +821,16 @@ func TestAReadOnlySessionBrokersItsMCPSecretsToo(t *testing.T) {
 	if code, err := Run(cfg, readOnlySessionShim(t, calls, boxEnv), spec); err != nil || code != 0 {
 		t.Fatalf("read-only session child = %d, %v", code, err)
 	}
-	helper, box := "", ""
+	helper, owner, ownerID, box := "", "", "", ""
 	for _, line := range strings.Split(strings.TrimSpace(string(mustReadFile(t, calls))), "\n") {
 		switch {
 		case strings.Contains(line, "--name coop-broker-"):
 			helper = line
+		case strings.Contains(line, "container create") && strings.Contains(line, "--name coop-native-"):
+			owner = line
+		case strings.Contains(line, "container start --attach --interactive "):
+			words := strings.Fields(line)
+			ownerID = words[len(words)-1]
 		case strings.Contains(line, "--label coop=box"):
 			box = line
 		}
@@ -846,8 +838,8 @@ func TestAReadOnlySessionBrokersItsMCPSecretsToo(t *testing.T) {
 	if !strings.Contains(helper, "--label coop=broker") || !strings.Contains(helper, gatewayimage.Tag()+" broker") {
 		t.Fatalf("no helper ran beside the read-only box:\n%s", helper)
 	}
-	if !strings.Contains(box, "--add-host=coop-broker:172.18.0.5") {
-		t.Fatalf("the box was not given the helper's address:\n%s", box)
+	if !strings.Contains(owner, "--add-host coop-broker:172.18.0.5") || len(ownerID) != 64 || !strings.Contains(box, "--network container:"+ownerID) || strings.Contains(box, "--add-host") {
+		t.Fatalf("the workload did not join the exact namespace with the MCP mapping:\n%s\n%s", owner, box)
 	}
 	// The profile still holds: nothing writable, and the hosts entry did not smuggle anything else in.
 	for _, forbidden := range []string{"--privileged", "--cap-add", "--add-host=coop-broker:172.18.0.5 --add-host"} {
@@ -903,7 +895,7 @@ func TestAHandRunReadOnlyLaunchStillLoadsNoMCP(t *testing.T) {
 		t.Fatalf("read-only run = %d, %v", code, err)
 	}
 	recorded := string(mustReadFile(t, calls))
-	for _, gone := range []string{"coop-broker", "--add-host", "coop=broker"} {
+	for _, gone := range []string{"--name coop-broker-", "--add-host", gatewayimage.Tag() + " broker"} {
 		if strings.Contains(recorded, gone) {
 			t.Fatalf("a hand-run readonly launch started a broker (%q):\n%s", gone, recorded)
 		}
@@ -923,11 +915,7 @@ func TestAReadOnlySessionWithNothingToBrokerKeepsTodaysList(t *testing.T) {
 	writeRepoFile(t, cfg.MCPFile, `{"mcpServers":{"twice":{"type":"http","url":"https://twice.example/mcp",`+
 		`"bearer_token_env_var":"TWICE_TOKEN","headers":{"X-Key":"${TWICE_KEY}"}}}}`)
 	cfg.BaseImage = "coop-box"
-	profile := cfg.AgentDir("claude")
-	if err := os.MkdirAll(profile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeRepoFile(t, filepath.Join(profile, ".credentials.json"), restrictedClaudeLogin)
+	seedCanonicalFixture(t, cfg, "claude", "default")
 	claude, _ := agents.Get("claude")
 	spec := run.spec
 	spec.Image, spec.Workdir, spec.Mode = cfg.BaseImage, "/workspace", agents.ModeReadOnly

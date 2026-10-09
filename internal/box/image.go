@@ -3,6 +3,7 @@ package box
 import (
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -51,6 +52,14 @@ func BaseDockerfile(arch string) (string, error) {
 
 type baseImageParts struct{ files, install, browserDeps, loginPath, provision, pathEnv, scripts string }
 
+// Both shipped images and the host gate build the identical analyzer dependency graph.
+//
+//go:embed staticcheck.mod
+var staticcheckMod []byte
+
+//go:embed staticcheck.sum
+var staticcheckSum []byte
+
 func renderBaseDockerfile(parts baseImageParts) string {
 	return fmt.Sprintf(baseDockerfileTemplate, parts.files, parts.install, parts.browserDeps, parts.loginPath, configPublicationShell+parts.provision, parts.pathEnv, parts.scripts)
 }
@@ -62,19 +71,19 @@ func renderBaseDockerfile(parts baseImageParts) string {
 const (
 	pinnedNodeImage   = "node:24-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6" // node 24 (slim)
 	floatingNodeImage = "node:24-slim"
-	pinnedGoImage     = "golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195"
-	floatingGoImage   = "golang:1.27.1-bookworm"
+	pinnedGoImage     = "golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61"
+	floatingGoImage   = "golang:1.27.2-bookworm"
 )
 
 // baseDockerfileTemplate is shared by the base and the filtered client image: OS tools, the
 // qualified clients and process supervision. Its slots carry the client installation, each image's
 // PATH and the base's optional startup provisioning.
 const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
-ARG GO_IMAGE=golang:1.27.1-bookworm
+ARG GO_IMAGE=golang:1.27.2-bookworm
 
 FROM ${GO_IMAGE} AS go-tools-builder
-ARG STATICCHECK_VERSION=v0.8.1
-RUN GOBIN=/out CGO_ENABLED=0 go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
+COPY staticcheck/go.mod staticcheck/go.sum /staticcheck/
+RUN GOBIN=/out CGO_ENABLED=0 go -C /staticcheck install -mod=readonly honnef.co/go/tools/cmd/staticcheck
 ARG GOVULNCHECK_VERSION=v1.8.0
 RUN GOBIN=/out CGO_ENABLED=0 go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
 ARG JV_VERSION=v0.7.0

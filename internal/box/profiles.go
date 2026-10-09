@@ -1,6 +1,7 @@
 package box
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,9 +15,24 @@ import (
 // needed. Consumers that mutate credential directories must continue to use Config.Profiles.
 func EffectiveProfiles(cfg *config.Config, agent string) []string {
 	profiles := cfg.Profiles(agent)
+	if entries, err := os.ReadDir(filepath.Join(cfg.ConfigDir, agent, "credentials")); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() && !slices.Contains(profiles, entry.Name()) {
+				profiles = append(profiles, entry.Name())
+			}
+		}
+	}
 	def := cfg.DefaultProfileOf(agent)
 	if !slices.Contains(profiles, def) && ProfileAuthed(cfg, agent, def) {
 		profiles = append(profiles, def)
+	}
+	if ag, ok := agents.Get(agent); ok {
+		profiles = slices.DeleteFunc(profiles, func(account string) bool {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			record, exists, err := readNativeAccount(ctx, cfg, ag, account)
+			return err == nil && exists && record.Revoked
+		})
 	}
 	return profiles
 }
@@ -47,6 +63,9 @@ func ProfileCredentialReady(cfg *config.Config, agent, profile string, now time.
 	ag, ok := agents.Get(agent)
 	if !ok {
 		return false
+	}
+	if ready, exists := nativeAccountReady(cfg, ag, profile, now); exists {
+		return ready
 	}
 	profileDir := cfg.AgentProfileDir(agent, profile)
 	markerPresent := profileMarkerPresent(ag, profileDir)
@@ -89,6 +108,9 @@ func ProfileMarkerPresent(cfg *config.Config, agent, profile string) bool {
 	if !ok {
 		return false
 	}
+	if ready, exists := nativeAccountReady(cfg, ag, profile, time.Now()); exists {
+		return ready
+	}
 	return profileMarkerPresent(ag, cfg.AgentProfileDir(agent, profile))
 }
 
@@ -99,6 +121,9 @@ func ProfileHostCredentialPresent(cfg *config.Config, agent, profile string) boo
 	ag, ok := agents.Get(agent)
 	if !ok {
 		return false
+	}
+	if ready, exists := nativeAccountReady(cfg, ag, profile, time.Now()); exists {
+		return ready
 	}
 	profileDir := cfg.AgentProfileDir(agent, profile)
 	if !hostCredentialSelected(ag, profileDir, profileMarkerPresent(ag, profileDir)) {
@@ -114,6 +139,9 @@ func ProfileHostCredentialPresent(cfg *config.Config, agent, profile string) boo
 // providers, but they never reconstruct provider-specific precedence. A provider-wide env token
 // represents one effective default account, never every named profile.
 func profileCredentialPresent(cfg *config.Config, ag agents.Agent, agent, profile string, envKeys map[string]bool, allowEnv bool) bool {
+	if ready, exists := nativeAccountReady(cfg, ag, profile, time.Now()); exists {
+		return ready
+	}
 	profileDir := cfg.AgentProfileDir(agent, profile)
 	markerPresent := profileMarkerPresent(ag, profileDir)
 	activeEnvKeys := ag.ActiveCredentialEnvKeys(profileDir, markerPresent)
@@ -149,6 +177,16 @@ func ProfileTokenMtime(cfg *config.Config, agent, profile string) (time.Time, bo
 	ag, ok := agents.Get(agent)
 	if !ok {
 		return time.Time{}, false
+	}
+	if _, exists, err := readNativeAccount(context.Background(), cfg, ag, profile); exists {
+		if err != nil {
+			return time.Time{}, false
+		}
+		info, err := os.Lstat(filepath.Join(cfg.ConfigDir, agent, "credentials", profile, "authority.json"))
+		if err != nil || !info.Mode().IsRegular() {
+			return time.Time{}, false
+		}
+		return info.ModTime(), true
 	}
 	profileDir := cfg.AgentProfileDir(agent, profile)
 	if hostCredentialSelected(ag, profileDir, profileMarkerPresent(ag, profileDir)) {

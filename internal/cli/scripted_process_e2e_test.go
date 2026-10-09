@@ -24,6 +24,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/taskchannel"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
@@ -142,15 +143,7 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 			if err != nil {
 				t.Fatal("git is required for the scripted process suite")
 			}
-			ag, _ := agents.Get(provider)
-			marker, _ := ag.AuthMarker()
-			profile := filepath.Join(layout.Config, provider, "profiles", "default")
-			if err := os.MkdirAll(profile, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(profile, marker), append(credentialMatrixMarker(provider), '\n'), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			seedNativeFixture(t, &config.Config{ConfigDir: layout.Config}, provider, "default")
 			envFile := filepath.Join(layout.Config, "env")
 			envContents := fmt.Sprintf("FIXTURE_SAFE=visible\n%s=must-be-stripped\n", credentialKey[provider])
 			if err := os.WriteFile(envFile, []byte(envContents), 0o600); err != nil {
@@ -199,7 +192,7 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 			}
 
 			trace := readProcessTrace(t, layout.Trace)
-			assertSequentialTrace(t, trace, directTraceEvents+credentialLeaseTraceEvents(provider))
+			assertSequentialTrace(t, trace, directTraceEvents)
 			assertDirectRuntimeInvocations(t, trace, noOrphanBoxSweep, provider)
 			run := oneProcessEvent(t, trace, "runtime", "run")
 			if run.Run == nil {
@@ -429,14 +422,6 @@ func assertSequentialTrace(t *testing.T, trace []*processTrace, want int) {
 	}
 }
 
-func credentialLeaseTraceEvents(provider string) int {
-	ag, _ := agents.Get(provider)
-	if ag.Usage().NativeCredentialLease {
-		return 1
-	}
-	return 0
-}
-
 func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape traceShape, provider string) {
 	t.Helper()
 	var got [][]string
@@ -450,9 +435,6 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape t
 		// The orphan sweep, before the box work begins: one label-filtered container listing, then
 		// one for the compose networks a dead session leaves holding a subnet.
 		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"}, []string{"network", "<validated>"})
-	}
-	if credentialLeaseTraceEvents(provider) != 0 {
-		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"})
 	}
 	wantPrefix = append(wantPrefix, []string{"info"})
 	wantSuffix := [][]string{}
@@ -476,9 +458,6 @@ func boxLabelsWithoutDynamicAuthorities(t *testing.T, labels []string, provider 
 	t.Helper()
 	var kept []string
 	counts := map[string]int{box.LabelHost: 0, box.LabelExecution: 0}
-	if credentialLeaseTraceEvents(provider) != 0 {
-		counts["coop.credential."+provider] = 0
-	}
 	for _, label := range labels {
 		dynamic := false
 		for key := range counts {
@@ -519,13 +498,22 @@ func oneProcessEvent(t *testing.T, trace []*processTrace, source, event string) 
 	return matches[0]
 }
 
+func processNativeHome(t *testing.T, layout procharness.Layout, provider, account, repo string) string {
+	t.Helper()
+	home, err := box.NativeHomePath(&config.Config{ConfigDir: layout.Config}, provider, account, repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return processTracePath(layout.Root, home)
+}
+
 func assertProcessMounts(t *testing.T, layout procharness.Layout, provider, account string, mounts []processMount) {
 	assertProcessMountsAtTarget(t, layout, layout.Repo, processTracePath(layout.Root, layout.Repo), provider, account, mounts)
 }
 
 func assertProcessMountsAtTarget(t *testing.T, layout procharness.Layout, repo, repoTarget, provider, account string, mounts []processMount) {
 	t.Helper()
-	profileSource := processTracePath(layout.Root, filepath.Join(layout.Config, provider, "profiles", account))
+	profileSource := processNativeHome(t, layout, provider, account, repo)
 	repoSource := processTracePath(layout.Root, repo)
 	profileTarget := "<container>/home/node/." + provider
 	foundProfile, foundRepo := false, false

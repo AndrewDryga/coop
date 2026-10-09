@@ -1,5 +1,39 @@
 # Migrating
 
+## Unreleased: repository-local native homes
+
+Coding and editor sessions now use complete native homes scoped to their repository. Ordinary
+homes are also scoped to the selected account; editor homes survive account switches. Native
+settings are seeded once and then remain local. Validated forks share the parent repository domain.
+
+On first reuse, co:op imports only older transcripts with proven repository ownership. Originals
+stay intact. Ambiguous or unsupported history is retained, not exposed to another project; active
+writers defer import rather than being stopped. Finish those sessions and retry. Native deletions
+are recorded by import receipts, so an old source cannot silently resurrect deleted sessions.
+
+Account credentials move into one canonical host-only authority. Old credential sources are
+retired only after recoverable publication and writer checks; no refresh grants are copied into
+repository homes. The host renews grants while a run-local broker serves native provider requests.
+Online provider runs now require Docker, including open-network runs. Raw uncredentialed workloads
+can still use Apple's container runtime.
+
+Use host `coop login <provider>@<account>` for sign-in and the confirming
+`coop credentials <provider> <account> rm` flow for removal. Removal deletes that account's ordinary
+repository histories, but not account-independent editor conversations. Native in-box login/logout
+is not a supported way to manage the shared account. If it changes local credential files, co:op
+refuses reuse and names both the native home and its recovery custody directory. Stop sessions
+using that home and back up the entire custody directory, including `home/`, `owner.json`, auth
+and import receipts. Recover locally created credentials through an explicit host sign-in. Restore
+public auth files from a known-good backup, or explicitly move the entire backed-up custody directory
+aside to start fresh. Moving only `home/` leaves ownership receipts behind and will be refused.
+Keep the backup: a fresh home is not proof that its unique history has been recovered.
+
+Before upgrading an existing installation, finish older sessions and keep a verified backup of
+its stopped credential/history roots. After credential cutover, do not run older binaries against
+those roots. A rollback must use current authority or a fresh host sign-in; restoring pre-refresh
+tokens can invalidate the remaining account access. Arbitrary old binaries and native host clients
+do not participate in co:op's writer fencing.
+
 ## v10.1.2: upgrading from v8.1.0
 
 This section covers the changes since v8.1.0. Do the steps below that apply to you before you use

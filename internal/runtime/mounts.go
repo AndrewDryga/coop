@@ -60,11 +60,27 @@ func (r Runtime) MountSourcesByLabel(
 // RunningWritableBindSourcesByLabels inventories live Compose sidecars that can replace host
 // paths while Coop validates a new launch. Named-volume backing paths are not repository writes.
 func (r Runtime) RunningWritableBindSourcesByLabels(ctx context.Context, labels map[string]string) ([]string, error) {
+	return r.WritableBindSourcesByLabels(ctx, labels, false)
+}
+
+// WritableBindSourcesByLabels includes stopped/restartable containers when all
+// is true. Credential cutover cannot treat an exited writer as permanently gone.
+func (r Runtime) WritableBindSourcesByLabels(ctx context.Context, labels map[string]string, all bool) ([]string, error) {
+	return r.bindSourcesByLabels(ctx, labels, all, true)
+}
+
+// BindSourcesByLabels also includes read-only copies of credential authority:
+// possessing a refresh grant is enough to rotate it without filesystem writes.
+func (r Runtime) BindSourcesByLabels(ctx context.Context, labels map[string]string) ([]string, error) {
+	return r.bindSourcesByLabels(ctx, labels, true, false)
+}
+
+func (r Runtime) bindSourcesByLabels(ctx context.Context, labels map[string]string, all, writable bool) ([]string, error) {
 	if r.kind() == runtimeAppleContainer {
 		return nil, fmt.Errorf("mount inspection is unsupported by %s", r.Name)
 	}
 	var docker *Docker
-	if r.kind() == runtimeDocker && r.composeEndpoint != "" {
+	if r.kind() == runtimeDocker && (r.composeEndpoint != "" || all) {
 		var err error
 		docker, err = bindDocker(ctx, r, r.composeEndpoint, r.composeDaemon, false)
 		if err != nil {
@@ -84,9 +100,12 @@ func (r Runtime) RunningWritableBindSourcesByLabels(ctx context.Context, labels 
 	var ids []string
 	var err error
 	if docker == nil {
-		ids, err = r.containerIDsContext(ctx, false, filters...)
+		ids, err = r.containerIDsContext(ctx, all, filters...)
 	} else {
 		args := []string{"ps", "-q"}
+		if all {
+			args = append(args, "-a")
+		}
 		for _, filter := range filters {
 			args = append(args, "--filter", filter)
 		}
@@ -118,7 +137,7 @@ func (r Runtime) RunningWritableBindSourcesByLabels(ctx context.Context, labels 
 			return nil, fmt.Errorf("decode running Compose mounts for %s: %w", id, err)
 		}
 		for _, mount := range mounts {
-			if mount.Type == "bind" && mount.RW && mount.Source != "" {
+			if mount.Type == "bind" && (!writable || mount.RW) && mount.Source != "" {
 				seen[mount.Source] = true
 			}
 		}

@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Repository-local native history and host-only provider credentials.** Each project keeps its
+  own complete provider home, including native resume, settings and history indexes. Older
+  transcripts import only when their repository ownership is known; originals remain intact and
+  deleted sessions are not resurrected. Editor homes survive account switches. A run-local broker
+  serves API-key and subscription accounts while the host owns renewal; real provider grants no
+  longer enter coding boxes. Online provider runs require Docker. See `MIGRATING.md` before reusing
+  existing accounts, and manage sign-in/removal through the host.
+
+- **Patched Go networking.** Builds and box helpers use Go 1.27.2 and the updated networking
+  library, addressing the October Go security advisories.
+
 - **Optional isolated-write forks.** `coop fork <name> <target> --isolated` gives native Git its
   own metadata/objects and fences parent checkout/Git stores from box and service mounts.
   Review uses exact private committed custody; checks run on a separate clone. Publication

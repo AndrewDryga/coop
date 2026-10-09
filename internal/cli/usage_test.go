@@ -18,6 +18,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -34,7 +35,9 @@ func TestUsageSignalCancelsLookup(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("NO_COLOR", "1")
 		cfg := &config.Config{ConfigDir: t.TempDir()}
-		usageFixtureFile(t, filepath.Join(cfg.AgentProfileDir("claude", "work"), ".credentials.json"), fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"fixture","refreshToken":"fixture","expiresAt":%d,"scopes":["user:profile"]}}`, time.Now().Add(time.Hour).UnixMilli()))
+		files := nativeauth.Files(t, "claude", "work")
+		files[".credentials.json"] = []byte(strings.Replace(string(files[".credentials.json"]), "account:read", "user:profile", 1))
+		importNativeFixture(t, cfg, "claude", "work", files)
 		http.DefaultTransport = usageBlockingQuotaTransport{}
 		a := &app{cfg: cfg}
 		if code, err := a.cmdUsage([]string{"claude@work"}); code != 1 || err != nil {
@@ -121,9 +124,14 @@ func TestUsageDiscoversPrivateRootsAndKeepsAmbiguityUnknown(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	state := t.TempDir()
 	usageFixtureFile(t, filepath.Join(state, "acp", "session", "codex", "profiles", "retired", "sessions", "x.jsonl"), "fixture")
+	privateHome := filepath.Join(state, "acp", "session", "codex", "acp-homes", "repo-key", "home")
+	usageFixtureFile(t, filepath.Join(privateHome, "sessions", "new.jsonl"), "fixture")
 	rows, partial := a.usageCredentials([]string{"codex"}, state)
 	if partial || len(rows) != 2 || rows[0].account != "retired" || len(rows[0].paths) != 1 {
 		t.Fatalf("private discovery=%+v partial=%v", rows, partial)
+	}
+	if !rows[1].shared || !slices.Contains(rows[1].paths, privateHome) || slices.Contains(rows[0].paths, privateHome) {
+		t.Fatalf("account-independent private ACP history misattributed: %+v", rows)
 	}
 	e := agents.UsageEvent{ID: "same", Model: "gpt-6.1-sol", Time: time.Now(), Input: 100, Output: 10, WriteKnown: true, ContextKnown: true}
 	rows = []usageCredential{

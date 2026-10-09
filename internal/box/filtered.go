@@ -89,6 +89,7 @@ type filteredExecution struct {
 	// box runs them by ID, so these are the only names a later build can weigh (reclaim.go).
 	builtTags       []string
 	broker          *credentialBrokerRun
+	native          *nativeRun
 	mcpScrub        []string        // the configured MCP file's token variables, kept out of the box env
 	authMarkers     map[string]bool // frozen before admission; agent-writable profile state cannot widen env authority
 	authoritySpec   RunSpec         // final mount guard for project/fork hardlink anchors
@@ -260,6 +261,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		}
 	}
 	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, agentIdentity: boxAgentIdentity(), attempted: map[string]bool{}, taskVolume: spec.taskVolume, authMarkers: authMarkers, authoritySpec: spec, authorityConfig: cfg}
+	f.native = spec.native
 	if brokerPlan != nil {
 		f.broker = &credentialBrokerRun{plan: brokerPlan}
 	}
@@ -347,8 +349,11 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if smoke != nil && smoke.registered != nil {
 		smoke.registered(f.record)
 	}
+	if f.native != nil {
+		f.native.runID = f.record.ID
+	}
 	launch := networkgateway.LaunchConfig{Version: 1, RunID: f.record.ID, Epoch: f.record.Epoch, AgentUID: uint32(f.agentIdentity.uid), Policy: policy, Protected: protected,
-		Services: f.services, ServiceProxyClients: f.serviceProxyClients, Serve: servePorts, Ingress: ingress, Brokers: f.broker.gatewayRoutes()}
+		Services: f.services, ServiceProxyClients: f.serviceProxyClients, Serve: servePorts, Ingress: ingress, Brokers: f.broker.gatewayRoutes(), NativeOrigins: f.native.origins()}
 	if err := launch.Validate(); err != nil {
 		return f, err
 	}

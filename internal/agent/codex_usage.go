@@ -25,9 +25,9 @@ type TurnTokens struct {
 // TurnRecord is an adapter whose ACP client answers a prompt with the usage of the turn's last
 // model call, while the client's own session record holds every call of the turn.
 type TurnRecord interface {
-	// LastTurnTokens reads native session nativeID's record in the client's private home under
-	// privateRoot, for account: the usage of its last task, whole, and of that task's last call.
-	LastTurnTokens(privateRoot, account, nativeID string) (whole, last TurnTokens, ok bool)
+	// LastTurnTokens reads the selected complete native home, never an account's
+	// legacy profile: the usage of its last task and that task's last call.
+	LastTurnTokens(home, nativeID string) (whole, last TurnTokens, ok bool)
 }
 
 // codex-acp (1.10.0 and 2.0.0 alike) answers a prompt with the usage of the turn's last model call
@@ -37,8 +37,8 @@ type TurnRecord interface {
 // restarts with each process and carries across the tasks one process serves. The turn is the
 // rollout's last task: its last running total, less what the total already held before the task's
 // first call.
-func (codexAgent) LastTurnTokens(privateRoot, account, nativeID string) (TurnTokens, TurnTokens, bool) {
-	path := codexRollout(privateRoot, account, nativeID)
+func (codexAgent) LastTurnTokens(home, nativeID string) (TurnTokens, TurnTokens, bool) {
+	path := codexRollout(home, nativeID)
 	if path == "" {
 		return TurnTokens{}, TurnTokens{}, false
 	}
@@ -137,15 +137,22 @@ func codexRolloutEvent(line []byte) string {
 	return event.Payload.Type
 }
 
-// codexRollout is the newest rollout of one native session in a child's private Codex profile, or
+// codexRollout is the newest rollout of one native session in its complete home, or
 // "" when there is none.
-func codexRollout(privateRoot, account, nativeID string) string {
-	if privateRoot == "" || !codexPathComponent(account) || !codexPathComponent(nativeID) {
+func codexRollout(home, nativeID string) string {
+	if home == "" || !filepath.IsAbs(home) || !codexPathComponent(nativeID) {
 		return ""
 	}
-	profile := filepath.Join(privateRoot, (codexAgent{}).Name(), "profiles", account)
-	matches, err := filepath.Glob(filepath.Join(profile, "sessions", "*", "*", "*", "rollout-*-"+nativeID+".jsonl"))
-	if err != nil || len(matches) == 0 {
+	matches, err := filepath.Glob(filepath.Join(home, "sessions", "*", "*", "*", "rollout-*-"+nativeID+".jsonl"))
+	if err != nil {
+		return ""
+	}
+	archived, err := filepath.Glob(filepath.Join(home, "archived_sessions", "rollout-*-"+nativeID+".jsonl"))
+	if err != nil {
+		return ""
+	}
+	matches = append(matches, archived...)
+	if len(matches) == 0 {
 		return ""
 	}
 	sort.Strings(matches)

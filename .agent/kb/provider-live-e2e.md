@@ -3,7 +3,7 @@ name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
 sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/image.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/loop/live_stream_probe.go, internal/loop/provider_accounts_live_e2e_test.go, internal/loop/provider_accounts_live_credentials_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
-updated: 2026-10-01
+updated: 2026-10-09
 ---
 
 `make provider-live-e2e COOP_LIVE_TARGETS='...'` is the permissive prerequisite probe;
@@ -101,7 +101,12 @@ profile instead of shadowing it with the credential-independent ACP store.
 
 The parent reads resolved Coop config only to select credential inputs and the host-runtime
 capability. `internal/testutil/liveprovider` writes one selected account's adapter-declared auth
-artifacts into new `0600` single-link files. Claude retains only a scoped, unexpired inference
+artifacts into new `0600` single-link files. Canonical accounts take precedence over retired
+profiles, even when revoked or incomplete. A pinned read-only authority snapshot never creates
+source locks, recovers pending renewal, or refreshes credentials; both `authority.json` and
+`renewal.json` (including their absence) enter the source fingerprint. Adapter-owned access-only
+exports are imported into the isolated canonical authority, never a workload-mounted home.
+Refresh-only or expired snapshots fail readiness without copying renewal authority. Claude retains only a scoped, unexpired inference
 access token; Codex retains exactly one API-key or ChatGPT access-token branch and represents the
 required refresh field as an empty string. Grok retains an access key, expiry, and the current CLI's
 required auth-mode/OIDC/principal/user/team/create-time routing fields; it drops refresh authority
@@ -109,7 +114,8 @@ and user-facing profile metadata. A key/expiry-only Grok record parses but is tr
 Refresh authority never enters staging. Selected Coop-owned host-vault keys are copied into the
 isolated host vault (never the mounted profile) and included in readiness and source fingerprints;
 an explicit default env key wins without reading an unused vault. Gemini's host-bound keychain is fingerprinted but not
-copied, and its settings projection contains only `security.auth.selectedType`. A Gemini API-key
+copied; canonical Gemini OAuth instead exports its plain access token and expiry without refresh
+authority. Its settings projection contains only `security.auth.selectedType`. A Gemini API-key
 selection grants only `GEMINI_API_KEY`; Vertex express mode grants only `GOOGLE_API_KEY`. The helper
 rejects unsafe modes, symlinks, hardlinks, special/oversized/replaced files, bare env imports, and
 partial destinations.
@@ -124,7 +130,7 @@ live suite copies the marked default for bare targets and every account explicit
 target or preset ladder.
 
 The provider command is the adapter's real `Headless` form inside `box.Run`: batch, open egress
-for native sign-ins or filtered for brokered API keys,
+with the selected open/filtered egress policy and host-only brokered credentials,
 isolated homes, no ambient MCP/instructions/services/cache, and the generated repo mounted
 read-only except for the loop task fixture and its run-private task MCP channel. A
 version probe makes no model request. The marker prompt makes exactly one. The parent accepts one
@@ -177,7 +183,7 @@ no provider switch.
 A source fingerprint proves local immutability and includes device/inode identity. File credentials
 carry no refresh authority. Before the prompt, the adapter must prove the projected access token
 outlives the run; otherwise standard mode reports `credential_refresh_required` with
-`attempted=false`, and strict mode fails. Gemini OAuth instead reports
+`attempted=false`, and strict mode fails. Legacy keychain-backed Gemini OAuth instead reports
 `credential_not_portable`; re-login cannot change its host-bound encryption, so live tests require
 the selected host-vault or env-backed API-key mode. The no-quota version probe still runs for these preflight
 skips.
@@ -191,6 +197,8 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-10-09 — canonical accounts use read-only, nonrenewable snapshots with authority/renewal
+  source witnesses; all-provider access-only and pending/missing/unsafe/revoked denial tests pass.
 - 2026-10-01 — real Codex recovery passed all code/queue/history checks but failed an
   unstated whole-message equality requirement. Verify the requested subject and unique task
   binding instead, using the production trailer reader. Descriptive-body/coauthor control

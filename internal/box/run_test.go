@@ -1007,6 +1007,8 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		ConfigDir: t.TempDir(), // empty: no env/instructions/mcp
 		Egress:    "open",      // the production default (config.Load); else the box fails closed to --network none
 	}
+	home := filepath.Join(cfg.ConfigDir, "claude", "native-homes", "default", "repo", "home")
+	cfg = cfg.WithNativeHomes(map[string]string{"claude": home})
 	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Agent: "claude", Homes: true}
 	mounts := []Mount{{Kind: Bind, Source: "/repo", Target: "/workspace"}}
 	t.Setenv("TZ", "America/Merida") // pin hostTimezone so the exact-args check is machine-independent
@@ -1017,7 +1019,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		"run", "--rm", "--init",
 		"-e", "TZ=America/Merida",
 		"-v", "/repo:/workspace",
-		"-v", cfg.AgentDir("claude") + ":/home/node/.claude", // active-profile dir (profiles/default)
+		"--mount", networkMount("bind", home, "/home/node/.claude", false),
 		"-e", "COOP_PRIMARY=claude",
 		"-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
 		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
@@ -1179,13 +1181,7 @@ func TestRunProjectsSharedMCPForNestedClaudeCommandsOnly(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, "env"), []byte("COOP_CLAUDE_MCP_CONFIG=/tmp/untrusted\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	claudeProfile := filepath.Join(configDir, "claude", "profiles", "default")
-	if err := os.MkdirAll(claudeProfile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(claudeProfile, ".credentials.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seedCanonicalFixture(t, &config.Config{ConfigDir: configDir}, "claude", "default")
 	newConfig := func() *config.Config {
 		return &config.Config{
 			ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile,
@@ -1327,9 +1323,10 @@ func TestRunRejectsAlternateNativeMCPBeforeHomeMutation(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+			repo := t.TempDir()
 			paths := map[string]string{}
 			for agent, body := range tc.configs {
-				path := filepath.Join(cfg.AgentDir(agent), "config.toml")
+				path := filepath.Join(scopedFixtureHome(t, cfg, agent, repo, false), "config.toml")
 				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 					t.Fatal(err)
 				}
@@ -1339,7 +1336,7 @@ func TestRunRejectsAlternateNativeMCPBeforeHomeMutation(t *testing.T) {
 				paths[agent] = path
 			}
 			recorder := filepath.Join(t.TempDir(), "runtime-args")
-			spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: tc.agent, AgentCommand: true, Homes: true, Batch: true, Quiet: true, Peers: tc.peers}
+			spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"true"}, Agent: tc.agent, AgentCommand: true, Homes: true, Batch: true, Quiet: true, Peers: tc.peers}
 			code, err := Run(cfg, recorderRuntime(t, recorder), spec)
 			if code != -1 || err == nil || !strings.Contains(err.Error(), "assemble MCP config for "+tc.wantAgent) || !strings.Contains(err.Error(), "cannot safely remove") {
 				t.Fatalf("Run = (%d, %v), want %s native MCP refusal", code, err, tc.wantAgent)
@@ -1428,13 +1425,18 @@ func TestRunRejectsUnsafeGeminiSettingsWithoutSharedMCP(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
-			settings := filepath.Join(cfg.AgentDir("gemini"), "settings.json")
+			repo := t.TempDir()
+			home := scopedFixtureHome(t, cfg, "gemini", repo, false)
+			settings := filepath.Join(home, "settings.json")
+			if err := os.Remove(settings); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
 			if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			verify := tc.make(t, settings)
 			recorder := filepath.Join(t.TempDir(), "runtime-args")
-			spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"gemini"}, Agent: "gemini", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+			spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"gemini"}, Agent: "gemini", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
 			code, err := Run(cfg, recorderRuntime(t, recorder), spec)
 			if code != -1 || err == nil || !strings.Contains(err.Error(), "assemble MCP config for gemini") || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Run = (%d, %v), want unsafe Gemini settings refusal containing %q", code, err, tc.want)
@@ -1488,13 +1490,17 @@ func TestRunKeepsInactiveMCPSeparateFromCodexDefaultsValidation(t *testing.T) {
 					}
 				}
 				cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
-				nativePath := filepath.Join(cfg.AgentDir("codex"), "config.toml")
+				repo := t.TempDir()
+				nativePath := filepath.Join(scopedFixtureHome(t, cfg, "codex", repo, false), "config.toml")
+				if err := os.Remove(nativePath); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
 				if err := os.MkdirAll(filepath.Dir(nativePath), 0o700); err != nil {
 					t.Fatal(err)
 				}
 				native.make(t, nativePath)
 				recorder := filepath.Join(t.TempDir(), "runtime-args")
-				spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: "codex", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+				spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"true"}, Agent: "codex", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
 				code, runErr := Run(cfg, recorderRuntime(t, recorder), spec)
 				if native.wantErr != "" {
 					if code != -1 || runErr == nil || !strings.Contains(runErr.Error(), "assemble MCP config for codex") || !strings.Contains(runErr.Error(), native.wantErr) {
@@ -1712,10 +1718,10 @@ func TestRunRejectsConfiguredMCPSourceInsideBroadMount(t *testing.T) {
 		},
 		{
 			name: "credential home",
-			kind: "mounted claude credential home",
+			kind: "mounted claude repository native home",
 			body: active,
-			set: func(t *testing.T, cfg *config.Config, _ *RunSpec) string {
-				path := filepath.Join(cfg.AgentDir("claude"), "shared-mcp.json")
+			set: func(t *testing.T, cfg *config.Config, spec *RunSpec) string {
+				path := filepath.Join(scopedFixtureHome(t, cfg, "claude", spec.Repo, false), "shared-mcp.json")
 				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 					t.Fatal(err)
 				}
@@ -1734,11 +1740,11 @@ func TestRunRejectsConfiguredMCPSourceInsideBroadMount(t *testing.T) {
 		},
 		{
 			name: "ACP session store",
-			kind: "mounted claude ACP session store",
+			kind: "mounted claude repository native home",
 			body: active,
 			set: func(t *testing.T, cfg *config.Config, spec *RunSpec) string {
 				spec.ShareACPSessions = true
-				path := filepath.Join(acpSharedDir(cfg, "claude"), "projects", "shared-mcp.json")
+				path := filepath.Join(scopedFixtureHome(t, cfg, "claude", spec.Repo, true), "projects", "shared-mcp.json")
 				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 					t.Fatal(err)
 				}
@@ -2507,7 +2513,7 @@ func TestRunRefusesUnsafeCredentialProfileBeforeRuntime(t *testing.T) {
 		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
 		Homes: true, Agent: "codex", Batch: true, Quiet: true,
 	})
-	if code != -1 || err == nil || !strings.Contains(err.Error(), "codex credential") {
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "not a real directory") {
 		t.Fatalf("Run = (%d, %v), want unsafe-credential refusal", code, err)
 	}
 	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
@@ -2680,19 +2686,14 @@ func TestRunGivesClaudeAPrivateCacheLogDir(t *testing.T) {
 func TestRunPresetRoleMountsConsultWrapperAndRoleEnv(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node", Egress: "none"}
-	codexDir := cfg.AgentProfileDir("codex", "default")
-	if err := os.MkdirAll(codexDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"r"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seedCanonicalFixture(t, cfg, "codex", "default")
+	repo := t.TempDir()
 	p := &preset.Preset{Name: "council", LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []preset.Role{
 		{Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "codex", Model: "gpt-role"}}},
 	}}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
-		Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: "claude", Homes: true, Batch: true, Quiet: true,
+		Image: "i", Repo: repo, Cmd: []string{"true"}, Agent: "claude", Homes: true, Batch: true, Quiet: true,
 		ConsultLead: "claude", Preset: p,
 	})
 	if err != nil || code != 0 {
@@ -2705,7 +2706,7 @@ func TestRunPresetRoleMountsConsultWrapperAndRoleEnv(t *testing.T) {
 	for _, want := range []string{
 		":" + consult.ConsultWrapperPath + ":ro",
 		"COOP_CONSULT_CRITIC_TARGETS=codex:gpt-role",
-		cfg.AgentDir("codex") + ":/home/node/.codex",
+		"target=/home/node/.codex",
 	} {
 		if !strings.Contains(string(args), want) {
 			t.Errorf("preset role runtime args missing %q:\n%s", want, args)
@@ -2860,8 +2861,7 @@ func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
 		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
 		writeCopyFixture(t, filepath.Join(spec.Repo, ".agent", "skills", "SKILL.md"), "inside")
 		outside := t.TempDir()
-		claude, _ := agents.Get("claude")
-		link := filepath.Join(acpSharedDir(cfg, "claude"), claude.ACPSessionDirs()[0])
+		link := filepath.Join(acpSharedDir(cfg, "claude"), "projects")
 		if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -2878,7 +2878,7 @@ func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		assertStopped(t, cfg, spec, artifacts, recorder, rt, "read claude instructions", false)
+		assertStopped(t, cfg, spec, artifacts, recorder, rt, "CLAUDE.md is not a regular file", false)
 	})
 
 	t.Run("shared instruction read", func(t *testing.T) {
@@ -3061,7 +3061,7 @@ func TestRunActiveMCPArtifactFailuresStopBeforeProvider(t *testing.T) {
 			return path, err
 		}
 		spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"gemini"}, Agent: "gemini", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
-		assertStopped(t, cfg, spec, artifacts, "assemble MCP config for gemini", false, &created)
+		assertStopped(t, cfg, spec, artifacts, "host native defaults are malformed", false, &created)
 	})
 
 	t.Run("generated config write", func(t *testing.T) {
@@ -3399,32 +3399,21 @@ func TestAssembleArgsRunLabel(t *testing.T) {
 	}
 }
 
-func TestAssembleArgsSharesSessionsOnlyForACP(t *testing.T) {
-	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
-	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
-	args := func(supervisor string, share bool) []string {
-		return assembleArgs(cfg, true, RunSpec{
-			Image: "i", Repo: "/r", Agent: "gemini", Homes: true,
-			SupervisorID: supervisor, ShareACPSessions: share,
-		}, mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
-	}
-	shared := acpSharedDir(cfg, "gemini") + "/tmp:/home/node/.gemini/tmp"
-	for _, tc := range []struct {
-		name       string
-		supervisor string
-		share      bool
-		want       bool
-	}{
-		{name: "plain", want: false},
-		{name: "supervised non-ACP", supervisor: "abc123", want: false},
-		{name: "unsupervised ACP", share: true, want: true},
-		{name: "supervised ACP", supervisor: "abc123", share: true, want: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := containsSeq(args(tc.supervisor, tc.share), []string{"-v", shared}); got != tc.want {
-				t.Fatalf("shared session mount present = %v, want %v", got, tc.want)
+func TestAssembleArgsUsesCompleteNativeHomeForACP(t *testing.T) {
+	for _, acp := range []bool{false, true} {
+		for _, supervisor := range []string{"", "abc123"} {
+			cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+			repo := t.TempDir()
+			home := scopedFixtureHome(t, cfg, "gemini", repo, acp)
+			cfg = cfg.WithNativeHomes(map[string]string{"gemini": home})
+			args := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: repo, Agent: "gemini", Homes: true, SupervisorID: supervisor, ShareACPSessions: acp}, nil, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
+			if !containsSeq(args, []string{"--mount", networkMount("bind", home, "/home/node/.gemini", false)}) {
+				t.Fatal("complete home not mounted", args)
 			}
-		})
+			if strings.Contains(strings.Join(args, " "), "/acp-sessions/") || strings.Contains(strings.Join(args, " "), "/profiles/") {
+				t.Fatal("legacy overlay mounted", args)
+			}
+		}
 	}
 }
 
@@ -3450,10 +3439,18 @@ func TestRunPreparesSharedSessionsOnlyWhenRequested(t *testing.T) {
 			if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
 				t.Fatalf("Run = %d, %v; want 0, nil", code, err)
 			}
-			shared := filepath.Join(acpSharedDir(cfg, "gemini"), "tmp")
-			if got := dirExists(shared); got != tc.share {
-				t.Fatalf("shared session directory exists = %v, want %v", got, tc.share)
+			home, err := NativeHomePath(cfg, "gemini", "default", spec.Repo, tc.share)
+			if err != nil || !dirExists(home) {
+				t.Fatal("selected complete home missing", err)
 			}
+			other, err := NativeHomePath(cfg, "gemini", "default", spec.Repo, !tc.share)
+			if err != nil || dirExists(other) {
+				t.Fatal("unselected history scope created", err)
+			}
+			if dirExists(acpSharedDir(cfg, "gemini")) {
+				t.Fatal("retired global ACP store created")
+			}
+
 		})
 	}
 }

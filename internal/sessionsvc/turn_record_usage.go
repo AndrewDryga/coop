@@ -30,8 +30,8 @@ func turnRecordOf(provider string) (agents.TurnRecord, bool) {
 	return record, ok
 }
 
-func wholeTurnUsage(ctx context.Context, record agents.TurnRecord, privateRoot, account, nativeID string, reported session.Usage) session.Usage {
-	if record == nil || privateRoot == "" || !reported.Recorded() {
+func wholeTurnUsage(ctx context.Context, record agents.TurnRecord, home, nativeID string, reported session.Usage) session.Usage {
+	if record == nil || home == "" || !reported.Recorded() {
 		return reported
 	}
 	for attempt := 0; attempt < turnRecordAttempts; attempt++ {
@@ -42,7 +42,7 @@ func wholeTurnUsage(ctx context.Context, record agents.TurnRecord, privateRoot, 
 			case <-time.After(turnRecordWait):
 			}
 		}
-		whole, last, ok := record.LastTurnTokens(privateRoot, account, nativeID)
+		whole, last, ok := record.LastTurnTokens(home, nativeID)
 		if ok && sameTurnCall(last, reported) {
 			usage := turnTokensUsage(whole)
 			usage.CostUSD, usage.CostRecorded = reported.CostUSD, reported.CostRecorded

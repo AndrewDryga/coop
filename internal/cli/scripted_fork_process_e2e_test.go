@@ -19,9 +19,12 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/loop"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -106,7 +109,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			// Wrong-cwd/same-id history alone must not resume. Providers with explicit IDs also
 			// reject a correct-cwd/different-id history before the exact match is installed.
 			wrongCwd := filepath.Join(filepath.Dir(ws), "wrong-cwd")
-			writeForkProviderSession(t, suite, provider, account, wrongCwd, id, "cli", time.Now())
+			writeForkProviderSessionAt(t, suite, provider, account, ws, wrongCwd, id, "cli", time.Now())
 			if provider != "codex" {
 				writeForkProviderSession(t, suite, provider, account, ws, "99999999-2222-4333-8444-000000000009", "cli", time.Now())
 			}
@@ -228,7 +231,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		model, effort := "fork-model-codex", "high"
 		target := forkProcessTarget(provider, model, effort, account)
 		oldID := "11111111-2222-4333-8444-000000000000"
-		writeForkProviderSession(t, &override, provider, account, "/workspace/fork", oldID, "cli", time.Now().Add(-time.Hour))
+		writeForkProviderSessionAt(t, &override, provider, account, suite.layout.Repo, "/workspace/fork", oldID, "cli", time.Now().Add(-time.Hour))
 		noSessionName := "workdir-no-session"
 		result, trace := runForkProcess(t, &override, []string{noSessionName, target}, provider)
 		assertForkProcessSuccess(t, result, provider)
@@ -288,7 +291,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		}
 	})
 
-	t.Run("overlapping codex discovery is serialized", func(t *testing.T) {
+	t.Run("codex discovery serializes one home not unrelated repositories", func(t *testing.T) {
 		resetForkProcessRepo(t, suite)
 		override := *suite
 		override.env = replaceProcessEnv(suite.env, "COOP_WORKDIR", "/workspace/fork")
@@ -306,9 +309,18 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		}
 		defer first.Cleanup()
 		firstReady := awaitProcessEvent(t, override.layout.Trace, "provider", "ready", 5*time.Second)
+		sameCtx, sameCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		same := procharness.Run(sameCtx, procharness.Command{
+			Path: override.coopBin, Args: []string{"fork", "overlap-same", target},
+			Dir: override.layout.Repo, Env: override.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+		})
+		sameCancel()
+		if same.Err != nil || same.ExitCode != 1 || !strings.Contains(same.Stderr, "another interactive codex session is active") {
+			t.Fatalf("same-home contender = exit %d err %v\nstderr:\n%s", same.ExitCode, same.Err, same.Stderr)
+		}
 
 		// Put the contender in another parent repository while keeping ConfigDir/account/cwd shared.
-		// The lock authority must follow the native history, not either repository's fork state.
+		// Complete native homes keep these repositories independent despite identical container cwd.
 		secondRepo := filepath.Join(override.layout.Root, "repo-overlap-b")
 		if err := os.MkdirAll(secondRepo, 0o700); err != nil {
 			t.Fatal(err)
@@ -319,8 +331,8 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		}
 		initProcessRepo(t, gitBin, secondRepo, override.env)
 
-		// Give the contender its own immutable scenario. Without config-global serialization it
-		// would create this session while A was still running, and A could wrongly claim it.
+		// Give the contender its own immutable scenario. Its native session must never be
+		// discovered in A's separate home even while both run concurrently.
 		secondID := "11111111-2222-4333-8444-000000000010"
 		secondScenario := processScenario(provider, nil, 0, "")
 		secondScenario["native_session"] = map[string]string{"account": account, "cwd": "/workspace/fork", "id": secondID}
@@ -340,28 +352,41 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			Dir: secondRepo, Env: secondEnv, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
 		})
 		contenderCancel()
-		if contended.Err != nil || contended.ExitCode != 1 || !strings.Contains(contended.Stderr, "another interactive codex session is active") {
+		if contended.Err != nil || contended.ExitCode != 0 {
 			t.Fatalf("cross-repo contender = exit %d err %v\nstderr:\n%s", contended.ExitCode, contended.Err, contended.Stderr)
 		}
-		// Ordinary interactive Coop launches participate too; otherwise a direct Codex session can
-		// become the fork's sole post-run ID even when every fork command uses the global lock.
+		// Ordinary and consult launches in B retain the same independent home selection.
 		directCtx, directCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		direct := procharness.Run(directCtx, procharness.Command{
 			Path: override.coopBin, Args: []string{target}, Dir: secondRepo, Env: secondEnv,
 			MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
 		})
 		directCancel()
-		if direct.Err != nil || direct.ExitCode != 1 || !strings.Contains(direct.Stderr, "another interactive codex session is active") {
+		if direct.Err != nil || direct.ExitCode != 0 {
 			t.Fatalf("direct contender = exit %d err %v\nstderr:\n%s", direct.ExitCode, direct.Err, direct.Stderr)
 		}
 		consultEnv := replaceProcessEnv(secondEnv, "COOP_HOMES", "1")
+		peerTarget := providerPairTarget("claude")
+		question := "independent repository question"
+		consultScenario := consultProcessScenario(provider, suite.providers,
+			[]consultCallSpec{{Target: "claude", Mode: "fresh", Prompt: question, ExitCode: 0}},
+			[]consultStepSpec{consultPairStep(peerTarget, "fresh", "usable", question, "independent reply")})
+		consultData, err := json.Marshal(consultScenario)
+		if err != nil {
+			t.Fatal(err)
+		}
+		consultPath := filepath.Join(override.layout.Plans, "fork-overlap-consult.json")
+		if err := os.WriteFile(consultPath, consultData, 0600); err != nil {
+			t.Fatal(err)
+		}
+		consultEnv = replaceProcessEnv(consultEnv, "COOP_PROVIDER_FIXTURE_SCENARIO", consultPath)
 		consultCtx, consultCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		consult := procharness.Run(consultCtx, procharness.Command{
-			Path: override.coopBin, Args: []string{target, "--peer", "claude"},
+			Path: override.coopBin, Args: []string{target, "--peer", peerTarget.String()},
 			Dir: secondRepo, Env: consultEnv, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
 		})
 		consultCancel()
-		if consult.Err != nil || consult.ExitCode != 1 || !strings.Contains(consult.Stderr, "another interactive codex session is active") {
+		if consult.Err != nil || consult.ExitCode != 0 {
 			t.Fatalf("consult contender = exit %d err %v\nstderr:\n%s", consult.ExitCode, consult.Err, consult.Stderr)
 		}
 
@@ -385,14 +410,17 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		if execResult.Err != nil || execResult.ExitCode != 0 {
 			t.Fatalf("concurrent Codex exec = exit %d err %v\nstderr:\n%s", execResult.ExitCode, execResult.Err, execResult.Stderr)
 		}
-		starts := 0
+		starts, peers := 0, 0
 		for _, event := range readProcessTrace(t, override.layout.Trace) {
 			if event.Source == "provider" && event.Event == "start" {
 				starts++
 			}
+			if event.Source == "peer" && event.Event == "start" {
+				peers++
+			}
 		}
-		if starts != 2 {
-			t.Fatalf("session contenders reached provider before owner released lock: %d starts", starts)
+		if starts != 4 || peers != 1 {
+			t.Fatalf("independent repository runs did not reach providers: %d starts/%d peers, want 4/1", starts, peers)
 		}
 
 		// Signal the waiting provider directly so teardown proceeds child-to-parent. Group-wide
@@ -431,12 +459,12 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			}
 			if event.PID == firstReady.PID && event.Event == "exit" {
 				firstExit = event.Sequence
-			} else if event.PID != firstReady.PID && event.Event == "start" {
+			} else if event.PID != firstReady.PID && event.Event == "start" && secondStart == 0 {
 				secondStart = event.Sequence
 			}
 		}
-		if firstExit == 0 || secondStart <= firstExit {
-			t.Fatalf("provider ordering did not prove serialization: first exit %d, second start %d", firstExit, secondStart)
+		if firstExit == 0 || secondStart == 0 || secondStart >= firstExit {
+			t.Fatalf("provider ordering did not prove repository independence: first exit %d, second start %d", firstExit, secondStart)
 		}
 	})
 }
@@ -729,7 +757,15 @@ func forkResumeArgv(provider, model, effort, id string) []string {
 
 func writeForkProviderSession(t *testing.T, suite *directProcessSuite, provider, account, ws, id, source string, modTime time.Time) {
 	t.Helper()
-	profile := filepath.Join(suite.layout.Config, provider, "profiles", account)
+	writeForkProviderSessionAt(t, suite, provider, account, ws, ws, id, source, modTime)
+}
+
+func writeForkProviderSessionAt(t *testing.T, suite *directProcessSuite, provider, account, repo, ws, id, source string, modTime time.Time) {
+	t.Helper()
+	profile, err := box.PrepareNativeHome(t.Context(), &config.Config{ConfigDir: suite.layout.Config}, runtime.Runtime{}, provider, account, repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var path, body, markerPath string
 	switch provider {
 	case "claude":

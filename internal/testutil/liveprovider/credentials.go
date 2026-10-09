@@ -4,6 +4,7 @@ package liveprovider
 
 import (
 	"bufio"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -44,6 +45,7 @@ type Prepared struct {
 	envBacked    map[string]bool
 	hostBacked   map[string]bool
 	profileDirs  map[string]string
+	native       map[string]box.NativeAccessSnapshot
 	key          [32]byte
 	inputs       []sourceInput
 	baseline     [][32]byte
@@ -94,11 +96,8 @@ func SelectionForTarget(cfg *config.Config, target agents.Target) (Selection, er
 	}, nil
 }
 
-// BrokersKey reports whether a selection's credential is an API key Coop serves through the
-// filtered gateway's broker rather than a sign-in it mounts. That is the ONLY way Coop runs an API
-// key, so a live suite launches such a target — and every launch whose scope includes one —
-// behind this host's filtered gateway; a signed-in account keeps the open path the suite was
-// written for. Asked of the real host configuration, before the credential is projected.
+// BrokersKey reports host brokering, including canonical subscription credentials. Live suites
+// use it to select their filtered gateway setup, not to infer an account's authentication family.
 func BrokersKey(cfg *config.Config, selection Selection) (bool, error) {
 	return box.AccountBrokersKey(cfg, selection.Provider, selection.Account)
 }
@@ -183,6 +182,7 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 	p := &Prepared{
 		ConfigDir: destination, accounts: defaults, configured: map[string]bool{},
 		envBacked: map[string]bool{}, hostBacked: map[string]bool{}, profileDirs: map[string]string{},
+		native: map[string]box.NativeAccessSnapshot{},
 	}
 	if _, err := rand.Read(p.key[:]); err != nil {
 		return nil, errors.New("create source-integrity key")
@@ -236,6 +236,23 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 			return nil, errors.New("create isolated credential account directory")
 		}
 		key := selectionKey(selection.Provider, selection.Account)
+		snapshot, canonical, err := box.SnapshotNativeAccess(context.Background(), &config.Config{ConfigDir: sourceDir}, selection.Provider, selection.Account)
+		if err != nil {
+			return nil, credentialError(selection.Provider, 0, "canonical access projection failed")
+		}
+		if canonical {
+			if snapshot.Ready {
+				if err := importNativeSnapshot(stage, selection, snapshot); err != nil {
+					return nil, credentialError(selection.Provider, 0, "canonical access projection failed")
+				}
+			}
+			if snapshot.APIKey && selection.SourceDefault {
+				allowedEnvKeys[selection.Provider] = ag.CredentialEnvKeys()
+			}
+			snapshot.Files = nil // Retain only readiness, never a second in-memory grant inventory.
+			p.native[key] = snapshot
+			continue
+		}
 		for ordinal, artifact := range live.Artifacts {
 			sourcePath := filepath.Join(sourceDir, selection.Provider, "profiles", selection.Account, artifact.Name)
 			state, err := readSource(sourceDir, sourcePath, selection.Provider, ordinal, nil)
@@ -285,6 +302,9 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 		key := selectionKey(selection.Provider, selection.Account)
 		envBacked := selection.SourceDefault && envProviders[selection.Provider]
 		p.configured[key] = markerBacked[key] || envBacked || p.hostBacked[key]
+		if snapshot, canonical := p.native[key]; canonical {
+			p.configured[key] = snapshot.Configured
+		}
 		p.envBacked[key] = envBacked
 	}
 	if len(envLines) > 0 {
@@ -313,6 +333,20 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 	}
 	keep = true
 	return p, nil
+}
+
+func importNativeSnapshot(stage string, selection Selection, snapshot box.NativeAccessSnapshot) error {
+	home, err := os.MkdirTemp(stage, ".access-only-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(home)
+	for name, data := range snapshot.Files {
+		if err := writePrivate(filepath.Join(home, name), data); err != nil {
+			return err
+		}
+	}
+	return box.ImportNativeSignIn(context.Background(), &config.Config{ConfigDir: stage}, selection.Provider, selection.Account, home)
 }
 
 // RevocationPath is the private, parent-known tombstone shared with the tagged timeout path.
@@ -420,6 +454,18 @@ func sourceInputs(sourceDir string, selections []Selection) ([]sourceInput, erro
 		ag, live, err := liveCredentialsFor(selection.Provider)
 		if err != nil {
 			return nil, err
+		}
+		// Even absence is witnessed: publication or renewal intent cannot appear
+		// between inventory and copying without invalidating the baseline.
+		canonical := filepath.Join(sourceDir, selection.Provider, "credentials", selection.Account)
+		for i, name := range []string{"authority.json", "renewal.json"} {
+			inputs = append(inputs, sourceInput{provider: selection.Provider, ordinal: len(live.Artifacts) + 1 + i, root: sourceDir, path: filepath.Join(canonical, name)})
+		}
+		envNeeded = envNeeded || selection.SourceDefault
+		if _, err := os.Lstat(canonical); err == nil {
+			continue // Canonical authority permanently supersedes legacy files.
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, credentialError(selection.Provider, 0, "canonical source cannot be inspected")
 		}
 		for ordinal, artifact := range live.Artifacts {
 			inputs = append(inputs, sourceInput{
@@ -579,6 +625,12 @@ func (p *Prepared) PreflightReason(provider, account string, deadline time.Time)
 	}
 	if p.envBacked[key] || p.hostBacked[key] {
 		return ""
+	}
+	if snapshot, canonical := p.native[key]; canonical {
+		if snapshot.Ready && (snapshot.APIKey || snapshot.ExpiresAt.After(deadline)) {
+			return ""
+		}
+		return ReasonCredentialRefresh
 	}
 	_, live, err := liveCredentialsFor(provider)
 	if err != nil {

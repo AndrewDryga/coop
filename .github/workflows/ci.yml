@@ -28,7 +28,7 @@ jobs:
         # laptop cannot analyze with different rule or vulnerability sets. The other required
         # tools, shellcheck and python3, are preinstalled on the runner image.
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@"$(make -s staticcheck-version)"
+          make install-staticcheck
           go install golang.org/x/vuln/cmd/govulncheck@"$(make -s govulncheck-version)"
       - name: install Git LFS for source and workspace integration tests
         run: sudo apt-get update && sudo apt-get install -y git-lfs

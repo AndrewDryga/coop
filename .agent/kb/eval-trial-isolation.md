@@ -3,7 +3,7 @@ name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
 sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_runtime_profile.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/compare.go, internal/eval/execute.go, internal/eval/fixtures.go, internal/eval/suite.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/runtime_profile.go, internal/eval/stage_profile.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go, examples/evals/maintenance/suite.yaml, examples/evals/maintenance/qualification.sh, examples/evals/maintenance/runtime-qualification.sh]
-updated: 2026-10-01
+updated: 2026-10-09
 ---
 
 `coop eval` measures configurations against each other, so its whole value rests on two trials
@@ -76,26 +76,18 @@ the map, and the reasoning behind the one place the obvious fix is wrong.
   a canceled loop gets cleanup time after TERM, but a surviving descendant cannot keep its output
   pipe and trial slot open indefinitely. The final group KILL occurs before releasing that ID.
 
-## The credential home is SHARED, and must stay that way
+## One host credential authority; separate trial homes
 
-Every trial mounts the same host credential directory read-write
-(`~/.config/coop/agents/<agent>/profiles/<name>`). The obvious hardening — give each trial its own
-copy — is WRONG and must not be implemented: these providers issue single-use refresh tokens, so N
-copies of a credential store means the first refresh invalidates the rest. This is the same lesson
-that produced the container-local `CODEX_SQLITE_HOME` instead of a split home.
+Each trial workspace selects a distinct complete repository native home. Settings and history from
+one candidate cannot contaminate another. Shared instructions remain read-only; native settings
+need not be file-bind overlays because they are trial-local. Codex SQLite stays container-local,
+and eval disables shared dependency caches for both candidate and grader.
 
-The contamination that WOULD matter is already prevented by other means:
-
-- the agent's instruction file (`CLAUDE.md`, `AGENTS.md`) is mounted `:ro` over the home
-  (`appendROMounts(args, instructionMounts)`, `internal/box/run.go`), so a trial cannot write what
-  the next trial is told — pinned by `TestTrialAttemptCannotRewriteTheNextTrialsInstructions`;
-- the agent's config (`config.toml`, `settings.json`) is a `:ro` MCP mount;
-- codex's session state is container-local via `CODEX_SQLITE_HOME`;
-- no shared cache volume: eval sets `Cache:false` on both the attempt and the grader.
-
-What remains shared is the credential material itself plus whatever new files a candidate chooses to
-write into that directory. Before "fixing" that, read this section again: the fix that looks right
-breaks authentication for every provider at once.
+The selected account has one host-only canonical authority. Never copy refresh grants per trial:
+rotating one copy could invalidate every other copy. Each run gets a broker entrance and public
+native selectors while host renewal updates the one authority. The grader has neither home nor
+broker. `TestTrialAttemptCannotRewriteTheNextTrialsInstructions` runs two hermetic trials and checks
+distinct homes plus no prior-trial state in the second; the canary test checks actual launch mounts.
 
 ## Distinguishing no work from an unsuccessful attempt
 
@@ -168,6 +160,8 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-10-09 — replaced the old shared writable credential-home map with complete trial-local homes
+  and one canonical host authority; inspected actual candidate/grader launch paths and fixtures.
 - 2026-10-01 — actual query-optimize preparation exposed the pinned YAML block emitter's
   invalid indentation and leading-newline loss. A field-level flow tag avoids the block
   path; Load→StageSuite→Load regression checks exact indented multiline instruction bytes.

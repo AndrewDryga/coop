@@ -5,9 +5,9 @@ destinations you approved and nothing else. This page is the support matrix: wha
 enforces today, what it refuses and why, what it measures, and how you ask for more.
 
 Filtering works on the network itself, not through a proxy setting. Every tool in the box hits the
-same packet boundary: the provider CLI, `curl`, an SDK, a subprocess. There is no `HTTPS_PROXY` to
-set or forget. The [credential broker](#api-keys-stay-outside-the-box) for provider API keys runs
-behind that boundary. It doesn't replace it.
+same packet boundary: the provider CLI, `curl`, an SDK, a subprocess. Proxy settings alone cannot
+bypass it. The [credential broker](#provider-credentials-stay-outside-the-box) for API-key and
+subscription accounts runs behind that boundary; it does not replace the packet filter.
 
 `coop net` says what a new run in this project can reach, and why. `coop net runs` lists what
 recorded runs did. `coop net --help` lists the verbs.
@@ -95,11 +95,11 @@ Each agent brings the provider access its client needs to work, and nothing it m
 | --- | --- |
 | `coop claude` | `api.anthropic.com`, `platform.claude.com` (the OAuth refresh) and `mcp-proxy.anthropic.com` (the claude.ai connectors a login has on by default) |
 | `coop codex` | `chatgpt.com` and `auth.openai.com` |
-| `coop gemini` | `generativelanguage.googleapis.com`, with a portable AI Studio API key |
+| `coop gemini` | adapter-declared Google model and Code Assist routes for the selected credential family |
 | `coop grok` | `cli-chat-proxy.grok.com`, `code.grok.com` and `auth.x.ai` (the OAuth refresh) |
 
-Gemini OAuth and Vertex AI credentials aren't supported in filtered mode, and they're refused before
-launch.
+Portable Gemini OAuth and AI Studio keys use their adapter's broker routes. Vertex credentials
+remain unsupported and are refused before launch.
 
 A client's own release feed, package registry, update check and telemetry
 (`raw.githubusercontent.com`, `registry.npmjs.org`, `api.github.com`, the Datadog intakes) are left
@@ -119,53 +119,40 @@ So a session that only answers a prompt records no refusals. If an agent or your
 reaches for one of those hosts on purpose, that refusal is recorded, shown and approvable like any
 other, and nothing is filtered out of the report.
 
-## API keys stay outside the box
+## Provider credentials stay outside the box
 
-Every provider account a run selects that holds a supported API key becomes one route of the run's
-broker. That includes the lead's account, a peer's and a preset role's. co:op replaces each key with
-a random credential that's valid only for this gateway generation and that route. It points every
-process of that provider in the box at the route's own loopback listener: the lead, the consult and
-delegate helpers, and the editor adapter.
+API-key and native OAuth/subscription accounts use the same run-local provider broker in open and
+filtered Docker runs. Only selected providers and accounts are admitted. Host sign-in, renewal and
+removal share one canonical credential authority; repository homes never hold reusable grants.
+The host refreshes credentials during a long run without restarting the client. Removing or
+replacing an account invalidates the old run's authority.
 
-The capless guard injects the real key only for that provider's qualified API route. The agent's
-policy itself doesn't grant the API domain. The broker uses the same guarded Envoy path, so provider
-traffic keeps normal attribution. Stopping the box revokes every substitute and cancels open
-streams.
+The native clients keep their original provider URLs. A private loopback entrance terminates TLS
+only for the provider origins declared by the adapter, checks the exact request route, and injects
+the selected grant upstream. Its run-local CA is supplied only to that workload, never installed
+in the host or a global trust store. This is not a general HTTPS interception proxy: undeclared
+paths, methods and queries on protected provider origins are refused. Other origins retain the
+ordinary open/filtered policy, and upstream TLS is verified normally.
 
-A box holds one account per provider, so every teammate of a provider in the box shares its one key.
-Keys and signed-in accounts of different providers mix freely. Several accounts of one provider run
-side by side in separate boxes, each with its own broker, as in loop rotation, editor account
-switches and remote sessions.
+A separate capless owner holds the short-lived credential snapshot. The workload joins the exact
+inspected owner's network namespace; it cannot read the private snapshot or CA signing key.
+Stopping the run removes the entrance. If host renewal/publication stops, snapshots expire closed.
+Filtered runs retain their approved egress policy and traffic attribution; open runs still permit
+ordinary outbound traffic.
 
-One filtered policy can't switch a provider between an API key and a sign-in. The sign-in needs the
-API granted, and that is the grant the broker withholds. So a loop or preset ladder that mixes them
-stops before launch. An editor session offers a provider's accounts of one kind only: the kind of
-the account it names, or else the kind of the first one it can use.
+One box has one selected account per provider, shared by its lead and teammates. Account switches
+start another broker with the new account; API-key and subscription accounts can both appear in a
+rotation ladder. Separate boxes are required for mutually untrusted teammates.
 
-These are the qualified routes. Each is shaped to the request its pinned client actually sends.
+Supported API variables are `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and `GEMINI_API_KEY`.
+Alternate token variables, Vertex credentials and `XAI_API_KEY` are refused rather than exposed.
+Plain native Gemini OAuth credentials are supported; an encrypted-only cache without an importable
+grant is not. Custom provider base URLs are refused.
 
-| Provider | Key | Route |
-| --- | --- | --- |
-| Claude | `ANTHROPIC_API_KEY` | `api.anthropic.com/v1/messages` |
-| Gemini | `GEMINI_API_KEY` | `generativelanguage.googleapis.com/v1beta/models/` |
-| Codex | `OPENAI_API_KEY` | `api.openai.com/v1/responses` |
-
-The pinned Grok client has no qualified API base override, so `XAI_API_KEY` is refused. Claude's
-alternate token variables, Gemini's Vertex `GOOGLE_API_KEY` and Codex's alternate key and
-access-token variables are refused too, instead of entering a box.
-
-A direct Claude run with `--readonly --egress filtered` can broker `ANTHROPIC_API_KEY` too. That
-doesn't qualify other providers' read-only or bare modes. A controller job in read-only or bare
-mode still can't use filtered networking. These stop before launch:
-
-- an API-key run in login or bare mode, or with open or offline networking;
-- a configured custom provider base URL;
-- a key that only a client's own credential file holds.
-
-Ordinary provider-native OAuth and access-token files keep their existing handling, and the broker
-doesn't protect them. Restricted and session projections keep their existing access-only copies. A
-remote session hands its child a selected API key the way the host keeps it, in the session's
-private host-side config. It removes the key after each turn and when the session closes.
+Offline runs receive no provider keys and start no broker. Online provider runs require Docker
+with an ordinary bridge or services network: host networking, arbitrary container-network joins
+and Apple's `container` runtime cannot provide this boundary. Native read-only/bare support remains
+Claude-only, and remote restricted jobs still cannot use filtered networking.
 
 ## A client's own downloads
 
@@ -185,10 +172,9 @@ included. For Codex those are:
 The github.com lines fetch one public repository and never push. The same discovery path with
 `service=git-receive-pack` isn't in the set.
 
-The client's own configuration points it at those listeners. For Codex, that's `chatgpt_base_url` in
-its managed layer and an `insteadOf` for that one repository in the box's co:op-owned git config.
-Those hosts aren't added to the agent's policy, so anything the routes don't name is still refused
-and still shows in `coop net inspect`.
+The native broker serves those original URLs. It never turns the public Git download route into
+general GitHub access, and never attaches the selected account's grant to it. Other GitHub requests
+still require ordinary network approval in filtered mode.
 
 ## MCP servers
 
@@ -260,8 +246,8 @@ A remote open session's child hands over its adapter list the same way, so the c
 tools are brokered too. The helper's image is built on first use, like a first filtered run's
 images.
 
-An open run's helper carries MCP routes only. A provider API key still needs `--egress filtered`,
-where the gateway holds the agent to its route. The helper uses exact routes for streamable HTTP and
+The MCP helper is separate from the native provider broker used in both open and filtered runs.
+The MCP helper uses exact routes for streamable HTTP and
 the same-host route described above for legacy SSE. The servers below keep today's behaviour, with
 the secret in the box, and the launch names each one:
 

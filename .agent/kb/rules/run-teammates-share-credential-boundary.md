@@ -4,22 +4,23 @@ description: protect credentials at the run boundary; teammates share selected r
 scope: security
 sources: [AGENTS.md, internal/box/credential_broker.go, internal/box/network_bundles.go]
 check: go test ./internal/box -run 'TestCredentialBrokerServesEveryTeammateShape|TestCredentialBrokerRoutesEveryProviderKeyAndLeavesSignedInTeammates|TestCredentialBrokerBindsEachBoxToItsOwnAccount'
-updated: 2026-09-22
+updated: 2026-10-09
 ---
 
 # Protect credentials at the run boundary, not between teammates
 
 Treat every model selected into one Coop run as a teammate inside one box-level trust boundary.
 Use one run-scoped host broker with an exact provider/account route for each selected credential.
-The real credential stays on the host; the box receives only temporary capabilities that select
-those routes. Any teammate in that run may intentionally use the routes selected for the team.
+The real credential stays outside the workload. Native public selectors contain no capability;
+the run-private namespace admits the workload to the selected provider routes. MCP routes retain
+per-run stand-ins. Any teammate in that run may intentionally use its selected routes.
 
 Do not add one broker per model, process-level credential isolation, or separate boxes to the normal
 preset/helper workflow. When agents must be mutually untrusted, make that an explicit separate-box
 use case with its own product contract.
 
-Route sharing does not make the broker a general forward proxy. A temporary capability remains
-bound to its run, provider/account route, allowed upstream request shape, and cleanup lifecycle.
+Route sharing does not make the broker a general forward proxy. Admission remains bound to the
+run, provider/account routes, allowed upstream request shapes and cleanup lifecycle.
 
 **Why:** The user chose the pragmatic long-term design: “All selected teammates share a box-level
 trust boundary, while actual credentials remain outside it.” They explicitly rejected elaborate
@@ -30,7 +31,8 @@ agents.
 
 - Resolve all selected provider/account routes before launch and start one broker for the run.
 - Keep real reusable keys out of environment variables, mounts, generated provider configuration,
-  argv, logs, and transcripts; put only temporary route capabilities in the box.
+  argv, logs, and transcripts; use public native selectors plus private namespace admission, or
+  temporary route capabilities for the separately brokered MCP boundary.
 - Make direct, loop, preset, helper, consult/delegate, ACP/editor, remote, and restricted workflows
   consume the same route plan instead of refusing merely because more than one teammate exists.
 - Keep provider request shapes behind their adapters and bind each capability to an exact upstream;
@@ -39,6 +41,8 @@ agents.
   tool route distinct from a provider/account route.
 
 ## Changelog
+- 2026-10-09 — swept native broker, selected account plan and teammate fixtures. Updated native
+  admission wording to namespace/public selectors; separate MCP stand-in semantics are unchanged.
 
 - 2026-09-22 — rechecked the selected-route boundary and restricted composition: direct Claude
   readonly/filtered runs now share the broker plan and receive only a substitute. The older

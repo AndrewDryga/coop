@@ -116,7 +116,7 @@
         <ul class="cmds" role="list">
           <li><code data-copy-source><span class="k">coop</span> build --egress open <span class="o">&amp;&amp;</span> <span class="k">coop</span> doctor</code></li>
         </ul>
-        <p>Docker is the default and fully supported runtime. You can also use Apple <a href="https://github.com/apple/container" target="_blank" rel="nofollow noopener">container</a> (macOS 26+), but some features need Docker, including the filtered networking that <code>coop init</code> turns on. co:op detects both and prefers Docker.</p>
+        <p>Docker is required for online provider runs, including open networking, because it supplies the run-private credential broker boundary. Apple <a href="https://github.com/apple/container" target="_blank" rel="nofollow noopener">container</a> (macOS 26+) remains available for raw uncredentialed open-network workloads. co:op detects both and prefers Docker.</p>
         <p class="callout">The one-line install trusts coop.dryga.com, which GitHub Pages serves from the repository's <code>main</code> branch, since it runs the script it downloads. The script then checks the release checksum with a local SHA-256 tool and stops if it can't; with <a href="https://github.com/sigstore/cosign" target="_blank" rel="nofollow noopener">cosign</a> on your <code>PATH</code>, it also checks that the checksum came from the exact release workflow and tag. To verify the download before running anything, follow the <a href="https://github.com/AndrewDryga/coop#verifying-a-download" target="_blank" rel="nofollow noopener">manual steps</a>.</p>
         <p>You can also build co:op from source:</p>
         <ul class="cmds" role="list">
@@ -166,8 +166,8 @@
       <section class="doc-section" id="sandbox">
         <h2>The sandbox</h2>
         <p class="section-lead">The box is a container with one folder from your computer in it: your repo. What co:op mounts into the box decides what the agent can reach.</p>
-        <p>co:op mounts your repo at the <em>same path</em> it has on your machine, so the agent edits your real files: you watch changes land in your editor as they happen, and paths match between co:op, its loops and your IDE. Apart from that folder, the agent's own sign-in folder and a shared cache for dependencies, nothing from your disk is in the box.</p>
-        <p class="callout callout-warn">That sign-in folder also keeps the account's session history from every project it has run in, so an agent in one box can read your conversations in the others, including code and anything you pasted there. To keep a project's sessions apart, give it its own account: <code>coop login claude@client</code>, then <code>coop claude@client</code>.</p>
+        <p>co:op mounts your repo at the <em>same path</em> it has on your machine, so the agent edits your real files: you watch changes land in your editor as they happen, and paths match between co:op, its loops and your IDE. Apart from that folder, the selected agents' repository-local native homes and a shared cache for dependencies, nothing from your disk is in the box.</p>
+        <p>Native history and settings stay with this repository. Other projects' conversations are not mounted, and reusable provider credentials stay outside the box: a run-local broker authenticates provider requests. Local settings and history remain writable, so review changes you do not trust before reusing that repository's home.</p>
         <h3>Your Git identity, not the box's</h3>
         <p>The agent commits as you. co:op gives the box a trimmed Git config with your name and email, your global gitignore and <code>commit.gpgsign=false</code>, but never your signing key, so the box's commits are <em>authored</em> by you and left <em>unsigned</em>.</p>
         <p>If you sign your commits (<code>commit.gpgsign=true</code> in your global Git config), co:op signs those commits afterwards on your computer, where your key lives: when an interactive run exits, after each <code>coop loop</code> cycle, and when <code>coop fork merge</code> merges a fork. Commits from an editor session aren't signed for you, and <code>coop sign</code> signs the current branch's unpushed commits by hand. Either way your history ends up signed by <em>you</em>, so a protected <code>main</code> that requires signatures accepts an agent's work.</p>
@@ -256,10 +256,10 @@ box:
         <p>When a loop hits a limit on one account, it moves to another and keeps going, and waits only when <em>every</em> account is at its limit. Limits are tracked per model and account, so <code>claude:opus@personal</code> stays usable while <code>claude:opus@work</code> waits for its reset. Switching loses no work, because the loop keeps its progress in the task queue and the repo.</p>
         <p>A loop uses all your signed-in accounts without any setup: a bare <code>provider:model</code> step in its <a href="#presets">target ladder</a> covers <em>every</em> account, the default first. A pinned <code>provider:model@account</code> runs on just that one, and <code>coop credentials &lt;agent&gt; &lt;name&gt; default</code> chooses the account a plain <code>coop &lt;agent&gt;</code> uses.</p>
         <h3>API keys</h3>
-        <p>To use an API key instead of a subscription, put <code>ANTHROPIC_API_KEY</code> (Claude), <code>OPENAI_API_KEY</code> (Codex) or <code>GEMINI_API_KEY</code> (Gemini) in <code>~/.config/coop/agents/env</code>. Keys need <a href="#networking">filtered networking</a>, which keeps the real key outside the box and gives the agent a stand-in. Other Claude and Codex token variables, Vertex's <code>GOOGLE_API_KEY</code> and Grok's <code>XAI_API_KEY</code> are refused; the <a href="https://github.com/AndrewDryga/coop/blob/main/docs/agents.md#authentication" target="_blank" rel="nofollow noopener">credential reference</a> lists every supported way to sign in.</p>
+        <p>To use an API key instead of a subscription, put <code>ANTHROPIC_API_KEY</code> (Claude), <code>OPENAI_API_KEY</code> (Codex) or <code>GEMINI_API_KEY</code> (Gemini) in <code>~/.config/coop/agents/env</code>. Keys work with open or <a href="#networking">filtered networking</a> on Docker. A run-local provider broker keeps the real key outside the box; subscription credentials use the same boundary. Other Claude and Codex token variables, Vertex's <code>GOOGLE_API_KEY</code> and Grok's <code>XAI_API_KEY</code> are refused; the <a href="https://github.com/AndrewDryga/coop/blob/main/docs/agents.md#authentication" target="_blank" rel="nofollow noopener">credential reference</a> lists every supported way to sign in.</p>
         <p>A key in that file counts as the provider's default credential. A bare <code>KEY</code> line copies the value from your shell, and is skipped when it's unset; a later line wins over an earlier one. The key stands for one default account, so when a named account you signed in to runs, co:op leaves the key out to keep it from overriding that account, even if that account is the default.</p>
         <h3>Check limits and usage</h3>
-        <p><code>coop usage</code> shows each account's current limits and reset times, and what its last 30 days of tokens would cost at API prices. <code>coop usage codex@work</code> shows one account without changing your default. The estimate includes subscription use, but it isn't a bill: it marks partial history, missing prices and editor history it can't tie to an account, and it leaves out use on the web, on phones, on other machines and charges that aren't tokens. Reading a Gemini sign-in's quota needs Docker and the current co:op base image; it reads the saved sign-in and sends no prompt.</p>
+        <p><code>coop usage</code> shows each account's current limits and reset times, and what its last 30 days of tokens would cost at API prices. <code>coop usage codex@work</code> shows one account without changing your default. The estimate includes subscription use, but it isn't a bill: it marks partial history, missing prices and editor history it can't tie to an account, and it leaves out use on the web, on phones, on other machines and charges that aren't tokens. Quota reads use the selected host-only account and send no model prompt.</p>
       </section>
 
       <section class="doc-section" id="models">
@@ -601,7 +601,7 @@ roles:
             </tr>
             <tr>
               <td>"no container runtime found"</td>
-              <td>Install Docker or Apple <code>container</code>, then run <code>coop build --egress open &amp;&amp; coop doctor</code>. To pick one when both are installed, set <code>COOP_RUNTIME=docker</code>.</td>
+              <td>Install Docker for online provider runs, then run <code>coop build --egress open &amp;&amp; coop doctor</code>. To pick it explicitly, set <code>COOP_RUNTIME=docker</code>. Apple <code>container</code> supports raw uncredentialed open-network workloads only.</td>
             </tr>
             <tr>
               <td>"image … not built"</td>
@@ -613,7 +613,7 @@ roles:
             </tr>
             <tr>
               <td>Gemini says its Google sign-in client is no longer supported</td>
-              <td>Google retired Gemini CLI sign-in for personal Google accounts. Run <code>coop login gemini</code> and paste a Gemini API key from the AI Studio link it shows. Enterprise Gemini CLI and Vertex sign-ins don't work with filtered networking, and co:op refuses a Vertex <code>GOOGLE_API_KEY</code> in every network mode.</td>
+              <td>Run host <code>coop login gemini</code> and paste an AI Studio API key from the link it shows. Existing importable plain OAuth accounts also work through the broker; encrypted-only caches cannot be imported. Vertex <code>GOOGLE_API_KEY</code> is refused in every network mode.</td>
             </tr>
             <tr>
               <td>A background loop won't stop</td>

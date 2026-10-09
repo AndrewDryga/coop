@@ -61,20 +61,19 @@ func TestGeminiHostLoginStoresWithoutEchoOrNativeCredentialMutation(t *testing.T
 	defer func() { readLoginSecret = old }()
 
 	out := captureStderr(t, func() {
-		if code, err := (&app{cfg: cfg}).loginWithHostCredential(gemini, profile); code != 0 || err != nil {
-			t.Fatalf("host login = (%d, %v)", code, err)
+		if code, err := (&app{cfg: cfg}).loginWithHostCredential(gemini, profile); code != -1 || err == nil || !strings.Contains(err.Error(), "encrypted cache") {
+			t.Fatalf("host login did not preserve/refuse unknown encrypted authority = (%d, %v)", code, err)
 		}
 	})
-	if strings.Contains(out, "not-printed-secret") || !strings.Contains(out, "aistudio.google.com/apikey") ||
-		!strings.Contains(out, "Signed in to Gemini as personal") {
+	if strings.Contains(out, "not-printed-secret") || !strings.Contains(out, "aistudio.google.com/apikey") || strings.Contains(out, "Signed in to Gemini as personal") {
 		t.Fatalf("Gemini login output leaked or omitted guidance:\n%s", out)
 	}
 	if data, _ := os.ReadFile(native); string(data) != "existing-corrupt-native-store" {
 		t.Fatalf("native credential changed: %q", data)
 	}
 	key, value, found, err := box.LoadHostCredential(cfg, gemini, profile)
-	if err != nil || !found || key != "GEMINI_API_KEY" || value != "not-printed-secret" {
-		t.Fatalf("stored Gemini credential = (%q, %q, %v, %v)", key, value, found, err)
+	if found || value != "" {
+		t.Fatalf("refused key became serving authority = (%q, %q, %v, %v)", key, value, found, err)
 	}
 }
 
@@ -91,13 +90,13 @@ func TestGeminiHostLoginDoesNotSaveOverMalformedSettings(t *testing.T) {
 	}
 	gemini, _ := agents.Get("gemini")
 	old := readLoginSecret
-	readLoginSecret = func(string) ([]byte, error) { return []byte("must-not-land"), nil }
+	readLoginSecret = func(string) ([]byte, error) { return []byte("new-staged-key"), nil }
 	defer func() { readLoginSecret = old }()
-	if code, err := (&app{cfg: cfg}).loginWithHostCredential(gemini, profile); code != -1 || err == nil {
+	if code, err := (&app{cfg: cfg}).loginWithHostCredential(gemini, profile); code != 0 || err != nil {
 		t.Fatalf("malformed settings login = (%d, %v)", code, err)
 	}
-	if _, _, found, _ := box.LoadHostCredential(cfg, gemini, profile); found {
-		t.Fatal("API key landed after settings activation failed")
+	if _, value, found, err := box.LoadHostCredential(cfg, gemini, profile); err != nil || !found || value != "new-staged-key" {
+		t.Fatal("fresh canonical key depends on retired settings", err)
 	}
 	if data, _ := os.ReadFile(settings); string(data) != "{" {
 		t.Fatalf("malformed settings changed: %q", data)

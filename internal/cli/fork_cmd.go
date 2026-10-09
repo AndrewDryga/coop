@@ -732,17 +732,17 @@ func (a *app) forkCreate(args []string) (int, error) {
 		if discoverer != nil {
 			account := a.cfg.ActiveProfile(fa.agent)
 			sessionCWD := box.Workdir(a.cfg, ws)
-			release, err := lockSessionProducer(a.cfg, fa.agent, sessionCWD)
+			home, err := a.sessionHome(fa.agent, ws)
+			if err != nil {
+				return 1, err
+			}
+			release, err := lockSessionProducer(a.cfg.WithNativeHomes(map[string]string{fa.agent: home}), fa.agent, sessionCWD)
 			if err != nil {
 				return 1, err
 			}
 			defer release()
 
 			hint := forkctl.ReadForkSession(ws, fa.agent, account)
-			home, err := a.sessionHome(fa.agent, ws)
-			if err != nil {
-				return 1, err
-			}
 			snapshot := discoverer.SessionIDs(home, sessionCWD)
 			captureNewSession = fa.newSession || hint == "" || !slices.Contains(snapshot, hint)
 			if captureNewSession {
@@ -860,14 +860,7 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool, rememberedAgen
 // history store when the provider keeps one (prepared now, before any lookup, so the first re-entry
 // after an upgrade finds sessions moved into it), else the account's profile.
 func (a *app) sessionHome(provider, ws string) (string, error) {
-	store, err := box.PrepareHistory(a.cfg, provider, a.cfg.ActiveProfile(provider), ws)
-	if err != nil {
-		return "", err
-	}
-	if store == "" {
-		return a.cfg.AgentDir(provider), nil
-	}
-	return store, nil
+	return box.PrepareNativeHome(context.Background(), a.cfg, a.rt, provider, a.cfg.ActiveProfile(provider), ws, false)
 }
 
 func (a *app) rememberNewDiscoveredForkSession(ws, provider string, discoverer agents.SessionDiscoverer, before []string) error {
@@ -1057,7 +1050,8 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	spec := box.RunSpec{
 		Image: img, Repo: ws, Workdir: workdir, RepoReadOnly: repositoryReadOnly,
 		Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers, NetworkClient: egress.ClientACP,
-		SupervisorID: os.Getenv("COOP_ACP_SUPERVISOR"), Quiet: innerProcess,
+		ShareACPSessions: !a.mode.Restricted(),
+		SupervisorID:     os.Getenv("COOP_ACP_SUPERVISOR"), Quiet: innerProcess,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name, identity.Generation),
 		ForkGeneration: string(identity.Generation),

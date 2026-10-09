@@ -262,11 +262,11 @@ You run inside a coop container that IS your sandbox and security boundary, in R
 `
 }
 
-// buildRestrictedSeed renders the seed tree for the one scoped agent: the access-only credential
-// projection, the adapter's first-run defaults into an otherwise EMPTY profile (so no hook, skill
+// buildRestrictedSeed renders the seed tree for the one scoped agent: public broker markers,
+// the adapter's first-run defaults into an otherwise EMPTY profile (so no hook, skill
 // or setting of the host profile comes along), and the mode's instruction note. It returns the
 // run-private root the caller removes after the run; the tree to copy is root/home.
-func buildRestrictedSeed(cfg *config.Config, agent string, mode agents.ExecutionMode, workdir string, artifacts compositionArtifactOps) (root string, err error) {
+func buildRestrictedSeed(cfg *config.Config, agent string, mode agents.ExecutionMode, workdir string, artifacts compositionArtifactOps, public ...agents.NativeBrokerSeed) (root string, err error) {
 	ag, ok := agents.Get(agent)
 	if !ok {
 		return "", fmt.Errorf("unknown agent %q", agent)
@@ -288,10 +288,17 @@ func buildRestrictedSeed(cfg *config.Config, agent string, mode agents.Execution
 	if err := os.MkdirAll(profile, 0o700); err != nil {
 		return "", fmt.Errorf("prepare %s seed: %w", mode, err)
 	}
-	source := cfg.AgentDir(agent)
-	if profileMarkerPresent(ag, source) {
-		if err := projectRestrictedCredential(ag, source, profile); err != nil {
-			return "", err
+	if len(public) > 1 {
+		return "", errors.New("restricted seed has more than one account")
+	}
+	if len(public) == 1 {
+		for name, data := range public[0].Files {
+			if !accountNameValid(name) {
+				return "", errors.New("invalid public native seed")
+			}
+			if err := os.WriteFile(filepath.Join(profile, name), data, 0600); err != nil {
+				return "", err
+			}
 		}
 	}
 	if err := ag.EnsureDefaults(&scratch, workdir); err != nil {
@@ -315,54 +322,6 @@ func buildRestrictedSeed(cfg *config.Config, agent string, mode agents.Execution
 	return root, nil
 }
 
-// projectRestrictedCredential seeds the adapter's access-only projection of the selected login,
-// after the host renewed it for the credential horizon. Refresh authority stays in the source
-// profile; a login the adapter cannot make portable (Gemini's host-bound keychain) refuses here.
-func projectRestrictedCredential(ag agents.Agent, source, target string) error {
-	live := ag.LiveCredentials()
-	if len(live.Artifacts) == 0 || live.Portability == nil {
-		return fmt.Errorf("%s has no portable credential projection", ag.Name())
-	}
-	deadline := time.Now().Add(RestrictedCredentialHorizon)
-	if live.Prepare != nil {
-		if err := live.Prepare(source, deadline); err != nil {
-			return fmt.Errorf("%s credential needs sign-in or renewal: %w", ag.Name(), err)
-		}
-	}
-	primary := false
-	for _, artifact := range live.Artifacts {
-		if artifact.Project == nil || filepath.Base(artifact.Name) != artifact.Name || artifact.Name == "." || artifact.Name == ".." {
-			return fmt.Errorf("%s credential projection is invalid", ag.Name())
-		}
-		data, present, err := readSeedArtifact(filepath.Join(source, artifact.Name))
-		if err != nil {
-			return fmt.Errorf("%s credential %s: %w", ag.Name(), artifact.Name, err)
-		}
-		if present {
-			if data, err = artifact.Project(data); err != nil {
-				return fmt.Errorf("project %s credential: %w", ag.Name(), err)
-			}
-		}
-		if data == nil {
-			if artifact.Primary {
-				return fmt.Errorf("%s has no portable stored login — run 'coop login %s'", ag.Name(), ag.Name())
-			}
-			continue
-		}
-		if err := os.WriteFile(filepath.Join(target, artifact.Name), data, 0o600); err != nil {
-			return fmt.Errorf("seed %s credential: %w", ag.Name(), err)
-		}
-		primary = primary || artifact.Primary
-	}
-	if !primary {
-		return fmt.Errorf("%s has no portable stored login — run 'coop login %s'", ag.Name(), ag.Name())
-	}
-	if live.Portability(target, deadline) != agents.CredentialPortable {
-		return fmt.Errorf("%s credential is not usable for the next %s without refresh authority — run 'coop login %s'", ag.Name(), RestrictedCredentialHorizon, ag.Name())
-	}
-	return nil
-}
-
 // readSeedArtifact reads one host credential file without following a link, bounded, or reports
 // it absent.
 func readSeedArtifact(path string) ([]byte, bool, error) {
@@ -372,10 +331,12 @@ func readSeedArtifact(path string) ([]byte, bool, error) {
 // restrictedPlan is what the assembled runtime options must be checked against before launch:
 // the one workdir, the exact tmpfs set, and the only host sources a (read-only) bind may name.
 type restrictedPlan struct {
-	workdir string
-	tmpfs   map[string]bool
-	sources map[string]bool
-	envFile string
+	nativeMounts    map[string]bool
+	nativeNamespace string
+	workdir         string
+	tmpfs           map[string]bool
+	sources         map[string]bool
+	envFile         string
 	// brokerHost is the one --add-host this profile admits: the entry a read-only session's box
 	// finds its own MCP credential broker through. Empty for every other restricted run.
 	brokerHost string
@@ -417,12 +378,16 @@ func validateRestrictedOptions(options []string, plan restrictedPlan) error {
 				return fmt.Errorf("restricted launch: security option %q is not part of the profile", value)
 			}
 		case "--network":
-			if value != "none" {
+			if value != "none" && (plan.nativeNamespace == "" || value != "container:"+plan.nativeNamespace) {
 				return fmt.Errorf("restricted launch: joins no network (%q)", value)
 			}
 		case "-w":
 			if value != plan.workdir {
 				return fmt.Errorf("restricted launch: workdir %q is not the planned %q", value, plan.workdir)
+			}
+		case "--mount":
+			if !plan.nativeMounts[value] {
+				return fmt.Errorf("restricted launch: native public mount is not in the plan")
 			}
 		case "--tmpfs":
 			if !plan.tmpfs[value] {
@@ -495,6 +460,28 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if spec.ExtraArgs, err = restrictedRuntimeArgs(spec.ExtraArgs, mode, "its own runtime arguments"); err != nil {
 		return -1, err
 	}
+	cmd := spec.Cmd
+	if spec.Agent != "" {
+		ag, ok := agents.Get(spec.Agent)
+		if !ok {
+			return -1, fmt.Errorf("unknown agent %q", spec.Agent)
+		}
+		if spec.AgentCommand {
+			if cmd, err = ag.RestrictedCommand(mode, cmd); err != nil {
+				return -1, err
+			}
+		} else if _, err := ag.ACPRestrictedSessionMeta(mode); err != nil {
+			return -1, err
+		}
+	}
+	nativeCtx := spec.Ctx
+	if nativeCtx == nil {
+		nativeCtx = context.Background()
+	}
+	spec.native, err = planNativeAccounts(nativeCtx, cfg, rt, spec, false)
+	if err != nil {
+		return -1, err
+	}
 	// Under the gateway, prepare it BEFORE anything is generated. Two reasons, both ordering:
 	// the credential broker refuses unless this run's artifacts already live in its runfiles, and
 	// every generated file a filtered box mounts is supposed to live there anyway. Preparing here
@@ -536,10 +523,19 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if err != nil {
 		return -1, err
 	}
-	defer cleanupArtifacts()
+	retainArtifacts := false
+	defer func() {
+		if !retainArtifacts {
+			cleanupArtifacts()
+		}
+	}()
 	if err := preflightCompositionArtifactExposure(cfg, rt, spec, artifacts.parent); err != nil {
 		return -1, err
 	}
+	if err := spec.native.prepare(nativeCtx, artifacts.parent); err != nil {
+		return -1, err
+	}
+	defer func() { result = errors.Join(result, spec.native.close()) }()
 	if _, err := selectCredentialPlan(cfg, spec); err != nil {
 		return -1, err
 	}
@@ -679,26 +675,17 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		return -1, err
 	}
 
-	cmd := spec.Cmd
-	if spec.Agent != "" {
-		ag, ok := agents.Get(spec.Agent)
-		if !ok {
-			return -1, fmt.Errorf("unknown agent %q", spec.Agent)
-		}
-		if spec.AgentCommand {
-			if cmd, err = ag.RestrictedCommand(mode, cmd); err != nil {
-				return -1, err
-			}
-		} else if _, err := ag.ACPRestrictedSessionMeta(mode); err != nil {
-			// The adapter takes no flags; its switches ride the session/new the client outside
-			// the box sends. The box still refuses an adapter with no proven switch, so an
-			// unqualified provider cannot be started under a mode nothing enforces.
-			return -1, err
-		}
-	}
 	var extras []string
 	if len(scope) > 0 {
-		seed, err := buildRestrictedSeed(cfg, scope[0], mode, workdir, artifacts)
+		var public []agents.NativeBrokerSeed
+		if spec.native != nil {
+			for _, account := range spec.native.accounts {
+				if account.agent.Name() == scope[0] {
+					public = append(public, account.seed)
+				}
+			}
+		}
+		seed, err := buildRestrictedSeed(cfg, scope[0], mode, workdir, artifacts, public...)
 		if err != nil {
 			return -1, err
 		}
@@ -752,6 +739,39 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		envFile = brokerEnv
 		tmpFiles = append(tmpFiles, brokerEnv)
 	}
+	if spec.native != nil {
+		var drop []string
+		for _, account := range spec.native.accounts {
+			drop = append(drop, account.agent.CredentialEnvKeys()...)
+			for key := range account.seed.Env {
+				drop = append(drop, key)
+			}
+		}
+		kept, err := dropEnvNames(artifacts, envFile, drop)
+		if err != nil {
+			return -1, err
+		}
+		if kept != envFile {
+			envFile = kept
+			tmpFiles = append(tmpFiles, kept)
+		}
+		nativeArgs, err := spec.native.agentArgs(artifacts)
+		if err != nil {
+			return -1, err
+		}
+		extras = append(extras, nativeArgs...)
+		tmpFiles = append(tmpFiles, spec.native.publicFiles...)
+		plan.nativeMounts = map[string]bool{}
+		for i, arg := range nativeArgs {
+			if arg == "--mount" {
+				plan.nativeMounts[nativeArgs[i+1]] = true
+			}
+		}
+		for _, path := range spec.native.publicFiles {
+			plan.sources[path] = true
+		}
+		cmd = nativeCACommand(cmd)
+	}
 	plan.envFile = envFile
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
@@ -784,6 +804,38 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		plan.brokerHost = open.hostArgs()[0]
 		extras = append(extras, plan.brokerHost)
 	}
+	runPlain, runCancelable, removeCanceled := rt.Run, rt.RunInterruptible, rt.RemoveByLabel
+	volumeReader := volumeExposureReader(rt.ExistingNamedVolumeExposure)
+	if spec.native != nil && filtered == nil {
+		var ownerArgs []string
+		extras, ownerArgs, _, err = nativeNetworkOptions(extras)
+		if err != nil {
+			return -1, err
+		}
+		plan.brokerHost = ""
+		owner, startErr := startNativeOpen(nativeCtx, rt, spec.native, "bridge", ownerArgs, ownerLabels(spec), sections.brokerImage)
+		if owner != nil {
+			defer func() {
+				if err := owner.close(); err != nil {
+					retainArtifacts = true
+					result = errors.Join(result, fmt.Errorf("native broker cleanup unconfirmed; retained %s: %w", artifacts.parent, err))
+				}
+			}()
+		}
+		if startErr != nil {
+			return -1, startErr
+		}
+		spec.nativeNamespace = owner.ref.ID
+		plan.nativeNamespace = owner.ref.ID
+		runPlain = func(in io.Reader, out, errOut io.Writer, args ...string) (int, error) {
+			return owner.docker.RunWorkload(context.Background(), in, out, errOut, args...)
+		}
+		runCancelable = owner.docker.RunWorkloadInterruptible
+		removeCanceled = func(ctx context.Context, key, value string) (int, error) {
+			return owner.docker.RemoveByLabels(ctx, map[string]string{LabelKey: LabelBox, key: value})
+		}
+		volumeReader = owner.docker.ExistingNamedVolumeExposure
+	}
 
 	// The shared assembly on a spec with every optional exposure off: no homes (so no credential
 	// bind, skills, transcripts, instruction or git mounts), no cache or asdf volume, no services
@@ -813,7 +865,6 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if err != nil {
 		return -1, err
 	}
-	volumeReader := volumeExposureReader(rt.ExistingNamedVolumeExposure)
 	if filtered != nil {
 		networkState = filtered.store.Path()
 		volumeReader = filtered.docker.ExistingNamedVolumeExposure
@@ -888,7 +939,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	args = append(append(args, spec.Image), cmd...)
 	sections.starting()
 	if spec.Ctx != nil {
-		code, runErr := rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
+		code, runErr := runCancelable(spec.Ctx, stdin, stdout, stderr, args...)
 		started = true
 		reason := stopReason(code, runErr, nil)
 		if spec.Ctx.Err() == nil || spec.RunID == "" {
@@ -900,14 +951,14 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		settled := sections.stopping()
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, cleanupErr := rt.RemoveByLabel(cleanupCtx, LabelRun, spec.RunID)
+		_, cleanupErr := removeCanceled(cleanupCtx, LabelRun, spec.RunID)
 		settled()
 		if cleanupErr == nil {
 			sections.stopped(reason)
 		}
 		return code, errors.Join(runErr, cleanupErr)
 	}
-	code, runErr := rt.Run(stdin, stdout, stderr, args...)
+	code, runErr := runPlain(stdin, stdout, stderr, args...)
 	// The plain client ran the box to its end, so its exit status is the main process's; a client
 	// that could not start is the one case with no box to stop, narrated as the failure above.
 	if started = runErr == nil; started {

@@ -15,10 +15,13 @@ If there's no plan yet and the change is non-trivial, run `/spec` first.
 2. **Build it** in the surrounding style. If you're unsure a function, option, or
    flag exists — yours or a dependency's — `/verify-api` before you write it; don't
    guess. Obey `AGENTS.md` and match `.agent/kb/rules/`.
-3. **Gate before moving on** — run the repo's exact gate (`AGENTS.md` → "The gate").
-4. **Red gate → stop.** Don't pile the next step on a broken one. Fix it, or report
-   the blocker with the error and your read on it. Never edit a test to make a real
-   failure pass.
+3. **Verify the step** — run focused checks that exercise its changed boundaries. The repo's
+   exact gate is the final default, subject to explicit user scope/batching direction in
+   `.agent/kb/rules/batch-slow-gates-when-requested.md`; do not rerun it after every small edit.
+4. **Red check → investigate.** Don't build dependent steps on a known broken contract. Fix
+   the cause and rerun the affected checks. Independent implementation and source review can
+   continue; neither requires waiting for slow qualification. Never edit a test to make a real
+   failure pass or report a red/missing gate as green.
 
 ## Rules while working
 - **No scope creep.** Build the approved slice; capture a separate idea instead of building it now.

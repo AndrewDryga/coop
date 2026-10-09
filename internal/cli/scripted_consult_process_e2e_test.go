@@ -646,7 +646,7 @@ func TestProviderScriptedConsultScopeFailures(t *testing.T) {
 			t.Fatalf("missing fallback peer starts = %#v", starts)
 		}
 		run := oneProcessEvent(t, trace, "runtime", "run")
-		missingSource := processTracePath(suite.layout.Root, filepath.Join(suite.layout.Config, "gemini", "profiles", "personal"))
+		missingSource := processNativeHome(t, suite.layout, "gemini", "personal", suite.layout.Repo)
 		for _, mount := range run.Run.Mounts {
 			if mount.Source == missingSource {
 				t.Fatalf("unauthenticated fallback credential was mounted: %#v", mount)
@@ -693,36 +693,17 @@ func disableProcessCredential(t *testing.T, suite *directProcessSuite, provider 
 		}
 	}
 	cfg := &config.Config{ConfigDir: suite.layout.Config}
-	_, hostSecret, hostFound, err := box.LoadHostCredential(cfg, ag, "personal")
-	if err != nil {
-		t.Fatal(err)
-	}
-	marker, _ := ag.AuthMarker()
-	markerPath := filepath.Join(suite.layout.Config, provider, "profiles", "personal", marker)
-	var markerBody []byte
-	if hostFound {
-		if err := box.RemoveHostCredential(cfg, ag, "personal"); err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		markerBody, err = os.ReadFile(markerPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Remove(markerPath); err != nil {
-			t.Fatal(err)
-		}
-	}
 	if err := os.WriteFile(envPath, []byte(strings.Join(filtered, "\n")), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := box.RemoveNativeAccount(t.Context(), cfg, provider, "personal"); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
-		if hostFound {
-			_ = box.SaveHostCredential(cfg, ag, "personal", []byte(hostSecret))
-		} else {
-			_ = os.WriteFile(markerPath, markerBody, 0o600)
+		seedNativeFixture(t, cfg, provider, "personal")
+		if err := os.WriteFile(envPath, envBody, 0o600); err != nil {
+			t.Error(err)
 		}
-		_ = os.WriteFile(envPath, envBody, 0o600)
 	})
 }
 
@@ -1099,7 +1080,7 @@ func assertConsultMounts(t *testing.T, suite *directProcessSuite, run *processTr
 			}
 		default:
 			for _, provider := range []string{lead, peer} {
-				wantSource := processTracePath(suite.layout.Root, filepath.Join(suite.layout.Config, provider, "profiles", "personal"))
+				wantSource := processNativeHome(t, suite.layout, provider, "personal", suite.layout.Repo)
 				if m.Source == wantSource && m.Target == "<container>/home/node/."+provider && !m.ReadOnly {
 					credentials[provider] = true
 				}
@@ -1111,7 +1092,7 @@ func assertConsultMounts(t *testing.T, suite *directProcessSuite, run *processTr
 	}
 	for _, provider := range suite.providers {
 		if provider != lead && provider != peer {
-			unexpected := processTracePath(suite.layout.Root, filepath.Join(suite.layout.Config, provider, "profiles", "personal"))
+			unexpected := processNativeHome(t, suite.layout, provider, "personal", suite.layout.Repo)
 			for _, m := range run.Run.Mounts {
 				if m.Source == unexpected {
 					t.Errorf("out-of-scope credential mounted for %s: %#v", provider, m)

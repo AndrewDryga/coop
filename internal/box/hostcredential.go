@@ -2,15 +2,18 @@ package box
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 const (
@@ -19,9 +22,9 @@ const (
 )
 
 // SaveHostCredential persists an adapter-declared API key outside the provider profile mounted
-// into boxes. The selected profile still receives its non-secret auth selector, then the key lands
-// atomically behind owner-only ancestors. Existing provider credential files are never touched.
-func SaveHostCredential(cfg *config.Config, ag agents.Agent, profile string, secret []byte) error {
+// into boxes. The selector is staged privately and only credential artifacts are
+// published. Any old serving authority must complete its recoverable cutover.
+func SaveHostCredential(cfg *config.Config, ag agents.Agent, profile string, secret []byte, runtimes ...runtime.Runtime) error {
 	spec := ag.HostCredential()
 	if err := validateHostCredentialSpec(ag, spec); err != nil {
 		return err
@@ -29,34 +32,25 @@ func SaveHostCredential(cfg *config.Config, ag agents.Agent, profile string, sec
 	if err := validateHostCredentialSecret(secret); err != nil {
 		return err
 	}
-	dir, err := hostCredentialDir(cfg, ag.Name(), profile)
+	stage, root, err := NativeSignInStage(cfg)
 	if err != nil {
 		return err
 	}
-	if err := EnsureProfilesDir(cfg, ag.Name()); err != nil {
-		return fmt.Errorf("prepare %s account: %w", ag.DisplayName(), err)
-	}
-	profileDir := cfg.AgentProfileDir(ag.Name(), profile)
-	if err := config.EnsurePrivateDir(profileDir); err != nil {
-		return fmt.Errorf("prepare %s account: %w", ag.DisplayName(), err)
-	}
-	for _, path := range []string{
-		cfg.ConfigDir,
-		filepath.Join(cfg.ConfigDir, ag.Name()),
-		filepath.Join(cfg.ConfigDir, ag.Name(), hostCredentialsDir),
-		dir,
-	} {
-		if err := config.EnsurePrivateDir(path); err != nil {
-			return fmt.Errorf("prepare private %s credential storage: %w", ag.DisplayName(), err)
-		}
-	}
-	if err := spec.Activate(profileDir); err != nil {
+	stage.SetActiveProfile(ag.Name(), profile)
+	home := stage.AgentDir(ag.Name())
+	if err := config.EnsurePrivateDir(home); err != nil {
 		return err
 	}
-	if err := config.WriteFileAtomic(filepath.Join(dir, spec.File), secret); err != nil {
-		return fmt.Errorf("save %s API key: %w", ag.DisplayName(), err)
+	if err := spec.Activate(home); err != nil {
+		return err
 	}
-	return nil
+	if err := config.WriteFileAtomic(filepath.Join(home, spec.File), secret); err != nil {
+		return err
+	}
+	if err := ImportNativeSignIn(context.Background(), cfg, ag.Name(), profile, home, runtimes...); err != nil {
+		return fmt.Errorf("credential publication failed; sign-in output retained at %s: %w", root, err)
+	}
+	return os.RemoveAll(root)
 }
 
 // LoadHostCredential returns one selected account's adapter-declared env credential. Missing is a
@@ -69,6 +63,22 @@ func LoadHostCredential(cfg *config.Config, ag agents.Agent, profile string) (en
 	}
 	if err := validateHostCredentialSpec(ag, spec); err != nil {
 		return "", "", false, err
+	}
+	if record, exists, err := readNativeAccount(context.Background(), cfg, ag, profile); exists {
+		if err != nil {
+			return "", "", false, err
+		}
+		if record.Revoked {
+			return "", "", false, nil
+		}
+		state, err := ag.NativeCredentials().Inspect(record.Artifacts, time.Now())
+		if err != nil {
+			return "", "", false, err
+		}
+		if state.APIKey && state.Ready {
+			return spec.EnvKey, state.AccessToken, true, nil
+		}
+		return "", "", false, nil
 	}
 	dir, err := hostCredentialDir(cfg, ag.Name(), profile)
 	if err != nil {
@@ -156,15 +166,14 @@ func ProjectHostCredential(from, to *config.Config, ag agents.Agent, profile str
 	if err != nil || !found {
 		return "", err
 	}
-	dir, err := hostCredentialDir(to, ag.Name(), profile)
-	if err != nil {
+	if err := SaveHostCredential(to, ag, profile, []byte(value)); err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, ag.HostCredential().File), SaveHostCredential(to, ag, profile, []byte(value))
+	return SelectedHostCredentialPath(to, ag, profile)
 }
 
-// SelectedHostCredentialPath identifies the selected account's vault input without reading its
-// secret. The path may be absent: isolated callers must also detect a key appearing during a copy.
+// SelectedHostCredentialPath identifies the selected account's credential input without
+// modifying it. A legacy path may be absent: isolated callers must also detect a key appearing.
 // Unselected credential families return no path, even when a stale vault key remains on disk.
 func SelectedHostCredentialPath(cfg *config.Config, ag agents.Agent, profile string) (string, error) {
 	spec := ag.HostCredential()
@@ -173,6 +182,19 @@ func SelectedHostCredentialPath(cfg *config.Config, ag agents.Agent, profile str
 	}
 	if err := validateHostCredentialSpec(ag, spec); err != nil {
 		return "", err
+	}
+	if record, exists, err := readNativeAccountSnapshot(cfg, ag, profile); exists {
+		if err != nil {
+			return "", err
+		}
+		if record.Revoked {
+			return "", nil
+		}
+		state, err := ag.NativeCredentials().Inspect(record.Artifacts, time.Now())
+		if err != nil || !state.APIKey {
+			return "", err
+		}
+		return filepath.Join(cfg.NativeAuthorityConfig().ConfigDir, ag.Name(), "credentials", profile, "authority.json"), nil
 	}
 	dir, err := hostCredentialDir(cfg, ag.Name(), profile)
 	if err != nil {

@@ -35,6 +35,7 @@ type UsageQuotaInput struct {
 	APIKey     bool
 	EnvKey     string
 	Native     func(context.Context, []string) ([]byte, error)
+	Current    func(context.Context, time.Time) (NativeCredentialState, map[string][]byte, error)
 }
 
 type UsageQuota struct {

@@ -49,7 +49,7 @@ func TestLoginOnlyMountsSelectedCredentialAndManagedSettings(t *testing.T) {
 				t.Fatal(err)
 			}
 			args := strings.Fields(string(data))
-			if !slices.Contains(args, cfg.AgentDir(name)+":"+cfg.HomeInBox+"/."+name) || !strings.Contains(string(data), "-w /tmp") {
+			if !slices.Contains(args, networkMount("bind", cfg.AgentDir(name), cfg.HomeInBox+"/."+name, false)) || !strings.Contains(string(data), "-w /tmp") {
 				t.Fatalf("login lost selected writable home or clean cwd: %s", data)
 			}
 			for _, other := range agents.Names() {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -378,7 +379,7 @@ func (a *app) removeProfile(agent, name string, yes bool) (int, error) {
 	if !ok {
 		return 2, unknownAgentErr(agent, "coop credentials")
 	}
-	if err := a.requireProfile(agent, name); err != nil {
+	if err := a.requireProfile(agent, name); err != nil && !box.NativeAccountRemoved(a.cfg, agent, name) {
 		return 2, err
 	}
 	title := titleName(agent)
@@ -393,9 +394,8 @@ func (a *app) removeProfile(agent, name string, yes bool) (int, error) {
 		}
 	}
 	dir := a.cfg.AgentProfileDir(agent, name)
-	// Deleting an account drops its login token AND all session history, with no undo — preview
-	// exactly that in future tense, then let the shared gate ask.
-	ui.Note("Permanently delete %s account %q along with its saved login\nand local session history?\n", title, name)
+	// Account-independent editor homes survive removal and account switches.
+	ui.Note("Permanently delete %s account %q along with its saved login\nand ordinary repository history? Editor conversations will be kept.\n", title, name)
 	if err := ui.DestroyGate("Continue", yes); err != nil {
 		if errors.Is(err, ui.ErrNeedsConfirmation) {
 			return 2, ui.ConfirmationRequired("coop credentials rm")
@@ -405,6 +405,9 @@ func (a *app) removeProfile(agent, name string, yes bool) (int, error) {
 	}
 	if !yes {
 		ui.Note("") // the Enter that answered the prompt ended its line; keep the result a paragraph
+	}
+	if err := box.RemoveNativeAccount(context.Background(), a.cfg, agent, name); err != nil {
+		return -1, fmt.Errorf("could not revoke %s account %q before removal: %w", title, name, err)
 	}
 	secretErr := box.RemoveHostCredential(a.cfg, ag, name)
 	profileErr := os.RemoveAll(dir)

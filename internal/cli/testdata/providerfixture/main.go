@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,8 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/taskchannel"
@@ -311,6 +314,20 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		childArgs = append(childArgs, parsed.Run.ProviderArgv...)
 		cmd := exec.Command(self, childArgs...)
 		cmd.Dir = parsed.Run.HostWorkdir
+		if activeScenario.NativeSession != nil {
+			for _, m := range parsed.Run.Mounts {
+				if m.Target == "/home/node/."+parsed.Run.Provider {
+					expected, pathErr := box.NativeHomePath(&config.Config{ConfigDir: filepath.Join(root, "config")}, parsed.Run.Provider, activeScenario.NativeSession.Account, parsed.Run.HostWorkdir, false)
+					if pathErr != nil || m.Source != expected || m.ReadOnly {
+						return errors.New("native session account does not match its mounted home")
+					}
+					parsed.Run.Env["COOP_PROVIDER_FIXTURE_NATIVE_HOME"] = m.Source
+				}
+			}
+			if parsed.Run.Env["COOP_PROVIDER_FIXTURE_NATIVE_HOME"] == "" {
+				return errors.New("native session has no mounted home")
+			}
+		}
 		cmd.Env = providerEnvironment(root, image, trace, scenarioPath, parsed.Run.Env)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		err = cmd.Run()
@@ -473,12 +490,12 @@ func parseRun(root, image string, args []string, provider string, providerHomes 
 			}
 			run.Interactive, run.TTY = true, true
 			i++
-		case "--label", "-e", "-v", "--env-file", "--network", "-w", "--security-opt", "--cap-drop", "--pids-limit", "--memory", "--cpus":
+		case "--label", "-e", "-v", "--mount", "--env-file", "--network", "-w", "--security-opt", "--cap-drop", "--pids-limit", "--memory", "--cpus":
 			if i+1 >= len(args) || args[i+1] == image {
 				return runCommand{}, fmt.Errorf("runtime flag %s has no value", arg)
 			}
 			value := args[i+1]
-			if arg != "--label" && arg != "-e" && arg != "-v" && seen[arg] {
+			if arg != "--label" && arg != "-e" && arg != "-v" && arg != "--mount" && seen[arg] {
 				return runCommand{}, fmt.Errorf("duplicate runtime flag %s", arg)
 			}
 			seen[arg] = true
@@ -491,9 +508,13 @@ func parseRun(root, image string, args []string, provider string, providerHomes 
 				run.Labels = append(run.Labels, value)
 			case "-e":
 				err = applyEnv(run.Env, value)
-			case "-v":
+			case "-v", "--mount":
 				var m mount
-				m, err = parseMount(root, value)
+				if arg == "--mount" {
+					m, err = parseBindMount(root, value)
+				} else {
+					m, err = parseMount(root, value)
+				}
 				if err == nil {
 					if mcpConfigTarget(m.Target) {
 						m.MCPServers = mcpServerNames(m.Source)
@@ -566,6 +587,41 @@ func cacheVolumeForIdentity(name string, nativeLinux bool, uid, gid int) string 
 		return name
 	}
 	return fmt.Sprintf("%s-%d-%d", name, uid, gid)
+}
+
+func parseBindMount(root, value string) (mount, error) {
+	fields, err := csv.NewReader(strings.NewReader(value)).Read()
+	if err != nil || strings.ContainsAny(value, "\r\n") {
+		return mount{}, errors.New("invalid bind mount fields")
+	}
+	values := map[string]string{}
+	for _, field := range fields {
+		key, value, assigned := strings.Cut(field, "=")
+		if _, exists := values[key]; exists {
+			return mount{}, errors.New("duplicate bind mount field")
+		}
+		switch key {
+		case "type", "source", "target":
+			if !assigned || value == "" {
+				return mount{}, errors.New("empty bind mount field")
+			}
+		case "readonly":
+			if assigned {
+				return mount{}, errors.New("invalid bind mount mode")
+			}
+		default:
+			return mount{}, errors.New("unsupported bind mount field")
+		}
+		values[key] = value
+	}
+	if values["type"] != "bind" || !filepath.IsAbs(values["source"]) || !filepath.IsAbs(values["target"]) {
+		return mount{}, errors.New("bind mount requires absolute source and target")
+	}
+	spec := values["source"] + ":" + values["target"]
+	if _, readonly := values["readonly"]; readonly {
+		spec += ":ro"
+	}
+	return parseMount(root, spec)
 }
 
 func parseMount(root, value string) (mount, error) {
@@ -676,7 +732,7 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 			}
 			continue
 		}
-		if provider, ok := credentialMountProvider(m.Target); ok && credentialSourceMatches(root, provider, m.Source) {
+		if provider, ok := credentialMountProvider(m.Target); ok && credentialSourceMatches(root, provider, m.Source, run) {
 			if !slices.Contains(providerHomes, provider) {
 				return fmt.Errorf("credential mount for %q is outside scenario provider_homes", provider)
 			}
@@ -822,7 +878,7 @@ func credentialMountProvider(target string) (string, bool) {
 	return provider, err == nil
 }
 
-func credentialSourceMatches(root, provider, source string) bool {
+func credentialSourceMatches(root, provider, source string, run runCommand) bool {
 	info, err := os.Stat(source)
 	if err != nil || !info.IsDir() {
 		return false
@@ -832,7 +888,31 @@ func credentialSourceMatches(root, provider, source string) bool {
 		return false
 	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
-	return len(parts) == 3 && parts[0] == provider && parts[1] == "profiles" && parts[2] != ""
+	if len(parts) != 5 || parts[0] != provider || parts[1] != "native-homes" || parts[2] == "" || parts[4] != "home" {
+		return false
+	}
+	repo := run.HostWorkdir
+	// Format-only reviewer continuation hides the workspace behind an empty, read-only
+	// run-local decoy. It retains the original repository's reviewer session home.
+	for _, m := range run.Mounts {
+		if m.Target != run.Workdir || !m.ReadOnly || m.Named {
+			continue
+		}
+		name, err := generatedFixtureArtifactName(root, m.Source)
+		if err != nil || !strings.HasPrefix(name, "coop-decoy-dir-") {
+			continue
+		}
+		entries, err := os.ReadDir(m.Source)
+		if err != nil || len(entries) != 0 {
+			return false
+		}
+		repo, err = procharness.CanonicalUnderRoot(root, run.Workdir)
+		if err != nil {
+			return false
+		}
+	}
+	want, err := box.NativeHomePath(&config.Config{ConfigDir: filepath.Join(root, "config")}, provider, parts[2], repo, false)
+	return err == nil && source == want
 }
 
 func pathAtOrBelow(base, path string) bool {
@@ -1097,8 +1177,7 @@ func readScenario(root, path string) (scenario, error) {
 			return scenario{}, errors.New("native_session is supported only for codex")
 		}
 		account := s.NativeSession.Account
-		profileInfo, profileErr := os.Stat(filepath.Join(root, "config", s.Provider, "profiles", account))
-		if account == "" || filepath.Base(account) != account || strings.HasPrefix(account, "-") || profileErr != nil || !profileInfo.IsDir() || !filepath.IsAbs(s.NativeSession.CWD) || len(s.NativeSession.CWD) > 4<<10 {
+		if account == "" || account == "." || account == ".." || filepath.Base(account) != account || strings.HasPrefix(account, "-") || !filepath.IsAbs(s.NativeSession.CWD) || len(s.NativeSession.CWD) > 4<<10 {
 			return scenario{}, errors.New("native_session requires a mounted account and bounded absolute cwd")
 		}
 		if !agents.ValidSessionID(s.NativeSession.ID) {
@@ -1129,7 +1208,11 @@ func writeNativeSession(root, provider string, session nativeSession) error {
 	if provider != "codex" {
 		return fmt.Errorf("native session provider %q is unsupported", provider)
 	}
-	dir := filepath.Join(root, "config", provider, "profiles", session.Account, "sessions", "2026", "07", "16")
+	home, err := procharness.CanonicalUnderRoot(root, os.Getenv("COOP_PROVIDER_FIXTURE_NATIVE_HOME"))
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(home, "sessions", "2026", "07", "16")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -1287,11 +1370,20 @@ func traceRuntimeArgv(root, image string, args []string) []string {
 			}
 			out = append(out, traceEnvArg(args[i+1]))
 			i += 2
-		case "-v":
+		case "-v", "--mount":
 			if i+1 >= len(args) {
 				return append(out, "<missing>")
 			}
-			out = append(out, traceMountArg(root, args[i+1]))
+			if arg == "--mount" {
+				m, err := parseBindMount(root, args[i+1])
+				if err != nil {
+					out = append(out, "<rejected>")
+				} else {
+					out = append(out, traceRootPath(root, m.Source)+":"+traceContainerPath(root, m.Target))
+				}
+			} else {
+				out = append(out, traceMountArg(root, args[i+1]))
+			}
 			i += 2
 		case "--env-file":
 			if i+1 >= len(args) {

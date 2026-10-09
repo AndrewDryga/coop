@@ -1073,7 +1073,8 @@ func TestFilteredDefaultCredentialHomeIsNotMistakenForWritableParent(t *testing.
 	}
 	cfg := &config.Config{BoxHome: boxHome, ConfigDir: filepath.Join(boxHome, "agents")}
 	spec := RunSpec{Repo: f.record.Project, Agent: "gemini", Homes: true}
-	profile := cfg.AgentDir("gemini")
+	profile := filepath.Join(cfg.ConfigDir, "gemini", "native-homes", "default", "repo", "home")
+	cfg = cfg.WithNativeHomes(map[string]string{"gemini": profile})
 	child := filepath.Join(profile, "agent-owned")
 	if err := os.MkdirAll(child, 0o700); err != nil {
 		t.Fatal(err)

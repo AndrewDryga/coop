@@ -21,7 +21,7 @@ func main() {
 
 func generate() error {
 	files := []string{"go.mod", "go.sum", "LICENSE"}
-	for _, dir := range []string{"cmd/coop-net", "internal/egress", "internal/networkgateway", "internal/networkview"} {
+	for _, dir := range []string{"cmd/coop-net", "internal/egress", "internal/networkgateway", "internal/networkview", "internal/safefile"} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			return err

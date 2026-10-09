@@ -13,7 +13,7 @@ import (
 func TestEmbeddedGatewaySourcesExactlyMatchCheckout(t *testing.T) {
 	root := filepath.Join("..", "..")
 	expected := map[string]bool{"go.mod": true, "go.sum": true, "LICENSE": true}
-	for _, dir := range []string{"cmd/coop-net", "internal/egress", "internal/networkgateway", "internal/networkview"} {
+	for _, dir := range []string{"cmd/coop-net", "internal/egress", "internal/networkgateway", "internal/networkview", "internal/safefile"} {
 		entries, err := os.ReadDir(filepath.Join(root, dir))
 		if err != nil {
 			t.Fatal(err)

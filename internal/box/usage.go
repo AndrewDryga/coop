@@ -25,6 +25,26 @@ func UsageQuotaAuthority(cfg *config.Config, provider, account string) (agents.U
 	if !ok {
 		return agents.UsageQuotaInput{}, errors.New("unknown quota provider")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	selected, exists, err := previewNativeAuthority(ctx, cfg, ag, account)
+	if err != nil {
+		return agents.UsageQuotaInput{}, err
+	}
+	if exists && (selected.canonical || selected.record == nil) {
+		input := agents.UsageQuotaInput{APIKey: selected.state.APIKey}
+		if selected.canonical {
+			input.Current = func(ctx context.Context, deadline time.Time) (agents.NativeCredentialState, map[string][]byte, error) {
+				record, err := renewNativeAccount(ctx, cfg, ag, account, deadline)
+				if err != nil {
+					return agents.NativeCredentialState{}, nil, err
+				}
+				state, err := ag.NativeCredentials().Inspect(record.Artifacts, time.Now())
+				return state, record.Artifacts, err
+			}
+		}
+		return input, nil
+	}
 	home := cfg.AgentProfileDir(provider, account)
 	input := agents.UsageQuotaInput{ProfileDir: home}
 	marker := ProfileMarkerPresent(cfg, provider, account)
@@ -134,10 +154,42 @@ func runCredentialUseLeases(cfg *config.Config, rt runtime.Runtime, spec *RunSpe
 			releases[i]()
 		}
 	}
+	// A pending retained-history index import may replace its repository-local
+	// index only while no native client is using that complete home.
+	if spec.Homes && !spec.Login && !spec.Mode.Restricted() {
+		ctx := spec.Ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		for _, name := range credentialScope(cfg, *spec) {
+			home, err := cfg.NativeHome(name)
+			if err != nil {
+				continue
+			}
+			lease, err := credentialUseLease(ctx, cfg, home, false)
+			if err != nil {
+				release()
+				return nil, err
+			}
+			releases = append(releases, lease.close)
+			if err := checkNativeHistorySettled(home); err != nil {
+				release()
+				return nil, err
+			}
+		}
+	}
 	if !rt.SupportsRestrictedFilesystem() {
 		return release, nil
 	}
 	for _, name := range credentialScope(cfg, *spec) {
+		if spec.native.selected(name) {
+			continue
+		}
+		if _, err := cfg.NativeHome(name); err == nil && !spec.Login {
+			// Offline native homes contain no account authority either. Their
+			// shared history lease above replaces the retired profile lease.
+			continue
+		}
 		ag, _ := agents.Get(name)
 		if !ag.Usage().NativeCredentialLease {
 			continue

@@ -816,8 +816,12 @@ func TestForkACPTreatsAKeyAsTheAgentsOwnClient(t *testing.T) {
 		rt: recordingRuntime(t, filepath.Join(root, "runtime-args")), rtSet: true,
 	}
 	code, err := a.forkACP("keyed", []string{"codex"})
-	if code == 0 || err == nil || !strings.Contains(err.Error(), "requires filtered networking") {
-		t.Fatalf("offline fork ACP with an API key = (%d, %v), want the filtered-networking refusal", code, err)
+	if code != 0 || err != nil {
+		t.Fatalf("offline fork ACP = (%d, %v)", code, err)
+	}
+	args, err := os.ReadFile(filepath.Join(root, "runtime-args"))
+	if err != nil || !strings.Contains(string(args), "--network none") || strings.Contains(string(args), "fixture-key") || strings.Contains(string(args), "native-broker") {
+		t.Fatal("offline fork exposed a grant or launched a broker", err)
 	}
 }
 
@@ -1024,6 +1028,7 @@ func TestForkACPReadOnlyFrontsTheForkUnderTheRestrictedProfile(t *testing.T) {
 	recorder := filepath.Join(root, "runtime-args")
 	a := restrictedApp(t, recorder)
 	a.cfg.RepoOverride, a.cfg.Egress, a.cfg.ConfigDir = repo, "none", privateRoot
+	a.cfg.SetEgress("none")
 	// No reservation yet: the daemon's own proof of ownership is required before any launch.
 	if code, runErr := a.forkACP("readonly", []string{"claude", "--readonly"}); code != 1 || runErr == nil ||
 		!strings.Contains(runErr.Error(), "reservation is absent") {
@@ -1296,6 +1301,14 @@ func TestForkLaunchCmd(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{ConfigDir: cfgDir}}
+	home := func(provider, ws string) string {
+		t.Helper()
+		value, err := a.sessionHome(provider, ws)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
 	launch := func(fa forkArgs, workspace string, existed bool) []string {
 		t.Helper()
 		cmd, err := a.forkLaunchCmd(fa, workspace, existed, false)
@@ -1320,7 +1333,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	// Place the fake session where the adapter resolves it — via the same key function, so
 	// this test can't drift from Claude Code's project-dir encoding.
 	claudeKey := agents.ClaudeProjectKey(ws)
-	sess := filepath.Join(a.cfg.AgentDir("claude"), "projects", claudeKey, id+".jsonl")
+	sess := filepath.Join(home("claude", ws), "projects", claudeKey, id+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(sess), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1345,7 +1358,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	if err := forkctl.SaveForkSession(overrideWS, "claude", "default", id); err != nil {
 		t.Fatal(err)
 	}
-	overrideSession := filepath.Join(a.cfg.AgentDir("claude"), "projects", agents.ClaudeProjectKey(a.cfg.Workdir), id+".jsonl")
+	overrideSession := filepath.Join(home("claude", overrideWS), "projects", agents.ClaudeProjectKey(a.cfg.Workdir), id+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(overrideSession), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1392,7 +1405,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	// Codex mints its own UUID. After the run, Coop discovers and persists it so a newer
 	// same-cwd session cannot hijack this fork under a shared container workdir.
 	codexID := "019f6a60-a28e-7d22-919c-81f43bef064f"
-	codexDir := filepath.Join(a.cfg.AgentDir("codex"), "sessions", "2026", "07", "16")
+	codexDir := filepath.Join(home("codex", ws), "sessions", "2026", "07", "16")
 	if err := os.MkdirAll(codexDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1450,7 +1463,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(legacyWS, ".coop", "session.claude"), []byte(legacyID+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	legacySession := filepath.Join(a.cfg.AgentDir("claude"), "projects", agents.ClaudeProjectKey(legacyWS), legacyID+".jsonl")
+	legacySession := filepath.Join(home("claude", legacyWS), "projects", agents.ClaudeProjectKey(legacyWS), legacyID+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(legacySession), 0o755); err != nil {
 		t.Fatal(err)
 	}

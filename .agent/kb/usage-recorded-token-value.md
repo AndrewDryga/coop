@@ -3,7 +3,7 @@ name: usage-recorded-token-value
 description: Usage reports native quota and recorded token value independently; historical account ambiguity and missing tariffs stay explicit
 subsystem: usage
 sources: [internal/agent/usage.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/run.go, internal/cli/usage.go, internal/session/usage.go]
-updated: 2026-10-02
+updated: 2026-10-09
 ---
 
 `coop usage [<provider>[@credential]]` is an inspection, not a model run or a billing report.
@@ -33,17 +33,17 @@ schema migration or checkpoint. Creation/rotation events provide historical targ
 during a turn and implicit defaults remain ambiguous. Old aggregate usage is unpriced coverage,
 never dollars added to overlapping native requests. Custom service roots are not auto-discovered.
 
-Gemini OAuth quota uses a fixed auth/server-only helper in the exact managed base image, with
-no repository, CLI initialization, model, MCP, hooks or onboarding. The selected original plain
-OAuth home is its only writable host bind. A host shared/exclusive lease protects that refresh
-authority against participating Coop runs/logins, including consult peers. Profile container
-labels keep failed teardown busy after the host flock closes. Native processes and older Coop
-versions do not participate; encrypted/keychain portability and missing runtime remain explicit
-unavailable results, not temporary refresh-token copies. API-key/Vertex auth has no Code Assist
-subscription quota but can still have valued native history. Its unavailable line names the
-selected mode without a second generic limits placeholder.
+Canonical quota reads use the host account authority's Current callback and renewal path for all
+four providers; no quota helper receives a copied refresh grant. Gemini issues native Code Assist
+load/quota requests directly from the host. The legacy plain-OAuth helper remains only for
+pre-cutover inspection; it leases its original home, never creates a second authority.
+Encrypted-only legacy caches remain unavailable. API keys have no subscription quota but can have
+valued history. Discovery includes ordinary repository homes and both local and private remote ACP
+homes; account-independent editor history remains unassigned.
 
 ## Changelog
+- 2026-10-09 — verified canonical quota callbacks, repository history discovery and unassigned
+  private remote ACP homes against box/usage.go and cli/usage.go.
 - 2026-10-02 — summary totals now appear only when priced; verified against usageTotal.
 - 2026-10-02 — sign-ins without limits now report `UsageQuota.Auth` instead of a reason sentence;
   verified against the four adapters and renderUsage.

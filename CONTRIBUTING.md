@@ -39,9 +39,11 @@ runs the doctor and review-writes jobs. They stay out of `make check` because th
 runtime.
 
 The gate needs `staticcheck`, `govulncheck`, `shellcheck`, `python3` and `git-lfs`.
-`STATICCHECK_VERSION` and `GOVULNCHECK_VERSION` in the Makefile pin the two Go analyzers, and CI
-reads the pins from there. A missing or wrong-version tool fails the gate and prints the command
-that installs it. The gate never skips a check silently.
+The Makefile pins `govulncheck` and installs Staticcheck with `make install-staticcheck` from
+`internal/box/staticcheck.mod`. That separate dependency graph pins both the analyzer and its
+Go importer without changing Coop's runtime dependencies. CI and the shipped images use the same
+graph. A missing or wrong-version tool fails the gate and prints the command that installs it.
+The gate never skips a check silently.
 
 `.tool-versions` pins the exact Go toolchain, so an asdf user and co:op's own box get the
 repository's required `go` and `gofmt` version automatically. CI reads the version from `go.mod`.

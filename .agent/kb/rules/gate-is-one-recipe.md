@@ -4,7 +4,7 @@ description: "a new check goes in `make check`; CI installs the tools and calls 
 scope: agent-workflow
 sources: [Makefile, .github/workflows/ci.yml]
 check: "none"
-updated: 2026-09-03
+updated: 2026-10-09
 ---
 
 # There is ONE gate recipe: `make check`
@@ -26,14 +26,18 @@ on the machine where the code was written, and main rotted red with no local gat
   failures come first and the slowest step (`-race`) runs last.
 - Needs a container runtime? That's the one exception: its own CI job, plus a Makefile comment on
   `check` saying it's CI-only and why — `make check` stays runtime-independent.
-- Pin a tool's version ONCE, in the Makefile, and have CI read it (`make -s staticcheck-version`)
-  instead of repeating the literal.
+- Pin a tool's version ONCE, in the Makefile or its dedicated dependency graph, and have CI use
+  the Makefile install target instead of repeating the literal. If compatibility requires a
+  transitive dependency pin, verify that pin too; the analyzer's version alone is insufficient.
 - A check that only ever ran locally has never been proven against a clean checkout: before wiring
   it into CI, run it on `git archive HEAD` output, where gitignored working state doesn't exist.
 
 Related: [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-10-09 — Go1.27.2 introduced V5 export data beyond Staticcheck0.8.1's published importer.
+  Swept host/CI/base/filtered/project-image installs: one embedded alternate module pins the
+  upstream-compatible importer, and the gate rejects the old same-version binary. No check skipped.
 - 2026-08-09 — created, from closing the divergence it describes (`make check` is now the union and
   CI's check job is `make check`). Swept both sides: 4 CI-only steps and 4 local-only targets were
   merged; the tracked-checkout sweep also caught `small-work-to-the-queue` naming a gitignored

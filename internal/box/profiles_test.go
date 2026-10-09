@@ -175,10 +175,13 @@ func TestProfileCredentialReady(t *testing.T) {
 		t.Fatal("host-bound Gemini marker was treated as runnable")
 	}
 	gemini, _ := agents.Get("gemini")
-	if err := SaveHostCredential(cfg, gemini, "opaque", []byte("portable-key")); err != nil {
+	if err := SaveHostCredential(cfg, gemini, "opaque", []byte("portable-key")); err == nil {
+		t.Fatal("host-bound opaque cache was silently retired")
+	}
+	if err := SaveHostCredential(cfg, gemini, "portable", []byte("portable-key")); err != nil {
 		t.Fatal(err)
 	}
-	if !ProfileCredentialReady(cfg, "gemini", "opaque", now) {
+	if !ProfileCredentialReady(cfg, "gemini", "portable", now) {
 		t.Fatal("Coop-owned Gemini key was not runnable")
 	}
 	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=token\n"), 0o600); err != nil {

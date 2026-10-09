@@ -16,7 +16,7 @@ type laggingTurnRecord struct {
 	reads       atomic.Int32
 }
 
-func (r *laggingTurnRecord) LastTurnTokens(_, _, _ string) (agents.TurnTokens, agents.TurnTokens, bool) {
+func (r *laggingTurnRecord) LastTurnTokens(_, _ string) (agents.TurnTokens, agents.TurnTokens, bool) {
 	if r.reads.Add(1) <= r.lag {
 		return agents.TurnTokens{Input: 1, Output: 1}, agents.TurnTokens{Input: 1, Output: 1}, true
 	}
@@ -33,7 +33,7 @@ func TestATurnsUsageComesFromTheClientsRecordOnceItHoldsTheReportedCall(t *testi
 	}
 	reported := session.Usage{InputTokens: 106_085 - 104_704, CachedInputTokens: 104_704, OutputTokens: 358, CostUSD: 0.5, CostRecorded: true}
 
-	got := wholeTurnUsage(context.Background(), record, "/private", "default", "native", reported)
+	got := wholeTurnUsage(context.Background(), record, "/private", "native", reported)
 	want := session.Usage{InputTokens: 1_020_300 - 1_005_440, CachedInputTokens: 1_005_440, OutputTokens: 1_900, ReasoningTokens: 99, CostUSD: 0.5, CostRecorded: true}
 	if got != want {
 		t.Fatalf("whole turn %+v, want %+v", got, want)
@@ -47,18 +47,18 @@ func TestATurnsUsageComesFromTheClientsRecordOnceItHoldsTheReportedCall(t *testi
 	behind := &laggingTurnRecord{lag: 1 << 20}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if got := wholeTurnUsage(ctx, behind, "/private", "default", "native", reported); got != reported {
+	if got := wholeTurnUsage(ctx, behind, "/private", "native", reported); got != reported {
 		t.Fatalf("an unconfirmed record replaced the report: %+v", got)
 	}
 
 	// No record, no private home, or nothing reported: the report stands.
-	if got := wholeTurnUsage(context.Background(), nil, "/private", "default", "native", reported); got != reported {
+	if got := wholeTurnUsage(context.Background(), nil, "/private", "native", reported); got != reported {
 		t.Fatalf("no record changed the report: %+v", got)
 	}
-	if got := wholeTurnUsage(context.Background(), record, "", "default", "native", reported); got != reported {
+	if got := wholeTurnUsage(context.Background(), record, "", "native", reported); got != reported {
 		t.Fatalf("no private home changed the report: %+v", got)
 	}
-	if got := wholeTurnUsage(context.Background(), record, "/private", "default", "native", session.Usage{}); got != (session.Usage{}) {
+	if got := wholeTurnUsage(context.Background(), record, "/private", "native", session.Usage{}); got != (session.Usage{}) {
 		t.Fatalf("an empty report became %+v", got)
 	}
 }

@@ -4,7 +4,7 @@ description: "boxed agent logins use device-code/paste flows; browser OAuth hang
 scope: box
 sources: [internal/agent/codex.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/box/login_test.go, internal/box/filtered.go, internal/box/derived_image.go, internal/box/network_bundles.go, internal/box/network_bundles_test.go, internal/cli/commands.go, internal/cli/commands_test.go, internal/cli/launch_box.go]
 check: "none"
-updated: 2026-09-14
+updated: 2026-10-09
 ---
 
 # Agent logins in the box use device-code flows, not browser OAuth
@@ -19,11 +19,9 @@ hangs.
 - **claude** — `coop login claude` runs `claude auth login`; Claude Code's sign-in is a
   paste-a-code flow, not a localhost redirect, so it works in the box — and unlike a bare
   `claude` it re-authenticates even when you're already logged in.
-- **gemini** — first-use interactive login uses `NO_BROWSER=true`, which selects the native
-  manual Google flow. Keep its selected account's user settings writable during login: Google
-  selection saves `security.auth.selectedType` before relaunching. Managed defaults and the empty
-  MCP allowlist belong in a separate immutable system config, not over that writable file.
-  An already signed-in account opens normally; use native `/auth` to explicitly sign in again.
+- **gemini** — host `coop login gemini` uses a hidden API-key prompt and publishes the selected
+  key into canonical host storage. Do not advise native in-box `/auth` for shared account changes.
+  Existing importable plain OAuth accounts retain their supported brokered native behavior.
 - **grok** — `coop login grok` runs `grok login --device-auth`, same shape as codex.
 
 **Why:** a container can't open a browser or receive a localhost OAuth redirect.
@@ -33,15 +31,17 @@ flow over browser OAuth. Not mechanically lint-checkable, so it lives here.
 
 Sign-in must not depend on a project's database, MCP servers, instructions or preset. Do not mount
 the project into the login cwd, build its image, publish its development ports or start its services. Preserve
-the selected credential's writable storage and network admission; ordinary coding config overlays
-remain read-only. `TestLoginOnlyMountsSelectedCredentialAndManagedSettings` pins this for every
-registered provider; native qualification must also exercise settings persistence across a restart.
+a fresh private sign-in staging home and network admission. Publish only credential artifacts into
+canonical host storage after success; never reuse a repository's coding home for account login.
+`TestLoginOnlyMountsSelectedCredentialAndManagedSettings` pins the selected sign-in boundary.
 Use a container-only scratch cwd, not HOME, so native project warnings do not misdescribe login.
 A filtered capture with service grants cannot run without service bindings: refuse it before
 runtime setup rather than starting services or silently changing the admitted policy. The operator
 can sign in from a project with a service-free policy; never change network posture automatically.
 
 ## Changelog
+- 2026-10-09 — swept four adapters and host sign-in publication. Corrected Gemini host API-key
+  guidance and canonical staging; coding homes contain public selectors, not login authority.
 - 2026-09-14 — fixed the ordinary-network login path to select the shared client image instead of
   a project's toolchain image. Reproduced with Blitz Infra's image, which had Claude and Gemini
   but no Grok. Also stopped filtered admission from requiring Grok's old credential before its

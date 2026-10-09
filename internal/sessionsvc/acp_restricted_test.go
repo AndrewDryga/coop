@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -104,7 +103,7 @@ func TestABareSessionLaunchesTheAdapterWithoutAWorkspace(t *testing.T) {
 		t.Fatalf("bare child argv = %q, want %q", *argv, want)
 	}
 	env := readFile(t, fixture.envLog)
-	if !strings.Contains(env, "repo= ") || !strings.Contains(env, "run="+sessionTurnRunID(fixture.session.ID, turn.ID)) || !strings.Contains(env, "ro=\n") {
+	if !strings.Contains(env, "repo= ") || !strings.Contains(env, "run="+sessionTurnRunID(fixture.session.ID, turn.ID)) || !strings.Contains(env, "ro= authority=") {
 		t.Fatalf("bare child environment = %q", env)
 	}
 	params := sessionNewParams(t, fixture.childLog)
@@ -161,7 +160,7 @@ func TestAReadOnlySessionLaunchesItsForkWithoutAnOutputRoot(t *testing.T) {
 	if want := []string{"fork", "fork", "acp", "claude@work", "--readonly"}; !slices.Equal(*argv, want) {
 		t.Fatalf("readonly child argv = %q, want %q", *argv, want)
 	}
-	if env := readFile(t, fixture.envLog); !strings.Contains(env, "ro=\n") || !strings.Contains(env, "repo="+fixture.repo+" ") {
+	if env := readFile(t, fixture.envLog); !strings.Contains(env, "ro= authority=") || !strings.Contains(env, "repo="+fixture.repo+" ") {
 		t.Fatalf("readonly child environment = %q", env)
 	}
 	if _, err := os.Lstat(filepath.Join(fixture.session.Workspace, sessionOutputRoot)); !errors.Is(err, os.ErrNotExist) {
@@ -224,39 +223,23 @@ func TestNormalRemoteSessionsAnnounceOneBoxCWDForPrivateForks(t *testing.T) {
 	}
 }
 
-// The restricted box re-checks the seeded token against its own hour-long horizon and cannot
-// renew it, so the daemon projects for that horizon: a login with less than an hour left and
-// no refresh authority is refused at projection, before any child — where a normal session's
-// turn, which only needs the token for its own deadline, still runs.
-func TestARestrictedSessionProjectsItsCredentialForTheBoxHorizon(t *testing.T) {
+// Both profiles use continuous canonical renewal. A turn need not fit within
+// one access token's lifetime, and the child never receives that token.
+func TestARestrictedSessionNeedsOnlyCanonicalStartupReadiness(t *testing.T) {
 	for _, mode := range []agents.ExecutionMode{agents.ModeBare, agents.ModeNormal} {
 		fixture := newSessionACPFixtureUnder(t, "normal", "claude@work", mode)
-		profile := filepath.Join(fixture.source, "claude", "profiles", "work")
-		short := `{"claudeAiOauth":{"accessToken":"access","expiresAt":` + fmt.Sprint(time.Now().Add(30*time.Minute).UnixMilli()) + `,"scopes":["user:inference"]}}`
-		if err := os.WriteFile(filepath.Join(profile, ".credentials.json"), []byte(short), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		writeSessionTestCredential(t, fixture.source, "claude@work", time.Now().Add(30*time.Minute))
 		turn := fixture.submit(t, "horizon")
-		result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
-		if mode == agents.ModeNormal {
-			if err != nil || result.State != session.TurnCompleted {
-				t.Fatalf("normal turn on a 30-minute token = %+v, %v", result, err)
-			}
-			continue
-		}
-		if err == nil || result.ErrorCode != sessionACPCredentialError || result.State != session.TurnFailed {
-			t.Fatalf("bare turn on a 30-minute token = %+v, %v; want a credential refusal before the child", result, err)
-		}
-		if _, statErr := os.Stat(fixture.childLog); !errors.Is(statErr, os.ErrNotExist) {
-			t.Fatalf("a child was started under a token the box would refuse: %v", statErr)
+		result, err := fixture.runner.Run(contextWithTurnTimeout(t, 2*time.Hour), fixture.session, turn)
+		if err != nil || result.State != session.TurnCompleted {
+			t.Fatalf("%s turn on a renewable 30-minute token = %+v, %v", mode, result, err)
 		}
 	}
 }
 
-// A filtered child re-checks Grok's access-only projection against the same hour-long horizon, so
-// the daemon renews the host login first — through Grok's own refresh, once — where an open
-// session, whose turn needs the token only for its own deadline, leaves a 30-minute login alone.
-func TestAFilteredGrokSessionRenewsTheHostLoginForTheBoxHorizon(t *testing.T) {
+// Filtered and open runs share the same startup horizon; neither prematurely
+// consumes a refresh grant just because its turn could last longer.
+func TestAFilteredGrokSessionDoesNotRefreshForTheWholeTurn(t *testing.T) {
 	for _, network := range []egress.Mode{egress.Open, egress.Filtered} {
 		t.Run(string(network), func(t *testing.T) {
 			var requests atomic.Int32
@@ -267,26 +250,16 @@ func TestAFilteredGrokSessionRenewsTheHostLoginForTheBoxHorizon(t *testing.T) {
 			defer server.Close()
 			t.Setenv("GROK_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
 			fixture := newSessionACPFixtureOn(t, "normal", "grok@work", agents.ModeNormal, network)
-			profile := filepath.Join(fixture.source, "grok", "profiles", "work")
-			login := fmt.Sprintf(`{"https://auth.x.ai::client":{"key":"short-access","refresh_token":"source-refresh","expires_at":%q,"create_time":%q,"auth_mode":"oidc","oidc_issuer":"https://auth.x.ai","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team"}}`,
-				time.Now().Add(30*time.Minute).UTC().Format(time.RFC3339Nano), time.Now().Add(-330*time.Minute).UTC().Format(time.RFC3339Nano))
-			if err := os.WriteFile(filepath.Join(profile, "auth.json"), []byte(login), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeSessionTestCredential(t, fixture.source, "grok@work", time.Now().Add(30*time.Minute))
+			before := readFile(t, filepath.Join(fixture.source, "grok", "credentials", "work", "authority.json"))
 			turn := fixture.submit(t, "renew")
-			result, err := fixture.runner.Run(contextWithTurnTimeout(t, 10*time.Minute), fixture.session, turn)
-			stored := readFile(t, filepath.Join(profile, "auth.json"))
+			result, err := fixture.runner.Run(contextWithTurnTimeout(t, 2*time.Hour), fixture.session, turn)
+			stored := readFile(t, filepath.Join(fixture.source, "grok", "credentials", "work", "authority.json"))
 			if err != nil || result.State != session.TurnCompleted {
 				t.Fatalf("%s turn on a 30-minute renewable login = %+v, %v", network, result, err)
 			}
-			if network == egress.Open {
-				if requests.Load() != 0 || !strings.Contains(stored, "short-access") {
-					t.Fatalf("an open turn renewed a login that covers it (%d requests)", requests.Load())
-				}
-				return
-			}
-			if requests.Load() != 1 || !strings.Contains(stored, "renewed-access") || !strings.Contains(stored, "rotated-refresh") {
-				t.Fatalf("a filtered turn did not renew the host login once (%d requests):\n%s", requests.Load(), stored)
+			if requests.Load() != 0 || stored != before {
+				t.Fatalf("%s turn unnecessarily renewed (%d requests)", network, requests.Load())
 			}
 		})
 	}

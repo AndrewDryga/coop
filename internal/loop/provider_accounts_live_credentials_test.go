@@ -3,6 +3,7 @@
 package loop
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -17,15 +18,18 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
+	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
 )
 
 // Absence means fewer than two configured accounts, not a broken credential or an incompatible
-// pair. A single filtered capture cannot mix brokered and native credentials for one provider.
+// pair. This live probe selects like-for-like credentials; deterministic tests cover mixed families.
 func accountLivePair(cfg *config.Config, provider string) ([]liveprovider.Selection, bool, error) {
 	// EffectiveProfiles intentionally treats catalog read errors as absence. Qualification must
 	// distinguish an unused provider from a catalog it could not inspect.
-	if _, err := os.ReadDir(filepath.Dir(cfg.AgentProfileDir(provider, "default"))); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, false, errors.New("cannot read configured account catalog")
+	for _, catalog := range []string{filepath.Dir(cfg.AgentProfileDir(provider, "default")), filepath.Join(cfg.ConfigDir, provider, "credentials")} {
+		if _, err := os.ReadDir(catalog); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, false, errors.New("cannot read configured account catalog")
+		}
 	}
 	accounts := box.EffectiveProfiles(cfg, provider)
 	slices.Sort(accounts)
@@ -37,16 +41,30 @@ func accountLivePair(cfg *config.Config, provider string) ([]liveprovider.Select
 		return nil, false, errors.New("invalid configured accounts")
 	}
 	kinds := make([]bool, len(selections))
+	brokered := make([]bool, len(selections))
 	for i, selection := range selections {
-		kinds[i], err = liveprovider.BrokersKey(cfg, selection)
+		snapshot, canonical, err := box.SnapshotNativeAccess(context.Background(), cfg, provider, selection.Account)
+		if err != nil || canonical && !snapshot.Configured {
+			return nil, false, errors.New("cannot inspect configured account family")
+		}
+		if canonical {
+			kinds[i] = snapshot.APIKey
+			brokered[i] = true
+			continue
+		}
+		brokered[i], err = liveprovider.BrokersKey(cfg, selection)
 		if err != nil {
 			return nil, false, errors.New("cannot inspect configured account family")
+		}
+		kinds[i], err = accountLiveLegacyAPIKey(cfg, selection)
+		if err != nil {
+			return nil, false, errors.New("cannot inspect legacy account family")
 		}
 	}
 	for i := range selections {
 		for j := i + 1; j < len(selections); j++ {
 			if kinds[i] == kinds[j] {
-				return []liveprovider.Selection{selections[i], selections[j]}, kinds[i], nil
+				return []liveprovider.Selection{selections[i], selections[j]}, brokered[i] || brokered[j], nil
 			}
 		}
 	}
@@ -55,12 +73,71 @@ func accountLivePair(cfg *config.Config, provider string) ([]liveprovider.Select
 
 const accountLiveInvalidKey = "coop-live-deliberately-invalid-credential"
 
+func accountLiveLegacyAPIKey(cfg *config.Config, selection liveprovider.Selection) (bool, error) {
+	ag, _ := agents.Get(selection.Provider)
+	profile := cfg.AgentProfileDir(selection.Provider, selection.Account)
+	if detector, ok := ag.(agents.StoredAPIKeyDetector); ok {
+		key, err := detector.StoredAPIKey(profile)
+		if key || err != nil && !errors.Is(err, os.ErrNotExist) {
+			return key, err
+		}
+	}
+	path, err := box.SelectedHostCredentialPath(cfg, ag, selection.Account)
+	if err != nil {
+		return false, err
+	}
+	if path != "" {
+		if _, _, found, err := box.LoadHostCredential(cfg, ag, selection.Account); found || err != nil {
+			return found, err
+		}
+	}
+	if selection.SourceDefault {
+		marker, _ := ag.AuthMarker()
+		_, err := os.Lstat(filepath.Join(profile, marker))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+		values := box.EnvFileValues(cfg.EnvFile())
+		for _, key := range ag.ActiveCredentialEnvKeys(profile, err == nil) {
+			if value := values[key]; value != "" {
+				state, err := ag.NativeCredentials().Environment("", key, value)
+				return state.APIKey, err
+			}
+		}
+	}
+	return false, nil
+}
+
 // Fault only a Prepare-owned copy. Closed canaries carry no real access or refresh authority;
 // future expiry keeps local readiness checks from skipping the first launch before the service
 // can reject it. The second account is never opened for writing.
 func faultAccountLiveCopy(cfg *config.Config, selection liveprovider.Selection, brokered bool) error {
 	ag, _ := agents.Get(selection.Provider)
 	profile := cfg.AgentProfileDir(selection.Provider, selection.Account)
+	snapshot, canonical, err := box.SnapshotNativeAccess(context.Background(), cfg, selection.Provider, selection.Account)
+	if err != nil || canonical && !snapshot.Ready {
+		return errors.New("inspect isolated canonical credential")
+	}
+	apiKey := brokered
+	if !canonical {
+		apiKey, err = accountLiveLegacyAPIKey(cfg, selection)
+		if err != nil {
+			return errors.New("inspect isolated legacy credential family")
+		}
+	}
+	if canonical {
+		apiKey = snapshot.APIKey
+		profile, err = os.MkdirTemp(cfg.ConfigDir, ".invalid-access-")
+		if err != nil {
+			return errors.New("stage isolated credential fault")
+		}
+		defer os.RemoveAll(profile)
+		for name, data := range snapshot.Files {
+			if err := config.WriteFileAtomic(filepath.Join(profile, name), data); err != nil {
+				return errors.New("stage isolated access artifact")
+			}
+		}
+	}
 	if selection.SourceDefault {
 		values := box.EnvFileValues(cfg.EnvFile())
 		changed := false
@@ -85,8 +162,11 @@ func faultAccountLiveCopy(cfg *config.Config, selection liveprovider.Selection, 
 		}
 	}
 	marker, _ := ag.AuthMarker()
+	if canonical && selection.Provider == "gemini" && !apiKey {
+		marker = "oauth_creds.json"
+	}
 	path := filepath.Join(profile, marker)
-	if ag.HostCredential().Declared() && brokered {
+	if ag.HostCredential().Declared() && apiKey {
 		if err := box.SaveHostCredential(cfg, ag, selection.Account, []byte(accountLiveInvalidKey)); err != nil {
 			return errors.New("write isolated invalid host key")
 		}
@@ -99,7 +179,7 @@ func faultAccountLiveCopy(cfg *config.Config, selection liveprovider.Selection, 
 				"scopes": []string{"user:inference"},
 			}}
 		case "codex":
-			if brokered {
+			if apiKey {
 				value = map[string]any{"auth_mode": "apikey", "OPENAI_API_KEY": accountLiveInvalidKey}
 			} else {
 				payload, _ := json.Marshal(map[string]any{
@@ -111,6 +191,9 @@ func faultAccountLiveCopy(cfg *config.Config, selection liveprovider.Selection, 
 				value = map[string]any{"auth_mode": "chatgpt", "last_refresh": time.Now().UTC().Format(time.RFC3339),
 					"tokens": map[string]string{"id_token": jwt, "access_token": jwt, "refresh_token": "", "account_id": "coop-live-invalid"}}
 			}
+		case "gemini":
+			value = map[string]any{"access_token": accountLiveInvalidKey,
+				"expiry_date": time.Now().Add(24 * time.Hour).UnixMilli(), "token_type": "Bearer"}
 		case "grok":
 			// Retain only the public issuer/client routing of every projected entry. Replacing just
 			// one would leave a real fallback key; copying an open object could retain new secrets.
@@ -125,7 +208,7 @@ func faultAccountLiveCopy(cfg *config.Config, selection liveprovider.Selection, 
 			}
 			canaries := map[string]any{}
 			for key, entry := range entries {
-				if entry.Issuer == "" || entry.Client == "" || (entry.Mode != "oidc" && entry.Mode != "api_key") {
+				if entry.Issuer == "" || entry.Client == "" || (entry.Mode != "oidc" && entry.Mode != "oauth" && entry.Mode != "api_key") {
 					return errors.New("unsupported isolated Grok route")
 				}
 				canaries[key] = map[string]string{"key": accountLiveInvalidKey, "auth_mode": entry.Mode,
@@ -144,6 +227,11 @@ func faultAccountLiveCopy(cfg *config.Config, selection liveprovider.Selection, 
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return errors.New("inspect isolated credential")
 	}
+	if canonical && !(ag.HostCredential().Declared() && apiKey) {
+		if err := box.ImportNativeSignIn(context.Background(), cfg, selection.Provider, selection.Account, profile); err != nil {
+			return errors.New("publish isolated invalid credential")
+		}
+	}
 	kind, err := liveprovider.BrokersKey(cfg, selection)
 	if err != nil || kind != brokered || !box.ProfileCredentialReady(cfg, selection.Provider, selection.Account, time.Now()) {
 		return errors.New("invalid credential canary changed local readiness or network family")
@@ -156,24 +244,17 @@ func TestProviderAccountsLiveContractCredentialFault(t *testing.T) {
 		t.Run(provider, func(t *testing.T) {
 			source := &config.Config{ConfigDir: t.TempDir()}
 			ag, _ := agents.Get(provider)
-			marker, _ := ag.AuthMarker()
 			for _, account := range []string{"first", "second"} {
-				profile := source.AgentProfileDir(provider, account)
-				if err := os.MkdirAll(profile, 0o700); err != nil {
+				stage := t.TempDir()
+				if err := os.Chmod(stage, 0700); err != nil {
 					t.Fatal(err)
 				}
-				if provider == "gemini" {
-					if err := box.SaveHostCredential(source, ag, account, []byte("SOURCE_SECRET_"+account)); err != nil {
+				for name, data := range nativeauth.Files(t, provider, account) {
+					if err := os.WriteFile(filepath.Join(stage, name), data, 0600); err != nil {
 						t.Fatal(err)
 					}
-					continue
 				}
-				body := map[string]string{
-					"claude": `{"claudeAiOauth":{"accessToken":"SOURCE_SECRET","refreshToken":"REFRESH_SECRET","expiresAt":9999999999999,"scopes":["user:inference"]}}`,
-					"codex":  `{"auth_mode":"chatgpt","tokens":{"id_token":"SOURCE_SECRET","access_token":"e30.eyJleHAiOjMyNTAzNjgwMDAwfQ.fake","refresh_token":"REFRESH_SECRET"},"last_refresh":"2026-01-01T00:00:00Z"}`,
-					"grok":   `{"issuer::id":{"key":"SOURCE_SECRET","refresh_token":"REFRESH_SECRET","expires_at":"2999-01-01T00:00:00Z","auth_mode":"oidc","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-01-01T00:00:00Z"}}`,
-				}[provider]
-				if err := os.WriteFile(filepath.Join(profile, marker), []byte(body), 0o600); err != nil {
+				if err := box.ImportNativeSignIn(t.Context(), source, provider, account, stage); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -193,6 +274,14 @@ func TestProviderAccountsLiveContractCredentialFault(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = second.Revoke() }()
+			original, found, err := box.SnapshotNativeAccess(t.Context(), cfg, provider, pair[0].Account)
+			if err != nil || !found || !original.Ready {
+				t.Fatal("missing isolated access", err)
+			}
+			originalState, err := ag.NativeCredentials().Inspect(original.Files, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := faultAccountLiveCopy(cfg, pair[0], brokered); err != nil {
 				t.Fatal(err)
 			}
@@ -202,14 +291,19 @@ func TestProviderAccountsLiveContractCredentialFault(t *testing.T) {
 			if err := prepared.VerifySources(); err != nil {
 				t.Fatal("fault touched source credentials")
 			}
-			data, err := os.ReadFile(filepath.Join(cfg.AgentProfileDir(provider, pair[0].Account), marker))
-			if provider == "gemini" {
-				_, key, found, keyErr := box.LoadHostCredential(cfg, ag, pair[0].Account)
-				if keyErr != nil || !found || key != accountLiveInvalidKey {
-					t.Fatal("host key was not replaced")
-				}
-			} else if err != nil || strings.Contains(string(data), "SOURCE_SECRET") || strings.Contains(string(data), "REFRESH_SECRET") {
-				t.Fatal("fault retained real credential authority")
+			faulted, found, err := box.SnapshotNativeAccess(t.Context(), cfg, provider, pair[0].Account)
+			if err != nil || !found || !faulted.Ready {
+				t.Fatal("missing faulted authority", err)
+			}
+			state, err := ag.NativeCredentials().Inspect(faulted.Files, time.Now())
+			if err != nil || state.Refreshable || state.AccessToken == originalState.AccessToken {
+				t.Fatal("fault retained original credential authority", err)
+			}
+			if state.Selection != originalState.Selection || state.APIKey != originalState.APIKey {
+				t.Fatal("fault changed the selected credential family")
+			}
+			if provider != "codex" && state.AccessToken != accountLiveInvalidKey {
+				t.Fatal("fault did not select the invalid access canary")
 			}
 		})
 	}
@@ -235,6 +329,46 @@ func TestProviderAccountsLiveContractAvailability(t *testing.T) {
 	}
 	if _, _, err := accountLivePair(cfg, "codex"); err == nil {
 		t.Fatal("incompatible configured pair accepted")
+	}
+}
+
+func TestProviderAccountsLiveContractMixedLayouts(t *testing.T) {
+	for _, apiKey := range []bool{false, true} {
+		t.Run(map[bool]string{false: "canonical-and-legacy-oauth", true: "legacy-mixed-families"}[apiKey], func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir()}
+			for _, account := range []string{"first", "second"} {
+				home := cfg.AgentProfileDir("codex", account)
+				if !apiKey && account == "first" {
+					home = t.TempDir()
+					if err := os.Chmod(home, 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.MkdirAll(home, 0700); err != nil {
+					t.Fatal(err)
+				}
+				data := nativeauth.Files(t, "codex", account)["auth.json"]
+				if apiKey && account == "first" {
+					data = []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"INERT_KEY"}`)
+				}
+				if err := os.WriteFile(filepath.Join(home, "auth.json"), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if !apiKey && account == "first" {
+					if err := box.ImportNativeSignIn(t.Context(), cfg, "codex", account, home); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			pair, brokered, err := accountLivePair(cfg, "codex")
+			if apiKey {
+				if err == nil {
+					t.Fatal("legacy mixed families passed like-for-like live selection")
+				}
+			} else if err != nil || len(pair) != 2 || !brokered {
+				t.Fatal("same-family mixed layouts were refused", err)
+			}
+		})
 	}
 }
 

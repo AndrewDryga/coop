@@ -40,11 +40,14 @@ Build *to* them, then *check the diff against them*.
 2. **Build** — wear the hats; obey `AGENTS.md`, match `.agent/kb/rules/` and the
    surrounding style exactly. `/spec` first if it spans more than one file (writes the
    task's `spec.md`). `/verify-api` before calling anything you're not certain exists.
-3. **Gate green** — the repo's exact gate (`AGENTS.md` → "The gate"). No green, no
-   review, no commit.
-4. **Self-review the diff** from every angle it touches — correctness, security /
+3. **Verify the changed boundaries** — focused happy/denial-path checks while iterating;
+   the repo's gate remains the final default. Honor explicit scope/batching direction under
+   `.agent/kb/rules/batch-slow-gates-when-requested.md`. Retain failed or missing evidence honestly;
+   do not require exhaustive upstream certification merely to review a new feature.
+4. **Self-review the diff** without waiting for slow gates, from every angle it touches — correctness, security /
    abuse path, UX, tests (including the failure path), docs, readability — against
-   the house rules. Fix what you find; iterate until you'd defend it.
+   the house rules. Fix what you find; iterate until you'd defend it. Review and test results
+   jointly determine readiness; a green test does not replace review or vice versa.
 5. **Commit** — one focused commit for this task; keep `log.md` (the *what + why*) current.
 6. **Final snapshot** — after the commit, refresh `state.md` in `10_in_progress/`: preserve the
    useful summary and traps, set `Status` to `complete`, and set `Next action` to `none`.

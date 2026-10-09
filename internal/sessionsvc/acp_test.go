@@ -31,6 +31,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
@@ -56,7 +57,11 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	if bound.NativeSessionID != "native-1" {
 		t.Fatalf("native session = %q, want native-1", bound.NativeSessionID)
 	}
-	if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "native-history")); err != nil {
+	home, err := box.NativeHomePath(&config.Config{ConfigDir: fixture.private}, "codex", "work", fixture.repo, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "native-history")); err != nil {
 		t.Fatalf("native session state was not retained: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); !os.IsNotExist(err) {
@@ -84,6 +89,7 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 		t.Fatalf("ACP methods = %v, want %v", methods, want)
 	}
 	if got := readFile(t, fixture.envLog); !strings.Contains(got, "config="+fixture.private) ||
+		!strings.Contains(got, "authority="+fixture.source) ||
 		!strings.Contains(got, "repo="+fixture.repo) || !strings.Contains(got, "run=session-") ||
 		!strings.Contains(got, "files=env,mcp.json,INSTRUCTIONS.md,.coop-conf-disabled") ||
 		strings.Contains(got, "secret") || !strings.Contains(got, "mcp= openai=") {
@@ -784,6 +790,9 @@ func TestRemoteSessionMCPRejectsFIFOAndCredentialHomeSource(t *testing.T) {
 	t.Run("selected credential home", func(t *testing.T) {
 		fixture := newSessionACPFixture(t, "normal", "claude@work")
 		source := filepath.Join(fixture.source, "claude", "profiles", "work", "shared-mcp.json")
+		if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+			t.Fatal(err)
+		}
 		body := []byte(`{"mcpServers":{"x":{"command":"true"}}}`)
 		if err := os.WriteFile(source, body, 0o600); err != nil {
 			t.Fatal(err)
@@ -1113,7 +1122,7 @@ func TestSessionACPRejectionDetailIsUsefulAndBounded(t *testing.T) {
 // first credential hit its limit, then tried to load emisar's native session
 // through oncall's credential store. Codex rejected it and the queue stayed
 // blocked even though oncall had 91% of its allowance left.
-func TestAProviderCredentialRotationStartsANewNativeSession(t *testing.T) {
+func TestAProviderCredentialRotationKeepsTheNativeSession(t *testing.T) {
 	fixture := newSessionACPFixture(t, "rate-limited-once")
 	fixture.signIn(t, "codex", "backup")
 	t.Setenv("COOP_TEST_SESSION_LIMIT_MARKER", filepath.Join(t.TempDir(), "limited"))
@@ -1133,13 +1142,12 @@ func TestAProviderCredentialRotationStartsANewNativeSession(t *testing.T) {
 	if bound.Target != "codex@backup" {
 		t.Fatalf("session target = %q, want codex@backup", bound.Target)
 	}
-	// The new credential owns a different native-session store. Its child must
-	// start a session instead of trying to load the first account's binding.
+	// ACP history belongs to the session, not the selected credential account.
 	if bound.NativeSessionID != "native-1" {
 		t.Fatalf("native session = %q, want the new account's native-1", bound.NativeSessionID)
 	}
 	methods := readSessionACPLog(t, fixture.childLog)
-	want := []string{"initialize", "session/new", "session/prompt", "initialize", "session/new", "session/prompt"}
+	want := []string{"initialize", "session/new", "session/prompt", "initialize", "session/load", "session/prompt"}
 	if fmt.Sprint(methods) != fmt.Sprint(want) {
 		t.Fatalf("ACP methods = %v, want %v", methods, want)
 	}
@@ -1157,7 +1165,7 @@ func TestAProviderCredentialRotationStartsANewNativeSession(t *testing.T) {
 			backoff = string(event.Payload)
 		}
 	}
-	if rotated != `{"from":"codex@work","native_session_reset":true,"to":"codex@backup"}` {
+	if rotated != `{"from":"codex@work","native_session_reset":false,"to":"codex@backup"}` {
 		t.Fatalf("rotation event = %s", rotated)
 	}
 	// The limit is audible before the rotation: a client watching events can
@@ -1645,8 +1653,11 @@ func TestSessionTurnRunnerReusesWarmACPProcessAcrossTurns(t *testing.T) {
 	if got, want := readFile(t, fixture.envLog), "run="+sessionWarmRunID(fixture.session.ID); !strings.Contains(got, want) {
 		t.Fatalf("cold-to-warm ACP run identity = %q, want %q", got, want)
 	}
-	if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); err != nil {
-		t.Fatalf("warm credential projection was not retained: %v", err)
+	if _, err := os.Stat(filepath.Join(fixture.private, "mcp.json")); err != nil {
+		t.Fatalf("warm MCP projection was not retained: %v", err)
+	}
+	if pathExists(filepath.Join(fixture.private, "codex", "credentials")) || pathExists(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")) {
+		t.Fatal("warm child acquired a copied account authority")
 	}
 	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
 	if err != nil {
@@ -1684,7 +1695,7 @@ func TestTurnStateToolsSurviveEveryTargetRotation(t *testing.T) {
 		targets                             []string
 		wantLoads                           int
 	}{
-		{name: "quota failover", scenario: "rate-limited-once", initial: "codex@work", wantTarget: "codex@backup"},
+		{name: "quota failover", scenario: "rate-limited-once", initial: "codex@work", wantTarget: "codex@backup", wantLoads: 1},
 		{name: "quota model failover", scenario: "rate-limited-once", initial: "codex:gpt-5.6-sol/medium@work", wantTarget: "codex:gpt-5.6-terra/high@work",
 			targets: []string{"codex:gpt-5.6-sol/medium@work", "codex:gpt-5.6-terra/high@work"}, wantLoads: 1},
 		{name: "quota provider failover", scenario: "rate-limited-once", initial: "codex:gpt-5.6-sol/medium@work", wantTarget: "claude:claude-opus-4-6/high@backup",
@@ -1879,20 +1890,18 @@ func TestSessionTurnRunnerPreparedProcessHandlesFirstPromptWithoutRestart(t *tes
 	}
 }
 
-func TestSessionTurnRunnerFallsBackToColdWhenCredentialCannotCoverWarmLease(t *testing.T) {
+func TestSessionTurnRunnerKeepsWarmthWithContinuousCanonicalRenewal(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
-	credential := filepath.Join(fixture.source, "codex", "profiles", "work", "auth.json")
-	if err := os.WriteFile(credential, []byte(codexTestCredential(time.Now().Add(30*time.Minute))), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeSessionTestCredential(t, fixture.source, "codex@work", time.Now().Add(30*time.Minute))
 	turn := fixture.submit(t, "do not trade correctness for warmth")
 	ctx := context.WithValue(contextWithTurnDeadline(t), sessionWarmIdleTimeoutContextKey{}, time.Hour)
 	if _, err := fixture.runner.Run(ctx, fixture.session, turn); err != nil {
 		t.Fatal(err)
 	}
-	if fixture.runner.WarmSessionReady(fixture.session) {
-		t.Fatal("short-lived credentials unexpectedly left a warm execution")
+	if !fixture.runner.WarmSessionReady(fixture.session) {
+		t.Fatal("renewable canonical authority unnecessarily disabled warmth")
 	}
+	t.Cleanup(func() { _ = fixture.runner.CloseWarmSessions() })
 	if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); !os.IsNotExist(err) {
 		t.Fatalf("cold fallback credential remains: %v", err)
 	}
@@ -2189,7 +2198,7 @@ func TestSessionTurnRunnerBoundsStderrWithoutLosingResponse(t *testing.T) {
 func TestSessionTurnRunnerRejectsSourceSymlinkAndRefreshRequired(t *testing.T) {
 	t.Run("symlink", func(t *testing.T) {
 		fixture := newSessionACPFixture(t, "normal")
-		credential := filepath.Join(fixture.source, "codex", "profiles", "work", "auth.json")
+		credential := filepath.Join(fixture.source, "codex", "credentials", "work", "authority.json")
 		outside := filepath.Join(t.TempDir(), "auth.json")
 		if err := os.Rename(credential, outside); err != nil {
 			t.Fatal(err)
@@ -2207,13 +2216,14 @@ func TestSessionTurnRunnerRejectsSourceSymlinkAndRefreshRequired(t *testing.T) {
 	})
 	t.Run("refresh required is renewed before projection", func(t *testing.T) {
 		fixture := newSessionACPFixture(t, "normal")
-		credential := filepath.Join(fixture.source, "codex", "profiles", "work", "auth.json")
-		if err := os.WriteFile(credential, []byte(codexTestCredential(time.Now().Add(-time.Minute))), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		writeSessionTestCredential(t, fixture.source, "codex@work", time.Now().Add(-time.Minute))
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, time.Now().Add(2*time.Hour).Unix())))
-			_, _ = fmt.Fprintf(w, `{"id_token":"identity","access_token":"x.%s.x","refresh_token":"rotated"}`, payload)
+			var document struct {
+				Tokens map[string]string `json:"tokens"`
+			}
+			_ = json.Unmarshal([]byte(codexTestCredential(time.Now().Add(2*time.Hour))), &document)
+			document.Tokens["refresh_token"] = "rotated"
+			_ = json.NewEncoder(w).Encode(document.Tokens)
 		}))
 		defer server.Close()
 		t.Setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
@@ -2264,11 +2274,10 @@ func TestEnsurePrivateDirectoryRejectsIntermediateSymlink(t *testing.T) {
 
 func TestSessionACPProjectionTracksDestinationBeforeFailedWrite(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
-	profile := filepath.Join(fixture.private, "codex", "profiles", "work")
-	if err := os.MkdirAll(profile, 0o700); err != nil {
+	if err := os.MkdirAll(fixture.private, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	authPath := filepath.Join(profile, "auth.json")
+	authPath := filepath.Join(fixture.private, "defaults")
 	if err := os.Mkdir(authPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -2321,7 +2330,7 @@ func TestSessionACPProjectionCanOmitSharedEnvironmentAndMCP(t *testing.T) {
 	}
 	for _, path := range []string{
 		filepath.Join(fixture.private, "INSTRUCTIONS.md"),
-		filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json"),
+		filepath.Join(fixture.private, "defaults"),
 	} {
 		if !pathExists(path) {
 			t.Fatalf("required session projection is missing: %s", path)
@@ -2354,10 +2363,10 @@ func TestSessionACPProjectionHandsAKeyToTheBrokerNotTheBox(t *testing.T) {
 			t.Fatal(err)
 		}
 		private := &config.Config{ConfigDir: fixture.private}
-		if _, value, found, err := box.LoadHostCredential(private, gemini, "studio"); err != nil || !found || value != "vault-key" {
-			t.Fatalf("private vault = %v, %v", found, err)
+		if _, _, found, err := box.LoadHostCredential(private, gemini, "studio"); err != nil || found {
+			t.Fatalf("account was copied into private vault: %v, %v", found, err)
 		}
-		keyFree(t, private.AgentProfileDir("gemini", "studio"), "vault-key")
+		keyFree(t, fixture.private, "vault-key")
 		// A daemon killed mid-turn never runs the turn's own cleanup; closing the session must still
 		// take the key, even past a profile artifact it cannot remove.
 		stuck := filepath.Join(private.AgentProfileDir("gemini", "studio"), "gemini-credentials.json")
@@ -2386,8 +2395,8 @@ func TestSessionACPProjectionHandsAKeyToTheBrokerNotTheBox(t *testing.T) {
 			t.Fatal(err)
 		}
 		env := filepath.Join(fixture.private, "env")
-		if got := readFile(t, env); got != "ANTHROPIC_API_KEY=env-key\n" {
-			t.Fatalf("private env = %q, want only the selected key", got)
+		if pathExists(env) {
+			t.Fatal("withheld environment was recreated to copy a provider key")
 		}
 		if got := readFile(t, filepath.Join(fixture.private, "defaults")); got != "claude=default\n" {
 			t.Fatalf("private defaults = %q", got)
@@ -3008,8 +3017,8 @@ type sessionACPFixture struct {
 }
 
 func codexTestCredential(expires time.Time) string {
-	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, expires.Unix())))
-	return `{"auth_mode":"chatgpt","tokens":{"id_token":"identity","access_token":"x.` + payload + `.x","refresh_token":"refresh"},"last_refresh":"2026-07-26T00:00:00Z"}`
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d,"sub":"fixture-user","https://api.openai.com/auth":{"chatgpt_account_id":"fixture-account","chatgpt_user_id":"fixture-user"}}`, expires.Unix())))
+	return `{"auth_mode":"chatgpt","tokens":{"id_token":"x.` + payload + `.x","access_token":"x.` + payload + `.x","refresh_token":"refresh"},"last_refresh":"2026-07-26T00:00:00Z"}`
 }
 
 func claudeTestCredential(expires time.Time) string {
@@ -3020,22 +3029,49 @@ func claudeTestCredential(expires time.Time) string {
 }
 
 // writeSessionTestCredential signs the fixture's account in for whichever provider the target
-// names, in that provider's own on-disk shape — what projectCredentials reads, renews and projects.
-func writeSessionTestCredential(t *testing.T, source, target string) {
+// names through host sign-in. Only explicit migration tests seed legacy grants.
+func writeSessionTestCredential(t *testing.T, source, target string, expiry ...time.Time) {
 	t.Helper()
 	parsed, err := agents.ParseTarget(target)
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile := filepath.Join(source, parsed.Provider, "profiles", parsed.Account())
-	if err := os.MkdirAll(profile, 0o700); err != nil {
+	profile := t.TempDir()
+	if err := os.Chmod(profile, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	name, body := "auth.json", codexTestCredential(time.Now().Add(2*time.Hour))
+	if err := os.MkdirAll(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(2 * time.Hour)
+	if len(expiry) != 0 {
+		expires = expiry[0]
+	}
+	name, body := "auth.json", codexTestCredential(expires)
 	if parsed.Provider == "claude" {
-		name, body = ".credentials.json", claudeTestCredential(time.Now().Add(2*time.Hour))
+		name, body = ".credentials.json", claudeTestCredential(expires)
+		if err := os.WriteFile(filepath.Join(profile, ".claude.json"), []byte(`{"oauthAccount":{"accountUuid":"fixture-account","organizationUuid":"fixture-org"}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if parsed.Provider == "grok" {
+		body = fmt.Sprintf(`{"https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828":{"key":"short-access","refresh_token":"source-refresh","expires_at":%q,"create_time":%q,"auth_mode":"oidc","oidc_issuer":"https://auth.x.ai","oidc_client_id":"b1a00492-073a-47ea-816f-4c329264a828","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team"}}`, expires.UTC().Format(time.RFC3339Nano), time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano))
+	}
+	if parsed.Provider == "gemini" {
+		for name, data := range nativeauth.Files(t, parsed.Provider, parsed.Account()) {
+			if err := os.WriteFile(filepath.Join(profile, name), data, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := box.ImportNativeSignIn(context.Background(), &config.Config{ConfigDir: source}, parsed.Provider, parsed.Account(), profile); err != nil {
+			t.Fatal(err)
+		}
+		return
 	}
 	if err := os.WriteFile(filepath.Join(profile, name), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := box.ImportNativeSignIn(context.Background(), &config.Config{ConfigDir: source}, parsed.Provider, parsed.Account(), profile); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -3211,14 +3247,7 @@ exit 0
 // to rotate onto.
 func (f *sessionACPFixture) signIn(t *testing.T, agent, credential string) {
 	t.Helper()
-	dir := filepath.Join(f.source, agent, "profiles", credential)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	auth := codexTestCredential(time.Now().Add(2 * time.Hour))
-	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(auth), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeSessionTestCredential(t, f.source, agent+"@"+credential)
 }
 
 // ladderContext supplies the policy ladder the service would attach to a turn's context.
@@ -3495,10 +3524,12 @@ func TestSessionACPChildHelper(t *testing.T) {
 			projected = append(projected, name)
 		}
 	}
-	fmt.Fprintf(env, "config=%s repo=%s mcp=%s openai=%s run=%s files=%s ro=%s\n", os.Getenv("COOP_CONFIG_DIR"), os.Getenv("COOP_REPO"), os.Getenv("COOP_MCP_FILE"), os.Getenv("OPENAI_API_KEY"), os.Getenv("COOP_SESSION_RUN_ID"), strings.Join(projected, ","), os.Getenv("COOP_SESSION_REPOSITORY_READ_ONLY"))
+	fmt.Fprintf(env, "config=%s repo=%s mcp=%s openai=%s run=%s files=%s ro=%s authority=%s\n", os.Getenv("COOP_CONFIG_DIR"), os.Getenv("COOP_REPO"), os.Getenv("COOP_MCP_FILE"), os.Getenv("OPENAI_API_KEY"), os.Getenv("COOP_SESSION_RUN_ID"), strings.Join(projected, ","), os.Getenv("COOP_SESSION_REPOSITORY_READ_ONLY"), os.Getenv("COOP_NATIVE_AUTHORITY_DIR"))
 	env.Close()
-	privateNative := filepath.Join(os.Getenv("COOP_CONFIG_DIR"), "codex", "profiles", "work", "native-history")
-	_ = os.WriteFile(privateNative, []byte("native"), 0o600)
+	if home, err := box.NativeHomePath(&config.Config{ConfigDir: os.Getenv("COOP_CONFIG_DIR")}, "codex", "work", os.Getenv("COOP_REPO"), true); err == nil {
+		_ = os.MkdirAll(home, 0o700)
+		_ = os.WriteFile(filepath.Join(home, "native-history"), []byte("native"), 0o600)
+	}
 
 	scenario := os.Getenv("COOP_TEST_SESSION_SCENARIO")
 	// An online child's box.Run hands over its adapter's MCP list — broker URLs and stand-ins —

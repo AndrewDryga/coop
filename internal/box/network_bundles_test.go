@@ -1,7 +1,7 @@
 package box
 
 import (
-	"fmt"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,73 +19,38 @@ import (
 // every installed provider. A raw run mounts none and therefore gets none.
 func TestNetworkProviderBundlesFollowTheMountedCredentialScope(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "filtered"}
-	claudeDir := cfg.AgentProfileDir("claude", "default")
-	codexDir := cfg.AgentProfileDir("codex", "default")
-	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(codexDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(`{"claudeAiOauth":{"refreshToken":"r","scopes":["user:inference"]}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"r"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	repo := t.TempDir()
-	raw, err := NetworkProviderBundles(cfg, RunSpec{Repo: repo})
-	if err != nil || len(raw) != 0 {
-		t.Fatal("a raw run derived provider endpoints", raw, err)
-	}
-	if _, err := NetworkProviderBundles(cfg, RunSpec{Repo: repo, Agent: "claude"}); err != nil {
-		t.Fatal("homes-off run derived endpoints", err)
-	}
-	bundles, err := NetworkProviderBundles(cfg, RunSpec{Repo: repo, Agent: "claude", Homes: true})
-	if err != nil || len(bundles) != 1 || bundles[0].Provider != "claude" || bundles[0].Client != egress.ClientCLI {
-		t.Fatal("selected provider lost its core endpoints", bundles, err)
-	}
-	domains := map[string]bool{}
-	for _, rule := range bundles[0].Core {
-		domains[rule.To.Domain] = true
-	}
-	// The API, the OAuth token endpoint and the claude.ai connector proxy: what a signed-in
-	// session needs to function, and nothing the client only chats to (see
-	// agent.TestProviderBundlesCarryFunctionNotChatter).
-	for _, host := range []string{"api.anthropic.com", "platform.claude.com", "mcp-proxy.anthropic.com"} {
-		if !domains[host] {
-			t.Fatal("core provider endpoint missing:", host, bundles[0].Core)
+	seedCanonicalFixture(t, cfg, "claude", "default")
+	seedCanonicalFixture(t, cfg, "codex", "default")
+	for _, client := range []egress.Client{egress.ClientCLI, egress.ClientACP} {
+		for _, peers := range [][]agents.Target{nil, {{Provider: "codex"}}} {
+			spec := RunSpec{Repo: t.TempDir(), Agent: "claude", Homes: true, Peers: peers, NetworkClient: client}
+			bundles, err := NetworkProviderBundles(cfg, spec)
+			if err != nil || len(bundles) != 0 {
+				t.Fatal("protected origins entered workload policy", bundles, err)
+			}
+			protected, err := brokeredProviders(cfg, spec)
+			if err != nil || len(protected) != 1+len(peers) || !protected["claude"] || len(peers) > 0 && !protected["codex"] {
+				t.Fatal("guard scope lost", protected, err)
+			}
+			bundle, err := NetworkTargetBundle(cfg, agents.Target{Provider: "claude"}, client)
+			if err != nil || bundle.Client != client || bundle.Backend != "native-broker" || len(bundle.Core) != 0 {
+				t.Fatal("native descriptor incorrect", bundle, err)
+			}
 		}
 	}
-	// An explicitly named peer mounts its credentials, so it needs its own
-	// endpoints too — and an unsupported provider fails the whole admission
-	// rather than launching under a policy that cannot reach it.
-	peered, err := NetworkProviderBundles(cfg, RunSpec{Repo: repo, Agent: "claude", Homes: true,
-		Peers: []agents.Target{{Provider: "codex"}}})
-	if err != nil || len(peered) != 2 {
-		t.Fatal("named peer lost its core endpoints", peered, err)
+	for _, spec := range []RunSpec{{Repo: t.TempDir()}, {Agent: "claude"}} {
+		if bundles, err := NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 0 {
+			t.Fatal("raw/homes-off derived endpoints", bundles, err)
+		}
 	}
-	if _, err := NetworkProviderBundles(cfg, RunSpec{Repo: repo, Agent: "claude", Homes: true,
-		Peers: []agents.Target{{Provider: "gemini"}}}); err == nil {
-		t.Fatal("unqualified provider was admitted", err)
-	}
-	// The client kind rides the spec: an ACP launch is a different variant and
-	// must not silently inherit the CLI's captured endpoints.
-	acp, err := NetworkProviderBundles(cfg, RunSpec{Repo: repo, Agent: "claude", Homes: true, NetworkClient: egress.ClientACP})
-	if err != nil || len(acp) != 1 || acp[0].Client != egress.ClientACP {
-		t.Fatal("declared client variant was ignored", acp, err)
+	if _, err := NetworkProviderBundles(cfg, RunSpec{Agent: "claude", Homes: true, Peers: []agents.Target{{Provider: "gemini"}}}); err == nil {
+		t.Fatal("missing peer account admitted")
 	}
 }
 
 func TestNetworkProviderBundlesRefusesMissingRequiredPresetRole(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), Egress: "filtered"}
-	dir := cfg.AgentProfileDir("codex", "default")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"r"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seedCanonicalFixture(t, cfg, "codex", "default")
 	p := &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}}, Roles: []preset.Role{{
 		Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "gemini"}},
 	}}}
@@ -126,29 +91,26 @@ func TestNetworkTargetBundleBindsAuthenticationAndOffersAPIKeysToACP(t *testing.
 	}
 	key := agents.Target{Provider: "gemini", Accounts: []string{"key"}}
 	bundle, err := NetworkTargetBundle(cfg, key, egress.ClientCLI)
-	if err != nil || bundle.AuthMode != "api-key" || len(bundle.Core) != 1 || bundle.Core[0].To.Domain != "generativelanguage.googleapis.com" {
+	if err != nil || bundle.Backend != "native-broker" || bundle.AuthMode != "gemini-api-key" || len(bundle.Core) != 0 {
 		t.Fatalf("portable Gemini key was not qualified exactly: %+v, %v", bundle, err)
 	}
-	if acp, err := NetworkTargetBundle(cfg, key, egress.ClientACP); err != nil || acp.AuthMode != "api-key" {
+	if acp, err := NetworkTargetBundle(cfg, key, egress.ClientACP); err != nil || acp.AuthMode != "gemini-api-key" {
 		t.Fatalf("Gemini API key was not offered to ACP: %+v, %v", acp, err)
 	}
 	// The client's own key file beside Coop's host key is shadowed by the broker, as in a direct
 	// run; a key only that file holds would enter the box.
+	if err := os.MkdirAll(cfg.AgentProfileDir("gemini", "key"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(cfg.AgentProfileDir("gemini", "key"), "gemini-credentials.json"), []byte(`{"encrypted":"native"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if acp, err := NetworkTargetBundle(cfg, key, egress.ClientACP); err != nil || acp.AuthMode != "api-key" {
+	if acp, err := NetworkTargetBundle(cfg, key, egress.ClientACP); err != nil || acp.AuthMode != "gemini-api-key" {
 		t.Fatalf("Gemini host key beside a native key file was not offered to ACP: %+v, %v", acp, err)
 	}
-	codexDir := cfg.AgentProfileDir("codex", "native")
-	if err := os.MkdirAll(codexDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"native-key"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NetworkTargetBundle(cfg, agents.Target{Provider: "codex", Accounts: []string{"native"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "native credential file") {
-		t.Fatal("a key only Codex's own file holds was offered to ACP", err)
+	importCanonicalFixture(t, cfg, "codex", "native", map[string][]byte{"auth.json": []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"inert-native-key"}`)})
+	if bundle, err := NetworkTargetBundle(cfg, agents.Target{Provider: "codex", Accounts: []string{"native"}}, egress.ClientACP); err != nil || bundle.Backend != "native-broker" || bundle.AuthMode != "apikey" || len(bundle.Core) != 0 {
+		t.Fatal("canonical Codex key not offered to ACP", bundle, err)
 	}
 
 	oauthDir := cfg.AgentProfileDir("gemini", "oauth")
@@ -161,7 +123,7 @@ func TestNetworkTargetBundleBindsAuthenticationAndOffersAPIKeysToACP(t *testing.
 	if err := os.WriteFile(filepath.Join(oauthDir, "gemini-credentials.json"), []byte(`{"encrypted":"host-bound"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NetworkTargetBundle(cfg, agents.Target{Provider: "gemini", Accounts: []string{"oauth"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "oauth-personal") {
+	if _, err := NetworkTargetBundle(cfg, agents.Target{Provider: "gemini", Accounts: []string{"oauth"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "encrypted cache") {
 		t.Fatal("host-bound Gemini OAuth was admitted", err)
 	}
 
@@ -191,19 +153,14 @@ func TestNetworkProviderBundlesBrokerAPresetRolesKey(t *testing.T) {
 	if err := os.WriteFile(cfg.EnvFile(), []byte("GEMINI_API_KEY=gemini-secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	codex := cfg.AgentProfileDir("codex", "default")
-	if err := os.MkdirAll(codex, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(codex, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"refresh"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seedCanonicalFixture(t, cfg, "codex", "default")
+
 	p := &preset.Preset{Roles: []preset.Role{{Name: "reviewer", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "gemini"}}}}}
 	for _, admission := range []bool{false, true} {
 		spec := RunSpec{Agent: "codex", AgentCommand: true, Homes: true, Preset: p, NetworkAdmission: admission}
 		bundles, err := NetworkProviderBundles(cfg, spec)
-		if err != nil || len(bundles) != 1 || bundles[0].Provider != "codex" {
-			t.Fatalf("admission=%v: bundles = %+v, %v; want only the signed-in lead's API granted", admission, bundles, err)
+		if err != nil || len(bundles) != 0 {
+			t.Fatalf("admission=%v: bundles = %+v, %v; want protected origins excluded from workload policy", admission, bundles, err)
 		}
 	}
 }
@@ -212,39 +169,46 @@ func TestNetworkProviderBundlesBrokerAPresetRolesKey(t *testing.T) {
 // through auth.x.ai, which the bundle allows — so a login that carries a refresh token starts however
 // little its access token has left, even none. Only a credential with no refresh token, like a
 // session's access-only projection, has to outlive the restricted horizon by itself.
-func TestNetworkTargetBundleRequiresALastingGrokTokenOnlyWithoutRefresh(t *testing.T) {
+func TestNetworkTargetBundleRequiresUsableGrokAuthority(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
-	dir := cfg.AgentProfileDir("grok", "personal")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	write := func(expiry time.Time, refresh string) {
-		t.Helper()
-		body := fmt.Sprintf(`{"https://auth.x.ai::client":{"key":"access","expires_at":%q,"auth_mode":"oauth","oidc_issuer":"https://auth.x.ai","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-09-13T00:00:00Z","refresh_token":%q}}`, expiry.UTC().Format(time.RFC3339Nano), refresh)
-		if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	target := agents.Target{Provider: "grok", Accounts: []string{"personal"}}
-	for _, c := range []struct {
+	seedCanonicalFixture(t, cfg, "grok", "personal")
+	ag, _ := agents.Get("grok")
+	for _, tc := range []struct {
 		name    string
 		expiry  time.Duration
 		refresh string
 		admit   bool
 	}{
-		{"access-only, lasting", 2 * time.Hour, "", true},
-		{"access-only, short-lived", 30 * time.Minute, "", false},
-		{"renewable, short-lived", 30 * time.Minute, "refresh", true},
-		{"renewable, already expired", -time.Hour, "refresh", true},
+		{"lasting", 2 * time.Hour, "", true}, {"short", 30 * time.Minute, "", true}, {"expired", -time.Hour, "", false},
+		{"renewable", 30 * time.Minute, "refresh", true}, {"expired renewable", -time.Hour, "refresh", true},
 	} {
-		write(time.Now().Add(c.expiry), c.refresh)
-		bundle, err := NetworkTargetBundle(cfg, target, egress.ClientACP)
-		if c.admit && (err != nil || bundle.AuthMode != "access-file" || len(bundle.Core) != 3) {
-			t.Errorf("%s Grok login was not qualified: %+v, %v", c.name, bundle, err)
-		}
-		if !c.admit && (err == nil || !strings.Contains(err.Error(), "no portable credential")) {
-			t.Errorf("%s Grok login was admitted: %v", c.name, err)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			files := canonicalFixtureFiles(t, "grok", "personal")
+			var doc map[string]map[string]any
+			if err := json.Unmarshal(files["auth.json"], &doc); err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range doc {
+				entry["expires_at"] = time.Now().Add(tc.expiry).UTC().Format(time.RFC3339Nano)
+				entry["refresh_token"] = tc.refresh
+			}
+			files["auth.json"] = canonicalFixtureJSON(t, doc)
+			state, err := ag.NativeCredentials().Inspect(files, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Simulate a published grant aging; fresh sign-in refuses expired access.
+			if _, _, err := replaceAccountAuthority(t.Context(), cfg, nativeAccountSpec(ag), "personal", &accountAuthority{Selection: state.Selection, Principal: state.Principal, Artifacts: files}); err != nil {
+				t.Fatal(err)
+			}
+			bundle, err := NetworkTargetBundle(cfg, agents.Target{Provider: "grok", Accounts: []string{"personal"}}, egress.ClientCLI)
+			if tc.admit && (err != nil || bundle.Backend != "native-broker" || bundle.AuthMode != "oauth" || len(bundle.Core) != 0) {
+				t.Fatal("usable authority refused", bundle, err)
+			}
+			if !tc.admit && err == nil {
+				t.Fatal("expired access-only authority admitted")
+			}
+		})
 	}
 }
 

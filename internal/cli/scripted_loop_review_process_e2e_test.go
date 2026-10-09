@@ -1745,7 +1745,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 func assertLoopCorrectionMounts(t *testing.T, layout procharness.Layout, provider, account string, mounts []processMount) {
 	t.Helper()
 	repo := processTracePath(layout.Root, layout.Repo)
-	profile := processTracePath(layout.Root, filepath.Join(layout.Config, provider, "profiles", account))
+	profile := processNativeHome(t, layout, provider, account, layout.Repo)
 	profileTarget := "<container>/home/node/." + provider
 	foundProfile := false
 	for _, mount := range mounts {
@@ -1806,7 +1806,7 @@ func loopPromptIndex(provider string, argv []string) (int, bool) {
 func assertLoopReviewMounts(t *testing.T, layout procharness.Layout, provider, account string, mounts []processMount) {
 	t.Helper()
 	repo := processTracePath(layout.Root, layout.Repo)
-	profile := processTracePath(layout.Root, filepath.Join(layout.Config, provider, "profiles", account))
+	profile := processNativeHome(t, layout, provider, account, layout.Repo)
 	profileTarget := "<container>/home/node/." + provider
 	foundRepo, foundProfile := false, false
 	for _, mount := range mounts {

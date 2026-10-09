@@ -411,18 +411,43 @@ func TestTrialRunnerStillGradesWorkAfterANonZeroExit(t *testing.T) {
 // property for the eval path, because losing it would let one trial write the next one's prompt.
 func TestTrialAttemptCannotRewriteTheNextTrialsInstructions(t *testing.T) {
 	suite := trialSuite(t)
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.ExtraRunArgs = nil // a developer's own runtime binds are not part of this trial
-	cfg.Homes = true
+	cfg := &config.Config{ConfigDir: t.TempDir(), BoxHome: t.TempDir(), HomeInBox: "/home/node", BaseImage: "coop-box:test", Homes: true, Egress: "open"}
+	signInCred(t, cfg, "codex", "default")
 	recorder := filepath.Join(t.TempDir(), "argv.log")
 	r := &trialRunner{
-		app: &app{cfg: cfg, rt: recordingRuntime(t, recorder)}, suite: suite,
+		app: &app{cfg: cfg, rt: nativeOnlineRuntime(t, recorder)}, suite: suite,
 		image: "coop-box:test", workRoot: t.TempDir(),
 	}
-	r.run(context.Background(), trialFor(suite))
+
+	var firstHome string
+	for repetition := range 2 {
+		trial := trialFor(suite)
+		trial.Repetition = repetition
+		if result := r.run(context.Background(), trial); result.Status != eval.TrialPassed {
+			t.Fatalf("trial %d = %s: %s", repetition, result.Status, result.Detail)
+		}
+		homes := box.HistoryStores(cfg, "codex", "default")
+		if len(homes) != repetition+1 {
+			t.Fatalf("trial homes = %v, want %d", homes, repetition+1)
+		}
+		home := homes[0]
+		if home == firstHome {
+			home = homes[1]
+		}
+		if repetition == 0 {
+			firstHome = home
+			if err := os.WriteFile(filepath.Join(home, "prior-trial-canary"), []byte("private history"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			if home == firstHome {
+				t.Fatal("trials shared one native home")
+			}
+			if _, err := os.Stat(filepath.Join(home, "prior-trial-canary")); !os.IsNotExist(err) {
+				t.Fatalf("prior trial state reached next home: %v", err)
+			}
+		}
+	}
 
 	data, rerr := os.ReadFile(recorder)
 	if rerr != nil {
@@ -437,9 +462,9 @@ func TestTrialAttemptCannotRewriteTheNextTrialsInstructions(t *testing.T) {
 	if attempt == "" {
 		t.Fatalf("no credential-carrying attempt was recorded:\n%s", data)
 	}
-	// Every mount that lands on an agent instruction file or its config must be read-only.
+	// Shared instruction mounts stay read-only; settings live in each trial's own complete home.
 	for _, field := range strings.Fields(attempt) {
-		for _, guarded := range []string{"AGENTS.md", "CLAUDE.md", "config.toml", "settings.json"} {
+		for _, guarded := range []string{"AGENTS.md", "CLAUDE.md"} {
 			if strings.Contains(field, "/"+guarded) && !strings.HasSuffix(field, ":ro") {
 				t.Errorf("%s is mounted writable — a trial could rewrite what the next one is told:\n%s", guarded, field)
 			}

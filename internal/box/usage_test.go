@@ -102,6 +102,38 @@ esac
 	}
 }
 
+func TestOfflineNativeHomesDoNotLeaseRetiredCredentialProfiles(t *testing.T) {
+	for _, name := range agents.Names() {
+		t.Run(name, func(t *testing.T) {
+			cfg := (&config.Config{ConfigDir: t.TempDir()}).WithNativeHomes(map[string]string{name: t.TempDir()})
+			spec := RunSpec{Ctx: t.Context(), Agent: name, Homes: true}
+			release, err := runCredentialUseLeases(cfg, runtime.Runtime{Name: "docker"}, &spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			home, err := cfg.NativeHome(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+			if exclusive, err := credentialUseLease(ctx, cfg, home, true); err == nil {
+				exclusive.close()
+				t.Error("offline history home has no shared lease")
+			}
+			cancel()
+			release()
+			exclusive, err := credentialUseLease(t.Context(), cfg, home, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			exclusive.close()
+			if len(spec.ExtraArgs) != 0 {
+				t.Fatal("native home inherited a legacy credential lease", spec.ExtraArgs)
+			}
+		})
+	}
+}
+
 func TestUsageSurvivingLoginWriterBlocksOrdinaryRun(t *testing.T) {
 	t.Setenv("COOP_USAGE_WRITER", "0")
 	cfg := &config.Config{ConfigDir: t.TempDir()}

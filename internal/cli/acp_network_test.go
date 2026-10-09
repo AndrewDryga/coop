@@ -50,13 +50,7 @@ func TestACPNetworkScope(t *testing.T) {
 			bundles, err := box.NetworkProviderBundles(cfg, box.RunSpec{
 				Agent: lead, Homes: true, Peers: scope, Preset: tc.preset, NetworkClient: egress.ClientACP,
 			})
-			if tc.refuse {
-				if err == nil || !strings.Contains(err.Error(), "gemini") {
-					t.Fatalf("explicit unsupported scope was pruned: %v, %v", bundles, err)
-				}
-				return
-			}
-			if err != nil || len(bundles) != 3 {
+			if err != nil || len(bundles) != 0 {
 				t.Fatalf("supported ACP startup blocked by optional providers: %v, %v", bundles, err)
 			}
 			for _, bundle := range bundles {
@@ -107,38 +101,38 @@ func TestACPNetworkScopeOffersGeminiAPIKeyAccounts(t *testing.T) {
 // filtered session may start, so the session offers a provider's accounts of one kind: that of the
 // account it names, or else of its active one. Its policy then brokers the key or grants the
 // sign-in's API, and switching accounts never meets a denial mid-session.
-func TestACPNetworkScopeOffersOneCredentialKindPerProvider(t *testing.T) {
+func TestACPNetworkScopeOffersBothNativeCredentialFamilies(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
-	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=fixture-key\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=fixture-key\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	signInCred(t, cfg, "claude", "work")
 	a := &app{cfg: cfg}
-	for _, tc := range []struct {
-		initial  agents.Target
-		want     string
-		brokered bool
-	}{
-		{agents.Target{Provider: "claude"}, "default", true},
-		{agents.Target{Provider: "claude", Accounts: []string{"work"}}, "work", false},
-	} {
-		scope, err := a.acpNetworkScope(cfg.RepoOverride, tc.initial, nil, nil)
+	for _, initial := range []agents.Target{{Provider: "claude"}, {Provider: "claude", Accounts: []string{"work"}}} {
+		scope, err := a.acpNetworkScope(cfg.RepoOverride, initial, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var claude []string
+		var accounts []string
 		for _, target := range scope {
-			if target.Provider == "claude" && !slices.Contains(claude, target.Account()) {
-				claude = append(claude, target.Account())
+			if target.Provider != "claude" {
+				continue
+			}
+			if !slices.Contains(accounts, target.Account()) {
+				accounts = append(accounts, target.Account())
+			}
+			bundle, err := box.NetworkTargetBundle(cfg, target, egress.ClientACP)
+			if err != nil || bundle.Backend != "native-broker" || len(bundle.Core) != 0 {
+				t.Fatal("account lost guard-only native routing", err)
 			}
 		}
-		if len(claude) != 1 || claude[0] != tc.want {
-			t.Fatalf("session for %s offered Claude accounts %v, want only %q", tc.initial, claude, tc.want)
+		slices.Sort(accounts)
+		if !slices.Equal(accounts, []string{"default", "work"}) {
+			t.Fatal("ACP credential family switch omitted account", accounts)
 		}
 		bundles, err := box.NetworkProviderBundles(cfg, box.RunSpec{Agent: "claude", Homes: true, Peers: scope, NetworkClient: egress.ClientACP})
-		granted := slices.ContainsFunc(bundles, func(bundle egress.Bundle) bool { return bundle.Provider == "claude" })
-		if err != nil || granted == tc.brokered {
-			t.Fatalf("session for %s: Claude API granted = %v, %v; want brokered = %v", tc.initial, granted, err, tc.brokered)
+		if err != nil || len(bundles) != 0 {
+			t.Fatal("native accounts got direct workload grants", err)
 		}
 	}
 }
@@ -174,13 +168,13 @@ func TestACPNetworkScopePreservesPresetRoleAccountIdentity(t *testing.T) {
 	}
 	if _, err := box.NetworkProviderBundles(cfg, box.RunSpec{
 		Agent: "codex", Homes: true, Peers: scope, Preset: p, NetworkClient: egress.ClientACP,
-	}); err == nil || !strings.Contains(err.Error(), "oauth-personal") {
+	}); err == nil || !strings.Contains(err.Error(), "encrypted cache") {
 		t.Fatal("portable Gemini sibling qualified the preset's OAuth role account", err)
 	}
 	// The inner child revalidates this actual scope without the admission-only peers too.
 	if _, err := box.NetworkProviderBundles(cfg, box.RunSpec{
 		Agent: "codex", Homes: true, Preset: p, NetworkClient: egress.ClientACP,
-	}); err == nil || !strings.Contains(err.Error(), "oauth-personal") {
+	}); err == nil || !strings.Contains(err.Error(), "encrypted cache") {
 		t.Fatal("filtered inner launch accepted the preset's OAuth role account", err)
 	}
 }

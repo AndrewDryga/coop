@@ -2,6 +2,7 @@ package box
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 func brokerFixture(t *testing.T, env string) (*config.Config, RunSpec) {
@@ -25,6 +27,62 @@ func brokerFixture(t *testing.T, env string) (*config.Config, RunSpec) {
 		t.Fatal(err)
 	}
 	return cfg, RunSpec{Agent: "claude", AgentCommand: true, Homes: true}
+}
+
+func nativeBrokerPlanFixture(t *testing.T, cfg *config.Config, spec RunSpec) *nativeRun {
+	t.Helper()
+	run, err := planNativeAccounts(t.Context(), cfg, runtime.Runtime{}, spec, false)
+	if err != nil || run == nil {
+		t.Fatalf("native plan: %v", err)
+	}
+	return run
+}
+
+func nativeBrokerPreparedFixture(t *testing.T, run *nativeRun) (networkgateway.NativeRunConfig, map[string]networkgateway.NativeAccessSnapshot) {
+	t.Helper()
+	if err := run.prepare(t.Context(), t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	run.cancel()
+	run.workers.Wait()
+	t.Cleanup(func() {
+		if err := run.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	var cfg networkgateway.NativeRunConfig
+	if err := json.Unmarshal(mustReadFile(t, filepath.Join(run.dir, "config.json")), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	snapshots := map[string]networkgateway.NativeAccessSnapshot{}
+	for _, account := range run.accounts {
+		var snapshot networkgateway.NativeAccessSnapshot
+		if err := json.Unmarshal(mustReadFile(t, filepath.Join(run.dir, account.agent.Name()+".json")), &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		snapshots[account.agent.Name()] = snapshot
+	}
+	return cfg, snapshots
+}
+
+func assertNativePublicSeed(t *testing.T, seed agents.NativeBrokerSeed, secrets ...string) {
+	t.Helper()
+	// JSON byte fields are base64: inspect actual file/helper bytes too.
+	public := seed.Marker + string(seed.Helper)
+	for _, data := range seed.Files {
+		public += string(data)
+	}
+	for key, value := range seed.Env {
+		public += key + "=" + value + "\n"
+	}
+	if seed.Marker == "" {
+		t.Fatal("native seed has no public selector")
+	}
+	for _, secret := range secrets {
+		if secret != "" && strings.Contains(public, secret) {
+			t.Fatal("reusable credential reached public seed")
+		}
+	}
 }
 
 // firstBrokerRoute is the plan's first route: the older single-provider tests read one.
@@ -56,134 +114,131 @@ func onePlan(route *credentialRoute) *credentialPlan {
 func TestACodexKeyBrokersItsPluginStoreWithoutACredential(t *testing.T) {
 	cfg, spec := brokerFixture(t, "OPENAI_API_KEY=provider-secret\n")
 	spec.Agent = "codex"
-	candidate, err := firstBrokerRoute(cfg, spec)
-	if err != nil || candidate == nil {
-		t.Fatalf("broker selection = %#v, %v", candidate, err)
+	run := nativeBrokerPlanFixture(t, cfg, spec)
+	if len(run.accounts) != 1 {
+		t.Fatal("unexpected selected accounts")
 	}
-	plan := onePlan(candidate)
-	routes := plan.gatewayRoutes()
-	if len(routes) != 3 {
-		t.Fatalf("a brokered codex key planned %d routes, want the key and its two downloads", len(routes))
+	assertNativePublicSeed(t, run.accounts[0].seed, "provider-secret")
+	featured, websocket := false, false
+	for _, route := range run.accounts[0].routes {
+		if route.Host == "github.com" {
+			t.Fatal("public git host became protected TLS origin")
+		}
+		if route.Host == "chatgpt.com" && route.Method == "GET" && route.Path == "/backend-api/plugins/featured" && route.Query == "platform=codex" {
+			if !route.CredentialFree || route.Header != "" || route.AccountHeader != "" {
+				t.Fatal("public catalog acquired credentials")
+			}
+			featured = true
+		}
+		websocket = websocket || route.Host == "api.openai.com" && route.Method == "GET" && route.Path == "/v1/responses"
 	}
-	store, git := routes[1], routes[2]
-	if store.Kind != networkgateway.CredentialBrokerDownload || store.Upstream != "chatgpt.com" ||
-		store.Header != "" || store.HeaderPrefix != "" {
-		t.Fatalf("the plugin store route = %#v", store)
+	if !featured || !websocket {
+		t.Fatal("native catalog or websocket missing")
 	}
-	if git.Upstream != "github.com" || len(git.Allow) != 2 ||
+	downloads := run.downloads()
+	if len(downloads) != 1 {
+		t.Fatal("public git downloads", downloads)
+	}
+	git := downloads[0]
+	if git.Kind != networkgateway.CredentialBrokerDownload || git.Upstream != "github.com" || git.Header != "" || git.HeaderPrefix != "" || len(git.Allow) != 2 ||
 		git.Allow[0] != (networkgateway.BrokerRequestLine{Method: "GET", Path: "/openai/plugins.git/info/refs", Query: "service=git-upload-pack"}) ||
 		git.Allow[1] != (networkgateway.BrokerRequestLine{Method: "POST", Path: "/openai/plugins.git/git-upload-pack"}) {
-		t.Fatalf("the plugin git route = %#v", git)
+		t.Fatal("public git route", git)
 	}
-	// The discovery path serves a push too, by query alone; that query is not in the set.
-	discovery, _ := url.Parse("/openai/plugins.git/info/refs?service=git-receive-pack")
-	if git.Admits("GET", discovery) {
-		t.Fatal("the git route admits a push's discovery request")
+	push, _ := url.Parse("/openai/plugins.git/info/refs?service=git-receive-pack")
+	if git.Admits("GET", push) {
+		t.Fatal("push discovery allowed")
 	}
-	// Both are shapes the gateway itself accepts (it validates the whole launch configuration).
-	if err := networkgateway.CheckBrokerRoutes(routes); err != nil {
-		t.Fatalf("the gateway would refuse this run's routes: %v", err)
-	}
-	// The client's own levers: its managed layer names the store listener, and the box's
-	// Coop-owned git configuration rewrites that ONE repository (codex scrubs GIT_CONFIG_* from
-	// the git it spawns, so a file is the only way in).
-	f := &filteredExecution{broker: &credentialBrokerRun{plan: plan}}
-	artifacts := defaultCompositionArtifactOps()
-	artifacts.parent = t.TempDir()
-	_, paths, err := f.credentialBrokerMounts(artifacts, cfg.HomeInBox)
-	if err != nil {
+	if err := networkgateway.CheckBrokerRoutes(downloads); err != nil {
 		t.Fatal(err)
 	}
-	managed := string(mustReadFile(t, paths[0]))
-	if want := `chatgpt_base_url = "http://` + networkgateway.CredentialBrokerAddress(1) + `/backend-api"`; !strings.Contains(managed, want) {
-		t.Fatalf("the managed layer lacks %q:\n%s", want, managed)
+	rewrites := run.gitRewrites()
+	if len(rewrites) != 1 || rewrites["https://github.com/openai/plugins.git"] != "http://"+networkgateway.NativeProxyAddress+"/openai/plugins.git" {
+		t.Fatal("git rewrites", rewrites)
 	}
-	rewrites := plan.gitRewrites()
-	if len(rewrites) != 1 || rewrites["https://github.com/openai/plugins.git"] != "http://"+networkgateway.CredentialBrokerAddress(2)+"/openai/plugins.git" {
-		t.Fatalf("git rewrites = %#v", rewrites)
-	}
-	// A run with no brokered key rewrites nothing and plans no download.
-	var none *credentialPlan
-	if len(none.gitRewrites()) != 0 {
-		t.Fatal("a run without a broker rewrote a repository")
+	var none *nativeRun
+	if len(none.gitRewrites()) != 0 || len(none.downloads()) != 0 {
+		t.Fatal("unselected provider rewrote git")
 	}
 }
 
 func TestFilteredClaudeAPIKeyUsesBrokerInsteadOfProviderPolicy(t *testing.T) {
-	cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
-	candidate, err := firstBrokerRoute(cfg, spec)
-	if err != nil || candidate == nil || candidate.provider != "claude" || candidate.credential != "raw-provider-secret" {
-		t.Fatalf("broker selection = %#v, %v", candidate, err)
+	cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\nNORMAL=value\n")
+	run := nativeBrokerPlanFixture(t, cfg, spec)
+	if len(run.accounts) != 1 || run.accounts[0].agent.Name() != "claude" || run.accounts[0].ephemeral == nil {
+		t.Fatal("env key not selected privately")
 	}
+	assertNativePublicSeed(t, run.accounts[0].seed, "raw-provider-secret")
+	spec.native = run
 	bundles, err := NetworkProviderBundles(cfg, spec)
 	if err != nil || len(bundles) != 0 {
-		t.Fatalf("brokered provider remained in agent policy: %#v, %v", bundles, err)
+		t.Fatal("protected origin in workload policy", bundles, err)
 	}
-	f := &filteredExecution{broker: &credentialBrokerRun{plan: onePlan(candidate), substitutes: []string{strings.Repeat("a", 64)}}}
 	artifacts := defaultCompositionArtifactOps()
 	artifacts.parent = t.TempDir()
-	envFile, err := f.credentialBrokerEnv(artifacts, cfg.EnvFile())
+	envFile, _, err := prepareBoxEnvFile(cfg, spec, artifacts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(envFile)
-	if err != nil {
-		t.Fatal(err)
+	values := EnvFileValues(envFile)
+	if values["ANTHROPIC_API_KEY"] != "" || values["NORMAL"] != "value" || strings.Contains(string(mustReadFile(t, envFile)), "raw-provider-secret") {
+		t.Fatal("box env leaked host key")
 	}
-	if strings.Contains(string(data), "raw-provider-secret") || EnvFileValues(envFile)["ANTHROPIC_API_KEY"] != strings.Repeat("a", 64) ||
-		EnvFileValues(envFile)["ANTHROPIC_BASE_URL"] != "http://"+networkgateway.CredentialBrokerAddress(0) {
-		t.Fatalf("broker environment leaked or omitted authority: %s", data)
+	plan, snapshots := nativeBrokerPreparedFixture(t, run)
+	if len(plan.Accounts) != 1 || snapshots["claude"].Credential != "raw-provider-secret" || snapshots["claude"].Revoked {
+		t.Fatal("private snapshot missing key")
+	}
+	if strings.Contains(string(mustReadFile(t, filepath.Join(run.dir, "config.json"))), "raw-provider-secret") {
+		t.Fatal("route config leaked key")
+	}
+	args, err := run.agentArgs(artifacts)
+	rendered := strings.Join(args, "\n")
+	if err != nil || strings.Contains(rendered, "raw-provider-secret") || strings.Contains(rendered, run.dir) || !strings.Contains(rendered, "HTTPS_PROXY=http://"+networkgateway.NativeProxyAddress) || strings.Contains(rendered, "ANTHROPIC_BASE_URL=") {
+		t.Fatal("native origin or custody changed", err)
 	}
 }
 
 func TestFilteredProviderAPIKeysUseTheirNativeBrokerContracts(t *testing.T) {
-	tests := []struct {
-		provider, key, baseURL, upstream, header, prefix, path string
-	}{
-		{"gemini", "GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL", "generativelanguage.googleapis.com", "x-goog-api-key", "", "/v1beta/models/"},
-		{"codex", "OPENAI_API_KEY", "OPENAI_BASE_URL", "api.openai.com", "authorization", "Bearer ", "/v1/responses"},
-	}
-	for _, test := range tests {
-		t.Run(test.provider, func(t *testing.T) {
-			cfg, spec := brokerFixture(t, test.key+"=provider-secret\n")
-			spec.Agent = test.provider
-			candidate, err := firstBrokerRoute(cfg, spec)
-			if err != nil || candidate == nil || candidate.provider != test.provider || candidate.credential != "provider-secret" {
-				t.Fatalf("broker selection = %#v, %v", candidate, err)
+	for _, tc := range []struct{ provider, key, upstream, header, prefix, path string }{
+		{"gemini", "GEMINI_API_KEY", "generativelanguage.googleapis.com", "X-Goog-Api-Key", "", "/v1beta/models/"},
+		{"codex", "OPENAI_API_KEY", "api.openai.com", "Authorization", "Bearer ", "/v1/responses"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			cfg, spec := brokerFixture(t, tc.key+"=provider-secret\n")
+			spec.Agent = tc.provider
+			run := nativeBrokerPlanFixture(t, cfg, spec)
+			if len(run.accounts) != 1 {
+				t.Fatal("unexpected accounts")
 			}
-			route := onePlan(candidate).gatewayRoutes()[0]
-			if route.Upstream != test.upstream || route.Header != test.header || route.HeaderPrefix != test.prefix || route.Path != test.path {
-				t.Fatalf("broker route = %#v", route)
+			account := run.accounts[0]
+			assertNativePublicSeed(t, account.seed, "provider-secret")
+			found := false
+			for _, route := range account.routes {
+				found = found || route.Host == tc.upstream && route.Method == "POST" && route.Path == tc.path && route.Header == tc.header && route.HeaderPrefix == tc.prefix
 			}
-			if test.provider == "codex" {
-				// Every codex process in the box — lead, arms, codex-acp — reads the managed layer, and
-				// the file replacing the image's must still keep the update check off.
-				f := &filteredExecution{broker: &credentialBrokerRun{plan: onePlan(candidate)}}
-				artifacts := defaultCompositionArtifactOps()
-				artifacts.parent = t.TempDir()
-				mounts, paths, err := f.credentialBrokerMounts(artifacts, cfg.HomeInBox)
-				if err != nil || len(mounts) != 1 || mounts[0].box != "/etc/codex/managed_config.toml" {
-					t.Fatalf("Codex broker configuration mount = %#v, %v", mounts, err)
+			if !found {
+				t.Fatal("native model route absent", account.routes)
+			}
+			if tc.provider == "codex" {
+				if account.seed.Env["COOP_NATIVE_CODEX_FAMILY"] != "apikey" || account.seed.Env["CODEX_API_KEY"] != account.seed.Marker {
+					t.Fatal("native API selection missing")
 				}
-				config := string(mustReadFile(t, paths[0]))
-				for _, want := range []string{"check_for_update_on_startup = false", `model_provider = "coop-broker"`,
-					`base_url = "http://` + networkgateway.CredentialBrokerAddress(0) + `/v1"`, `env_key = "OPENAI_API_KEY"`, "responses_websockets = false"} {
-					if !strings.Contains(config, want) {
-						t.Fatalf("Codex broker configuration lacks %q:\n%s", want, config)
+				for _, data := range account.seed.Files {
+					if strings.Contains(string(data), "responses_websockets") || strings.Contains(string(data), "model_provider") {
+						t.Fatal("seed changed native transport")
 					}
 				}
+				websocket := false
+				for _, route := range account.routes {
+					websocket = websocket || route.Host == tc.upstream && route.Method == "GET" && route.Path == "/v1/responses"
+				}
+				if !websocket {
+					t.Fatal("native websocket missing")
+				}
 			}
-			f := &filteredExecution{broker: &credentialBrokerRun{plan: onePlan(candidate), substitutes: []string{strings.Repeat("b", 64)}}}
-			artifacts := defaultCompositionArtifactOps()
-			artifacts.parent = t.TempDir()
-			envFile, err := f.credentialBrokerEnv(artifacts, cfg.EnvFile())
-			if err != nil {
-				t.Fatal(err)
-			}
-			data := mustReadFile(t, envFile)
-			if strings.Contains(string(data), "provider-secret") || EnvFileValues(envFile)[test.key] != strings.Repeat("b", 64) ||
-				!strings.HasPrefix(EnvFileValues(envFile)[test.baseURL], "http://"+networkgateway.CredentialBrokerAddress(0)) {
-				t.Fatalf("broker environment leaked or omitted authority: %s", data)
+			plan, snapshots := nativeBrokerPreparedFixture(t, run)
+			if len(plan.Accounts) != 1 || snapshots[tc.provider].Credential != "provider-secret" || snapshots[tc.provider].Revoked {
+				t.Fatal("snapshot omitted key")
 			}
 		})
 	}
@@ -232,67 +287,68 @@ func TestCredentialBrokerRoutesAdmitWhatThePinnedClientsSend(t *testing.T) {
 	}
 }
 
-func TestCredentialBrokerHandlesNamedGeminiHostKeyAndShadowsNativeStore(t *testing.T) {
+func TestCredentialBrokerKeepsNamedGeminiKeyOutsideCompleteHome(t *testing.T) {
 	cfg, spec := brokerFixture(t, "")
 	spec.Agent = "gemini"
-	if err := cfg.SetDefaultProfile("gemini", "personal"); err != nil {
+	cfg.SetActiveProfile("gemini", "personal")
+	ag, _ := agents.Get("gemini")
+	if err := SaveHostCredential(cfg, ag, "personal", []byte("host-provider-secret")); err != nil {
 		t.Fatal(err)
 	}
-	gemini, _ := agents.Get("gemini")
-	if err := SaveHostCredential(cfg, gemini, "personal", []byte("host-provider-secret")); err != nil {
+	legacy := cfg.AgentProfileDir("gemini", "personal")
+	if err := os.MkdirAll(legacy, 0700); err != nil {
 		t.Fatal(err)
 	}
-	profile := cfg.AgentProfileDir("gemini", "personal")
-	if err := os.WriteFile(filepath.Join(profile, "gemini-credentials.json"), []byte(`{"encrypted":"native-secret"}`), 0o600); err != nil {
+	cache := filepath.Join(legacy, "gemini-credentials.json")
+	retained := []byte("inert-retained-unknown-cache")
+	if err := os.WriteFile(cache, retained, 0600); err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := firstBrokerRoute(cfg, spec)
-	if err != nil || candidate == nil || candidate.credential != "host-provider-secret" || candidate.shadowMarker != "gemini-credentials.json" {
-		t.Fatalf("named host broker = %#v, %v", candidate, err)
+	home := scopedFixtureHome(t, cfg, "gemini", t.TempDir(), false)
+	cfg = cfg.WithNativeHomes(map[string]string{"gemini": home})
+	run, err := planNativeRun(t.Context(), cfg, runtime.Runtime{}, spec)
+	if err != nil || run == nil || len(run.accounts) != 1 || run.accounts[0].account != "personal" || run.accounts[0].ephemeral != nil {
+		t.Fatal("named key not selected", err)
 	}
-	f := &filteredExecution{broker: &credentialBrokerRun{plan: onePlan(candidate)}}
-	artifacts := defaultCompositionArtifactOps()
-	artifacts.parent = t.TempDir()
-	mounts, paths, err := f.credentialBrokerMounts(artifacts, cfg.HomeInBox)
-	if err != nil || len(mounts) != 1 || len(paths) != 1 || mounts[0].box != "/home/node/.gemini/gemini-credentials.json" || string(mustReadFile(t, paths[0])) != "{}\n" {
-		t.Fatalf("marker shadow = %#v, %q, %v", mounts, paths, err)
+	assertNativePublicSeed(t, run.accounts[0].seed, "host-provider-secret", string(retained))
+	if _, err := os.Stat(filepath.Join(home, "gemini-credentials.json")); !os.IsNotExist(err) {
+		t.Fatal("legacy encrypted store copied", err)
 	}
-	mount, path := mounts[0], paths[0]
-	options := assembleOptions(cfg, true, spec, nil, "/decoy", "/decoys", "/workspace", ttyNone,
-		false, []extraMount{mount}, nil, nil, nil, nil, "", "")
+	if !bytes.Equal(mustReadFile(t, cache), retained) {
+		t.Fatal("retained cache modified")
+	}
+	options := assembleOptions(cfg, true, spec, nil, "/decoy", "/decoys", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	rendered := strings.Join(options, "\n")
-	homeAt := strings.Index(rendered, cfg.AgentDir("gemini")+":"+cfg.HomeInBox+"/.gemini")
-	shadowAt := strings.Index(rendered, path+":"+mount.box+":ro")
-	if homeAt < 0 || shadowAt <= homeAt {
-		t.Fatalf("credential marker must shadow the mounted profile: %s", rendered)
+	if !strings.Contains(rendered, home) || strings.Contains(rendered, legacy) || strings.Contains(rendered, "host-credentials") {
+		t.Fatal("mount escaped complete native home")
+	}
+	_, snapshots := nativeBrokerPreparedFixture(t, run)
+	if snapshots["gemini"].Credential != "host-provider-secret" || snapshots["gemini"].Revoked {
+		t.Fatal("guard snapshot missing")
 	}
 }
 
 func TestReusableAPIKeysRefuseBeforeRuntimeOutsideBrokerShape(t *testing.T) {
-	for _, test := range []struct {
-		provider string
-		env      string
-	}{
-		{"claude", "ANTHROPIC_API_KEY=secret\n"},
-		{"codex", "OPENAI_API_KEY=secret\n"},
-		{"gemini", "GEMINI_API_KEY=secret\n"},
-		{"grok", "XAI_API_KEY=secret\n"},
+	for _, tc := range []struct{ provider, env string }{
+		{"claude", "ANTHROPIC_API_KEY=secret\nANTHROPIC_BASE_URL=https://unselected.example\n"},
+		{"codex", "OPENAI_API_KEY=secret\nOPENAI_BASE_URL=https://unselected.example\n"},
+		{"gemini", "GEMINI_API_KEY=secret\nGOOGLE_GEMINI_BASE_URL=https://unselected.example\n"}, {"grok", "XAI_API_KEY=secret\n"},
 	} {
-		t.Run(test.provider, func(t *testing.T) {
-			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
-			if err := os.WriteFile(cfg.EnvFile(), []byte(test.env), 0o600); err != nil {
-				t.Fatal(err)
-			}
+		t.Run(tc.provider, func(t *testing.T) {
+			cfg, spec := brokerFixture(t, tc.env)
+			cfg.Egress = "open"
+			spec.Agent = tc.provider
 			recorder := filepath.Join(t.TempDir(), "runtime.log")
-			code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
-				Image: "i", Repo: t.TempDir(), Workdir: "/workspace", Cmd: []string{test.provider},
-				Agent: test.provider, AgentCommand: true, Homes: true, Batch: true, Quiet: true,
-			})
-			if code != -1 || err == nil {
-				t.Fatalf("Run = (%d, %v), want pre-launch credential refusal", code, err)
+			run, err := planNativeAccounts(t.Context(), cfg, recorderRuntime(t, recorder), spec, false)
+			if err == nil {
+				spec.native = run
+				_, err = selectCredentialPlan(cfg, spec)
 			}
-			if _, statErr := os.Stat(recorder); !os.IsNotExist(statErr) {
-				t.Fatalf("credential refusal reached runtime: %v", statErr)
+			if err == nil {
+				t.Fatal("unsupported origin/family admitted")
+			}
+			if _, err := os.Stat(recorder); !os.IsNotExist(err) {
+				t.Fatal("refusal invoked runtime", err)
 			}
 		})
 	}
@@ -372,24 +428,33 @@ func TestCredentialBrokerRefusesUnsupportedAlternateAndStoredAPIKeys(t *testing.
 		t.Run(test.provider+"/"+strings.Split(test.env, "=")[0], func(t *testing.T) {
 			cfg, spec := brokerFixture(t, test.env)
 			spec.Agent = test.provider
-			if candidate, err := firstBrokerRoute(cfg, spec); err == nil || candidate != nil || !strings.Contains(err.Error(), "cannot be brokered yet") {
+			if candidate, err := firstBrokerRoute(cfg, spec); err == nil || candidate != nil {
 				t.Fatalf("unsupported credential = %#v, %v", candidate, err)
 			}
 		})
 	}
 
-	t.Run("codex native API key", func(t *testing.T) {
+	t.Run("stored Codex API key is canonical and private", func(t *testing.T) {
 		cfg, spec := brokerFixture(t, "")
 		spec.Agent = "codex"
-		profile := cfg.AgentProfileDir("codex", "default")
-		if err := os.MkdirAll(profile, 0o700); err != nil {
+		importCanonicalFixture(t, cfg, "codex", "default", map[string][]byte{"auth.json": []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"stored-secret"}`)})
+		run := nativeBrokerPlanFixture(t, cfg, spec)
+		if run.accounts[0].ephemeral != nil || run.accounts[0].record.Selection != "apikey" {
+			t.Fatal("stored key not canonical")
+		}
+		assertNativePublicSeed(t, run.accounts[0].seed, "stored-secret")
+		_, snapshots := nativeBrokerPreparedFixture(t, run)
+		if snapshots["codex"].Credential != "stored-secret" || snapshots["codex"].Revoked {
+			t.Fatal("guard snapshot missing")
+		}
+		if err := RemoveNativeAccount(t.Context(), cfg, "codex", "default"); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(profile, "auth.json"), []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"stored-secret"}`), 0o600); err != nil {
+		if err := os.WriteFile(cfg.EnvFile(), []byte("OPENAI_API_KEY=stale-env-secret\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if candidate, err := firstBrokerRoute(cfg, spec); err == nil || candidate != nil || !strings.Contains(err.Error(), "native credential file") {
-			t.Fatalf("stored credential = %#v, %v", candidate, err)
+		if next, err := planNativeAccounts(t.Context(), cfg, runtime.Runtime{}, spec, false); err == nil || next != nil {
+			t.Fatal("env resurrected removed account")
 		}
 	})
 }
@@ -420,7 +485,6 @@ func TestCredentialBrokerRefusesAmbiguousOrUnqualifiedClaudeAPIKeyRuns(t *testin
 		"custom upstream in project env": func(_ *config.Config, spec *RunSpec) {
 			spec.projectEnv = map[string]string{"ANTHROPIC_BASE_URL": "https://gateway.example"}
 		},
-		"not command": func(_ *config.Config, spec *RunSpec) { spec.AgentCommand = false },
 		"env override": func(_ *config.Config, spec *RunSpec) {
 			spec.ExtraArgs = []string{"--env=ANTHROPIC_BASE_URL=https://other.example"}
 		},
@@ -428,7 +492,7 @@ func TestCredentialBrokerRefusesAmbiguousOrUnqualifiedClaudeAPIKeyRuns(t *testin
 		t.Run(name, func(t *testing.T) {
 			cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
 			mutate(cfg, &spec)
-			if candidate, err := firstBrokerRoute(cfg, spec); err == nil || candidate != nil {
+			if candidate, err := planNativeAccounts(t.Context(), cfg, runtime.Runtime{}, spec, false); err == nil || candidate != nil {
 				t.Fatalf("unqualified broker selection = %#v, %v", candidate, err)
 			}
 		})
@@ -437,29 +501,35 @@ func TestCredentialBrokerRefusesAmbiguousOrUnqualifiedClaudeAPIKeyRuns(t *testin
 
 func TestCredentialBrokerFreezesWritableProfileAuthMode(t *testing.T) {
 	cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
-	profile := cfg.AgentProfileDir("claude", cfg.ActiveProfile("claude"))
-	if err := os.MkdirAll(profile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	marker := filepath.Join(profile, ".credentials.json")
-	if err := os.WriteFile(marker, []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	markers := profileMarkerSnapshot(cfg)
-	if err := os.Remove(marker); err != nil {
-		t.Fatal(err)
-	}
-	if candidate, err := firstBrokerRouteWithMarkers(cfg, spec, markers); err != nil || candidate != nil {
-		t.Fatalf("frozen stored-auth selection = %#v, %v", candidate, err)
-	}
-	artifacts := defaultCompositionArtifactOps()
-	artifacts.parent = t.TempDir()
-	envFile, _, err := prepareBoxEnvFileWithMarkers(cfg, spec, artifacts, nil, markers)
+	seedCanonicalFixture(t, cfg, "claude", "default")
+	repo := t.TempDir()
+	home, err := PrepareNativeHome(t.Context(), cfg, runtime.Runtime{}, "claude", "default", repo, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value := EnvFileValues(envFile)["ANTHROPIC_API_KEY"]; value != "" {
-		t.Fatalf("marker race restored reusable key %q", value)
+	cfg = cfg.WithNativeHomes(map[string]string{"claude": home})
+	run, err := planNativeRun(t.Context(), cfg, runtime.Runtime{}, spec)
+	if err != nil || run == nil || len(run.accounts) != 1 || run.accounts[0].record.Selection != "claude-oauth" || run.accounts[0].accessOverride != "" {
+		t.Fatal("stale global key replaced subscription selection", err)
+	}
+	assertNativePublicSeed(t, run.accounts[0].seed, "raw-provider-secret", "ACCESS_CANARY-claude-default", "REFRESH_CANARY-claude-default")
+	marker := filepath.Join(home, ".credentials.json")
+	changed := []byte("{}")
+	if err := os.WriteFile(marker, changed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if next, err := planNativeRun(t.Context(), cfg, runtime.Runtime{}, spec); err == nil || next != nil {
+		t.Fatal("divergent native auth mode admitted")
+	}
+	if !bytes.Equal(mustReadFile(t, marker), changed) {
+		t.Fatal("divergent native credential overwritten")
+	}
+	spec.native = run
+	artifacts := defaultCompositionArtifactOps()
+	artifacts.parent = t.TempDir()
+	envFile, _, err := prepareBoxEnvFile(cfg, spec, artifacts, nil)
+	if err != nil || EnvFileValues(envFile)["ANTHROPIC_API_KEY"] != "" {
+		t.Fatal("auth mode change restored reusable key", err)
 	}
 }
 
@@ -467,49 +537,64 @@ func TestCredentialBrokerFreezesWritableProfileAuthMode(t *testing.T) {
 // runtime. Selection itself does not read the configured egress: an ACP child or a session runs
 // under a captured filtered policy whatever its own egress setting says.
 func TestCredentialBrokerRefusesOpenKeyAndLeavesOAuthUnchanged(t *testing.T) {
-	cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
-	for _, mode := range []string{"open", "none"} {
-		cfg.Egress = mode
-		recorder := filepath.Join(t.TempDir(), "runtime.log")
-		code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{Image: "i", Repo: t.TempDir(), Workdir: "/workspace",
-			Cmd: []string{"claude"}, Agent: "claude", AgentCommand: true, Homes: true, Batch: true, Quiet: true})
-		if code != -1 || err == nil || !strings.Contains(err.Error(), "requires filtered networking") {
-			t.Fatalf("%s run = (%d, %v), want the key refused", mode, code, err)
-		}
-		if _, statErr := os.Stat(recorder); !os.IsNotExist(statErr) {
-			t.Fatalf("%s refusal reached the runtime: %v", mode, statErr)
-		}
+	for _, mode := range []string{"open", "filtered"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
+			cfg.Egress = mode
+			run := nativeBrokerPlanFixture(t, cfg, spec)
+			assertNativePublicSeed(t, run.accounts[0].seed, "raw-provider-secret")
+			_, snapshots := nativeBrokerPreparedFixture(t, run)
+			if snapshots["claude"].Credential != "raw-provider-secret" || snapshots["claude"].Revoked {
+				t.Fatal("supported native key not held privately")
+			}
+		})
 	}
-	// Interactive, the refusal comes before the launch names an account it will not connect.
-	out := captureStderr(t, func() {
-		_, err := Run(cfg, recorderRuntime(t, filepath.Join(t.TempDir(), "runtime.log")), RunSpec{Image: "i", Repo: t.TempDir(),
-			Workdir: "/workspace", Cmd: []string{"claude"}, Agent: "claude", AgentCommand: true, Homes: true})
-		if err == nil || !strings.Contains(err.Error(), "requires filtered networking") {
-			t.Errorf("interactive open run = %v, want the key refused", err)
+	for _, tc := range []struct{ provider, key string }{{"claude", "ANTHROPIC_API_KEY"}, {"codex", "OPENAI_API_KEY"}, {"gemini", "GEMINI_API_KEY"}} {
+		t.Run("offline/"+tc.provider, func(t *testing.T) {
+			cfg, spec := brokerFixture(t, tc.key+"=offline-host-secret\nNORMAL=value\n")
+			cfg.Egress, spec.Agent = "none", tc.provider
+			if run, err := planNativeAccounts(t.Context(), cfg, runtime.Runtime{}, spec, false); err != nil || run != nil {
+				t.Fatal("offline run started native proxy", err)
+			}
+			artifacts := defaultCompositionArtifactOps()
+			artifacts.parent = t.TempDir()
+			envFile, _, err := prepareBoxEnvFile(cfg, spec, artifacts, map[string]string{tc.key: "offline-project-secret"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			values := EnvFileValues(envFile)
+			if values[tc.key] != "" || values["NORMAL"] != "value" || strings.Contains(string(mustReadFile(t, envFile)), "offline-host-secret") || strings.Contains(string(mustReadFile(t, envFile)), "offline-project-secret") {
+				t.Fatal("offline environment leaked reusable provider credentials")
+			}
+		})
+	}
+	t.Run("offline stored Gemini key", func(t *testing.T) {
+		cfg, spec := brokerFixture(t, "NORMAL=value\n")
+		cfg.Egress, spec.Agent = "none", "gemini"
+		gemini, _ := agents.Get("gemini")
+		if err := SaveHostCredential(cfg, gemini, "default", []byte("offline-stored-secret")); err != nil {
+			t.Fatal(err)
+		}
+		artifacts := defaultCompositionArtifactOps()
+		artifacts.parent = t.TempDir()
+		envFile, _, err := prepareBoxEnvFile(cfg, spec, artifacts, nil)
+		if err != nil || EnvFileValues(envFile)["GEMINI_API_KEY"] != "" || EnvFileValues(envFile)["NORMAL"] != "value" {
+			t.Fatal("offline host vault key entered workload env", err)
 		}
 	})
-	if strings.Contains(out, "Connecting account") {
-		t.Fatalf("an open run narrated the account it refuses:\n%s", out)
-	}
-	if candidate, err := firstBrokerRoute(cfg, spec); err != nil || candidate == nil {
-		t.Fatalf("selection read the configured egress: %#v, %v", candidate, err)
-	}
-	// An ACP child or a session's admission revalidates under a captured filtered policy whatever
-	// its own egress says, and brokers the key there.
-	if bundles, err := NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 0 {
-		t.Fatalf("a captured child's revalidation = %+v, %v; want the key brokered", bundles, err)
-	}
-	cfg.Egress = "filtered"
-	profile := cfg.AgentProfileDir("claude", cfg.ActiveProfile("claude"))
-	if err := os.MkdirAll(profile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(profile, ".credentials.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if candidate, err := firstBrokerRoute(cfg, spec); err != nil || candidate != nil {
-		t.Fatalf("stored-credential run unexpectedly brokered: %#v, %v", candidate, err)
-	}
+	t.Run("subscription suppresses stale API environment", func(t *testing.T) {
+		cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=stale-api-secret\n")
+		seedCanonicalFixture(t, cfg, "claude", "default")
+		run := nativeBrokerPlanFixture(t, cfg, spec)
+		if len(run.accounts) != 1 || run.accounts[0].record.Selection != "claude-oauth" || run.accounts[0].accessOverride != "" || run.accounts[0].ephemeral != nil {
+			t.Fatal("native subscription silently became API billing")
+		}
+		assertNativePublicSeed(t, run.accounts[0].seed, "stale-api-secret", "ACCESS_CANARY-claude-default", "REFRESH_CANARY-claude-default")
+		_, snapshots := nativeBrokerPreparedFixture(t, run)
+		if snapshots["claude"].Credential != "ACCESS_CANARY-claude-default" {
+			t.Fatal("subscription access replaced by API key")
+		}
+	})
 }
 
 // One broker serves every teammate shape a box can hold: the key of a peer, a preset role or a
@@ -523,10 +608,11 @@ func TestCredentialBrokerServesEveryTeammateShape(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg, _ := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
-			route, err := firstBrokerRoute(cfg, spec)
-			if err != nil || route == nil || route.provider != "claude" || route.credential != "raw-provider-secret" {
-				t.Fatalf("teammate broker = %#v, %v", route, err)
+			run := nativeBrokerPlanFixture(t, cfg, spec)
+			if len(run.accounts) != 1 || run.accounts[0].agent.Name() != "claude" || run.accounts[0].account != "default" || run.accounts[0].ephemeral == nil {
+				t.Fatal("teammate native authority selection differs from lead")
 			}
+			assertNativePublicSeed(t, run.accounts[0].seed, "raw-provider-secret")
 		})
 	}
 }
@@ -537,60 +623,88 @@ func TestCredentialBrokerServesEveryTeammateShape(t *testing.T) {
 func TestCredentialBrokerRefusesWhatItCannotServe(t *testing.T) {
 	cfg, _ := brokerFixture(t, "XAI_API_KEY=xai-secret\n")
 	peer := RunSpec{Agent: "claude", AgentCommand: true, Homes: true, Peers: []agents.Target{{Provider: "grok"}}}
-	if plan, err := selectCredentialPlan(cfg, peer); err == nil || plan != nil || !strings.Contains(err.Error(), "cannot be brokered yet") {
-		t.Fatalf("a Grok peer's key = %+v, %v", plan, err)
+	if plan, err := selectCredentialPlan(cfg, peer); err == nil || plan != nil {
+		t.Fatal("unsupported Grok API key peer admitted")
 	}
-	// A restricted run composed with the gateway CAN broker: the key stays with the broker outside
-	// the box while the profile still owns the filesystem. Without the gateway there is nowhere for
-	// the key to live but the box, which is the one place it must not be — so that is still refused.
-	cfg, _ = brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
-	restricted := RunSpec{Agent: "claude", AgentCommand: true, Homes: true, Mode: agents.ModeReadOnly}
-	if plan, err := selectCredentialPlan(cfg, restricted); err != nil || plan == nil || len(plan.routes) != 1 {
-		t.Fatalf("a restricted run under the gateway should broker its key: %+v, %v", plan, err)
-	}
-	openCfg, _ := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
-	openCfg.Egress = "open"
-	if plan, err := selectCredentialPlan(openCfg, restricted); err == nil || plan != nil || !strings.Contains(err.Error(), "does not assemble") {
-		t.Fatalf("an OPEN restricted run must still refuse a key: %+v, %v", plan, err)
+	for _, mode := range []string{"filtered", "open"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
+			cfg.Egress, spec.Mode = mode, agents.ModeReadOnly
+			run := nativeBrokerPlanFixture(t, cfg, spec)
+			if len(run.accounts) != 1 {
+				t.Fatal("restricted native authority missing")
+			}
+			assertNativePublicSeed(t, run.accounts[0].seed, "raw-provider-secret")
+			_, snapshots := nativeBrokerPreparedFixture(t, run)
+			if snapshots["claude"].Credential != "raw-provider-secret" || snapshots["claude"].Revoked {
+				t.Fatal("restricted key was not held guard-only")
+			}
+		})
 	}
 }
 
 // Two providers' keys are two routes of one broker: each gets its own listener and capability, the
 // box environment carries only capabilities, and a teammate on a stored login keeps it unbrokered.
 func TestCredentialBrokerRoutesEveryProviderKeyAndLeavesSignedInTeammates(t *testing.T) {
-	cfg, _ := brokerFixture(t, "GEMINI_API_KEY=gemini-secret\nANTHROPIC_API_KEY=claude-secret\n")
+	cfg, _ := brokerFixture(t, "GEMINI_API_KEY=gemini-secret\nANTHROPIC_API_KEY=claude-secret\nNORMAL=value\n")
+	seedCanonicalFixture(t, cfg, "codex", "default")
 	spec := RunSpec{Agent: "gemini", AgentCommand: true, Homes: true, Peers: []agents.Target{{Provider: "claude"}, {Provider: "codex"}}}
-	codexProfile := cfg.AgentProfileDir("codex", cfg.ActiveProfile("codex"))
-	if err := os.MkdirAll(codexProfile, 0o700); err != nil {
+	run := nativeBrokerPlanFixture(t, cfg, spec)
+	if len(run.accounts) != 3 || run.accounts[0].agent.Name() != "gemini" || run.accounts[1].agent.Name() != "claude" || run.accounts[2].agent.Name() != "codex" || run.accounts[2].record.Selection != "chatgpt" {
+		t.Fatal("mixed API and subscription selection changed", run.accounts)
+	}
+	codex := run.accounts[2]
+	codexState, err := codex.inspect(codex.record)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(codexProfile, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"a"}}`), 0o600); err != nil {
-		t.Fatal(err)
+	for _, account := range run.accounts {
+		assertNativePublicSeed(t, account.seed, "gemini-secret", "claude-secret", codexState.AccessToken, "REFRESH_CANARY-codex-default")
 	}
-	plan, err := selectCredentialPlan(cfg, spec)
-	if err != nil || plan == nil || len(plan.routes) != 2 || plan.routes[0].provider != "gemini" || plan.routes[1].provider != "claude" {
-		t.Fatalf("plan = %+v, %v", plan, err)
+	spec.native = run
+	if bundles, err := NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 0 {
+		t.Fatal("native account got ordinary workload provider grants", err)
 	}
-	if routes := plan.gatewayRoutes(); len(routes) != 2 || routes[0].Upstream != "generativelanguage.googleapis.com" || routes[1].Upstream != "api.anthropic.com" {
-		t.Fatalf("gateway routes = %+v", routes)
-	}
-	f := &filteredExecution{broker: &credentialBrokerRun{plan: plan, substitutes: []string{strings.Repeat("g", 64), strings.Repeat("c", 64)}}}
 	artifacts := defaultCompositionArtifactOps()
 	artifacts.parent = t.TempDir()
-	envFile, err := f.credentialBrokerEnv(artifacts, cfg.EnvFile())
+	envFile, _, err := prepareBoxEnvFile(cfg, spec, artifacts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	values := EnvFileValues(envFile)
-	if data := string(mustReadFile(t, envFile)); strings.Contains(data, "gemini-secret") || strings.Contains(data, "claude-secret") {
-		t.Fatalf("a real key reached the box environment: %s", data)
+	if values["GEMINI_API_KEY"] != "" || values["ANTHROPIC_API_KEY"] != "" || values["OPENAI_API_KEY"] != "" || values["NORMAL"] != "value" {
+		t.Fatal("mixed run exposed provider keys")
 	}
-	if values["GEMINI_API_KEY"] != strings.Repeat("g", 64) || values["GOOGLE_GEMINI_BASE_URL"] != "http://"+networkgateway.CredentialBrokerAddress(0) ||
-		values["ANTHROPIC_API_KEY"] != strings.Repeat("c", 64) || values["ANTHROPIC_BASE_URL"] != "http://"+networkgateway.CredentialBrokerAddress(1) {
-		t.Fatalf("each route's capability and listener = %#v", values)
+	plan, snapshots := nativeBrokerPreparedFixture(t, run)
+	if len(plan.Accounts) != 3 || snapshots["gemini"].Credential != "gemini-secret" || snapshots["claude"].Credential != "claude-secret" || snapshots["codex"].Credential != codexState.AccessToken {
+		t.Fatal("guard selected different account credentials")
 	}
-	if _, route := plan.route("codex"); route != nil || values["OPENAI_BASE_URL"] != "" {
-		t.Fatalf("a signed-in teammate was brokered: %+v, %q", route, values["OPENAI_BASE_URL"])
+	for _, snapshot := range snapshots {
+		if snapshot.Revoked || snapshot.Binding.RunID != run.runID || snapshot.Binding.Account != "default" {
+			t.Fatal("account not bound to exact native run")
+		}
+	}
+	args, err := run.agentArgs(artifacts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := strings.Join(args, "\n")
+	if strings.Count(rendered, "HTTPS_PROXY=http://"+networkgateway.NativeProxyAddress) != 1 || strings.Contains(rendered, "gemini-secret") || strings.Contains(rendered, "claude-secret") || strings.Contains(rendered, codexState.AccessToken) || strings.Contains(rendered, run.dir) {
+		t.Fatal("mixed run lost single entrance or guard custody")
+	}
+	accountHeader := false
+	for _, account := range plan.Accounts {
+		if account.Binding.Provider != "codex" {
+			continue
+		}
+		for _, origin := range account.Origins {
+			if origin.Host == "chatgpt.com" {
+				accountHeader = origin.AccountHeaders["Chatgpt-Account-Id"] == codexState.AccountID && origin.ClientAccountHeaders["Chatgpt-Account-Id"] == agents.NativeBrokerAccount
+			}
+		}
+	}
+	if !accountHeader {
+		t.Fatal("native subscription lost selected ChatGPT account header")
 	}
 }
 
@@ -606,22 +720,32 @@ func TestCredentialBrokerBindsEachBoxToItsOwnAccount(t *testing.T) {
 		}
 	}
 	for _, account := range []string{"work", "personal"} {
-		cfg.SetActiveProfile("gemini", account)
-		route, err := firstBrokerRoute(cfg, spec)
-		if err != nil || route == nil || route.account != account || route.credential != account+"-secret" {
-			t.Fatalf("%s box route = %#v, %v", account, route, err)
-		}
+		t.Run(account, func(t *testing.T) {
+			cfg.SetActiveProfile("gemini", account)
+			run := nativeBrokerPlanFixture(t, cfg, spec)
+			if len(run.accounts) != 1 || run.accounts[0].account != account || run.accounts[0].ephemeral != nil {
+				t.Fatal("wrong native account selected")
+			}
+			assertNativePublicSeed(t, run.accounts[0].seed, "work-secret", "personal-secret")
+			plan, snapshots := nativeBrokerPreparedFixture(t, run)
+			snapshot := snapshots["gemini"]
+			if len(plan.Accounts) != 1 || plan.Accounts[0].Binding.Account != account || plan.Accounts[0].Binding.RunID != run.runID || snapshot.Binding != plan.Accounts[0].Binding || snapshot.Credential != account+"-secret" || snapshot.Revoked {
+				t.Fatal("box crossed native account boundary")
+			}
+		})
 	}
 }
 
 // The guard's secret file holds every route's key, each bound to its own capability, and the host
 // forgets the keys once the file is written.
 func TestCredentialBrokerSecretCoversEveryRouteOnce(t *testing.T) {
-	cfg, _ := brokerFixture(t, "GEMINI_API_KEY=gemini-secret\nANTHROPIC_API_KEY=claude-secret\n")
-	plan, err := selectCredentialPlan(cfg, RunSpec{Agent: "gemini", AgentCommand: true, Homes: true, Peers: []agents.Target{{Provider: "claude"}}})
-	if err != nil || plan == nil || len(plan.routes) != 2 {
-		t.Fatal(plan, err)
-	}
+	// Static bearer/MCP transport remains separate from native provider selection.
+	gemini, _ := agents.Get("gemini")
+	claude, _ := agents.Get("claude")
+	plan := &credentialPlan{routes: []*credentialRoute{
+		{provider: "gemini", account: "default", spec: gemini.CredentialBroker(), credential: "gemini-secret"},
+		{provider: "claude", account: "default", spec: claude.CredentialBroker(), credential: "claude-secret"},
+	}}
 	f, _ := filteredFixture(t)
 	f.broker = &credentialBrokerRun{plan: plan}
 	artifacts := defaultCompositionArtifactOps()
@@ -630,22 +754,21 @@ func TestCredentialBrokerSecretCoversEveryRouteOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := mustReadFile(t, f.broker.configPath)
-	config := networkgateway.LaunchConfig{RunID: f.record.ID, Epoch: f.record.Epoch, Brokers: plan.gatewayRoutes()}
-	secrets, err := networkgateway.ReadCredentialBrokerSecrets(bytes.NewReader(data), config)
+	cfg := networkgateway.LaunchConfig{RunID: f.record.ID, Epoch: f.record.Epoch, Brokers: plan.gatewayRoutes()}
+	secrets, err := networkgateway.ReadCredentialBrokerSecrets(bytes.NewReader(data), cfg)
 	if err != nil {
-		t.Fatalf("the guard would refuse this secret: %v", err)
+		t.Fatalf("guard refused static broker secret: %v", err)
 	}
-	if len(secrets.Routes) != 2 || secrets.Routes[0].Credential != "gemini-secret" || secrets.Routes[1].Credential != "claude-secret" ||
-		secrets.Routes[0].Substitute != f.broker.substitutes[0] || secrets.Routes[1].Substitute != f.broker.substitutes[1] {
-		t.Fatal("the secret does not bind each route's key to its own capability")
+	if len(secrets.Routes) != 2 || secrets.Routes[0].Credential != "gemini-secret" || secrets.Routes[1].Credential != "claude-secret" || secrets.Routes[0].Substitute != f.broker.substitutes[0] || secrets.Routes[1].Substitute != f.broker.substitutes[1] {
+		t.Fatal("secret did not bind every static route credential once")
 	}
 	for _, route := range plan.routes {
 		if route.credential != "" {
-			t.Fatalf("the host kept %s's key after writing the guard's secret", route.provider)
+			t.Fatalf("host kept %s static transport key", route.provider)
 		}
 	}
-	if info, err := os.Stat(f.broker.configPath); err != nil || info.Mode().Perm() != 0o444 {
-		t.Fatalf("secret file = %v, %v", info, err)
+	if info, err := os.Stat(f.broker.configPath); err != nil || info.Mode().Perm() != 0444 {
+		t.Fatalf("secret file mode: %v %v", info, err)
 	}
 }
 

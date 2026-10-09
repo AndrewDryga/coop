@@ -6,9 +6,11 @@ LDFLAGS := -s -w -X github.com/AndrewDryga/coop/internal/cli.Version=$(VERSION)
 
 # The gate tool pins. CI installs exactly these versions (it reads them from here), and the
 # corresponding targets refuse any other build, so a laptop, a box, and CI cannot silently use
-# different analyzers. Bump them here AND in internal/box/image.go (the box ships the same binaries
-# for the in-box gate); tests in internal/box hold the copies together.
-STATICCHECK_VERSION := v0.8.1
+# different analyzers. Staticcheck's isolated module also pins its Go export-data importer;
+# the box embeds that same module. The scanner pin is mirrored in internal/box/image.go.
+STATICCHECK_MODFILE := internal/box/staticcheck.mod
+STATICCHECK_VERSION := $(shell awk '$$1 == "honnef.co/go/tools" {print $$2}' $(STATICCHECK_MODFILE))
+STATICCHECK_XTOOLS_VERSION := $(shell awk '$$1 == "golang.org/x/tools" {print $$2}' $(STATICCHECK_MODFILE))
 GOVULNCHECK_VERSION := v1.8.0
 
 build: ## Build the coop binary to ./coop
@@ -40,13 +42,17 @@ lint: ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and
 # The e2e/live files sit behind build tags, so the pass above never compiles them — a lost cancel
 # lived there unseen. Every tag in the tree in one pass; the untagged pass still covers !cooplivetest.
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,cooplivetest,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e ./... || exit 1; done
-	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck is not installed — run: go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)"; exit 1; }
-	@staticcheck -version | grep -qF "($(patsubst v%,%,$(STATICCHECK_VERSION)))" || { echo "$$(staticcheck -version) is not the pinned $(STATICCHECK_VERSION) — run: go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)"; exit 1; }
+	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck is not installed — run: make install-staticcheck"; exit 1; }
+	@staticcheck -version | grep -qF "($(patsubst v%,%,$(STATICCHECK_VERSION)))" || { echo "$$(staticcheck -version) is not the pinned $(STATICCHECK_VERSION) — run: make install-staticcheck"; exit 1; }
+	@staticcheck -debug.version | awk '$$1 == "golang.org/x/tools@$(STATICCHECK_XTOOLS_VERSION)" {found=1} END {exit !found}' || { echo "staticcheck needs the pinned Go importer $(STATICCHECK_XTOOLS_VERSION) — run: make install-staticcheck"; exit 1; }
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os staticcheck ./... || exit 1; done
 
 # Plumbing for CI's install step, which reads the pin from here instead of repeating it.
 staticcheck-version:
 	@echo $(STATICCHECK_VERSION)
+
+install-staticcheck: ## Install the pinned analyzer and compatible Go importer
+	@go install -modfile=$(STATICCHECK_MODFILE) -mod=readonly honnef.co/go/tools/cmd/staticcheck
 
 govulncheck-version:
 	@echo $(GOVULNCHECK_VERSION)
@@ -247,6 +253,6 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint staticcheck-version govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
+.PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: require-git-lfs

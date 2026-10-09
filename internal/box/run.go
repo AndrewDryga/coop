@@ -135,11 +135,13 @@ type RunSpec struct {
 	// part of authentication; network policy and secret-shadowing protections still apply.
 	Login bool
 
-	ForceNoTTY   bool               // ACP: attach stdin (-i) but never allocate a tty
-	Serve        bool               // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
-	servePorts   []int              // validated project policy carried into argument assembly by Run
-	servePlan    []servePublication // each serve port's outcome, decided once by Run for the note and the publish args
-	SupervisorID string             // non-empty for a supervised inner box: tags it coop.supervised=1
+	ForceNoTTY      bool               // ACP: attach stdin (-i) but never allocate a tty
+	Serve           bool               // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
+	servePorts      []int              // validated project policy carried into argument assembly by Run
+	servePlan       []servePublication // each serve port's outcome, decided once by Run for the note and the publish args
+	native          *nativeRun         // host-only canonical account broker for this exact run
+	nativeNamespace string             // full inspected open namespace-owner ID
+	SupervisorID    string             // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
 	ShareACPSessions bool   // mount credential-independent ACP transcript dirs across account switches
 	ForkName         string // non-empty for a detached fork loop's box: readable runtime label
@@ -246,9 +248,6 @@ type RunSpec struct {
 	// cachePrivate maps each cache subdirectory a scoped agent keeps per-project data in to this
 	// run's empty stand-in for it (cachePrivateDirs); Run creates them.
 	cachePrivate map[string]string
-	// historyStores maps each scoped agent to the per-repository history store Run prepared for it
-	// (history.go); empty for a provider with no layout, a remote session or a box without a repo.
-	historyStores map[string]string
 
 	// Peers is the EXPLICIT peer set for this run — the targets named by repeatable
 	// --peer (a normal run, ACP, or a loop run), each provider[:model] (no
@@ -680,22 +679,44 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				return -1, err
 			}
 		}
-		if err := ensureAgentHomes(cfg, spec); err != nil {
-			return -1, err
+		homes := map[string]string{}
+		for _, name := range credentialScope(cfg, spec) {
+			var home string
+			if spec.Login {
+				// The credential CLI supplies its private sign-in staging config.
+				home = cfg.AgentDir(name)
+				if err := config.EnsurePrivateDir(home); err != nil {
+					return -1, err
+				}
+			} else {
+				homeCtx := spec.Ctx
+				if homeCtx == nil {
+					homeCtx = context.Background()
+				}
+				home, err = PrepareNativeHome(homeCtx, cfg, rt, name, cfg.ActiveProfile(name), spec.Repo,
+					spec.ShareACPSessions && name == runPrimary(spec))
+				if err != nil {
+					return -1, err
+				}
+			}
+			homes[name] = home
 		}
+		cfg = cfg.WithNativeHomes(homes)
+		authorityConfig = authorityConfig.WithNativeHomes(homes)
+	}
+	nativeCtx := spec.Ctx
+	if nativeCtx == nil {
+		nativeCtx = context.Background()
+	}
+	spec.native, err = planNativeRun(nativeCtx, cfg, rt, spec)
+	if err != nil {
+		return -1, err
 	}
 	releaseCredentials, err := runCredentialUseLeases(cfg, rt, &spec)
 	if err != nil {
 		return -1, err
 	}
 	defer releaseCredentials()
-	// Before any guard reads the mount plan (MCP isolation, the composition preflight), so each
-	// one sees the history stores too.
-	if !spec.Login {
-		if err := prepareHistoryStores(cfg, &spec, ""); err != nil {
-			return -1, err
-		}
-	}
 	if spec.Review && !spec.FormatCorrection {
 		if p.Review.Compose != "" {
 			composeFile = ComposeFileAt(spec.Repo, p.Review.Compose)
@@ -891,10 +912,19 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err != nil {
 		return -1, err
 	}
-	defer cleanupArtifacts()
+	retainArtifacts := false
+	defer func() {
+		if !retainArtifacts {
+			cleanupArtifacts()
+		}
+	}()
 	if err := preflightCompositionArtifactExposure(cfg, rt, spec, artifacts.parent); err != nil {
 		return -1, err
 	}
+	if err := spec.native.prepare(nativeCtx, artifacts.parent); err != nil {
+		return -1, err
+	}
+	defer func() { result = errors.Join(result, spec.native.close()) }()
 	var tmpFiles []string
 	var tmpDirs []string
 	defer func() {
@@ -917,23 +947,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		mounts = append(mounts, protected...)
 		tmpDirs = append(tmpDirs, snapshots...)
-	}
-	if spec.Login { // its stand-in stores live in the run's artifacts, created only now
-		if err := prepareHistoryStores(cfg, &spec, artifacts.parent); err != nil {
-			return -1, err
-		}
-		for _, m := range mountedWritables(cfg, spec) { // generated sources, removed after the run
-			switch {
-			case !m.history:
-			case m.file:
-				tmpFiles = append(tmpFiles, m.Host)
-			default:
-				tmpDirs = append(tmpDirs, m.Host)
-			}
-		}
-		for _, store := range spec.historyStores {
-			tmpDirs = append(tmpDirs, store)
-		}
 	}
 	if spec.Cache {
 		for _, dir := range cachePrivateDirs(cfg, spec) {
@@ -1270,7 +1283,14 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				ui.Warning("The box could not use your global Git ignore file", err.Error(), "")
 			}
 		}
-		p, err := artifacts.writeFile(artifacts.parent, gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask, brokerPlan.gitRewrites()))
+		rewrites := brokerPlan.gitRewrites()
+		if rewrites == nil {
+			rewrites = map[string]string{}
+		}
+		for source, target := range spec.native.gitRewrites() {
+			rewrites[source] = target
+		}
+		p, err := artifacts.writeFile(artifacts.parent, gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask, rewrites))
 		if err != nil {
 			return -1, fmt.Errorf("prepare box Git config: %w", err)
 		}
@@ -1288,21 +1308,14 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// managed one. A later build of each family keeps what was recorded here (reclaim.go).
 	markLaunchImages(cfg, append([]string{spec.Image, cfg.BaseImage}, filtered.builtImageTags()...)...)
 	if spec.Homes {
-		if err := ensureAgentDefaults(cfg, spec, workdir); err != nil {
-			return -1, err
+		if spec.Login {
+			if err := ensureAgentDefaults(cfg, spec, workdir); err != nil {
+				return -1, err
+			}
 		}
 		spec.configPublication, err = prepareConfigPublication(cfg, spec)
 		if err != nil {
 			return -1, err
-		}
-		// An ACP box shares the lead's session transcripts across credentials (see assembleArgs), so
-		// ensure that shared store exists before it's mounted.
-		if spec.ShareACPSessions {
-			if ag, ok := agents.Get(runPrimary(spec)); ok {
-				for _, name := range ag.ACPSessionDirs() {
-					_ = os.MkdirAll(filepath.Join(acpSharedDir(cfg, runPrimary(spec)), name), 0o700)
-				}
-			}
 		}
 	}
 
@@ -1360,6 +1373,32 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			envFile = brokerEnv
 			tmpFiles = append(tmpFiles, brokerEnv)
 		}
+	}
+	if spec.native != nil {
+		var scrub []string
+		for _, account := range spec.native.accounts {
+			scrub = append(scrub, account.agent.CredentialEnvKeys()...)
+			for key := range account.seed.Env {
+				scrub = append(scrub, key)
+			}
+		}
+		clean, err := dropEnvNames(artifacts, envFile, scrub)
+		if err != nil {
+			return -1, err
+		}
+		if clean != envFile {
+			tmpFiles = append(tmpFiles, clean)
+			envFile = clean
+		}
+		nativeArgs, err := spec.native.agentArgs(artifacts)
+		if err != nil {
+			return -1, err
+		}
+		spec.ExtraArgs = append(spec.ExtraArgs, nativeArgs...)
+		tmpFiles = append(tmpFiles, spec.native.publicFiles...)
+		// SSL_CERT_FILE replaces Rust/OpenSSL's system roots. Compose the
+		// run-local public CA with the image's normal trust store instead.
+		spec.Cmd = nativeCACommand(spec.Cmd)
 	}
 
 	if err := ctxStep(spec.Ctx, "sibling services"); err != nil {
@@ -1581,6 +1620,55 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err := appendInstructionNote(instructionMounts, servicesNote(services, servicePorts, joined, spec.servePlan)); err != nil {
 		return finish(-1, err)
 	}
+	runPlain, runCancelable, removeCanceled := rt.Run, rt.RunInterruptible, rt.RemoveByLabel
+	volumeReader := volumeExposureReader(rt.ExistingNamedVolumeExposure)
+	if spec.native != nil && filtered == nil {
+		cfg = cfg.Clone()
+		var ownerOptions, extraOwner []string
+		var configuredNetwork, requestedNetwork string
+		cfg.ExtraRunArgs, ownerOptions, configuredNetwork, err = nativeNetworkOptions(cfg.ExtraRunArgs)
+		if err != nil {
+			return finish(-1, err)
+		}
+		spec.ExtraArgs, extraOwner, requestedNetwork, err = nativeNetworkOptions(spec.ExtraArgs)
+		if err != nil {
+			return finish(-1, err)
+		}
+		ownerOptions = append(ownerOptions, extraOwner...)
+		ownerNetwork := configuredNetwork
+		if requestedNetwork != "" {
+			ownerNetwork = requestedNetwork
+		}
+		if networkName != "" {
+			ownerNetwork = networkName
+		}
+		for _, port := range spec.servePlan {
+			if port.Published {
+				ownerOptions = append(ownerOptions, "-p", fmt.Sprintf("127.0.0.1:%d:%d", port.Host, port.Port))
+			}
+		}
+		owner, startErr := startNativeOpen(nativeCtx, rt, spec.native, ownerNetwork, ownerOptions, ownerLabels(spec), sections.brokerImage)
+		if owner != nil {
+			defer func() {
+				if err := owner.close(); err != nil {
+					retainArtifacts = true
+					result = errors.Join(result, fmt.Errorf("native broker cleanup unconfirmed; retained private run state at %s (owner %s): %w", artifacts.parent, owner.ref.ID, err))
+				}
+			}()
+		}
+		if startErr != nil {
+			return finish(-1, startErr)
+		}
+		spec.nativeNamespace = owner.ref.ID
+		runPlain = func(in io.Reader, out, errOut io.Writer, args ...string) (int, error) {
+			return owner.docker.RunWorkload(context.Background(), in, out, errOut, args...)
+		}
+		runCancelable = owner.docker.RunWorkloadInterruptible
+		removeCanceled = func(ctx context.Context, key, value string) (int, error) {
+			return owner.docker.RemoveByLabels(ctx, map[string]string{LabelKey: LabelBox, key: value})
+		}
+		volumeReader = owner.docker.ExistingNamedVolumeExposure
+	}
 
 	// networkName is the exact service network already inspected above. An unavailable network
 	// withholds both the join and every in-box service URL/forwarder derived from it.
@@ -1627,7 +1715,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		activityRepo = spec.Repo
 	}
 	unlockMounts, err := enterAuthorityMountWindow(spec.Ctx, activityRepo, func() error {
-		return validateAuthorityMounts(spec.Ctx, spec, finalOptions, networkState, rt.ExistingNamedVolumeExposure, authorityAllow)
+		return validateAuthorityMounts(spec.Ctx, spec, finalOptions, networkState, volumeReader, authorityAllow)
 	})
 	if err != nil {
 		return finish(-1, err)
@@ -1641,7 +1729,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	sections.starting()
 	if spec.Ctx != nil {
-		code, runErr := rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
+		code, runErr := runCancelable(spec.Ctx, stdin, stdout, stderr, args...)
 		if spec.Ctx.Err() == nil || spec.RunID == "" {
 			return finish(code, runErr)
 		}
@@ -1649,10 +1737,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// The loop run id owns one box at a time, so remove that exact canceled box as a backstop.
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, cleanupErr := rt.RemoveByLabel(cleanupCtx, LabelRun, spec.RunID)
+		_, cleanupErr := removeCanceled(cleanupCtx, LabelRun, spec.RunID)
 		return finish(code, errors.Join(runErr, cleanupErr))
 	}
-	code, runErr := rt.Run(stdin, stdout, stderr, args...)
+	code, runErr := runPlain(stdin, stdout, stderr, args...)
 	// The plain client ran the box to its end, so its exit status is the main process's. A client
 	// that could not start is the one case with no box to stop; the deferred narration above
 	// renders that failure.
@@ -1677,12 +1765,19 @@ func prepareBoxEnvFile(cfg *config.Config, spec RunSpec, artifacts compositionAr
 func prepareBoxEnvFileWithMarkers(cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps, projectEnv map[string]string, markers map[string]bool) (envFile, tmp string, err error) {
 	userEnvFile := ""
 	drop := envKeysOutsideScopeWithMarkers(cfg, credentialScope(cfg, spec), markers)
+	if spec.native != nil {
+		for _, account := range spec.native.accounts {
+			for _, key := range account.agent.CredentialEnvKeys() {
+				drop[key] = true
+			}
+		}
+	}
 	userEnv := map[string]string{}
 	if spec.Homes && fileExists(cfg.EnvFile()) {
 		userEnvFile = cfg.EnvFile()
 		userEnv = EnvFileValues(userEnvFile)
 	}
-	if spec.Login {
+	if spec.Login || cfg.Egress == "none" {
 		for _, name := range agents.Names() {
 			if agent, ok := agents.Get(name); ok {
 				for _, key := range agent.CredentialEnvKeys() {
@@ -1727,15 +1822,8 @@ func validateMCPSourceIsolation(cfg *config.Config, spec RunSpec) (string, error
 	for _, companion := range spec.CompanionRepositories {
 		roots = append(roots, MCPSourceRoot{Kind: "mounted companion repository", Path: companion.HostPath})
 	}
-	acpStore := ""
 	for _, m := range mountedWritables(cfg, spec) {
-		switch {
-		case !m.acp:
-			roots = append(roots, MCPSourceRoot{Kind: "mounted " + m.Kind, Path: m.Host})
-		case acpStore == "": // the whole store, not only the directories a box mounts
-			acpStore = filepath.Dir(m.Host)
-			roots = append(roots, MCPSourceRoot{Kind: "mounted " + m.Kind, Path: acpStore})
-		}
+		roots = append(roots, MCPSourceRoot{Kind: "mounted " + m.Kind, Path: m.Host})
 	}
 	return ResolveMCPSource(cfg.MCPFile, roots)
 }
@@ -2191,7 +2279,12 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 			// The mount replaces the lead home's own agents directory in the box, so the definitions
 			// the user keeps there ride along — a `subagent:` reference among them — with a generated
 			// role winning a name they share.
-			own := ownAgentFiles(cfg.AgentDir(lead), lead, support.HomeDir)
+			home, homeErr := cfg.AgentSettingsDir(lead)
+			if homeErr != nil {
+				err = homeErr
+				return
+			}
+			own := ownAgentFiles(home, lead, support.HomeDir)
 			dir, assembleErr := artifacts.assembleAgentsDir(artifacts.parent, append(own, gen...))
 			if assembleErr != nil {
 				err = fmt.Errorf("assemble native roles for %s: %w", lead, assembleErr)
@@ -2366,7 +2459,11 @@ You run inside a coop container: a Debian box that IS your sandbox and security 
 // else the shared INSTRUCTIONS.md. Consult and preset routing augment this; they do not replace it.
 func agentBaseInstructions(cfg *config.Config, agent, file, network string, filtered bool) (string, error) {
 	user := ""
-	data, present, err := readOptionalRegularFile(cfg.AgentDir(agent), file)
+	home, err := cfg.AgentSettingsDir(agent)
+	if err != nil {
+		return "", err
+	}
+	data, present, err := readOptionalRegularFile(home, file)
 	if err != nil {
 		return "", fmt.Errorf("read %s instructions: %w", agent, err)
 	}
@@ -3122,26 +3219,12 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		scope := credentialScope(cfg, spec)
 		writables := mountedWritables(cfg, spec)
 		for _, m := range writables {
-			switch {
-			case m.acp:
-			case m.file:
-				args = append(args, "--mount", "type=bind,source="+m.Host+",target="+m.Box)
-			default:
-				args = append(args, "-v", m.Host+":"+m.Box)
-			}
+			args = append(args, "--mount", "type=bind,source="+m.Host+",target="+m.Box)
 		}
 		// Synthesized skills: mounted READ-WRITE (a copy, so the host stays clean) so a CLI that
 		// installs system skills into its skills dir isn't broken by a :ro mount.
 		for _, m := range synthMounts {
 			args = append(args, "-v", m.host+":"+m.box)
-		}
-		// An ACP box shares the LEAD's session transcripts across credentials, so
-		// switching account/preset mid-session doesn't lose the conversation — session/load still finds
-		// the transcript. The shared dir is credential-independent and shadows the profile's own copy.
-		for _, m := range writables {
-			if m.acp {
-				args = append(args, "-v", m.Host+":"+m.Box)
-			}
 		}
 		args = append(args, modelEnvArgs(cfg, spec, scope)...)
 		// COOP_PRIMARY plus COOP_PEERS describe the mounted credential scope to role wrappers.
@@ -3209,10 +3292,15 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	}
 	// A filtered run publishes on its gateway controller instead: that container
 	// owns the network namespace this box runs in (filteredPublish).
-	if spec.Serve && spec.CapturedEgress == nil {
+	if spec.Serve && spec.CapturedEgress == nil && spec.nativeNamespace == "" {
 		args = appendPublish(args, cfg, spec, hostPortFree)
 	}
-	if networkName != "" {
+	if spec.nativeNamespace != "" {
+		args = append(args, "--network", "container:"+spec.nativeNamespace)
+		for _, port := range spec.servePlan {
+			args = append(args, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", port.Port, port.Host))
+		}
+	} else if networkName != "" {
 		args = append(args, "--network", networkName)
 	}
 	if spec.Cache {

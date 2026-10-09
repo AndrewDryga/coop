@@ -11,7 +11,65 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
 )
+
+// These tests intentionally exercise pre-cutover vaults, not today's sign-in writer.
+func seedLegacyHostKey(cfg *config.Config, ag agents.Agent, account string, data []byte) error {
+	home := cfg.AgentProfileDir(ag.Name(), account)
+	if err := os.MkdirAll(home, 0700); err != nil {
+		return err
+	}
+	if err := ag.HostCredential().Activate(home); err != nil {
+		return err
+	}
+	dir := filepath.Join(cfg.ConfigDir, ag.Name(), "host-credentials", account)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, ag.HostCredential().File), data, 0600)
+}
+
+func TestPrepareCanonicalAccountsNeverCopiesRenewalAuthority(t *testing.T) {
+	for _, provider := range agents.Names() {
+		t.Run(provider, func(t *testing.T) {
+			source := &config.Config{ConfigDir: t.TempDir()}
+			home := t.TempDir()
+			if err := os.Chmod(home, 0700); err != nil {
+				t.Fatal(err)
+			}
+			for name, data := range nativeauth.Files(t, provider, "work") {
+				writeSource(t, filepath.Join(home, name), string(data), 0600)
+			}
+			if err := box.ImportNativeSignIn(t.Context(), source, provider, "work", home); err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := Prepare(source.ConfigDir, filepath.Join(t.TempDir(), "isolated"), []Selection{{Provider: provider, Account: "work"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !prepared.CredentialPresent(provider, "work") || !prepared.SafeThrough(provider, "work", time.Now().Add(time.Hour)) {
+				t.Fatal("canonical access was not usable")
+			}
+			copied, found, err := box.SnapshotNativeAccess(t.Context(), &config.Config{ConfigDir: prepared.ConfigDir}, provider, "work")
+			if err != nil || !found || !copied.Ready {
+				t.Fatalf("isolated canonical account: %v, %v", found, err)
+			}
+			ag, _ := agents.Get(provider)
+			state, err := ag.NativeCredentials().Inspect(copied.Files, time.Now())
+			if err != nil || state.Refreshable {
+				t.Fatalf("isolated account retains renewal authority: %v", err)
+			}
+			if err := prepared.VerifySources(); err != nil {
+				t.Fatal(err)
+			}
+			writeSource(t, filepath.Join(source.ConfigDir, provider, "credentials", "work", "renewal.json"), `{"intent":"inert"}`, 0600)
+			if err := prepared.VerifySources(); err == nil {
+				t.Fatal("renewal intent was not part of source integrity")
+			}
+		})
+	}
+}
 
 func TestPrepareCopiesOnlySelectedHostVaultKey(t *testing.T) {
 	source := &config.Config{ConfigDir: t.TempDir()}
@@ -36,7 +94,7 @@ func TestPrepareCopiesOnlySelectedHostVaultKey(t *testing.T) {
 	if _, _, found, err := box.LoadHostCredential(copyConfig, ag, "unrelated"); err != nil || found {
 		t.Fatalf("unrelated account copied: found=%v, error=%v", found, err)
 	}
-	rel := filepath.Join("gemini", "host-credentials", "work", ag.HostCredential().File)
+	rel := filepath.Join("gemini", "credentials", "work", "authority.json")
 	assertPrivateCopy(t, filepath.Join(source.ConfigDir, rel), filepath.Join(prepared.ConfigDir, rel))
 	if err := filepath.WalkDir(copyConfig.AgentProfileDir("gemini", "work"), func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
@@ -65,7 +123,7 @@ func TestPrepareHostVaultMissingAndUnselected(t *testing.T) {
 			source := &config.Config{ConfigDir: t.TempDir()}
 			ag, _ := agents.Get("gemini")
 			selection := Selection{Provider: "gemini", Account: "work", SourceDefault: mode == "default env"}
-			if err := box.SaveHostCredential(source, ag, "work", []byte("UNUSED_KEY_CANARY")); err != nil {
+			if err := seedLegacyHostKey(source, ag, "work", []byte("UNUSED_KEY_CANARY")); err != nil {
 				t.Fatal(err)
 			}
 			path, err := box.SelectedHostCredentialPath(source, ag, "work")
@@ -113,7 +171,7 @@ func TestPrepareRejectsUnsafeHostVaultWithoutDisclosure(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			source := &config.Config{ConfigDir: t.TempDir()}
 			ag, _ := agents.Get("gemini")
-			if err := box.SaveHostCredential(source, ag, "ACCOUNT_CANARY", []byte("SECRET_CANARY")); err != nil {
+			if err := seedLegacyHostKey(source, ag, "ACCOUNT_CANARY", []byte("SECRET_CANARY")); err != nil {
 				t.Fatal(err)
 			}
 			path, err := box.SelectedHostCredentialPath(source, ag, "ACCOUNT_CANARY")
@@ -166,7 +224,7 @@ func TestHostVaultSelectionChangesSourceInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := box.SaveHostCredential(source, ag, "work", []byte("KEY_CANARY")); err != nil {
+	if err := seedLegacyHostKey(source, ag, "work", []byte("KEY_CANARY")); err != nil {
 		t.Fatal(err)
 	}
 	after, err := sourceInputs(source.ConfigDir, selection)

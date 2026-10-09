@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-10-05
+updated: 2026-10-09
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,18 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-09 — acpctl imports safefile for confined, no-follow legacy binding migration reads;
+  verified the edge against bindings.go and the import allowlist.
+- 2026-10-09 — added test-only `nativeauth` (leaf) and `nativedocker` (gatewayimage, runtime,
+  dockersock) fixtures shared by box and CLI tests. No production consumer edges are granted.
+  The former supplies independent inert native file shapes; the latter inspects actual emitted
+  Docker options and exact lifecycle identities, keeping online launch tests off real daemons.
+- 2026-10-08 — added `networkgateway -> safefile` for strict nonblocking, no-follow reads of
+  guard-only native access snapshots. The existing leaf avoids accepting links or hanging on
+  a FIFO in the live renewal path; the full import scan checks the graph.
+- 2026-10-08 — added `agent -> safefile` for adapter-owned native history migration inventories.
+  The existing leaf supplies descriptor-relative no-follow reads; ownership decisions and byte
+  witnesses now share a pinned file. No dependency cycle or higher-layer adapter import added.
 - 2026-10-05 — added the `testutil/dockersock` leaf: test fakes serve the daemon identity request
   (GET /info) that `runtime` now sends over the bound socket itself.
 - 2026-10-01 — added `cli -> session` for the read-only retained usage metadata snapshot.

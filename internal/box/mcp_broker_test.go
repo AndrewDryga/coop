@@ -32,86 +32,87 @@ const brokeredMCPSnapshot = `{"mcpServers":{
 // Coop-owned stand-in where the operator's variable was — two servers sharing one variable still
 // get two stand-ins, each bound to its own listener.
 func TestFilteredRunBrokersEveryBearerMCPServer(t *testing.T) {
-	cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=claude-secret\nEMISAR_TOKEN=emisar-secret\nSHARED=kept\n")
+	cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=stale-claude-secret\nEMISAR_TOKEN=emisar-secret\nSHARED=kept\n")
+	seedCanonicalFixture(t, cfg, "claude", "default")
+	native := nativeBrokerPlanFixture(t, cfg, spec)
+	spec.native = native
+	if native.accounts[0].record.Selection != "claude-oauth" {
+		t.Fatal("MCP replaced subscription")
+	}
 	plan, err := selectCredentialPlan(cfg, spec)
 	if err == nil {
 		plan, err = planMCPRoutes(cfg, spec, []byte(brokeredMCPSnapshot), plan)
 	}
-	if err != nil || len(plan.routes) != 1 || len(plan.mcp) != 2 {
-		t.Fatalf("plan = %+v, %v", plan, err)
+	if err != nil || plan == nil || len(plan.routes) != 0 || len(plan.mcp) != 2 {
+		t.Fatal("MCP-only static plan", err)
 	}
 	routes := plan.gatewayRoutes()
 	for i, want := range []networkgateway.CredentialBrokerRoute{
-		{Name: "mcp-1", Kind: networkgateway.CredentialBrokerMCP, Upstream: "emisar.example", Header: "authorization", HeaderPrefix: "Bearer ",
-			Methods: []string{"POST", "GET", "DELETE"}, Path: "/mcp", Port: 443},
-		{Name: "mcp-2", Kind: networkgateway.CredentialBrokerMCP, Upstream: "mirror.example", Header: "authorization", HeaderPrefix: "Bearer ",
-			Methods: []string{"POST", "GET", "DELETE"}, Path: "/v1/mcp/", Port: 443},
+		{Name: "mcp-0", Kind: networkgateway.CredentialBrokerMCP, Upstream: "emisar.example", Header: "authorization", HeaderPrefix: "Bearer ", Methods: []string{"POST", "GET", "DELETE"}, Path: "/mcp", Port: 443},
+		{Name: "mcp-1", Kind: networkgateway.CredentialBrokerMCP, Upstream: "mirror.example", Header: "authorization", HeaderPrefix: "Bearer ", Methods: []string{"POST", "GET", "DELETE"}, Path: "/v1/mcp/", Port: 443},
 	} {
-		if got := routes[i+1]; got.Name != want.Name || got.Kind != want.Kind || got.Upstream != want.Upstream || got.Path != want.Path ||
-			got.Header != want.Header || got.HeaderPrefix != want.HeaderPrefix || !slices.Equal(got.Methods, want.Methods) || got.Port != want.Port {
-			t.Fatalf("MCP route %d = %+v, want %+v", i, got, want)
+		got := routes[i]
+		if got.Name != want.Name || got.Kind != want.Kind || got.Upstream != want.Upstream || got.Path != want.Path || got.Header != want.Header || got.HeaderPrefix != want.HeaderPrefix || !slices.Equal(got.Methods, want.Methods) || got.Port != want.Port {
+			t.Fatalf("MCP route %d: %+v", i, got)
 		}
 	}
-	if routes[0].Name != "claude" || routes[0].Kind != networkgateway.CredentialBrokerProvider {
-		t.Fatalf("the provider route moved: %+v", routes[0])
-	}
-
 	f, _ := filteredFixture(t)
-	f.broker = &credentialBrokerRun{plan: plan}
-	f.mcpScrub = []string{"EMISAR_TOKEN"}
+	native.runID = f.record.ID
+	f.native, f.broker, f.mcpScrub = native, &credentialBrokerRun{plan: plan}, []string{"EMISAR_TOKEN"}
 	artifacts := defaultCompositionArtifactOps()
 	artifacts.parent = f.runfiles
 	if err := f.prepareCredentialBroker(artifacts); err != nil {
 		t.Fatal(err)
 	}
-	config := networkgateway.LaunchConfig{RunID: f.record.ID, Epoch: f.record.Epoch, Brokers: routes}
-	secrets, err := networkgateway.ReadCredentialBrokerSecrets(bytes.NewReader(mustReadFile(t, f.broker.configPath)), config)
-	if err != nil {
-		t.Fatalf("the guard would refuse this secret: %v", err)
-	}
-	if secrets.Routes[1].Credential != "emisar-secret" || secrets.Routes[2].Credential != "emisar-secret" ||
-		secrets.Routes[1].Substitute == secrets.Routes[2].Substitute {
-		t.Fatalf("each MCP route does not hold its own capability for the real token: %+v", secrets.Routes)
+	launch := networkgateway.LaunchConfig{RunID: f.record.ID, Epoch: f.record.Epoch, Brokers: routes}
+	secrets, err := networkgateway.ReadCredentialBrokerSecrets(bytes.NewReader(mustReadFile(t, f.broker.configPath)), launch)
+	if err != nil || len(secrets.Routes) != 2 || secrets.Routes[0].Credential != "emisar-secret" || secrets.Routes[1].Credential != "emisar-secret" || secrets.Routes[0].Substitute == secrets.Routes[1].Substitute {
+		t.Fatal("MCP capabilities differ", err)
 	}
 	for _, route := range plan.mcp {
 		if route.token != "" {
-			t.Fatalf("the host kept %s's token after writing the guard's secret", route.server)
+			t.Fatal("MCP token not cleared")
 		}
 	}
-
-	envFile, err := f.credentialBrokerEnv(artifacts, cfg.EnvFile())
+	_, snapshots := nativeBrokerPreparedFixture(t, native)
+	if snapshots["claude"].Credential != "ACCESS_CANARY-claude-default" || snapshots["claude"].Revoked {
+		t.Fatal("subscription missing from private guard snapshot")
+	}
+	baseEnv, _, err := prepareBoxEnvFile(cfg, spec, artifacts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envFile, err := f.credentialBrokerEnv(artifacts, baseEnv)
 	if err != nil {
 		t.Fatal(err)
 	}
 	values := EnvFileValues(envFile)
-	if data := string(mustReadFile(t, envFile)); strings.Contains(data, "emisar-secret") || strings.Contains(data, "claude-secret") {
-		t.Fatalf("a real token reached the box environment: %s", data)
+	for _, secret := range []string{"emisar-secret", "stale-claude-secret", "ACCESS_CANARY", "REFRESH_CANARY"} {
+		if strings.Contains(string(mustReadFile(t, envFile)), secret) {
+			t.Fatal("real credential in box env")
+		}
 	}
-	if _, ok := values["EMISAR_TOKEN"]; ok || values["COOP_MCP_TOKEN_1"] != f.broker.substitutes[1] ||
-		values["COOP_MCP_TOKEN_2"] != f.broker.substitutes[2] || values["SHARED"] != "kept" {
-		t.Fatalf("box environment = %#v", values)
+	if _, present := values["EMISAR_TOKEN"]; present || values["ANTHROPIC_API_KEY"] != "" || values["COOP_MCP_TOKEN_0"] != f.broker.substitutes[0] || values["COOP_MCP_TOKEN_1"] != f.broker.substitutes[1] || values["SHARED"] != "kept" {
+		t.Fatal("incorrect composed environment")
 	}
-
 	rewritten, err := mcp.RouteThroughBroker([]byte(brokeredMCPSnapshot), plan.brokeredServers(networkgateway.CredentialBrokerAddress))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var root struct {
-		MCPServers map[string]map[string]any `json:"mcpServers"`
-	}
+	var root map[string]map[string]map[string]any
 	if err := json.Unmarshal(rewritten, &root); err != nil {
 		t.Fatal(err)
 	}
 	for name, want := range map[string][2]string{
-		"emisar": {"http://" + networkgateway.CredentialBrokerAddress(1) + "/mcp", "COOP_MCP_TOKEN_1"},
-		"mirror": {"http://" + networkgateway.CredentialBrokerAddress(2) + "/v1/mcp/", "COOP_MCP_TOKEN_2"},
+		"emisar": {"http://" + networkgateway.CredentialBrokerAddress(0) + "/mcp", "COOP_MCP_TOKEN_0"},
+		"mirror": {"http://" + networkgateway.CredentialBrokerAddress(1) + "/v1/mcp/", "COOP_MCP_TOKEN_1"},
 	} {
-		if server := root.MCPServers[name]; server["url"] != want[0] || server["bearer_token_env_var"] != want[1] {
-			t.Fatalf("%s in the box = %#v, want %v", name, server, want)
+		if server := root["mcpServers"][name]; server["url"] != want[0] || server["bearer_token_env_var"] != want[1] {
+			t.Fatalf("%s projection: %+v", name, server)
 		}
 	}
-	if root.MCPServers["open"]["url"] != "https://open.example/mcp" {
-		t.Fatal("a tokenless server was routed")
+	if root["mcpServers"]["open"]["url"] != "https://open.example/mcp" {
+		t.Fatal("tokenless MCP rewritten")
 	}
 }
 

@@ -134,22 +134,21 @@ func TestCanaryNeverReachesTheCandidateWorkspace(t *testing.T) {
 // its own /proc/self/environ or looks at its mount table must find nothing.
 func TestCanaryNeverReachesTheCandidateContainer(t *testing.T) {
 	suite := canarySuite(t)
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.ExtraRunArgs = nil // isolate the argv proof from this host's personal runtime mounts
-	cfg.Homes = true
+	cfg := &config.Config{ConfigDir: t.TempDir(), BoxHome: t.TempDir(), HomeInBox: "/home/node", BaseImage: "coop-box:test", Homes: true, Egress: "open"}
+	signInCred(t, cfg, "codex", "default")
 	recorder := filepath.Join(t.TempDir(), "argv.log")
 	r := &trialRunner{
-		app: &app{cfg: cfg, rt: recordingRuntime(t, recorder)}, suite: suite,
+		app: &app{cfg: cfg, rt: nativeOnlineRuntime(t, recorder)}, suite: suite,
 		image: "coop-box:test", workRoot: t.TempDir(),
 	}
-	r.run(context.Background(), eval.Trial{
+	result := r.run(context.Background(), eval.Trial{
 		Case:   suite.Cases[0],
 		Config: eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex"},
 	})
 
+	if result.Status != eval.TrialPassed {
+		t.Fatalf("trial = %s: %s", result.Status, result.Detail)
+	}
 	data, rerr := os.ReadFile(recorder)
 	if rerr != nil {
 		t.Fatalf("nothing was launched: %v", rerr)

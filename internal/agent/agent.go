@@ -157,19 +157,6 @@ type EffortSpec struct {
 	Validate func(model, effort string) error
 }
 
-// HistoryLayout is where a provider keeps its session history inside its home: directories of
-// per-project or per-session records, and files it only ever appends to (prompt history). Coop
-// gives each repository its own copy of these paths, so a box sees only its repository's history.
-type HistoryLayout struct {
-	Dirs    []string // home-relative directories
-	Appends []string // home-relative files the provider only appends to, never replaces
-}
-
-// HistoryKeeper is implemented by a provider whose history Coop keeps per repository.
-type HistoryKeeper interface {
-	HistoryLayout() HistoryLayout
-}
-
 // CachePrivateDirs is implemented by an agent that writes per-project data under ~/.cache. Every
 // box shares ~/.cache through one cache volume, across repositories and accounts, so each named
 // subdirectory is covered by an empty directory private to the run.
@@ -535,6 +522,8 @@ type Agent interface {
 	ModelCatalog() ModelCatalogSpec
 	// Usage declares read-only quota inspection and retained native token accounting.
 	Usage() UsageSpec
+	// NativeHistory inventories native records by recorded repository ownership, never bucket names alone.
+	NativeHistory(source string, ownsCWD func(string) bool) (NativeHistoryPlan, error)
 	Scaffold() ScaffoldSpec
 	// DisplayName is the human product name for UX surfaces (the ACP toolbar dropdowns):
 	// "Claude Code", "Codex", … Name() stays the grammar token everywhere a value is parsed.
@@ -558,12 +547,6 @@ type Agent interface {
 	// resolved model flag; a separate adapter binary (claude-agent-acp, codex-acp) takes
 	// no flags — claude's picks the model up via ModelEnv instead.
 	ACP(cfg *config.Config) []string
-	// ACPSessionDirs are the agent-home-relative dirs where this agent's ACP adapter keeps session
-	// state — the transcript AND any session index/aux state session/load needs (claude keeps a
-	// sessions/ index alongside the projects/ transcript). For an ACP box coop bind-mounts a shared,
-	// credential-independent copy of each so switching the credential mid-session doesn't lose the
-	// conversation — session/load still finds it. Empty → no sharing for this agent.
-	ACPSessionDirs() []string
 	// ACPFinalChunk reports whether an ACP assistant/agent message chunk carrying meta (the
 	// update's `_meta`, possibly empty) is part of the answer. An adapter that streams progress
 	// commentary and the final answer through the same chunk event marks them there; every other
@@ -643,6 +626,8 @@ type Agent interface {
 	// diagnostics for this adapter. It is consumed only by opt-in live tests, but compiler-required
 	// so a registered provider cannot silently evade the registry-generated suite.
 	LiveCredentials() LiveCredentialSpec
+	// NativeCredentials owns credential-only canonical import, identity and host renewal.
+	NativeCredentials() NativeCredentialSpec
 	// CredentialBroker declares one qualified API-key transport whose reusable key can stay in
 	// the trusted filtered gateway. Unsupported adapters return the zero value.
 	CredentialBroker() CredentialBrokerSpec

@@ -28,7 +28,9 @@ ENV GOMODCACHE=/home/node/.cache/go-mod
 
 # The gate's own tools (make check), at the Makefile's STATICCHECK_VERSION and GOVULNCHECK_VERSION;
 # its version checks fail loudly if these drift. Built as node, installed for every shell.
-RUN GOBIN=/tmp/gate-tools go install honnef.co/go/tools/cmd/staticcheck@v0.8.1 \
+COPY --chown=node:node internal/box/staticcheck.mod /tmp/staticcheck/go.mod
+COPY --chown=node:node internal/box/staticcheck.sum /tmp/staticcheck/go.sum
+RUN GOBIN=/tmp/gate-tools go -C /tmp/staticcheck install -mod=readonly honnef.co/go/tools/cmd/staticcheck \
  && GOBIN=/tmp/gate-tools go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
 # Login shells reset PATH, so restore the same order after /etc/profile runs (this drop-in sorts

@@ -152,6 +152,9 @@ func (f *filteredExecution) verifyContainer(ctx context.Context, role, image str
 	}
 	capabilities := len(value.CapAdd) == 0
 	if role == "controller" {
+		if hostname := f.native.hostname(); hostname != "" {
+			options = append(options, "--hostname", hostname)
+		}
 		capabilities = len(value.CapAdd) == 1 && strings.TrimPrefix(value.CapAdd[0], "CAP_") == "NET_ADMIN"
 	}
 	nnp := slices.Contains(value.SecurityOpt, "no-new-privileges") || slices.Contains(value.SecurityOpt, "no-new-privileges=true")
@@ -201,6 +204,9 @@ func (f *filteredExecution) helperOptions(role string) []string {
 		"--tmpfs", "/private:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m")
 	if f.broker != nil {
 		options = append(options, "--mount", networkMount("bind", f.broker.configPath, networkgateway.CredentialBrokerPath, true))
+	}
+	if f.native != nil {
+		options = append(options, "--mount", networkMount("bind", f.native.dir, networkgateway.NativePrivateDirectory, true))
 	}
 	return options
 }

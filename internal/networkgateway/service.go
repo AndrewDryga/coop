@@ -125,7 +125,8 @@ type LaunchConfig struct {
 	// Brokers are non-secret helper-only authority derived from the selected adapters: one route per
 	// brokered provider account, in listener order. The reusable credentials live in a separate
 	// guard-only mount and never in this controller-readable file.
-	Brokers []CredentialBrokerRoute `json:"credential_brokers,omitempty"`
+	Brokers       []CredentialBrokerRoute `json:"credential_brokers,omitempty"`
+	NativeOrigins []string                `json:"native_origins,omitempty"`
 }
 
 // CredentialBrokerRoute is one exact endpoint a brokered credential reaches — a provider's API, or
@@ -303,6 +304,15 @@ func ReadLaunchConfig(reader io.Reader) (LaunchConfig, error) {
 }
 
 func (c LaunchConfig) Validate() error {
+	if len(c.NativeOrigins) > 8 || len(c.NativeOrigins) > 0 && slices.Contains(c.Serve, 15445) {
+		return Failure("gateway_configuration_invalid")
+	}
+	for i, host := range c.NativeOrigins {
+		name, err := egress.NormalizeDomain(host, false)
+		if err != nil || name != host || slices.Contains(c.NativeOrigins[:i], host) {
+			return Failure("gateway_configuration_invalid")
+		}
+	}
 	if c.Version != 1 || !validAgentUID(c.AgentUID) || !lowerHex(c.RunID, 32) || !lowerHex(c.Epoch, 32) || !lowerHex(c.Policy.Fingerprint, 64) || c.Policy.Version != egress.Version ||
 		len(c.Policy.Grants) > egress.MaxGrants || len(c.Protected) > MaxProtectedRanges || c.Policy.RequireSupported() != nil {
 		return Failure("gateway_configuration_invalid")
@@ -378,6 +388,7 @@ func RunController(ctx context.Context, config LaunchConfig) error {
 	if err := c.Initialize(ctx, netip.MustParseAddr(MaintenanceResolver)); err != nil {
 		return err
 	}
+	c.nativeOrigins = slices.Clone(config.NativeOrigins)
 	c.kernel.read = readKernelCounters
 	return c.ServeControl(ctx, ControllerSocket)
 }
@@ -402,6 +413,7 @@ type GuardRuntime struct {
 	EnvoyEvents *EnvoyEvents
 	guard       *Guard
 	brokers     []*credentialBroker
+	native      *nativeRunRuntime
 	doh         *DoH
 	collector   *Collector
 	phase       atomic.Uint32
@@ -476,12 +488,20 @@ func NewGuardRuntime(config LaunchConfig) (*GuardRuntime, error) {
 			brokerResolvers = append(brokerResolvers, broker.resolver)
 		}
 	}
+	runtime := &GuardRuntime{Identity: identity, GuardEvents: events, EnvoyEvents: envoyEvents, guard: guard, brokers: brokers, doh: doh}
+	nativeResolvers, err := runtime.prepareNative(config, clock, controller)
+	if err != nil {
+		doh.Close()
+		return nil, err
+	}
+	brokerResolvers = append(brokerResolvers, nativeResolvers...)
 	collector, err := NewCollector(guard, envoyEvents, doh, brokerResolvers...)
 	if err != nil {
 		doh.Close()
 		return nil, err
 	}
-	return &GuardRuntime{Identity: identity, GuardEvents: events, EnvoyEvents: envoyEvents, guard: guard, brokers: brokers, doh: doh, collector: collector}, nil
+	runtime.collector = collector
+	return runtime, nil
 }
 
 func (g *GuardRuntime) Run(ctx context.Context) (result error) {
@@ -569,8 +589,11 @@ func (g *GuardRuntime) Run(ctx context.Context) (result error) {
 	}
 	var workers sync.WaitGroup
 	defer func() { g.stopReady(); cancel(); workers.Wait() }()
-	failures := make(chan error, 3+len(g.brokers))
+	failures := make(chan error, 4+len(g.brokers))
 	needed := int32(1 + len(g.brokers))
+	if g.native != nil {
+		needed++
+	}
 	var readyParts atomic.Int32
 	partReady := func() {
 		if readyParts.Add(1) == needed {
@@ -578,6 +601,11 @@ func (g *GuardRuntime) Run(ctx context.Context) (result error) {
 		}
 	}
 	workers.Go(func() { failures <- g.guard.Serve(ctx, partReady) })
+	if g.native != nil {
+		ordinary := newNativeOrdinaryProxy(ctx, g.guard)
+		g.native.fallback = ordinary
+		workers.Go(func() { defer ordinary.close(); failures <- g.native.serve(ctx, partReady) })
+	}
 	for _, broker := range g.brokers {
 		workers.Go(func() { failures <- broker.Serve(ctx, partReady) })
 	}
