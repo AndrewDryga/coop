@@ -364,6 +364,7 @@ roles:
         <h2>The loop</h2>
         <p class="section-lead">Most agent work is a queue of small, well-defined tasks. <code>coop loop</code> works through the queue on its own, overnight and through usage limits.</p>
         <p>One long session gets worse as old work fills its context, so the loop starts a <strong>fresh agent for each task</strong>: it picks the next task, and the agent does the work, runs your checks, commits the result and marks the task done. Then the loop picks the next one, until no task it can take is left or <code>--max-tasks</code> is reached.</p>
+        <p><code>--max-tasks</code> pauses before final review and exits <code>0</code> on a successful pause. Run the same command without the limit to finish the review; a pause is not verified completion.</p>
         <p>Each task is a folder under <code>.agent/tasks/</code>, and the folder it sits in is its state. Fill in each generated <code>task.md</code> before you start, so the agent knows what done means:</p>
         <ul class="cmds" role="list">
           <li><code data-copy-source><span class="k">coop</span> tasks add <span class="s">"Fix the flaky test"</span></code><span class="cmd-note"># a folder per task</span></li>

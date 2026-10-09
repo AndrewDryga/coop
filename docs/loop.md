@@ -25,10 +25,15 @@ A cron job or CI can branch on the loop's exit code without parsing its output:
 
 | Exit code | Meaning |
 |---|---|
-| `0` | The queue is verified done, including a final verification you switched on. |
+| `0` | Final review and enabled final checks passed, or a successful `--max-tasks` pause before final review. |
 | `1` | A failure, an unverified final pass, or actionable work. |
 | `2` | A usage error. |
 | `3` | The loop stopped with a task blocked on a human decision, including one the review kept reopening past the round cap. Resolve it with `coop tasks decisions`, then run the loop again. |
+| `130` | The run was interrupted before the final verdict. |
+
+`--max-tasks` pauses the loop; it does not certify the queue as done. A successful pause exits `0`
+and leaves final review pending. Run the same command without the limit to resume that review
+before treating the work as verified complete.
 
 Each controller leases its exact task with a host-only lock under `~/.local/state/coop/task-leases/` while the agent runs. A second loop skips a held task and can take independent todo work. `coop tasks watch` shows a short `busy`, `stalled` or `unleased` state from metadata beside that lock, without exposing run IDs or PIDs. A stale heartbeat is only a diagnostic. The loop adopts a task only once its kernel lock is available, and then right away. It never adopts one by timeout. An unleased in-progress folder is adopted through that same lock.
 
