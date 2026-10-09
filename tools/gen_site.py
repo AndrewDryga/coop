@@ -348,8 +348,9 @@ DOCTOR_SECTIONS = [
     ("Offline access", ["Offline mode leaves only the loopback interface"]),
     ("Task access", ["The task channel exposes only its 8 task tools", "Calls outside the task tools are refused",
                      "Changes to a task held by another process are refused", "The assigned task can be updated"]),
-    ("Credentials and settings", ["Claude's credential home is available", "Codex's credential home is hidden from Claude",
-                                  "Gemini's credential home is hidden from Claude", "Claude's saved login takes priority over its environment key",
+    ("Credentials and settings", ["Claude's native home is available", "Host account grants stay outside Claude's home",
+                                  "Codex's native home is hidden from Claude", "Gemini's native home is hidden from Claude",
+                                  "Grok's native home is hidden from Claude", "Claude's saved login takes priority over its environment key",
                                   "Codex's environment key is hidden from Claude", "Gemini's environment key is hidden from Claude",
                                   "The box can write its settings directory"]),
     ("Fork handoff", [".env is absent from the clone", ".envrc is absent from the clone", "Secret directories are absent from the clone",
@@ -360,7 +361,7 @@ DOCTOR_BEATS = ([(None, [at_shop("coop doctor")]), (None, ["Checking the Coop bo
                 + [(None, ["", ("strong", title)] + [f"  {OK} {check}" for check in checks]) for title, checks in DOCTOR_SECTIONS]
                 + [(None, ["", f"{OK} All {sum(len(checks) for _, checks in DOCTOR_SECTIONS)} checks passed"])])
 DOCTOR = ('<figure class="window scene-replay scene-doctor" data-scene="doctor" aria-label="coop doctor tries to break out of its own '
-          'box: secrets, host access, the network, tasks, credentials and the fork handoff, and all 35 checks pass">'
+          'box: secrets, host access, the network, tasks, credentials and the fork handoff, and all 37 checks pass">'
           + window_bar("coop doctor") + "<pre><code>"
           + "".join(loop_line(beat, entry) for beat, (bar, entries) in enumerate(DOCTOR_BEATS) for entry in entries)
           + "</code></pre></figure>")

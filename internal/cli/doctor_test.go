@@ -11,10 +11,12 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	boxruntime "github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
 )
 
@@ -24,10 +26,123 @@ func TestDoctorDefaultMatchesCredentialFixture(t *testing.T) {
 		t.Fatal("default provider is not registered")
 	}
 	marker, key := ag.AuthMarker()
-	probe := doctorCredAndHomeProbe("/fixture")
+	probe := doctorCredAndHomeProbe("/fixture", true)
 	if marker != ".credentials.json" || key != "ANTHROPIC_API_KEY" ||
 		!strings.Contains(probe, "/fixture/."+ag.Name()+"/"+marker) {
 		t.Fatal("doctor's scoped credential fixture no longer matches the default provider")
+	}
+}
+
+func TestDoctorCredentialFixturePreparesPrivateNativeHome(t *testing.T) {
+	for _, account := range []string{"default", "work"} {
+		t.Run(account, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
+			cfg.SetActiveProfile(agents.Default(), account)
+			if err := seedDoctorCredentials(cfg); err != nil {
+				t.Fatal(err)
+			}
+			ag, _ := agents.Get(agents.Default())
+			ready, err := box.PrepareNativeAccount(t.Context(), cfg, boxruntime.Runtime{}, ag.Name(), account, time.Now().Add(24*time.Hour))
+			if err != nil || !ready {
+				t.Fatalf("doctor fixture is not inert usable authority: ready=%t, %v", ready, err)
+			}
+			if err := filepath.WalkDir(cfg.ConfigDir, func(path string, entry os.DirEntry, err error) error {
+				if err != nil || path == cfg.ConfigDir {
+					return err
+				}
+				info, err := entry.Info()
+				if err == nil && info.Mode().Perm()&0o077 != 0 {
+					t.Errorf("fixture path is not owner-private: %s (%o)", path, info.Mode().Perm())
+				}
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := box.PrepareNativeHome(t.Context(), cfg, boxruntime.Runtime{}, ag.Name(), account, t.TempDir(), false); err != nil {
+				t.Fatalf("real native-home custody rejects doctor fixture: %v", err)
+			}
+		})
+	}
+}
+
+func TestDoctorCredentialProbeRejectsExposureAndMissingEvidence(t *testing.T) {
+	for _, scenario := range []string{"online", "offline", "access", "refresh", "sidecar", "peer", "missing", "missing-selector", "own-env", "peer-env", "peer-alias"} {
+		t.Run(scenario, func(t *testing.T) {
+			home := t.TempDir()
+			dir := filepath.Join(home, ".claude")
+			if err := os.Mkdir(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			ag, _ := agents.Get(agents.Default())
+			seed, err := ag.NativeCredentials().Broker.Seed("claude-oauth")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario != "offline" {
+				for name, data := range seed.Files {
+					if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			wantFail := ""
+			env := map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": seed.Marker, "ANTHROPIC_API_KEY": "", "OPENAI_API_KEY": "", "GOOGLE_API_KEY": ""}
+			switch scenario {
+			case "access", "refresh", "sidecar":
+				path := filepath.Join(dir, "unexpected-grant")
+				if scenario == "sidecar" {
+					path = filepath.Join(home, ".claude.json")
+				}
+				if err := os.WriteFile(path, []byte("hunter2-"+scenario), 0600); err != nil {
+					t.Fatal(err)
+				}
+				wantFail = "credential.host_grants"
+			case "peer":
+				if err := os.Mkdir(filepath.Join(home, ".codex"), 0000); err != nil {
+					t.Fatal(err)
+				}
+				wantFail = "credential.codex_home"
+			case "missing":
+				if err := os.Rename(dir, dir+"-missing"); err != nil {
+					t.Fatal(err)
+				}
+				wantFail = "credential.host_grants"
+			case "missing-selector":
+				env["CLAUDE_CODE_OAUTH_TOKEN"] = ""
+				wantFail = "credential.own_home"
+			case "own-env":
+				env["ANTHROPIC_API_KEY"] = "hunter2"
+				wantFail = "credential.own_env"
+			case "peer-env":
+				env["OPENAI_API_KEY"] = "hunter2"
+				wantFail = "credential.peer_env"
+			case "peer-alias":
+				env["GOOGLE_API_KEY"] = "hunter2"
+				wantFail = "credential.peer_alias"
+			}
+			cmd := exec.Command("sh")
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+			for key, value := range env {
+				cmd.Env = append(cmd.Env, key+"="+value)
+			}
+			cmd.Stdin = strings.NewReader(doctorCredAndHomeProbe(home, scenario != "offline"))
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("probe execution: %v\n%s", err, out)
+			}
+			results := parseProbeResults(string(out))
+			if wantFail != "" {
+				if results[wantFail] != "FAIL" {
+					t.Fatalf("%s did not fail closed:\n%s", wantFail, out)
+				}
+				return
+			}
+			for _, check := range doctorCredentialChecks {
+				if results[check.id] != "PASS" {
+					t.Errorf("%s did not pass:\n%s", check.id, out)
+				}
+			}
+		})
 	}
 }
 
@@ -203,7 +318,7 @@ func TestDoctorCredAndHomeProbeReportsConfigWritability(t *testing.T) {
 	probe := func(home string) string {
 		t.Helper()
 		cmd := exec.Command("sh")
-		cmd.Stdin = strings.NewReader(doctorCredAndHomeProbe(home))
+		cmd.Stdin = strings.NewReader(doctorCredAndHomeProbe(home, true))
 		cmd.Env = append(os.Environ(), "ANTHROPIC_API_KEY=fake", "OPENAI_API_KEY=", "GOOGLE_API_KEY=")
 		out, err := cmd.CombinedOutput()
 		if err != nil {

@@ -198,7 +198,7 @@ func snapshotInitTree(t *testing.T, root string) map[string]initTreeEntry {
 }
 
 // On Apple container a filtered project is refused at its first run (checkFilteredRuntime), so
-// init says so up front and names both ways forward. The committed policy stays filtered: a
+// init says so up front and directs the user to Docker. The committed policy stays filtered: a
 // teammate on Docker keeps it. On Docker, init says nothing extra.
 func TestInitWarnsWhenTheRuntimeCannotFilter(t *testing.T) {
 	for _, tc := range []struct {
@@ -217,11 +217,14 @@ func TestInitWarnsWhenTheRuntimeCannotFilter(t *testing.T) {
 			})
 			warning := []string{"Apple container can't filter network access",
 				"This project filters network access, which needs Docker.",
-				"Start or install Docker, or run with open networking: coop claude --egress open"}
+				"Start or install Docker. Online agents need Docker even with open networking."}
 			for _, line := range warning {
 				if strings.Contains(out, line) != tc.warns {
 					t.Errorf("on %s, init output has %q = %t, want %t:\n%s", tc.runtime, line, !tc.warns, tc.warns, out)
 				}
+			}
+			if strings.Contains(out, "--egress open") {
+				t.Errorf("init recommends an unsupported runtime workaround:\n%s", out)
 			}
 			data, err := os.ReadFile(filepath.Join(dir, ".agent", "project.yaml"))
 			if err != nil || !strings.Contains(string(data), "\n  egress: filtered\n") {

@@ -24,12 +24,13 @@ func TestInstallSetupOutcome(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name, build, doctor, calls string
-		ok, signed                 bool
+		ok, signed, noDocker       bool
 	}{
-		{"build fails", "23", "0", "build --egress open\n", false, false},
-		{"doctor fails", "0", "24", "build --egress open\ndoctor\n", false, false},
-		{"ready", "0", "0", "build --egress open\ndoctor\n", true, false},
-		{"ready with signed release and Zsh", "0", "0", "build --egress open\ndoctor\n", true, true},
+		{"build fails", "23", "0", "build --egress open\n", false, false, false},
+		{"doctor fails", "0", "24", "build --egress open\ndoctor\n", false, false, false},
+		{"ready", "0", "0", "build --egress open\ndoctor\n", true, false, false},
+		{"ready with signed release and Zsh", "0", "0", "build --egress open\ndoctor\n", true, true, false},
+		{"Apple container needs Docker", "0", "0", "", true, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -96,7 +97,11 @@ esac
 			write(filepath.Join(root, "archive"), archive.String(), 0o600)
 			write(filepath.Join(root, "checksums"), fmt.Sprintf("%x  coop_9.9.9_linux_amd64.tar.gz\n", sha256.Sum256(archive.Bytes())), 0o600)
 			write(filepath.Join(bin, "uname"), "#!/bin/sh\ncase \"$1\" in -s) echo Linux;; -m) echo x86_64;; *) exit 97;; esac\n", 0o755)
-			write(filepath.Join(bin, "docker"), "#!/bin/sh\nexit 97\n", 0o755)
+			runtime := "docker"
+			if tc.noDocker {
+				runtime = "container"
+			}
+			write(filepath.Join(bin, runtime), "#!/bin/sh\nexit 97\n", 0o755)
 			write(filepath.Join(bin, "curl"), `#!/bin/sh
 test "$#" -eq 4 && test "$1" = -fsSL && test "$3" = -o || exit 97
 case "$2" in
@@ -121,7 +126,7 @@ esac
 			if (err == nil) != tc.ok {
 				t.Errorf("installer success = %v, want %v: %v\n%s", err == nil, tc.ok, err, out)
 			}
-			if got, err := os.ReadFile(calls); err != nil || string(got) != tc.calls {
+			if got, err := os.ReadFile(calls); err != nil && !(tc.noDocker && os.IsNotExist(err)) || string(got) != tc.calls {
 				t.Errorf("setup calls = %q, want %q: %v\n%s", got, tc.calls, err, out)
 			}
 			footer := "\nDone. Now run in any repo:\n\n" +
@@ -139,8 +144,11 @@ esac
 					t.Errorf("installer output is missing %q:\n%s", want, out)
 				}
 			}
-			if tc.build == "0" && !strings.Contains(string(out), "sessions will reconnect with the new image.\n\nChecking the Coop box") {
+			if tc.build == "0" && !tc.noDocker && !strings.Contains(string(out), "sessions will reconnect with the new image.\n\nChecking the Coop box") {
 				t.Errorf("build and doctor output need a blank line between sections:\n%s", out)
+			}
+			if tc.noDocker && !strings.Contains(string(out), "online agents require Docker — install and start Docker") {
+				t.Errorf("Apple-only setup must direct online agents to Docker:\n%s", out)
 			}
 			if tc.signed {
 				completion := "\nZsh completion (optional)\n\n" +

@@ -30,9 +30,11 @@ Task access
   ✓ The assigned task can be updated
 
 Credentials and settings
-  ✓ Claude's credential home is available
-  ✓ Codex's credential home is hidden from Claude
-  ✓ Gemini's credential home is hidden from Claude
+  ✓ Claude's native home is available
+  ✓ Host account grants stay outside Claude's home
+  ✓ Codex's native home is hidden from Claude
+  ✓ Gemini's native home is hidden from Claude
+  ✓ Grok's native home is hidden from Claude
   ✓ Claude's saved login takes priority over its environment key
   ✓ Codex's environment key is hidden from Claude
   ✓ Gemini's environment key is hidden from Claude
@@ -47,4 +49,4 @@ Fork handoff
   ✓ The test secret is absent from the clone
   ✓ The clone's origin is a local path
 
-⚠ 33 checks passed; 2 limits are not applied by this runtime
+⚠ 35 checks passed; 2 limits are not applied by this runtime

@@ -13,7 +13,7 @@ import (
 func TestProbeKindsAreAllParsed(t *testing.T) {
 	scripts := []string{
 		doctorProbe,
-		doctorCredAndHomeProbe("/home/node"),
+		doctorCredAndHomeProbe("/home/node", true),
 		doctorTaskProbe,
 	}
 	kind := regexp.MustCompile(`RESULT ([A-Z_]+)`)

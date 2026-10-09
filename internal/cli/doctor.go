@@ -581,14 +581,29 @@ func writeProbeFile(content string) (string, func(), error) {
 	return path, cleanup, nil
 }
 
-// doctorCredAndHomeProbe checks, inside a box scoped to claude, that only claude's credentials are
-// visible and the normal mount composition leaves its application config home writable.
-func doctorCredAndHomeProbe(home string) string {
+// doctorCredAndHomeProbe checks the public native home, not a mounted account grant.
+// Offline runs have no broker selector; neither mode may expose the host canary.
+func doctorCredAndHomeProbe(home string, online bool) string {
 	return fmt.Sprintf(`#!/bin/sh
 check() { if "$@"; then echo "RESULT PASS $ID"; else echo "RESULT FAIL $ID"; fi; }
-ID=credential.own_home    check test -f "%[1]s/.claude/.credentials.json"
-ID=credential.codex_home  check test ! -e "%[1]s/.codex/auth.json"
-ID=credential.gemini_home check test ! -e "%[1]s/.gemini/gemini-credentials.json"
+native_home() {
+	test -d "%[1]s/.claude" && test -r "%[1]s/.claude" || return 1
+	if %[2]t; then
+		test "$CLAUDE_CODE_OAUTH_TOKEN" = coop-native-claude-v1 &&
+			grep -Fq '"accessToken":"coop-native-claude-v1"' "%[1]s/.claude/.credentials.json"
+	fi
+}
+grants_hidden() {
+	set -- "%[1]s/.claude"
+	if test -e "%[1]s/.claude.json"; then set -- "$@" "%[1]s/.claude.json"; fi
+	grep -rF hunter2 "$@" >/dev/null 2>&1
+	test "$?" -eq 1
+}
+ID=credential.own_home    check native_home
+ID=credential.host_grants check grants_hidden
+ID=credential.codex_home  check test ! -e "%[1]s/.codex"
+ID=credential.gemini_home check test ! -e "%[1]s/.gemini"
+ID=credential.grok_home   check test ! -e "%[1]s/.grok"
 ID=credential.own_env     check test -z "$ANTHROPIC_API_KEY"
 ID=credential.peer_env    check test -z "$OPENAI_API_KEY"
 ID=credential.peer_alias  check test -z "$GOOGLE_API_KEY"
@@ -598,7 +613,7 @@ if mkdir -p "%[1]s/.config/coop-browser-probe" && : > "%[1]s/.config/coop-browse
 else
 	echo "RESULT HOME blocked"
 fi
-`, home)
+`, home, online)
 }
 
 func doctorCredentialProbeArgs(probe string, usingReal bool) []string {
@@ -611,10 +626,50 @@ func doctorCredentialProbeArgs(probe string, usingReal bool) []string {
 	return args
 }
 
-// doctorCheckCredAndHomeScope proves the credential boundary and writable config-home contract in
-// one normally composed box. It seeds a throwaway credential for every agent and an env file
-// holding every agent's key, then runs a claude-scoped probe that also creates state under
-// ~/.config — exercising credentialScope, generated home mounts, and writeFilteredEnvFile.
+// seedDoctorCredentials uses inert host authority with a distant expiry, so the
+// real launch path can prove isolation without contacting a provider or renewing.
+func seedDoctorCredentials(credCfg *config.Config) error {
+	for _, name := range agents.Names() {
+		if name == agents.Default() {
+			continue
+		}
+		ag, _ := agents.Get(name)
+		credFile, _ := ag.AuthMarker()
+		dir := credCfg.AgentDir(name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, credFile), []byte(`{"token":"hunter2"}`), 0o600); err != nil {
+			return err
+		}
+	}
+	// This independent default-provider oracle must describe real sign-in input,
+	// not its public broker seed. TestDoctorDefaultMatchesCredentialFixture pins it.
+	stage, err := os.MkdirTemp(credCfg.ConfigDir, ".doctor-sign-in-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stage)
+	for name, body := range map[string]string{
+		".credentials.json": `{"claudeAiOauth":{"accessToken":"hunter2-access","refreshToken":"hunter2-refresh","expiresAt":4102444800000,"scopes":["user:inference","account:read"]}}`,
+		".claude.json":      `{"oauthAccount":{"accountUuid":"doctor-account","organizationUuid":"doctor-organization"}}`,
+	} {
+		if err := os.WriteFile(filepath.Join(stage, name), []byte(body), 0o600); err != nil {
+			return err
+		}
+	}
+	// Fresh canonical sign-in avoids surveying unrelated legacy mounts on the
+	// operator's daemon. The fixture has never had a legacy writer to migrate.
+	if err := box.ImportNativeSignIn(context.Background(), credCfg, agents.Default(), credCfg.ActiveProfile(agents.Default()), stage); err != nil {
+		return err
+	}
+	// The saved login must beat its own env key. Peer keys, including aliases,
+	// have explicit canaries so the check never depends on the operator's env.
+	return os.WriteFile(credCfg.EnvFile(), []byte("ANTHROPIC_API_KEY=hunter2\nOPENAI_API_KEY=hunter2\nGOOGLE_API_KEY=hunter2\n"), 0o600)
+}
+
+// doctorCheckCredAndHomeScope exercises the ordinary launch path with throwaway
+// account authority and verifies both credential isolation and config writability.
 func doctorCheckCredAndHomeScope(s *doctorSection, a *app, fixture, img string, usingReal bool) {
 	covers := len(doctorCredentialChecks) + 1
 	cfgDir, err := os.MkdirTemp("", "coop-doctor-cred-")
@@ -623,34 +678,20 @@ func doctorCheckCredAndHomeScope(s *doctorSection, a *app, fixture, img string, 
 		return
 	}
 	defer os.RemoveAll(cfgDir)
-	if err := os.Chmod(cfgDir, 0o755); err != nil { // box reads it as a non-owner uid
+	// Clear any daemon authority/home selection before choosing the private
+	// fixture root. No diagnostic may inspect or migrate the operator's account.
+	credCfg, err := a.cfg.WithNativeAuthorityRoot(cfgDir)
+	if err != nil {
 		s.probeFailed("Could not prepare the credential checks", sentence(err.Error()), covers)
 		return
 	}
-	credCfg := *a.cfg
-	credCfg.ConfigDir = cfgDir
-	credCfg.MCPFile = filepath.Join(cfgDir, "mcp.json") // absent → no MCP wiring to stand up
-	// Seed a fake credential per agent at its real mount source (cfg.AgentDir), so a claude-scoped
-	// run mounts claude's and leaves the peers' behind. Each credential filename comes from the
-	// agent's own AuthMarker — the single place a cred filename lives (agents-are-one-file), so a
-	// new agent is exercised here automatically and this can't drift from the real mount.
-	for _, name := range agents.Names() {
-		ag, _ := agents.Get(name)
-		credFile, _ := ag.AuthMarker()
-		dir := credCfg.AgentDir(name)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			s.probeFailed("Could not prepare the credential checks", sentence(err.Error()), covers)
-			return
-		}
-		_ = os.WriteFile(filepath.Join(dir, credFile), []byte(`{"token":"hunter2"}`), 0o644)
+	credCfg = credCfg.NativeAuthorityConfig()
+	credCfg.MCPFile = filepath.Join(cfgDir, "mcp.json")
+	if err := seedDoctorCredentials(credCfg); err != nil {
+		s.probeFailed("Could not prepare the credential checks", sentence(err.Error()), covers)
+		return
 	}
-	// ANTHROPIC is claude's own, but claude also has a mounted login (the marker seeded above), so
-	// its env token yields to that login and is dropped — a marker-backed account is never shadowed
-	// by an env token. OPENAI is codex's; GOOGLE is one of gemini's keys, given bare so the filter
-	// must drop a peer's alias AND a bare (env-imported) line.
-	_ = os.WriteFile(credCfg.EnvFile(), []byte("ANTHROPIC_API_KEY=hunter2\nOPENAI_API_KEY=hunter2\nGOOGLE_API_KEY\n"), 0o644)
-
-	probe, cleanup, err := writeProbeFile(doctorCredAndHomeProbe(credCfg.HomeInBox))
+	probe, cleanup, err := writeProbeFile(doctorCredAndHomeProbe(credCfg.HomeInBox, credCfg.Egress != "none"))
 	if err != nil {
 		s.probeFailed("Could not prepare the credential checks", sentence(err.Error()), covers)
 		return
@@ -658,7 +699,7 @@ func doctorCheckCredAndHomeScope(s *doctorSection, a *app, fixture, img string, 
 	defer cleanup()
 
 	var out, errOut bytes.Buffer
-	_, runErr := box.Run(&credCfg, a.rt, box.RunSpec{
+	_, runErr := box.Run(credCfg, a.rt, box.RunSpec{
 		Image: img, Repo: fixture, Agent: agents.Default(), Homes: true,
 		Cmd: []string{"sh", "/credprobe.sh"}, Batch: true, Quiet: true, Stdout: &out, Stderr: &errOut,
 		ExtraArgs: doctorCredentialProbeArgs(probe, usingReal),

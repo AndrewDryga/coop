@@ -31,7 +31,7 @@ const (
 
 // doctorRow is one line of the report. covers is how many ordinary checks the line accounts for:
 // one for a real check, and for a probe failure the number of checks that probe was carrying — so
-// the totals add up to the same 35 whatever went wrong.
+// the totals still account for every check, whatever went wrong.
 type doctorRow struct {
 	outcome doctorOutcome
 	label   string

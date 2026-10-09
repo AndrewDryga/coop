@@ -1,6 +1,6 @@
 # Migrating
 
-## Unreleased: repository-local native homes
+## v11.0.0: upgrading from v10.1.2
 
 Coding and editor sessions now use complete native homes scoped to their repository. Ordinary
 homes are also scoped to the selected account; editor homes survive account switches. Native

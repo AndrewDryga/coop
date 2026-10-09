@@ -29,9 +29,11 @@ Task access
         The task channel did not respond.
 
 Credentials and settings
-  ✓ Claude's credential home is available
-  ✓ Codex's credential home is hidden from Claude
-  ✓ Gemini's credential home is hidden from Claude
+  ✓ Claude's native home is available
+  ✓ Host account grants stay outside Claude's home
+  ✓ Codex's native home is hidden from Claude
+  ✓ Gemini's native home is hidden from Claude
+  ✓ Grok's native home is hidden from Claude
   ✓ Claude's saved login takes priority over its environment key
   ✓ Codex's environment key is hidden from Claude
   ✓ Gemini's environment key is hidden from Claude
@@ -46,4 +48,4 @@ Fork handoff
   ✓ The test secret is absent from the clone
   ✓ The clone's origin is a local path
 
-✗ 31 checks passed; 1 probe failed; 4 checks could not be completed
+✗ 33 checks passed; 1 probe failed; 4 checks could not be completed

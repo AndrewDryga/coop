@@ -50,9 +50,11 @@ var doctorHostChecks = []doctorCheckDef{
 // doctorCredentialChecks are the credential-boundary assertions from the claude-scoped box. Only
 // the NAME of an environment variable is ever reported, never its value.
 var doctorCredentialChecks = []doctorCheckDef{
-	{"credential.own_home", "Claude's credential home is available", "Claude's credential home is missing", ".claude/.credentials.json"},
-	{"credential.codex_home", "Codex's credential home is hidden from Claude", "Codex's credential home is visible to Claude", ".codex/auth.json"},
-	{"credential.gemini_home", "Gemini's credential home is hidden from Claude", "Gemini's credential home is visible to Claude", ".gemini/gemini-credentials.json"},
+	{"credential.own_home", "Claude's native home is available", "Claude's native home is unavailable", ".claude"},
+	{"credential.host_grants", "Host account grants stay outside Claude's home", "Host account grants could not be isolated from Claude's home", ""},
+	{"credential.codex_home", "Codex's native home is hidden from Claude", "Codex's native home is visible to Claude", ".codex"},
+	{"credential.gemini_home", "Gemini's native home is hidden from Claude", "Gemini's native home is visible to Claude", ".gemini"},
+	{"credential.grok_home", "Grok's native home is hidden from Claude", "Grok's native home is visible to Claude", ".grok"},
 	{"credential.own_env", "Claude's saved login takes priority over its environment key", "Claude's environment key overrides its saved login", "ANTHROPIC_API_KEY"},
 	{"credential.peer_env", "Codex's environment key is hidden from Claude", "Codex's environment key is visible to Claude", "OPENAI_API_KEY"},
 	{"credential.peer_alias", "Gemini's environment key is hidden from Claude", "Gemini's environment key is visible to Claude", "GOOGLE_API_KEY"},

@@ -126,8 +126,8 @@
   `~/.cache/claude-cli-nodejs`; the rest of the cache stays shared.
 
 - **`coop init` warns on Apple container.** Filtered networking, which `coop init` turns on,
-  needs Docker. On Apple `container`, init now says so up front and names both ways forward:
-  start or install Docker, or run with `--egress open`. The project file stays filtered, so
+  needs Docker. On Apple `container`, init now says to start or install Docker; online agents
+  require it even with open networking. The project file stays filtered, so
   teammates on Docker keep the filter.
 
 - **Agent help lists the network options.** `coop help claude` (and codex, gemini, grok) now

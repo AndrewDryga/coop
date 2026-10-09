@@ -177,11 +177,11 @@ case "${SHELL:-}" in
     ;;
 esac
 
-# Build the sandbox image + verify, when a container runtime is available.
+# Build the sandbox image + verify, when the online-agent runtime is available.
 printf '\n'
 if [ "${COOP_NO_BUILD:-0}" = 1 ]; then
   echo "coop: skipped image build (COOP_NO_BUILD=1) — next: coop build --egress open && coop doctor"
-elif command -v container >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
+elif command -v docker >/dev/null 2>&1; then
   if ! "$bindir/coop" build --egress open; then
     echo "Image build failed. The Coop binary is installed, but setup is incomplete." >&2
     echo "Retry: coop build --egress open && coop doctor" >&2
@@ -194,7 +194,7 @@ elif command -v container >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; 
     exit 1
   fi
 else
-  echo "coop: no container runtime found — install Docker or Apple 'container',"
+  echo "coop: online agents require Docker — install and start Docker,"
   echo "      then run: coop build --egress open && coop doctor"
 fi
 

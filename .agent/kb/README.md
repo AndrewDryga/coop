@@ -76,7 +76,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [compose-host-authority](compose-host-authority.md) — sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 - [host-execution-surfaces](host-execution-surfaces.md) — which changed files count as "runs on your machine", the two tiers, and where coop surfaces them (fork review/merge, check-secrets)
 - [secret-finding-identity](secret-finding-identity.md) — how a secret finding is named across runs (fp-v1 fingerprints), what .coopsecretsignore may excuse, and why exceptions stop at check-secrets
-- [doctor-report-accounting](doctor-report-accounting.md) — how `coop doctor` counts: the 35 checks, the outcomes a row can have, and why a failed probe adds one failure plus the checks it was carrying
+- [doctor-report-accounting](doctor-report-accounting.md) — how `coop doctor` counts: the 37 checks, the outcomes a row can have, and why a failed probe adds one failure plus the checks it was carrying
 - [eval-trial-isolation](eval-trial-isolation.md) — what isolates one `coop eval` trial from the next and from the grader, and why per-trial credential copies would break authentication (single-use refresh tokens)
 - [trusted-git-view](trusted-git-view.md) — host git runs under a coop-owned GIT_DIR view with an allowlisted config, so repository-defined filter/textconv/merge drivers never execute; ref-store writes stay on the real git dir
 - [isolated-fork-publication](isolated-fork-publication.md) — optional independent execution, exact private review, semantic parent preconditions and durable forward-only publication

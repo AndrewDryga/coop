@@ -299,7 +299,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 		ui.Note("")
 		warnBlock(notice.Headline, notice.Reason, notice.Action)
 	}
-	a.reportUnfilteredRuntime(repo, agentDirs)
+	a.reportUnfilteredRuntime(repo)
 	reportDockerSetup(repo)
 	for _, g := range initActions(a.cfg, repo, services, agentDirs, !already) {
 		g.print()
@@ -311,9 +311,9 @@ func (a *app) cmdInit(args []string) (int, error) {
 // reportUnfilteredRuntime says up front when this machine's runtime cannot run the project's
 // filtered networking: the first coop claude would otherwise be refused (checkFilteredRuntime).
 // The committed policy stays filtered, because teammates on Docker rely on it; the person here
-// starts Docker or chooses open networking for their runs. No runtime at all is left to the
+// starts Docker for online agents. No runtime at all is left to the
 // install steps and coop doctor.
-func (a *app) reportUnfilteredRuntime(repo string, agentDirs []string) {
+func (a *app) reportUnfilteredRuntime(repo string) {
 	pj, err := project.Load(repo)
 	if err != nil || pj.Box.Egress != "filtered" {
 		return
@@ -329,14 +329,10 @@ func (a *app) reportUnfilteredRuntime(repo string, agentDirs []string) {
 	if rt.SupportsFilteredNetwork() {
 		return
 	}
-	target := agents.Default()
-	if len(agentDirs) > 0 {
-		target = agentDirs[0]
-	}
 	ui.Note("")
 	warnBlock(runtimeTitle(rt.Name)+" can't filter network access",
 		"This project filters network access, which needs Docker.",
-		"Start or install Docker, or run with open networking: coop "+target+" --egress open")
+		"Start or install Docker. Online agents need Docker even with open networking.")
 }
 
 // registrationFailure reports a member registration that could not finish. A project.yaml that
