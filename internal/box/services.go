@@ -368,11 +368,24 @@ func DownServicesFile(rt runtime.Runtime, workspace, file string, volumes bool, 
 		return &ComposeRefused{Verb: "stop", File: filepath.Base(file), Err: err}
 	}
 	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	bound, err := rt.FreezeCompose(ctx)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("bind service teardown to Docker daemon: %w", err)
+	}
 	args = append(args, "down", "--remove-orphans")
 	if volumes {
 		args = append(args, "--volumes")
 	}
-	return runCompose(rt, stdout, stderr, "down", args)
+	if err := runCompose(bound, stdout, stderr, "down", args); err != nil {
+		return err
+	}
+	// The original file does not declare networks added by the filtered-service override.
+	ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, err = RemoveProjectNetworks(ctx, bound, ComposeProject(workspace))
+	return err
 }
 
 // DownServicesFileVolumes stops the Compose project, then deletes exactly the volumes the caller

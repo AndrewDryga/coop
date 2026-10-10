@@ -569,7 +569,80 @@ func TestDownServicesUsesCurrentProjectAndVolumePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertComposeSnapshotCall(t, strings.TrimSpace(string(data)), repo, "down --remove-orphans --volumes")
+	calls := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(calls) != 2 {
+		t.Fatalf("runtime calls = %q, want Compose down then project network inventory", calls)
+	}
+	assertComposeSnapshotCall(t, calls[0], repo, "down --remove-orphans --volumes")
+	if calls[1] != "network ls -q --filter label=com.docker.compose.project="+ComposeProject(repo) {
+		t.Fatalf("network inventory = %q, want the current project", calls[1])
+	}
+}
+
+func TestDownServicesCleansOnlyUnusedProjectNetworks(t *testing.T) {
+	for _, tc := range []struct {
+		name, failure, wantErr string
+	}{
+		{"unused and attached", "", ""},
+		{"inventory fails", "network ls", "list "},
+		{"attachment inspection fails", "ps", "list containers on network unused"},
+		{"removal fails", "network rm", "network rm unused"},
+		{"compose fails", "compose", "compose down exited with status 23"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := testComposeRepo(t)
+			recorder := filepath.Join(t.TempDir(), "calls")
+			shim := filepath.Join(t.TempDir(), "rt")
+			script := "#!/bin/sh\n" +
+				"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
+				"case \"$*\" in\n" +
+				"  " + strconv.Quote(tc.failure) + "*) "
+			if tc.failure != "" {
+				script += "exit 23"
+			} else {
+				script += ":"
+			}
+			script += " ;;\nesac\n" +
+				"case \"$*\" in\n" +
+				"  'network ls '*) printf '%s\\n' unused running stopped ;;\n" +
+				"  'ps -q -a --filter network=running') echo live-container ;;\n" +
+				"  'ps -q -a --filter network=stopped') echo stopped-container ;;\n" +
+				"esac\n"
+			if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			err := DownServices(runtime.Runtime{Name: shim}, repo, repo, false, io.Discard, io.Discard)
+			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("down error = %v, want %q", err, tc.wantErr)
+			}
+			data, err := os.ReadFile(recorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := strings.Split(strings.TrimSpace(string(data)), "\n")
+			assertComposeSnapshotCall(t, calls[0], repo, "down --remove-orphans")
+			if tc.failure == "compose" {
+				if len(calls) != 1 {
+					t.Fatalf("cleanup followed failed Compose down: %s", data)
+				}
+				return
+			}
+			want := "network ls -q --filter label=com.docker.compose.project=" + ComposeProject(repo)
+			if len(calls) < 2 || calls[1] != want {
+				t.Fatalf("missing exact-project network inventory %q: %s", want, data)
+			}
+			if tc.failure == "" {
+				want := []string{want, "ps -q -a --filter network=unused", "network rm unused",
+					"ps -q -a --filter network=running", "ps -q -a --filter network=stopped"}
+				if !slices.Equal(calls[1:], want) {
+					t.Fatalf("network cleanup = %q, want %q", calls[1:], want)
+				}
+			}
+			if strings.Contains(string(data), "volume rm") || strings.Contains(string(data), "--volumes") {
+				t.Fatalf("ordinary down deleted data: %s", data)
+			}
+		})
+	}
 }
 
 func TestDownServicesFileVolumesDeletesOnlyReviewedTargets(t *testing.T) {
@@ -589,12 +662,15 @@ func TestDownServicesFileVolumesDeletesOnlyReviewedTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(calls) != 2 {
-		t.Fatalf("runtime calls = %q, want Compose down then one exact volume removal", calls)
+	if len(calls) != 3 {
+		t.Fatalf("runtime calls = %q, want Compose down, project network inventory and one exact volume removal", calls)
 	}
 	assertComposeSnapshotCall(t, calls[0], repo, "down --remove-orphans")
-	if calls[1] != "volume rm reviewed-data" {
-		t.Fatalf("volume removal = %q, want only the reviewed target", calls[1])
+	if calls[1] != "network ls -q --filter label=com.docker.compose.project="+ComposeProject(repo) {
+		t.Fatalf("network inventory = %q, want the current project", calls[1])
+	}
+	if calls[2] != "volume rm reviewed-data" {
+		t.Fatalf("volume removal = %q, want only the reviewed target", calls[2])
 	}
 }
 

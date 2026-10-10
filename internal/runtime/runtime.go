@@ -602,7 +602,7 @@ func (r Runtime) NetworkIDs(ctx context.Context, filters ...string) ([]string, e
 	for _, f := range filters {
 		args = append(args, "--filter", f)
 	}
-	out, err := contextCommand(ctx, r.Name, args...).Output()
+	out, err := r.serviceNetworkOutput(ctx, args...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -627,13 +627,17 @@ func (r Runtime) NetworkLabel(ctx context.Context, id, key string) (string, erro
 // ContainerIDsOnNetwork lists every container attached to the network, stopped ones included —
 // a stopped compose service still reconnects to it on the next start.
 func (r Runtime) ContainerIDsOnNetwork(ctx context.Context, id string) ([]string, error) {
+	if r.composeEndpoint != "" {
+		out, err := r.serviceNetworkOutput(ctx, "ps", "-q", "-a", "--filter", "network="+id)
+		return strings.Fields(string(out)), err
+	}
 	return r.containerIDsContext(ctx, true, "network="+id)
 }
 
 // RemoveNetwork removes one network. The runtime refuses while a container is attached; callers
 // check ContainerIDsOnNetwork first and treat that refusal as a real error.
 func (r Runtime) RemoveNetwork(ctx context.Context, id string) error {
-	out, err := contextCommand(ctx, r.Name, "network", "rm", id).CombinedOutput()
+	out, err := r.serviceNetworkOutput(ctx, "network", "rm", id)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()

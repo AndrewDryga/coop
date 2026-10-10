@@ -35,6 +35,19 @@ func (r Runtime) ComposeBinding() (endpoint, daemonID string) {
 	return r.composeEndpoint, r.composeDaemon
 }
 
+// Service network cleanup must not follow an ambient context changed after Compose ran.
+func (r Runtime) serviceNetworkOutput(ctx context.Context, args ...string) ([]byte, error) {
+	if r.composeEndpoint == "" {
+		return contextCommand(ctx, r.Name, args...).Output()
+	}
+	docker, err := bindDocker(ctx, r, r.composeEndpoint, r.composeDaemon, false)
+	if err != nil {
+		return nil, err
+	}
+	defer docker.Close()
+	return docker.output(ctx, 1<<20, args...)
+}
+
 // ComposeImageID inspects an image on the daemon frozen for this service operation.
 // It never pulls; callers decide explicitly whether a terminal review may do so.
 func (r Runtime) ComposeImageID(ctx context.Context, image string) (string, error) {

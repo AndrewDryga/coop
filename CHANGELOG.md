@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Stopping services cleans up filtered networks.** `coop down` now removes unused
+  project networks left by filtered runs, while keeping attached networks and stored data.
+
 - **Same-provider peers work independently.** Naming the lead's provider with `--peer` now
   mounts and authorizes its consult wrapper while preserving the lead's model and effort,
   including in editor sessions. The peer shares the lead's selected account.

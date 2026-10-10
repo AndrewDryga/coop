@@ -123,6 +123,69 @@ func TestFrozenComposeInventoriesWritersOnSameDaemon(t *testing.T) {
 	}
 }
 
+func TestFrozenComposeNetworkCleanupStaysOnSameDaemon(t *testing.T) {
+	t.Setenv("DOCKER_CONTEXT", "")
+	endpoint := composeFixtureDaemon(t)
+	t.Setenv("DOCKER_HOST", endpoint)
+	recorder := filepath.Join(t.TempDir(), "commands")
+	path := filepath.Join(t.TempDir(), "docker")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
+		"case \"$*\" in\n" +
+		"  *'network ls -q '*) echo owned-network ;;\n" +
+		"  *'ps -q -a --filter network='*) echo stopped-container ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := (Runtime{Name: path}).FreezeCompose(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKER_HOST", "unix:///other.sock")
+	operations := []func() error{
+		func() error {
+			ids, err := rt.NetworkIDs(t.Context(), "label=com.docker.compose.project=fixture")
+			if err == nil && (len(ids) != 1 || ids[0] != "owned-network") {
+				t.Fatalf("network inventory = %v", ids)
+			}
+			return err
+		},
+		func() error {
+			ids, err := rt.ContainerIDsOnNetwork(t.Context(), "owned-network")
+			if err == nil && (len(ids) != 1 || ids[0] != "stopped-container") {
+				t.Fatalf("attached container inventory = %v", ids)
+			}
+			return err
+		},
+		func() error { return rt.RemoveNetwork(t.Context(), "owned-network") },
+	}
+	for _, operation := range operations {
+		if err := operation(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observed, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(observed)), "\n") {
+		if !strings.Contains(line, "--host "+endpoint) || strings.Contains(line, "unix:///other.sock") {
+			t.Fatalf("network cleanup followed ambient context: %s", line)
+		}
+	}
+	t.Setenv("COOP_TEST_DAEMON", "daemon-two")
+	for _, operation := range operations {
+		if err := operation(); err == nil {
+			t.Fatal("network cleanup followed a replaced daemon")
+		}
+	}
+	after, err := os.ReadFile(recorder)
+	if err != nil || string(after) != string(observed) {
+		t.Fatalf("network command ran after daemon replacement: %v\n%s", err, after)
+	}
+}
+
 // composeFixtureDaemon serves the fixture daemon's identity, daemon-one unless COOP_TEST_DAEMON
 // names a replacement.
 func composeFixtureDaemon(t *testing.T) string {
