@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 11.0.1
 
 - **Slow activity reads no longer make worker polls look stale.** Workers refresh the outgoing
