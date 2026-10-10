@@ -3,7 +3,7 @@ name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
 sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/test_lifecycle_bench.py]
-updated: 2026-10-09
+updated: 2026-10-10
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -96,6 +96,12 @@ old empty-cleanup failure and passes with the handshake; production cleanup and 
 unchanged. A readiness failure still reaps the fixture process.
 
 ## Changelog
+- 2026-10-10 — the canonical gate's whole session-service race package reached 20 m with its
+  active test only 1 s old. That exact test passed alone in 4.784 s; the unchanged complete race
+  package then passed in 1220.664 s (399 serial tests). Raised only the race aggregate guard to 30 m,
+  roughly 50% contention headroom. Plain 20 m, -race, -p 4, operation deadlines and all
+  assertions remain unchanged. Swept both recipes and the provider-scripted guard; no other
+  bound needed a change. Successful unchanged-package cache reuse is not an uncached timing run.
 - 2026-10-09 — race CI missed a consult reader after its immediate peer had already exited.
   Added a release/produced handshake and joined cleanup, retaining the eight-second slow-drain
   assertion and unchanged production budget.

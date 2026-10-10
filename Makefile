@@ -23,9 +23,8 @@ install: ## Build from source and install to ~/.local/bin/coop
 test: require-git-lfs ## Run unit tests (no container runtime needed)
 	@# -p 4 for the same reason as the race target: every package at once oversubscribes a laptop
 	@# until fixture guards and production grace periods expire in tests that pass alone.
-	@# The 379 serial sessionsvc tests with Git/LFS fixtures took 517 s alone;
-	@# they exceeded Go's default 10 m package timeout under gate load. This
-	@# 20 m bound guards a hung package, not operation deadlines; behavioral
+	@# Serial session Git/LFS fixtures exceeded Go's default 10 m package timeout under gate load.
+	@# This 20 m bound guards a hung package, not operation deadlines; behavioral
 	@# timing assertions remain tight, as in the race target.
 	@go test -p 4 -timeout 20m ./...
 
@@ -131,9 +130,10 @@ race: require-git-lfs ## Full unit suite under the race detector (the slowest ga
 	@# once oversubscribes the host badly enough that production grace periods (a 3 s TERM wait
 	@# before a fork's box is reaped) expire in tests that pass alone. Bounded parallelism, not a
 	@# longer grace, is the fix: the gate must fail on a real regression, not on a busy laptop.
-	@# Session Git/LFS fixtures approach ten minutes without instrumentation. This is the whole
-	@# package's hang guard, not a per-operation deadline; keep behavioral timing assertions tight.
-	@go test -race -p 4 -timeout 20m ./...
+	@# Serial session Git/LFS fixtures take over 20 m with race instrumentation. The 30 m bound
+	@# gives this whole-package hang guard contention headroom, not a longer per-operation deadline.
+	@# Keep behavioral timing assertions tight.
+	@go test -race -p 4 -timeout 30m ./...
 
 # THE GATE. One recipe, run identically on a laptop, in a box, and by CI's check job — which
 # installs the pinned tools and then calls this target. A new check belongs HERE, never in the
