@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,6 +15,13 @@ import (
 
 type Transport interface {
 	Poll(context.Context, workerproto.Poll) (workerproto.Response, error)
+}
+
+const commandReadSlots = 4
+
+func readOnlyCommand(command workerproto.Command) bool {
+	request, err := workerproto.DecodeAPIRequest(command.Payload)
+	return err == nil && (request.Method == http.MethodGet || request.Method == http.MethodHead)
 }
 
 type ConnectorConfig struct {
@@ -137,20 +145,23 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 	var workers sync.WaitGroup
 	defer func() { cancel(); workers.Wait() }()
 	type pendingCommand struct {
-		command workerproto.Command
-		digest  string
-		expiry  atomic.Int64
-		renewed chan struct{}
+		command  workerproto.Command
+		digest   string
+		readOnly bool
+		expiry   atomic.Int64
+		renewed  chan struct{}
 	}
 	type completion struct {
 		job *pendingCommand
 		err error
 	}
-	completed := make(chan completion, 1)
+	// Run waits for all executors on shutdown without consuming more completions.
+	completed := make(chan completion, 1+commandReadSlots)
 	pending := make(map[string]*pendingCommand)
 	var waits firstDownloadWaits
 	var queue []*pendingCommand
-	var active *pendingCommand
+	var mutationActive bool
+	var readsActive int
 	dispatch := func(command workerproto.Command) error {
 		digest, err := commandDigest(command)
 		if err != nil {
@@ -173,30 +184,37 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 		if len(pending) >= workerproto.MaxBatchItems {
 			return errors.New("worker command queue is full; awaiting redelivery")
 		}
-		job := &pendingCommand{command: command, digest: digest, renewed: make(chan struct{}, 1)}
+		job := &pendingCommand{command: command, digest: digest, readOnly: readOnlyCommand(command), renewed: make(chan struct{}, 1)}
 		job.expiry.Store(command.LeaseExpiresAt.UnixNano())
 		pending[command.CommandID] = job
 		queue = append(queue, job)
 		return nil
 	}
-	// One executor owns mutation order. Polling stays live during large source/body
-	// transfers, and only identical redelivery can renew an in-flight command's lease.
+	// Mutations keep FIFO order; validated reads use their own bounded lane so a
+	// slow command cannot hold fleet inspection behind it. Run owns both lanes.
 	startNext := func() {
-		if ctx.Err() != nil || active != nil || len(queue) == 0 {
-			return
+		for index := 0; index < len(queue) && ctx.Err() == nil; {
+			job := queue[index]
+			if (job.readOnly && readsActive == commandReadSlots) || (!job.readOnly && mutationActive) {
+				index++
+				continue
+			}
+			queue = append(queue[:index], queue[index+1:]...)
+			if job.readOnly {
+				readsActive++
+			} else {
+				mutationActive = true
+			}
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				expiresAt := func() time.Time { return time.Unix(0, job.expiry.Load()) }
+				commandCtx, stopLease := watchCommandLease(ctx, c.now, expiresAt, job.renewed)
+				defer stopLease()
+				_, err := c.executor.execute(commandCtx, job.command, expiresAt)
+				completed <- completion{job, err}
+			}()
 		}
-		job := queue[0]
-		queue = queue[1:]
-		active = job
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			expiresAt := func() time.Time { return time.Unix(0, job.expiry.Load()) }
-			commandCtx, stopLease := watchCommandLease(ctx, c.now, expiresAt, job.renewed)
-			defer stopLease()
-			_, err := c.executor.execute(commandCtx, job.command, expiresAt)
-			completed <- completion{job, err}
-		}()
 	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
@@ -213,7 +231,11 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 			// every later try that finds the download running says nothing new.
 			stillWaiting := waits.waiting(done.job.command.CommandID) && errors.Is(done.err, errJobSourceDownloading)
 			waits.settled(done.job.command.CommandID, done.err, c.now())
-			active = nil
+			if done.job.readOnly {
+				readsActive--
+			} else {
+				mutationActive = false
+			}
 			if done.err != nil && ctx.Err() == nil && !stillWaiting {
 				onError(fmt.Errorf("command %s: %w", done.job.command.CommandID, done.err))
 			}

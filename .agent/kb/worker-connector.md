@@ -68,13 +68,18 @@ The traps the code does not make obvious:
   resolves only that original key and operation ID, verifies a succeeded CreateRemoteSession/session
   resource, then fsyncs the stream before marking its origin bound. Uncertain operations remain
   pending. Only exact event ACKs advance cursors; lookup/activity errors cannot block response commands.
-- **Large bodies do not pause heartbeats.** Run owns a bounded FIFO and one execution goroutine;
-  polling remains live during source downloads, request preparation and response uploads. Only
+- **Slow commands do not serialize fleet reads.** Run owns one FIFO mutation lane and four
+  read slots for strictly decoded GET/HEAD requests. Invalid requests and every other method
+  remain in the mutation lane; placement-fence exemptions are not a read classification.
+  Either lane can bypass a full sibling lane within the shared bounded queue. Polling remains
+  live during source downloads, request preparation and response uploads. Only
   identical command redelivery renews its in-memory lease. Expiry cancels preparation and both
   lease and placement are checked again before forwarding a mutation. Shutdown waits for execution
   and refuses new admission at the poll loop, queued start and executor entry. A successful poll
   still applies acknowledgements even if cancellation races its response; a ready completion or
-  timer must not restart a command after that acknowledgement deletes its receipt.
+  timer must not restart a command after that acknowledgement deletes its receipt. Run alone owns
+  pending identities and lane counters; its completion buffer holds all five active jobs so waiting
+  for executor shutdown cannot deadlock on undrained completions.
 - **A create waiting on a first download is held, quietly.** A repository's first download (its
   whole history) runs in the background, and a create that needs it fails with
   `errJobSourceDownloading`, which has no result, so the controller redelivers it on every poll.
@@ -129,6 +134,9 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-10-10 — split validated fleet reads from ordered mutations after a slow command held
+  other sessions' inspections behind it. Deterministic gated-API tests reproduce both slow-read
+  and slow-mutation starvation and cover bounded admission, shutdown and receipt replay.
 - 2026-10-10 — actual private TLS enrollment, duplicate refusal, owned shutdown and identity-only
   reconnect verified current service ownership; corrected public Connect guidance. The retired
   2026-09-11 reuse description below is historical, not the current contract.

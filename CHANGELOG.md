@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fleet reads stay responsive during slow commands.** Workers can inspect sessions and
+  operations while another command is still running, with bounded concurrency and ordered writes.
+
 - **Stopping services cleans up filtered networks.** `coop down` now removes unused
   project networks left by filtered runs, while keeping attached networks and stored data.
 
