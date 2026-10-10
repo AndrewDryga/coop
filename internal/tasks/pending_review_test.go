@@ -71,6 +71,11 @@ func TestPendingReviewEnrollmentSurvivesRestart(t *testing.T) {
 func TestPendingReviewBranchReadErrorsAreNotBranchLoss(t *testing.T) {
 	repo, root, base, assignment, _, plan := pendingReviewTestCompletion(t)
 	t.Cleanup(func() { _ = assignment.Lease.Release() })
+	configPath := filepath.Join(repo, ".git", "config")
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	git(t, repo, "config", "extensions.refStorage", "reftable")
 	if _, err := NewPendingReviewPlan(repo, []string{root}, base, "abc123", "coop loop", plan.Signoff, 1, false, PendingReviewStage{}, false); err == nil || !strings.Contains(err.Error(), "reftable") {
 		t.Fatalf("capture replaced the actual Git failure with branch loss: %v", err)
@@ -78,7 +83,10 @@ func TestPendingReviewBranchReadErrorsAreNotBranchLoss(t *testing.T) {
 	if err := pendingReviewPlanMatches(repo, []string{root}, plan); err == nil || !strings.Contains(err.Error(), "reftable") {
 		t.Fatalf("resume replaced the actual Git failure with branch drift: %v", err)
 	}
-	git(t, repo, "config", "--unset", "extensions.refStorage")
+	// Git 2.55 refuses discovery of this invalid repository even for config cleanup.
+	if err := os.WriteFile(configPath, config, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	git(t, repo, "checkout", "--detach", "-q", "HEAD")
 	if _, err := NewPendingReviewPlan(repo, []string{root}, base, "abc123", "coop loop", plan.Signoff, 1, false, PendingReviewStage{}, false); err == nil || !strings.Contains(err.Error(), "no checked-out branch") {
 		t.Fatalf("detached HEAD refusal changed: %v", err)

@@ -2,7 +2,7 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go]
+sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go]
 updated: 2026-10-10
 ---
 
@@ -30,6 +30,12 @@ only by their owner. Concurrent first population accepts an existing symlink onl
 matches exactly. This supports ordinary concurrent reads of a stable repository; it does not make
 concurrent rebases or branch mutations transactional. Pending-review branch reads retain actual
 Git/view failures instead of reporting them as branch loss or drift.
+
+Tests that deliberately invalidate repository configuration must restore the owned fixture's
+original bytes without repository discovery. Git 2.55 rejects a format-0 repository containing
+`extensions.refStorage=reftable`, including `git config --unset`; using that cleanup hides the
+later detached/malformed-HEAD checks. The pending-review regression restores its saved config
+directly while keeping the unsupported-store refusal assertions unchanged.
 
 **What must NOT run under the view** — anything that replaces a top-level git-dir entry by rename
 or edits the worktree list: `branch -D`/`tag -d` of packed refs, `pack-refs`, `update-ref`, a
@@ -74,6 +80,10 @@ inline-diff positive control but never during production review. The loop's work
 keep their existing restrictions.
 
 ## Changelog
+- 2026-10-10 — reproduced the pending-review fixture cleanup failure on actual Git 2.55 and
+  restored saved config bytes, retaining unsupported-store, detached and malformed-HEAD checks.
+  Swept all three reftable fixtures: the view fixture ends with refusal, and the config-parser
+  fixture uses a standalone file; neither has the same repository-discovery cleanup bug.
 - 2026-10-10 — actual detached startup plus status polling exposed shared config.copy removal:
   seven of eight real concurrent readers failed config parsing. Added private parser/publisher
   scratch, exact-target link race handling and review error preservation; persistent operation
