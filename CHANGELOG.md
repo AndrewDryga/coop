@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Status checks no longer interrupt fork startup.** Concurrent Git refreshes now keep their
+  temporary files separate. Review setup also reports the real Git error instead of branch loss.
+
 - **Background fork stop finishes cleanup.** Stopping a loop now retires its dead sandbox records
   as well as its containers, so stale cleanup state does not block later work. Paused tasks remain.
 

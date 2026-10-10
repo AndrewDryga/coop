@@ -177,7 +177,10 @@ func NewPendingReviewPlan(repo string, hosts []string, baseHead, configDigest, c
 	if _, err := rand.Read(cohortRaw); err != nil {
 		return PendingReviewPlan{}, err
 	}
-	branch := gitOut(repo, "symbolic-ref", "--quiet", "HEAD")
+	branch, err := gitBranchErr(repo)
+	if err != nil {
+		return PendingReviewPlan{}, fmt.Errorf("read pending-review checked-out branch: %w", err)
+	}
 	if !strings.HasPrefix(branch, "refs/heads/") {
 		return PendingReviewPlan{}, errors.New("pending-review workspace has no checked-out branch")
 	}
@@ -1083,7 +1086,11 @@ func pendingReviewPlanMatches(repo string, hosts []string, plan PendingReviewPla
 	if workspace != plan.Workspace || len(hosts) != len(plan.Queues) {
 		return errors.New("pending final review belongs to a different workspace or queue selection")
 	}
-	if branch := gitOut(repo, "symbolic-ref", "--quiet", "HEAD"); branch != plan.Branch {
+	branch, err := gitBranchErr(repo)
+	if err != nil {
+		return fmt.Errorf("read pending final review branch: %w", err)
+	}
+	if branch != plan.Branch {
 		return errors.New("pending final review belongs to a different branch")
 	}
 	for i, host := range hosts {

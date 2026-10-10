@@ -3,7 +3,7 @@ name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
 sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go]
-updated: 2026-09-30
+updated: 2026-10-10
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
@@ -23,6 +23,13 @@ copy; `GIT_INDEX_FILE` naming the real index; no `hooks`, `info/attributes`, `co
 `gc.auto`/`maintenance.auto`/`fetch.prune` are off under the view (a pack-refs rewrite would land
 in the view). Views live under `~/.local/state/coop/gitviews/<hash of git dir>` (`COOP_GITVIEW_ROOT`
 overrides; a test binary uses a temp root removed by `CloseGitViews`).
+
+Separate host processes share that persistent view. Config parsing and atomic file publication
+therefore use invocation-private temporary files, closed before reading or renaming and removed
+only by their owner. Concurrent first population accepts an existing symlink only when its target
+matches exactly. This supports ordinary concurrent reads of a stable repository; it does not make
+concurrent rebases or branch mutations transactional. Pending-review branch reads retain actual
+Git/view failures instead of reporting them as branch loss or drift.
 
 **What must NOT run under the view** — anything that replaces a top-level git-dir entry by rename
 or edits the worktree list: `branch -D`/`tag -d` of packed refs, `pack-refs`, `update-ref`, a
@@ -67,6 +74,10 @@ inline-diff positive control but never during production review. The loop's work
 keep their existing restrictions.
 
 ## Changelog
+- 2026-10-10 — actual detached startup plus status polling exposed shared config.copy removal:
+  seven of eight real concurrent readers failed config parsing. Added private parser/publisher
+  scratch, exact-target link race handling and review error preservation; persistent operation
+  recovery and config allowlist unchanged. Swept the two pending-review branch authority reads.
 - 2026-09-30 — reproduced healthy fsck failure on Git 2.55 and added a scoped real-refs
   projection, retaining config isolation and full reference/object checks. Tested
   packed/loose refs, linked/shallow/SHA256 repositories and invalid/special metadata.

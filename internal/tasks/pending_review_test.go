@@ -68,6 +68,29 @@ func TestPendingReviewEnrollmentSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestPendingReviewBranchReadErrorsAreNotBranchLoss(t *testing.T) {
+	repo, root, base, assignment, _, plan := pendingReviewTestCompletion(t)
+	t.Cleanup(func() { _ = assignment.Lease.Release() })
+	git(t, repo, "config", "extensions.refStorage", "reftable")
+	if _, err := NewPendingReviewPlan(repo, []string{root}, base, "abc123", "coop loop", plan.Signoff, 1, false, PendingReviewStage{}, false); err == nil || !strings.Contains(err.Error(), "reftable") {
+		t.Fatalf("capture replaced the actual Git failure with branch loss: %v", err)
+	}
+	if err := pendingReviewPlanMatches(repo, []string{root}, plan); err == nil || !strings.Contains(err.Error(), "reftable") {
+		t.Fatalf("resume replaced the actual Git failure with branch drift: %v", err)
+	}
+	git(t, repo, "config", "--unset", "extensions.refStorage")
+	git(t, repo, "checkout", "--detach", "-q", "HEAD")
+	if _, err := NewPendingReviewPlan(repo, []string{root}, base, "abc123", "coop loop", plan.Signoff, 1, false, PendingReviewStage{}, false); err == nil || !strings.Contains(err.Error(), "no checked-out branch") {
+		t.Fatalf("detached HEAD refusal changed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("invalid HEAD\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewPendingReviewPlan(repo, []string{root}, base, "abc123", "coop loop", plan.Signoff, 1, false, PendingReviewStage{}, false); err == nil || !strings.Contains(err.Error(), "git symbolic-ref") {
+		t.Fatalf("capture discarded the Git command failure: %v", err)
+	}
+}
+
 // The lease registry is host-wide: another queue's review records, however many, must not fail
 // this queue's load (tests once left 2,236 of them in a real registry, on course for the bound),
 // while this queue's own records still count toward it.

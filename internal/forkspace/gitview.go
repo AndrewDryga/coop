@@ -35,10 +35,9 @@ import (
 // — would land in the view, so those run through GitRefCommand on the real git dir instead; they
 // pass no content through a driver. Auto-gc is disabled under the view for the same reason.
 //
-// Views are per process (a shared view would let one process refresh HEAD under another's rebase)
-// and removed by CloseGitViews at exit; a crash leaves a small coop-gitview-* directory in the
-// temp dir and any in-flight rebase state with it — the worktree is then just dirty, and `git
-// reset --hard` recovers it.
+// Production views persist per git directory, so an interrupted rebase can be recovered by the
+// next coop process. Refresh uses invocation-private scratch files and leaves an in-flight
+// operation's HEAD alone. Test binaries default to a per-process temporary root.
 
 // gitViewHardening is appended after GitHardening on every view-side command: no auto-gc or
 // maintenance (they pack refs), no pruning, no commit-graph writes, and no submodule descent (a
@@ -392,8 +391,26 @@ func ensureSymlink(path, source string, required bool) error {
 	case err == nil && info.Mode()&os.ModeSymlink == 0:
 		return fmt.Errorf("view entry %s is not a symlink: a rewrite landed in the view; remove it and retry", path)
 	case err == nil:
+		target, readErr := os.Readlink(path)
+		if readErr != nil {
+			// Another refresher may already have removed this now-unused optional link.
+			if !required && !fileExists(source) {
+				if _, statErr := os.Lstat(path); errors.Is(statErr, os.ErrNotExist) {
+					return nil
+				}
+			}
+			return readErr
+		}
+		if target != source {
+			return fmt.Errorf("view entry %s points to %s instead of %s", path, target, source)
+		}
 		if !fileExists(source) {
-			return os.Remove(path)
+			if required {
+				return fmt.Errorf("%s is missing", source)
+			}
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
 		}
 		return nil
 	case !errors.Is(err, os.ErrNotExist):
@@ -405,15 +422,29 @@ func ensureSymlink(path, source string, required bool) error {
 		}
 		return nil
 	}
-	return os.Symlink(source, path)
+	if err := os.Symlink(source, path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			// Another process may have populated this persistent view after our lstat.
+			if target, readErr := os.Readlink(path); readErr == nil && target == source {
+				return nil
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func writeViewFile(path string, data []byte) error {
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, data, 0o600); err != nil {
+	file, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(temporary, path)
+	defer os.Remove(file.Name())
+	_, writeErr := file.Write(data)
+	if err := errors.Join(writeErr, file.Close()); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 func (v *gitView) envFrom(base []string) []string {

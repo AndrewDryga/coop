@@ -94,11 +94,16 @@ func listGitConfig(ctx context.Context, data []byte, scratchDir string) ([][2]st
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, nil
 	}
-	path := filepath.Join(scratchDir, "config.copy")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	file, err := os.CreateTemp(scratchDir, "config.copy-*")
+	if err != nil {
 		return nil, err
 	}
+	path := file.Name()
 	defer os.Remove(path)
+	_, writeErr := file.Write(data)
+	if err := errors.Join(writeErr, file.Close()); err != nil {
+		return nil, err
+	}
 	cmd := exec.CommandContext(ctx, "git", "config", "--file", path, "-z", "--list")
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.Output()
