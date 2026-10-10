@@ -62,6 +62,11 @@ The traps the code does not make obvious:
   command identity and yield to healthy siblings. Arbitrary journal corruption still fails closed.
   Custody and HTTP share non-HTML-escaping JSON encoding so bounded raw payloads do not expand;
   command digests and replay comparison keep their original encoder for compatibility.
+- **The poll clock belongs to send time, not capacity sampling.** Refresh only ClockAt after
+  activity collection and fitting. UTC whole seconds keep it fresh within one second without
+  expanding a fully budgeted receipt page. Never rebuild Hello at that boundary: receipts are
+  sampled before capacity so a newly completed result cannot release a reservation using an
+  older free-slot snapshot.
 - **Results repeat until acknowledged.** Terminal results are resent on subsequent pages until the
   controller acknowledges them. A successful asynchronous create carries an operation, not a
   session: its metadata-only origin must be durable before receipt deletion. The fair activity scan
@@ -134,6 +139,9 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-10-10 — refreshed the outbound clock after activity/capacity collection; fake-clock
+  regressions reproduce stale success/error reads without real waits and retain capacity ordering.
+  An exactly full receipt-page test covers whole-second to fractional-clock expansion.
 - 2026-10-10 — split validated fleet reads from ordered mutations after a slow command held
   other sessions' inspections behind it. Deterministic gated-API tests reproduce both slow-read
   and slow-mutation starvation and cover bounded admission, shutdown and receipt replay.

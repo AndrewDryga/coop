@@ -224,7 +224,8 @@ func TestConnectorQueuedReadExpiresBeforeForwarding(t *testing.T) {
 		}
 		select {
 		case err := <-failures:
-			if !errors.Is(err, ErrLeaseExpired) {
+			// The lease watcher can cancel before Execute checks the deadline.
+			if !errors.Is(err, ErrLeaseExpired) && !errors.Is(err, context.Canceled) {
 				t.Fatalf("queued expiry: %v", err)
 			}
 		default:

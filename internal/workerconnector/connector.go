@@ -101,6 +101,9 @@ func (c *Connector) pollOnce(ctx context.Context, dispatch func(workerproto.Comm
 		// its durable cursor on the next poll after those results are acknowledged.
 		poll.EventBatches = []workerproto.EventBatch{}
 	}
+	// Capacity and activity reads may have aged Hello's clock. UTC seconds keep
+	// the fresh timestamp within the wire space already budgeted for receipts.
+	poll.Worker.ClockAt = c.now().UTC().Truncate(time.Second)
 	if err := poll.Validate(); err != nil {
 		return fmt.Errorf("validate outbound worker poll: %w", err)
 	}

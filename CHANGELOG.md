@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Slow activity reads no longer make worker polls look stale.** Workers refresh the outgoing
+  timestamp before sending, so delayed local reads do not cause clock-skew refusals.
+
 - **Fleet reads stay responsive during slow commands.** Workers can inspect sessions and
   operations while another command is still running, with bounded concurrency and ordered writes.
 
