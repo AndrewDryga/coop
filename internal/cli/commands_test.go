@@ -848,7 +848,7 @@ func TestResolvePeers(t *testing.T) {
 		t.Fatalf("resolvePeers(claude:opus-4.8) = (%+v, %v)", peers, err)
 	}
 	if _, err := a.resolvePeers("coop claude", []string{"claude@work"}); err == nil {
-		t.Error("a peer with an @account must be rejected (a peer runs on its default account)")
+		t.Error("a peer with an @account must be rejected (one account per provider in a run)")
 	}
 	if _, err := a.resolvePeers("coop claude", []string{"codex"}); err == nil {
 		t.Error("an unauthed peer must be rejected")

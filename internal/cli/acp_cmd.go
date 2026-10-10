@@ -117,10 +117,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if a.mode == agents.ModeBare && len(peerVals) > 0 {
 		return 2, errors.New("a bare run consults no peers — drop --peer")
 	}
-	// Resolve the --peer peers HERE, before the outer/inner split — so an editor's
-	// agent_servers entry with a bad peer (unknown/unauthed, or an @account) fails fast in the
-	// OUTER process, not silently later inside the box.
-	peers, err := a.resolvePeers("coop acp", peerVals)
+	// Validate syntax now; account presence depends on the selected concrete lead below.
+	peers, err := resolvePeerTargets("coop acp", peerVals, agents.Names())
 	if err != nil {
 		return 2, err
 	}
@@ -252,6 +250,21 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if profile != "" {
 			initial.Accounts = []string{profile}
 		}
+		if len(peerVals) > 0 {
+			rungs := []agents.Target{initial}
+			if a.preset != nil && !toolSet {
+				rungs = a.preset.LeadTargets
+			}
+			leads, err := expandLadder(a.cfg, tool, rungs)
+			if err != nil {
+				return 2, err
+			}
+			peers, err = a.resolvePeersForLeads("coop acp", peerVals, leads)
+			if err != nil {
+				return 2, err
+			}
+			a.acpPeers = slices.Clone(peers)
+		}
 		scope, err := a.acpNetworkScope(repo, initial, peers, a.preset)
 		if err != nil {
 			return 1, err
@@ -298,6 +311,11 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err := a.applyOneOff(tool, model, profile, effort); err != nil {
 		return 2, err
 	}
+	peers, err = a.resolvePeers("coop acp", peerVals)
+	if err != nil {
+		return 2, err
+	}
+	a.acpPeers = slices.Clone(peers)
 	// Built AFTER the model selection: gemini's ACP command is its own binary and carries
 	// the resolved model as a flag. tool passed agents.Valid above, so this can't miss.
 	cmd := acpCommand(a.cfg, tool)
@@ -860,7 +878,9 @@ func (a *app) acpFilteredSpawnScope(lead agents.Target, presetName string) ([]ag
 		return nil, nil, err
 	}
 	for _, peer := range a.acpPeers {
-		if peer.Account() == "" {
+		if peer.Provider == lead.Provider {
+			peer.Accounts = slices.Clone(lead.Accounts)
+		} else if peer.Account() == "" {
 			peer.Accounts = []string{a.cfg.ActiveProfile(peer.Provider)}
 		}
 		addTarget(peer)

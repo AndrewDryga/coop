@@ -289,6 +289,11 @@ Name each peer with `--peer <target>`, and repeat the flag for more:
 The lead may ask its peers read-only and in parallel, through the same `coop-consult` wrapper, then
 decide.
 
+A peer may use the lead's provider with another model, for example
+`coop claude:opus@work --peer claude:haiku`. Its model selection is independent, and it shares the
+lead's selected account. Other providers use their default account; `--peer` does not accept
+`@account` because one box selects one account per provider.
+
 Asking is optional and off by default. There's no synthesis mandate, and it isn't meant for routine
 work. It defaults to `--fresh`, so each hard call gets an independent second opinion. Only the peers
 you name are consulted. co:op never consults everyone signed in, and only a named peer's

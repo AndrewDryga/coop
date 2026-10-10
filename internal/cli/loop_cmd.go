@@ -94,7 +94,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	peers, err := a.resolvePeers("coop loop", peerVals)
+	_, err = resolvePeerTargets(loopCommand, peerVals, agents.Names())
 	if err != nil {
 		return 2, err
 	}
@@ -164,6 +164,10 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	rot, err := a.buildRotation(agent, rungs)
 	if err != nil {
 		return -1, err
+	}
+	peers, err := a.resolvePeersForLeads(loopCommand, peerVals, rot.Targets())
+	if err != nil {
+		return 2, err
 	}
 	// Everything above is usage and config; only the run itself needs the project and a container
 	// runtime, so those are checked last and a usage error never reads as "runtime not found".

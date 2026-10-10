@@ -697,9 +697,23 @@ func (a *app) forkCreate(args []string) (int, error) {
 		// The worker/foreground paths run the loop here, so resolve --peer to peer targets
 		// (validate authed, reject an @account). The detach path re-execs `coop fork … --peer
 		// <t>` and the worker re-resolves, so it forwards the raw values instead.
-		peers, err := a.resolvePeers("coop fork "+fa.name, fa.peers)
-		if err != nil {
-			return 2, err
+		var peers []agents.Target
+		if len(fa.peers) > 0 {
+			ladder, err := oneOffLadder(fa.model, fa.credential, fa.effort)
+			if err != nil {
+				return 2, err
+			}
+			if ladder == nil && a.preset != nil && fa.agent == a.preset.Lead().Provider {
+				ladder = a.preset.LeadTargets
+			}
+			rot, err := a.buildRotation(fa.agent, ladder)
+			if err != nil {
+				return 2, err
+			}
+			peers, err = a.resolvePeersForLeads("coop fork "+fa.name, fa.peers, rot.Targets())
+			if err != nil {
+				return 2, err
+			}
 		}
 		switch {
 		case fa.worker:

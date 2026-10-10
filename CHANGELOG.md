@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Same-provider peers work independently.** Naming the lead's provider with `--peer` now
+  mounts and authorizes its consult wrapper while preserving the lead's model and effort,
+  including in editor sessions. The peer shares the lead's selected account.
+
 - **Status checks no longer interrupt fork startup.** Concurrent Git refreshes now keep their
   temporary files separate. Review setup also reports the real Git error instead of branch loss.
 

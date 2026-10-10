@@ -254,7 +254,8 @@ type RunSpec struct {
 
 	// Peers is the EXPLICIT peer set for this run — the targets named by repeatable
 	// --peer (a normal run, ACP, or a loop run), each provider[:model] (no
-	// account: a peer runs on its default). It REPLACES the old implicit "every authed
+	// account: a same-provider peer shares the lead account; others use their default). It
+	// REPLACES the old implicit "every authed
 	// agent is a peer" policy: only these providers' credentials mount as peers, only
 	// they are named in the consult directive, and the in-box coop-consult refuses any
 	// other (COOP_PEERS). A preset's own consult/delegate roles join separately (their
@@ -2861,7 +2862,6 @@ func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, pee
 	if err != nil {
 		return "", "", false, false, err
 	}
-	peers = excluding(peers, lead)
 	if p != nil {
 		// The preset names its roles and exact invocations; explicit --peer values remain
 		// independent optional second opinions and are appended rather than discarded.
@@ -3069,35 +3069,39 @@ func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
 	for _, agent := range scope {
 		ag, ok := agents.Get(agent)
 		target := scopedTarget(cfg, spec.Peers, agent)
-		if model := target.Model; model != "" {
+		nativeTarget := target
+		if agent == runPrimary(spec) {
+			nativeTarget = scopedTarget(cfg, nil, agent)
+		}
+		if model := nativeTarget.Model; model != "" {
 			if ok {
 				if env := ag.ModelEnv(); env != "" {
 					args = append(args, "-e", env+"="+model)
 				}
 			}
-			if consults {
-				args = append(args, "-e", "COOP_PEER_MODEL_"+strings.ToUpper(agent)+"="+model)
-			}
+		}
+		if consults && target.Model != "" {
+			args = append(args, "-e", "COOP_PEER_MODEL_"+strings.ToUpper(agent)+"="+target.Model)
 		}
 		// Effort rides the same way but resolves independently — an agent may carry an effort
 		// (env or peer flag) even when it takes the CLI's default model.
-		if effort := target.Effort; effort != "" {
+		if effort := nativeTarget.Effort; effort != "" {
 			if ok {
 				if env := ag.EffortEnv(); env != "" {
 					args = append(args, "-e", env+"="+effort)
 				}
 			}
-			if consults {
-				args = append(args, "-e", "COOP_PEER_EFFORT_"+strings.ToUpper(agent)+"="+effort)
-			}
+		}
+		if consults && target.Effort != "" {
+			args = append(args, "-e", "COOP_PEER_EFFORT_"+strings.ToUpper(agent)+"="+target.Effort)
 		}
 	}
 	return args
 }
 
 // scopedTarget is the model and effort a scoped agent runs at: an explicit peer target's :model
-// and /effort (COOP_PEER_MODEL_<X>, COOP_PEER_EFFORT_<X>), else the run config's. The lead isn't in
-// Peers, so it always takes the config's.
+// and /effort (COOP_PEER_MODEL_<X>, COOP_PEER_EFFORT_<X>), else the run config's. Callers resolving
+// the lead itself pass no peers, because one provider may be both lead and explicit peer.
 func scopedTarget(cfg *config.Config, peers []agents.Target, agent string) agents.Target {
 	target := agents.Target{Provider: agent}
 	for _, p := range peers {
@@ -3127,6 +3131,9 @@ func scopedTarget(cfg *config.Config, peers []agents.Target, agent string) agent
 func checkEfforts(cfg *config.Config, spec RunSpec) error {
 	scope := credentialScope(cfg, spec)
 	targets := make([]agents.Target, 0, len(scope))
+	if primary := runPrimary(spec); slices.Contains(scope, primary) {
+		targets = append(targets, scopedTarget(cfg, nil, primary))
+	}
 	for _, agent := range scope {
 		targets = append(targets, scopedTarget(cfg, spec.Peers, agent))
 	}
@@ -3236,12 +3243,10 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		if len(scope) > 0 {
 			args = append(args, "-e", "COOP_PRIMARY="+scope[0])
 		}
-		// COOP_PEERS is the space-separated peer set (scope minus the lead) — exactly the agents
-		// whose credentials this box mounts as peers. The in-box coop-consult refuses any target
-		// not in it, so a compromised lead can't consult (and thus can't drive) an agent the run
-		// never named. Inert where the wrapper isn't mounted.
-		if len(scope) > 1 {
-			args = append(args, "-e", "COOP_PEERS="+strings.Join(scope[1:], " "))
+		// Direct peers are a separate projection from deduplicated credential mounts: an explicit
+		// same-provider peer uses the lead's route but still needs wrapper authorization.
+		if peers := consultPeerProviders(spec, scope); len(peers) > 0 {
+			args = append(args, "-e", "COOP_PEERS="+strings.Join(peers, " "))
 		}
 		// Each agent's own box env (Agent.BoxEnv) — claude points $CLAUDE_CONFIG_DIR at
 		// the mounted ~/.claude and disables the bubblewrap env scrub. Exported for every

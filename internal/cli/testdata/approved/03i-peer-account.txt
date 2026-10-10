@@ -1,5 +1,5 @@
 
-✗ A peer uses its default account
+✗ Peers share this run's selected accounts
 
       Remove "@work" from "--peer codex@work".
 

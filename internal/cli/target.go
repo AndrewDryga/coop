@@ -142,8 +142,8 @@ func foldTarget(t agents.Target, command string, model, profile *string) error {
 }
 
 // resolvePeers parses each --peer value into a peer target and validates it: a known, authed
-// provider with an optional :model and NO account — a peer runs on its default account (only the
-// lead rotates accounts). command is the run the peers belong to ("coop claude"), so a refusal
+// provider with an optional :model and NO account — a peer shares the run's selected account for
+// its provider (the default unless that provider also leads). command names the run ("coop claude"), so a refusal
 // points at that run's own page. Unknown or unauthed → a usage refusal naming the peer + the fix;
 // never a silent skip.
 func (a *app) resolvePeers(command string, vals []string) ([]agents.Target, error) {
@@ -154,6 +154,30 @@ func (a *app) resolvePeers(command string, vals []string) ([]agents.Target, erro
 	// reads the env file, and its answer cannot change between two peers of one launch. Passing
 	// the result in is what keeps it out of the loop.
 	return resolvePeerTargets(command, vals, box.AuthedAgents(a.cfg))
+}
+
+// resolvePeersForLeads checks each concrete launch without changing the supervisor's config.
+// A peer shares its provider's selected lead account, but needs its ordinary account on other rungs.
+func (a *app) resolvePeersForLeads(command string, vals []string, leads []agents.Target) ([]agents.Target, error) {
+	if len(vals) == 0 {
+		return nil, nil
+	}
+	if len(leads) == 0 {
+		return a.resolvePeers(command, vals)
+	}
+	var peers []agents.Target
+	for _, lead := range leads {
+		cfg := a.cfg.Clone()
+		if account := lead.Account(); account != "" {
+			cfg.SetActiveProfile(lead.Provider, account)
+		}
+		var err error
+		peers, err = resolvePeerTargets(command, vals, box.AuthedAgents(cfg))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return peers, nil
 }
 
 // resolvePeerTargets validates each --peer value against one already-taken list of signed-in
@@ -168,7 +192,7 @@ func resolvePeerTargets(command string, vals, authed []string) ([]agents.Target,
 		}
 		if len(t.Accounts) > 0 {
 			return nil, &ui.UsageError{
-				Headline: "A peer uses its default account",
+				Headline: "Peers share this run's selected accounts",
 				Cause: fmt.Sprintf("Remove %q from %q.", "@"+strings.Join(t.Accounts, ","),
 					"--peer "+agents.DisplayTarget(v)),
 				Rows: [][2]string{{"Help:", ui.HelpCommand(command)}},

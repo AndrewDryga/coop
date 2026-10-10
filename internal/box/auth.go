@@ -291,17 +291,23 @@ func filteredEnvContent(data []byte, drop map[string]bool) string {
 func peerProviders(peers []agents.Target) []string {
 	out := make([]string, 0, len(peers))
 	for _, p := range peers {
-		out = append(out, p.Provider)
+		if !slices.Contains(out, p.Provider) {
+			out = append(out, p.Provider)
+		}
 	}
 	return out
 }
 
-// excluding returns names with every element equal to drop removed, order-preserving.
-func excluding(names []string, drop string) []string {
-	out := make([]string, 0, len(names))
-	for _, n := range names {
-		if n != drop {
-			out = append(out, n)
+// consultPeerProviders preserves explicit peers even when they share the lead's one credential
+// mount. Unnamed primary providers remain role-only; non-primary role providers stay consultable.
+func consultPeerProviders(spec RunSpec, scope []string) []string {
+	if spec.Login || len(scope) == 0 {
+		return nil
+	}
+	var out []string
+	for _, name := range append(peerProviders(spec.Peers), scope[1:]...) {
+		if slices.Contains(scope, name) && !slices.Contains(out, name) {
+			out = append(out, name)
 		}
 	}
 	return out

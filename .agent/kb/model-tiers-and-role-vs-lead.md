@@ -2,7 +2,7 @@
 name: model-tiers-and-role-vs-lead
 description: ModelFor picks active>target>env per PROVIDER, so nothing but the lead's rotation may write a provider's active/target tier; a role's model rides its wrapper target
 subsystem: config
-sources: [internal/config/config.go, internal/cli/presetflag.go, internal/loop/rotation.go, internal/box/run.go, internal/preset/preset.go, internal/agent/claude.go, internal/agent/agent.go]
+sources: [internal/config/config.go, internal/cli/presetflag.go, internal/cli/target.go, internal/cli/acp_network.go, internal/cli/acp_cmd.go, internal/loop/rotation.go, internal/box/run.go, internal/preset/preset.go, internal/agent/claude.go, internal/agent/agent.go]
 updated: 2026-10-10
 ---
 
@@ -33,6 +33,14 @@ Corollary: `spec.Peers` is populated only from `--peer`, never preset roles, so 
 `COOP_PEER_MODEL_<agent>` derives from `cfg.ModelFor` purely as a fallback — a role with an
 explicit model never depends on it.
 
+An explicit peer may name the lead provider. Its `COOP_PEER_*` defaults resolve from the peer
+target, while the lead's native environment and effort validation resolve from the run config.
+Credential mounts remain deduplicated, but direct peer authorization retains the explicitly
+named primary. One account per provider means that peer shares the selected lead account.
+Rotating launch validation checks each concrete lead account on a cloned config; a peer on a
+different-provider rung still needs its ordinary account. Filtered ACP admission and child bindings
+resolve same-provider peers to that concrete lead account, never an unrelated supervisor default.
+
 Native CLI acceptance is not proof an effort was applied. Pinned Claude SDK0.3.284 reports applied
 effort null for Haiku4.5; ACP0.84.0 exposes no effort option. Claude's existing EffortSpec.Validate
 refuses explicit effort for the three known alias/current IDs during target parsing and resolved box
@@ -40,6 +48,8 @@ configuration validation, before a client starts. Haiku without effort remains v
 to the client. Do not ignore an ACP setting failure to hide an impossible target.
 
 ## Changelog
+- 2026-10-10 — real Claude same-provider peer launch omitted the consult wrapper and authorization;
+  repaired that projection and kept flagless ACP lead model/effort independent of peer targets.
 - 2026-10-10 — real Haiku/low preset ACP prompt failed Unknown config option: effort. Inspected
   pinned adapter/SDK and verified parser plus inherited config prelaunch refusal without changing
   supported ACP settings, model-tier ownership or unknown-model pass-through.

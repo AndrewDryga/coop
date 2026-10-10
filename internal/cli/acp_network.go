@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -88,15 +89,6 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 		key, err := box.AccountBrokersKey(a.cfg, target.Provider, target.Account())
 		return err == nil && key == keyed[target.Provider]
 	}
-	// Ad-hoc peers use their active account in the child. Preserve that exact
-	// identity so filtered admission cannot be borrowed from a portable sibling.
-	for _, peer := range peers {
-		if len(peer.Accounts) == 0 {
-			peer.Accounts = []string{a.cfg.ActiveProfile(peer.Provider)}
-		}
-		anchor(peer)
-		scope = append(scope, peer)
-	}
 	if len(initial.Accounts) != 0 {
 		anchor(initial)
 	}
@@ -107,12 +99,62 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 	for _, target := range selectedTargets {
 		anchor(target)
 	}
+	// Explicit peers share the concrete lead account on matching rungs; other rungs
+	// use their ordinary account. Never require an unsigned default for a named lead.
+	if len(peers) > 0 {
+		rungs := []agents.Target{initial}
+		if selected != nil {
+			rungs = selected.LeadTargets
+		}
+		leads, err := expandLadder(a.cfg, initial.Provider, rungs)
+		if err != nil {
+			leads = []agents.Target{initial} // retain required unavailable scope for admission to refuse
+		}
+		for _, peer := range peers {
+			for _, lead := range leads {
+				target := peer
+				if peer.Provider == lead.Provider && lead.Account() != "" {
+					target.Accounts = slices.Clone(lead.Accounts)
+				} else if target.Account() == "" {
+					target.Accounts = []string{a.cfg.ActiveProfile(target.Provider)}
+				}
+				anchor(target)
+				scope = append(scope, target)
+			}
+		}
+	}
+	peerValues := make([]string, len(peers))
+	for i, peer := range peers {
+		peerValues[i] = peer.String()
+	}
+	peerClosureQualified := func(leads []agents.Target) bool {
+		if _, err := a.resolvePeersForLeads("coop acp", peerValues, leads); err != nil {
+			return false
+		}
+		for _, lead := range leads {
+			for _, peer := range peers {
+				account := a.cfg.ActiveProfile(peer.Provider)
+				if peer.Provider == lead.Provider && lead.Account() != "" {
+					account = lead.Account()
+				}
+				target := peer
+				target.Accounts = []string{account}
+				if !acpNetworkQualified(a.cfg, target) || !sameKind(target) {
+					return false
+				}
+			}
+		}
+		return true
+	}
 	add := func(providers []string) {
 		for _, provider := range providers {
 			for _, account := range accountsFor(a.cfg, provider) {
 				target := agents.Target{Provider: provider, Accounts: []string{account}}
 				if !acpNetworkQualified(a.cfg, target) {
 					continue
+				}
+				if !peerClosureQualified([]agents.Target{target}) {
+					continue // a toolbar choice must keep its complete explicit-peer closure runnable
 				}
 				anchor(target)
 				if sameKind(target) {
@@ -186,6 +228,15 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 			continue
 		}
 		qualified := true
+		if len(peers) > 0 {
+			leads, err := expandLadder(a.cfg, p.Lead().Provider, p.LeadTargets)
+			if err != nil {
+				continue
+			}
+			if !peerClosureQualified(leads) {
+				continue
+			}
+		}
 		for _, target := range targets {
 			qualified = qualified && acpNetworkQualified(a.cfg, target) && sameKind(target)
 		}
