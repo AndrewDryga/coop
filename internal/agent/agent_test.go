@@ -2156,7 +2156,8 @@ func TestCodexACPDeclaresTheMountedSharedServers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"command":"emisar-mcp","env":[{"name":"EMISAR_API_KEY","value":"secret"},{"name":"EMISAR_URL","value":"https://emisar.example"}],"name":"emisar"}]`
+	// ACP requires args even for a command without arguments; both adapters share that serializer.
+	want := `[{"args":[],"command":"emisar-mcp","env":[{"name":"EMISAR_API_KEY","value":"secret"},{"name":"EMISAR_URL","value":"https://emisar.example"}],"name":"emisar"}]`
 	if string(got) != want {
 		t.Fatalf("Codex ACP servers = %s, want %s", got, want)
 	}
