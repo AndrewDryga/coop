@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Background fork stop finishes cleanup.** Stopping a loop now retires its dead sandbox records
+  as well as its containers, so stale cleanup state does not block later work. Paused tasks remain.
+
 - **Editor switches give useful retry guidance.** A request during an agent switch now asks you
   to wait and retry instead of incorrectly suggesting that the thread is unavailable.
 

@@ -681,13 +681,41 @@ func (c *Control) ForkStop(args []string) (int, error) {
 	if reapErr != nil {
 		return 1, fmt.Errorf("fork %s worker stopped, but its box reap failed: %w — fix the container runtime, then retry: coop fork stop %s", name, reapErr, name)
 	}
-	if n > 0 {
-		ui.Detail("removed %s", ui.Count(n, "orphaned box container"))
-	}
 	if hasGeneration {
+		// A killed loop can leave its child supervisor's sandbox record behind. Retire only dead
+		// loop children after verifying their exact runtime is gone; live editor sessions stay held.
+		observations, problems := forkspace.Executions(repo)
+		if len(problems) > 0 {
+			return 1, fmt.Errorf("fork %s activity registry is unreadable: %w — cleanup state is kept; resolve the reported registry error, then retry: coop fork stop %s", name, errors.Join(problems...), name)
+		}
+		for _, observation := range observations {
+			record := observation.Record
+			if !observation.Stale || record.Fork == nil || *record.Fork != forkIdentity ||
+				record.Kind != forkspace.ExecutionForkLoop || record.Role != forkspace.ExecutionRoleSandbox {
+				continue
+			}
+			labels := map[string]string{
+				box.LabelForkOwner:      ForkContainerOwner(repo, name, forkIdentity.Generation),
+				box.LabelForkGeneration: string(forkIdentity.Generation),
+				box.LabelExecution:      record.ID,
+			}
+			reapCtx, cancelReap := context.WithTimeout(context.Background(), forkStopReapTimeout)
+			removed, reapErr := c.rt.RemoveByLabels(reapCtx, labels)
+			cancelReap()
+			if reapErr != nil {
+				return 1, fmt.Errorf("fork %s stale loop sandbox %s cleanup failed: %w — fix the container runtime, then retry: coop fork stop %s", name, record.ID, reapErr, name)
+			}
+			n += removed
+			if err := forkspace.EndExecution(repo, record); err != nil {
+				return 1, fmt.Errorf("fork %s runtime is gone, but stale loop activity %s could not be retired: %w — cleanup state is kept; resolve the reported registry error, then retry: coop fork stop %s", name, record.ID, err, name)
+			}
+		}
 		if err := forkspace.RemoveDeadForkExecutionsLocked(repo, forkIdentity, forkspace.ExecutionRoleDetachedWorker); err != nil {
 			return 1, fmt.Errorf("fork %s worker and box are gone, but its activity record cleanup failed: %w", name, err)
 		}
+	}
+	if n > 0 {
+		ui.Detail("removed %s", ui.Count(n, "orphaned box container"))
 	}
 	if err := os.Remove(forkspace.PidPath(repo, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 1, fmt.Errorf("fork %s box is gone, but its cleanup state could not be cleared: %w — inspect it and its parent with: ls -ld %q %q; remove any obstruction or restore parent write permission, then retry: coop fork stop %s", name, err, forkspace.PidPath(repo, name), forkspace.StateDir(repo), name)

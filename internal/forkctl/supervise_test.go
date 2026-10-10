@@ -500,6 +500,141 @@ if [ "$1" = ps ]; then printf '%s\n' stale-box; fi
 	}
 }
 
+func TestForkStopRetiresStaleLoopSandboxBeforeSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name, container, failure     string
+		keep, live, unknown, foreign bool
+		kind                         forkspace.ExecutionKind
+	}{
+		{name: "orphan present", container: "sandbox-box"},
+		{name: "already absent"},
+		{name: "query failure", failure: "ps"},
+		{name: "remove failure", container: "sandbox-box", failure: "rm"},
+		{name: "registry error", failure: "inventory"},
+		{name: "live sandbox", live: true, keep: true},
+		{name: "unknown owner", unknown: true, keep: true},
+		{name: "other generation", foreign: true, keep: true},
+		{name: "foreground", kind: forkspace.ExecutionForkInteractive, keep: true},
+		{name: "editor", kind: forkspace.ExecutionForkACP, keep: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			repo := filepath.Join(dir, "repo")
+			workspace := forkspace.Workspace(repo, "perf")
+			if err := os.MkdirAll(workspace, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			unlock, err := forkspace.LockState(repo, "perf")
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity, err := forkspace.EnsureGenerationLocked(repo, "perf")
+			unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pending: true, Generation: identity.Generation}); err != nil {
+				t.Fatal(err)
+			}
+			stale := forkspace.ExecutionRecord{Version: 1, ID: strings.Repeat("c", 32), Kind: forkspace.ExecutionForkLoop, Role: forkspace.ExecutionRoleSandbox,
+				Workspace: workspace, Fork: &identity, PID: 2147483646, Token: "linux-proc-v1:1:2", StartedAt: time.Now().UTC()}
+			if tc.kind != "" {
+				stale.Kind = tc.kind
+			}
+			if tc.live {
+				stale.PID, stale.Token = os.Getpid(), forkspace.ProcStartToken(os.Getpid())
+			}
+			if tc.unknown {
+				oldSignal := forkspace.SignalPID
+				forkspace.SignalPID = func(pid int, sig syscall.Signal) error {
+					if pid == stale.PID && sig == 0 {
+						return syscall.EPERM
+					}
+					return oldSignal(pid, sig)
+				}
+				t.Cleanup(func() { forkspace.SignalPID = oldSignal })
+			}
+			if tc.foreign {
+				other := identity
+				other.Generation = forkspace.Generation(strings.Repeat("d", 32))
+				stale.Fork = &other
+			}
+			executionDir := filepath.Join(forkspace.StateDir(repo), "executions")
+			if err := os.MkdirAll(executionDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(stale)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recordPath := filepath.Join(executionDir, stale.ID+".json")
+			if err := os.WriteFile(recordPath, append(body, '\n'), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tc.failure == "inventory" {
+				if err := os.WriteFile(filepath.Join(executionDir, "broken.json"), []byte("invalid\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runtimeCLI, events := filepath.Join(dir, "runtime"), filepath.Join(dir, "events")
+			if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
+case "$*" in
+  *coop.execution=*)
+    if [ "$COOP_TEST_RUNTIME_FAILURE" = ps ]; then exit 42; fi
+    if [ -n "$COOP_TEST_CONTAINER_ID" ]; then printf '%s\n' "$COOP_TEST_CONTAINER_ID"; fi ;;
+esac
+if [ "$1" = rm ] && [ "$COOP_TEST_RUNTIME_FAILURE" = rm ]; then exit 42; fi
+`), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("COOP_TEST_EVENTS", events)
+			t.Setenv("COOP_TEST_CONTAINER_ID", tc.container)
+			t.Setenv("COOP_TEST_RUNTIME_FAILURE", tc.failure)
+			c := &Control{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}}
+			code, stopErr := c.ForkStop([]string{"perf"})
+			if tc.failure != "" {
+				if code != 1 || stopErr == nil || !strings.Contains(stopErr.Error(), "coop fork stop perf") || !pathExists(recordPath) || !pathExists(forkspace.PidPath(repo, "perf")) {
+					t.Fatalf("failed exact sandbox cleanup lost retry authority: code=%d err=%v", code, stopErr)
+				}
+				if tc.failure == "inventory" {
+					if err := os.Remove(filepath.Join(executionDir, "broken.json")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				t.Setenv("COOP_TEST_RUNTIME_FAILURE", "")
+				code, stopErr = c.ForkStop([]string{"perf"})
+			}
+			if code != 0 || stopErr != nil || pathExists(forkspace.PidPath(repo, "perf")) {
+				t.Fatalf("stop=%d err=%v", code, stopErr)
+			}
+			if pathExists(recordPath) != tc.keep {
+				t.Fatalf("first stop retained=%v, want %v", pathExists(recordPath), tc.keep)
+			}
+			calls, err := os.ReadFile(events)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if exact := strings.Contains(string(calls), "label="+box.LabelExecution+"="+stale.ID); exact == tc.keep {
+				t.Fatalf("wrong cleanup scope: %s", calls)
+			}
+			if !tc.keep {
+				for _, call := range strings.Split(string(calls), "\n") {
+					if !strings.Contains(call, "label="+box.LabelExecution+"="+stale.ID) {
+						continue
+					}
+					if !strings.HasPrefix(call, "ps ") || !strings.Contains(call, "label="+box.LabelForkOwner+"="+ForkContainerOwner(repo, "perf", identity.Generation)) || !strings.Contains(call, "label="+box.LabelForkGeneration+"="+string(identity.Generation)) {
+						t.Fatalf("exact sandbox query missing generation scope: %s", call)
+					}
+				}
+				if code, err := c.ForkStop([]string{"perf"}); code != 0 || err != nil {
+					t.Fatalf("idempotent stop=%d err=%v", code, err)
+				}
+			}
+		})
+	}
+}
+
 // ForkStop signals the detached worker before reaping only that fork's labeled box. The runtime
 // shim makes both the orphan-present and already-gone paths deterministic without a real daemon.
 func TestForkStopReapsBoxAfterWorkerExit(t *testing.T) {

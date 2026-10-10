@@ -3,7 +3,7 @@ name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file holds four fork lifecycle states; unsupported formats stay held and only pid+start-token — never file age — may decide a current owner is gone
 subsystem: fork
 sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
-updated: 2026-09-23
+updated: 2026-10-10
 ---
 Every fork's whole process lifecycle lives in ONE small file, `<repo>-forks/.coop/<name>.pid`, read
 and written through `forkspace.WorkerState` (`internal/forkspace/state.go`) — never by hand. Four
@@ -128,7 +128,13 @@ tombstone, and a launched-but-unrecorded worker all answer "held".
 A dead-WORKER state (not a reservation) is never auto-cleared: it may still own an orphaned box, and
 only `coop fork stop` reaps that by owner label.
 
+Successful worker stop also retires provably dead `fork-loop` sandbox records for that exact
+generation, after a separate owner/generation/execution-ID runtime reap confirms absence. A dead
+child supervisor's registry record is cleanup authority, not a paused task. Reap or registry errors
+keep the retryable worker state; live/unknown owners and unrelated foreground/editor records stay held.
+
 ## Changelog
+- 2026-10-10 — actual detached-loop stop left a dead sandbox record after its box was gone. Reverified stop/registry ownership and added exact child cleanup before success; live, unknown, foreign-generation and foreground/editor retention regressed.
 - 2026-09-23 — generation v3 replaced allocator metadata with a private hardlink anchor. Stopped
   v1/v2 records migrate only after branch/origin verification and absence of executions,
   reservations and land intent; active or ambiguous state fails closed. Publication and session
