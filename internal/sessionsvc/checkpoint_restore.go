@@ -37,7 +37,7 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 	if err := req.Checkpoint.Validate(); err != nil {
 		return fail(err)
 	}
-	release, ok := s.beginWorkspaceRestore(req.SessionID)
+	release, ok := s.beginWorkspaceMutation(req.SessionID)
 	if !ok {
 		return fail(&session.Error{Code: session.CodeInvalidSessionState, Detail: "restore requires a parked runtime"})
 	}
@@ -150,6 +150,9 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 		return fail(err)
 	}
 	if _, err := verifyStreamedCheckpoint(ctx, sess, req.Checkpoint, manifest); err != nil {
+		return fail(err)
+	}
+	if err := excludeWorkspaceTaskMetadata(sess.Workspace, binding.ID); err != nil {
 		return fail(err)
 	}
 	bound, err := s.store.RestoreWorkspaceTask(ctx, sess.ID, req.ExpectedRevision, req.Checkpoint.BaseRevision, binding)

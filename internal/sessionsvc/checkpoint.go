@@ -230,7 +230,7 @@ func (s *Service) executeCheckpointWorkspace(
 	if err := s.validateCheckpointSession(ctx, sess, req.ExpectedRevision); err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	release, ok := s.beginWorkspaceRestore(req.SessionID)
+	release, ok := s.beginWorkspaceMutation(req.SessionID)
 	if !ok {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{
 			Code: session.CodeInvalidSessionState, Detail: "checkpoint requires a parked runtime",

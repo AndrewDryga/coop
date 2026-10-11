@@ -296,6 +296,8 @@ func TestInterruptedOldCreateCannotRelabelItsPublishedReservation(t *testing.T) 
 }
 
 func TestConfirmedEngineeringSessionEnsuresOneDurableWorkspaceTask(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
@@ -324,6 +326,14 @@ func TestConfirmedEngineeringSessionEnsuresOneDurableWorkspaceTask(t *testing.T)
 	item, ok := mustCurrentTask(t, filepath.Join(bound.Workspace, tasks.TasksRoot), bound.WorkspaceTask.ID)
 	if !ok || item.State != tasks.StateTodo || len(item.Subtasks) != 2 {
 		t.Fatalf("workspace task = %+v, ok=%v", item, ok)
+	}
+	// Two production turns were rejected as dirty solely because of the seven files the
+	// controller had just generated. They remain durable task custody, not product changes.
+	if status := gitOut(bound.Workspace, "status", "--porcelain", "--untracked-files=all"); status != "" {
+		t.Fatalf("controller bookkeeping counted as unfinished product changes:\n%s", status)
+	}
+	if status, truncated, err := sessionWorkspaceStatusContext(t.Context(), bound.Workspace); err != nil || truncated || len(status) != 0 {
+		t.Fatalf("host status counts controller bookkeeping: %q, truncated=%t, err=%v", status, truncated, err)
 	}
 	replayed, err := service.EnsureWorkspaceTask(context.Background(), "ensure-workspace-task", EnsureWorkspaceTaskRequest{
 		SessionID: sess.ID, ExpectedRevision: sess.Revision, Task: draft,
@@ -573,9 +583,6 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(gitConfig, "global"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(gitConfig, "system"))
 	repo, git := gitrepo.New(t)
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/tasks/\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -775,6 +782,9 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 	restoredItem, ok := mustCurrentTask(t, filepath.Join(restored.Workspace, tasks.TasksRoot), source.WorkspaceTask.ID)
 	if !ok || restoredItem.State != tasks.StateInProgress || len(restoredItem.Subtasks) != 1 || !restoredItem.Subtasks[0] {
 		t.Fatalf("restored task = %+v, ok=%v", restoredItem, ok)
+	}
+	if status := gitOut(restored.Workspace, "status", "--porcelain", "--untracked-files=all"); strings.Contains(status, ".agent/tasks/") {
+		t.Fatalf("restored task custody counted as product changes:\n%s", status)
 	}
 	replayed, err := service.RestoreWorkspaceCheckpoint(context.Background(), "restore-target-once", RestoreWorkspaceCheckpointRequest{
 		SessionID: target.ID, ExpectedRevision: target.Revision,

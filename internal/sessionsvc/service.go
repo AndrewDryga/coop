@@ -167,23 +167,63 @@ func (s *Service) executeEnsureWorkspaceTask(
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	if err := requireSessionWorkspace(sess); err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+	if sess.WorkspaceTask == nil {
+		release, ok := s.beginWorkspaceMutation(req.SessionID)
+		if !ok {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+				Code: session.CodeInvalidSessionState, Detail: "workspace task requires a parked runtime",
+			})
+		}
+		defer release()
+		// A competing binding may have finished between the first read and this fence.
+		sess, err = s.store.GetSession(ctx, req.SessionID)
+		if err != nil {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+		}
 	}
-	if err := s.validateSessionForkAuthority(ctx, sess); err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
-			Code: session.CodeInvalidSessionState, Detail: err.Error(),
-		})
-	}
-	instance, err := tasks.EnsureControllerTask(sess.Workspace, req.Task)
-	if err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
-			Code: session.CodeInvalidSessionState, Detail: err.Error(),
-		})
-	}
-	binding := session.WorkspaceTaskBinding{
-		QueueID: instance.Ref.QueueID, TaskID: instance.Ref.TaskID, ID: instance.Ref.ID,
-		OfferRef: req.Task.OfferRef, DraftSHA256: digest,
+	var binding session.WorkspaceTaskBinding
+	if sess.WorkspaceTask != nil {
+		// The binding may have committed before the operation receipt. Recover that exact
+		// durable result without filesystem work, even if the session has since been used.
+		if sess.WorkspaceTask.OfferRef != req.Task.OfferRef || sess.WorkspaceTask.DraftSHA256 != digest {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+				Code: session.CodeInvalidRequest, Detail: "session is already bound to another workspace task",
+			})
+		}
+		binding = *sess.WorkspaceTask
+	} else {
+		if err := requireSessionWorkspace(sess); err != nil {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+		}
+		if sess.Revision != req.ExpectedRevision {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, session.ErrRevisionConflict)
+		}
+		if sess.State != session.SessionOpen || sess.RepositoryReadOnly || sess.Activity != session.ActivityParked ||
+			sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 || sess.TurnsUsed != 0 {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+				Code: session.CodeInvalidSessionState, Detail: "workspace task requires an unused writable open session",
+			})
+		}
+		if err := s.validateSessionForkAuthority(ctx, sess); err != nil {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+				Code: session.CodeInvalidSessionState, Detail: err.Error(),
+			})
+		}
+		instance, err := tasks.EnsureControllerTask(sess.Workspace, req.Task)
+		if err != nil {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+				Code: session.CodeInvalidSessionState, Detail: err.Error(),
+			})
+		}
+		binding = session.WorkspaceTaskBinding{
+			QueueID: instance.Ref.QueueID, TaskID: instance.Ref.TaskID, ID: instance.Ref.ID,
+			OfferRef: req.Task.OfferRef, DraftSHA256: digest,
+		}
+		if err := excludeWorkspaceTaskMetadata(sess.Workspace, binding.ID); err != nil {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+				Code: session.CodeInvalidSessionState, Detail: err.Error(),
+			})
+		}
 	}
 	bound, err := s.store.BindWorkspaceTask(ctx, req.SessionID, req.ExpectedRevision, binding)
 	if err != nil {
@@ -514,12 +554,10 @@ func (s *Service) tryLockSessionRuntime(sessionID string) (func(), bool) {
 	return s.acquireSessionRuntime(sessionID, true)
 }
 
-// beginWorkspaceRestore takes the session's runtime for a checkpoint restore and marks the
-// session as restoring for the duration, so a turn cannot start on the workspace while it is
-// being rewritten (the runtime lock) and a turn cannot be queued into that window either
-// (SubmitTurn refuses while the mark is set). Exactly one of a restore and a first turn wins:
-// a turn queued first makes the restore's "unused session" check refuse before any file work.
-func (s *Service) beginWorkspaceRestore(sessionID string) (func(), bool) {
+// beginWorkspaceMutation fences checkpoint restore and initial controller-task projection
+// against both runtime execution and turn admission. A turn queued first makes the caller's
+// unused-session check refuse before any file work; SubmitTurn refuses while the mark is set.
+func (s *Service) beginWorkspaceMutation(sessionID string) (func(), bool) {
 	unlock, ok := s.tryLockSessionRuntime(sessionID)
 	if !ok {
 		return nil, false
@@ -2104,7 +2142,7 @@ func (s *Service) SubmitTurn(ctx context.Context, key string, req session.Submit
 	if err := s.validateTurnEscalation(ctx, req); err != nil {
 		return session.Turn{}, err
 	}
-	// Serialize the final check and durable admission with beginWorkspaceRestore.
+	// Serialize the final check and durable admission with beginWorkspaceMutation.
 	// Taking the runtime lock instead would block queued turns behind a running model.
 	s.runtimeMu.Lock()
 	if s.restoring[req.SessionID] {
@@ -2112,7 +2150,7 @@ func (s *Service) SubmitTurn(ctx context.Context, key string, req session.Submit
 		// Refused before any receipt is journaled, so the same key succeeds once the restore is
 		// done and the turn then runs on the restored workspace it was meant for.
 		return session.Turn{}, &session.Error{Code: session.CodeInvalidSessionState,
-			Detail: "a workspace restore is in progress on this session; retry once it completes"}
+			Detail: "workspace preparation is in progress on this session; retry once it completes"}
 	}
 	turn, err := s.store.SubmitTurn(ctx, key, req)
 	s.runtimeMu.Unlock()
