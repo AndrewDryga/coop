@@ -102,7 +102,10 @@ func seedClaudeBroker(selection string) (NativeBrokerSeed, error) {
 
 func claudeBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	if selection == "apikey" {
-		return []NativeBrokerRoute{{Host: "api.anthropic.com", Method: "POST", Path: "/v1/messages", Query: "beta=true", Header: "X-Api-Key"}}, nil
+		return []NativeBrokerRoute{
+			{Host: "api.anthropic.com", Method: "POST", Path: "/v1/messages", Query: "beta=true", Header: "X-Api-Key"},
+			{Host: "api.anthropic.com", Method: "GET", Path: "/api/claude_code/settings", Header: "X-Api-Key"},
+		}, nil
 	}
 	if selection != "claude-oauth" {
 		return nil, errors.New("unsupported Claude broker selection")
@@ -111,6 +114,7 @@ func claudeBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 		{Host: "api.anthropic.com", Method: "POST", Path: "/v1/messages", Query: "beta=true"},
 		{Host: "api.anthropic.com", Method: "GET", Path: "/v1/mcp_servers", Query: "limit=1000&include_additional_installs=true"},
 		{Host: "api.anthropic.com", Method: "GET", Path: "/api/claude_code/policy_limits"},
+		{Host: "api.anthropic.com", Method: "GET", Path: "/api/claude_code/settings"},
 		{Host: "api.anthropic.com", Method: "GET", Path: "/api/oauth/profile"},
 	}
 	for _, method := range []string{"GET", "POST", "DELETE"} {
