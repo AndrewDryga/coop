@@ -2,8 +2,8 @@
 name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
-sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/test_lifecycle_bench.py]
-updated: 2026-10-10
+sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/lifecycle_bench.py, tools/test_lifecycle_bench.py]
+updated: 2026-10-11
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -95,7 +95,16 @@ before the unchanged 0.5 s case timeout starts. A controlled 0.75 s startup dela
 old empty-cleanup failure and passes with the handshake; production cleanup and timeouts stay
 unchanged. A readiness failure still reaps the fixture process.
 
+A filesystem readiness marker does not mean the host consumed queued terminal output. Drain
+already-readable PTY bytes before sending terminal Ctrl-C: the signal flushes unread bytes, which
+may contain the only printed network-run identity. A controlled unread-output schedule preserves
+the real signal and exact leaked-gateway refusal/own-only cleanup assertions; no delay or relaxed
+ownership rule is needed.
+
 ## Changelog
+- 2026-10-11 — full gate exposed a cancellation benchmark false success after Ctrl-C flushed its
+  unread identity. Controlled scheduling failed before pre-cancel nonblocking drain; kept signal,
+  timing and ownership assertions unchanged. This is benchmark capture, not product teardown.
 - 2026-10-10 — the canonical gate's whole session-service race package reached 20 m with its
   active test only 1 s old. That exact test passed alone in 4.784 s; the unchanged complete race
   package then passed in 1220.664 s (399 serial tests). Raised only the race aggregate guard to 30 m,

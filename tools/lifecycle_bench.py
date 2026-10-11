@@ -444,6 +444,9 @@ def case_cancelled_stop(coop: str, repo: str, runtime: str, extra: list[str]) ->
             drain()
         if not os.path.exists(marker):
             return Sample("", False, detail="the box never announced itself")
+        # Terminal Ctrl-C flushes unread output, which may carry the only network identity.
+        while drain(0):
+            pass
         signalled = time.time()
         os.write(fd, b"\x03")  # ^C on the terminal, exactly as a person types it
         exited = False

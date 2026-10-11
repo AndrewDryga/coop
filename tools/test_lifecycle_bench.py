@@ -531,6 +531,32 @@ class EveryCaseCleansOnlyItsOwnTest(unittest.TestCase):
         self.assertFalse(sample.ok, sample)
         self.assertEqual(self.fake.removed, {"printed-ipc"})
 
+    def test_cancel_drains_queued_identity_before_terminal_flush(self):
+        self.fake.appear = ([], [("printed-ipc", self.GATEWAY)])
+        original_select = bench.select.select
+        original_write = bench.os.write
+        signalled = False
+
+        def queued_output(readers, writers, errors, timeout=None):
+            # Readiness can arrive before the host reads the terminal. Only the explicit
+            # nonblocking cancellation-boundary drain gets the queued identity first.
+            if not signalled and timeout != 0:
+                return [], [], []
+            return original_select(readers, writers, errors, timeout)
+
+        def signal_write(fd, data):
+            nonlocal signalled
+            if data == b"\x03":
+                signalled = True
+            return original_write(fd, data)
+
+        with patch.object(bench.select, "select", queued_output), \
+                patch.object(bench.os, "write", signal_write), \
+                contextlib.redirect_stderr(io.StringIO()):
+            sample = bench.case_cancelled_stop(str(self.coop), str(self.repo), "docker", [])
+        self.assertFalse(sample.ok, sample)
+        self.assertEqual(self.fake.removed, {"printed-ipc"})
+
 
 class OwnershipTest(unittest.TestCase):
     """A filtered launch owns more than the agent box, and a stop that only counts boxes lies."""
