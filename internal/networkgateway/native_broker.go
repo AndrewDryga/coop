@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -216,7 +218,7 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 		conns: make(chan struct{}, maxCredentialBrokerFlows), requests: make(chan struct{}, maxCredentialBrokerFlows),
 		active: map[*nativeBrokerConn]struct{}{}}
 	fail := func() (*NativeBroker, error) {
-		b.stopProtected()
+		b.stopProtected("configuration_invalid", 0, 0, 0)
 		return nil, Failure("native_broker_configuration_invalid")
 	}
 	for _, declared := range origins {
@@ -338,7 +340,7 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 	go func() {
 		defer b.workers.Done()
 		_ = b.server.Serve(b.input)
-		b.stopProtected()
+		b.stopProtected("server_stopped", 0, 0, 0)
 	}()
 	go func() {
 		defer b.workers.Done()
@@ -347,7 +349,7 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 		for {
 			select {
 			case <-b.ctx.Done():
-				b.stopProtected()
+				b.stopProtected("context_canceled", 0, 0, 0)
 				return
 			case <-ticker.C:
 				if _, err := b.current(); err != nil {
@@ -365,10 +367,25 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 	}
 }
 
-func validNativeSnapshot(binding NativeBrokerBinding, previous, next NativeAccessSnapshot, now time.Time) bool {
-	return next.Binding == binding && !next.Revoked && next.Revision > 0 && next.Revision >= previous.Revision && next.Expires.After(now) &&
-		len(next.Credential) > 0 && len(next.Credential) <= 32<<10 && !strings.ContainsAny(next.Credential, "\x00\r\n") &&
-		(next.Revision != previous.Revision || next.Credential == previous.Credential && next.Expires.Equal(previous.Expires))
+func nativeSnapshotFailure(binding NativeBrokerBinding, previous, next NativeAccessSnapshot, now time.Time) string {
+	switch {
+	case next.Binding != binding:
+		return "binding_mismatch"
+	case next.Revoked:
+		return "revoked"
+	case next.Revision == 0:
+		return "revision_missing"
+	case next.Revision < previous.Revision:
+		return "revision_rollback"
+	case !next.Expires.After(now):
+		return "expired"
+	case len(next.Credential) == 0 || len(next.Credential) > 32<<10 || strings.ContainsAny(next.Credential, "\x00\r\n"):
+		return "credential_invalid"
+	case next.Revision == previous.Revision && (next.Credential != previous.Credential || !next.Expires.Equal(previous.Expires)):
+		return "revision_mutation"
+	default:
+		return ""
+	}
 }
 
 func (b *NativeBroker) current() (NativeAccessSnapshot, error) {
@@ -379,16 +396,30 @@ func (b *NativeBroker) current() (NativeAccessSnapshot, error) {
 		return NativeAccessSnapshot{}, Failure("native_broker_revoked")
 	}
 	ctx, done := context.WithTimeout(b.ctx, time.Second)
+	started := time.Now()
 	next, err := b.load(ctx)
 	loadErr := ctx.Err()
 	done()
-	valid := err == nil && loadErr == nil && b.ctx.Err() == nil && validNativeSnapshot(b.binding, b.last, next, time.Now())
-	if valid {
+	reason, attempts := "", 0
+	var documentErr *nativeDocumentFailure
+	switch {
+	case b.ctx.Err() != nil:
+		reason = "context_canceled"
+	case errors.As(err, &documentErr):
+		reason, attempts = documentErr.reason, documentErr.attempts
+	case loadErr != nil:
+		reason = "load_deadline"
+	case err != nil:
+		reason = "load_failed"
+	default:
+		reason = nativeSnapshotFailure(b.binding, b.last, next, time.Now())
+	}
+	if reason == "" {
 		b.last = next
 	}
 	b.mu.Unlock()
-	if !valid {
-		b.stopProtected()
+	if reason != "" {
+		b.stopProtected(reason, next.Revision, attempts, time.Since(started))
 		return NativeAccessSnapshot{}, Failure("native_broker_revoked")
 	}
 	return next, nil
@@ -526,10 +557,11 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 	http.Error(w, "native route refused", http.StatusForbidden)
 }
 
-func (b *NativeBroker) stopProtected() {
+func (b *NativeBroker) stopProtected(reason string, revision uint64, attempts int, elapsed time.Duration) {
 	b.once.Do(func() {
 		b.mu.Lock()
 		b.stopped = true
+		previousRevision := b.last.Revision
 		conns := make([]*nativeBrokerConn, 0, len(b.active))
 		for conn := range b.active {
 			conns = append(conns, conn)
@@ -547,10 +579,17 @@ func (b *NativeBroker) stopProtected() {
 		for _, origin := range b.origins {
 			origin.transport.CloseIdleConnections()
 		}
+		// Shut protected traffic first: a blocked log sink must not delay
+		// revocation. Never log raw errors, account identifiers or documents.
+		log.Printf("native_broker_stopped reason=%s previous_revision=%d revision=%d attempts=%d load_ms=%d", reason, previousRevision, revision, attempts, elapsed.Milliseconds())
 	})
 }
 
-func (b *NativeBroker) Close() error { b.stopProtected(); b.workers.Wait(); return nil }
+func (b *NativeBroker) Close() error {
+	b.stopProtected("closed", 0, 0, 0)
+	b.workers.Wait()
+	return nil
+}
 
 type nativeBrokerConn struct {
 	net.Conn

@@ -23,6 +23,9 @@
   consumes the session's next idle interval. Broker credentials still renew continuously and
   expire closed if renewal stops.
 
+- **Native proxy disconnections are easier to diagnose.** Helpers record a safe failure
+  category when protected traffic stops, without logging account details or credentials.
+
 - **Reviewed commits say what they change.** A review request may name the commit message
   (`commit_message`, up to 4,096 bytes); the published commit carries it instead of "Reviewed
   changes", still followed by the `Coop-Review` trailer. Workers advertise

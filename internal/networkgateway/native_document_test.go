@@ -59,6 +59,32 @@ func TestNativeDocumentPersistentAndSemanticFailuresRemainClosed(t *testing.T) {
 	}
 }
 
+func TestNativeDocumentFailureRetainsOnlyFixedDiagnostics(t *testing.T) {
+	for _, test := range []struct {
+		name, data, reason string
+		readError          error
+	}{
+		{"missing", "", "document_missing", os.ErrNotExist},
+		{"incomplete", `{"Credential":"private-test-value"`, "document_incomplete", nil},
+		{"schema", `{"Unknown":"private-test-value"}`, "document_schema", nil},
+		{"io", "", "document_io", errors.New("private-test-value")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+			defer cancel()
+			var snapshot NativeAccessSnapshot
+			err := decodeNativeDocument(ctx, &snapshot, func() ([]byte, error) { return []byte(test.data), test.readError })
+			var failure *nativeDocumentFailure
+			if !errors.As(err, &failure) {
+				t.Fatal("missing fixed document diagnostic")
+			}
+			if failure.reason != test.reason || failure.attempts < 1 || err.Error() != "native_broker_configuration_invalid" {
+				t.Fatalf("diagnostic reason=%q attempts=%d", failure.reason, failure.attempts)
+			}
+		})
+	}
+}
+
 func TestNativeDocumentReopensTransientlyMissingVirtualFilesystemLeaf(t *testing.T) {
 	reads := 0
 	var snapshot NativeAccessSnapshot

@@ -61,27 +61,46 @@ func readNativeDocument(ctx context.Context, name string, value any) error {
 	})
 }
 
+type nativeDocumentFailure struct {
+	reason   string
+	attempts int
+}
+
+func (*nativeDocumentFailure) Error() string { return "native_broker_configuration_invalid" }
+
 func decodeNativeDocument(ctx context.Context, value any, read func() ([]byte, error)) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
+	reason, attempts := "document_canceled", 0
+	fail := func() error { return &nativeDocumentFailure{reason: reason, attempts: attempts} }
 	for {
 		if ctx.Err() != nil {
 			break
 		}
+		attempts++
 		raw, err := read()
-		if ctx.Err() != nil || err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			reason = "document_io"
+			break
+		}
+		if ctx.Err() != nil {
+			reason = "document_canceled"
 			break
 		}
 		// VM bind mounts can briefly miss a leaf or expose a truncated prefix after an atomic
 		// host rename. Reopen, never decode partial fields or reuse a prior grant.
 		if err != nil || !json.Valid(raw) {
+			reason = "document_incomplete"
+			if err != nil {
+				reason = "document_missing"
+			}
 			// Use the existing load deadline rather than an attempt cutoff: the
 			// VM's rename view can outlast the previous two-delay retry window.
 			timer := time.NewTimer(50 * time.Millisecond)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return Failure("native_broker_configuration_invalid")
+				return fail()
 			case <-timer.C:
 				continue
 			}
@@ -89,11 +108,15 @@ func decodeNativeDocument(ctx context.Context, value any, read func() ([]byte, e
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.DisallowUnknownFields()
 		if decoder.Decode(value) != nil || decoder.Decode(new(any)) != io.EOF || ctx.Err() != nil {
+			reason = "document_schema"
+			if ctx.Err() != nil {
+				reason = "document_canceled"
+			}
 			break
 		}
 		return nil
 	}
-	return Failure("native_broker_configuration_invalid")
+	return fail()
 }
 
 func readNativeRunConfig(runID string, origins []string) (NativeRunConfig, error) {
