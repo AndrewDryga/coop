@@ -92,17 +92,17 @@ func TestTheLockedClientsMatchTheirQualification(t *testing.T) {
 	}
 	if err := ValidateQualification(q, lock, clients); err != nil {
 		changelog, readErr := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
-		if readErr == nil && permitsV1100QualificationException(data, lock, clients, string(changelog)) {
-			t.Logf("UNQUALIFIED: operator approved v11.0.0 on 2026-10-09 without a fresh full upstream qualification; exact client identity and historical evidence remain unchanged: %v", err)
+		if readErr == nil && permitsV1101QualificationException(data, lock, clients, string(changelog)) {
+			t.Logf("UNQUALIFIED: operator approved v11.0.1 on 2026-10-11 without a fresh full upstream qualification; exact client identity and historical evidence remain unchanged: %v", err)
 			return
 		}
 		t.Fatalf("the committed qualification is incomplete or no longer describes this binary's clients: %v", err)
 	}
 }
 
-// Delete after v11.0.0. Pin both the retained evidence and every platform's native/adapter identity;
+// Delete after v11.0.1. Pin both the retained evidence and every platform's native/adapter identity;
 // the latest numbered release binds the exception even after Unreleased is reopened on main.
-func permitsV1100QualificationException(record []byte, lock string, clients map[string][]string, changelog string) bool {
+func permitsV1101QualificationException(record []byte, lock string, clients map[string][]string, changelog string) bool {
 	if fmt.Sprintf("%x", sha256.Sum256(record)) != "b5afd7bdfef2fa016e04b9062ec7306df354bd9615764f2f84dfd870686d4876" {
 		return false
 	}
@@ -112,13 +112,13 @@ func permitsV1100QualificationException(record []byte, lock string, clients map[
 	}
 	for line := range strings.SplitSeq(changelog, "\n") {
 		if strings.HasPrefix(line, "## ") && line != "## Unreleased" {
-			return line == "## 11.0.0"
+			return line == "## 11.0.1"
 		}
 	}
 	return false
 }
 
-func TestV1100QualificationExceptionIsBoundToReleaseClientsAndEvidence(t *testing.T) {
+func TestV1101QualificationExceptionIsBoundToReleaseClientsAndEvidence(t *testing.T) {
 	record, err := os.ReadFile("locked-clients/qualification.json")
 	if err != nil {
 		t.Fatal(err)
@@ -130,14 +130,16 @@ func TestV1100QualificationExceptionIsBoundToReleaseClientsAndEvidence(t *testin
 		changePlatforms bool
 		want            bool
 	}{
-		{name: "approved release", changelog: "## 11.0.0\n", want: true},
-		{name: "reopened main", changelog: "## Unreleased\n\n## 11.0.0\n", want: true},
-		{name: "previous release", changelog: "## 10.1.2\n"},
-		{name: "next release", changelog: "## 11.0.1\n\n## 11.0.0\n"},
+		{name: "approved release", changelog: "## 11.0.1\n", want: true},
+		{name: "reopened main", changelog: "## Unreleased\n\n## 11.0.1\n", want: true},
+		{name: "older release", changelog: "## 10.1.2\n"},
+		{name: "previous release", changelog: "## 11.0.0\n"},
+		{name: "next patch", changelog: "## 11.0.2\n\n## 11.0.1\n"},
+		{name: "next minor", changelog: "## 11.1.0\n\n## 11.0.1\n"},
 		{name: "no release", changelog: "## Unreleased\n"},
-		{name: "changed dependency", changelog: "## 11.0.0\n", changeLock: true},
-		{name: "changed evidence", changelog: "## 11.0.0\n", changeEvidence: true},
-		{name: "missing platform", changelog: "## 11.0.0\n", changePlatforms: true},
+		{name: "changed dependency", changelog: "## 11.0.1\n", changeLock: true},
+		{name: "changed evidence", changelog: "## 11.0.1\n", changeEvidence: true},
+		{name: "missing platform", changelog: "## 11.0.1\n", changePlatforms: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lock, clients, err := QualifiedClientSet()
@@ -154,7 +156,7 @@ func TestV1100QualificationExceptionIsBoundToReleaseClientsAndEvidence(t *testin
 			if tc.changeEvidence {
 				evidence = append(evidence, '\n')
 			}
-			if got := permitsV1100QualificationException(evidence, lock, clients, tc.changelog); got != tc.want {
+			if got := permitsV1101QualificationException(evidence, lock, clients, tc.changelog); got != tc.want {
 				t.Fatalf("exception allowed=%t, want %t", got, tc.want)
 			}
 		})
@@ -168,14 +170,14 @@ func TestV1100QualificationExceptionIsBoundToReleaseClientsAndEvidence(t *testin
 			t.Run(platform+"/"+line, func(t *testing.T) {
 				lines[i] = line + " changed"
 				defer func() { lines[i] = line }()
-				if permitsV1100QualificationException(record, lock, clients, "## 11.0.0\n") {
+				if permitsV1101QualificationException(record, lock, clients, "## 11.0.1\n") {
 					t.Fatal("changed native or adapter identity accepted")
 				}
 			})
 		}
 	}
 	clients["linux/s390x"] = []string{"unexpected client"}
-	if permitsV1100QualificationException(record, lock, clients, "## 11.0.0\n") {
+	if permitsV1101QualificationException(record, lock, clients, "## 11.0.1\n") {
 		t.Fatal("additional platform accepted")
 	}
 }
