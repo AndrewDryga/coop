@@ -29,7 +29,7 @@ type nativeTransportFixture struct {
 	forwarded       atomic.Int64
 }
 
-func newNativeTransportFixture(t *testing.T, handler http.Handler) *nativeTransportFixture {
+func newNativeTransportFixture(t *testing.T, handler http.Handler, configure ...func(*NativeBrokerOrigin)) *nativeTransportFixture {
 	t.Helper()
 	f := &nativeTransportFixture{}
 	f.upstream = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +49,7 @@ func newNativeTransportFixture(t *testing.T, handler http.Handler) *nativeTransp
 			Header: "Authorization", HeaderPrefix: "Bearer ", ClientHeader: "Authorization", ClientPrefix: "Bearer ", ClientMarker: "public-selector"})
 	}
 	var err error
-	f.broker, err = NewNativeBroker(context.Background(), binding, []NativeBrokerOrigin{{
+	origin := NativeBrokerOrigin{
 		Host: "example.com", Certificate: f.upstream.TLS.Certificates[0], Requests: routes,
 		AccountHeaders: map[string]string{"ChatGPT-Account-ID": "selected-id"},
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -58,7 +58,11 @@ func newNativeTransportFixture(t *testing.T, handler http.Handler) *nativeTransp
 			}
 			return (&net.Dialer{}).DialContext(ctx, network, f.upstream.Listener.Addr().String())
 		},
-	}}, func(context.Context) (NativeAccessSnapshot, error) {
+	}
+	for _, apply := range configure {
+		apply(&origin)
+	}
+	f.broker, err = NewNativeBroker(context.Background(), binding, []NativeBrokerOrigin{origin}, func(context.Context) (NativeAccessSnapshot, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		return f.snapshot, nil

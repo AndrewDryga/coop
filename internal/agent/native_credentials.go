@@ -83,6 +83,13 @@ type NativeBrokerRoute struct {
 	Queries                   []NativeBrokerQuery
 	Header, HeaderPrefix      string
 	AccountHeader             string
+	// Alias the selected identity in account discovery without changing routing.
+	AccountResponse *NativeBrokerAccountResponse
+}
+
+// Literal object keys for one bounded selected-identity projection, not JSON paths.
+type NativeBrokerAccountResponse struct {
+	Header, CollectionKey, IDKey, LegacyObjectKey, LegacyIDKey, OrderingKey, DefaultIDKey string
 }
 type NativeBrokerQuery struct {
 	Name     string

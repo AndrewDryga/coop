@@ -144,7 +144,12 @@ func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	add("POST", "/backend-api/codex/responses/compact", "")
 	add("GET", "/backend-api/codex/responses", "")
 	add("GET", "/backend-api/codex/models", "client_version=0.159.2")
-	for _, path := range []string{"/backend-api/wham/accounts/check", "/backend-api/wham/usage", "/backend-api/wham/settings/user", "/backend-api/ps/connectors/directory/list", "/backend-api/ps/connectors/directory/list_workspace"} {
+	add("GET", "/backend-api/wham/accounts/check", "")
+	out[len(out)-1].AccountResponse = &NativeBrokerAccountResponse{
+		Header: "Chatgpt-Account-Id", CollectionKey: "accounts", IDKey: "id",
+		LegacyObjectKey: "account", LegacyIDKey: "account_id", OrderingKey: "account_ordering", DefaultIDKey: "default_account_id",
+	}
+	for _, path := range []string{"/backend-api/wham/usage", "/backend-api/wham/settings/user", "/backend-api/ps/connectors/directory/list", "/backend-api/ps/connectors/directory/list_workspace"} {
 		add("GET", path, "")
 	}
 	add("POST", "/backend-api/codex/analytics-events/events", "")

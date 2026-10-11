@@ -6,6 +6,35 @@ import (
 	"testing"
 )
 
+func TestCodexBrokerDeclaresOnlyAccountDiscoveryProjection(t *testing.T) {
+	for _, selection := range []string{"chatgpt", "apikey"} {
+		routes, err := codexBrokerRoutes(selection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := 0
+		for _, route := range routes {
+			if route.AccountResponse == nil {
+				continue
+			}
+			found++
+			if selection != "chatgpt" || route.Host != "chatgpt.com" || route.Method != "GET" || route.Path != "/backend-api/wham/accounts/check" || route.Query != "" || len(route.Queries) != 0 || route.Segment != "" || route.CredentialFree || route.AccountHeader != route.AccountResponse.Header {
+				t.Fatalf("account projection widened: %#v", route)
+			}
+			if *route.AccountResponse != (NativeBrokerAccountResponse{Header: "Chatgpt-Account-Id", CollectionKey: "accounts", IDKey: "id", LegacyObjectKey: "account", LegacyIDKey: "account_id", OrderingKey: "account_ordering", DefaultIDKey: "default_account_id"}) {
+				t.Fatal("native discovery grammar changed")
+			}
+		}
+		want := 0
+		if selection == "chatgpt" {
+			want = 1
+		}
+		if found != want {
+			t.Fatalf("%s projection count=%d, want %d", selection, found, want)
+		}
+	}
+}
+
 func TestNativeBrokerPublicSeedsAndDivergence(t *testing.T) {
 	for _, test := range []struct{ provider, selection string }{
 		{"claude", "claude-oauth"}, {"codex", "chatgpt"}, {"codex", "apikey"},

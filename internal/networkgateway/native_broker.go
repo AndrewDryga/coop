@@ -41,6 +41,23 @@ type NativeBrokerRequestLine struct {
 	ClientHeader, ClientPrefix, ClientMarker string
 	Segment, Suffix                          string
 	Queries                                  []NativeBrokerQuery
+	// Adapter-declared account-discovery identity projection; never guest input.
+	AccountResponse *NativeBrokerAccountResponse
+}
+
+// NativeBrokerAccountResponse declares literal object keys for the fixed
+// selected-identity projection. Only the adapter supplies the document grammar.
+type NativeBrokerAccountResponse struct {
+	Header, CollectionKey, IDKey, LegacyObjectKey, LegacyIDKey, OrderingKey, DefaultIDKey string
+}
+
+func (shape NativeBrokerAccountResponse) valid() bool {
+	for _, key := range []string{shape.CollectionKey, shape.IDKey, shape.LegacyObjectKey, shape.LegacyIDKey, shape.OrderingKey, shape.DefaultIDKey} {
+		if key == "" || len(key) > 128 || strings.Trim(key, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != "" {
+			return false
+		}
+	}
+	return shape.Header != "" && shape.CollectionKey != shape.OrderingKey && shape.CollectionKey != shape.DefaultIDKey && shape.OrderingKey != shape.DefaultIDKey
 }
 
 type NativeBrokerQuery struct {
@@ -251,6 +268,16 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 			if !line.valid() || accountHeaders.Get(line.Header) != "" || line.ClientHeader != "" && accountHeaders.Get(line.ClientHeader) != "" {
 				return fail()
 			}
+			if shape := line.AccountResponse; shape != nil && (!shape.valid() || line.CredentialFree || line.Method != http.MethodGet ||
+				line.Query != "" || len(line.Queries) != 0 || line.Segment != "" || line.Suffix != "" || line.ClientMarker == "" ||
+				accountHeaders.Get(shape.Header) == "" || clientAccountHeaders.Get(shape.Header) == "" ||
+				accountHeaders.Get(shape.Header) == clientAccountHeaders.Get(shape.Header)) {
+				return fail()
+			}
+			if line.AccountResponse != nil {
+				shape := *line.AccountResponse
+				line.AccountResponse = &shape // immutable transport-owned declaration
+			}
 			for _, prior := range origin.routes {
 				if prior.line.Method == line.Method && prior.line.Path == line.Path && prior.line.Query == line.Query &&
 					prior.line.Segment == line.Segment && prior.line.Suffix == line.Suffix && reflect.DeepEqual(prior.line.Queries, line.Queries) {
@@ -275,11 +302,20 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 					if !line.CredentialFree {
 						p.Out.Header.Set(line.Header, line.HeaderPrefix+access.Credential)
 					}
+					if line.AccountResponse != nil {
+						p.Out.Header.Set("Accept-Encoding", "identity")
+						// A cached upstream body would still contain the private identity.
+						p.Out.Header.Del("If-None-Match")
+						p.Out.Header.Del("If-Modified-Since")
+					}
 				},
 				ModifyResponse: func(response *http.Response) error {
 					response.Header.Del("Set-Cookie")
 					if response.StatusCode >= 300 && response.StatusCode < 400 && response.StatusCode != http.StatusNotModified {
 						return Failure("native_broker_redirect_refused")
+					}
+					if shape := line.AccountResponse; shape != nil && response.StatusCode >= 200 && response.StatusCode < 400 {
+						return projectNativeAccountResponse(response, *shape, accountHeaders.Get(shape.Header), clientAccountHeaders.Get(shape.Header))
 					}
 					return nil
 				},
@@ -299,7 +335,11 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 		return nil, err
 	}
 	b.workers.Add(2)
-	go func() { defer b.workers.Done(); _ = b.server.Serve(b.input); b.stopProtected() }()
+	go func() {
+		defer b.workers.Done()
+		_ = b.server.Serve(b.input)
+		b.stopProtected()
+	}()
 	go func() {
 		defer b.workers.Done()
 		ticker := time.NewTicker(100 * time.Millisecond)

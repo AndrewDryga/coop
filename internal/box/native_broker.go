@@ -545,6 +545,12 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 				}
 				line := networkgateway.NativeBrokerRequestLine{Method: route.Method, Path: route.Path, Query: route.Query, Segment: route.Segment, Suffix: route.Suffix,
 					Header: route.Header, HeaderPrefix: route.HeaderPrefix, ClientHeader: route.Header, ClientPrefix: route.HeaderPrefix, ClientMarker: account.seed.Marker}
+				if shape := route.AccountResponse; shape != nil {
+					line.AccountResponse = &networkgateway.NativeBrokerAccountResponse{
+						Header: shape.Header, CollectionKey: shape.CollectionKey, IDKey: shape.IDKey,
+						LegacyObjectKey: shape.LegacyObjectKey, LegacyIDKey: shape.LegacyIDKey, OrderingKey: shape.OrderingKey, DefaultIDKey: shape.DefaultIDKey,
+					}
+				}
 				if route.CredentialFree {
 					line.CredentialFree = true
 					line.ClientMarker = ""
