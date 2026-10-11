@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -114,7 +116,22 @@ func TestNativeClaudeFamilyTransitionRefusesLocalRealGrants(t *testing.T) {
 	}
 }
 
+func TestNativeGuardRemainsReadableUnderPrivateUmask(t *testing.T) {
+	// Managed admission and learning never reached a model: umask 077 made
+	// the separate guard UID's configuration unreadable. Isolate the mask
+	// from the test runner and exercise the real credential-safe publication.
+	cmd := exec.Command(os.Args[0], "-test.run=^TestNativeRunPublishesGuardOnlyExpiringAccess$")
+	cmd.Env = append(os.Environ(), "COOP_TEST_NATIVE_PRIVATE_UMASK=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("native guard under private mask: %v\n%s", err, output)
+	}
+}
+
 func TestNativeRunPublishesGuardOnlyExpiringAccess(t *testing.T) {
+	if os.Getenv("COOP_TEST_NATIVE_PRIVATE_UMASK") == "1" {
+		previous := syscall.Umask(0o077)
+		defer syscall.Umask(previous)
+	}
 	ctx := context.Background()
 	cfg := &config.Config{ConfigDir: t.TempDir(), Egress: "open", HomeInBox: "/home/node"}
 	staging := t.TempDir()
@@ -146,6 +163,21 @@ func TestNativeRunPublishesGuardOnlyExpiringAccess(t *testing.T) {
 	run.cancel()
 	run.workers.Wait() // deterministically test publications without a polling worker
 	defer run.close()
+	for path, want := range map[string]os.FileMode{
+		filepath.Dir(run.dir):                 0o700,
+		run.dir:                               0o755,
+		run.publicCA:                          0o444,
+		filepath.Join(run.dir, "config.json"): 0o444,
+		filepath.Join(run.dir, "codex.json"):  0o444,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("native %s mode = %04o, want %04o", filepath.Base(path), got, want)
+		}
+	}
 	public, err := os.ReadFile(filepath.Join(home, "auth.json"))
 	if err != nil || strings.Contains(string(public), private) || !strings.Contains(string(public), agents.NativeBrokerAccount) {
 		t.Fatal("home did not receive a public-only native selector", err)

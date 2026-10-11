@@ -89,6 +89,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [native-broker-account-discovery](native-broker-account-discovery.md) — guard-selected public account aliases must match native discovery without changing workspace routing
 - [native-broker-managed-policy](native-broker-managed-policy.md) — Claude policy retrieval needs its exact native settings route and must retain genuine upstream policy and errors
 - [native-broker-lease-reads](native-broker-lease-reads.md) — VM lease reads use fresh descriptors and the existing load deadline, never a cached grant
+- [native-helper-file-modes](native-helper-file-modes.md) — native helper read mounts keep their intended modes under a private umask while outer custody remains owner-only
 - [mcp-authority-projection](mcp-authority-projection.md) — one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 - [provider-scripted-e2e](provider-scripted-e2e.md) — drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 - [provider-live-e2e](provider-live-e2e.md) — probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows

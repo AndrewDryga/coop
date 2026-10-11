@@ -515,8 +515,13 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 	}
 	// The outer owner-only directory keeps host custody. Only the guard can
 	// mount this child; its own UID must traverse it and read atomic snapshots.
+	// Creation modes inherit the operator's umask; normalize only these new
+	// mounts so a private mask cannot lock out the separate guard UID.
 	r.dir = filepath.Join(dir, "guard")
 	if err := os.Mkdir(r.dir, 0755); err != nil {
+		return err
+	}
+	if err := os.Chmod(r.dir, 0755); err != nil {
 		return err
 	}
 	ca, key, public, err := nativeCertificateAuthority()
@@ -525,7 +530,7 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 	}
 	r.publicCA = filepath.Join(dir, "ca.pem")
 	r.publicFiles = []string{r.publicCA}
-	if err := os.WriteFile(r.publicCA, public, 0444); err != nil {
+	if err := config.WriteFileAtomicMode(r.publicCA, public, 0444); err != nil {
 		return err
 	}
 	plan := networkgateway.NativeRunConfig{Version: 1, RunID: r.runID, Downloads: r.downloads()}
@@ -590,7 +595,7 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(r.dir, "config.json"), data, 0444); err != nil {
+	if err := config.WriteFileAtomicMode(filepath.Join(r.dir, "config.json"), data, 0444); err != nil {
 		return err
 	}
 	lifetime, cancel := context.WithCancel(ctx)
