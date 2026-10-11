@@ -1842,6 +1842,17 @@ func TestSessionTurnRunnerPersistsBorrowedWarmRuntimeUntilCleanupRetry(t *testin
 
 func TestSessionTurnRunnerPreparesAndExpiresWarmExecution(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
+	command := fixture.runner.command
+	fixture.runner.command = func(name string, args ...string) *exec.Cmd {
+		if _, err := os.Stat(filepath.Join(fixture.private, "defaults")); err != nil {
+			t.Fatalf("private projection was not created before startup: %v", err)
+		}
+		// Hold startup past the requested idle interval. Idle time belongs to
+		// the parked process, not to setup or a synthetic portable-token budget.
+		<-time.After(500 * time.Millisecond)
+		return command(name, args...)
+	}
+	t.Cleanup(func() { _ = fixture.runner.CloseWarmSessions() })
 	if err := fixture.runner.PrepareSession(contextWithTurnDeadline(t), fixture.session, 500*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
@@ -1855,9 +1866,10 @@ func TestSessionTurnRunnerPreparesAndExpiresWarmExecution(t *testing.T) {
 	if got, want := readSessionACPLog(t, fixture.childLog), []string{"initialize", "session/new"}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("prepared ACP methods = %v, want %v", got, want)
 	}
-	// The 500 ms idle expiry is the behavior; how long a loaded host takes to show it is not.
-	wait.For(t, "warm execution expiry removing the projected credentials", func() bool {
-		_, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json"))
+	// Canonical credentials never enter this projection. Defaults is created
+	// during setup and removed only when the warm runtime is actually cleaned.
+	wait.For(t, "warm execution expiry removing its private projection", func() bool {
+		_, err := os.Stat(filepath.Join(fixture.private, "defaults"))
 		return os.IsNotExist(err)
 	})
 }
@@ -1905,6 +1917,51 @@ func TestSessionTurnRunnerKeepsWarmthWithContinuousCanonicalRenewal(t *testing.T
 	if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); !os.IsNotExist(err) {
 		t.Fatalf("cold fallback credential remains: %v", err)
 	}
+}
+
+func TestSessionTurnRunnerParksAfterTurnOutlastsIdleInterval(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	t.Cleanup(func() { _ = fixture.runner.CloseWarmSessions() })
+	service := &Service{store: fixture.store, runner: fixture.runner,
+		runtimeLocks: make(map[string]*sessionOperationLock), runtimeCleanupDone: make(map[string]runtimeCleanupStamp)}
+	fixture.runner.service = service
+	service.reserveRuntimeSlot(fixture.session.ID)
+	// Keep expiry cleanup behind the existing runtime lock. The post-parking
+	// receipt writes may outlast idle time, but cannot erase proof of parking.
+	unlock := service.lockSessionRuntime(fixture.session.ID)
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
+	// Hold the protocol's activity clock during the turn, before parking.
+	// A completed model turn must not consume its subsequent idle interval.
+	var once sync.Once
+	fixture.runner.activityClock = func() time.Time {
+		once.Do(func() { <-time.After(2 * time.Second) })
+		return time.Now()
+	}
+	turn := fixture.submit(t, "retain the completed process")
+	ctx := context.WithValue(contextWithTurnDeadline(t), sessionWarmIdleTimeoutContextKey{}, time.Second)
+	if _, err := fixture.runner.Run(ctx, fixture.session, turn); err != nil {
+		t.Fatal(err)
+	}
+	fixture.runner.warmMu.Lock()
+	parked := fixture.runner.warm[fixture.session.ID] != nil
+	fixture.runner.warmMu.Unlock()
+	if !parked {
+		t.Fatal("completed turn consumed its subsequent idle interval")
+	}
+	unlock()
+	unlock = nil
+	if err := fixture.runner.CloseWarmSessions(); err != nil {
+		t.Fatal(err)
+	}
+	// An already-fired expirer may own cleanup after dropping the warm entry.
+	wait.For(t, "completed warm projection cleanup", func() bool {
+		_, err := os.Stat(filepath.Join(fixture.private, "defaults"))
+		return os.IsNotExist(err)
+	})
 }
 
 func TestSessionTurnRunnerSendsDurableImageArtifact(t *testing.T) {

@@ -19,6 +19,10 @@
   builds are explained early. Docker observation failures retain their real cause, and
   `update --check` no longer reports ordinary-image records for filtered projects.
 
+- **Warm sessions keep their full idle interval.** Slow startup or a long model turn no longer
+  consumes the session's next idle interval. Broker credentials still renew continuously and
+  expire closed if renewal stops.
+
 - **Reviewed commits say what they change.** A review request may name the commit message
   (`commit_message`, up to 4,096 bytes); the published commit carries it instead of "Reviewed
   changes", still followed by the `Coop-Review` trailer. Workers advertise

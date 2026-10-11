@@ -3,7 +3,7 @@ name: session-awaiting-validation-runtime-cleanup
 description: every started turn retains its exact runtime receipt through teardown; awaiting-validation owns durable candidate authority but no live provider runtime
 subsystem: sessions
 sources: [internal/session/store.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/forkspace/generation.go, internal/forkspace/reservation.go]
-updated: 2026-10-11
+updated: 2026-10-12
 ---
 
 # Awaiting validation is durable authority, not runtime authority
@@ -64,7 +64,15 @@ turn admission share the session lock. Quarantined history, even record-only ret
 proof that old runtime resources stopped; capacity stays busy until the separate narrow runtime
 proof succeeds. Provider-native private history remains intact, and every restart repeats proof.
 
+Warm idle time starts when the completed or prepared child is parked, not before startup or its
+preceding turn. The projection contains public selectors, not a portable grant. Canonical broker
+renewal continues while parked; short lease expiry and revocation independently stop protected
+traffic. Startup readiness retains its existing bounded admission horizon.
+
 ## Changelog
+- 2026-10-12 — removed the obsolete synthetic portable-credential cap that consumed warm idle
+  time during startup/turns. Controlled delayed startup failed before the repair; real projection
+  removal now proves idle cleanup instead of an auth file already absent at preparation.
 - 2026-10-11 — generalized the verified workspace mutation fence to initial controller-task
   projection; both preparation and checkpoint restore refuse racing turn admission.
 - 2026-09-30 — narrowed the quarantine capacity statement: exact run-label/private-credential

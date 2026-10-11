@@ -95,12 +95,11 @@ type sessionWarmIdleTimeoutContextKey struct{}
 type sessionTargetLadderContextKey struct{}
 
 type sessionWarmExecution struct {
-	bound              session.Session
-	child              *sessionACPProcess
-	projection         *sessionACPProjection
-	credentialDeadline time.Time
-	expiresAt          time.Time
-	timer              *time.Timer
+	bound      session.Session
+	child      *sessionACPProcess
+	projection *sessionACPProjection
+	expiresAt  time.Time
+	timer      *time.Timer
 }
 
 type turnCompletionStore interface {
@@ -680,7 +679,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 				runtimeRunID = desiredRunID
 			}
 			child, err := r.startChildWithRunID(ctx, bound, desiredRunID, projection.privateRoot)
-			execution = &sessionWarmExecution{bound: bound, child: child, projection: projection, credentialDeadline: credentialDeadline}
+			execution = &sessionWarmExecution{bound: bound, child: child, projection: projection}
 			if err != nil {
 				runErr = err
 				return result, runErr
@@ -1206,21 +1205,15 @@ func (r *sessionTurnRunner) parkWarmExecution(execution *sessionWarmExecution, i
 	if execution == nil || idleTimeout <= 0 || !sessionWarmExecutionMatches(execution, execution.bound) {
 		return false
 	}
-	expiresAt := time.Now().Add(idleTimeout)
-	credentialLimit := execution.credentialDeadline.Add(-execution.bound.TurnTimeout)
-	if credentialLimit.Before(expiresAt) {
-		expiresAt = credentialLimit
-	}
-	if !expiresAt.After(time.Now()) {
-		return false
-	}
+	// Canonical broker leases renew while parked and expire closed independently.
+	// Startup and completed turn time must not consume the next idle interval.
 	r.warmMu.Lock()
 	if r.warm[execution.bound.ID] != nil || len(r.warm) >= sessionACPWarmLimit {
 		r.warmMu.Unlock()
 		return false
 	}
-	execution.expiresAt = expiresAt
-	execution.timer = time.AfterFunc(time.Until(expiresAt), func() {
+	execution.expiresAt = time.Now().Add(idleTimeout)
+	execution.timer = time.AfterFunc(time.Until(execution.expiresAt), func() {
 		r.expireWarmExecution(execution.bound.ID, execution)
 	})
 	r.warm[execution.bound.ID] = execution
@@ -1367,7 +1360,7 @@ func (r *sessionTurnRunner) PrepareSession(ctx context.Context, bound session.Se
 		return err
 	}
 	child, err := r.startChildWithRunID(ctx, bound, sessionWarmRunID(bound.ID), projection.privateRoot)
-	execution := &sessionWarmExecution{bound: bound, child: child, projection: projection, credentialDeadline: credentialDeadline}
+	execution := &sessionWarmExecution{bound: bound, child: child, projection: projection}
 	if err != nil {
 		return errors.Join(err, r.cleanupWarmExecution(execution))
 	}
