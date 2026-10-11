@@ -4,6 +4,8 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Shell completion now fills in account names and actions for `coop credentials`.
+
 ## 11.0.1
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->

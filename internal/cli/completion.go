@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -247,7 +248,24 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if prev[1] == "run" {
 			return a.evalRunCandidates(prev[2:], cur)
 		}
-	case "login", "credentials", "models":
+	case "credentials":
+		if len(prev) == 1 {
+			return agents.Names()
+		}
+		if len(prev) > 3 {
+			return nil
+		}
+		if _, ok := agents.Get(prev[1]); !ok {
+			return nil
+		}
+		accounts := box.EffectiveProfiles(a.cfg, prev[1])
+		if len(prev) == 2 {
+			return accounts
+		}
+		if slices.Contains(accounts, prev[2]) {
+			return []string{"default", "rm"}
+		}
+	case "login", "models":
 		if len(prev) == 1 {
 			return agents.Names()
 		}

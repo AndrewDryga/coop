@@ -2,8 +2,8 @@
 name: shell-completion-current-word
 description: Shell completion replaces the current word, and Bash 3.2 needs IFS kept away from the COMP_WORDS slice
 subsystem: cli
-sources: [internal/cli/completion.go, internal/cli/completion_test.go, internal/cli/approved_runtime_output_test.go, internal/cli/testdata/approved/75-completion-bash.txt]
-updated: 2026-09-28
+sources: [internal/cli/completion.go, internal/cli/completion_test.go, internal/cli/profiles.go, internal/box/profiles.go, internal/cli/approved_runtime_output_test.go, internal/cli/testdata/approved/75-completion-bash.txt]
+updated: 2026-10-11
 ---
 
 `coop __complete` receives every word after `coop` through the word being edited, including an
@@ -16,6 +16,13 @@ The Bash script must not set function-wide IFS before expanding the `COMP_WORDS`
 `loop ` as one word. IFS belongs on `read` while collecting each output line into a quoted array
 element. That also preserves spaces and literal glob characters in a candidate. Completion is
 best-effort, so a lookup failure produces no candidates rather than blocking the shell.
+
+`coop credentials <provider> <account> <action>` has its own positional completion: registered
+providers, that provider's `box.EffectiveProfiles` names, then `default` or `rm` for an existing
+account. Unknown providers/accounts and extra arguments offer nothing. Do not merge this with
+the provider-only `login`/`models` branch: working `codex@<account>` target completion does not
+prove the separate credentials command works. Canonical stored accounts and legacy names share
+the existing lookup; only names are emitted, never grant contents or another provider's accounts.
 
 Bash also treats `:` as a Readline word break by default. Bash 3.2 keeps `codex:model` together
 in COMP_WORDS; Bash 5 splits it into three entries. Rejoin those entries for the backend, then
@@ -34,6 +41,10 @@ Review the full mismatch, not only its reported first differing line, and retain
 assertion. Update the approved transcript in the same commit as a script-output change.
 
 ## Changelog
+- 2026-10-11 — actual Zsh Tab reproduced omitted credentials account/action positions while
+  target-account completion worked. Split that command only; regression covers canonical/legacy
+  names, prefixes, provider isolation, valid actions and invalid/extra-token denial. Static shell
+  scripts remain byte-identical, so their approved transcripts require no regeneration.
 - 2026-09-28 — replaced process jargon with the actionable transcript-update rule; rechecked the
   script and approved fixture paths. The earlier fix changed the expected executable body, not only
   its header, and did not relax an output assertion.

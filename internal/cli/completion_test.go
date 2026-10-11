@@ -232,6 +232,52 @@ func TestCompletionTargetsAccountsAndPresets(t *testing.T) {
 	}
 }
 
+func TestCredentialCompletionFollowsAccountCommand(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), BoxHome: t.TempDir(), RepoOverride: t.TempDir()}
+	for _, dir := range []string{
+		filepath.Join(cfg.ConfigDir, "codex", "credentials", "personal"),
+		cfg.AgentProfileDir("codex", "work"),
+		cfg.AgentProfileDir("claude", "other-provider"),
+	} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := &app{cfg: cfg}
+	accounts := a.completionCandidates([]string{"credentials", "codex"})
+	if !hasCand(accounts, "personal") || !hasCand(accounts, "work") || hasCand(accounts, "other-provider") {
+		t.Errorf("selected-provider canonical and legacy accounts = %v", accounts)
+	}
+	for _, tc := range []struct {
+		words []string
+		want  string
+	}{
+		{[]string{"credentials", "cod"}, "codex\n"},
+		{[]string{"credentials", "codex", "p"}, "personal\n"},
+		{[]string{"credentials", "codex", "w"}, "work\n"},
+		{[]string{"credentials", "codex", "other"}, ""},
+		{[]string{"credentials", "claude", "other"}, "other-provider\n"},
+		{[]string{"credentials", "codex", "personal", ""}, "default\nrm\n"},
+		{[]string{"credentials", "codex", "personal", "d"}, "default\n"},
+		{[]string{"credentials", "codex", "personal", "r"}, "rm\n"},
+		{[]string{"credentials", "unknown", ""}, ""},
+		{[]string{"credentials", "codex", "missing", ""}, ""},
+		{[]string{"credentials", "codex", "personal", "default", ""}, ""},
+		{[]string{"credentials", "codex", "personal", "rm", "--yes", ""}, ""},
+		{[]string{"login", "cod"}, "codex\n"},
+		{[]string{"models", "cod"}, "codex\n"},
+	} {
+		got := captureCompletionOutput(t, func() {
+			if code, err := a.cmdComplete(tc.words); code != 0 || err != nil {
+				t.Fatalf("cmdComplete(%q) = (%d, %v)", tc.words, code, err)
+			}
+		})
+		if got != tc.want {
+			t.Errorf("cmdComplete(%q) = %q, want %q", tc.words, got, tc.want)
+		}
+	}
+}
+
 func TestCompletionKeepsTheCurrentWord(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}
 
