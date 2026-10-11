@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 11.0.1
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
