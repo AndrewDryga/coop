@@ -4,7 +4,7 @@ description: a green gate is not proof a feature works — the last verification
 scope: agent-workflow
 sources: [AGENTS.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md]
 check: none
-updated: 2026-09-10
+updated: 2026-10-11
 ---
 
 # The last thing you verify is the command the user types
@@ -35,7 +35,20 @@ real repo's mount set takes on a loaded machine.
 cannot run it — no credentials, no runtime, needs their machine — say exactly that instead of
 reporting the suite as if it were the same thing.
 
+For provider-launch releases, exercise every registered provider in interactive CLI mode using
+the selected real account and a disposable real repository. Observe startup, a greeting, file
+reading, a shell command, a file write/readback and a follow-up after lease renewal, then exit
+normally. Inspect the terminal like a user and independently verify written files. A process
+that starts, a one-turn smoke or scripted provider fixtures alone do not prove the ordinary CLI
+works through a session. Keep upstream credential failures distinct from Coop defects and never
+hide genuine provider policy or authentication errors to obtain a clean-looking screen.
+
 ## Changelog
+- 2026-10-11 — user required basic multi-turn CLI proof for each provider before release. Swept
+  all four adapters, scripted/live provider suites and work/sweep completion guidance. Scripted
+  coverage remains useful but does not replace native interactive evidence; actual CLI testing
+  found discovery/settings defects and session-time lease failures. `check: none` remains honest
+  because observing real authenticated terminals is not an offline mechanical gate.
 - 2026-09-10 — the same day, the redirected form hid a second and worse failure: in a terminal the
   attached Docker client was suspended by the kernel and the box never started (fixed in d8634c4).
   Added the real-terminal habit; a short `pty.fork` harness is enough when the shell has no tty.
