@@ -287,9 +287,7 @@ func (b *openBroker) start(ctx context.Context, rt runtime.Runtime, repo, artifa
 	if err := errors.Join(configErr, secretErr); err != nil {
 		return errors.New("encode the MCP credential broker configuration")
 	}
-	// Readable by the helper's own user, inside a directory only this user can enter.
-	configPath, secretsPath := filepath.Join(b.dir, "broker.json"), filepath.Join(b.dir, "secrets.json")
-	err = errors.Join(os.WriteFile(configPath, append(configData, '\n'), 0o444), os.WriteFile(secretsPath, secretData, 0o444))
+	configPath, secretsPath, err := b.writeFiles(append(configData, '\n'), secretData)
 	clear(secretData)
 	if err != nil {
 		return fmt.Errorf("prepare the MCP credential broker: %w", err)
@@ -304,6 +302,14 @@ func (b *openBroker) start(ctx context.Context, rt runtime.Runtime, repo, artifa
 		return fmt.Errorf("start the MCP credential broker: %w", err)
 	}
 	return b.waitReady()
+}
+
+// writeFiles leaves both files readable by the helper's own user, inside a directory only this
+// user can enter. Modes are set, not left to the umask: under `umask 077` WriteFile leaves 0400.
+func (b *openBroker) writeFiles(configData, secretData []byte) (string, string, error) {
+	configPath, secretsPath := filepath.Join(b.dir, "broker.json"), filepath.Join(b.dir, "secrets.json")
+	return configPath, secretsPath, errors.Join(config.WriteFileAtomicMode(configPath, configData, 0o444),
+		config.WriteFileAtomicMode(secretsPath, secretData, 0o444))
 }
 
 // waitReady takes the one line the helper prints once every listener accepts: the address the box

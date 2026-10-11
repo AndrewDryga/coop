@@ -24,6 +24,10 @@
   changes", still followed by the `Coop-Review` trailer. Workers advertise
   `review-commit-message:1` once their daemon accepts the field.
 
+- **MCP credential brokers start under strict file permissions.** The broker's configuration
+  and secret files are written with their modes set, so a private umask no longer leaves them
+  unreadable to the broker's own user.
+
 ## 11.0.2
 
 - **Providers start under strict file permissions.** Native provider helpers now receive

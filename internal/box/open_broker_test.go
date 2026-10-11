@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -272,6 +273,28 @@ func TestAnOpenSessionHandsOverStandInsAndNothingElse(t *testing.T) {
 	for _, gone := range []string{"docs-secret", "tickets-secret", "stream-secret", "docs.example"} {
 		if strings.Contains(data, gone) {
 			t.Errorf("the handoff carries %q:\n%s", gone, data)
+		}
+	}
+}
+
+// Under `umask 077` the MCP broker's files were written 0400 by the host user, so the helper, which
+// reads them as its own UID, could not start. The same umask stopped every native broker on Ryker's
+// bundled worker on 2026-10-11.
+func TestOpenBrokerFilesStayReadableUnderAPrivateUmask(t *testing.T) {
+	previous := syscall.Umask(0o077)
+	defer syscall.Umask(previous)
+	b := &openBroker{dir: t.TempDir()}
+	configPath, secretsPath, err := b.writeFiles([]byte("{}\n"), []byte("{}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{configPath, secretsPath} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o444 {
+			t.Errorf("%s is %o under umask 077, want 444: the broker's own UID cannot read it", filepath.Base(path), got)
 		}
 	}
 }
