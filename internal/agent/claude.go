@@ -104,6 +104,7 @@ func claudeBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	if selection == "apikey" {
 		return []NativeBrokerRoute{
 			{Host: "api.anthropic.com", Method: "POST", Path: "/v1/messages", Query: "beta=true", Header: "X-Api-Key"},
+			{Host: "api.anthropic.com", Method: "GET", Path: "/api/claude_code/policy_limits", Header: "X-Api-Key"},
 			{Host: "api.anthropic.com", Method: "GET", Path: "/api/claude_code/settings", Header: "X-Api-Key"},
 		}, nil
 	}
