@@ -50,6 +50,8 @@ const (
 	sessionCreateConcurrency        = 2
 	runtimeCleanupBatchSize         = 2
 	startupReapErrorLimit           = 8
+	defaultParkedRuntimeWait        = 10 * time.Second
+	parkedRuntimePoll               = 25 * time.Millisecond
 )
 
 // executionConfig is derived from one authenticated, immutable controller job.
@@ -168,7 +170,7 @@ func (s *Service) executeEnsureWorkspaceTask(
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	if sess.WorkspaceTask == nil {
-		release, ok := s.beginWorkspaceMutation(req.SessionID)
+		release, ok := s.beginWorkspaceMutation(ctx, req.SessionID)
 		if !ok {
 			return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
 				Code: session.CodeInvalidSessionState, Detail: "workspace task requires a parked runtime",
@@ -403,6 +405,7 @@ type Service struct {
 	runtimeLocks            map[string]*sessionOperationLock
 	runtimeSlots            map[string]bool
 	runtimeChanged          chan struct{}
+	parkedRuntimeWait       time.Duration   // how long a "parked" precondition waits out a held runtime
 	restoring               map[string]bool // sessions whose workspace a restore is rewriting right now
 	testDuringRestoreFiles  func()          // test seam: runs while the restore holds the runtime and rewrites files
 	runtimeCleanupMu        sync.Mutex
@@ -455,6 +458,7 @@ func NewService(cfg Config) (*Service, error) {
 		runtimeLocks:       make(map[string]*sessionOperationLock),
 		runtimeCleanupDone: make(map[string]runtimeCleanupStamp),
 		historicalPending:  make(map[string]struct{}),
+		parkedRuntimeWait:  defaultParkedRuntimeWait,
 	}
 	if service.stopTimeout <= 0 {
 		service.stopTimeout = DefaultStopTimeout
@@ -554,11 +558,45 @@ func (s *Service) tryLockSessionRuntime(sessionID string) (func(), bool) {
 	return s.acquireSessionRuntime(sessionID, true)
 }
 
+// lockParkedRuntime takes the runtime for a caller whose precondition is "parked". The runtime
+// janitor holds each parked session's runtime while it checks it, so a runtime held while the
+// session has no turn is waited out for a few seconds. On 2026-10-11 a Ryker task follow-up
+// stopped for a person on "restore requires a parked runtime" one second after its session was
+// created, while the janitor checked that new, parked session. A session with a turn running or
+// queued is still refused at once.
+func (s *Service) lockParkedRuntime(ctx context.Context, sessionID string) (func(), bool) {
+	deadline := time.Now().Add(s.parkedRuntimeWait)
+	for {
+		if unlock, ok := s.tryLockSessionRuntime(sessionID); ok {
+			return unlock, true
+		}
+		if s.sessionHasTurn(ctx, sessionID) || !time.Now().Before(deadline) {
+			return nil, false
+		}
+		timer := time.NewTimer(parkedRuntimePoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, false
+		case <-timer.C:
+		}
+	}
+}
+
+// sessionHasTurn reports whether the store records a turn running or queued on the session, so a
+// held runtime is that turn's and not a moment's housekeeping. A session it cannot read counts as
+// having one.
+func (s *Service) sessionHasTurn(ctx context.Context, sessionID string) bool {
+	sess, err := s.store.GetSession(ctx, sessionID)
+	return err != nil || sess.Activity != session.ActivityParked || sess.ActiveTurnID != "" ||
+		sess.QueuedTurnCount > 0
+}
+
 // beginWorkspaceMutation fences checkpoint restore and initial controller-task projection
 // against both runtime execution and turn admission. A turn queued first makes the caller's
 // unused-session check refuse before any file work; SubmitTurn refuses while the mark is set.
-func (s *Service) beginWorkspaceMutation(sessionID string) (func(), bool) {
-	unlock, ok := s.tryLockSessionRuntime(sessionID)
+func (s *Service) beginWorkspaceMutation(ctx context.Context, sessionID string) (func(), bool) {
+	unlock, ok := s.lockParkedRuntime(ctx, sessionID)
 	if !ok {
 		return nil, false
 	}

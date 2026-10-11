@@ -265,11 +265,12 @@ func (s *Service) resumeReview(
 }
 
 func (s *Service) executeReview(ctx context.Context, op session.Operation, req RunReviewRequest) (ReviewDossier, error) {
-	// Review requires a parked session, so a runtime already owned by a running turn, another
-	// review, or cleanup is the documented state conflict — reported now, not after waiting up to
-	// a turn timeout for the lock. Check the cheap durable preconditions before evicting a
-	// healthy warm child, then remove that last possible workspace writer before reading Git.
-	unlock, ok := s.tryLockSessionRuntime(req.SessionID)
+	// Review requires a parked session, so a runtime owned by a running turn is the documented
+	// state conflict — reported now, not after waiting up to a turn timeout for the lock — and one
+	// another review or cleanup still owns after lockParkedRuntime's short wait is too. Check the
+	// cheap durable preconditions before evicting a healthy warm child, then remove that last
+	// possible workspace writer before reading Git.
+	unlock, ok := s.lockParkedRuntime(ctx, req.SessionID)
 	if !ok {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, &session.Error{
 			Code:   session.CodeInvalidSessionState,

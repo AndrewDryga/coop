@@ -28,6 +28,11 @@
   and secret files are written with their modes set, so a private umask no longer leaves them
   unreadable to the broker's own user.
 
+- **A parked session is not refused while Coop checks it.** Restore, checkpoint, task binding
+  and review wait up to ten seconds for a session runtime that Coop's own cleanup briefly holds,
+  instead of refusing as if a turn were running. A session with a turn running or queued is
+  still refused at once.
+
 ## 11.0.2
 
 - **Providers start under strict file permissions.** Native provider helpers now receive

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -201,6 +202,7 @@ func TestRefusedTaskBindingCannotCreateOrHideAnotherProjection(t *testing.T) {
 			} else if refusal == "stale revision" {
 				request.ExpectedRevision++
 			} else if refusal == "busy runtime" {
+				service.parkedRuntimeWait = 10 * time.Millisecond
 				release := service.lockSessionRuntime(sess.ID)
 				defer release()
 			} else if refusal == "queued turn" || refusal == "active turn" {

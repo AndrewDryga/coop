@@ -106,6 +106,78 @@ func mustDigest(data []byte) []byte {
 	return digest[:]
 }
 
+// Coop's runtime janitor holds a parked session's runtime while it checks it. A restore that arrived
+// meanwhile was refused as if a turn were running: on 2026-10-11 a Ryker task follow-up stopped for a
+// person on "restore requires a parked runtime" one second after its new session was created, and
+// only a person's retry, with a whole new session, got past it. A runtime still held once the short
+// wait is over is refused as before (TestSubmitTurnDoesNotWaitForARunningTurn holds that a session
+// running a turn is refused at once).
+func TestRestoreWaitsOutTheJanitorsCheckOfAParkedSession(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repository, git := gitrepo.New(t)
+	sessionWorkspaceWrite(t, filepath.Join(repository, ".gitignore"), ".agent/tasks/\n")
+	sessionWorkspaceWrite(t, filepath.Join(repository, "tracked.txt"), "base\n")
+	git("add", ".")
+	git("commit", "-qm", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repository, nil)
+	defer service.Stop()
+	ctx := context.Background()
+	source, err := service.CreateRemoteSession(ctx, "janitor-source", service.request(t, "offer:janitor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err = service.EnsureWorkspaceTask(ctx, "janitor-task", EnsureWorkspaceTaskRequest{
+		SessionID: source.ID, ExpectedRevision: source.Revision,
+		Task: tasks.ControllerTaskDraft{OfferRef: "offer:janitor", Title: "Follow up", Prompt: "Keep the earlier work.", SuccessChecks: []string{"restored"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceWrite(t, filepath.Join(source.Workspace, "tracked.txt"), "earlier work\n")
+	captured, err := service.CheckpointWorkspace(ctx, "janitor-capture", CheckpointWorkspaceRequest{
+		SessionID: source.ID, SessionRef: "source", ExpectedRevision: source.Revision, PlacementGeneration: 1, RepositoryRef: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := readCheckpointBundle(t, service.Service, captured.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := service.CreateRemoteSession(ctx, "janitor-target", service.request(t, "offer:janitor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := func(key string) (session.Session, error) {
+		return service.RestoreWorkspaceCheckpoint(ctx, key, RestoreWorkspaceCheckpointRequest{
+			SessionID: target.ID, ExpectedRevision: target.Revision, Checkpoint: captured.Checkpoint, Stream: bytes.NewReader(bundle),
+		})
+	}
+
+	service.parkedRuntimeWait = 100 * time.Millisecond
+	turn := service.lockSessionRuntime(target.ID)
+	_, err = restore("restore-during-turn")
+	turn()
+	if err == nil || !strings.Contains(err.Error(), "restore requires a parked runtime") {
+		t.Fatalf("a restore under a runtime held past the wait = %v, want the parked-runtime refusal", err)
+	}
+
+	service.parkedRuntimeWait = 10 * time.Second
+	janitor := service.lockSessionRuntime(target.ID)
+	time.AfterFunc(300*time.Millisecond, janitor)
+	restored, err := restore("restore-during-janitor")
+	if err != nil {
+		t.Fatalf("a restore during the janitor's check of a parked session was refused: %v", err)
+	}
+	if restored.WorkspaceTask == nil || *restored.WorkspaceTask != *source.WorkspaceTask {
+		t.Fatalf("restored session = %+v, source task = %+v", restored, source.WorkspaceTask)
+	}
+	if got, err := os.ReadFile(filepath.Join(restored.Workspace, "tracked.txt")); err != nil || string(got) != "earlier work\n" {
+		t.Fatalf("restored work = %q, %v", got, err)
+	}
+}
+
 func TestCheckpointDiskRefusalCancellationAndOwnedStageCleanup(t *testing.T) {
 	ctx := context.Background()
 	repository, git := gitrepo.New(t)
