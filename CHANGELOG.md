@@ -4,14 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-## 11.0.1
-
 - **Codex starts with the selected workspace.** Native account discovery now matches the
   public broker identity while preserving upstream workspace routing and sibling accounts.
 
-- **Claude loads managed settings normally.** The broker admits the native settings request
-  for subscription and API-key accounts, eliminating false access-denied warnings without
-  changing genuine upstream policy or authentication errors.
+- **Claude loads managed settings and organization policy normally.** The broker admits exact
+  native policy requests for subscription and API-key accounts, eliminating false access-denied
+  warnings without changing genuine upstream policy or authentication errors.
 
 - **Provider sessions survive transient VM file reads.** Credential leases reopen briefly
   incomplete or missing atomic publications instead of permanently disconnecting a healthy
