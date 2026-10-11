@@ -1,12 +1,21 @@
 # Changelog
 
-## Unreleased
+## 11.0.2
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+- **Providers start under strict file permissions.** Native provider helpers now receive
+  readable public configuration when the host uses a private umask. Secret custody remains
+  owner-only and outside the provider box.
 
-- Shell completion now fills in account names and actions for `coop credentials`.
-- Provider sessions allow transient host-to-VM credential-file reads to recover within the
-  existing load deadline, instead of stopping after three reads. Invalid accounts still fail closed.
+- **Provider sessions recover from brief credential-file read failures.** Transient
+  host-to-VM reads can recover within the existing load deadline, instead of stopping after
+  three reads. Invalid accounts still fail closed.
+
+- **Task bookkeeping stays out of code changes.** Verified controller-managed task files
+  no longer appear as unfinished product changes, including after checkpoint recovery.
+  Actual code changes and unrelated files remain visible.
+
+- **Credential completion fills in accounts and actions.** Shell completion now fills in
+  account names and actions for `coop credentials`.
 
 ## 11.0.1
 
