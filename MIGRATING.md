@@ -1,5 +1,18 @@
 # Migrating
 
+## v11.1.0: project image preparation
+
+When upgrading from v11.0.2 or earlier, run `coop update --box-only` once with the newly
+installed binary. The older updater continues in its old process after installation, so that
+first update can still build an ordinary image using old definitions. Subsequent updates
+prepare the project's effective network mode using the installed version.
+
+A filtered interactive provider launch in a host terminal may also offer Build and continue,
+defaulting to No. Review the saved snapshot displayed by the prompt; that single decision
+approves only those build files, not future edits. Headless commands, editor connections,
+loops and controller jobs do not receive this prompt. Project builds still use ordinary
+networking, independent of runtime network restrictions.
+
 ## v11.0.0: upgrading from v10.1.2
 
 Coding and editor sessions now use complete native homes scoped to their repository. Ordinary

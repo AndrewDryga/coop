@@ -607,6 +607,10 @@ func (claudeAgent) base(cfg *config.Config) []string {
 
 func (a claudeAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }
 
+func (claudeAgent) InteractiveInvocation(cmd []string) bool {
+	return nativeInteractiveCommand(cmd, []string{"-p", "--print", "--output-format", "--input-format", "--help", "-h", "--version", "-v", "auth", "mcp", "plugin", "plugins", "doctor", "install", "update", "setup-token"}, []string{"--model", "--effort", "--append-system-prompt", "--system-prompt", "--settings", "--permission-mode", "--add-dir"})
+}
+
 func (a claudeAgent) Headless(cfg *config.Config, prompt string) []string {
 	return append(a.base(cfg), "-p", prompt)
 }

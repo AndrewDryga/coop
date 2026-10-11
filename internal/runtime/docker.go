@@ -48,6 +48,12 @@ func BindDocker(ctx context.Context, rt Runtime, endpoint, expectedID string) (*
 	return bindDocker(ctx, rt, endpoint, expectedID, expectedID == "")
 }
 
+// BindDockerForSetup preserves a frozen daemon identity while permitting explicit image
+// preparation and its qualification probes. A recovery binding must never gain this authority.
+func BindDockerForSetup(ctx context.Context, rt Runtime, endpoint, expectedID string) (*Docker, error) {
+	return bindDocker(ctx, rt, endpoint, expectedID, true)
+}
+
 // InspectDocker binds read-only inventory before policy admission determines
 // whether a launch needs gateway qualification. It grants no create/start
 // authority, including on ordinary rootless or otherwise unqualified engines.
@@ -376,28 +382,7 @@ func (d *Docker) readInfo(ctx context.Context) (DockerInfo, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	// The socket is the endpoint's literal bytes after unix://, as the docker CLI reads it for every
-	// other operation: a URL-decoded path could name a different socket, and so another daemon.
-	socket, ok := strings.CutPrefix(d.endpoint, "unix://")
-	if !ok || !validDockerEndpoint(d.endpoint) {
-		return DockerInfo{}, errors.Join(errDockerCommandNotStarted, errors.New("Docker endpoint is not a local socket"))
-	}
-	client := http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				var dialer net.Dialer
-				return dialer.DialContext(ctx, "unix", socket)
-			},
-			DisableKeepAlives: true,
-		},
-		// the Docker client follows no redirect, and neither does this
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/info", nil)
-	if err != nil {
-		return DockerInfo{}, errors.Join(errDockerCommandNotStarted, err)
-	}
-	response, err := client.Do(request)
+	response, err := d.daemonGet(ctx, "/info")
 	if err != nil {
 		if ctx.Err() != nil {
 			return DockerInfo{}, ctx.Err()
@@ -405,7 +390,6 @@ func (d *Docker) readInfo(ctx context.Context) (DockerInfo, error) {
 		return DockerInfo{}, errors.New("Docker daemon observation failed")
 	}
 	defer response.Body.Close()
-	// a daemon's whole /info runs to tens of KiB; its plugins and registries are not read
 	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
 	if err != nil && ctx.Err() != nil {
 		return DockerInfo{}, ctx.Err()
@@ -421,6 +405,31 @@ func (d *Docker) readInfo(ctx context.Context) (DockerInfo, error) {
 		return DockerInfo{}, errors.New("Docker daemon observation is invalid")
 	}
 	return info, nil
+}
+
+func (d *Docker) daemonGet(ctx context.Context, path string) (*http.Response, error) {
+	// The socket is the endpoint's literal bytes after unix://, as the docker CLI reads it for every
+	// other operation: a URL-decoded path could name a different socket, and so another daemon.
+	socket, ok := strings.CutPrefix(d.endpoint, "unix://")
+	if !ok || !validDockerEndpoint(d.endpoint) {
+		return nil, errors.Join(errDockerCommandNotStarted, errors.New("Docker endpoint is not a local socket"))
+	}
+	client := http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var dialer net.Dialer
+				return dialer.DialContext(ctx, "unix", socket)
+			},
+			DisableKeepAlives: true,
+		},
+		// the Docker client follows no redirect, and neither does this
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker"+path, nil)
+	if err != nil {
+		return nil, errors.Join(errDockerCommandNotStarted, err)
+	}
+	return client.Do(request)
 }
 
 func (d *Docker) Verify(ctx context.Context) error {

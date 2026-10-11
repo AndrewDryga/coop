@@ -4,6 +4,21 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Updates prepare the image your project actually uses.** After installing a new release,
+  Coop uses that version's image definitions and the project's effective network mode.
+  Filtered projects no longer finish updating with only an unused ordinary image built.
+  When upgrading from v11.0.2 or earlier, run `coop update --box-only` once using the newly
+  installed binary; the older updater cannot use the new preparation flow.
+
+- **Build and continue from an interactive launch.** When a filtered project needs a build,
+  Coop offers the next step before slow launch setup. Review the saved build snapshot and
+  approve it once; unattended runs still require an explicit host build. Later edits are not
+  approved, and project builds remain on the selected Docker daemon.
+
+- **Image checks distinguish missing builds from Docker failures.** Missing or changed project
+  builds are explained early. Docker observation failures retain their real cause, and
+  `update --check` no longer reports ordinary-image records for filtered projects.
+
 ## 11.0.2
 
 - **Providers start under strict file permissions.** Native provider helpers now receive

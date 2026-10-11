@@ -38,23 +38,32 @@ func projectBuildRecordName(id string) string { return "projectbuild-" + id + ".
 // ApprovedProjectBuild returns an explicitly built image for exactly these inputs, or "" when
 // approval is missing, unreadable, foreign, legacy or for other inputs.
 func (s *Store) ApprovedProjectBuild(tag, inputs string) string {
+	image, _ := s.ProjectBuildStatus(tag, inputs)
+	return image
+}
+
+// ProjectBuildStatus explains a readiness miss without granting build or launch authority.
+// The immutable image still needs the caller's existence and derivation/client proofs.
+func (s *Store) ProjectBuildStatus(tag, inputs string) (image, reason string) {
 	if s.intactAuthority() != nil || !lowerHex(inputs, 64) {
-		return ""
+		return "", "the saved project build approval is unavailable"
 	}
 	id, err := s.projectBuildID(tag)
 	if err != nil {
-		return ""
+		return "", "the saved project build approval is unavailable"
 	}
 	data, err := s.read(projectBuildRecordName(id), maxPrivateRecordBytes)
 	if err != nil {
-		return ""
+		return "", "no explicit project build is recorded for this client image"
 	}
 	var record projectBuildRecord
-	if strictJSON(data, &record) != nil || record.Version != 2 || record.ID != id || record.Tag != tag ||
-		record.Inputs != inputs || !imageDigest(record.Image) {
-		return ""
+	if strictJSON(data, &record) != nil || record.Version != 2 || record.ID != id || record.Tag != tag || !imageDigest(record.Image) {
+		return "", "the saved project build approval is no longer usable"
 	}
-	return record.Image
+	if record.Inputs != inputs {
+		return "", "project build inputs or settings changed since the explicit build"
+	}
+	return record.Image, ""
 }
 
 // ApproveProjectBuild records an explicit host build after its proofs, replacing the tag's previous

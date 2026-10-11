@@ -241,7 +241,7 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	// launch's posture and, for filtered mode, freezes the policy the gateway
 	// will enforce. An open or offline run gets a nil capture and proceeds
 	// exactly as it does today.
-	capture, err := box.AdmitNetwork(a.cfg, a.rt, spec, a.network.admission())
+	capture, err := a.admitInteractiveNetwork(spec, session)
 	if err != nil {
 		return 1, err
 	}

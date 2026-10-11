@@ -625,21 +625,15 @@ func (e *StageError) Error() string { return "staging the build context: " + e.E
 
 func (e *StageError) Unwrap() error { return e.Err }
 
-// buildProjectOnBase builds a repository's own box Dockerfile ON TOP of base, tagged tag, through
-// the same staged context and build arguments `coop build` uses. Only an explicit host build calls
-// it. The returned ID and digest describe this exact build, not a later read of the tag or checkout.
-func buildProjectOnBase(ctx context.Context, rt runtime.Runtime, repo string, entries []contextEntry, dfRel, tag, base string, stderr io.Writer) (image, staged string, err error) {
-	dir, staged, cleanup, err := stageContextEntries(ctx, repo, entries)
-	if err != nil {
-		return "", "", &StageError{Err: err}
-	}
-	defer cleanup()
+// The staged context may have been reviewed before a host confirmation. Never reread the
+// checkout here: that would execute instructions the confirmation did not cover.
+func buildStagedProjectOnBase(ctx context.Context, rt runtime.Runtime, dir string, entries []contextEntry, dfRel, tag, base string, lease *os.File, stderr io.Writer) (image string, err error) {
 	if err := validateProjectBuildFiles(dir, entries, dfRel); err != nil {
-		return "", "", &StageError{Err: err}
+		return "", &StageError{Err: err}
 	}
 	idFile, err := os.CreateTemp("", "coop-build-id-")
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	_ = idFile.Close()
 	defer os.Remove(idFile.Name())
@@ -650,17 +644,17 @@ func buildProjectOnBase(ctx context.Context, rt runtime.Runtime, repo string, en
 		labels = append(labels, derivedImageLabel+"="+project)
 	}
 	args := projectBuildArgs(dir, dfRel, tag, base, true, false, labels...)
-	code, runErr := rt.RunInterruptible(ctx, nil, nil, stderr, append([]string{"build", "--iidfile", idFile.Name()}, args[1:]...)...)
+	code, runErr := rt.RunProjectBuild(ctx, lease, nil, stderr, append([]string{"build", "--iidfile", idFile.Name()}, args[1:]...)...)
 	if runErr != nil {
-		return "", "", runErr
+		return "", runErr
 	}
 	if code != 0 {
-		return "", "", fmt.Errorf("%s build exited with status %d", filepath.Base(rt.Name), code)
+		return "", fmt.Errorf("%s build exited with status %d", filepath.Base(rt.Name), code)
 	}
 	if image, err = readImageID(idFile.Name()); err != nil {
-		return "", "", err
+		return "", err
 	}
-	return image, staged, nil
+	return image, nil
 }
 
 // projectBuildArgs assembles the `<runtime> build` args for a project Dockerfile at dfRel inside the
@@ -911,7 +905,11 @@ func contextDigest(ctx context.Context, repo string, entries []contextEntry, wri
 // stageContextEntries copies entries into a throwaway dir and returns the digest of exactly what it
 // wrote.
 func stageContextEntries(ctx context.Context, repo string, entries []contextEntry) (string, string, func(), error) {
-	dir, err := os.MkdirTemp("", "coop-buildctx-")
+	return stageContextEntriesUnder(ctx, repo, entries, "")
+}
+
+func stageContextEntriesUnder(ctx context.Context, repo string, entries []contextEntry, parent string) (string, string, func(), error) {
+	dir, err := os.MkdirTemp(parent, "coop-buildctx-")
 	if err != nil {
 		return "", "", func() {}, err
 	}

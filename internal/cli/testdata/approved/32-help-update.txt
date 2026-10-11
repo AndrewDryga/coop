@@ -3,16 +3,17 @@ coop update — update Coop and rebuild the box image
 Usage:
   coop update [--self-only | --box-only | --check]
 
-Updates the Coop binary when a newer release is available, then rebuilds
-the box on newer base-image components. The agent CLIs and editor adapters
-stay at the versions this Coop release qualifies.
-Downloaded releases are checked before replacing the binary.
-The rebuild prepares the ordinary image; filtered project images require
-coop build --egress filtered. Project builds use ordinary networking.
+Updates the Coop binary when a newer release is available, then prepares
+the image for this project's effective network mode using the installed
+version's image definitions. Filtered projects use the pinned client base
+and record their explicit project build. Open and offline images refresh
+base-image components. Agent CLIs and editor adapters remain pinned.
+Downloaded releases are checked before replacing the binary. Project
+builds use ordinary networking; review the Dockerfile and copied files.
 
 OPTIONS
   --self-only  update only the Coop binary; no container runtime needed
-  --box-only   rebuild only the box image, fetching newer components
+  --box-only   prepare only this project's effective box image
   --check      report available updates and local build records; change nothing
 
 Choose at most one option. --check does not need a container runtime.

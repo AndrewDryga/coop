@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -33,6 +35,9 @@ var errDockerStartupProbe = errors.New("attached Docker startup observation unav
 
 const dockerImageFormat = `{"ID":{{json .Id}},"Labels":{{json (index .Config "Labels")}}}`
 
+// ErrDockerImageMissing is proven absence on the bound daemon, not an inspection failure.
+var ErrDockerImageMissing = errors.New("Docker image is missing")
+
 func (d *Docker) Image(ctx context.Context, name string) (string, map[string]string, error) {
 	if !dockerToken(name, 512) || strings.HasPrefix(name, "-") {
 		return "", nil, errors.New("invalid Docker image reference")
@@ -44,6 +49,20 @@ func (d *Docker) Image(ctx context.Context, name string) (string, map[string]str
 	// direct .Config.Labels fails its missingkey template policy before JSON.
 	data, err := d.output(ctx, 64<<10, "image", "inspect", "--format", dockerImageFormat, name)
 	if err != nil {
+		// A CLI failure alone proves nothing. Only the exact daemon's API 404 establishes
+		// absence, with identity checks on both sides; transport and malformed data stay errors.
+		probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		response, probeErr := d.daemonGet(probeCtx, "/images/"+url.PathEscape(name)+"/json")
+		if probeErr == nil {
+			defer response.Body.Close()
+			if response.StatusCode == http.StatusNotFound {
+				if verifyErr := d.Verify(probeCtx); verifyErr != nil {
+					return "", nil, verifyErr
+				}
+				return "", nil, ErrDockerImageMissing
+			}
+		}
 		return "", nil, err
 	}
 	var image struct {

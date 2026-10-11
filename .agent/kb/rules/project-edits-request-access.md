@@ -4,7 +4,7 @@ description: project configuration requests access; one host approval grants it,
 scope: security
 sources: [internal/cli/net_approve.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/box/run.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/composecheck.go]
 check: none
-updated: 2026-09-23
+updated: 2026-10-11
 ---
 
 # Approve added access, not ordinary development
@@ -29,13 +29,19 @@ storage automatic, except that a service receiving approved secret files or outs
 keeps the exact reviewed image ID; see [[filtered-services-share-network-restrictions]]. Unused
 services stay stopped without triggering approval. Preserve the
 explicit restricted project-build boundary in [[restricted-project-builds-are-explicit]]:
-runtime source edits remain live, but a filtered/offline launch cannot execute a new Docker build.
+runtime source edits remain live, but a filtered/offline launch cannot automatically execute a
+new Docker build. The linked rule's single host-terminal snapshot confirmation is an explicit
+build decision, not a reusable project permission. Offline and unattended paths still refuse.
 Preserve prohibitions and destructive-command confirmations; do not convert them to reusable
 permission grants.
 Tests must prove refusal before execution/mounts, same-snapshot publication/startup, and real runtime
 denial from agent-controlled services. A command rename or UI warning is not enforcement.
 
 ## Changelog
+
+- 2026-10-11 — synchronized the owner-approved host-terminal snapshot build exception.
+  Swept the direct, fork, ACP and controller launch callers with the linked build rule;
+  no network or service permission grant is widened by this one build decision.
 
 - 2026-09-23 — added the narrow human-approved image-ID exception for services granted
   protected host data; swept the startup/approval paths and kept ordinary updates automatic.

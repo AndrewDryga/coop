@@ -472,6 +472,10 @@ func (grokAgent) base(cfg *config.Config) []string {
 
 func (a grokAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }
 
+func (grokAgent) InteractiveInvocation(cmd []string) bool {
+	return nativeInteractiveCommand(cmd, []string{"-p", "--single", "--output-format", "--help", "-h", "--version", "-v", "login", "logout", "auth", "mcp", "inspect", "update"}, []string{"--model", "--effort"})
+}
+
 // Headless is grok's single-turn form: `grok -p "<prompt>"` prints one response and exits.
 // -p/--single takes the prompt as its VALUE, so the prompt must be the token right after it
 // (never a flag) — hence it's appended last, after base's model/permission flags.

@@ -120,6 +120,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [case-figures-outside-case-blocks](case-figures-outside-case-blocks.md) — a homepage figure sits above or below its case's block, never inside it; a chapter gives every case a figure or none
 
 **The box**
+- [update-prepares-the-effective-project-image](update-prepares-the-effective-project-image.md) — updates use installed definitions and effective mode; missing project builds are handled before slow setup
 - [box-logins-device-code](box-logins-device-code.md) — boxed agent logins use device-code/paste flows; browser OAuth hangs in a container
 - [box-toolchain-on-login-path](box-toolchain-on-login-path.md) — a box toolchain goes on the login PATH too, not just `ENV PATH`
 - [isolate-state-dont-serialize](isolate-state-dont-serialize.md) — when shared state breaks concurrency, isolate the state; never lock the users of it
@@ -134,7 +135,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [scaffold-config-reads-well](scaffold-config-reads-well.md) — scaffolded config leads every field with its comment and works as-is
 
 **Security**
-- [restricted-project-builds-are-explicit](restricted-project-builds-are-explicit.md) — restricted launches require explicit host project builds; open editor connects may prepare missing images, while stale inputs still need a build
+- [restricted-project-builds-are-explicit](restricted-project-builds-are-explicit.md) — restricted launches require explicit builds; native host terminals may confirm one private snapshot, never future edits
 - [eval-oracles-outside-agent-authority](eval-oracles-outside-agent-authority.md) — hidden eval material stays outside mounts, Git history, images, caches and every candidate tool path
 - [project-edits-request-access](project-edits-request-access.md) — one host approval grants requested access; check before execution and enforce agent/service permissions without approving ordinary edits
 - [coopignore-read-only-in-boxes](coopignore-read-only-in-boxes.md) — keep .coopignore readable but read-only in every box, with ordinary host editing and no policy-approval workflow

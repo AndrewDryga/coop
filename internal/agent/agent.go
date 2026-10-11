@@ -132,6 +132,29 @@ func hasFlag(cmd []string, names []string) string {
 	return ""
 }
 
+// Host confirmation is conservative: print/protocol and maintenance argv cannot acquire it,
+// including joined short flags. Native-history/session classification has a different purpose.
+func nativeInteractiveCommand(cmd, denied, valueFlags []string) bool {
+	if len(cmd) == 0 {
+		return false
+	}
+	for i := 1; i < len(cmd); i++ {
+		arg := cmd[i]
+		for _, token := range denied {
+			if arg == token || strings.HasPrefix(arg, token+"=") ||
+				len(token) == 2 && token[0] == '-' && strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.Contains(arg[1:], token[1:]) {
+				return false
+			}
+		}
+		// Adapter-owned, known value flags keep an innocent model/prompt value from being
+		// mistaken for an administrative verb. Unknown grammar remains conservative.
+		if slices.Contains(valueFlags, arg) && i+1 < len(cmd) && !strings.HasPrefix(cmd[i+1], "-") {
+			i++
+		}
+	}
+	return true
+}
+
 // EffortFlagStyle is how an agent's command expresses one reasoning-effort value.
 type EffortFlagStyle uint8
 
@@ -534,6 +557,9 @@ type Agent interface {
 	Vendor() string
 	// Interactive is the autonomous default command — what `coop <agent>` runs.
 	Interactive(cfg *config.Config) []string
+	// InteractiveInvocation distinguishes native TUI commands from print/protocol commands.
+	// Host build confirmation uses this, not native-history session production.
+	InteractiveInvocation(cmd []string) bool
 	// Headless is the one-shot, non-interactive form carrying a prompt (the loop).
 	Headless(cfg *config.Config, prompt string) []string
 	// HeadlessSession starts or resumes one exact non-interactive native session. Review uses it

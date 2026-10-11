@@ -2,15 +2,19 @@
 name: restricted-project-builds-are-explicit
 description: restricted launches consume explicit host project builds; open mode permits automatic preparation only where implemented
 scope: security
-sources: [internal/box/derived_image.go, internal/box/project_build.go, internal/box/image.go, internal/networkstate/project_builds.go, internal/cli/build_cmd.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/forkctl/merge.go]
-check: "go test ./internal/box -run 'TestFilteredProjectImageRequiresExplicitBuild|TestFilteredProjectImageReusesAnUnchangedBuild|TestAutomaticProjectBuildRequiresOpenNetworking'"
-updated: 2026-09-30
+sources: [internal/box/derived_image.go, internal/box/project_build.go, internal/box/project_preparation.go, internal/box/image.go, internal/networkstate/project_builds.go, internal/cli/project_build.go, internal/cli/build_cmd.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/forkctl/merge.go]
+check: "go test ./internal/box -run 'TestFilteredProjectImageRequiresExplicitBuild|TestFilteredProjectImageReusesAnUnchangedBuild|TestAutomaticProjectBuildRequiresOpenNetworking|TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot'"
+updated: 2026-10-11
 ---
 
 # Require explicit host builds when project networking is restricted
 
-Filtered/offline launches must not execute repository build instructions with ordinary build
-networking. Open-network editor connections may prepare a missing project image automatically;
+Filtered/offline launches must not automatically execute repository build instructions with
+ordinary build networking. One host-terminal interactive provider launch may offer default-No
+Build and continue for an inspectable owner-private snapshot captured before consent. That
+single decision covers only those bytes and the selected daemon, never later edits. Headless,
+editor, loop, controller and in-box callers cannot acquire this permission by having a tty.
+Offline launches do not offer it. Open-network editor connections may prepare a missing project image automatically;
 ordinary runs only warn on stale project inputs and need an explicit build. Explicit host builds
 remain available; say plainly that their networking is not restricted by the run's egress policy.
 
@@ -30,6 +34,10 @@ turns and review gates consume no project image in any mode, and a worker never 
 instructions.
 
 ## Changelog
+- 2026-10-11 — owner approved explicit host Build and continue after a late launch refusal.
+  Swept 13 listed source files: unattended/ACP/fork/loop/controller paths retain refusal;
+  only the direct host-terminal path confirms a private snapshot. Added the snapshot check;
+  the canonical gate also covers native headless denials and daemon-binding regressions.
 - 2026-09-30 — rechecked controller turns and review gates in `commands.go`, `merge.go` and
   `box/run.go`: both use the worker image and bypass the job repository's Dockerfile. The earlier
   filtered-review limitation below was superseded by `ReviewControllerJob`; focused open/offline

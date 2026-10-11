@@ -740,6 +740,10 @@ func (geminiAgent) base(cfg *config.Config) []string {
 
 func (a geminiAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }
 
+func (geminiAgent) InteractiveInvocation(cmd []string) bool {
+	return nativeInteractiveCommand(cmd, []string{"-p", "--prompt", "-o", "--output-format", "--acp", "--help", "-h", "--version", "-v", "mcp", "skills", "extensions"}, []string{"--model", "-m", "--prompt-interactive", "-i"})
+}
+
 func (a geminiAgent) Headless(cfg *config.Config, prompt string) []string {
 	return append(a.base(cfg), "-p", prompt)
 }

@@ -1832,7 +1832,11 @@ OPTIONS
 Defaults to this project's effective network mode. Filtered builds use
 Coop's locked client base and record the exact reviewed build inputs.
 Filtered launches reuse that image; changed inputs or a missing image
-require another explicit build. An open editor connection may build a missing
+require another explicit build. An interactive provider launch in a host
+terminal can offer Build and continue, defaulting to No. Review the saved
+snapshot shown by the prompt; only those files are approved for that build.
+Headless commands, editor connections and unattended runs never ask.
+An open editor connection may build a missing
 image automatically; ordinary runs only warn when project inputs change.
 Run coop build --egress open after editing the box Dockerfile or tool versions.
 Offline launches never automatically build project instructions.
@@ -1843,7 +1847,7 @@ The option selects the runtime image; it does not filter build traffic.
 
 Run after changing the box Dockerfile or .tool-versions.
 Builds use the configured versions and available cache.
-Use coop update --box-only to refresh the ordinary image's components.
+Use coop update --box-only to prepare this project's effective image.
 
 New runs use the rebuilt image. Supervised editor sessions restart and
 reconnect. Other running boxes use the old image until their next start.
@@ -1856,16 +1860,17 @@ coop update — update Coop and rebuild the box image
 Usage:
   coop update [--self-only | --box-only | --check]
 
-Updates the Coop binary when a newer release is available, then rebuilds
-the box on newer base-image components. The agent CLIs and editor adapters
-stay at the versions this Coop release qualifies.
-Downloaded releases are checked before replacing the binary.
-The rebuild prepares the ordinary image; filtered project images require
-coop build --egress filtered. Project builds use ordinary networking.
+Updates the Coop binary when a newer release is available, then prepares
+the image for this project's effective network mode using the installed
+version's image definitions. Filtered projects use the pinned client base
+and record their explicit project build. Open and offline images refresh
+base-image components. Agent CLIs and editor adapters remain pinned.
+Downloaded releases are checked before replacing the binary. Project
+builds use ordinary networking; review the Dockerfile and copied files.
 
 OPTIONS
   --self-only  update only the Coop binary; no container runtime needed
-  --box-only   rebuild only the box image, fetching newer components
+  --box-only   prepare only this project's effective box image
   --check      report available updates and local build records; change nothing
 
 Choose at most one option. --check does not need a container runtime.

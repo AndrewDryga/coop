@@ -299,8 +299,10 @@ func TestFilteredProjectBuildCancellationCleansStaging(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
 	finished := make(chan struct{})
 	var buildErr error
+	projectBuildEndpoint(t)
+	rt := frozenProjectRuntime(t, script)
 	go func() {
-		_, _, buildErr = buildFilteredProject(ctx, runtime.Runtime{Name: script}, &config.Config{BoxHome: root}, d, f.store, repo, fixtureCandidate(), io.Discard)
+		_, _, buildErr = buildFilteredProject(ctx, rt, &config.Config{BoxHome: root}, d, f.store, repo, fixtureCandidate(), io.Discard)
 		close(finished)
 	}()
 	defer func() { cancel(); <-finished }()
@@ -336,6 +338,7 @@ func TestFilteredProjectBuildCancellationCleansStaging(t *testing.T) {
 // Only an explicit build executes instructions. Every reuse proves the exact built image; changed
 // inputs, lost images and missing host authority stop rather than restoring build networking.
 func TestFilteredProjectImageReusesAnUnchangedBuild(t *testing.T) {
+	projectBuildEndpoint(t)
 	f, d := filteredFixture(t)
 	derivedImageFixture(t, d)
 	definition, _, _, err := lockedImageDefinition(agents.ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"})
@@ -405,7 +408,7 @@ func TestFilteredProjectImageReusesAnUnchangedBuild(t *testing.T) {
 	}
 	build := func() {
 		t.Helper()
-		if _, _, err := buildFilteredProject(context.Background(), runtime.Runtime{Name: script}, reuseCfg, d, f.store, repo, fixtureCandidate(), io.Discard); err != nil {
+		if _, _, err := buildFilteredProject(context.Background(), frozenProjectRuntime(t, script), reuseCfg, d, f.store, repo, fixtureCandidate(), io.Discard); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -471,7 +474,7 @@ func TestFilteredProjectImageReusesAnUnchangedBuild(t *testing.T) {
 
 	// A lost approval store must not print success for an unusable image.
 	f.store.Close()
-	if _, _, err := buildFilteredProject(context.Background(), runtime.Runtime{Name: script}, reuseCfg, d, f.store, repo, fixtureCandidate(), io.Discard); err == nil || !strings.Contains(err.Error(), "approval could not be saved") {
+	if _, _, err := buildFilteredProject(context.Background(), frozenProjectRuntime(t, script), reuseCfg, d, f.store, repo, fixtureCandidate(), io.Discard); err == nil || !strings.Contains(err.Error(), "approval could not be saved") {
 		t.Fatalf("approval publication failure was hidden: %v", err)
 	}
 }

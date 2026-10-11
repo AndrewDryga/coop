@@ -2,8 +2,8 @@
 name: box-base-image-tags
 description: Coop's shared base is tagged by its box definition so two Coop versions on one host keep their own; why there is no :latest alias, how an upgrade is repaired, and what stays shared
 subsystem: box
-sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
-updated: 2026-09-30
+sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/project_preparation.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/project_build.go, internal/cli/selfupdate.go, internal/runtime/project_build.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
+updated: 2026-10-11
 ---
 
 `COOP_BASE_IMAGE` defaults to the bare repository `coop-box`, which `box.ResolveBaseImage` (run
@@ -42,9 +42,22 @@ ordinary-image availability until admission or capture reconstruction. `restrict
 prepares the shared base eagerly; it never executes project build instructions. An ordinary merge
 or controller-job review gate builds it through `forkctl.Host.EnsureBaseImage` (the CLI's
 `ensureManagedBase`; the daemon's build output goes to the controller-readable review log).
-Filtered gates defer to their captured image instead. `coop build --egress open` and `coop update`
-print `Image: coop-box:<definition>` when preparing the shared image. Until the next launch,
-`coop update --check` and `coop doctor` still report the new tag as not built.
+Filtered gates defer to their captured image instead. `coop build --egress open` prints
+`Image: coop-box:<definition>` when preparing the shared image. `coop update` prepares the
+effective project mode: filtered uses the locked client/gateway pair and explicitly records
+the derived project build; open/offline refresh the ordinary image. Verified self-update
+executes the resolved installed binary before building, retaining cwd/environment/terminal.
+`update --check` deliberately needs no Docker and labels filtered readiness as unchecked.
+
+Filtered project readiness is inspected before network qualification or mount scanning.
+An eligible native host TUI can confirm one private saved build context before continuing.
+The prompt displays that snapshot's Dockerfile, not the mutable checkout. The fixed local
+daemon and default Buildx builder are used for setup, build and re-admission. Final launch
+still proves current inputs, immutable image derivation and pinned client bytes; later edits
+cannot inherit the decision. See [[restricted-project-builds-are-explicit]].
+Saved review contexts live in owner-private leased bundles, never agent mounts. Host and Docker
+client hold the same flock; later preparation reaps only independently unlocked bundles after
+checking their inodes. Closing the host lease never unlocks a surviving client's copy.
 
 A controller job's turns and reviews never resolve a project image. A worker stages every job source in a
 folder named `repository`, so `ImageForRepo` there names one `coop-repository` tag for every
@@ -83,6 +96,8 @@ record, so the 14 days start then), and an image any container still references 
 stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-10-11 — reverified update/admission/derived-image sources. Documented effective-mode
+  preparation, installed-executable handoff, early readiness and one-snapshot confirmation.
 - 2026-09-30 — rechecked eval and controller image selection after the empty-repository eval
   lookup selected the caller's project tag. `SharedImage` now names the common override-or-base
   choice; a checkout's Dockerfile does not affect eval trials or controller jobs.

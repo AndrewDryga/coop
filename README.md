@@ -55,8 +55,12 @@ namespace to keep credentials outside the box. Apple's
 [`container`](https://github.com/apple/container) remains available for raw open-network workloads,
 not provider-brokered or filtered runs. co:op prefers Docker when both are present. The `coop` binary is static.
 
-`coop update` updates the binary and rebuilds the box on a newer base image. Each release carries
-the agent CLIs and ACP adapters it was tested with, so updating co:op updates them too. To build
+`coop update` updates the binary, then uses the installed version to prepare the image for this
+project's network mode. Filtered projects build on the pinned client base; open and offline
+images refresh their base components. If a filtered project needs a build later, an interactive
+provider launch can offer Build and continue. Review the saved snapshot before approving;
+unattended runs still require an explicit host build. Each release carries pinned agent CLIs and
+ACP adapters. To build
 from source, run `git clone https://github.com/AndrewDryga/coop && cd coop && make install`.
 
 <a name="verifying-a-download"></a>

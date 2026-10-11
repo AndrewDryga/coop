@@ -303,6 +303,9 @@ func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, 
 		return nil, err
 	}
 	defer docker.Close()
+	if err := checkFilteredProjectReadiness(ctx, docker, store, spec, networkRuntimeBinding(docker.Info(), docker.Endpoint())); err != nil {
+		return nil, err
+	}
 	qualification, err := ensureNetworkQualification(ctx, func() (*networkstate.Qualification, error) {
 		return currentQualification(ctx, docker, store, policy, cfg.ImageOverride)
 	}, qualify)

@@ -185,7 +185,8 @@ func setupPalette(out io.Writer) ui.Palette {
 func setupImages(ctx context.Context, cfg *config.Config, rt runtime.Runtime, store *networkstate.Store, p ui.Palette, out, errOut io.Writer) (networkstate.CandidateSpec, []networkstate.QualifiedClient, error) {
 	// Setup is the one path that may create runtime state, so it binds with
 	// launch authority. Admission keeps the read-only inventory binding.
-	docker, err := runtime.BindDocker(ctx, rt, "", "")
+	endpoint, daemon := rt.ComposeBinding()
+	docker, err := runtime.BindDockerForSetup(ctx, rt, endpoint, daemon)
 	if err != nil {
 		return networkstate.CandidateSpec{}, nil, err
 	}

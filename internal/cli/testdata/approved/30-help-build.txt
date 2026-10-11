@@ -13,7 +13,11 @@ OPTIONS
 Defaults to this project's effective network mode. Filtered builds use
 Coop's locked client base and record the exact reviewed build inputs.
 Filtered launches reuse that image; changed inputs or a missing image
-require another explicit build. An open editor connection may build a missing
+require another explicit build. An interactive provider launch in a host
+terminal can offer Build and continue, defaulting to No. Review the saved
+snapshot shown by the prompt; only those files are approved for that build.
+Headless commands, editor connections and unattended runs never ask.
+An open editor connection may build a missing
 image automatically; ordinary runs only warn when project inputs change.
 Run coop build --egress open after editing the box Dockerfile or tool versions.
 Offline launches never automatically build project instructions.
@@ -24,7 +28,7 @@ The option selects the runtime image; it does not filter build traffic.
 
 Run after changing the box Dockerfile or .tool-versions.
 Builds use the configured versions and available cache.
-Use coop update --box-only to refresh the ordinary image's components.
+Use coop update --box-only to prepare this project's effective image.
 
 New runs use the rebuilt image. Supervised editor sessions restart and
 reconnect. Other running boxes use the old image until their next start.

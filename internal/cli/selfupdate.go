@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -31,6 +32,7 @@ var (
 
 	// executablePath resolves the running binary; a var so tests can stub it.
 	executablePath = os.Executable
+	updateExec     = syscall.Exec
 
 	updateHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
@@ -103,9 +105,10 @@ const (
 // selfUpdateResult carries the versions involved so the caller can name both without asking
 // GitHub a second time.
 type selfUpdateResult struct {
-	Outcome selfUpdateOutcome
-	Current string // this binary's version, normalized (no leading v)
-	Latest  string // the latest release, normalized; "" when it was never resolved
+	Outcome    selfUpdateOutcome
+	Current    string // this binary's version, normalized (no leading v)
+	Latest     string // the latest release, normalized; "" when it was never resolved
+	Executable string // resolved path actually replaced; only set after a verified install
 }
 
 // installFailure is a hard binary-install failure, carrying the sentence a person reads and
@@ -124,7 +127,7 @@ func (e *installFailure) Unwrap() error { return e.err }
 // what it did. A dev build, an already-current binary and a binary ahead of the release are all
 // no-ops. An inability to *check* for a release is a checkError (soft — the box rebuild still
 // runs); a write-permission or install failure is an installFailure (hard). The box rebuild that
-// follows in cmdUpdate runs in this (pre-update) process; the new binary takes effect next run.
+// follows in cmdUpdate continues in the installed executable, so its own image definitions apply.
 func selfUpdate() (selfUpdateResult, error) {
 	cur := resolveVersion()
 	if !releaseVersion(cur) {
@@ -138,6 +141,9 @@ func selfUpdate() (selfUpdateResult, error) {
 	}
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
+	}
+	if exe, err = filepath.Abs(exe); err != nil {
+		return result, &installFailure{reason: "Could not resolve the running Coop binary: " + err.Error() + ".", unchanged: true, err: err}
 	}
 
 	latest, err := latestReleaseTag()
@@ -165,6 +171,7 @@ func selfUpdate() (selfUpdateResult, error) {
 		return result, err
 	}
 	result.Outcome = selfUpdateInstalled
+	result.Executable = exe
 	return result, nil
 }
 

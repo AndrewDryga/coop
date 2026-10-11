@@ -206,7 +206,7 @@ func (d *filteredDaemonFixture) Image(_ context.Context, name string) (string, m
 	defer d.mu.Unlock()
 	image, ok := d.images[name]
 	if !ok {
-		return "", nil, errors.New("fixture has no image " + name)
+		return "", nil, runtime.ErrDockerImageMissing
 	}
 	return image.id, maps.Clone(image.labels), nil
 }

@@ -55,11 +55,15 @@ func (a *app) cmdApprove(args []string) (int, error) {
 }
 
 func confirmNetApprovalPrompt(ctx context.Context) bool {
+	return confirmTerminalPrompt(ctx, netApprovePrompt)
+}
+
+func confirmTerminalPrompt(ctx context.Context, prompt string) bool {
 	if ctx.Err() != nil {
 		return false
 	}
 	answered := make(chan bool, 1)
-	go func() { answered <- ui.Confirm(netApprovePrompt, false) }()
+	go func() { answered <- ui.Confirm(prompt, false) }()
 	select {
 	case answer := <-answered:
 		return answer

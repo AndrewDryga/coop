@@ -755,6 +755,10 @@ func (codexAgent) ProducesSession(args []string) bool {
 	return len(args) == 0 || args[0] != "exec"
 }
 
+func (codexAgent) InteractiveInvocation(cmd []string) bool {
+	return nativeInteractiveCommand(cmd, []string{"--help", "-h", "--version", "-V", "exec", "e", "review", "app-server", "mcp-server", "login", "logout", "mcp", "completion", "debug", "cloud", "apply", "features"}, []string{"--model", "-m", "--config", "-c", "--profile", "--sandbox", "--ask-for-approval", "--cd", "-C", "--add-dir"})
+}
+
 func (codexAgent) SessionIDs(home, cwd string) []string {
 	return codexSessionIDs(home, cwd)
 }

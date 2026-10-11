@@ -51,17 +51,7 @@ func (a *app) cmdBuild(args []string) (int, error) {
 			return 1, buildFailure("Could not build the filtered box image", err, a.rt.Name, "coop build --egress filtered")
 		}
 		warnUntrackedBuild(plan)
-		ui.Note("Preparing the filtered box image")
-		if plan.Project {
-			ui.Note("  Dockerfile: %s", plan.Dockerfile)
-		}
-		ui.Note("  Project builds use ordinary networking, not the run's network restrictions.")
-		ui.Note("  Review the Dockerfile and copied build files before building.")
-		// Install after ordinary preflight: only the filtered builder's detached process group
-		// needs explicit cancellation, while foreground probes still receive terminal signals.
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer stop()
-		if err := box.BuildFilteredProject(ctx, a.rt, a.cfg, repo, os.Stdout, os.Stderr); err != nil {
+		if err := a.buildFilteredBox(repo, plan, "Preparing the filtered box image"); err != nil {
 			return 1, buildFailure("Could not build the filtered box image", err, a.rt.Name, "coop build --egress filtered")
 		}
 		ui.OK("Filtered box image ready")
@@ -79,6 +69,20 @@ func (a *app) cmdBuild(args []string) (int, error) {
 	ui.Note("")
 	ui.OK("Box image built")
 	return a.reportRecycle(repo, "Box image built", retry)
+}
+
+func (a *app) buildFilteredBox(repo string, plan box.BuildPlan, title string) error {
+	ui.Note("%s", title)
+	if plan.Project {
+		ui.Note("  Dockerfile: %s", plan.Dockerfile)
+		ui.Note("  Project builds use ordinary networking, not the run's network restrictions.")
+		ui.Note("  Review the Dockerfile and copied build files before building.")
+	}
+	// Only the filtered builder's detached process group needs explicit cancellation;
+	// foreground probes still receive terminal signals.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return box.BuildFilteredProject(ctx, a.rt, a.cfg, repo, os.Stdout, os.Stderr)
 }
 
 // --egress chooses the image a later run needs; it is not a build-time network sandbox.
@@ -205,13 +209,12 @@ func (a *app) recycleBoxes(repo string) (supervised, others int, err error) {
 	return n, len(running) - len(live), nil
 }
 
-// cmdUpdate self-updates the coop binary to the latest release, then force-rebuilds
-// the box image (--pull --no-cache) on the newest OS packages and Node — the agent
-// clients stay the set this Coop qualifies — then reports which clients it carries.
-// --self-only does just the binary; --box-only does just the image (the old behavior).
+// cmdUpdate installs the latest binary and prepares the effective project image. Filtered
+// builds retain the qualified pinned base; ordinary builds refresh their upstream base.
+// --self-only does just the binary; --box-only does just image preparation.
 //
-// The binary is replaced BEFORE the rebuild, and the rebuild runs in THIS, pre-update process —
-// so the image is built by the old binary's box definition. Nothing here may say otherwise.
+// A successful binary replacement hands off to that executable before image preparation:
+// configuration and embedded client/base definitions must come from the installed version.
 func (a *app) cmdUpdate(args []string) (int, error) {
 	selfOnly, boxOnly, check, err := parseUpdateFlags(args)
 	if err != nil {
@@ -231,6 +234,13 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 		switch {
 		case err == nil:
 			reportSelfUpdate(result)
+			if result.Outcome == selfUpdateInstalled && !selfOnly {
+				if err := updateExec(result.Executable, []string{result.Executable, "update", "--box-only"}, os.Environ()); err != nil {
+					return 1, reported("Coop updated, but the box image was not prepared", sentence(firstLine(err)),
+						fmt.Sprintf("Coop v%s is installed. Run coop update --box-only to finish.", result.Latest))
+				}
+				return 0, nil // exec replaced this process; reachable only through the test seam
+			}
 		case selfOnly:
 			return 1, selfUpdateFailure(err, "coop update --self-only")
 		case errors.As(err, &soft):
@@ -258,20 +268,35 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	if err := a.ensureRuntime(); err != nil {
 		return 1, updateBoxFailure(err, a.rt.Name, selfFailed)
 	}
-	plan, err := box.PlanBuild(a.rt, a.cfg, repo, true)
+	access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
 	if err != nil {
 		return 1, updateBoxFailure(err, a.rt.Name, selfFailed)
 	}
-	ui.Note("Updating the Coop box")
-	ui.Note("  Fetching newer base-image components. Agent clients stay at the versions this Coop qualifies.")
-	ui.Note("  Image:      %s", plan.Image)
-	ui.Note("")
-	if err := box.BuildPlanned(a.rt, a.cfg, repo, plan, true, resolveVersion(), os.Stdin, os.Stdout); err != nil {
+	filtered := access.Mode == egress.Filtered
+	plan, err := box.PlanBuild(a.rt, a.cfg, repo, !filtered)
+	if err != nil {
+		return 1, updateBoxFailure(err, a.rt.Name, selfFailed)
+	}
+	if filtered {
+		warnUntrackedBuild(plan)
+		err = a.buildFilteredBox(repo, plan, "Updating the filtered box image")
+	} else {
+		ui.Note("Updating the Coop box")
+		ui.Note("  Fetching newer base-image components. Agent clients stay at the versions this Coop qualifies.")
+		ui.Note("  Image:      %s", plan.Image)
+		ui.Note("")
+		err = box.BuildPlanned(a.rt, a.cfg, repo, plan, true, resolveVersion(), os.Stdin, os.Stdout)
+	}
+	if err != nil {
 		ui.Note("")
 		return 1, updateBoxFailure(err, a.rt.Name, selfFailed)
 	}
 	ui.Note("")
-	ui.OK("Box image updated")
+	if filtered {
+		ui.OK("Filtered box image updated")
+	} else {
+		ui.OK("Box image updated")
+	}
 	if code, err := a.reportRecycle(repo, "Box image updated", "coop update --box-only"); err != nil {
 		return code, err
 	}
@@ -430,6 +455,16 @@ func (a *app) cmdUpdateCheck() (int, error) {
 		// The stamps live per project, so with no project folder there is no record to read —
 		// which is not the same as a box that has never been built.
 		ui.Note("The box image was not checked because no project folder could be resolved.")
+		return 0, nil
+	}
+	access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
+	if err != nil {
+		return 1, err
+	}
+	if access.Mode == egress.Filtered {
+		ui.Note("This project uses filtered networking.")
+		ui.Note("Filtered image readiness is verified on launch; --check does not inspect Docker.")
+		ui.Note("Use coop update --box-only to prepare this project's filtered image.")
 		return 0, nil
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
