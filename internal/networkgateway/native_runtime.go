@@ -62,7 +62,9 @@ func readNativeDocument(ctx context.Context, name string, value any) error {
 }
 
 func decodeNativeDocument(ctx context.Context, value any, read func() ([]byte, error)) error {
-	for attempt := 0; attempt < 3; attempt++ {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	for {
 		if ctx.Err() != nil {
 			break
 		}
@@ -73,11 +75,8 @@ func decodeNativeDocument(ctx context.Context, value any, read func() ([]byte, e
 		// VM bind mounts can briefly miss a leaf or expose a truncated prefix after an atomic
 		// host rename. Reopen, never decode partial fields or reuse a prior grant.
 		if err != nil || !json.Valid(raw) {
-			if attempt == 2 {
-				break
-			}
-			// Two delays fit within one watcher period and the existing 1s
-			// load deadline, allowing the VM's rename view to converge.
+			// Use the existing load deadline rather than an attempt cutoff: the
+			// VM's rename view can outlast the previous two-delay retry window.
 			timer := time.NewTimer(50 * time.Millisecond)
 			select {
 			case <-ctx.Done():
@@ -89,7 +88,7 @@ func decodeNativeDocument(ctx context.Context, value any, read func() ([]byte, e
 		}
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.DisallowUnknownFields()
-		if decoder.Decode(value) != nil || decoder.Decode(new(any)) != io.EOF {
+		if decoder.Decode(value) != nil || decoder.Decode(new(any)) != io.EOF || ctx.Err() != nil {
 			break
 		}
 		return nil

@@ -5,6 +5,8 @@
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
 - Shell completion now fills in account names and actions for `coop credentials`.
+- Provider sessions allow transient host-to-VM credential-file reads to recover within the
+  existing load deadline, instead of stopping after three reads. Invalid accounts still fail closed.
 
 ## 11.0.1
 
