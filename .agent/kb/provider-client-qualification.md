@@ -55,14 +55,16 @@ invocation passed, or that macOS/Linux-arm64 live provider parity was exercised.
 account was configured per provider, so all four second-account recovery entries remain
 `not_configured`, not proved. A missing-file gate is dormant, not proof of compatibility.
 
-**Temporary exact-client gate policy.** The v11.0.1-only gate policy hashes the retained
-historical record, the lock and every platform's complete client/native identity, and requires
-11.0.1 to be the latest numbered changelog section. Reopening Unreleased permits ordinary main
-checks; earlier/later releases, altered evidence or any client/dependency/platform change refuse.
+**Temporary exact-client gate policy.** The separately approved v11.0.1 and v11.0.2 exceptions
+hash the retained historical record, the lock and every platform's complete client/native identity,
+and require
+one of those two exact versions to be the latest numbered changelog section. Reopening Unreleased
+permits ordinary main checks; other releases, altered evidence or any client/dependency/platform
+change refuse. An approved older section cannot authorize a newer unapproved release.
 Release preflight independently binds the finalized first section to the actual event tag.
 No environment bypass exists. The validator and historical record are unchanged; the gate
-reports UNQUALIFIED rather than claiming fresh compatibility evidence. Remove the temporary
-exception after this release.
+reports UNQUALIFIED for the matched approved version rather than claiming fresh compatibility
+evidence. Remove the temporary exception after v11.0.2.
 
 Live harnesses route brokered API keys through the host's filtered gateway automatically, using
 `BrokersKey`/`AnyBrokersKey` and `NetworkStateHome`; native sign-ins retain the open path except
@@ -240,6 +242,11 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-10-11 — added the explicitly approved v11.0.2-only exception alongside the existing
+  v11.0.1 approval so ordinary Unreleased checks retain their prior policy before finalization.
+  Both exact hashes and historical evidence remain unchanged. Finalized/reopened approval and
+  future-release, dependency, evidence, every native/adapter and platform denials cover both
+  approved versions; no fresh full qualification or publication permission is implied.
 - 2026-10-11 — replaced the expired policy with the explicitly approved v11.0.1-only exception;
   retained both exact hashes, historical evidence and truthful UNQUALIFIED reporting. Previous
   release, future patch/minor, dependency, native/adapter, platform and evidence denials remain.
