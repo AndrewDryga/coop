@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -48,27 +50,56 @@ type NativeOriginConfig struct {
 	ClientAccountHeaders map[string]string
 }
 
-func readNativeDocument(name string, value any) error {
-	root, err := safefile.OpenRoot(NativePrivateDirectory)
-	if err != nil {
-		return Failure("native_broker_configuration_invalid")
+func readNativeDocument(ctx context.Context, name string, value any) error {
+	return decodeNativeDocument(ctx, value, func() ([]byte, error) {
+		root, err := safefile.OpenRoot(NativePrivateDirectory)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		return safefile.ReadRegular(root, name, 1<<20)
+	})
+}
+
+func decodeNativeDocument(ctx context.Context, value any, read func() ([]byte, error)) error {
+	for attempt := 0; attempt < 3; attempt++ {
+		if ctx.Err() != nil {
+			break
+		}
+		raw, err := read()
+		if ctx.Err() != nil || err != nil && !errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		// VM bind mounts can briefly miss a leaf or expose a truncated prefix after an atomic
+		// host rename. Reopen, never decode partial fields or reuse a prior grant.
+		if err != nil || !json.Valid(raw) {
+			if attempt == 2 {
+				break
+			}
+			// Two delays fit within one watcher period and the existing 1s
+			// load deadline, allowing the VM's rename view to converge.
+			timer := time.NewTimer(50 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return Failure("native_broker_configuration_invalid")
+			case <-timer.C:
+				continue
+			}
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(value) != nil || decoder.Decode(new(any)) != io.EOF {
+			break
+		}
+		return nil
 	}
-	defer root.Close()
-	raw, err := safefile.ReadRegular(root, name, 1<<20)
-	if err != nil {
-		return Failure("native_broker_configuration_invalid")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(value) != nil || decoder.Decode(new(any)) != io.EOF {
-		return Failure("native_broker_configuration_invalid")
-	}
-	return nil
+	return Failure("native_broker_configuration_invalid")
 }
 
 func readNativeRunConfig(runID string, origins []string) (NativeRunConfig, error) {
 	var config NativeRunConfig
-	if readNativeDocument("config.json", &config) != nil || config.Version != 1 ||
+	if readNativeDocument(context.Background(), "config.json", &config) != nil || config.Version != 1 ||
 		!lowerHex(config.RunID, 32) || runID != "" && config.RunID != runID || len(config.Accounts) == 0 || len(config.Accounts) > 4 {
 		return config, Failure("native_broker_configuration_invalid")
 	}
@@ -173,7 +204,7 @@ func (r *nativeRunRuntime) serve(ctx context.Context, ready func()) error {
 				return NativeAccessSnapshot{}, err
 			}
 			var snapshot NativeAccessSnapshot
-			err := readNativeDocument(account.Binding.Provider+".json", &snapshot)
+			err := readNativeDocument(ctx, account.Binding.Provider+".json", &snapshot)
 			return snapshot, err
 		}, handler)
 		if err != nil {

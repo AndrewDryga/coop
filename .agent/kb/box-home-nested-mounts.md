@@ -2,8 +2,8 @@
 name: box-home-nested-mounts
 description: Avoid bind targets that make Docker create missing application-owned home parents as root
 subsystem: box
-sources: [internal/box/run.go, internal/box/gitenv.go, internal/cli/doctor.go, internal/box/config_publication.go, internal/box/config_publication.js, internal/agent/claude.go]
-updated: 2026-10-01
+sources: [internal/box/run.go, internal/box/gitenv.go, internal/cli/doctor.go, internal/box/config_publication.go, internal/box/config_publication.js, internal/agent/claude.go, internal/networkgateway/native_runtime.go, internal/networkgateway/native_document_test.go]
+updated: 2026-10-11
 ---
 
 Docker prepares bind targets before the image's non-root user starts. If a generated mount targets
@@ -29,7 +29,16 @@ are covered too. `settings.json` is excluded because project fallbacks may legit
 Rebuilt managed images are required: independent custom entrypoints and later concurrent native
 writes are outside this startup check.
 
+Expiring native broker snapshots hit the same VM rename boundary during a session. A synthetic
+atomic host publisher and strict Linux reader captured truncated JSON and transient missing-leaf
+errors. `decodeNativeDocument` reopens those two cases at most three times, with cancellable50ms
+delays; it never decodes a partial prefix or reuses the last grant. Other read errors and semantic
+JSON failures refuse immediately. Persistent absence/truncation and every complete revoked,
+expired, wrong-binding or rolled-back snapshot still shut down protected traffic permanently.
+
 ## Changelog
+- 2026-10-11 — captured session-time read failures and reproduced both transient VM behaviors with
+  public synthetic leases; added bounded fresh-read, cancellation and fail-closed regressions.
 - 2026-10-01 — captured a stale857-byte guest read followed by899-byte descriptor metadata and an
   exact899-byte reopen, all before native startup; documented the bounded publication check and
   project-overlay/custom-entrypoint limits. Focused stale-first-read and refusal regressions pass.
