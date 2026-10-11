@@ -1,6 +1,17 @@
 # Changelog
 
-## 11.0.1
+## Unreleased
+
+- **Codex starts with the selected workspace.** Native account discovery now matches the
+  public broker identity while preserving upstream workspace routing and sibling accounts.
+
+- **Claude loads managed settings normally.** The broker admits the native settings request
+  for subscription and API-key accounts, eliminating false access-denied warnings without
+  changing genuine upstream policy or authentication errors.
+
+- **Provider sessions survive transient VM file reads.** Credential leases reopen briefly
+  incomplete or missing atomic publications instead of permanently disconnecting a healthy
+  session. Revoked, expired and invalid accounts still stop protected traffic.
 
 - **Slow activity reads no longer make worker polls look stale.** Workers refresh the outgoing
   timestamp before sending, so delayed local reads do not cause clock-skew refusals.
