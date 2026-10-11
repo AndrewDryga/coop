@@ -19,7 +19,7 @@ import (
 
 // Publication has always been one commit. Freeze that commit before the gate,
 // not at approval time: the reviewed SHA is the SHA that will be pushed.
-func freezeReviewCommit(ctx context.Context, candidate reviewScratch, op session.Operation) (string, string, error) {
+func freezeReviewCommit(ctx context.Context, candidate reviewScratch, op session.Operation, message string) (string, string, error) {
 	head, tree, err := ReviewGitIdentity(candidate.dir, candidate.name)
 	if err != nil {
 		return "", "", err
@@ -28,7 +28,7 @@ func freezeReviewCommit(ctx context.Context, candidate reviewScratch, op session
 	env := append(sessionCompanionGitEnv(), "GIT_AUTHOR_NAME=Coop", "GIT_AUTHOR_EMAIL=coop@localhost",
 		"GIT_COMMITTER_NAME=Coop", "GIT_COMMITTER_EMAIL=coop@localhost", "GIT_AUTHOR_DATE="+date, "GIT_COMMITTER_DATE="+date)
 	output, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, candidate.dir, 1024, env,
-		"commit-tree", tree, "-p", candidate.base, "-m", "Reviewed changes\n\nCoop-Review: "+op.ID)
+		"commit-tree", tree, "-p", candidate.base, "-m", reviewCommitMessage(message, op.ID))
 	commit := strings.TrimSpace(string(output))
 	if err != nil || truncated || !validSessionReviewObject(commit) {
 		return "", "", errors.Join(err, errors.New("cannot freeze reviewed commit"))
@@ -246,4 +246,14 @@ func syncReviewPath(path string) error {
 		return err
 	}
 	return errors.Join(file.Sync(), file.Close())
+}
+
+// reviewCommitMessage is the controller's message for the change, or "Reviewed changes" when it
+// named none, always followed by the review receipt.
+func reviewCommitMessage(message, operationID string) string {
+	subject := strings.TrimSpace(strings.ReplaceAll(message, "\r\n", "\n"))
+	if subject == "" {
+		subject = "Reviewed changes"
+	}
+	return subject + "\n\nCoop-Review: " + operationID
 }

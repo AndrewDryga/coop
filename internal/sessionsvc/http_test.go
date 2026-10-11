@@ -122,7 +122,7 @@ func TestSessionHTTPCapabilitiesAdvertiseSupportedVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	versions, ok := document["repository_freshness_receipt_versions"].([]any)
-	if !ok || len(document) != 4 || len(versions) != 1 || versions[0] != float64(2) {
+	if !ok || len(document) != 5 || len(versions) != 1 || versions[0] != float64(2) {
 		t.Fatalf("capabilities = %#v", document)
 	}
 	jobs, ok := document["job_spec_versions"].([]any)
@@ -136,6 +136,10 @@ func TestSessionHTTPCapabilitiesAdvertiseSupportedVersions(t *testing.T) {
 	tools, ok := document["controller_tools_versions"].([]any)
 	if !ok || len(tools) != 1 || tools[0] != float64(1) {
 		t.Fatalf("controller tools versions = %#v", document["controller_tools_versions"])
+	}
+	messages, ok := document["review_commit_message_versions"].([]any)
+	if !ok || len(messages) != 1 || messages[0] != float64(1) {
+		t.Fatalf("review commit message versions = %#v", document["review_commit_message_versions"])
 	}
 }
 

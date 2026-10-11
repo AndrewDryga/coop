@@ -313,6 +313,9 @@ type sessionCapabilitiesDTO struct {
 	// capability, so an older worker's missing evidence reads as "not exported by this build"
 	// rather than as an empty network or an unbound task.
 	SessionEvidenceVersions []int `json:"session_evidence_versions"`
+	// ReviewCommitMessageVersions proves a review accepts commit_message, so a controller names
+	// the reviewed change only to a daemon that would not refuse the field.
+	ReviewCommitMessageVersions []int `json:"review_commit_message_versions"`
 }
 
 type sessionHTTPErrorBody struct {
@@ -374,6 +377,7 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ControllerToolsVersions:            []int{1},
 			RepositoryFreshnessReceiptVersions: []int{2},
 			SessionEvidenceVersions:            []int{workerproto.SessionEvidenceVersion},
+			ReviewCommitMessageVersions:        []int{1},
 		})
 		return
 	case "/v1/capacity":
@@ -1249,12 +1253,15 @@ func (h *sessionHTTPHandler) review(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 	var body struct {
-		ExpectedRevision int64 `json:"expected_revision"`
+		ExpectedRevision int64  `json:"expected_revision"`
+		CommitMessage    string `json:"commit_message"`
 	}
 	if !decodeSessionJSON(w, r, &body) {
 		return
 	}
-	dossier, err := h.service.RunReview(r.Context(), sessionIdempotencyKey(r), RunReviewRequest{SessionID: sessionID, ExpectedRevision: body.ExpectedRevision})
+	dossier, err := h.service.RunReview(r.Context(), sessionIdempotencyKey(r), RunReviewRequest{
+		SessionID: sessionID, ExpectedRevision: body.ExpectedRevision, CommitMessage: body.CommitMessage,
+	})
 	if err != nil {
 		writeSessionServiceError(w, err)
 		return

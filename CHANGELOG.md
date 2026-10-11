@@ -19,6 +19,11 @@
   builds are explained early. Docker observation failures retain their real cause, and
   `update --check` no longer reports ordinary-image records for filtered projects.
 
+- **Reviewed commits say what they change.** A review request may name the commit message
+  (`commit_message`, up to 4,096 bytes); the published commit carries it instead of "Reviewed
+  changes", still followed by the `Coop-Review` trailer. Workers advertise
+  `review-commit-message:1` once their daemon accepts the field.
+
 ## 11.0.2
 
 - **Providers start under strict file permissions.** Native provider helpers now receive

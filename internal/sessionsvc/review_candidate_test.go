@@ -3,6 +3,7 @@ package sessionsvc
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,7 +64,7 @@ func TestRetainedReviewSurvivesLostCompletionWithoutRebuildingWorkspace(t *testi
 		t.Fatal(err)
 	}
 	defer candidate.cleanup()
-	head, tree, err := freezeReviewCommit(ctx, candidate, op)
+	head, tree, err := freezeReviewCommit(ctx, candidate, op, intent.CommitMessage)
 	if err != nil || head != retained.CandidateHead || tree != retained.CandidateTree {
 		t.Fatalf("review commit is not deterministic: %s %s %v", head, tree, err)
 	}
@@ -130,5 +131,49 @@ func TestRetainedReviewOwnsLFSPayloadWithoutWorkingFiles(t *testing.T) {
 	}
 	if _, _, err := service.retainedReviewCandidate(context.Background(), dossier.OperationID); err == nil {
 		t.Fatal("corrupt retained LFS payload was accepted")
+	}
+}
+
+// Every Ryker task commit read "Reviewed changes" because the reviewed commit's message was fixed
+// here. The controller now names the change; the review receipt stays in the trailer.
+func TestReviewCommitCarriesTheRequestedMessage(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "base")
+	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	defer service.Stop()
+	ctx := context.Background()
+
+	for _, tc := range []struct{ name, message, subject string }{
+		{"named", "Add the sweep line to README\n\nRequested in #test.", "Add the sweep line to README\n\nRequested in #test."},
+		{"default", "", "Reviewed changes"},
+	} {
+		sess := createReviewSession(t, service, "commit-message-"+tc.name)
+		sessionWorkspaceWrite(t, filepath.Join(sess.Workspace, "work.txt"), tc.name+"\n")
+		sessionWorkspaceGit(t, sess.Workspace, "add", ".")
+		sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "model work")
+		req := RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, CommitMessage: tc.message}
+		dossier, err := service.RunReview(ctx, "commit-message-"+tc.name, req)
+		if err != nil {
+			t.Fatalf("%s: review failed: %v", tc.name, err)
+		}
+		directory, _, err := service.retainedReviewCandidate(ctx, dossier.OperationID)
+		if err != nil {
+			t.Fatalf("%s: no retained candidate: %v", tc.name, err)
+		}
+		got := gitOut(directory, "log", "-1", "--format=%B", dossier.CandidateHead)
+		want := tc.subject + "\n\nCoop-Review: " + dossier.OperationID
+		if strings.TrimSpace(got) != want {
+			t.Fatalf("%s: commit message\n%q\nwant\n%q", tc.name, got, want)
+		}
+	}
+
+	sess := createReviewSession(t, service, "commit-message-invalid")
+	for _, message := range []string{"nul\x00byte", strings.Repeat("x", maxReviewCommitMessageBytes+1), " \n\t "} {
+		req := RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, CommitMessage: message}
+		if _, err := service.RunReview(ctx, "commit-message-invalid-"+fmt.Sprint(len(message)), req); session.CodeOf(err) != session.CodeInvalidRequest {
+			t.Fatalf("message %q was not refused: %v", message[:min(len(message), 20)], err)
+		}
 	}
 }

@@ -421,7 +421,7 @@ doesn't spend a caller-review attempt.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after daemon startup |
-| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1]}`, for caller-side protocol negotiation |
+| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1]}`, for caller-side protocol negotiation |
 | `GET` | `/v1/capacity` | Current shared active and warm runtime slots. The connector forwards this measurement in the hello it sends with every poll. |
 | `GET` | `/v1/storage` | This daemon's own workspace-storage accounting: `storage` (the object a fleet controller reads), `budget`, `totals`, `roots`, `forks` and `problems` |
 
@@ -464,8 +464,8 @@ Allocation closes at `storage.high_watermark_bytes` of used space, and reopens o
 `storage.reserve_bytes` is the free-space floor underneath both, and new work never spends it.
 None of this bounds what an already-running task writes inside its own workspace.
 
-The outbound connector reports `job-setup:2`, `repository-freshness:2`, `session-evidence:1` and
-`controller-tools:1` only after its local daemon proves the matching versions through
+The outbound connector reports `job-setup:2`, `repository-freshness:2`, `session-evidence:1`,
+`controller-tools:1` and `review-commit-message:1` only after its local daemon proves the matching versions through
 `GET /v1/capabilities`. Missing proof removes that capability from the next hello. The
 controller can tell an unsupported evidence export from a session that observed nothing.
 
@@ -1034,9 +1034,13 @@ reports `unavailable` with its identity intact. It never reports an empty task.
 curl --unix-socket "$SOCKET" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: controller:review:01J...' \
-  -d '{"expected_revision":12}' \
+  -d '{"expected_revision":12,"commit_message":"Add per-worker memory metrics"}' \
   http://localhost/v1/sessions/remote_.../review
 ```
+
+`commit_message` is optional: the reviewed commit's message, up to 4,096 bytes of text. Without
+it the commit says `Reviewed changes`. Either way co:op adds the `Coop-Review: <operation id>`
+trailer, and the message is part of the reviewed commit, so it is the one that gets published.
 
 Review requires a parked open or exhausted session, with no queued turns and a clean, committed
 fork. It snapshots the exact source and parent commit and tree identities. It prepares a

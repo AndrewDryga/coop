@@ -16,6 +16,8 @@ type sessionCapabilities struct {
 	// SessionEvidenceVersions proves the daemon serves the session evidence read this connector
 	// forwards an api_request GET to. Omitted by an older daemon, which then advertises nothing.
 	SessionEvidenceVersions []int `json:"session_evidence_versions,omitempty"`
+	// ReviewCommitMessageVersions proves a review accepts the controller's commit message.
+	ReviewCommitMessageVersions []int `json:"review_commit_message_versions,omitempty"`
 }
 
 // LiveCapabilities adds implementation capabilities only after the exact local
@@ -52,6 +54,9 @@ func LiveCapabilities(ctx context.Context, api API) []workerproto.Capability {
 	}
 	if proves(document.ControllerToolsVersions, 1) {
 		result = append(result, workerproto.Capability{Name: "controller-tools", Version: "1"})
+	}
+	if proves(document.ReviewCommitMessageVersions, 1) {
+		result = append(result, workerproto.Capability{Name: "review-commit-message", Version: "1"})
 	}
 	return result
 }

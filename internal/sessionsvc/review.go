@@ -50,9 +50,15 @@ const (
 	ReviewRebaseConflict ReviewRebaseStatus = "conflict"
 )
 
+// maxReviewCommitMessageBytes bounds the message a controller names for a reviewed commit.
+const maxReviewCommitMessageBytes = 4096
+
 type RunReviewRequest struct {
 	SessionID        string `json:"session_id"`
 	ExpectedRevision int64  `json:"expected_revision"`
+	// CommitMessage names the reviewed change in its commit; empty keeps "Reviewed changes".
+	// The review receipt is always added as the Coop-Review trailer.
+	CommitMessage string `json:"commit_message,omitempty"`
 }
 
 type ReviewDossier struct {
@@ -138,6 +144,7 @@ type sessionReviewIntent struct {
 	JobDigest          string                 `json:"job_digest"`
 	Source             *session.SourceBinding `json:"source,omitempty"`
 	MaxPatchBytes      int                    `json:"max_patch_bytes"`
+	CommitMessage      string                 `json:"commit_message,omitempty"`
 }
 
 type sessionReviewSourceIdentity struct {
@@ -158,6 +165,9 @@ func (s *Service) RunReview(ctx context.Context, key string, req RunReviewReques
 
 	if req.SessionID == "" || len(req.SessionID) > session.MaxIDBytes || !utf8SessionText(req.SessionID) || req.ExpectedRevision <= 0 {
 		return ReviewDossier{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "session id and positive expected revision are required"}
+	}
+	if !validReviewCommitMessage(req.CommitMessage) {
+		return ReviewDossier{}, &session.Error{Code: session.CodeInvalidRequest, Detail: fmt.Sprintf("commit message must be text of at most %d bytes", maxReviewCommitMessageBytes)}
 	}
 	op, replay, err := s.store.ReserveOperation(ctx, "RunReview", key, req)
 	if err != nil {
@@ -454,7 +464,17 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 		ParentHead: parent.Head, ParentTree: parent.Tree,
 		JobDigest: sess.JobDigest, Source: session.CloneSourceBinding(sess.Source),
 		MaxPatchBytes: sess.MaxPatchBytes,
+		CommitMessage: req.CommitMessage,
 	}, nil
+}
+
+// validReviewCommitMessage accepts no message, or readable text a commit can carry.
+func validReviewCommitMessage(message string) bool {
+	if message == "" {
+		return true
+	}
+	return len(message) <= maxReviewCommitMessageBytes && utf8.ValidString(message) &&
+		!strings.ContainsRune(message, 0) && strings.TrimSpace(message) != ""
 }
 
 func captureSessionReviewSource(repo, workspace, branch string) (sessionReviewSourceIdentity, error) {
@@ -601,7 +621,7 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 		dossier.NotPublishableReasons = []string{"rebase_conflict"}
 		return s.completeReview(ctx, dossier)
 	}
-	candidateHead, candidateTree, err := freezeReviewCommit(ctx, candidate, op)
+	candidateHead, candidateTree, err := freezeReviewCommit(ctx, candidate, op, intent.CommitMessage)
 	if err != nil {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("pin review candidate: %w", err))
 	}

@@ -79,3 +79,20 @@ func (a *capabilityAPI) Do(_ context.Context, request Request) (json.RawMessage,
 	a.request = request
 	return a.response, a.err
 }
+
+// A controller names a reviewed commit only for a daemon that proves it accepts the field.
+func TestReviewCommitMessageCapabilityRequiresExactLiveProof(t *testing.T) {
+	for _, test := range []struct {
+		body string
+		want int
+	}{
+		{`{"review_commit_message_versions":[1]}`, 1},
+		{`{}`, 0},
+		{`{"review_commit_message_versions":[2]}`, 0},
+	} {
+		got := LiveCapabilities(context.Background(), &capabilityAPI{response: json.RawMessage(test.body)})
+		if len(got) != test.want || (test.want == 1 && (got[0].Name != "review-commit-message" || got[0].Version != "1")) {
+			t.Fatalf("capability for %s = %+v", test.body, got)
+		}
+	}
+}
