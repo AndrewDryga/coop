@@ -84,7 +84,7 @@ func TestLiveACPProcessPreservesEditorStdin(t *testing.T) {
 	cmd, _, recorded, _ := liveACPHelperCommand(t, root, "stdio", true)
 	cmd.Stdin = strings.NewReader("editor-request\n")
 	if err := cmd.Run(); err != nil {
-		t.Fatal(err)
+		t.Fatalf("live ACP helper: %v\n%s", err, cmd.Stdout)
 	}
 	payload, err := os.ReadFile(recorded)
 	if err != nil {
@@ -92,6 +92,88 @@ func TestLiveACPProcessPreservesEditorStdin(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(payload)); got != "editor-request" {
 		t.Fatalf("inner ACP stdin = %q, want editor-request", got)
+	}
+}
+
+const liveACPFixtureMarker = `printf '%s' "$coop_pgid" > "$COOP_TEST_LIVE_ACP_MARKER.pending" || exit 126
+mv "$COOP_TEST_LIVE_ACP_MARKER.pending" "$COOP_TEST_LIVE_ACP_MARKER" || exit 126
+`
+
+func TestLiveACPProcessMarkerAppearsOnlyWithCompleteBytes(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker")
+	release := filepath.Join(root, "release")
+	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+	defer cancel()
+	// Redirection opens the destination before printf runs. Hold that write to
+	// prove that existence alone must not expose a half-published PGID marker.
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `
+coop_pgid=12345
+printf() {
+  : > "$COOP_TEST_LIVE_ACP_MARKER.ready"
+  while [ ! -e "$COOP_TEST_LIVE_ACP_RELEASE" ]; do /bin/sleep 0.005; done
+  command printf "$@"
+}
+`+liveACPFixtureMarker)
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "COOP_TEST_LIVE_ACP_MARKER=" + marker,
+		"COOP_TEST_LIVE_ACP_RELEASE=" + release}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var commandErr error
+	done := make(chan struct{})
+	go func() { commandErr = cmd.Wait(); close(done) }()
+	t.Cleanup(func() {
+		_ = os.WriteFile(release, nil, 0o600)
+		<-done
+	})
+	waitForFile(t, marker+".ready")
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("PGID marker visible before its bytes are complete: %v", err)
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if commandErr != nil {
+		t.Fatal(commandErr)
+	}
+	payload, err := os.ReadFile(marker)
+	if err != nil || string(payload) != "12345" {
+		t.Fatalf("complete PGID marker = %q, error %v", payload, err)
+	}
+}
+
+func TestLiveACPProcessFailedAssertionReapsLeader(t *testing.T) {
+	root := t.TempDir()
+	cmd, _, _, _ := liveACPHelperCommand(t, root, "invalid_marker", true)
+	if err := cmd.Run(); err == nil {
+		t.Fatal("helper accepted an empty PGID marker")
+	}
+	if output := cmd.Stdout.(*bytes.Buffer).String(); !strings.Contains(output, `inner process group = ""`) {
+		t.Fatalf("helper failed for an unexpected reason:\n%s", output)
+	}
+	registry := filepath.Join(root, "state", "live-process-groups")
+	entries, err := os.ReadDir(registry)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("published process records = %v, error %v", entries, err)
+	}
+	data, err := os.ReadFile(filepath.Join(registry, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record liveprocess.Record
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		// The regression must not leak its fixture if helper cleanup breaks again.
+		if record.PID > 1 && processidentity.Inspect(record.PID, record.StartToken) == processidentity.Match {
+			_ = syscall.Kill(-record.PID, syscall.SIGKILL)
+		}
+	})
+	if got := processidentity.Inspect(record.PID, record.StartToken); got != processidentity.Gone {
+		t.Fatalf("failed helper left resident fixture leader %d: identity state %v", record.PID, got)
 	}
 }
 
@@ -261,8 +343,7 @@ func TestLiveACPProcessHelper(t *testing.T) {
 	innerScript := `
 test ! -e /dev/fd/3 || exit 126
 coop_pgid=$(ps -o pgid= -p $$) || exit 126
-printf '%s' "$coop_pgid" > "$COOP_TEST_LIVE_ACP_MARKER"
-`
+` + liveACPFixtureMarker
 	if scenario == "stdio" {
 		innerScript = `
 test ! -e /dev/fd/3 || exit 126
@@ -270,8 +351,10 @@ coop_pgid=$(ps -o pgid= -p $$) || exit 126
 line=stdin-eof
 IFS= read -r line || :
 printf '%s' "$line" > "$COOP_TEST_LIVE_ACP_RECORDED"
-printf '%s' "$coop_pgid" > "$COOP_TEST_LIVE_ACP_MARKER"
-`
+` + liveACPFixtureMarker
+	}
+	if scenario == "invalid_marker" {
+		innerScript = "coop_pgid=\n" + liveACPFixtureMarker
 	}
 	inner := exec.Command("/bin/sh", "-c", innerScript)
 	inner.Env = os.Environ()
@@ -293,6 +376,13 @@ printf '%s' "$coop_pgid" > "$COOP_TEST_LIVE_ACP_MARKER"
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		// A failed assertion must not strand the resident fixture leader.
+		if inner.ProcessState == nil {
+			_ = syscall.Kill(-inner.Process.Pid, syscall.SIGKILL)
+			_ = inner.Wait()
+		}
+	}()
 	waitForFile(t, marker)
 	rawPGID, err := os.ReadFile(marker)
 	if err != nil {
