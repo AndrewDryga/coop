@@ -140,6 +140,22 @@ func TestUsageResetCountExpiryAndGrayTiming(t *testing.T) {
 	}
 }
 
+func TestUsageClaudeResetCountAndExpiry(t *testing.T) {
+	now := time.Date(2026, 10, 12, 19, 13, 0, 0, time.UTC)
+	used, count := 14.0, int64(3)
+	row := usageCredential{provider: "claude", account: "personal", quota: agents.UsageQuota{
+		Buckets: []agents.UsageBucket{{Name: "Weekly", Used: &used}},
+		Resets:  &agents.UsageResetCredits{Available: &count, Expirations: []time.Time{now.Add(48 * time.Hour)}},
+	}}
+	for _, details := range []bool{false, true} {
+		var out bytes.Buffer
+		renderUsage(&out, ui.Palette{}, 120, now, []string{"claude"}, []usageCredential{row}, details)
+		if !strings.Contains(out.String(), "Claude") || !strings.Contains(out.String(), "3 available") || !strings.Contains(out.String(), "Oct 14, 19:13 UTC") {
+			t.Fatalf("Claude reset metadata lost in details=%v:\n%s", details, out.String())
+		}
+	}
+}
+
 func TestUsageGrandTotalFiltersProvidersAndMarksUnknownCoverage(t *testing.T) {
 	rows := []usageCredential{
 		{provider: "codex", value: agents.UsageValue{Available: true, Priced: 1, USD: 3}},

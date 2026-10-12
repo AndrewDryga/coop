@@ -38,7 +38,11 @@ func TestNativeQuotaUsesCanonicalAuthority(t *testing.T) {
 				body := `{}`
 				switch name {
 				case "claude":
-					if r.URL.String() != "https://api.anthropic.com/api/oauth/usage" || r.Method != http.MethodGet {
+					endpoint := "https://api.anthropic.com/api/oauth/usage"
+					if requests == 2 {
+						endpoint += "?cedar_ember=1&skip_spend=1"
+					}
+					if requests > 2 || r.URL.String() != endpoint || r.Method != http.MethodGet {
 						t.Fatal("wrong Claude quota route")
 					}
 				case "codex":

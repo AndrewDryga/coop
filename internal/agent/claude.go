@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -414,14 +415,25 @@ func claudeUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 		return UsageQuota{Note: "limits unavailable for this token's scopes"}, nil
 	}
 	var raw claudeQuotaResponse
-	err = readUsageQuota(ctx, http.MethodGet, "https://api.anthropic.com/api/oauth/usage", http.Header{
+	headers := http.Header{
 		"Authorization": {"Bearer " + source.AccessToken}, "Anthropic-Beta": {"oauth-2025-04-20"},
 		"Content-Type": {"application/json"}, "User-Agent": {"claude-cli/2.1.285 (external, cli)"},
-	}, nil, &raw)
+	}
+	err = readUsageQuota(ctx, http.MethodGet, "https://api.anthropic.com/api/oauth/usage", headers, nil, &raw)
 	if err != nil {
 		return UsageQuota{}, err
 	}
 	quota := raw.quota()
+	// The pinned client requests reset grants separately without fetching spend again. Optional
+	// metadata must not discard useful limits when the program is absent or unavailable.
+	detailsCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var details struct {
+		Resets json.RawMessage `json:"cedar_ember"`
+	}
+	if readUsageQuota(detailsCtx, http.MethodGet, "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1", headers, nil, &details) == nil {
+		quota.Resets = claudeUsageResets(details.Resets)
+	}
 	var metadata struct {
 		OAuth struct {
 			Plan string `json:"subscriptionType"`
@@ -431,6 +443,39 @@ func claudeUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 		quota.Plan = metadata.OAuth.Plan
 	}
 	return quota, nil
+}
+
+func claudeUsageResets(data json.RawMessage) *UsageResetCredits {
+	var raw struct {
+		Eligible *bool `json:"eligible"`
+		Grants   *[]struct {
+			ID   string          `json:"id"`
+			Left *int64          `json:"resets_left"`
+			Ends json.RawMessage `json:"ends_at"`
+		} `json:"grants"`
+	}
+	if json.Unmarshal(data, &raw) != nil || raw.Eligible == nil || !*raw.Eligible || raw.Grants == nil {
+		return nil
+	}
+	var count int64
+	out := &UsageResetCredits{Available: &count}
+	// Match the native client's sum of remaining resets, not the number of grants. usable_now
+	// describes redemption at the current limit, not whether a reset remains on the account.
+	for _, grant := range *raw.Grants {
+		if len(grant.ID) < 1 || len(grant.ID) > 40 || strings.ContainsFunc(grant.ID, func(r rune) bool {
+			return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-')
+		}) || grant.Left == nil || *grant.Left < 0 || *grant.Left > math.MaxInt64-count {
+			return nil
+		}
+		count += *grant.Left
+		var expiry string
+		if *grant.Left > 0 && json.Unmarshal(grant.Ends, &expiry) == nil {
+			if at := usageReset(expiry); !at.IsZero() {
+				out.Expirations = append(out.Expirations, at)
+			}
+		}
+	}
+	return out
 }
 
 type claudeQuotaWindow struct {

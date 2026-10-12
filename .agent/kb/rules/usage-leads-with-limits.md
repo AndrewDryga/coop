@@ -2,7 +2,7 @@
 name: usage-leads-with-limits
 description: Usage keeps quota bars first and an estimate last; account details hold coverage metadata, not blanket footers
 scope: cli-output
-sources: [internal/cli/usage.go, internal/cli/usage_test.go, internal/cli/help.go, internal/cli/profiles.go, internal/agent/usage.go]
+sources: [internal/cli/usage.go, internal/cli/usage_test.go, internal/cli/help.go, internal/cli/profiles.go, internal/agent/usage.go, internal/agent/claude.go, internal/agent/codex.go]
 check: "go test ./internal/cli -run TestUsage"
 updated: 2026-10-12
 ---
@@ -62,6 +62,11 @@ The existing `provider@credential` view holds plan, coverage, pricing and retain
 Help explains the data scope. Neither view ends with an unsolicited disclaimer paragraph.
 
 ## Changelog
+- 2026-10-12 — owner noted Claude also offers resets. Swept the four quota adapters and shared
+  renderer: Codex already reports counts, Claude requires the pinned client's optional grant
+  query, and Gemini/Grok have no verified reset-count metadata. Claude sums explicit per-grant
+  remaining counts, not list length; missing data stays unknown. Added Claude adapter failure
+  and positive summary/detail regressions without new redemption or generic output paths.
 - 2026-10-12 — owner requested `/30d`, no dot before gray reset timing, readable credits and
   labeled provider/grand totals instead of Sigma aggregates. Swept cli/usage.go, its existing
   tests, agent/usage.go, codex.go, help.go and the usage KB: both summary layouts use usageTotal,

@@ -54,7 +54,19 @@ usable quota/count, and missing expiry is not guessed. Only expiry timestamps su
 opaque IDs, profile information and upstream prose are discarded. No inspection request redeems
 a reset or opts into reserve capacity. Credentials and account headers remain host-only.
 
+Claude Code 2.1.285 reads optional reset grants using OAuth GET
+`/api/oauth/usage?cedar_ember=1&skip_spend=1`. The adapter keeps the ordinary usage response for
+limits/extra usage, then makes a bounded optional reset read with the same canonical authority.
+For an eligible account with a complete valid grants array it sums `resets_left`, matching the
+native client, never grant-list length. `usable_now` describes current redemption eligibility,
+not remaining resets. Missing/ineligible/malformed metadata remains unknown; failure never
+discards ordinary quota. Only positive remaining grants contribute reported `ends_at` expiry.
+This is inspection only: no organization reset route, grant IDs, event properties or redemption.
+
 ## Changelog
+- 2026-10-12 — verified Claude reset query, grants schema and remaining-count sum in the exact
+  locked native client and the live selected-account OAuth response. Added optional failure-safe
+  mapping with missing/null/invalid/overflow/expiry/authority regressions.
 - 2026-10-12 — verified reset endpoints and response keys against pinned upstream backend-client
   source/tests; added nullable count, reported expiry and read-only failure coverage. Verified
   compact style and aggregates against focused CLI deduplication/rounding/partial/layout fixtures.
