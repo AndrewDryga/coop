@@ -21,9 +21,10 @@
   stderr text.
 
 - **Filtered networking works where 1.1.1.1 is intercepted.** The network gateway's resolver
-  now tries Cloudflare's other address, 1.0.0.1, when 1.1.1.1 doesn't connect or doesn't prove
-  its certificate. Both must present cloudflare-dns.com; nothing falls back to an unverified
-  resolver.
+  now dials both of Cloudflare's addresses, 1.1.1.1 and 1.0.0.1, at once and uses the first that
+  proves its certificate, so an address that is blocked, hangs, or answers with another
+  certificate no longer stops name resolution. Both must present cloudflare-dns.com; nothing falls
+  back to an unverified resolver.
 
 - **A quiet turn's pulse says what the provider is still sending.** `provider.alive` now carries
   `last_kind`, the latest frame's method or session update type. It never carries frame content.

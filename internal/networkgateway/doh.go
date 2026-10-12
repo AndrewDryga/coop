@@ -27,7 +27,7 @@ type DoH struct {
 	stop      context.CancelFunc
 }
 
-// NewDoH dials only peers, in order, and keeps the first that proves serverName. A network can
+// NewDoH dials only peers, all at once, and keeps the first that proves serverName. A network can
 // intercept one address of a resolver without the resolver being down: on 2026-10-12 one office
 // network answered 1.1.1.1:443 with a certificate that does not verify while 1.0.0.1:443 worked,
 // so `coop net setup` failed and the worker refused every filtered job. Every peer must prove the
@@ -59,15 +59,7 @@ func NewDoH(peers []netip.AddrPort, serverName string, roots *x509.CertPool, clo
 			defer cancel()
 			end := context.AfterFunc(lifetime, cancel)
 			defer end()
-			var failure error
-			for _, peer := range peers {
-				conn, err := doh.dialPeer(ctx, peer)
-				if err == nil {
-					return conn, nil
-				}
-				failure = err
-			}
-			return nil, failure
+			return doh.dialFirst(ctx, peers)
 		},
 		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12, ServerName: name, RootCAs: roots},
 		ForceAttemptHTTP2: true, DisableCompression: true,
@@ -81,6 +73,45 @@ func NewDoH(peers []netip.AddrPort, serverName string, roots *x509.CertPool, clo
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	return doh, nil
+}
+
+// dialFirst dials every peer at once and keeps the first that proves the pinned name. An
+// intercepted address can also swallow the connection: on 2026-10-12, a few hours after it had
+// answered with the wrong certificate, 1.1.1.1:443 accepted nothing for 15 s, so trying peers in
+// turn spent the whole query budget on it and never reached 1.0.0.1. The others are cancelled
+// once one wins, and every dial has returned, its connection closed, before this does.
+func (d *DoH) dialFirst(ctx context.Context, peers []netip.AddrPort) (net.Conn, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type dialed struct {
+		conn net.Conn
+		err  error
+	}
+	results := make(chan dialed, len(peers))
+	for _, peer := range peers {
+		go func() {
+			conn, err := d.dialPeer(ctx, peer)
+			results <- dialed{conn: conn, err: err}
+		}()
+	}
+	var winner net.Conn
+	var failure error
+	for range peers {
+		result := <-results
+		switch {
+		case result.err != nil:
+			failure = result.err
+		case winner == nil:
+			winner = result.conn
+			cancel()
+		default:
+			_ = result.conn.Close()
+		}
+	}
+	if winner != nil {
+		return winner, nil
+	}
+	return nil, failure
 }
 
 // dialPeer connects to one peer and proves the pinned name over it, or closes it.

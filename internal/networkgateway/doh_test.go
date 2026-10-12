@@ -6,11 +6,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/testutil/workertls"
 )
@@ -100,6 +103,61 @@ func TestDoHFallsBackOnlyToAPeerThatProvesTheName(t *testing.T) {
 	}
 	if intercepted.Load() != 0 {
 		t.Fatal("a query reached a peer that did not prove the pinned name")
+	}
+}
+
+// A few hours later the same network stopped answering 1.1.1.1:443 at all: the connection
+// hung, and trying the addresses in turn spent the whole three-second query budget on it. The
+// resolver still answers through the other address, well inside that budget.
+func TestDoHAnswersWhileAnotherPeerSwallowsTheConnection(t *testing.T) {
+	wire := bytes.Repeat([]byte{1}, 12)
+	silent, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer silent.Close()
+	var held []net.Conn
+	var mu sync.Mutex
+	go func() {
+		for {
+			conn, err := silent.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, conn)
+			mu.Unlock()
+		}
+	}()
+	defer func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range held {
+			_ = conn.Close()
+		}
+	}()
+	resolver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/dns-message")
+		_, _ = w.Write(wire)
+	}))
+	defer resolver.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(resolver.Certificate())
+	peers := []netip.AddrPort{
+		netip.MustParseAddrPort(silent.Addr().String()),
+		netip.MustParseAddrPort(resolver.Listener.Addr().String()),
+	}
+	doh, err := NewDoH(peers, "example.com", roots, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer doh.Close()
+	started := time.Now()
+	if got, err := doh.Exchange(context.Background(), wire); err != nil || !bytes.Equal(got, wire) {
+		t.Fatalf("resolver behind a silent first address: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= DNSQueryTimeout {
+		t.Fatalf("the answer waited out the silent address: %s", elapsed)
 	}
 }
 
