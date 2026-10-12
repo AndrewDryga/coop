@@ -3,7 +3,7 @@ name: provider-client-qualification
 description: locked clients, strict schema2 qualification requirements and Linux/amd64 live evidence
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-10-11
+updated: 2026-10-12
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -55,16 +55,16 @@ invocation passed, or that macOS/Linux-arm64 live provider parity was exercised.
 account was configured per provider, so all four second-account recovery entries remain
 `not_configured`, not proved. A missing-file gate is dormant, not proof of compatibility.
 
-**Temporary exact-client gate policy.** The separately approved v11.0.1 and v11.0.2 exceptions
+**Temporary exact-client gate policy.** The separately approved v11.0.1, v11.0.2 and v11.1.0 exceptions
 hash the retained historical record, the lock and every platform's complete client/native identity,
 and require
-one of those two exact versions to be the latest numbered changelog section. Reopening Unreleased
+one of those three exact versions to be the latest numbered changelog section. Reopening Unreleased
 permits ordinary main checks; other releases, altered evidence or any client/dependency/platform
 change refuse. An approved older section cannot authorize a newer unapproved release.
 Release preflight independently binds the finalized first section to the actual event tag.
 No environment bypass exists. The validator and historical record are unchanged; the gate
 reports UNQUALIFIED for the matched approved version rather than claiming fresh compatibility
-evidence. Remove the temporary exception after v11.0.2.
+evidence. Remove the temporary exception after v11.1.0.
 
 Live harnesses route brokered API keys through the host's filtered gateway automatically, using
 `BrokersKey`/`AnyBrokersKey` and `NetworkStateHome`; native sign-ins retain the open path except
@@ -242,6 +242,10 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-10-12 — added the explicitly approved v11.1.0-only exception without changing either
+  pinned hash, client identities, strict validator or historical evidence. Finalized/reopened
+  acceptance and future patch/minor, dependency, evidence, every native/adapter and platform
+  denial checks retain the exact boundary. This is still UNQUALIFIED, not fresh certification.
 - 2026-10-11 — added the explicitly approved v11.0.2-only exception alongside the existing
   v11.0.1 approval so ordinary Unreleased checks retain their prior policy before finalization.
   Both exact hashes and historical evidence remain unchanged. Finalized/reopened approval and
