@@ -267,8 +267,17 @@ func TestFilteredWatchGrowsProtectionWhileWorkRuns(t *testing.T) {
 	if !strings.Contains(d.applied[0], added.String()) || !slices.Contains(f.protected, added) {
 		t.Fatal("grown envelope lacks the address the watch saw", d.applied, f.protected)
 	}
-	if record, err := f.store.Execution(f.record.ID); err != nil || !slices.Contains(record.Protected, added) {
-		t.Fatal("watch growth was not recorded", err)
+	// The watch applies the kernel rule first and records it after, so the record can trail the
+	// applied rule by a moment: CI read it in between once (2026-10-12) and failed.
+	for {
+		record, err := f.store.Execution(f.record.ID)
+		if err == nil && slices.Contains(record.Protected, added) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("watch growth was not recorded", err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if gone, err := f.cleanup("cancelled"); err != nil || !gone {
 		t.Fatal("growth lost cleanup", gone, err)
