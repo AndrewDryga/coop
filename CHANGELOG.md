@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 11.1.0
 
 - **Updates prepare the image your project actually uses.** After installing a new release,
