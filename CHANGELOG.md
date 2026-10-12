@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A reservation released mid-scan no longer fails a session create.** When another session
+  released its workspace reservation while Coop was reading the registry, the missing file was
+  reported as a registry problem and the unrelated create failed with "no such file or
+  directory". A released reservation now counts as absent; an entry that is still there but
+  unreadable is still refused.
+
 - **Two project reviews starting together no longer fail on their shared lock.** Creating the
   review lock could fail with "no such file or directory" when another review created it at the
   same moment. Coop now tries that open again.

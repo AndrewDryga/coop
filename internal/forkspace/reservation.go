@@ -27,6 +27,10 @@ const WorkspaceReservationVersion = workspaceReservationVersion
 // Injectable only inside this package to qualify visible-create/unlink recovery.
 var syncReservationDirectory = func(dir *os.File) error { return dir.Sync() }
 
+// Injectable only inside this package to qualify an entry released between the registry's
+// directory read and the read of the entry itself.
+var afterReservationDirectoryRead = func() {}
+
 type WorkspaceReservationKind string
 
 const WorkspaceReservationRemoteSession WorkspaceReservationKind = "remote-session"
@@ -368,6 +372,7 @@ func WorkspaceReservations(repo string) ([]WorkspaceReservation, []error) {
 	if len(entries) > workspaceReservationCount {
 		return nil, []error{fmt.Errorf("workspace reservation registry exceeds %d entries", workspaceReservationCount)}
 	}
+	afterReservationDirectoryRead()
 	var records []WorkspaceReservation
 	var problems []error
 	for _, entry := range entries {
@@ -381,6 +386,12 @@ func WorkspaceReservations(repo string) ([]WorkspaceReservation, []error) {
 			continue
 		}
 		record, err := readWorkspaceReservationFile(root, entry.Name())
+		if errors.Is(err, os.ErrNotExist) {
+			// Its owner released it after the directory was read. A read a moment later would not
+			// list it, and a reservation that no longer exists holds nothing; reporting it failed
+			// an unrelated session create with ENOENT.
+			continue
+		}
 		if err != nil {
 			problems = append(problems, fmt.Errorf("%s: %w", entry.Name(), err))
 			continue
