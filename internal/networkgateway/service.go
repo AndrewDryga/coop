@@ -27,18 +27,21 @@ import (
 )
 
 const (
-	LaunchConfigPath        = "/run/coop-network.json"
-	ControllerSocket        = "/ipc/controller/c.sock"
-	EnvoyAdminSocket        = "/private/admin.sock"
-	RuntimeSocket           = "/private/runtime.sock"
-	EnvoyHealthTimeout      = 750 * time.Millisecond
-	EnvoyStartTimeout       = 10 * time.Second
-	EnvoyStopTimeout        = 2 * time.Second
-	MaxLaunchConfigBytes    = 4 << 20
-	MaintenanceResolver     = "1.1.1.1"
-	MaintenanceResolverName = "cloudflare-dns.com"
-	CredentialBrokerPort    = 15580 // route 0's listener; route i listens on CredentialBrokerPort+i
-	CredentialBrokerPath    = "/run/coop-credential-broker.json"
+	LaunchConfigPath     = "/run/coop-network.json"
+	ControllerSocket     = "/ipc/controller/c.sock"
+	EnvoyAdminSocket     = "/private/admin.sock"
+	RuntimeSocket        = "/private/runtime.sock"
+	EnvoyHealthTimeout   = 750 * time.Millisecond
+	EnvoyStartTimeout    = 10 * time.Second
+	EnvoyStopTimeout     = 2 * time.Second
+	MaxLaunchConfigBytes = 4 << 20
+	MaintenanceResolver  = "1.1.1.1"
+	// MaintenanceResolverFallback is the same resolver's other address, dialed when a network
+	// intercepts the first one (NewDoH). It has to prove the same name.
+	MaintenanceResolverFallback = "1.0.0.1"
+	MaintenanceResolverName     = "cloudflare-dns.com"
+	CredentialBrokerPort        = 15580 // route 0's listener; route i listens on CredentialBrokerPort+i
+	CredentialBrokerPath        = "/run/coop-credential-broker.json"
 	// MaxCredentialBrokerRoutes bounds one run's brokered routes: a provider route per selected
 	// account kind (at most 8) and a route per bearer-authenticated MCP server (at most 64).
 	MaxCredentialBrokerRoutes = 72
@@ -385,12 +388,17 @@ func RunController(ctx context.Context, config LaunchConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := c.Initialize(ctx, netip.MustParseAddr(MaintenanceResolver)); err != nil {
+	if err := c.Initialize(ctx, maintenanceResolvers()...); err != nil {
 		return err
 	}
 	c.nativeOrigins = slices.Clone(config.NativeOrigins)
 	c.kernel.read = readKernelCounters
 	return c.ServeControl(ctx, ControllerSocket)
+}
+
+// maintenanceResolvers are the gateway resolver's addresses, in the order it dials them.
+func maintenanceResolvers() []netip.Addr {
+	return []netip.Addr{netip.MustParseAddr(MaintenanceResolver), netip.MustParseAddr(MaintenanceResolverFallback)}
 }
 
 func applyKernelRules(ctx context.Context, rules string) error {
@@ -444,7 +452,11 @@ func NewGuardRuntime(config LaunchConfig) (*GuardRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	doh, err := NewDoH(netip.MustParseAddrPort(MaintenanceResolver+":443"), MaintenanceResolverName, nil, clock)
+	var peers []netip.AddrPort
+	for _, resolver := range maintenanceResolvers() {
+		peers = append(peers, netip.AddrPortFrom(resolver, 443))
+	}
+	doh, err := NewDoH(peers, MaintenanceResolverName, nil, clock)
 	if err != nil {
 		return nil, err
 	}

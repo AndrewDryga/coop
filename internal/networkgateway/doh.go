@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -26,19 +27,30 @@ type DoH struct {
 	stop      context.CancelFunc
 }
 
-// NewDoH dials only peer. clock times the release of each resolver connection for the collector.
-func NewDoH(peer netip.AddrPort, serverName string, roots *x509.CertPool, clock *BootClock) (*DoH, error) {
+// NewDoH dials only peers, in order, and keeps the first that proves serverName. A network can
+// intercept one address of a resolver without the resolver being down: on 2026-10-12 one office
+// network answered 1.1.1.1:443 with a certificate that does not verify while 1.0.0.1:443 worked,
+// so `coop net setup` failed and the worker refused every filtered job. Every peer must prove the
+// same name; one that does not is closed and never used. clock times the release of each
+// resolver connection for the collector.
+func NewDoH(peers []netip.AddrPort, serverName string, roots *x509.CertPool, clock *BootClock) (*DoH, error) {
 	name, err := egress.NormalizeDomain(serverName, false)
-	if err != nil || !peer.IsValid() || !peer.Addr().Is4() || peer.Port() == 0 {
+	if err != nil || len(peers) == 0 {
 		return nil, Failure("dns_upstream_invalid")
 	}
+	for _, peer := range peers {
+		if !peer.IsValid() || !peer.Addr().Is4() || peer.Port() == 0 {
+			return nil, Failure("dns_upstream_invalid")
+		}
+	}
+	peers = slices.Clone(peers)
 	doh := &DoH{}
 	doh.sockets.clock = clock
 	lifetime, stop := context.WithCancel(context.Background())
 	doh.stop = stop
 	transport := &http.Transport{
 		Proxy: nil,
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		DialTLSContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			if !doh.sockets.beginDial() {
 				return nil, net.ErrClosed
 			}
@@ -47,11 +59,15 @@ func NewDoH(peer netip.AddrPort, serverName string, roots *x509.CertPool, clock 
 			defer cancel()
 			end := context.AfterFunc(lifetime, cancel)
 			defer end()
-			conn, err := (&net.Dialer{Timeout: DNSQueryTimeout}).DialContext(ctx, "tcp4", peer.String())
-			if err != nil {
-				return nil, err
+			var failure error
+			for _, peer := range peers {
+				conn, err := doh.dialPeer(ctx, peer)
+				if err == nil {
+					return conn, nil
+				}
+				failure = err
 			}
-			return doh.sockets.track(conn), nil
+			return nil, failure
 		},
 		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12, ServerName: name, RootCAs: roots},
 		ForceAttemptHTTP2: true, DisableCompression: true,
@@ -65,6 +81,24 @@ func NewDoH(peer netip.AddrPort, serverName string, roots *x509.CertPool, clock 
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	return doh, nil
+}
+
+// dialPeer connects to one peer and proves the pinned name over it, or closes it.
+func (d *DoH) dialPeer(ctx context.Context, peer netip.AddrPort) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, DNSQueryTimeout)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp4", peer.String())
+	if err != nil {
+		return nil, err
+	}
+	config := d.transport.TLSClientConfig.Clone()
+	config.NextProtos = []string{"h2", "http/1.1"}
+	secured := tls.Client(d.sockets.track(conn), config)
+	if err := secured.HandshakeContext(ctx); err != nil {
+		_ = secured.Close()
+		return nil, err
+	}
+	return secured, nil
 }
 
 func (d *DoH) Close() { d.transport.CloseIdleConnections() }

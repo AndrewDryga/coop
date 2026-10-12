@@ -27,7 +27,7 @@ func collectorFixture(t *testing.T) (*Collector, *BootInstant) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doh, err := NewDoH(netip.MustParseAddrPort("1.1.1.1:443"), "cloudflare-dns.com", nil, controller.clock)
+	doh, err := NewDoH([]netip.AddrPort{netip.MustParseAddrPort("1.1.1.1:443")}, "cloudflare-dns.com", nil, controller.clock)
 	if err != nil {
 		t.Fatal(err)
 	}

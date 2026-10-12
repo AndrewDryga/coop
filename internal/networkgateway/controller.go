@@ -193,10 +193,19 @@ func portSet(ports []int) string {
 	return "{ " + strings.Join(out, ", ") + " }"
 }
 
+// addressSet renders IPv4 addresses as one nft anonymous set.
+func addressSet(addresses []netip.Addr) string {
+	out := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		out = append(out, address.String())
+	}
+	return "{ " + strings.Join(out, ", ") + " }"
+}
+
 // Initialize runs once before any guard/agent starts. Failure leaves readiness
 // false; callers destroy these exact resources rather than repair under a live
 // workload. Only lease sets, never chains or counters, change after readiness.
-func (c *Controller) Initialize(ctx context.Context, maintenance netip.Addr) error {
+func (c *Controller) Initialize(ctx context.Context, maintenance ...netip.Addr) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.initialized {
@@ -206,10 +215,12 @@ func (c *Controller) Initialize(ctx context.Context, maintenance netip.Addr) err
 	if !c.now().Valid() {
 		return Failure("clock_unavailable")
 	}
-	if !maintenance.Is4() || !egress.PublicAnswer(maintenance, c.protected) {
+	if len(maintenance) == 0 || slices.ContainsFunc(maintenance, func(address netip.Addr) bool {
+		return !address.Is4() || !egress.PublicAnswer(address, c.protected)
+	}) {
 		return errors.New("invalid pinned maintenance endpoint")
 	}
-	if err := c.apply(ctx, c.initialRules(maintenance)); err != nil {
+	if err := c.apply(ctx, c.initialRules(maintenance...)); err != nil {
 		return Failure("enforcement_unavailable")
 	}
 	if c.closed.Load() {
@@ -359,7 +370,7 @@ func leaseRules(leases map[string]Lease, now BootInstant) (string, map[netip.Add
 	return result, installed
 }
 
-func (c *Controller) initialRules(maintenance netip.Addr) string {
+func (c *Controller) initialRules(maintenance ...netip.Addr) string {
 	var protected []string
 	for _, prefix := range egress.ProtectedRanges(c.protected) {
 		if prefix.Addr().Is4() {
@@ -469,7 +480,7 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
   counter name denied_ingress drop
  }
 }
-`, counters.String(), strings.Join(protected, ", "), capture, serviceEgress.String(), egressRules.String(), maintenance,
+`, counters.String(), strings.Join(protected, ", "), capture, serviceEgress.String(), egressRules.String(), addressSet(maintenance),
 		serviceIngress.String(), portSet(replies), ingressRules.String())
 	return strings.ReplaceAll(rules, "AGENT_UID", fmt.Sprint(c.agentUID))
 }

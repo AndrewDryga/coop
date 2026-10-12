@@ -324,3 +324,12 @@ func TestServiceGrantsRequireAnExactBinding(t *testing.T) {
 		t.Fatal("an exactly bound service grant was not rendered", grants, err)
 	}
 }
+
+// The gateway's resolver may answer on either of its addresses (NewDoH), so the gateway's own
+// TLS to both is allowed, and to nothing else on that rule.
+func TestGatewayResolverMayUseEitherOfItsAddresses(t *testing.T) {
+	rules := transportController(t, transportPolicy(t), nil, nil).initialRules(maintenanceResolvers()...)
+	if !strings.Contains(rules, "  meta skuid 65532 ip daddr { 1.1.1.1, 1.0.0.1 } tcp dport 443 accept\n") {
+		t.Fatalf("resolver rule = %s", rules)
+	}
+}

@@ -3,6 +3,7 @@ package networkgateway
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"io"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"net/netip"
 	"sync/atomic"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/workertls"
 )
 
 func testDoH(t *testing.T, handler http.Handler) *DoH {
@@ -22,7 +25,7 @@ func testDoH(t *testing.T, handler http.Handler) *DoH {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doh, err := NewDoH(peer, "example.com", roots, nil) // the httptest certificate covers example.com
+	doh, err := NewDoH([]netip.AddrPort{peer}, "example.com", roots, nil) // the httptest certificate covers example.com
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +54,52 @@ func TestDoHPinsPeerAndAuthenticatesServerWithoutEnvironmentProxy(t *testing.T) 
 	doh.transport.TLSClientConfig.ServerName = "wrong.example.net"
 	if _, err := doh.Exchange(context.Background(), wire); err == nil {
 		t.Fatal("resolver accepted wrong certificate identity")
+	}
+}
+
+// On 2026-10-12 one office network answered 1.1.1.1:443 with a certificate that does not verify
+// while 1.0.0.1:443 worked, so `coop net setup` failed and the worker refused every filtered
+// job. The resolver's other address answers instead. A peer that cannot prove the pinned name
+// never receives a query, and with no peer that can, nothing answers.
+func TestDoHFallsBackOnlyToAPeerThatProvesTheName(t *testing.T) {
+	wire := bytes.Repeat([]byte{1}, 12)
+	var intercepted atomic.Int64
+	interceptor := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		intercepted.Add(1)
+	}))
+	interceptor.TLS = &tls.Config{Certificates: []tls.Certificate{workertls.NewCA(t).ServerCertificate(t)}}
+	interceptor.StartTLS()
+	defer interceptor.Close()
+	resolver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/dns-message")
+		_, _ = w.Write(wire)
+	}))
+	defer resolver.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(resolver.Certificate())
+	peer := func(server *httptest.Server) netip.AddrPort {
+		return netip.MustParseAddrPort(server.Listener.Addr().String())
+	}
+
+	doh, err := NewDoH([]netip.AddrPort{peer(interceptor), peer(resolver)}, "example.com", roots, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer doh.Close()
+	if got, err := doh.Exchange(context.Background(), wire); err != nil || !bytes.Equal(got, wire) {
+		t.Fatalf("resolver behind an intercepted first address: %v", err)
+	}
+
+	intercepting, err := NewDoH([]netip.AddrPort{peer(interceptor)}, "example.com", roots, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer intercepting.Close()
+	if _, err := intercepting.Exchange(context.Background(), wire); err == nil {
+		t.Fatal("resolver answered through a peer that did not prove its name")
+	}
+	if intercepted.Load() != 0 {
+		t.Fatal("a query reached a peer that did not prove the pinned name")
 	}
 }
 

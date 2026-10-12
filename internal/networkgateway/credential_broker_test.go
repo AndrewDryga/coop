@@ -350,7 +350,7 @@ func TestCredentialBrokerWaitsForAnMCPToolsResponseHeaders(t *testing.T) {
 			Methods: []string{"POST", "GET", "DELETE"}, Path: "/mcp", Port: 443},
 	}
 	clock := testBootClock()
-	doh, err := NewDoH(netip.MustParseAddrPort("1.1.1.1:443"), "cloudflare-dns.com", nil, clock)
+	doh, err := NewDoH([]netip.AddrPort{netip.MustParseAddrPort("1.1.1.1:443")}, "cloudflare-dns.com", nil, clock)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -632,7 +632,7 @@ func TestCredentialBrokerWaitsOutAConcurrentLeaseUpdate(t *testing.T) {
 	client, _, _ := startControlFixture(t, c, func(*net.UnixConn) bool { asks.Add(1); return true })
 	letGo := sync.OnceFunc(func() { close(release) })
 	t.Cleanup(letGo)
-	doh, err := NewDoH(netip.MustParseAddrPort("1.1.1.1:443"), "cloudflare-dns.com", nil, clock)
+	doh, err := NewDoH([]netip.AddrPort{netip.MustParseAddrPort("1.1.1.1:443")}, "cloudflare-dns.com", nil, clock)
 	if err != nil {
 		t.Fatal(err)
 	}
