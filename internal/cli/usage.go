@@ -184,7 +184,8 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	// Inspection succeeds when it can show any usable quota or native history. Individual errors
 	// stay inline; a total lookup failure is nonzero, not a fabricated empty successful report.
 	for _, row := range rows {
-		if row.value.Available || row.unpricedTurns > 0 || row.quotaErr == nil && len(row.quota.Buckets) > 0 {
+		quotaKnown := row.quotaErr == nil && (len(row.quota.Buckets) > 0 || row.quota.Resets != nil && row.quota.Resets.Available != nil)
+		if row.value.Available || row.unpricedTurns > 0 || quotaKnown {
 			return 0, nil
 		}
 	}
@@ -355,11 +356,34 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			fmt.Fprintln(w, pal.Dim(text))
 		}
 	}
+	var grand usageAggregate
+	// Reset/expiry text is measured and wrapped before styling, so ANSI bytes never shift the
+	// value column. On a narrow terminal the whole suffix moves below the value, without a dot.
+	values := func(value, suffix string, room int) []string {
+		if suffix == "" {
+			if room <= 0 {
+				return []string{value}
+			}
+			return usageWrap(value, room)
+		}
+		if room <= 0 || utf8.RuneCountInString(value+"  "+suffix) <= room {
+			return []string{value + pal.Faint("  "+suffix)}
+		}
+		lines := usageWrap(value, room)
+		for _, text := range usageWrap(suffix, room) {
+			lines = append(lines, pal.Faint(text))
+		}
+		return lines
+	}
 	for n, name := range names {
 		if n > 0 {
 			fmt.Fprintln(w)
 		}
 		fmt.Fprintln(w, pal.Bold(titleName(name)))
+		subtotal := sumUsage(rows, name)
+		grand.USD += subtotal.USD
+		grand.Known = grand.Known || subtotal.Known
+		grand.Partial = grand.Partial || subtotal.Partial
 		var shown []usageCredential
 		for _, row := range rows {
 			// An editor row is nothing but its total, so the summary shows it only with one.
@@ -382,7 +406,7 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 		stack := width > 0 && prefixWidth+usageMinValueWidth > width
 		// columns prints a label, an optional bar and a value, continuing an overflowing value in
 		// the value column; a terminal too narrow for the columns stacks the row instead.
-		columns := func(label, bar, coloredBar, value string) {
+		columns := func(label, bar, coloredBar, value, suffix string) {
 			if stack {
 				if label != "" {
 					line("    ", label)
@@ -390,7 +414,7 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 				if bar != "" {
 					fmt.Fprintf(w, "      %s\n", coloredBar)
 				}
-				for _, text := range usageWrap(value, width-6) {
+				for _, text := range values(value, suffix, width-6) {
 					fmt.Fprintln(w, "      "+text)
 				}
 				return
@@ -399,16 +423,17 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			if bar != "" {
 				slot = "  " + coloredBar + "  "
 			}
-			values := []string{value}
+			room := 0
 			if width > 0 {
-				values = usageWrap(value, width-prefixWidth)
+				room = width - prefixWidth
 			}
-			fmt.Fprintf(w, "    %s%s%s\n", padRight(label, cols.labelWidth), slot, values[0])
-			for _, more := range values[1:] {
+			texts := values(value, suffix, room)
+			fmt.Fprintf(w, "    %s%s%s\n", padRight(label, cols.labelWidth), slot, texts[0])
+			for _, more := range texts[1:] {
 				fmt.Fprintf(w, "%s%s\n", strings.Repeat(" ", prefixWidth), more)
 			}
 		}
-		fact := func(label, value string) { columns(label, "", "", value) }
+		fact := func(label, value string) { columns(label, "", "", value, "") }
 		for i, row := range shown {
 			// Blank lines separate multi-line accounts; one-line accounts stack together.
 			if i > 0 && (!cols.oneLine[i] || !cols.oneLine[i-1]) {
@@ -446,7 +471,12 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			shownResets := make(map[int64]bool)
 			for _, bucket := range buckets {
 				label := agents.DisplayTarget(bucket.Name)
-				text := usageBucketText(bucket, details, now, shownResets)
+				text := usageBucketText(bucket, details)
+				reset := ""
+				if details || !bucket.Reset.IsZero() && !(bucket.Used != nil && *bucket.Used == 0 && shownResets[bucket.Reset.Unix()]) {
+					reset = usageResetLabel(bucket.Reset, now)
+					shownResets[bucket.Reset.Unix()] = true
+				}
 				bar, colored := "", ""
 				if bucket.Used != nil {
 					filled := int(math.Round(min(100, *bucket.Used) / 10))
@@ -458,7 +488,19 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 						colored = pal.Yellow(bar)
 					}
 				}
-				columns(label, bar, colored, text)
+				columns(label, bar, colored, text, reset)
+			}
+			if resets := row.quota.Resets; resets != nil {
+				text := "unavailable"
+				if resets.Available != nil {
+					text = fmt.Sprintf("%d available", *resets.Available)
+				}
+				columns("Resets", "", "", text, usageResetExpiry(resets, now))
+				if details {
+					for _, expiry := range resets.Expirations {
+						fact("Reported reset expiry", usageExpiryLabel(expiry, now))
+					}
+				}
 			}
 			if note != "" {
 				r, size := utf8.DecodeRuneInString(note)
@@ -482,7 +524,56 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 				quiet(strings.Repeat(" ", indent), total)
 			}
 		}
+		if !details && subtotal.Known {
+			fmt.Fprintln(w)
+			line("  Subtotal  ", subtotal.label())
+		}
 	}
+	if !details && grand.Known {
+		fmt.Fprintln(w)
+		texts := []string{"Total  " + grand.label()}
+		if width > 0 {
+			texts = ui.PrefixedLines("Total  ", grand.label(), width)
+		}
+		for _, text := range texts {
+			fmt.Fprintln(w, pal.Bold(text))
+		}
+	}
+}
+
+type usageAggregate struct {
+	USD            float64
+	Known, Partial bool
+}
+
+// Rows have already been deduplicated by provider/request ID. Unassigned editor history is
+// included once without inventing account attribution; missing history is never a known zero.
+func sumUsage(rows []usageCredential, provider string) usageAggregate {
+	var sum usageAggregate
+	for _, row := range rows {
+		if row.provider != provider {
+			continue
+		}
+		v := row.value
+		if row.shared && !v.Available && !v.Partial && !row.history.Partial && row.unpricedTurns == 0 {
+			continue // no shared history store is not a missing account
+		}
+		known := v.Available && (v.Priced > 0 || !v.Partial && v.Unpriced == 0) && v.USD >= 0 && !math.IsNaN(v.USD) && !math.IsInf(v.USD, 0)
+		if known {
+			sum.USD += v.USD
+			sum.Known = true
+		}
+		sum.Partial = sum.Partial || !known || v.Partial || v.Unpriced > 0 || row.ambiguous || row.unpricedTurns > 0
+	}
+	return sum
+}
+
+func (sum usageAggregate) label() string {
+	text := fmt.Sprintf("≈$%.2f/30d", sum.USD)
+	if sum.Partial {
+		text += " partial"
+	}
+	return text
 }
 
 // usageColumns is one provider's layout. Labels pad to labelWidth, bars follow them, and every
@@ -507,6 +598,12 @@ func usageLayout(rows []usageCredential, details bool, width int) usageColumns {
 		for _, bucket := range buckets {
 			cols.labelWidth = max(cols.labelWidth, utf8.RuneCountInString(agents.DisplayTarget(bucket.Name)))
 			cols.bars = cols.bars || bucket.Used != nil
+		}
+		if row.quota.Resets != nil {
+			cols.labelWidth = max(cols.labelWidth, len("Resets"))
+			if details && len(row.quota.Resets.Expirations) > 0 {
+				cols.labelWidth = max(cols.labelWidth, len("Reported reset expiry"))
+			}
 		}
 		labels := []string{}
 		if row.quotaErr != nil || usageLimitsUnknown(row, buckets) {
@@ -590,7 +687,7 @@ func usageLimitsUnknown(row usageCredential, buckets []agents.UsageBucket) bool 
 	return !row.shared && row.quotaErr == nil && len(buckets) == 0 && row.quota.Note == "" && row.quota.Auth == ""
 }
 
-func usageBucketText(bucket agents.UsageBucket, details bool, now time.Time, shownResets map[int64]bool) string {
+func usageBucketText(bucket agents.UsageBucket, details bool) string {
 	text := ""
 	if bucket.Used != nil {
 		// Right-aligned to the width of "100%", so "used" and the resets line up in every row.
@@ -601,6 +698,7 @@ func usageBucketText(bucket agents.UsageBucket, details bool, now time.Time, sho
 		if !details {
 			if number, err := strconv.ParseFloat(remaining, 64); err == nil && !math.IsNaN(number) && !math.IsInf(number, 0) {
 				remaining = strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", number), "0"), ".")
+				remaining = usageGroupedNumber(remaining)
 			}
 		}
 		if text != "" {
@@ -619,11 +717,43 @@ func usageBucketText(bucket agents.UsageBucket, details bool, now time.Time, sho
 	if bucket.Note != "" {
 		text += " · " + agents.DisplayTarget(bucket.Note)
 	}
-	if details || !bucket.Reset.IsZero() && !(bucket.Used != nil && *bucket.Used == 0 && shownResets[bucket.Reset.Unix()]) {
-		text += " · " + usageResetLabel(bucket.Reset, now)
-		shownResets[bucket.Reset.Unix()] = true
-	}
 	return text
+}
+
+func usageGroupedNumber(number string) string {
+	whole, fraction, decimal := strings.Cut(number, ".")
+	sign := ""
+	if strings.HasPrefix(whole, "-") {
+		sign, whole = "-", whole[1:]
+	}
+	for i := len(whole) - 3; i > 0; i -= 3 {
+		whole = whole[:i] + "," + whole[i:]
+	}
+	if decimal {
+		whole += "." + fraction
+	}
+	return sign + whole
+}
+
+func usageResetExpiry(resets *agents.UsageResetCredits, now time.Time) string {
+	if resets.Available == nil || *resets.Available == 0 {
+		return ""
+	}
+	var earliest time.Time
+	for _, expiry := range resets.Expirations {
+		if expiry.After(now) && (earliest.IsZero() || expiry.Before(earliest)) {
+			earliest = expiry
+		}
+	}
+	if earliest.IsZero() {
+		return ""
+	}
+	return "reported expiry " + usageExpiryLabel(earliest, now)
+}
+
+func usageExpiryLabel(expiry, now time.Time) string {
+	text := usageResetLabel(expiry, now)
+	return strings.TrimPrefix(strings.TrimPrefix(text, "resets "), "reset ")
 }
 
 // usageMinValueWidth is the narrowest value column worth keeping beside labels and bars.
@@ -673,7 +803,7 @@ func usageWrap(value string, room int) []string {
 // account details say why.
 func usageTotal(row usageCredential) string {
 	if value := usageValueLabel(row, false); strings.HasPrefix(value, "≈$") {
-		return "Σ" + value
+		return "Σ" + value + "/30d"
 	}
 	return ""
 }

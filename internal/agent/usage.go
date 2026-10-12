@@ -41,10 +41,18 @@ type UsageQuotaInput struct {
 type UsageQuota struct {
 	Plan    string
 	Buckets []UsageBucket
+	Resets  *UsageResetCredits
 	Note    string
 	// Auth names a sign-in kind that has no provider limits to report, such as "API key"; the
 	// summary shows it beside the account instead of explaining the missing limits.
 	Auth string
+}
+
+// Available is authoritative even when the provider caps its expiry detail list. A nil count
+// is unknown, not zero; expirations describe only returned available credits, never all credits.
+type UsageResetCredits struct {
+	Available   *int64
+	Expirations []time.Time
 }
 
 type UsageBucket struct {

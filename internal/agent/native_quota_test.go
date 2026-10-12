@@ -45,6 +45,7 @@ func TestNativeQuotaUsesCanonicalAuthority(t *testing.T) {
 					if r.URL.String() != "https://chatgpt.com/backend-api/wham/usage" || r.Header.Get("Chatgpt-Account-Id") != state.AccountID {
 						t.Fatal("wrong Codex quota authority")
 					}
+					body = `{"rate_limit_reset_credits":{"available_count":0}}`
 				case "gemini":
 					if r.URL.Host != "cloudcode-pa.googleapis.com" || r.Method != http.MethodPost {
 						t.Fatal("wrong Gemini quota route")

@@ -528,14 +528,48 @@ func codexUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, er
 		return UsageQuota{}, ErrUsageSignIn
 	}
 	var raw codexQuotaResponse
-	err = readUsageQuota(ctx, http.MethodGet, "https://chatgpt.com/backend-api/wham/usage", http.Header{
+	headers := http.Header{
 		"Authorization":      {"Bearer " + state.AccessToken},
 		"Chatgpt-Account-Id": {state.AccountID}, "User-Agent": {"codex_cli_rs/0.159.2"},
-	}, nil, &raw)
+	}
+	err = readUsageQuota(ctx, http.MethodGet, "https://chatgpt.com/backend-api/wham/usage", headers, nil, &raw)
 	if err != nil {
 		return UsageQuota{}, err
 	}
-	return raw.quota(), nil
+	out := raw.quota()
+	if out.Resets.Available != nil && *out.Resets.Available == 0 {
+		return out, nil
+	}
+	// Match the pinned client's optional detail lookup: failure must not discard usable quota
+	// or its reset count. This GET cannot redeem a credit and never opts into reserve capacity.
+	detailCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var details codexResetCreditsResponse
+	if readUsageQuota(detailCtx, http.MethodGet, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits", headers, nil, &details) == nil && details.Available != nil && *details.Available >= 0 {
+		out.Resets = details.usage()
+	}
+	return out, nil
+}
+
+type codexResetCreditsResponse struct {
+	Available *int64 `json:"available_count"`
+	Credits   []struct {
+		Type    string `json:"reset_type"`
+		Status  string `json:"status"`
+		Expires string `json:"expires_at"`
+	} `json:"credits"`
+}
+
+func (raw codexResetCreditsResponse) usage() *UsageResetCredits {
+	out := &UsageResetCredits{Available: raw.Available}
+	for _, credit := range raw.Credits {
+		if credit.Type == "codex_rate_limits" && credit.Status == "available" {
+			if expiry := usageReset(credit.Expires); !expiry.IsZero() {
+				out.Expirations = append(out.Expirations, expiry)
+			}
+		}
+	}
+	return out
 }
 
 type codexQuotaWindow struct {
@@ -563,10 +597,14 @@ type codexQuotaResponse struct {
 		Unlimited bool    `json:"unlimited"`
 		Balance   *string `json:"balance"`
 	} `json:"credits"`
+	Resets *codexResetCreditsResponse `json:"rate_limit_reset_credits"`
 }
 
 func (raw codexQuotaResponse) quota() UsageQuota {
-	out := UsageQuota{Plan: raw.Plan}
+	out := UsageQuota{Plan: raw.Plan, Resets: &UsageResetCredits{}}
+	if raw.Resets != nil && raw.Resets.Available != nil && *raw.Resets.Available >= 0 {
+		out.Resets.Available = raw.Resets.Available
+	}
 	appendLimit := func(prefix string, limit *codexQuotaLimit) {
 		if limit == nil {
 			return

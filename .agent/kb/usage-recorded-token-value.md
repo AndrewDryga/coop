@@ -3,7 +3,7 @@ name: usage-recorded-token-value
 description: Usage reports native quota and recorded token value independently; historical account ambiguity and missing tariffs stay explicit
 subsystem: usage
 sources: [internal/agent/usage.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/run.go, internal/cli/usage.go, internal/session/usage.go]
-updated: 2026-10-09
+updated: 2026-10-12
 ---
 
 `coop usage [<provider>[@credential]]` is an inspection, not a model run or a billing report.
@@ -21,7 +21,12 @@ Provider quota is account-wide; the dollar estimate is not. The CLI reads only C
 credential roots and default session-private ACP roots, not independent native host homes,
 web/mobile usage or other machines. Native runs that write into those same roots can be included.
 The compact view leads with quota bars, then the 30-day API estimate as a dim, aligned Sigma total
-when one is priced; unavailable/unpriced results show no total in the summary. Sign-ins without
+as `Σ≈$N/30d` when one is priced; unavailable/unpriced results show no account total in the summary.
+Provider Subtotal and bold grand Total sum unrounded deduplicated rows, including unassigned
+editor history once. Missing, ambiguous, partial and unpriced coverage marks aggregates partial;
+no known recorded amount means no money aggregate, not a fabricated zero. Exact-account selection
+omits aggregate rows. Timing is a separately measured dim gray suffix with two spaces, no dot.
+Sign-ins without
 provider limits (API key, setup token, Vertex) report `UsageQuota.Auth` and render as one line
 beside their total. Exact-account selection adds plan, coverage, pricing and retained-record
 details without a blanket disclaimer footer.
@@ -41,7 +46,18 @@ Encrypted-only legacy caches remain unavailable. API keys have no subscription q
 valued history. Discovery includes ordinary repository homes and both local and private remote ACP
 homes; account-independent editor history remains unassigned.
 
+Codex 0.159.2 quota GET `/backend-api/wham/usage` supplies nullable
+`rate_limit_reset_credits.available_count`. An optional bounded GET of
+`/backend-api/wham/rate-limit-reset-credits` supplies its own authoritative count and available
+Codex reset expiry details. List length is never the count; it may be capped. Detail failures keep
+usable quota/count, and missing expiry is not guessed. Only expiry timestamps survive adaptation;
+opaque IDs, profile information and upstream prose are discarded. No inspection request redeems
+a reset or opts into reserve capacity. Credentials and account headers remain host-only.
+
 ## Changelog
+- 2026-10-12 — verified reset endpoints and response keys against pinned upstream backend-client
+  source/tests; added nullable count, reported expiry and read-only failure coverage. Verified
+  compact style and aggregates against focused CLI deduplication/rounding/partial/layout fixtures.
 - 2026-10-09 — verified canonical quota callbacks, repository history discovery and unassigned
   private remote ACP homes against box/usage.go and cli/usage.go.
 - 2026-10-02 — summary totals now appear only when priced; verified against usageTotal.

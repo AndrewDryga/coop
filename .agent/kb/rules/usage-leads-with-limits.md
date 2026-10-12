@@ -4,17 +4,19 @@ description: Usage keeps quota bars first and an estimate last; account details 
 scope: cli-output
 sources: [internal/cli/usage.go, internal/cli/usage_test.go, internal/cli/help.go, internal/cli/profiles.go, internal/agent/usage.go]
 check: "go test ./internal/cli -run TestUsage"
-updated: 2026-10-02
+updated: 2026-10-12
 ---
 
 # Usage answers how much capacity remains
 
 `coop usage` and provider summaries show account names, quota bars and resets, then the priced
-30-day total as `Σ≈$406.48`, dimmed so it stays quieter than the limits. Without a dollar estimate
+30-day total as `Σ≈$406.48/30d`, dimmed so it stays quieter than the limits. Without a dollar estimate
 (unpriced, unavailable or ambiguous history) the summary shows no Σ line at all, and an editor
 row, which is nothing but its total, is omitted; account details say why. Narrow terminals put
 the total at the normal four-space fact indent. A reset reads `resets in 2d 2h (Oct 4, 08:35 UTC)`:
-the time left, then the moment in UTC, never an unlabeled local clock. Exact-account details keep
+the time left, then the moment in UTC, never an unlabeled local clock. Separate it from the value
+with two spaces, not a middle dot, and dim it gray after measuring/wrapping plain text. On a
+narrow terminal timing continues below the value in the same column. Exact-account details keep
 the labeled estimate. Do not add default/plan tags, repeated pricing/history qualifications or a
 blanket disclaimer footer. Default selection belongs in `coop credentials`.
 
@@ -22,7 +24,10 @@ Keep separate model pools, including unused capacity. The summary omits a provid
 "not allowed" flag, which only restates a full bar and misleads when credits keep an account
 running; account details show it as `limit reached` on a percentage limit, never on a balance.
 Hide disabled extra usage, unknown reset placeholders and duplicate reset times on unused buckets.
-Show useful remaining balances without excessive decimal precision. Missing usage must never
+Show useful remaining balances with comma-grouped digits and without excessive decimal precision.
+Earned reset counts are provider-reported, nullable and separate from credits. Never infer a count
+from a capped detail list. Label expiry as reported because those details may be incomplete;
+inspection never redeems a reset. Missing usage must never
 become zero; failed lookups and sign-in remedies remain visible.
 
 Each provider measures its own columns, so one long label never spreads another provider's
@@ -36,7 +41,7 @@ reaches 100%. A value too long for the terminal continues in that column, breaki
 and then before a parenthetical; only a terminal too narrow for the columns stacks the row
 under its label.
 
-An account with nothing but a total is one line, `blitz_ai_studio (API key)  Σ≈$0.48`, and
+An account with nothing but a total is one line, `blitz_ai_studio (API key)  Σ≈$0.48/30d`, and
 consecutive one-line accounts stack without blank lines; one blank line separates every other
 block and nothing trails the last one. A sign-in kind without provider limits (API key, setup
 token, Vertex) comes from the adapter as `UsageQuota.Auth` and shows only as that parenthetical,
@@ -45,10 +50,25 @@ account line, dimmed; without limits it is the account's one capitalized reason 
 history reads `Unassigned editor usage`; its identity and accounting remain separate from named
 accounts.
 
+Each provider summary ends with plain `Subtotal ≈$N/30d` when its recorded estimate is known.
+The complete summary ends with bold `Total ≈$N/30d`; labels replace Sigma in aggregates. Include
+unassigned editor history exactly once, without inventing account attribution. Sum unrounded
+deduplicated recorded values, then format; never sum balances. Mark incomplete aggregate coverage
+`partial`. Missing/unpriced values never become a fabricated zero; show no money aggregate when
+none is known. Exact-account details omit redundant subtotal/grand-total rows. Styling must remain
+understandable with NO_COLOR and narrow terminals.
+
 The existing `provider@credential` view holds plan, coverage, pricing and retained-record facts.
 Help explains the data scope. Neither view ends with an unsolicited disclaimer paragraph.
 
 ## Changelog
+- 2026-10-12 — owner requested `/30d`, no dot before gray reset timing, readable credits and
+  labeled provider/grand totals instead of Sigma aggregates. Swept cli/usage.go, its existing
+  tests, agent/usage.go, codex.go, help.go and the usage KB: both summary layouts use usageTotal,
+  both timing layouts use the separately measured suffix, and aggregates consume deduplicated
+  rows. Updated the owning render fixtures and added missing/partial/shared/rounding/ANSI/narrow
+  regressions; the same TestUsage check now mechanizes these corrections. Reset lookup is GET-only
+  with canonical authority and no redemption endpoint.
 - 2026-10-02 — the user, on the per-provider columns: "can 3% used be right aligned? like so?",
   with a mockup of `  3%`, ` 16%` and `100%` ending in one column and Σ starting where `100%`
   starts. usageBucketText now formats the percentage at a fixed width; swept the render paths

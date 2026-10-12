@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Usage makes capacity and estimates easier to read.** Codex shows earned reset counts and
+  reported expiry without redeeming them. Credit balances use readable digit grouping, reset
+  times are quieter and dot-free, and account estimates show their `/30d` period. Provider
+  subtotals and a highlighted total sum recorded API-value estimates, with incomplete coverage
+  marked partial; these are not credit balances or bills.
+
 - **A quiet turn's pulse says what the provider is still sending.** `provider.alive` now carries
   `last_kind`, the latest frame's method or session update type. It never carries frame content.
 

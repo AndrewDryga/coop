@@ -218,13 +218,16 @@ func TestUsageAlignsEveryFactAndQuietsTheTotal(t *testing.T) {
 	for _, wanted := range []string{
 		"    Weekly                ██████████  100% used\n",
 		"    gpt-reserve · Weekly  ░░░░░░░░░░    0% used",
-		"    Credits" + at(value-11, "62500 remaining"),
+		"    Credits" + at(value-11, "62,500 remaining"),
 		"    Limits" + at(value-10, "unavailable · sign-in required"),
 		at(value, "Run: coop login codex@work"),
-		at(value, "Σ≈$54.82"),
-		"  Unassigned editor usage" + at(value-25, "Σ≈$0.82"),
+		at(value, "Σ≈$54.82/30d"),
+		"  Unassigned editor usage" + at(value-25, "Σ≈$0.82/30d"),
 		// Accounts with nothing but a total are one line each, stacked, with no explanation.
-		"Gemini\n  blitz_ai_studio (API key)  Σ≈$0.48\n  personal (API key)" + at(29-20, "Σ≈$2.62"),
+		"Gemini\n  blitz_ai_studio (API key)  Σ≈$0.48/30d\n  personal (API key)" + at(29-20, "Σ≈$2.62/30d"),
+		"  Subtotal  ≈$55.64/30d partial\n",
+		"  Subtotal  ≈$3.10/30d\n",
+		"Total  ≈$58.74/30d partial\n",
 		// Grok fits its own label; its note rides the account line, and without API pricing it
 		// has no total line at all.
 		"  default · shared credit pool\n    Weekly credits  ███░░░░░░░   26% used\n",
@@ -247,8 +250,9 @@ func TestUsageAlignsEveryFactAndQuietsTheTotal(t *testing.T) {
 	pal := ui.Colored()
 	renderUsage(&colored, pal, 120, now, names, rows, false)
 	for _, wanted := range []string{
-		pal.Dim(strings.TrimSuffix(at(value, "Σ≈$54.82"), "\n")) + "\n",
-		"  blitz_ai_studio (API key)  " + pal.Dim("Σ≈$0.48") + "\n",
+		pal.Dim(strings.TrimSuffix(at(value, "Σ≈$54.82/30d"), "\n")) + "\n",
+		"  blitz_ai_studio (API key)  " + pal.Dim("Σ≈$0.48/30d") + "\n",
+		pal.Bold("Total  ≈$58.74/30d partial") + "\n",
 		"  default" + pal.Dim(" · shared credit pool") + "\n",
 		pal.Red("██████████") + "  100% used",
 	} {
@@ -329,9 +333,9 @@ func TestUsageWrapsValuesInTheirColumn(t *testing.T) {
 		"    Weekly   ██████████  100% used\n" +
 		value + "resets in 2d 2h\n" +
 		value + "(Oct 4, 08:35 UTC)\n" +
-		"    Credits" + strings.Repeat(" ", 2+12) + "60149.85 remaining\n" +
-		value + "Σ≈$0.40\n"
-	if !strings.HasSuffix(out.String(), want) {
+		"    Credits" + strings.Repeat(" ", 2+12) + "60,149.85 remaining\n" +
+		value + "Σ≈$0.40/30d\n"
+	if !strings.Contains(out.String(), want) {
 		t.Fatalf("narrow row lost its columns:\n%s\nwant suffix:\n%s", out.String(), want)
 	}
 	for _, line := range strings.Split(out.String(), "\n") {
@@ -371,7 +375,7 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 	var out bytes.Buffer
 	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude", "codex", "gemini"}, rows, false)
 	text := out.String()
-	for _, wanted := range []string{"  personal\n", "░░░░░░░░░░    0% used", "██████████  100% used", "Fable", "gpt-reserve · Weekly", "60412.02 remaining", "Σ≈$406.48", "Unassigned editor usage", "Σ≈$0.82"} {
+	for _, wanted := range []string{"  personal\n", "░░░░░░░░░░    0% used", "██████████  100% used", "Fable", "gpt-reserve · Weekly", "60,412.02 remaining", "Σ≈$406.48/30d", "Unassigned editor usage", "Σ≈$0.82/30d"} {
 		if !strings.Contains(text, wanted) {
 			t.Fatalf("missing %q:\n%s", wanted, text)
 		}
@@ -409,7 +413,7 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 			t.Fatalf("percentage is not right-aligned: %q", line)
 		}
 	}
-	gemini := text[strings.Index(text, "Gemini\n"):]
+	gemini := strings.Split(text[strings.Index(text, "Gemini\n"):], "\nTotal  ")[0]
 	if strings.Contains(gemini, "Limits") || strings.Contains(gemini, "Σ") || !strings.HasSuffix(gemini, "Gemini\n  api-key (API key)\n  vertex (Vertex)\n") {
 		t.Fatalf("Gemini sign-ins without limits or pricing are not one plain line each:\n%s", gemini)
 	}
@@ -417,7 +421,7 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 
 	out.Reset()
 	renderUsage(&out, ui.Palette{}, 30, now, []string{"claude"}, rows[:1], false)
-	if !strings.Contains(out.String(), "    Σ≈$406.48\n") {
+	if !strings.Contains(out.String(), "    Σ≈$406.48/30d\n") {
 		t.Fatalf("narrow total did not use the compact fallback:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), "    5-hour\n      ░░░░░░░░░░\n        0% used\n") {
