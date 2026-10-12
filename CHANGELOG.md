@@ -10,6 +10,12 @@
   subtotals and a highlighted total sum recorded API-value estimates, with incomplete coverage
   marked partial; these are not credit balances or bills.
 
+- **An early exit says what kind of exit it was.** When a model process closed before its
+  response, the turn only said "ACP child closed before its response". It now also says how the
+  process ended and what its stderr looked like: line and byte counts, a digest that groups
+  identical exits, and word classes such as rate limit or authentication. It never includes the
+  stderr text.
+
 - **Filtered networking works where 1.1.1.1 is intercepted.** The network gateway's resolver
   now tries Cloudflare's other address, 1.0.0.1, when 1.1.1.1 doesn't connect or doesn't prove
   its certificate. Both must present cloudflare-dns.com; nothing falls back to an unverified

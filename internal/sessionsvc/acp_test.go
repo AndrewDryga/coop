@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2104,6 +2105,50 @@ func TestSessionACPChildClosedFailureWaitsForExitStderr(t *testing.T) {
 	}()
 	if err := sessionACPChildClosedFailure(process); !strings.Contains(err.Error(), "Coop box image is not built; run 'coop build'") {
 		t.Fatalf("exit diagnostic was lost before stderr collection: %v", err)
+	}
+}
+
+// Six model processes closed about 17 s into their turns on 2026-10-12 with no usage and no
+// events, and nothing on record said why. The failure now says how the child ended and what kind
+// of thing it printed, never what it printed, and identical exits share one shape.
+func TestSessionACPChildClosedFailureDescribesStderrWithoutExposingIt(t *testing.T) {
+	failure := func(stderr string) string {
+		process := &sessionACPProcess{stderr: &sessionACPStderr{}, waitDone: make(chan struct{})}
+		_, _ = process.stderr.Write([]byte(stderr))
+		close(process.waitDone)
+		return sessionACPChildClosedFailure(process).Error()
+	}
+	shape := regexp.MustCompile(`shape ([0-9a-f]{12})`)
+	shapeOf := func(detail string) string {
+		match := shape.FindStringSubmatch(detail)
+		if match == nil {
+			t.Fatalf("exit detail has no shape: %q", detail)
+		}
+		return match[1]
+	}
+
+	first := failure("2026-10-12T04:29:01Z request 7f3a9c failed: 429 Too Many Requests (bearer sk-live-5501)\nretrying in 30s\n")
+	for _, want := range []string{"ACP child closed before its response (", "stderr 2 lines, 104 bytes", "mentions rate limit"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("exit detail %q lacks %q", first, want)
+		}
+	}
+	for _, secret := range []string{"sk-live", "Too Many", "bearer", "7f3a9c", "retrying"} {
+		if strings.Contains(first, secret) {
+			t.Fatalf("exit detail exposed stderr text %q: %q", secret, first)
+		}
+	}
+
+	again := failure("2026-10-12T05:54:17Z request 0b21de failed: 429 Too Many Requests (bearer sk-live-8812)\nretrying in 30s\n")
+	if shapeOf(again) != shapeOf(first) {
+		t.Fatalf("one cause got two shapes: %q and %q", first, again)
+	}
+	if crash := failure("panic: runtime error: invalid memory address\n"); shapeOf(crash) == shapeOf(first) ||
+		!strings.Contains(crash, "mentions crash") {
+		t.Fatalf("a different exit was not told apart: %q", crash)
+	}
+	if silent := failure(""); !strings.Contains(silent, "no stderr") {
+		t.Fatalf("a silent exit = %q", silent)
 	}
 }
 

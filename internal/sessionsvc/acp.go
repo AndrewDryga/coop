@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -2520,13 +2521,17 @@ type sessionACPProcess struct {
 }
 
 type sessionACPStderr struct {
-	mu   sync.Mutex
-	tail []byte
+	mu    sync.Mutex
+	tail  []byte
+	bytes int64
+	lines int64
 }
 
 func (w *sessionACPStderr) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.bytes += int64(len(p))
+	w.lines += int64(bytes.Count(p, []byte{'\n'}))
 	if len(p) >= sessionACPStderrLimit {
 		w.tail = append(w.tail[:0], p[len(p)-sessionACPStderrLimit:]...)
 		return len(p), nil
@@ -2547,6 +2552,80 @@ func (w *sessionACPStderr) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return string(w.tail)
+}
+
+// size is how much the child printed in all, not only the tail kept.
+func (w *sessionACPStderr) size() (written, lines int64) {
+	if w == nil {
+		return 0, 0
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.bytes, w.lines
+}
+
+// sessionACPStderrClasses are the fixed word classes an exit may name. Only a class name ever
+// leaves Coop, never the words that matched.
+var sessionACPStderrClasses = []struct {
+	name    string
+	pattern *regexp.Regexp
+}{
+	{"rate limit", regexp.MustCompile(`rate.?limit|too many requests|\b429\b`)},
+	{"usage limit", regexp.MustCompile(`usage.?limit|quota|insufficient credit`)},
+	{"authentication", regexp.MustCompile(`unauthori[sz]ed|unauthenticated|not authenticated|authentication|forbidden|\b40[13]\b|invalid api key|token expired|refresh token`)},
+	{"timeout", regexp.MustCompile(`timeout|timed out|deadline exceeded`)},
+	{"network", regexp.MustCompile(`connection (refused|reset)|econn(reset|refused)|enotfound|getaddrinfo|socket hang up|network|certificate|\btls\b`)},
+	{"memory", regexp.MustCompile(`out of memory|cannot allocate memory|oom.?kill`)},
+	{"crash", regexp.MustCompile(`panic|fatal|uncaught|unhandled|traceback|segmentation fault|stack overflow`)},
+}
+
+var sessionACPStderrNumber = regexp.MustCompile(`[0-9a-fA-F]*[0-9][0-9a-fA-F]*`)
+
+// sessionACPExitShape says how a child that closed before its response ended, without a byte
+// of what it printed.
+//
+// Six model processes in one campaign (2026-10-12) closed about 17 s into their turns with no
+// usage and no events, and nothing on record said why: stderr is withheld, because a crashing
+// process can print anything it had in memory, and safeSessionACPExitDetail's allowlist matched
+// none of them. Whether the child exited or was killed, how much it printed, which fixed word
+// classes its output contains, and a digest of its shape group identical exits and point at a
+// cause. Digits and hex runs are masked before the digest, so timestamps, process ids and
+// request ids do not split one cause into many shapes.
+func sessionACPExitShape(process *sessionACPProcess, exited bool) string {
+	written, lines := process.stderr.size()
+	parts := []string{sessionACPExitStatus(process, exited)}
+	if written == 0 {
+		return strings.Join(append(parts, "no stderr"), "; ")
+	}
+	tail := process.stderr.String()
+	masked := sessionACPStderrNumber.ReplaceAllString(strings.ToLower(tail), "#")
+	digest := sha256.Sum256([]byte(masked))
+	parts = append(parts, fmt.Sprintf("stderr %d lines, %d bytes, shape %x", lines, written, digest[:6]))
+	text := strings.ToLower(tail)
+	var classes []string
+	for _, class := range sessionACPStderrClasses {
+		if class.pattern.MatchString(text) {
+			classes = append(classes, class.name)
+		}
+	}
+	if len(classes) > 0 {
+		parts = append(parts, "mentions "+strings.Join(classes, ", "))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func sessionACPExitStatus(process *sessionACPProcess, exited bool) string {
+	if !exited {
+		return "process still running"
+	}
+	if process.cmd == nil || process.cmd.ProcessState == nil {
+		return "exit status unknown"
+	}
+	state := process.cmd.ProcessState
+	if status, ok := state.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		return fmt.Sprintf("killed by signal %d (%s)", int(status.Signal()), status.Signal())
+	}
+	return fmt.Sprintf("exit status %d", state.ExitCode())
 }
 
 // sessionACPRejectionDetail renders an adapter's JSON-RPC error as a bounded single line.
@@ -2612,15 +2691,18 @@ func sessionACPChildClosedFailure(process *sessionACPProcess) error {
 	if process != nil {
 		// Stdout EOF can precede cmd.Wait's stderr copy. Give an exiting child a
 		// bounded chance to finish so its safe launch diagnostic is not lost.
+		exited := false
 		if process.waitDone != nil {
 			select {
 			case <-process.waitDone:
+				exited = true
 			case <-time.After(sessionACPTermGrace):
 			}
 		}
 		if diagnostic := safeSessionACPExitDetail(process.stderr.String()); diagnostic != "" {
 			detail += ": " + diagnostic
 		}
+		detail += " (" + sessionACPExitShape(process, exited) + ")"
 	}
 	return acpFailure(sessionACPProcessError, detail)
 }

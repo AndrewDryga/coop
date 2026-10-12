@@ -865,6 +865,12 @@ narrated something. An ordinary turn produces none, and a long tool call is not 
 A turn that produces no frames at all still produces no events. That is what a client's
 silent-turn deadline is for.
 
+A turn whose ACP child closes before its response fails with `acp_process_error`. Its detail says
+how the child ended (exit status or signal) and what its stderr looked like: line and byte counts,
+a shape digest that groups identical exits (digits and hex runs are masked first), and the fixed
+classes of words it mentions, such as rate limit, authentication, network or crash. The stderr
+text itself never leaves Coop.
+
 ### Budget
 
 Extend a session's turn budget:
