@@ -10,6 +10,10 @@
   subtotals and a highlighted total sum recorded API-value estimates, with incomplete coverage
   marked partial; these are not credit balances or bills.
 
+- **A turn that goes quiet after its tools stops.** A model that sends nothing for 15 minutes
+  after its tools answered used to hold its turn until the turn deadline, while its provider kept
+  pulsing. The turn now fails with `acp_quiet`, which a caller can retry.
+
 - **An early exit says what kind of exit it was.** When a model process closed before its
   response, the turn only said "ACP child closed before its response". It now also says how the
   process ended and what its stderr looked like: line and byte counts, a digest that groups

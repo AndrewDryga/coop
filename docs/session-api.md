@@ -865,6 +865,12 @@ narrated something. An ordinary turn produces none, and a long tool call is not 
 A turn that produces no frames at all still produces no events. That is what a client's
 silent-turn deadline is for.
 
+A turn whose model sends nothing for 15 minutes after its tools answered fails with `acp_quiet`.
+Nothing counts as output but the model's own text, thoughts, plans and tool calls; pulses do not.
+A turn that has not finished a tool yet, or is waiting on a running one, is never quiet. The
+error detail says how long it was quiet and its provider's last frame kind. A caller may retry
+such a turn; it is not the work failing.
+
 A turn whose ACP child closes before its response fails with `acp_process_error`. Its detail says
 how the child ended (exit status or signal) and what its stderr looked like: line and byte counts,
 a shape digest that groups identical exits (digits and hex runs are masked first), and the fixed

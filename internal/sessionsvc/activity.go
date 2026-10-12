@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +60,21 @@ const (
 	// turn never trips it, and far shorter than any deadline a client sets on
 	// silence — the point is to be countable, not prompt.
 	sessionActivityAliveInterval = time.Minute
+	// sessionActivityQuietAfterTools bounds how long a model may send nothing once its tools have
+	// answered. Three Ryker eval turns (2026-10-12) finished their tools, twice with a passing
+	// final check, then sent nothing for 12-18 minutes while the provider CLI pulsed one 385-byte
+	// frame a minute, until their harness gave up on them. A caller could only wait such a turn
+	// out: Ryker's deadline for a silent turn is 45 minutes, and the pulse is not silence. No
+	// answer seen took shape after fifteen quiet minutes, so the turn stops with a reason its
+	// caller can retry on (acp_quiet). A tool still running is the model waiting on it, and a
+	// turn that has not used a tool yet is never stopped this way: a routing turn that evening
+	// sent only one 385-byte session/update:session_info_update frame a minute before any tool,
+	// but a provider CLI retrying 429s inside itself sends frames without output too, and
+	// stopping that turn only replays it into the same throttle (2026-08-15). Its caller's own
+	// turn deadline bounds it instead.
+	sessionActivityQuietAfterTools = 15 * time.Minute
+	// sessionActivityQuietCheck looks at a turn whose provider sends no frames at all.
+	sessionActivityQuietCheck = time.Minute
 )
 
 // sessionActivityTool is a tool call in flight: what it was called, and whether
@@ -115,6 +131,10 @@ type sessionActivity struct {
 	// heartbeat measures against, so activity that already told the story
 	// suppresses it instead of doubling it.
 	narratedAt time.Time
+	// outputAt is when the model last sent something of its own: text, a thought, a plan, or a
+	// tool call. toolResults counts the tool calls that finished.
+	outputAt    time.Time
+	toolResults int
 
 	wake chan struct{}
 	done chan struct{}
@@ -143,6 +163,7 @@ func newSessionActivity(
 	// A turn is born having just said something — turn.started — so the first
 	// window is measured from its start and a short turn never reports a pulse.
 	a.narratedAt = now()
+	a.outputAt = a.narratedAt
 	go a.drain()
 	return a
 }
@@ -251,12 +272,54 @@ func (a *sessionActivity) observe(raw json.RawMessage) {
 	update := envelope.Update
 	switch update.SessionUpdate {
 	case "tool_call", "tool_call_update":
+		a.output()
 		a.observeTool(update.ToolCallID, update.Title, update.Kind, update.Status, update.RawInput, update.RawOutput, update.Content, update.Locations, update.Meta)
 	case "agent_thought_chunk", "assistant_thought_chunk":
+		if activityContentText(update.Content) != "" {
+			a.output()
+		}
 		a.observeThought(update.Content)
+	case "agent_message_chunk", "assistant_message_chunk":
+		if activityContentText(update.Content) != "" {
+			a.output()
+		}
 	case "plan":
+		a.output()
 		a.observePlan(update.Entries)
 	}
+}
+
+func (a *sessionActivity) output() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.outputAt = a.now()
+}
+
+// quiet is the failure of a turn whose model has sent nothing for
+// sessionActivityQuietAfterTools since its tools answered, or nil while it may still answer.
+func (a *sessionActivity) quiet() error {
+	if a == nil {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.toolResults == 0 {
+		return nil
+	}
+	for _, tool := range a.tools {
+		if tool.started && !tool.finished {
+			return nil
+		}
+	}
+	silent := a.now().Sub(a.outputAt)
+	if silent < sessionActivityQuietAfterTools {
+		return nil
+	}
+	detail := fmt.Sprintf("the model sent nothing for %s after its tools answered", silent.Round(time.Minute))
+	if a.lastKind != "" {
+		detail += "; its provider's last frame was " + a.lastKind
+	}
+	return acpFailure(sessionACPQuietError, detail)
 }
 
 func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, rawOutput, content, locations json.RawMessage, terminal sessionActivityTerminal) {
@@ -341,6 +404,7 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, 
 	// Kept, not deleted. An agent that repeats a terminal update would
 	// otherwise be handed a fresh entry and narrate the whole call again.
 	tool.finished = true
+	a.toolResults++
 	a.flushProgressLocked()
 	if tool.terminalSeen {
 		output := map[string]any{"formatted_output": tool.terminalOutput}

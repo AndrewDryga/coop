@@ -3,6 +3,7 @@ package sessionsvc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -628,6 +629,54 @@ func TestAlivePulseNamesTheLatestFrameKindWithoutItsContent(t *testing.T) {
 	}
 	if kind := activityPayload(t, events[0])["last_kind"]; kind != "session/update:usage_update" {
 		t.Fatalf("pulse named its latest frame %v", kind)
+	}
+}
+
+// Three Ryker eval turns finished their tools, twice with a passing final check, then sent
+// nothing for 12-18 minutes while their provider pulsed one frame a minute (2026-10-12), and their
+// caller could only wait them out. Fifteen minutes with no output after the tools answered stops
+// the turn with a reason its caller retries on. A turn that has used no tool yet, a tool still
+// running and a model still writing its answer are never quiet, and a pulse is not output.
+func TestATurnQuietAfterItsToolsStopsWithARetryableReason(t *testing.T) {
+	store, sess := newActivityTestStore(t)
+	clock := &activityTestClock{at: time.Unix(1_760_000_000, 0)}
+	activity := newSessionActivity(store, sess, "turn-1", clock.now)
+	defer activity.close(context.Background())
+	pulse := func() { activity.frame(385, "session/update:usage_update") }
+	update := func(raw string) { activity.observe(json.RawMessage(raw)) }
+	notQuiet := func(when string) {
+		t.Helper()
+		if err := activity.quiet(); err != nil {
+			t.Fatalf("%s was stopped as quiet: %v", when, err)
+		}
+	}
+
+	clock.advance(sessionActivityQuietAfterTools)
+	pulse()
+	notQuiet("a turn that has used no tool")
+
+	update(`{"update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read job","kind":"read"}}`)
+	update(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed"}}`)
+	update(`{"update":{"sessionUpdate":"tool_call","toolCallId":"t2","title":"Build","kind":"execute"}}`)
+	clock.advance(sessionActivityQuietAfterTools + time.Minute)
+	pulse()
+	notQuiet("a turn waiting on its running tool")
+
+	update(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"t2","status":"completed"}}`)
+	clock.advance(sessionActivityQuietAfterTools - time.Minute)
+	update(`{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"The deploy"}}}`)
+	clock.advance(sessionActivityQuietAfterTools - time.Minute)
+	pulse()
+	notQuiet("a model still writing its answer")
+
+	update(`{"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":""}}}`)
+	clock.advance(time.Minute)
+	pulse()
+	err := activity.quiet()
+	var failure *sessionACPFailure
+	if !errors.As(err, &failure) || failure.code != sessionACPQuietError || failure.detail !=
+		"the model sent nothing for 15m0s after its tools answered; its provider's last frame was session/update:usage_update" {
+		t.Fatalf("a turn quiet after its tools = %v", err)
 	}
 }
 

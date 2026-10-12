@@ -80,6 +80,7 @@ const (
 	sessionACPProcessError    session.ErrorCode = "acp_process_error"
 	sessionACPTimeoutError    session.ErrorCode = "acp_timeout"
 	sessionACPCancelledError  session.ErrorCode = "acp_cancelled"
+	sessionACPQuietError      session.ErrorCode = "acp_quiet"
 	sessionACPCredentialError session.ErrorCode = "credential_projection_error"
 	sessionACPCleanupError    session.ErrorCode = "session_cleanup_error"
 	sessionACPInvalidTarget   session.ErrorCode = "invalid_session_target"
@@ -2968,6 +2969,15 @@ func (r *sessionTurnRunner) runACP(
 		}
 	}
 	waitResponse := func(id json.RawMessage, expectedSession string, cancelPrompt bool) (json.RawMessage, error) {
+		// Only the admitted prompt can go quiet after its tools. A frame checks it as it
+		// arrives; the ticker checks a provider that sends none at all.
+		watchQuiet := cancelPrompt && expectedSession != "" && activity != nil
+		var quietCheck <-chan time.Time
+		if watchQuiet {
+			ticker := time.NewTicker(sessionActivityQuietCheck)
+			defer ticker.Stop()
+			quietCheck = ticker.C
+		}
 		for {
 			select {
 			case <-ctx.Done():
@@ -2975,6 +2985,11 @@ func (r *sessionTurnRunner) runACP(
 					cancelSession(expectedSession)
 				}
 				return nil, classifyContextFailure(ctx.Err())
+			case <-quietCheck:
+				if quiet := activity.quiet(); quiet != nil {
+					cancelSession(expectedSession)
+					return nil, quiet
+				}
 			case frame := <-frames:
 				if frame.err != nil {
 					if errors.Is(frame.err, io.EOF) {
@@ -2991,6 +3006,12 @@ func (r *sessionTurnRunner) runACP(
 				// already moved the window it would otherwise be announced in.
 				if collectAssistant {
 					activity.frame(len(frame.line), sessionACPFrameKind(frame.line))
+					if watchQuiet {
+						if quiet := activity.quiet(); quiet != nil {
+							cancelSession(expectedSession)
+							return nil, quiet
+						}
+					}
 				}
 				if responseID != nil && bytes.Equal(bytes.TrimSpace(responseID), bytes.TrimSpace(id)) {
 					var envelope struct {
