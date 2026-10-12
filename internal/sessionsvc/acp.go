@@ -2908,7 +2908,7 @@ func (r *sessionTurnRunner) runACP(
 				// are not the turn's progress, and a frame that narrated something has
 				// already moved the window it would otherwise be announced in.
 				if collectAssistant {
-					activity.frame(len(frame.line))
+					activity.frame(len(frame.line), sessionACPFrameKind(frame.line))
 				}
 				if responseID != nil && bytes.Equal(bytes.TrimSpace(responseID), bytes.TrimSpace(id)) {
 					var envelope struct {

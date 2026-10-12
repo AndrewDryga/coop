@@ -107,6 +107,10 @@ type sessionActivity struct {
 	closed           bool
 	frames           int
 	frameBytes       int
+	// lastKind names the latest frame by kind, never by content. Three Ryker eval
+	// turns pulsed for 12-18 minutes on one 385-byte frame a minute and never
+	// answered, and nothing said what those frames were (2026-10-12).
+	lastKind string
 	// narratedAt is when this turn last said anything — the window the alive
 	// heartbeat measures against, so activity that already told the story
 	// suppresses it instead of doubling it.
@@ -157,7 +161,7 @@ func newSessionActivity(
 //
 // Called after the frame is handled, so a frame that produced real narration has
 // already moved the window and is not announced twice.
-func (a *sessionActivity) frame(size int) {
+func (a *sessionActivity) frame(size int, kind string) {
 	if a == nil {
 		return
 	}
@@ -165,12 +169,59 @@ func (a *sessionActivity) frame(size int) {
 	defer a.mu.Unlock()
 	a.frames++
 	a.frameBytes += size
+	if kind != "" {
+		a.lastKind = kind
+	}
 	if a.now().Sub(a.narratedAt) < sessionActivityAliveInterval {
 		return
 	}
-	a.enqueueLocked(session.EventProviderAlive, map[string]any{
-		"frames": a.frames, "bytes": a.frameBytes,
-	})
+	payload := map[string]any{"frames": a.frames, "bytes": a.frameBytes}
+	if a.lastKind != "" {
+		payload["last_kind"] = a.lastKind
+	}
+	a.enqueueLocked(session.EventProviderAlive, payload)
+}
+
+// sessionACPFrameKind names an ACP frame without its content: its JSON-RPC
+// method, a session update's type after a colon, or "response". Anything
+// outside a short identifier alphabet reads as "other", so no provider text
+// can reach an event through it.
+func sessionACPFrameKind(line []byte) string {
+	var envelope struct {
+		Method string `json:"method"`
+		Params struct {
+			Update struct {
+				SessionUpdate string `json:"sessionUpdate"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(line, &envelope) != nil {
+		return "other"
+	}
+	kind := envelope.Method
+	switch {
+	case kind == "":
+		kind = "response"
+	case envelope.Params.Update.SessionUpdate != "":
+		kind += ":" + envelope.Params.Update.SessionUpdate
+	}
+	if len(kind) > sessionACPFrameKindBytes || strings.IndexFunc(kind, frameKindRuneInvalid) >= 0 {
+		return "other"
+	}
+	return kind
+}
+
+const sessionACPFrameKindBytes = 64
+
+func frameKindRuneInvalid(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return false
+	case r == '/', r == ':', r == '_', r == '.', r == '-', r == '$':
+		return false
+	default:
+		return true
+	}
 }
 
 // observe records one ACP frame. It parses and buffers; it never writes and

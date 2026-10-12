@@ -529,7 +529,7 @@ func TestAStreamingTurnWithNothingToNarrateStillReportsItIsAlive(t *testing.T) {
 	// in any of them.
 	for window := range 2 {
 		for range 40 {
-			activity.frame(512)
+			activity.frame(512, "")
 		}
 		if window == 0 {
 			clock.advance(sessionActivityAliveInterval)
@@ -557,9 +557,9 @@ func TestAStreamingTurnWithNothingToNarrateStillReportsItIsAlive(t *testing.T) {
 	clock.advance(sessionActivityAliveInterval)
 	activity = newSessionActivity(store, sess, "turn-1", clock.now)
 	clock.advance(sessionActivityAliveInterval)
-	activity.frame(512)
+	activity.frame(512, "")
 	clock.advance(sessionActivityAliveInterval)
-	activity.frame(512)
+	activity.frame(512, "")
 	activity.close(context.Background())
 
 	events = activityEvents(t, store, sess.ID)
@@ -585,10 +585,10 @@ func TestAliveIsSilentWhileTheTurnIsNarratingItsWork(t *testing.T) {
 	clock.advance(sessionActivityAliveInterval)
 	activity.observe(json.RawMessage(
 		`{"update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read job","kind":"read"}}`))
-	activity.frame(512)
+	activity.frame(512, "")
 	// And the window after it is spent inside that same tool call.
 	clock.advance(sessionActivityAliveInterval - time.Second)
-	activity.frame(512)
+	activity.frame(512, "")
 	activity.close(context.Background())
 
 	events := activityEvents(t, store, sess.ID)
@@ -606,5 +606,42 @@ func TestSessionActivityWithoutStoreIsInert(t *testing.T) {
 	activity.close(context.Background())
 	if newSessionActivity(nil, session.Session{ID: "sess"}, "turn") != nil {
 		t.Fatal("a recorder without a store must not exist")
+	}
+}
+
+// Three Ryker eval turns pulsed for 12-18 minutes, one 385-byte frame a minute,
+// and never answered; nothing said what those frames were (2026-10-12). The
+// pulse names the latest frame by kind, and never carries its content.
+func TestAlivePulseNamesTheLatestFrameKindWithoutItsContent(t *testing.T) {
+	store, sess := newActivityTestStore(t)
+	clock := &activityTestClock{at: time.Unix(1_760_000_000, 0)}
+	activity := newSessionActivity(store, sess, "turn-1", clock.now)
+
+	clock.advance(sessionActivityAliveInterval)
+	activity.frame(385, sessionACPFrameKind([]byte(
+		`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"usage_update","used":5}}}`)))
+	activity.close(context.Background())
+
+	events := activityEvents(t, store, sess.ID)
+	if len(events) != 1 || events[0].Type != session.EventProviderAlive {
+		t.Fatalf("want one pulse, got %v", eventTypes(events))
+	}
+	if kind := activityPayload(t, events[0])["last_kind"]; kind != "session/update:usage_update" {
+		t.Fatalf("pulse named its latest frame %v", kind)
+	}
+}
+
+func TestFrameKindIsAnIdentifierNeverText(t *testing.T) {
+	for line, want := range map[string]string{
+		`{"jsonrpc":"2.0","id":3,"result":{}}`:                                                                                                "response",
+		`{"jsonrpc":"2.0","id":4,"method":"session/request_permission","params":{}}`:                                                          "session/request_permission",
+		`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"secret"}}}}`: "session/update:agent_message_chunk",
+		`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"say hi to everyone"}}}`:                              "other",
+		`{"jsonrpc":"2.0","method":"session/update","params":[1]}`:                                                                            "other",
+		`not json`: "other",
+	} {
+		if got := sessionACPFrameKind([]byte(line)); got != want {
+			t.Errorf("sessionACPFrameKind(%s) = %q, want %q", line, got, want)
+		}
 	}
 }

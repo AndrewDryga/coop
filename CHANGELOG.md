@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A quiet turn's pulse says what the provider is still sending.** `provider.alive` now carries
+  `last_kind`, the latest frame's method or session update type. It never carries frame content.
+
 - **A reservation released mid-scan no longer fails a session create.** When another session
   released its workspace reservation while Coop was reading the registry, the missing file was
   reported as a registry problem and the unrelated create failed with "no such file or

@@ -816,7 +816,7 @@ model.progress          # outward commentary text, not private reasoning
 permission.decided      # tool_call_id, title, outcome, option_id, option_kind
 activity.elided         # dropped, reason
 provider.backoff        # attempt, target, next_target, retry_after_seconds, reset_at, all_limited_until
-provider.alive          # frames, bytes
+provider.alive          # frames, bytes, last_kind
 ```
 
 When available, `terminal_exit` carries a numeric `exit_code`, a `signal` or both, separately
@@ -856,6 +856,9 @@ That turn streams frames while it makes no tool calls and produces no other even
 The pulse says the transport is still moving. `frames` and `bytes` count every ACP frame read for
 that turn's prompt, cumulatively. A client re-reading its cursor tells new progress from a
 redelivered event by these numbers, not by the timestamp.
+`last_kind` names the latest frame: its JSON-RPC method, a session update's type after a colon,
+or `response`. It never carries frame content. A turn that pulses on one kind of frame, minute
+after minute, shows what the provider is still sending.
 
 The pulse is emitted at most once a minute. It is never emitted in a window where the turn already
 narrated something. An ordinary turn produces none, and a long tool call is not described twice.
