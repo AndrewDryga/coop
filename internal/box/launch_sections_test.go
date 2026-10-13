@@ -327,7 +327,7 @@ func TestServiceWarningsNameObservedPartialAvailability(t *testing.T) {
 		s := newLaunchSections(RunSpec{Agent: "claude", AgentCommand: true, Batch: true, LoopPresentation: true})
 		s.servicesFailed("keycloak unhealthy", db)
 	})
-	for _, want := range []string{"Some services failed to start", "Continuing with observed service(s): db.", "To retry: coop up"} {
+	for _, want := range []string{"Some services failed to start", "Continuing with the running services: db.", "To retry: coop up"} {
 		if !strings.Contains(loop, want) {
 			t.Errorf("partial loop warning lacks %q:\n%s", want, loop)
 		}
