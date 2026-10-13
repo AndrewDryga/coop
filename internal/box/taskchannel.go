@@ -134,6 +134,7 @@ func (c *taskChannel) close() error {
 	c.once.Do(func() {
 		var errs []error
 		if c.helper != nil {
+			defer c.helper.Stdout.Close() // after the serving join, including its bounded timeout
 			errs = append(errs, c.helper.Close())
 		}
 		if c.cancel != nil {

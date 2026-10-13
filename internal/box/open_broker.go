@@ -315,15 +315,25 @@ func (b *openBroker) writeFiles(configData, secretData []byte) (string, string, 
 // waitReady takes the one line the helper prints once every listener accepts: the address the box
 // must be pointed at. A helper that exits instead fails at once, with what it printed.
 func (b *openBroker) waitReady() error {
+	return b.waitReadyWithin(openBrokerReadyTimeout)
+}
+
+func (b *openBroker) waitReadyWithin(timeout time.Duration) error {
 	ready := make(chan string, 1)
+	readDone := make(chan struct{})
 	go func() {
+		defer close(readDone)
 		line, err := bufio.NewReader(b.helper.Stdout).ReadString('\n')
 		if err == nil {
 			ready <- strings.TrimSpace(line)
 		}
 		close(ready)
 	}()
-	timer := time.NewTimer(openBrokerReadyTimeout)
+	defer func() {
+		_ = b.helper.Stdout.Close() // owns only the readiness line, never an ongoing stream
+		<-readDone
+	}()
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case line := <-ready:
@@ -336,8 +346,7 @@ func (b *openBroker) waitReady() error {
 	case <-b.helper.Exited():
 		return fmt.Errorf("the MCP credential broker stopped before it was ready%s", b.stderrDetail())
 	case <-timer.C:
-		_ = b.helper.Stdout.Close() // the line reader above has nothing left to wait for
-		return fmt.Errorf("the MCP credential broker did not become ready within %s; no agent started%s", openBrokerReadyTimeout, b.stderrDetail())
+		return fmt.Errorf("the MCP credential broker did not become ready within %s; no agent started%s", timeout, b.stderrDetail())
 	}
 }
 
@@ -371,6 +380,7 @@ func (b *openBroker) stop(rt runtime.Runtime) error {
 			cancel()
 			err = errors.Join(err, removeErr)
 		}
+		_ = b.helper.Stdout.Close() // also covers a helper that never reached readiness
 	}
 	if b.dir != "" {
 		err = errors.Join(err, os.RemoveAll(b.dir))

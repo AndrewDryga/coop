@@ -2,14 +2,20 @@
 name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
-sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/box/taskchannel.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go]
-updated: 2026-09-19
+sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go]
+updated: 2026-10-13
 ---
 
 A loop work box changes task state through the `coop-tasks` MCP server (eight tools:
 `tasks_list/get/update_state/append_log/set_subtasks/complete/block/propose`), not by moving folders
 or writing outbox JSON. The coop binary is still absent from the box (doctor still asserts it) — the
 server is the ONLY host control surface a box gets, and it exposes eight verbs, nothing shell/exec/file.
+
+Helper stdout is a caller-owned os.Pipe, not Cmd.StdoutPipe: background Cmd.Wait may reap before
+the caller reads the final frames and must not close that reader. The parent closes its write
+duplicate immediately after Start so the child's exit produces real EOF. Task-channel teardown
+closes the reader after its bounded serving join; abnormal transport errors still fail cleanup.
+The open MCP broker owns only one readiness line and closes/joins that reader on every outcome.
 
 **Transport is a helper-container unix socket, decided by a spike (`internal/box/run.go` comments,
 the task's decision.md).** A socket created ON THE HOST and bind-mounted into the box does NOT work
@@ -103,6 +109,11 @@ server validates structure and authority, not diagnostic truth or semantic dupli
 an accepted proposal is not evidence that its diagnosis is correct.
 
 ## Changelog
+- 2026-10-13 — hosted release CI caught a helper-output ownership race during normal shutdown.
+  Reaping previously closed the reader early, losing buffered output or yielding ErrClosed.
+  Caller-owned stdout and explicit consumer cleanup preserve final data and EOF without
+  suppressing transport errors; deterministic delayed-read and readiness cleanup regressions
+  cover the source contract. No credential or network authority changed.
 - 2026-09-19 — `tasks_block` keeps an answered decision in log.md before replacing it.
 - 2026-09-13 — shared loop discovery now checks existing owners; proposal descriptions/example
   preserve uncertainty and abnormal behavior. Scripted lookup/reuse and separate-new-proposal

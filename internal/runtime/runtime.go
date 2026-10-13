@@ -335,7 +335,7 @@ type Helper struct {
 }
 
 // StartHelper launches the runtime with args, stderr going to stderr, and returns the running
-// helper with its stdio pipes attached.
+// helper with its stdio pipes attached. The caller closes stdout after its reader finishes.
 func (r Runtime) StartHelper(stderr io.Writer, args ...string) (*Helper, error) {
 	cmd := exec.Command(r.Name, args...)
 	cmd.Stderr = stderr
@@ -345,17 +345,25 @@ func (r Runtime) StartHelper(stderr io.Writer, args ...string) (*Helper, error) 
 		return nil, err
 	}
 	cmd.SysProcAttr = processGroup
+	// Wait must not own this reader: it can reap before the caller drains final output.
+	stdout, output, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		_ = stdout.Close()
+		_ = output.Close()
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
+	cmd.Stdout = output
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = output.Close()
 		return nil, fmt.Errorf("%s: %w", cmd.Path, err)
 	}
+	_ = output.Close() // only the child's write end may keep the reader from seeing EOF
 	h := &Helper{Stdin: stdin, Stdout: stdout, cmd: cmd, done: make(chan error, 1), exited: make(chan struct{})}
 	go func() {
 		h.done <- cmd.Wait()

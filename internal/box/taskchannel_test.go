@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -225,5 +226,18 @@ func TestTaskChannelFailsClosedWhenTheHelperDies(t *testing.T) {
 	_, err := startTaskChannel(context.Background(), runtime.Runtime{Name: script}, "img", "coop-tasks-dead", "", echoServer{}, filepath.Join(dir, "mux.js"))
 	if err == nil || !strings.Contains(err.Error(), "helper exited before its socket was ready") || !strings.Contains(err.Error(), "no such image") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestTaskChannelClosePreservesServingError(t *testing.T) {
+	sentinel := errors.New("unexpected transport read failure")
+	channel := &taskChannel{
+		rt: runtime.Runtime{Name: "true"}, volume: "synthetic-volume", serving: make(chan error, 1),
+	}
+	channel.serving <- sentinel
+	for range 2 {
+		if err := channel.close(); !errors.Is(err, sentinel) {
+			t.Fatalf("close = %v, want original transport error", err)
+		}
 	}
 }

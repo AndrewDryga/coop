@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Task tools shut down cleanly.** A helper's normal exit no longer loses its final output
+  or reports a false shutdown error.
+
 - **Invalid native account access stays stopped.** Another request cannot slip through
   while the first account refusal is being cleaned up.
 
