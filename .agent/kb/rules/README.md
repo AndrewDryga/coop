@@ -119,6 +119,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [docs-bold-sparingly](docs-bold-sparingly.md) — bold marks structure, never mid-sentence emphasis, never inline code
 - [site-external-links-nofollow](site-external-links-nofollow.md) — every link off coop.dryga.com opens in a new tab with rel="nofollow noopener"; tools/gen_site.py adds both, never the page by hand
 - [case-figures-outside-case-blocks](case-figures-outside-case-blocks.md) — a homepage figure sits above or below its case's block, never inside it; a chapter gives every case a figure or none
+- [site-stories-use-mobile-cards](site-stories-use-mobile-cards.md) — mobile landing stories pair their pinned animation with readable sticky cards
 
 **The box**
 - [update-prepares-the-effective-project-image](update-prepares-the-effective-project-image.md) — updates use installed definitions and effective mode; missing project builds are handled before slow setup

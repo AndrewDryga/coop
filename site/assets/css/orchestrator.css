@@ -154,10 +154,12 @@
   .night-step, .night-step:last-child { min-height: 0; padding-top: 56px; }
   .night-safe { grid-template-columns: minmax(0, 1fr); }
   .night-sandbox { justify-items: start; }
-  /* Small screens with the script: a compact board sticks to the top and the steps slide up under
-     it. orchestrator.js gives its lists only the rows the task in hand and the decision leave room for. */
+  /* The sandbox's deck: the board pins above sticky sheets that slide over one another.
+     orchestrator.js measures the board into --frame and each sheet into --h; a tall sheet
+     stops when its last line fits on screen, as on the sandbox page. */
+  .night-deck .night { --screen: 100vh; --frame: calc(22rem + 24px); --card: calc(var(--screen) - var(--frame)); }
   .night-deck .night-stage { position: sticky; top: 0; z-index: 2; margin-inline: calc(-1 * var(--gutter)); padding: 10px var(--gutter) 14px; background: var(--bg); }
-  .night-deck .night-stage::after { content: ""; position: absolute; right: 0; bottom: -24px; left: 0; height: 24px; background: linear-gradient(var(--bg), transparent); pointer-events: none; }
+  .night-deck .night-stage::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; height: 24px; background: linear-gradient(transparent, var(--bg)); pointer-events: none; }
   /* the options on one line, the recommended one starred */
   .night-deck .waiting .task .options { grid-auto-flow: column; justify-content: start; gap: 14px; }
   .night-deck .options li { gap: 8px; font-size: 0.8125rem; }
@@ -167,11 +169,21 @@
   .night-deck .board .done:not(:empty) { padding-top: 6px; }
   /* one height all night, so the text under it never jumps */
   .night-deck .board { min-height: 22rem; }
-  .night-deck .night-step { min-height: 64svh; align-content: start; padding-top: 36px; }
-  .night-deck .night-step:last-child { min-height: 80svh; }
+  /* morning gets a reading beat before the board and its last sheet leave together */
+  .night-deck .night-steps::after { content: ""; display: block; height: var(--card); }
+  .night-deck .night-step { position: sticky; top: min(var(--frame), calc(var(--screen) - var(--h, 0px))); align-content: start; min-height: calc(var(--card) - 56px); margin-inline: calc(-1 * var(--gutter)); padding: 24px var(--gutter) 32px; border-top: 1px solid var(--line); border-radius: 20px 20px 0 0; background: var(--bg); box-shadow: 0 -12px 32px rgb(0 0 0 / 45%); }
+  .night-deck .night-step:focus-within { z-index: 1; }
+  .night-deck .night-step h2 { font-size: 1.5rem; }
+  .night-deck .night-step p { margin-top: 12px; font-size: 1.0625rem; line-height: 1.55; }
+  .night-deck .night-step > .evidence { margin-top: 20px; font-size: 0.9375rem; }
+  .night-deck .night-step .evidence strong { font-size: 2.25rem; }
+}
+@supports (height: 1svh) {
+  @media (max-width: 1023px) { .night-deck .night { --screen: 100svh; } }
 }
 @media (max-width: 640px) {
   .board { --row: 1.75rem; padding: 14px 16px 16px; }
+  .night-deck .night { --frame: calc(19.5rem + 24px); }
   .night-deck .board { min-height: 19.5rem; }
   .night-track { margin: 10px 0 12px; }
   .cells { gap: 2px; margin-bottom: 14px; }

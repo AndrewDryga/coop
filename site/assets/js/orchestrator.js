@@ -22,6 +22,7 @@
   const headline = board.querySelector(".headline");
   const time = board.querySelector(".clock time");
   const track = board.querySelector(".night-track");
+  const story = stage.closest(".night");
   const steps = [...document.querySelectorAll(".night-step")];
   const blank = document.getElementById("night-task").content.firstElementChild;
   const [kit, blankAccount] = document.getElementById("night-agent").content.children;
@@ -388,14 +389,26 @@
     queued = false;
     if (!playing()) return;
     const frame = stage.getBoundingClientRect();
-    const line = deck ? frame.bottom + 32 : innerHeight * 0.55;
+    const line = deck ? frame.bottom + 1 : innerHeight * 0.55;
     let part = 0;
     steps.forEach((step, k) => { if (step.getBoundingClientRect().top < line) part = k + 1; });
     if (deck && frame.top > 1) part = 0;
     show(part);
   };
+  // Like the sandbox deck, a sheet that fits pins below the picture; a taller one pins with its
+  // last line on screen. The board's actual height sets the floor, including after fonts rewrap it.
+  const fit = () => {
+    if (deck) {
+      story.style.setProperty("--frame", `${stage.offsetHeight}px`);
+      for (const step of steps) step.style.setProperty("--h", `${step.offsetHeight}px`);
+    } else {
+      story.style.removeProperty("--frame");
+      for (const step of steps) step.style.removeProperty("--h");
+    }
+    update();
+  };
   addEventListener("scroll", () => { if (!queued) { queued = true; requestAnimationFrame(update); } }, { passive: true });
-  addEventListener("resize", update);
+  addEventListener("resize", fit);
   // The layout follows the screen, as the homepage's does: a wide screen pins the board beside the
   // story, a narrow one that is tall enough sticks it to the top, and a short one shows the plain
   // page. Crossing either line switches the mode and redraws the step on screen, without motion.
@@ -407,12 +420,18 @@
     deck = mode === "night-deck";
     epoch++;
     shown = -1;
-    if (mode) update();
-    else render(states.at(-1), states.length - 1, false, false);
+    fit();
+    if (!mode) render(states.at(-1), states.length - 1, false, false);
   };
   wide.addEventListener("change", relayout);
   tall.addEventListener("change", relayout);
-  update();
+  fit();
+  document.fonts?.ready.then(fit);
+  if ("ResizeObserver" in window) {
+    const sizes = new ResizeObserver(fit);
+    sizes.observe(stage);
+    steps.forEach((step) => sizes.observe(step));
+  }
   // the queue arrives when the night opens on it: the dots one by one, then its first tasks
   if (shown === 0 && !still.matches) {
     cells.forEach((cell, i) => cell.animate([{ opacity: 0, transform: "scale(0.3)" }, { opacity: 1, transform: "none" }],

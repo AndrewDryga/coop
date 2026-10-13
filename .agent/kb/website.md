@@ -3,7 +3,7 @@ name: website
 description: site/ is static and partly generated; tools/gen_site.py owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
 subsystem: website
 sources: [tools/gen_site.py, tools/services_bench.py, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/overnight.html, site/docs.html, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
-updated: 2026-10-08
+updated: 2026-10-13
 ---
 
 The homepage and docs are static files in `site/`, published by `.github/workflows/pages.yml` on
@@ -90,6 +90,14 @@ marks, as the rail's ticks are on wide screens (an overall strip under the pictu
 Desktop's layout rules stay `.js-story`-only: a deck change must leave 1024px and up pixel-identical
 (diff against `git archive HEAD site` with the commit count matched).
 
+The Orchestrator uses the same sticky sheets in `.night-deck`, with the actual `.night-stage`
+height measured into `--frame` rather than a viewport fraction. `orchestrator.js` measures each
+step into `--h`, observes size changes and clears both measurements when leaving deck mode.
+The timeline changes when a sheet reaches the board's floor. An empty `.night-steps::after`
+block gives the final morning sheet room to stick before the story leaves; bottom padding
+does not extend a sticky child's containing content box and would push that sheet upward.
+See [[site-stories-use-mobile-cards]].
+
 **Docs commands and files.** A shell command a reader copies is a row in a command list:
 `<ul class="cmds" role="list"><li><code data-copy-source>…</code><span class="cmd-note"># …</span></li>`.
 site.js gives every row (and every `.code-file`) the homepage's Copy button, so a button copies one
@@ -172,6 +180,9 @@ with `--disable-javascript`, and `--blink-settings=scriptEnabled=false` makes `-
 nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 
 ## Changelog
+- 2026-10-13 — Orchestrator mobile steps now use the sandbox's measured-height sticky sheets.
+  Recorded the content-flow spacer required for the final sheet; checked responsive rendering,
+  timeline synchronization, citation exposure and desktop equivalence.
 - 2026-10-04 — created with the site replacement (task 2026-10-03-settle-the-co-op-website-direction); verified against every file in sources. Added the pinned-wording trap after the docs copy pass dropped "commits no starter subagents" and failed help_test.go.
 - 2026-10-04 — shell commands became copyable command lists and file snippets got name headers (task 2026-10-04-make-the-docs-read-as-one-guide-with-a-copy-butt); the code-block paragraph now describes both.
 - 2026-10-04 — the docs contents fold to the group being read (task 2026-10-04-show-services-isolation-link-ryker-and-protector).
