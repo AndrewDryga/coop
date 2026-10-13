@@ -23,7 +23,6 @@ const (
 var deviceComparisons = map[string]string{
 	"fingerprint.Device != task.Generation.Device": "two fields of one host-written pending-review record, " +
 		"always captured together: a corruption tripwire, not a comparison with the live filesystem",
-	"current.Dev != children.Dev": "two namespace stats taken together in one process, never a recorded value",
 }
 
 // TestIdentityFencesNeverCompareTheDevice is the check for deviceFenceCard. A volume's device number
