@@ -53,7 +53,7 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 	defer result.approval.close()
 	if err != nil {
 		if result.landed {
-			ui.Note("Isolated Git publication landed; remaining finalization is journaled.")
+			ui.Note("The isolated fork's commits are in the parent repository. Remaining steps are recorded for recovery.")
 		}
 		return 1, err
 	}
@@ -156,7 +156,7 @@ func (c *Control) forkReviewIsolated(repo, ws, name string, identity forkspace.I
 	if err := forkspace.CheckoutIndependent(context.Background(), candidate.dir, candidate.parent.Head, ""); err != nil {
 		return 1, err
 	}
-	ui.Note("Isolated review uses private committed custody; parent refs and model workspace remain unchanged.")
+	ui.Note("The review uses a private copy of the committed files. Parent Git refs and the agent's workspace are unchanged.")
 	into := strings.TrimPrefix(candidate.parent.Target, "refs/heads/")
 	if into == "" {
 		into = "detached parent " + candidate.parent.Head

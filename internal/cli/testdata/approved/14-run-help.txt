@@ -1,4 +1,4 @@
-coop run — run a command in the box
+coop run: run a command in the box
 
 Usage:
   coop run [options] -- <command> [<args>...]

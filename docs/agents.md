@@ -46,10 +46,11 @@ between mutually untrusted agents.
 
 ### Blast radius
 
-A compromised agent can read and edit its current repository's native history and settings, and
-can use the selected account through that run's broker. A settings hook can persist into later
-boxes for this repository/account. Repository isolation does not make that local history or
-configuration untrusted-code-proof, nor does it limit the provider bill by itself.
+A compromised agent can read and edit its current repository's native history and
+settings, and can use the selected account through that run's broker. A settings hook
+can persist into later boxes for this repository/account. Repository isolation does not
+protect that local history or configuration from untrusted code, and it does not limit
+the provider bill.
 
 It cannot read another repository's native home through the managed provider mounts. Open
 networking still allows arbitrary outbound traffic; use filtered networking for approved
@@ -207,9 +208,10 @@ coop fork risky claude:opus                         # a careful fork on the big 
 coop acp claude:sonnet                              # pin an editor entry's model
 ```
 
-For a standing model you don't retype, put it in a [preset](#presets). The lead's `agent:` ladder
-is the model, and on a loop it's also the rotation across your accounts. Each role names its own. A
-credential is just an account (which subscription). The model is a separate axis:
+For a standing model you don't retype, put it in a [preset](#presets). The lead's
+`agent:` ladder is the model, and on a loop it's also the rotation across your accounts.
+Each role names its own. A credential selects the account and subscription. Choose the
+model separately:
 
 ```bash
 coop models                        # the model menu per agent
@@ -219,8 +221,8 @@ coop claude:opus/xhigh             # …at extra-high reasoning effort (low·med
 coop frontier                      # a standing lead model + roles, from the preset (its lead leads)
 ```
 
-One env knob rounds it out. [`COOP_<AGENT>_MODEL`](configuration.md#environment-variables) is the
-agent-wide default, for example `COOP_CLAUDE_MODEL=fable`.
+[`COOP_<AGENT>_MODEL`](configuration.md#environment-variables) sets the agent-wide
+default, for example `COOP_CLAUDE_MODEL=fable`.
 
 For the loop, put the per-step model in [`.agent/loop.yaml`](loop.md). `work.agent` sets it for the
 iterations. `signoff.agent` sets a stronger final reviewer over the cheaper work loop. Give each
@@ -236,9 +238,10 @@ If more than one is set, the most specific wins:
 
 ### Reasoning effort
 
-Reasoning effort is a sibling axis on the same target. Add `/effort` after the provider or the
-optional model: `coop codex/high`, `coop codex:gpt-6-astra/high`, `coop claude:opus/xhigh`,
-`coop loop claude:opus/low`. The levels are `low`, `medium`, `high`, `xhigh` and `max`.
+Set reasoning effort on the same target. Add `/effort` after the provider or the
+optional model: `coop codex/high`, `coop codex:gpt-6-astra/high`,
+`coop claude:opus/xhigh`, `coop loop claude:opus/low`. The levels are `low`, `medium`,
+`high`, `xhigh` and `max`.
 
 co:op passes the level to the agent's CLI, except for known unsupported model-and-effort combinations
 which it refuses before starting:
@@ -265,9 +268,9 @@ For example, `signoff.agent: [claude:opus/xhigh]` signs off at xhigh while the w
 
 ### Which model runs
 
-Consult peers pick their model the same way: each peer resolves its own default. `coop loop`'s live
-view prints the model each iteration actually ran. It comes from the agent's own init report rather
-than from co:op, so it's ground truth.
+Consult peers pick their model the same way: each peer resolves its own default.
+`coop loop`'s live view prints the model each iteration actually ran. The model name
+comes from the agent's own startup report and shows what actually ran.
 
 co:op never validates a model id. `coop models` lists each agent's models, and ids churn. Whatever the agent
 CLI accepts works, and a bad id fails loudly in the agent's own error.
@@ -321,11 +324,11 @@ that never saw the thread.
 
 ### Continuity and fallback
 
-`coop-consult` adds optional continuity. `--fresh` starts a new session. `--continue` resumes the
-peer's own prior consult, so a follow-up can send just the delta instead of re-pasting context. The
-wrapper tells a transcript-backed fresh recovery, where the leader sends only the delta, apart from
-a plain fresh start, where the leader must resend full context. A fresh session becomes resumable
-only after a usable reply.
+`coop-consult` adds optional continuity. `--fresh` starts a new session. `--continue`
+resumes the peer's own prior consult, so a follow-up can send just the delta instead of
+re-pasting context. The wrapper distinguishes recovery from a saved transcript, where
+the leader sends only the new information, from a fresh start that requires the full
+context. A fresh session becomes resumable only after a usable reply.
 
 A failed resume isn't retried in the same call. co:op returns that failure once, clears the
 uncertain native session id and keeps the last complete transcript. The next `--continue` restarts
@@ -448,8 +451,8 @@ roles:
 
 ### Run a preset
 
-Name the preset in the who-runs slot, and its lead leads. A target in that same slot
-(`<agent>[:model][/effort][@account]`) runs the agent directly instead:
+Use the preset name where the command expects a target, and co:op runs its lead. A
+target in that position (`<agent>[:model][/effort][@account]`) runs the agent directly:
 
 ```bash
 coop presets init                # scaffold the recipe + starter prompt files, ready to edit
@@ -555,9 +558,9 @@ change should stay local, or the shared `INSTRUCTIONS.md` for machine-wide fallb
 
 ### Skills and the .agent/ folder
 
-The `.agent/` folder is the normal cornerstone. `coop init` scaffolds the per-agent dirs
-(`.claude/`, `.codex/`, `.gemini/`) only for the agents you're signed in to, or for the ones you name
-with `--agents claude,codex` (or `all`).
+`coop init` scaffolds the per-agent dirs (`.claude/`, `.codex/`, `.gemini/`) only for
+the agents you're signed in to, or for the ones you name with `--agents claude,codex`
+(or `all`).
 
 A repo that never uses an agent can delete its dir. When a box runs an agent whose dir is absent,
 co:op synthesizes the workflow skills from `.agent/skills` at the box's user-level

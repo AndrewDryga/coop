@@ -315,8 +315,7 @@ that mixes text with a reference (`Bearer ${TOKEN}`) is the one shape Codex can'
 
 ### SSE servers
 
-Transport matters for one agent. This is what each agent does with a legacy SSE server
-(`"type": "sse"`):
+The agents handle a legacy SSE server (`"type": "sse"`) differently:
 
 | Agent | What happens |
 | --- | --- |
@@ -354,9 +353,9 @@ run ends. It holds each secret-bearing server's credential and answers only to a
 exactly as the filtered broker does. The box's copy of the file points the server at `coop-broker`
 and names `COOP_MCP_TOKEN_<n>`.
 
-The box reaches the helper over plain HTTP on its container network, which is the default bridge
-when your project has no network of its own. That network doesn't keep the credential yours; the
-stand-in does. The launch says which servers the helper covers.
+The box reaches the helper over plain HTTP on its container network, using the default
+bridge when your project has no network of its own. The stand-in protects the credential
+on that network. The launch lists the servers the helper covers.
 
 A server that no single route can carry keeps working exactly as before, with its secret in the
 box, and the launch says which server and why. That happens for:

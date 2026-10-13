@@ -1,4 +1,4 @@
-coop doctor — check that the box's isolation works
+coop doctor: check that the box's isolation works
 
 Usage:
   coop doctor

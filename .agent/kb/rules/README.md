@@ -95,6 +95,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [acp-connects-before-selection](acp-connects-before-selection.md) — coop acp and coop fork <name> acp connect without a target so the editor can expose its live selectors
 
 **CLI output** — what the terminal shows
+- [cli-text-is-plain-english](cli-text-is-plain-english.md) — direct wording that preserves facts, commands and safety details
 - [installer-output-is-spaced-and-actionable](installer-output-is-spaced-and-actionable.md) — installer progress and shell instructions use readable blocks, with separate start/help examples
 - [selectors-need-a-real-choice](selectors-need-a-real-choice.md) — hide already-selected singleton dropdowns while retaining native state
 - [acp-waits-and-switches-are-visible](acp-waits-and-switches-are-visible.md) — announce automatic quota fallback and every newly queued account wait

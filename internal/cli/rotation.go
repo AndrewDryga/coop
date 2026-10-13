@@ -125,12 +125,12 @@ func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target
 				targets[i] = agents.DisplayTarget(repair.target)
 				commands[i] = agents.LoginCommand(repair.target)
 			}
-			return nil, fmt.Errorf("credentials need login (%s) — run: %s", strings.Join(targets, ", "), strings.Join(commands, "; "))
+			return nil, fmt.Errorf("credentials need login (%s). Run: %s", strings.Join(targets, ", "), strings.Join(commands, "; "))
 		}
 		if len(missing) > 0 {
-			return nil, fmt.Errorf("no signed-in account for %s — run: coop login %s[@<account>]", strings.Join(missing, ", "), missing[0])
+			return nil, fmt.Errorf("no signed-in account for %s. Run: coop login %s[@<account>]", strings.Join(missing, ", "), missing[0])
 		}
-		return nil, fmt.Errorf("%s: none of the ladder's accounts are signed in — run 'coop login', or edit the preset", defaultAgent)
+		return nil, fmt.Errorf("%s: none of the configured accounts are signed in. Run 'coop login', or edit the preset", defaultAgent)
 	}
 	return out, nil
 }

@@ -1,4 +1,4 @@
-coop backlog promote — move an idea to the task queue
+coop backlog promote: move an idea to the task queue
 
 Usage: coop backlog promote <id> [--tasks <path>]...
 

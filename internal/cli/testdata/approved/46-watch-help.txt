@@ -1,4 +1,4 @@
-coop tasks watch — watch task progress
+coop tasks watch: watch task progress
 
 Usage: coop tasks watch [--tasks <path>]... [--json]
 

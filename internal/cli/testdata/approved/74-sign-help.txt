@@ -1,4 +1,4 @@
-coop sign — sign this branch's unpushed commits with your host key
+coop sign: sign this branch's unpushed commits with your host key
 
 Usage:
   coop sign [--from <ref>]

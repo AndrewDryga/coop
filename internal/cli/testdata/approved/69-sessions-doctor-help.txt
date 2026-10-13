@@ -1,4 +1,4 @@
-coop sessions doctor — check the local session service
+coop sessions doctor: check the local session service
 
 Usage:
   coop sessions doctor [options]

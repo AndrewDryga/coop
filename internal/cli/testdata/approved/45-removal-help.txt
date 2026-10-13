@@ -1,4 +1,4 @@
-coop tasks rm — permanently delete task folders
+coop tasks rm: permanently delete task folders
 
 Usage: coop tasks rm <id> [--tasks <path>]... [--yes]
        coop tasks rm --all-done [--tasks <path>]... [--yes]

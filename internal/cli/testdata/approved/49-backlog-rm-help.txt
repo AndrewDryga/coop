@@ -1,4 +1,4 @@
-coop backlog rm — permanently delete a saved idea
+coop backlog rm: permanently delete a saved idea
 
 Usage: coop backlog rm <id> [--tasks <path>]... [--yes]
 

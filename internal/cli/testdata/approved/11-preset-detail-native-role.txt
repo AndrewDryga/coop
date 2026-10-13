@@ -1,4 +1,4 @@
-review — a preset for multiple Claude models
+review: a preset for multiple Claude models
 
 RUN IT
   coop review       start an interactive session with the lead agent

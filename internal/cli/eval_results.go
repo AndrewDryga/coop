@@ -74,10 +74,10 @@ func (a *app) evalInspect(args []string) (int, error) {
 	printEvalText("Result: ", evalResultLine(*sum))
 	printEvalText("Change size: ", evalChangeSizeLine(evalSizeSummary(trials), sum.Counts[eval.TrialPassed]+sum.Counts[eval.TrialFailed]))
 	if !sealed {
-		fmt.Println("\n⚠ No final summary — running or interrupted; not comparable yet.")
+		fmt.Println("\n⚠ No final summary: the run is still running or was interrupted. It cannot be compared yet.")
 	}
 	if sum.Counts[eval.TrialError] > 0 {
-		fmt.Println("\nAn error is not a model-quality failure: no graded verdict was obtained.")
+		fmt.Println("\nAn error means no graded verdict was obtained; it does not count as a model-quality failure.")
 	}
 	if sum.Counts[eval.TrialTimedOut]+sum.Counts[eval.TrialPending]+sum.Counts[eval.TrialRunning] > 0 {
 		fmt.Println("Timeouts and pending trials also leave grading incomplete.")

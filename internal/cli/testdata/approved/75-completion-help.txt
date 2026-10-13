@@ -1,4 +1,4 @@
-coop completion — print shell integration for Bash or Zsh
+coop completion: print shell integration for Bash or Zsh
 
 Usage:
   coop completion <bash|zsh>

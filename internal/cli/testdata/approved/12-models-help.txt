@@ -1,4 +1,4 @@
-coop models — list models available to each agent
+coop models: list models available to each agent
 
 Usage:
   coop models [claude|codex|gemini|grok] [--refresh]

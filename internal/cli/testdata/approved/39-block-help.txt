@@ -1,4 +1,4 @@
-coop tasks block — pause a task that needs a decision
+coop tasks block: pause a task that needs a decision
 
 Usage: coop tasks block <id> [--tasks <path>]... [options]
 

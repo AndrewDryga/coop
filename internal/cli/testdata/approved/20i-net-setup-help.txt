@@ -1,4 +1,4 @@
-coop net setup — prepare this host for filtered networking
+coop net setup: prepare this host for filtered networking
 
 Usage: coop net setup
 

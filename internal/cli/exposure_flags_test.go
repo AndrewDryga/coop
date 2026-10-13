@@ -211,7 +211,7 @@ func TestACPExposureUsageErrors(t *testing.T) {
 		want string
 	}{
 		{"acp readonly", func(a *app) (int, error) { return a.cmdACP([]string{"claude", "--readonly"}) }, "does not take --readonly"},
-		{"acp bare preset", func(a *app) (int, error) { return a.cmdACP([]string{"frontier", "--bare"}) }, "name its lead directly"},
+		{"acp bare preset", func(a *app) (int, error) { return a.cmdACP([]string{"frontier", "--bare"}) }, "Run the lead directly"},
 		{"acp bare peer", func(a *app) (int, error) { return a.cmdACP([]string{"claude", "--bare", "--peer", "codex"}) }, "no peers"},
 		{"acp bare no target", func(a *app) (int, error) { return a.cmdACP([]string{"--bare"}) }, "name the target"},
 		{"acp both", func(a *app) (int, error) { return a.cmdACP([]string{"claude", "--bare", "--readonly"}) }, `Cannot combine`},

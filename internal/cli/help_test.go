@@ -26,7 +26,7 @@ func TestHelpServicesSectionIsProjectAware(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{RepoOverride: repo, BoxHome: "/b", ConfigDir: "/c"}
-	if got := helpText(cfg); !strings.Contains(got, "SERVICES — db and redis, defined in .agent/compose.yml") {
+	if got := helpText(cfg); !strings.Contains(got, "SERVICES: db and redis, defined in .agent/compose.yml") {
 		t.Errorf("the section should name the real services from the compose file:\n%s", got)
 	}
 	// Configured services: all three rows read normally, even though nothing is running.
@@ -34,7 +34,7 @@ func TestHelpServicesSectionIsProjectAware(t *testing.T) {
 		t.Errorf("configured services must not dim the up row:\n%q", got)
 	}
 	empty := &config.Config{RepoOverride: t.TempDir(), BoxHome: "/b", ConfigDir: "/c"}
-	if got := helpText(empty); !strings.Contains(got, "SERVICES — databases and other services defined in .agent/compose.yml") {
+	if got := helpText(empty); !strings.Contains(got, "SERVICES: databases and other services defined in .agent/compose.yml") {
 		t.Errorf("with no services the section keeps the generic explanation:\n%s", got)
 	}
 	// No services: the whole up/down rows recede on a terminal, the setup row does not.
@@ -260,7 +260,7 @@ func TestRenderManual(t *testing.T) {
 	}
 	// The MENU's first-run block is state-aware and stays out of the reference; a page may carry
 	// its own GET STARTED heading (the tasks family does), which is approved copy, not state.
-	if strings.Contains(m, "GET STARTED — sign in") {
+	if strings.Contains(m, "GET STARTED: sign in") {
 		t.Error("RenderManual must omit the state-aware GET STARTED block")
 	}
 	if strings.Contains(m, "/host-boxhome") || strings.Contains(m, "/host-configdir") {
@@ -297,7 +297,7 @@ func TestManualOpensWithTheApprovedMenu(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The reference form drops the build version from the title; nothing else differs.
-	want := strings.Replace(string(data), "coop "+fixtureVersion+" —", "coop —", 1)
+	want := strings.Replace(string(data), "coop "+fixtureVersion+":", "coop:", 1)
 	if menu != want {
 		t.Errorf("the manual's menu drifted from the approved menu\n--- got ---\n%s\n--- want ---\n%s\n%s",
 			menu, want, firstDifference(menu, want))
@@ -476,7 +476,7 @@ func TestHelpRunAgentsNamesProviders(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			out := renderMenu(ui.Palette{}, test.cfg, test.ref)
-			_, group, ok := strings.Cut(out, "RUN AGENTS —")
+			_, group, ok := strings.Cut(out, "RUN AGENTS:")
 			if !ok {
 				t.Fatal("RUN AGENTS group is missing")
 			}

@@ -224,12 +224,12 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 		}
 		ui.Pass("Everything else blocked")
 	case cfg.Egress == "open":
-		ui.Caution("Unrestricted — nothing is blocked")
+		ui.Caution("Unrestricted: nothing is blocked")
 	default:
 		if s.loop && spec.AgentCommand {
-			ui.Note("%s", ui.Red("  ⚠ Offline — "+offlineText(spec)))
+			ui.Note("%s", ui.Red("  ⚠ Offline: "+offlineText(spec)))
 		} else {
-			ui.Caution("Offline — %s", offlineText(spec))
+			ui.Caution("Offline: %s", offlineText(spec))
 		}
 	}
 }
@@ -264,7 +264,7 @@ func (s *launchSections) legacyMCP(servers []string) {
 	if !s.on || len(servers) == 0 {
 		return
 	}
-	ui.Note("  %s on the legacy SSE transport, brokered on a wider route — ask for a streamable HTTP URL: %s",
+	ui.Note("  %s: legacy SSE uses a wider broker route. Ask for a streamable HTTP URL: %s",
 		ui.Count(len(servers), "MCP server"), strings.Join(servers, ", "))
 }
 
@@ -399,7 +399,7 @@ func (s *launchSections) stopped(reason string) {
 	if !s.interactive {
 		return
 	}
-	ui.Note("\nThe Coop box has stopped — %s.", reason)
+	ui.Note("\nThe Coop box has stopped: %s.", reason)
 }
 
 // stopSlow is how long a teardown may run before a person watching a silent terminal deserves to
@@ -595,9 +595,9 @@ func (s *launchSections) servicesFailed(cause string, available ...ServicePort) 
 		}
 	}
 	if len(names) > 0 {
-		ui.Note("    Continuing with observed service(s): %s.", strings.Join(names, ", "))
+		ui.Note("    Continuing with the running services: %s.", strings.Join(names, ", "))
 	} else {
-		ui.Note("    Continuing without sibling services.")
+		ui.Note("    Continuing without project services.")
 	}
 	ui.Note("    To retry: coop up")
 }
@@ -609,11 +609,11 @@ func (s *launchSections) servicesObserved(ports []ServicePort) {
 	names := strings.Join(servicePortNames(ports), ", ")
 	if !s.loop {
 		ui.Note("")
-		ui.Note("Observed running project service(s): %s", names)
+		ui.Note("Project services already running: %s", names)
 		return
 	}
 	s.section("Starting services")
-	ui.Note("  %s Existing service(s) available: %s", ui.Green("✓"), names)
+	ui.Note("  %s Running services available: %s", ui.Green("✓"), names)
 }
 
 // servicesSkipped is a launch that did not even attempt them, with the reason it did not. It never

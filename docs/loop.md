@@ -56,7 +56,8 @@ A custom `core.hooksPath` is left untouched. Copy or chain both tracked hooks fr
 
 ## Final review
 
-When the queue empties, a fresh, demanding final review (the signoff) re-checks each task the run shipped, held to a senior reviewer's bar:
+When the queue empties, a fresh final review (the signoff) checks each task the run
+completed:
 
 - every acceptance criterion and subtask is met
 - the change follows `AGENTS.md` and `.agent/kb/rules`, with no scope creep
@@ -66,7 +67,12 @@ When the queue empties, a fresh, demanding final review (the signoff) re-checks 
 
 co:op atomically finalizes each completed `state.md` before the review. The worker records its final checks in that state as a compact handoff. Reviewers inspect the implementation and the test coverage and trust the reported execution. They never repeat tests themselves. A missing, failed or stale check reopens the task with an exact request for the worker. Reviewers never change an archived task in place. An unexpected lifecycle defect is reopened and reported like any other completion-integrity failure.
 
-If the review reopened work, the loop drains the queue and reviews again. It repeats until a review reopens nothing (verified done) or the loop hits the round cap. At the cap, the task the review keeps reopening is blocked for a human, and the loop doesn't report it as done. The cap scales with the batch: half the tasks worked this run, clamped to `[3, signoff.rounds]` (default `5`). A small batch still gets a few tries, and a big overnight batch can't ping-pong one stuck task forever.
+If the review reopened work, the loop drains the queue and reviews again. It repeats
+until a review reopens nothing (verified done) or the loop hits the round cap. At the
+cap, the task the review keeps reopening is blocked for a human, and the loop doesn't
+report it as done. The cap scales with the batch: half the tasks worked this run,
+clamped to `[3, signoff.rounds]` (default `5`). Small batches still get several
+attempts, while larger batches have a limit on repeatedly reopening one task.
 
 Each completed task must have exactly one `Coop-Task: <id>` binding in the current iteration's commit range, and exactly one reachable from `HEAD`. So rework after a review amends or rewrites the existing task commit. A second bound commit is rejected, and the task goes back to in-progress. A worker can't bind another task in its iteration either: verify subjects come only from tasks the host accepted as completed during this run.
 
@@ -163,7 +169,11 @@ With no `--tasks`, a fork schedules from every queue co:op knows about: the repo
 
 `-d` (`--detach`) runs the worker in the background and captures its output in `../<repo>-forks/.coop/<name>.log`. When a fork drains its available work, review and [land it](forks.md#land-it) like a pull request, then `git push`. Add agents until review is your bottleneck.
 
-`coop fork merge --all` lands all forks at once. It's a revalidating rebase queue: it rebases each fork onto the result of the last one and re-runs the configured gate (`gate:` in `.agent/project.yaml`, or `COOP_GATE`). A fork that was green can't ride in against a base an earlier landing already changed. The queue stops at the first conflict or red gate and leaves the rest untouched.
+`coop fork merge --all` lands all forks at once. It's a revalidating rebase queue: it
+rebases each fork onto the result of the last one and re-runs the configured gate
+(`gate:` in `.agent/project.yaml`, or `COOP_GATE`). Each fork must pass the gate again
+against the base produced by earlier merges. The queue stops at the first conflict or
+red gate and leaves the rest untouched.
 
 `coop tasks split` and whole-queue fork seeding are retired. Those copies could each move the same task on their own, and no merged dashboard could make them one authority. Keep semantic grouping as separate canonical queues only when the project truly owns separate queues. `--tasks` is a filter. It doesn't slice a queue.
 

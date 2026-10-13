@@ -1,4 +1,4 @@
-coop net forget — withdraw this project's network approval
+coop net forget: withdraw this project's network approval
 
 Usage: coop net forget [--project <path>]
 

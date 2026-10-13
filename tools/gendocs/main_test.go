@@ -8,12 +8,12 @@ import (
 // TestManPage: the man page carries a NAME line (for apropos/mandb) and the manual verbatim in a
 // no-fill block, and roff-escapes the body so arbitrary help text can't be misread as roff.
 func TestManPage(t *testing.T) {
-	manual := "coop — the tagline.\nUsage: coop x\n.dotstart line\nback\\slash line\n'quote line\n"
+	manual := "coop: the tagline.\nUsage: coop x\n.dotstart line\nback\\slash line\n'quote line\n"
 	got := manPage(manual)
 
 	for _, want := range []string{
 		`.TH COOP 1 "" "coop" "coop Manual"`, // deterministic header — no date/version to break -check
-		".SH NAME\ncoop \\- the tagline.",    // NAME derived from the tagline, sans "coop — "
+		".SH NAME\ncoop \\- the tagline.",    // NAME derived from the tagline, sans "coop: "
 		".SH DESCRIPTION",
 		".nf\n",   // no-fill block opens
 		"\n.fi\n", // ...and closes

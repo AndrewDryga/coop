@@ -356,7 +356,7 @@ func writeSetupChecks(out io.Writer, p ui.Palette, code int, runErr error) error
 		fmt.Fprintf(out, "  %s %s\n", p.Green("✓"), check.property)
 	}
 	if runErr == nil && code == 0 {
-		fmt.Fprintf(out, "\n%s\n", p.Bold(p.Green(fmt.Sprintf("✓ All %d checks passed — this host is ready for filtered runs", len(setupChecks)))))
+		fmt.Fprintf(out, "\n%s\n", p.Bold(p.Green(fmt.Sprintf("✓ All %d checks passed. This host is ready for filtered runs", len(setupChecks)))))
 		return nil
 	}
 	reason := ""

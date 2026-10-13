@@ -1,5 +1,5 @@
 ✓ Coop project updated
-  /work/atlas — existing files kept, anything missing added
+  /work/atlas: existing files kept, missing files added
 
 ⚠ Coop kept your Git hooks
 

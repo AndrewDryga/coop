@@ -1,4 +1,4 @@
-coop fork ls — show forks and their progress
+coop fork ls: show forks and their progress
 
 Usage: coop fork ls [--json]
 

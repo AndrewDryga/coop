@@ -13,10 +13,10 @@ func TestLoginNarrationHandoffAndSuccess(t *testing.T) {
 		t.Fatalf("handoff = %q, want %q", got, want)
 	}
 	got = captureStderr(t, func() {
-		ui.Note("The Coop box has stopped — main process exited with status 0.")
+		ui.Note("The Coop box has stopped: main process exited with status 0.")
 		loginResult("grok", config.DefaultProfile, true)
 	})
-	want := "The Coop box has stopped — main process exited with status 0.\n\n✓ Signed in to Grok\n\nStart Grok:\n  coop grok\n"
+	want := "The Coop box has stopped: main process exited with status 0.\n\n✓ Signed in to Grok\n\nStart Grok:\n  coop grok\n"
 	if got != want {
 		t.Fatalf("success = %q, want %q", got, want)
 	}

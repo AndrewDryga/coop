@@ -19,10 +19,11 @@ Coding and editor sessions now use complete native homes scoped to their reposit
 homes are also scoped to the selected account; editor homes survive account switches. Native
 settings are seeded once and then remain local. Validated forks share the parent repository domain.
 
-On first reuse, co:op imports only older transcripts with proven repository ownership. Originals
-stay intact. Ambiguous or unsupported history is retained, not exposed to another project; active
-writers defer import rather than being stopped. Finish those sessions and retry. Native deletions
-are recorded by import receipts, so an old source cannot silently resurrect deleted sessions.
+On first reuse, co:op imports only older transcripts with proven repository ownership.
+Originals stay intact. Ambiguous or unsupported history is retained, not exposed to
+another project; co:op postpones import while older sessions are writing history; it
+does not stop them. Finish those sessions and retry. Native deletions are recorded by
+import receipts, so an old source cannot silently resurrect deleted sessions.
 
 Account credentials move into one canonical host-only authority. Old credential sources are
 retired only after recoverable publication and writer checks; no refresh grants are copied into
@@ -285,10 +286,11 @@ must exist on the runtime you end up on, so if your images lived on the other on
 co:op falls back to `container` only when Docker's daemon doesn't answer, and it tells you when it
 falls back.
 
-Podman is no longer a container runtime. Install Docker, or Apple `container` on macOS 26, then run
-`coop build && coop doctor`. Auto-detection no longer looks for Podman, and an explicit
-`COOP_RUNTIME=podman` now stops with the reason instead of running. co:op no longer manages
-anything on the Podman side, so stop leftover sibling stacks there first:
+co:op no longer supports Podman as a container runtime. Install Docker, or Apple
+`container` on macOS 26, then run `coop build && coop doctor`. Auto-detection no longer
+looks for Podman, and an explicit `COOP_RUNTIME=podman` now stops with the reason
+instead of running. co:op no longer manages anything on the Podman side, so stop
+leftover sibling stacks there first:
 `podman compose -p <project> -f .agent/compose.yml down --remove-orphans`.
 
 The session state root moves to schema 25. Back it up before the new connection starts its

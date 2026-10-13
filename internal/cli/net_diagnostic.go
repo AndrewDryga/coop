@@ -606,7 +606,7 @@ func writeNetNoBlock(w io.Writer, p ui.Palette, host, scope string, complete boo
 
 // netIncompleteRecording is the one warning that goes before any next action:
 // what follows is a lower bound, not the whole story.
-const netIncompleteRecording = "Recording incomplete — some blocked attempts may be missing"
+const netIncompleteRecording = "Recording is incomplete; some blocked attempts may be missing"
 
 // netExplainHost reads one run for every refusal of one host and groups the
 // repeats by what actually differed — the boundary, the reason, the port, the service — so

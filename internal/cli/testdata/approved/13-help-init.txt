@@ -1,4 +1,4 @@
-coop init — set up Coop in this project
+coop init: set up Coop in this project
 
 Usage:
   coop init
@@ -8,10 +8,10 @@ COOP SETS UP
 
 - Shared instructions and skills for all your AI agents.
 
-- A file-based task system — agents can pick up work, save progress, and hand
+- A file-based task system. Agents can pick up work, save progress, and hand
   it to another agent or session.
 
-- Commit checks — Coop verifies formatting for the languages it detects or
+- Commit checks. Coop verifies formatting for the languages it detects or
   you choose.
 
 - Project settings for sandboxed runs, including filtered internet access.

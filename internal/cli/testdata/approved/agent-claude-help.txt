@@ -1,4 +1,4 @@
-coop claude — run Claude in a sandboxed box
+coop claude: run Claude in the box
 
 Usage:
   coop claude[:<model>][/<effort>][@<account>] [options] [-- <claude-args>...]
@@ -19,7 +19,7 @@ OPTIONS
 
 NETWORK OPTIONS
   --egress <mode>        internet access: filtered, open or none
-  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
+  --allow-domain <name>  allow this exact domain over TLS on port 443; repeat to add more
   --egress-rules <file>  add this file's network rules for the run
 
 MODELS AND ACCOUNTS

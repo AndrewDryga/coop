@@ -711,7 +711,7 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 		// finish — so it is named here too, with the one command that finishes it.
 		p := ui.For(os.Stdout)
 		if len(refs) == 0 {
-			ui.OK("no open decisions — nothing is waiting for your answer")
+			ui.OK("No questions are waiting for your answer")
 			printAnsweredDecisions(p, answered, false)
 			return 0, nil
 		}

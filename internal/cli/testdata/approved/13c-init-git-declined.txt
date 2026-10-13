@@ -30,7 +30,7 @@ Network access is filtered.
 Codex can reach OpenAI.
 Other network traffic is blocked until you approve rules allowing it.
 
-Finish setup — Coop needs a Git repository
+Finish setup: Coop needs a Git repository
   → git init
   → coop init
 

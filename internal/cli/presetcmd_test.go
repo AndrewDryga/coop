@@ -111,14 +111,14 @@ func TestPresetDetailIsOneRendererBehindBothDoors(t *testing.T) {
 	if show != help {
 		t.Errorf("coop presets <name> and coop help <name> drifted:\n--- presets ---\n%s\n--- help ---\n%s", show, help)
 	}
-	want := `frontier — a preset for multiple models and providers to work together
+	want := `frontier: a preset for multiple models and providers to work together
 
 RUN IT
   coop frontier       start an interactive session with the lead agent
   coop loop frontier  work through tasks with this preset
   coop acp frontier   use this preset in your editor
 
-LEAD MODELS — next selected when the previous is unavailable:
+LEAD MODELS (tried in order when one is unavailable):
   Agent:  claude:claude-fable-5@work codex:gpt-5.6-sol/xhigh
   Prompt: .agent/presets/frontier/roles/lead.md
 
@@ -242,7 +242,7 @@ func TestHelpTopicResolutionOrder(t *testing.T) {
 	if out, code := run("loop"); code != 0 || !strings.Contains(out, "coop loop") || strings.Contains(out, "Run it") {
 		t.Errorf("the loop COMMAND keeps its page against a preset of the same name: (%d)\n%s", code, out)
 	}
-	if out, code := run("gemini"); code != 0 || !strings.Contains(out, "run Gemini in a sandboxed box") {
+	if out, code := run("gemini"); code != 0 || !strings.Contains(out, "run Gemini in the box") {
 		t.Errorf("the gemini AGENT keeps its page against a preset of the same name: (%d)\n%s", code, out)
 	}
 	if _, code := run("nonsense-name"); code != 2 {
@@ -278,7 +278,7 @@ func TestPresetDetailLabelsAGlobalOrigin(t *testing.T) {
 	if !strings.Contains(out, filepath.ToSlash(dir)+"/preset.yaml (global)") {
 		t.Errorf("a global preset shows its own path, labeled:\n%s", out)
 	}
-	if !strings.Contains(out, "review — a preset for Claude") {
+	if !strings.Contains(out, "review: a preset for Claude") {
 		t.Errorf("the summary comes from the preset's shape, not its name:\n%s", out)
 	}
 }
@@ -410,10 +410,10 @@ func TestManualEndsWithThisProjectsPresets(t *testing.T) {
 	if !strings.HasPrefix(pages, "\n"+manualSeparator+"\n\n") {
 		t.Fatalf("a preset page must arrive behind the manual's separator, got:\n%s", pages)
 	}
-	if !strings.Contains(pages, "frontier — a preset for multiple models") {
+	if !strings.Contains(pages, "frontier: a preset for multiple models") {
 		t.Errorf("the project's preset is missing from the manual:\n%s", pages)
 	}
-	if strings.Contains(RenderManual(cfg), "frontier —") {
+	if strings.Contains(RenderManual(cfg), "frontier:") {
 		t.Error("RenderManual is the tool's documentation — a project's preset must not be in it")
 	}
 }

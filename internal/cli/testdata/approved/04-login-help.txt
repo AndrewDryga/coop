@@ -1,4 +1,4 @@
-coop login — sign in to an agent
+coop login: sign in to an agent
 
 Usage: coop login <agent>[@<account>]
 

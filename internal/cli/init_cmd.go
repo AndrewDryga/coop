@@ -264,7 +264,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// actions its ACTUAL state still needs.
 	if already {
 		ui.OK("Coop project updated")
-		ui.Note("  %s — existing files kept, anything missing added", repo)
+		ui.Note("  %s: existing files kept, missing files added", repo)
 		if len(registered) > 0 {
 			ui.Note("  Task queues registered: %s", strings.Join(registered, ", "))
 		}
@@ -489,7 +489,7 @@ func initActions(cfg *config.Config, repo string, services, agentDirs []string, 
 	// coop runs forks and the loop on top of git (worktrees, rebase-merge), and the commit gate
 	// needs core.hooksPath — which only the re-init after `git init` can set. Lead with both.
 	if !pathExists(filepath.Join(repo, ".git")) {
-		out = append(out, initAction{title: "Finish setup — Coop needs a Git repository", actions: []string{"git init", "coop init"}})
+		out = append(out, initAction{title: "Finish setup: Coop needs a Git repository", actions: []string{"git init", "coop init"}})
 	}
 	// The agent to sign in to is also the one the loop line below names, so a first run reads as
 	// one story rather than two unrelated suggestions.

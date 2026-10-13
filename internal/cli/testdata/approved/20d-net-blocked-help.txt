@@ -1,4 +1,4 @@
-coop net blocked — find blocked connections and how to allow them
+coop net blocked: find blocked connections and how to allow them
 
 Usage: coop net blocked <host> [--run <run>] [--json]
 

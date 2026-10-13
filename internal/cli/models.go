@@ -183,9 +183,9 @@ func (a *app) modelMenuEntry(agent string, ag agents.Agent, cause string, failed
 	if !failed && mc.current(now) {
 		return ids, "", ""
 	}
-	issue = "Could not refresh — showing example models"
+	issue = "Could not refresh. Showing example models"
 	if cached {
-		issue = "Could not refresh — showing the list saved " + humanAge(mc.FetchedAt)
+		issue = "Could not refresh. Showing the list saved " + humanAge(mc.FetchedAt)
 	}
 	if cause == "" {
 		cause = mc.AttemptError // an earlier failure, still inside its retry window

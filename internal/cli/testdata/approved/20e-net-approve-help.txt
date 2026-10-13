@@ -1,4 +1,4 @@
-coop approve — review and approve this project's requested access
+coop approve: review and approve this project's requested access
 
 Usage: coop approve
 

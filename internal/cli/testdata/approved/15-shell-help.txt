@@ -1,4 +1,4 @@
-coop shell — open a shell in the box
+coop shell: open a shell in the box
 
 Usage:
   coop shell [options]

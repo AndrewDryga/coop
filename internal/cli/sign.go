@@ -133,7 +133,7 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	args := append(append([]string{}, forkspace.TrustedSignArgs()...), "rebase", "-f", "--gpg-sign", base)
 	if err := gitSign(worktree, args...); err != nil {
 		_ = gitRun(worktree, "rebase", "--abort") // leave no rebase state behind for the next signing worktree in this slot
-		return 0, fmt.Errorf("re-signing %s..HEAD failed (a signing key/agent issue?): %w", base, err)
+		return 0, fmt.Errorf("could not re-sign %s..HEAD: %w", base, err)
 	}
 	newHead := gitOut(worktree, "rev-parse", "--verify", "HEAD^{commit}")
 	newTrees := rangeTrees(worktree, base, newHead)
@@ -158,7 +158,7 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	// never trips its own compare-and-swap. Acquired only for this short tail, never the rebase above.
 	release, lockErr := tasks.LockRefAuthority(a.cfg, repo)
 	if lockErr != nil {
-		return 0, fmt.Errorf("acquire ref authority for %s: %w", repo, lockErr)
+		return 0, fmt.Errorf("lock the branch before applying signed commits in %s: %w", repo, lockErr)
 	}
 	defer release()
 	if a.beforeSignRefUpdate != nil {

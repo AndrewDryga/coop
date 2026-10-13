@@ -121,7 +121,7 @@ func TestSignUnpushedTakesRefAuthority(t *testing.T) {
 	}
 	defer release()
 
-	if _, err := a.signUnpushed(repo, base); err == nil || !strings.Contains(err.Error(), "ref authority") {
+	if _, err := a.signUnpushed(repo, base); err == nil || !strings.Contains(err.Error(), "lock the branch before applying signed commits") {
 		t.Fatalf("signUnpushed while ref authority is held = %v, want a ref-authority refusal", err)
 	}
 }

@@ -1,4 +1,4 @@
-coop fork path — print a fork's folder path
+coop fork path: print a fork's folder path
 
 Usage: coop fork path <name>
 

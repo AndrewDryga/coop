@@ -28,7 +28,7 @@ var (
 type needsConfirmation struct{ what string }
 
 func (e needsConfirmation) Error() string {
-	return fmt.Sprintf("refusing to %s without confirmation — re-run with --yes (no terminal to prompt)", e.what)
+	return fmt.Sprintf("cannot %s without confirmation. No terminal is available; run again with --yes", e.what)
 }
 
 func (e needsConfirmation) Is(target error) bool { return target == ErrNeedsConfirmation }

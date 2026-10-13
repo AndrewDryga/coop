@@ -1,4 +1,4 @@
-coop tasks — manage work in .agent/tasks/
+coop tasks: manage work in .agent/tasks/
 
 Usage: coop tasks [--tasks <path>]... [<command>]
 

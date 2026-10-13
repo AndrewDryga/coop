@@ -1,10 +1,10 @@
-coop tasks done — move completed work to the archive
+coop tasks done: move completed work to the archive
 
 Usage: coop tasks done <id> [--tasks <path>]...
 
   Finish the checks and commit the task's work first.
-  Completion requires a nonempty, fully checked task checklist.
-  Failed, unavailable or unrun required checks must stay open.
+  The task must have at least one checklist item, with every item checked.
+  Leave required checks open if they failed, could not run, or have not run.
   Coop moves the task to done and removes its temporary files.
   The task's instructions, progress and saved evidence stay in the archive.
 

@@ -1,4 +1,4 @@
-coop fork review — inspect a fork before merging
+coop fork review: inspect a fork before merging
 
 Usage: coop fork review <name> [<options>]
 
@@ -14,9 +14,10 @@ OPTIONS
   --gate leaves the fork and your working tree unchanged. It cannot be used
   with --open.
 
-  Isolated forks review private committed custody, even when your parent is dirty.
-  --open and COOP_REVIEW_CMD use a retained private preview, not the model workspace.
-  Preview edits never become merge input. Remove that preview when finished.
+  Coop reviews an isolated fork's saved private commits even when your main
+  checkout has uncommitted changes. --open and COOP_REVIEW_CMD use a saved
+  private preview, separate from the agent's workspace.
+  Preview edits are never merged. Remove the preview when finished.
 
 EXAMPLES
   coop fork review myfork

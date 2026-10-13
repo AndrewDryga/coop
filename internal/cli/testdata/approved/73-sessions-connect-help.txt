@@ -1,4 +1,4 @@
-coop sessions connect — run a worker for a remote controller
+coop sessions connect: run a worker for a remote controller
 
 Usage: coop sessions connect --controller <https-url> [options]
 
@@ -14,7 +14,8 @@ DEFAULT STORAGE
 RUNNING
   The controller supplies each session's code, context, and execution settings.
   No local policy file or worker configuration file is needed.
-  The enrollment token is exchanged for a renewable worker identity and removed.
+  Coop exchanges the enrollment token for worker credentials it can renew,
+  then removes the token.
 
   Leave this command running. Connection failures are retried automatically.
   Press Ctrl-C to disconnect and stop the local service it started.

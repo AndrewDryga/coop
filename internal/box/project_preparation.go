@@ -25,7 +25,7 @@ type ProjectBuildRequired struct {
 }
 
 func (e *ProjectBuildRequired) Error() string {
-	return fmt.Sprintf("this project's %s is not ready: %s — review the Dockerfile and copied build files, then run 'coop build --egress filtered' on the host; project builds use ordinary networking", e.Dockerfile, e.Reason)
+	return fmt.Sprintf("this project's %s is not ready: %s. Review the Dockerfile and copied build files, then run 'coop build --egress filtered' on the host. Project builds use ordinary networking", e.Dockerfile, e.Reason)
 }
 
 func projectDockerfileForRun(spec RunSpec) string {

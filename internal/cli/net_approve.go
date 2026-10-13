@@ -78,7 +78,7 @@ const (
 	netApproveIntro     = "Review the requested project access."
 	netApprovePrompt    = "Approve this access for new runs?"
 	netApproveApproved  = "Approved for new runs"
-	netApproveUnchanged = "No approval needed — this project's requested access has not changed."
+	netApproveUnchanged = "No approval needed: this project's requested access has not changed."
 )
 
 func approveMovedError() error {
@@ -153,7 +153,7 @@ func writeNetAccessChange(w io.Writer, p ui.Palette, before *networkstate.Approv
 
 // netOpenWarning is the one red line an unrestricted request earns: it is an
 // escalation, and a reader about to type y should see it without color too.
-const netOpenWarning = "⚠ Nothing will be blocked — an agent can reach any destination"
+const netOpenWarning = "⚠ An agent can reach any destination; nothing will be blocked"
 
 // netModeDescription is the access mode in the words every network view uses,
 // so approve, the posture view and a withdrawal never describe the same mode
@@ -161,10 +161,10 @@ const netOpenWarning = "⚠ Nothing will be blocked — an agent can reach any d
 func netModeDescription(mode egress.Mode) string {
 	switch mode {
 	case egress.Open:
-		return "Unrestricted — nothing is blocked."
+		return "Unrestricted: nothing is blocked."
 	case egress.None:
-		return "Offline — internet access is blocked."
+		return "Offline: internet access is blocked."
 	default:
-		return "Filtered — only approved network traffic is allowed."
+		return "Filtered: only approved network traffic is allowed."
 	}
 }

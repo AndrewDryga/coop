@@ -170,7 +170,7 @@ func (a *app) presetsInit(repo string, args []string) (int, error) {
 	}
 	pal := ui.For(os.Stderr)
 	ui.OK("Created preset %q", name)
-	ui.Note("\nPlease edit the preset template: %s", presetDisplayPath(repo, path))
+	ui.Note("\nEdit the preset template: %s", presetDisplayPath(repo, path))
 	ui.Note("\nTo run it, use:\n  %s", pal.Cyan("coop "+name))
 	return 0, nil
 }
@@ -326,7 +326,7 @@ func presetManualPages(cfg *config.Config) string {
 func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
 	path, global := presetPaths(repo, p.Dir)
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n", pal.Bold(p.Name+" — "+presetSummary(p)))
+	fmt.Fprintf(&b, "%s\n\n", pal.Bold(p.Name+": "+presetSummary(p)))
 
 	fmt.Fprintf(&b, "%s\n", pal.Bold("RUN IT"))
 	runs := [][2]string{
@@ -344,7 +344,7 @@ func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
 
 	lead := "LEAD MODEL"
 	if len(p.LeadTargets) > 1 { // only a ladder can fall back, so only a ladder says so
-		lead = "LEAD MODELS — next selected when the previous is unavailable:"
+		lead = "LEAD MODELS (tried in order when one is unavailable):"
 	}
 	fmt.Fprintf(&b, "\n%s\n", pal.Bold(lead))
 	targets := make([]string, len(p.LeadTargets))

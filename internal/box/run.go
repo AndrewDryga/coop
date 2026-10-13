@@ -829,7 +829,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if n := ShadowCount(mounts); sections.on {
 		sections.secrets(n)
 	} else if n > 0 && !spec.Quiet {
-		ui.Note("shadowed %d secret path(s)", n)
+		ui.Note("Hidden secret paths: %d", n)
 	}
 	sections.coopignoreComments(shadowpath.RepoCommentedEntries(spec.Repo), spec.Quiet)
 	// The sibling-services compose file is NOT shadowed: an in-box agent may author it, but coop
@@ -1511,7 +1511,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if cf := composeFile; cf != "" {
 			sections.servicesPreparing()
 			if !sections.on && !spec.Quiet {
-				ui.Note("starting sibling services (%s)", filepath.Base(cf))
+				ui.Note("Starting project services (%s)", filepath.Base(cf))
 			}
 			// Discard compose's own progress UI — it repaints with carriage returns and would overprint
 			// the loop's live bar. coop's status line says what happened; `coop up` shows the live

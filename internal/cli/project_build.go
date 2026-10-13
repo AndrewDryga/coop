@@ -71,7 +71,7 @@ func confirmProjectBuild(ctx context.Context, dockerfile, reason string, confirm
 		return err
 	}
 	if !confirmed {
-		return errors.New("cancelled — no project image was built")
+		return errors.New("cancelled. No project image was built")
 	}
 	return nil
 }

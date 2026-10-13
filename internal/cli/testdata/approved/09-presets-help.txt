@@ -1,4 +1,4 @@
-coop presets — configure multiple models and providers to work together
+coop presets: configure multiple models and providers to work together
 
 Usage:
   coop presets                list presets
@@ -29,18 +29,18 @@ HOW TO DEFINE A PRESET
 
   Syntax:
 
-    agent:   presets use Coop’s standard model, effort, account, and
+    agent:   presets use Coop's standard model, effort, account, and
              automatic-rotation syntax. For details, see:
                coop help models
 
     mode:    controls how a role works
-               native    runs inside the lead agent’s session
+               native    runs inside the lead agent's session
                consult   provides read-only advice from another agent
                delegate  edits files for the lead; never commits; runs one at a time
 
     when:    tells the lead when to use a role
 
-    prompt:  adds custom instructions to Coop’s generated instructions for the
+    prompt:  adds custom instructions to Coop's generated instructions for the
              lead or role
 
     A native role runs in the lead's own session, so every lead in the preset

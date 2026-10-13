@@ -1,4 +1,4 @@
-coop build — build the Coop box image
+coop build: build the Coop box image
 
 Usage:
   coop build [--egress <mode>]

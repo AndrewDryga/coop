@@ -131,7 +131,7 @@ func updateNotice(cur, latest string) string {
 		return ""
 	}
 	c, l := normalizeVersion(cur), normalizeVersion(latest)
-	return "a newer coop is available: v" + c + " → v" + l + " — run 'coop update' (or set COOP_NO_UPDATE_CHECK=1)"
+	return "Update Coop from v" + c + " to v" + l + ". Run 'coop update' (or set COOP_NO_UPDATE_CHECK=1)"
 }
 
 // startUpdateCheck begins the daily background check when it's due and returns the

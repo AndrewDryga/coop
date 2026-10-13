@@ -71,7 +71,7 @@ func TestEvalResultsJourney(t *testing.T) {
 	}
 	for _, args := range [][]string{{"inspect"}, {"inspect", "20260921-errors"}} {
 		out := run(args...)
-		for _, want := range []string{"coop-core", "claude [config abcdef123456, build v-test]", "0/3 passed", "0/3 graded", "no trial reached grading", "fix-the-cause", "sign-in required", "trial budget exhausted", "not a model", dir} {
+		for _, want := range []string{"coop-core", "claude [config abcdef123456, build v-test]", "0/3 passed", "0/3 graded", "no trial reached grading", "fix-the-cause", "sign-in required", "trial budget exhausted", "does not count as a model-quality failure", dir} {
 			if !strings.Contains(out, want) {
 				t.Errorf("inspection missing %q:\n%s", want, out)
 			}
@@ -97,7 +97,7 @@ func TestEvalInspectionUnsealedAndUnsafeDetail(t *testing.T) {
 			t.Fatalf("inspect = %d, %v", code, err)
 		}
 	})
-	for _, want := range []string{"running or interrupted", "0/3 graded", "2 pending", "truncated", "Records:"} {
+	for _, want := range []string{"the run is still running or was interrupted", "0/3 graded", "2 pending", "truncated", "Records:"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("inspection missing %q:\n%s", want, out)
 		}

@@ -165,7 +165,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if a.mode == agents.ModeBare {
 		if !toolSet {
 			if presetName != "" {
-				return 2, fmt.Errorf("a preset runs its roles from the box, which a bare run has none of — name its lead directly: coop acp <target> --bare")
+				return 2, fmt.Errorf("preset roles are unavailable in bare mode. Run the lead directly: coop acp <target> --bare")
 			}
 			return 2, noProviderErr("acp")
 		}

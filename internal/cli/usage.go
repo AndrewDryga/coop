@@ -137,7 +137,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 			}
 			input, err := box.UsageQuotaAuthority(a.cfg, row.provider, row.account)
 			if err != nil {
-				row.quotaErr = errors.New("selected authentication authority is unavailable")
+				row.quotaErr = errors.New("this credential's sign-in could not be checked")
 				return
 			}
 			input.Native = func(nativeCtx context.Context, command []string) ([]byte, error) {
@@ -166,16 +166,16 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	renderUsage(os.Stdout, ui.For(os.Stdout), ui.TermWidth(os.Stdout), time.Now(), names, rows, details)
 	var footer []string
 	if details && len(retained.Turns) > 0 {
-		footer = append(footer, "Retained Coop turn aggregates are unpriced and are not added to native history.")
+		footer = append(footer, "Saved Coop turn totals have no price estimate and are excluded from provider-history totals.")
 		if unattributed > 0 {
-			footer = append(footer, fmt.Sprintf("%d installation-wide retained turns have no exact historical credential binding.", unattributed))
+			footer = append(footer, fmt.Sprintf("%d saved turns across this installation cannot be matched to a credential.", unattributed))
 		}
 	}
 	if details && retained.Truncated {
-		footer = append(footer, "Retained Coop turn scan is partial (read limit reached).")
+		footer = append(footer, "Only part of the saved Coop turn history was read (read limit reached).")
 	}
 	if details && retainedErr != nil && !errors.Is(retainedErr, os.ErrNotExist) {
-		footer = append(footer, "Retained Coop turn coverage unavailable.")
+		footer = append(footer, "Saved Coop turn history could not be read.")
 	}
 	if len(footer) > 0 {
 		fmt.Println()
@@ -820,7 +820,7 @@ func usageValueLabel(row usageCredential, details bool) string {
 		}
 	}
 	if row.ambiguous {
-		value = "unavailable · historical credential attribution is ambiguous"
+		value = "unavailable · history cannot be matched to one credential"
 	}
 	if row.value.Available {
 		if row.value.Priced == 0 && row.value.Unpriced > 0 {

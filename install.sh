@@ -20,7 +20,7 @@ verify_checksum() {
   vc_archive=$3
   vc_want=$(awk -v f="$vc_asset" '$2 == f {print $1}' "$vc_sums")
   if [ -z "$vc_want" ]; then
-    echo "coop: checksums.txt has no entry for $vc_asset — aborting (release integrity check failed)" >&2
+    echo "Cannot verify $vc_asset: checksums.txt has no checksum for it." >&2
     return 1
   fi
   if command -v sha256sum >/dev/null 2>&1; then
@@ -28,11 +28,11 @@ verify_checksum() {
   elif command -v shasum >/dev/null 2>&1; then
     vc_got=$(shasum -a 256 "$vc_archive" | cut -d ' ' -f 1)
   else
-    echo "coop: no SHA-256 tool found — install sha256sum or shasum, then retry" >&2
+    echo "No SHA-256 tool found. Install sha256sum or shasum, then try again." >&2
     return 1
   fi
   if [ "$vc_want" != "$vc_got" ]; then
-    echo "coop: checksum mismatch for $vc_asset — aborting (expected $vc_want, got $vc_got)" >&2
+    echo "Checksum mismatch for $vc_asset. Expected $vc_want, got $vc_got." >&2
     return 1
   fi
   return 0
@@ -65,12 +65,12 @@ atomic_install() {
   ai_tmp="$ai_dir/.coop.new.$$"
   if ! install -m 0755 "$ai_src" "$ai_tmp"; then
     rm -f "$ai_tmp"
-    echo "coop: failed to stage $ai_dest" >&2
+    echo "Could not prepare a temporary file for $ai_dest." >&2
     return 1
   fi
   if ! mv -f "$ai_tmp" "$ai_dest"; then
     rm -f "$ai_tmp"
-    echo "coop: failed to install $ai_dest" >&2
+    echo "Could not install $ai_dest." >&2
     return 1
   fi
   return 0
@@ -87,11 +87,11 @@ arch=$(uname -m)
 case "$arch" in
   x86_64 | amd64) arch=amd64 ;;
   aarch64 | arm64) arch=arm64 ;;
-  *) echo "coop: unsupported architecture: $arch" >&2; exit 1 ;;
+  *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;
 esac
 case "$os" in
   linux | darwin) ;;
-  *) echo "coop: unsupported OS: $os (Linux and macOS only)" >&2; exit 1 ;;
+  *) echo "Unsupported operating system: $os. Coop supports Linux and macOS." >&2; exit 1 ;;
 esac
 
 ver="${COOP_VERSION:-}"
@@ -99,7 +99,7 @@ if [ -z "$ver" ]; then
   ver=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" |
     grep '"tag_name"' | head -1 | cut -d '"' -f 4)
 fi
-[ -n "$ver" ] || { echo "coop: could not resolve the latest release; set COOP_VERSION" >&2; exit 1; }
+[ -n "$ver" ] || { echo "Could not find the latest release. Set COOP_VERSION to choose a release." >&2; exit 1; }
 
 asset="coop_${ver#v}_${os}_${arch}.tar.gz"
 url="https://github.com/$repo/releases/download/$ver/$asset"
@@ -108,7 +108,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 printf 'Installing Coop %s\n' "${ver#v}"
 printf '  Downloading %s…\n\n' "$asset"
-curl -fsSL "$url" -o "$tmp/coop.tar.gz" || { echo "coop: download failed: $url" >&2; exit 1; }
+curl -fsSL "$url" -o "$tmp/coop.tar.gz" || { echo "Download failed: $url" >&2; exit 1; }
 
 # Verify the download against the release's published checksums — defends against a
 # tampered or MITM'd asset. Fails closed on a mismatch, a missing entry, or a host with no
@@ -121,7 +121,7 @@ curl -fsSL "$url" -o "$tmp/coop.tar.gz" || { echo "coop: download failed: $url" 
 # was not verified. The checksum file itself is mandatory either way: no release metadata means
 # no install.
 if ! curl -fsSL "https://github.com/$repo/releases/download/$ver/checksums.txt" -o "$tmp/checksums.txt"; then
-  echo "coop: could not fetch checksums.txt for $ver — aborting" >&2
+  echo "Could not download checksums.txt for $ver. Installation stopped." >&2
   exit 1
 fi
 if command -v cosign >/dev/null 2>&1; then
@@ -133,17 +133,17 @@ if command -v cosign >/dev/null 2>&1; then
         >/dev/null 2>&1; then
       printf '  ✓ Release signature verified with Cosign\n'
     else
-      echo "coop: checksums.txt failed cosign signature verification — aborting" >&2
+      echo "Cosign could not verify checksums.txt. Installation stopped." >&2
       exit 1
     fi
   elif bundle_required "$ver"; then
-    echo "coop: no checksums.txt.bundle for $ver, which every release since v2.2.2 ships — aborting (a release missing its signature bundle is not trusted; retry, or set COOP_VERSION to a release that has one)" >&2
+    echo "checksums.txt.bundle is missing for $ver. Releases from v2.2.2 require this file, so installation stopped. This release cannot be trusted without it. Retry, or set COOP_VERSION to a release with a bundle." >&2
     exit 1
   else
-    echo "coop: no checksums.txt.bundle for $ver (releases before v2.2.2 were not signed); skipping signature verification" >&2
+    echo "checksums.txt.bundle is missing for $ver. Releases before v2.2.2 were not signed; signature verification was skipped." >&2
   fi
 else
-  echo "coop: cosign not found; skipping signature check (see README → Verifying a download)" >&2
+  echo "Cosign is not installed, so the release signature was not verified. See README: Verifying a download." >&2
 fi
 verify_checksum "$asset" "$tmp/checksums.txt" "$tmp/coop.tar.gz" || exit 1
 printf '  ✓ Download checksum verified\n'
@@ -154,7 +154,7 @@ printf '  ✓ Installed %s (%s)\n' "$bindir/coop" "$("$bindir/coop" version)"
 
 case ":$PATH:" in
   *":$bindir:"*) ;;
-  *) printf "\n  %s is not on your PATH — add to your shell rc:\n    export PATH=\"%s:\$PATH\"\n" "$bindir" "$bindir" ;;
+  *) printf "\n  %s is not on your PATH. Add this to your shell startup file:\n    export PATH=\"%s:\$PATH\"\n" "$bindir" "$bindir" ;;
 esac
 
 # Zsh only, and only ever as instructions: the installer never edits a shell startup file.
@@ -171,7 +171,7 @@ case "${SHELL:-}" in
     printf "  Coop does not edit your shell files. Run once:\n\n"
     printf "    mkdir -p ~/.config/coop\n"
     printf "    coop completion zsh > ~/.config/coop/completion.zsh\n"
-    printf "\n  Then add this to ~/.zshrc, AFTER your compinit line:\n\n"
+    printf "\n  Then add this to ~/.zshrc, after your compinit line:\n\n"
     printf "    source ~/.config/coop/completion.zsh\n\n"
     printf "  Spelling correction stays on everywhere; only Coop's own arguments are exempt.\n"
     ;;
@@ -180,7 +180,7 @@ esac
 # Build the sandbox image + verify, when the online-agent runtime is available.
 printf '\n'
 if [ "${COOP_NO_BUILD:-0}" = 1 ]; then
-  echo "coop: skipped image build (COOP_NO_BUILD=1) — next: coop build --egress open && coop doctor"
+  echo "Image build skipped (COOP_NO_BUILD=1). Next: coop build --egress open && coop doctor"
 elif command -v docker >/dev/null 2>&1; then
   if ! "$bindir/coop" build --egress open; then
     echo "Image build failed. The Coop binary is installed, but setup is incomplete." >&2
@@ -194,7 +194,7 @@ elif command -v docker >/dev/null 2>&1; then
     exit 1
   fi
 else
-  echo "coop: online agents require Docker — install and start Docker,"
+  echo "Online agents require Docker. Install and start Docker,"
   echo "      then run: coop build --egress open && coop doctor"
 fi
 

@@ -1,4 +1,4 @@
-coop tasks claim — take responsibility for a task
+coop tasks claim: take responsibility for a task
 
 Usage: coop tasks claim <id> [--tasks <path>]... [<options>]
 

@@ -1308,7 +1308,7 @@ func moveBlockedAuditUnblock(root string, t Item, transition *blockedAuditUnbloc
 func MoveTaskDir(root string, t Item, newState string) error {
 	dest := filepath.Join(root, newState, t.ID)
 	if t.Dir != dest && pathExists(dest) {
-		return fmt.Errorf("can't move %s to %s/: a folder with that id already exists there (a torn move or stray copy) — remove one: rm -rf %q", t.ID, StateLabel(newState), dest)
+		return fmt.Errorf("can't move %s to %s/: a task folder with that ID already exists at %q. Review both task folders and resolve the duplicate before retrying", t.ID, StateLabel(newState), dest)
 	}
 	if err := os.MkdirAll(filepath.Join(root, newState), 0o755); err != nil {
 		return err
@@ -2761,7 +2761,7 @@ func tasksFolderLint(root string) (int, error) {
 	if fi, err := os.Stat(root); err == nil && fi.IsDir() {
 		for _, st := range TaskStates {
 			if s, e := os.Stat(filepath.Join(root, st)); e != nil || !s.IsDir() {
-				add(st, "state dir is missing — the move protocol will corrupt the queue; run 'coop init'")
+				add(st, "state directory is missing. Run 'coop init' to restore it")
 			}
 		}
 	}

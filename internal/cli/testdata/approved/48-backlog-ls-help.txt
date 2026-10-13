@@ -1,4 +1,4 @@
-coop backlog ls — list saved ideas
+coop backlog ls: list saved ideas
 
 Usage: coop backlog ls [--tasks <path>]...
 

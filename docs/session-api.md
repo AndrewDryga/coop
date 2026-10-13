@@ -117,9 +117,9 @@ three are derived from the measured capacity:
 - Allocation closes when free space falls under one reserve.
 - Allocation reopens only once two reserves are free.
 
-This hysteresis stops a worker from flapping after every reclaimed workspace. A worker that can't
-measure its volume, or whose daemon predates this endpoint, leaves the object out and keeps
-polling.
+The gap between the closing and reopening thresholds stops allocation from repeatedly
+changing state as workspaces are reclaimed. A worker that can't measure its volume, or
+whose daemon predates this endpoint, leaves the object out and keeps polling.
 
 An unbound generation or a clean workspace is not proof of abandonment. Another session store or
 an unfinished create may own it. co:op reports it as protected in `/v1/storage` and leaves it for
@@ -346,10 +346,10 @@ without racing an active turn. The same sweep reaps an awaiting-validation turn'
 and projected credentials, without changing its candidate. Deleting the workspace volumes and
 network is still the job of an explicit session discard.
 
-A completed turn stays completed even when that teardown fails. The janitor's retry is the
-guarantee, and a slow container runtime must not turn a finished answer into an error. A cleanup
-failure is logged with its bounded cause. A turn that itself failed carries the cleanup cause
-joined with its own error.
+A completed turn stays completed even when teardown fails. The janitor retries failed
+cleanup; a slow container runtime must not turn a finished answer into an error. A
+cleanup failure is logged with its bounded cause. A turn that itself failed carries the
+cleanup cause joined with its own error.
 
 On restart:
 
@@ -540,8 +540,9 @@ a new connector, so the advertisement requires live daemon proof. Check your Job
 against the shared digest vectors in `internal/workerproto/job_test.go`. Don't rely on the
 worker's `COOP_GATE` or the repository's `gate:` for remote reviews.
 
-No v1 job gains invented setup. Historical sessions and evidence stay readable. Their turns,
-reviews and interrupted creates can't run until they are resubmitted as v2 jobs.
+co:op does not fill in missing execution settings for v1 jobs. Historical sessions and
+evidence stay readable, but their turns, reviews and interrupted creates can't run until
+they are resubmitted as v2 jobs.
 
 #### Frozen repository source
 
@@ -836,8 +837,8 @@ outbound worker projection validates these fields again. It drops any path entry
 and marks the context `partial`. The title and input it forwards follow the bounds and secret scan
 described under [Events](#events).
 
-`provider.backoff` is how a throttled turn stays audible. There is one event per proven rate
-limit, and the ladder bounds that to one per rung.
+`provider.backoff` reports when a turn is rate limited. There is one event per confirmed
+limit, capped at one per ladder rung.
 
 - `attempt` numbers the events from 1 within the turn.
 - `target` is the rung the provider limited.
@@ -944,20 +945,20 @@ The session API has no path to network authority at all.
 - `current`: the newest run's retained observation summary, or `{"status":"no run yet"}`;
 - a bounded `alerts` list.
 
-`GET /v1/sessions/{session_id}/network/receipt` aggregates every run the session owned into one
-versioned receipt, with independent `finality` and `completeness`. The receipt is `final` only
-once the session is closed and every run receipt is final. A `final` receipt may still be honestly
-`partial`.
+`GET /v1/sessions/{session_id}/network/receipt` aggregates every run the session owned
+into one versioned receipt, with independent `finality` and `completeness`. The receipt
+is `final` only once the session is closed and every run receipt is final. A `final`
+receipt may still be `partial`.
 
 The receipts are retained in the owner's own registry, so both of these answers survive container
 garbage collection. A session that never ran filtered answers `{"available":false,"reason":"..."}`
 instead of an empty receipt.
 
-`GET /v1/sessions/{session_id}/network/connections` is the live drilldown. It returns the newest
-run's bounded connection rows as the collector recorded them, with `status` (the same freshness
-word the summary uses), `as_of` and `detail_truncated`. It is pull-based, because a per-second
-sample belongs in nobody's durable journal. A session with no run yet answers
-`{"status":"no run yet","connections":[]}`.
+`GET /v1/sessions/{session_id}/network/connections` returns live connection details for
+the newest run: bounded connection rows as the collector recorded them, with `status`
+(the same freshness word the summary uses), `as_of` and `detail_truncated`. Clients
+request live samples as needed, so per-second samples needn't enter a durable journal. A
+session with no run yet answers `{"status":"no run yet","connections":[]}`.
 
 `GET /v1/sessions/{session_id}/network/explanations/{event_id}` opens one retained refusal from
 this session's own runs. It returns the event, the reason, its provenance and whether a candidate
@@ -992,12 +993,12 @@ page. It covers:
 - the session-wide receipt;
 - the host-approved task bound into its workspace, as the task folder currently stands.
 
-It is a read: no gateway probe, no runtime, no authority. It takes no query, so the caller can't
-select anything about the disclosure. The daemon checks the object against its own contract
-before it answers. An object that fails the check is never sent, and the route returns
-`500 internal_error` instead. The outbound worker forwards this route through an ordinary
-`api_request` command, verbatim. The controller never gets an object it has to guess its way
-through.
+The route reads retained evidence without probing a gateway or starting a runtime, and
+cannot grant authority. It takes no query, so the caller can't select anything about the
+disclosure. The daemon checks the object against its own contract before it answers. An
+object that fails the check is never sent, and the route returns `500 internal_error`
+instead. The outbound worker forwards this route through an ordinary `api_request`
+command, verbatim.
 
 Every section states its own availability. A section that couldn't be read and a section with
 nothing in it lead an operator to opposite conclusions:
@@ -1018,9 +1019,10 @@ and a `provisional` receipt with `run_count` `0`. It never reports an empty coun
 Counters are unsigned decimal strings, so a value above 2^53 survives a JavaScript client. A
 `null` counter is a metric nobody measured. It never means `0`.
 
-Lists are bounded on the way out, with the drop counted in `omitted_denials`,
-`omitted_connections`, `omitted_alerts` and `omitted_run_references`. A run that denied a thousand
-names costs one bounded object, which still says how much it left behind.
+Response lists are bounded, with omitted entries counted in `omitted_denials`,
+`omitted_connections`, `omitted_alerts` and `omitted_run_references`. Even a run that
+denied a thousand names returns one bounded object that reports how many entries were
+omitted.
 
 The same `projection` rule as the network routes applies. A destination appears only under
 `destinations-included`. A refusal whose name was withheld says so with `destination_withheld`,
@@ -1123,11 +1125,11 @@ Another session, a non-review operation and an unfinished review are refused. Bo
 
 #### Gate output
 
-Everything the gate printed is kept beside the review: stdout and stderr as they came, and what
-co:op printed while starting it. It is kept on a green gate as on a red one. So your controller
-can fix what failed without asking a person to relay it. Read it page by page with
-`GET /v1/sessions/{session_id}/reviews/{operation_id}/gate-output?cursor={cursor}`, starting
-without a cursor:
+The review keeps the gate's stdout, stderr and co:op startup messages as printed,
+whether the gate passes or fails. Your controller can read failures directly without
+asking someone to relay the output. Read it page by page with
+`GET /v1/sessions/{session_id}/reviews/{operation_id}/gate-output?cursor={cursor}`,
+starting without a cursor:
 
 ```json
 {"output":"1 test, 1 failure\n…","next_cursor":"1048576","bytes":1843200,"complete":true}

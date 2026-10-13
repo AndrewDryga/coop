@@ -213,7 +213,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	}
 	if len(hidden) > 0 && noticeHidden {
 		ui.Note("")
-		ui.Warn("services get an empty source in place of %s (looks like a secret) — run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden",
+		ui.Warn("Services receive an empty replacement for %s because it looks like a secret. Run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden",
 			safeServicePaths(hidden))
 	}
 	keepSnapshot := false

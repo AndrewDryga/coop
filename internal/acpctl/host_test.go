@@ -178,7 +178,7 @@ func testExpandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Ta
 		if len(missing) > 0 {
 			return nil, fmt.Errorf("no signed-in account for %s — run: coop login %s[@account]", strings.Join(missing, ", "), missing[0])
 		}
-		return nil, fmt.Errorf("%s: none of the ladder's accounts are signed in — run 'coop login', or edit the preset", defaultAgent)
+		return nil, fmt.Errorf("%s: none of the configured accounts are signed in. Run 'coop login', or edit the preset", defaultAgent)
 	}
 	return out, nil
 }

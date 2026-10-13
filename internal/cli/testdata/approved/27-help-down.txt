@@ -1,4 +1,4 @@
-coop down — stop this project's services
+coop down: stop this project's services
 
 Usage: coop down [--delete-volumes] [--yes]
 

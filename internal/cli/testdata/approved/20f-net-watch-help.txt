@@ -1,4 +1,4 @@
-coop net watch — follow a run's network activity
+coop net watch: follow a run's network activity
 
 Usage: coop net watch [<run>] [--json]
 

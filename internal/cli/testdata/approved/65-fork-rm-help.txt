@@ -1,4 +1,4 @@
-coop fork rm — delete a fork and its local work
+coop fork rm: delete a fork and its local work
 
 Usage: coop fork rm <name> [<options>]
 

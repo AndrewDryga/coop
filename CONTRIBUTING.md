@@ -54,8 +54,7 @@ folder name.
 
 ## Test layers
 
-The table below is the reference for a source checkout. It used to be appended to
-`coop help --all`. The user manual now lists commands only.
+These test layers apply to a source checkout.
 
 | Layer | Targets | What they prove |
 |---|---|---|
@@ -65,13 +64,14 @@ The table below is the reference for a source checkout. It used to be appended t
 | Upstream compatibility | provider live targets [below](#live-provider-suites) · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
 | Full client qualification | `make provider-qualify` | operator-only image build, offline client probes and paid live suites; writes a version-pinned record only after all required checks pass |
 
-The deterministic provider suite, `make provider-scripted-e2e`, crosses the real co:op
-CLI/box/runtime boundary with strict provider-native fixture oracles for Claude, Codex, Gemini and
-Grok. It owns target/account/model/effort propagation, all directed fallback pairs,
-rate/auth/output failures, cancellation, loop audit stages, detached-fork lifecycle, session
-lookup, telemetry and cleanup. Its fake runtime validates assembly. It does not validate container
-enforcement: `make doctor` and `make review-writes-e2e` own that boundary. On failure, rerun the
-printed subtest with `-v` and inspect its bounded, redacted trace.
+The deterministic provider suite, `make provider-scripted-e2e`, exercises the real co:op
+CLI/box/runtime boundary with strict fixtures matching each provider's native commands
+and output for Claude, Codex, Gemini and Grok. It tests target/account/model/effort
+propagation, all directed fallback pairs, rate/auth/output failures, cancellation, loop
+audit stages, detached-fork lifecycle, session lookup, telemetry and cleanup. Its fake
+runtime validates assembly. It does not validate container enforcement: `make doctor`
+and `make review-writes-e2e` own that boundary. On failure, rerun the printed subtest
+with `-v` and inspect its bounded, redacted trace.
 
 The security-critical logic is pure and unit-tested without a runtime: secret enumeration
 (`internal/box/mounts.go`) and run-arg assembly (`internal/box/run.go`). `coop doctor` proves the

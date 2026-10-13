@@ -1,4 +1,4 @@
-coop net recover — clean up interrupted network runs
+coop net recover: clean up interrupted network runs
 
 Usage: coop net recover [<run>]
 

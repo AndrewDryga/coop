@@ -1,4 +1,4 @@
-coop grok — run Grok in a sandboxed box
+coop grok: run Grok in the box
 
 Usage:
   coop grok[:<model>][/<effort>][@<account>] [options] [-- <grok-args>...]
@@ -15,7 +15,7 @@ OPTIONS
 
 NETWORK OPTIONS
   --egress <mode>        internet access: filtered, open or none
-  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
+  --allow-domain <name>  allow this exact domain over TLS on port 443; repeat to add more
   --egress-rules <file>  add this file's network rules for the run
 
 MODELS AND ACCOUNTS

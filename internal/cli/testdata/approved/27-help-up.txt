@@ -1,4 +1,4 @@
-coop up — start this project's services
+coop up: start this project's services
 
 Usage:
   coop up

@@ -1,4 +1,4 @@
-coop net runs — show recorded network runs
+coop net runs: show recorded network runs
 
 Usage: coop net runs [--all | --all-projects] [--json]
 

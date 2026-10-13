@@ -1,4 +1,4 @@
-coop update — update Coop and rebuild the box image
+coop update: update Coop and rebuild the box image
 
 Usage:
   coop update [--self-only | --box-only | --check]

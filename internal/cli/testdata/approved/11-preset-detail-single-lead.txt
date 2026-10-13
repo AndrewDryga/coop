@@ -1,4 +1,4 @@
-review — a preset for Codex
+review: a preset for Codex
 
 RUN IT
   coop review       start an interactive session with the lead agent

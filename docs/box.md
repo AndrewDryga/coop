@@ -108,7 +108,7 @@ The provider gets a seed instead of its home, copied into the tmpfs home before 
 If the checkout's host path is under the box's `/tmp` or home scratch, a read-only run mounts it at
 `/workspace` inside the box instead. An explicit workdir inside that scratch is refused.
 
-Both refuse what they cannot enforce instead of launching on a promise:
+Both stop before launch when co:op cannot enforce their restrictions:
 
 - They run on Docker only.
 - Native restricted modes are offered only for `claude`.
@@ -121,10 +121,10 @@ The answer is the run's only output. A run that needs artifacts back is a normal
 
 ## Toolchain: .tool-versions
 
-Real projects need a language toolchain (Elixir, Go and so on) and stateful services (Postgres,
-Redis). Having the agent install those at runtime is slow, isn't reproducible, and dies with the
-container. Declare them once instead. This is the Dev Containers plus Compose model, without the
-ceremony.
+Projects need language toolchains such as Elixir or Go, and stateful services such as
+Postgres or Redis. Installing them during each run is slow and isn't reproducible; the
+installation disappears with the container. Declare them once using the Dev Containers
+plus Compose model.
 
 If your repo pins versions in a `.tool-versions` file (asdf), the base box provisions that toolchain
 at runtime and caches it in a shared volume. It resolves the file from the working directory up the
@@ -167,8 +167,8 @@ The scaffolded Dockerfile is the asdf image. It bakes in the exact `.tool-versio
 versions live in `.tool-versions`, not in the Dockerfile. For anything more exotic, hand-write a
 `.agent/Dockerfile` that meets [the box contract](#the-box-contract).
 
-When the agent needs a new system package, add it to the `RUN` line and run `coop build` again. The
-dependency graduates into the image instead of being installed each run.
+When the agent needs a new system package, add it to the `RUN` line and run `coop build`
+again. The package becomes part of the image, so it doesn't need installing on each run.
 
 co:op records the image's inputs at build time. If you change `.agent/Dockerfile` or
 `.tool-versions` but forget to rebuild, `coop` notices on the next run and reminds you to run
@@ -424,8 +424,8 @@ Compose commands use a private Docker client config. It keeps registry authentic
 validated `DOCKER_AUTH_CONFIG`, without passing the host's configured proxy credentials into
 services.
 
-The repo can say which files its services really need, so the ask is documented and travels to
-your teammates instead of arriving as a crash:
+List the files your services need in the repo, so teammates can review the access
+request before a service fails to start:
 
 ```yaml
 # .agent/project.yaml — committed with the repo
@@ -472,11 +472,11 @@ The box gets `COOP_SERVICE_KEYCLOAK_URL=https://localhost:<port>`, with the sche
 `.agent/compose.yml` runs on your host daemon (that's how a service becomes a real container), so
 co:op validates it before every run: `coop up` and each networked launch alike.
 
-A running agent could replace a validated bind folder with a link to somewhere else on your machine
-before Docker opens it. So co:op holds a short exclusive launch barrier around validation and
-daemon startup, and a box that can edit the checkout holds the matching shared side. `coop up` waits
-for that safe boundary instead of refusing the whole workspace, then starts the independent
-development stack.
+A running agent could replace a validated bind folder with a link to somewhere else on
+your machine before Docker opens it. co:op holds a short exclusive lock during
+validation and daemon startup. A box that can edit the checkout holds the matching
+shared lock. `coop up` waits for that safe boundary instead of refusing the whole
+workspace, then starts the independent development stack.
 
 Only plain sibling-service directives pass:
 

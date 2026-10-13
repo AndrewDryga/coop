@@ -54,11 +54,11 @@ The agent workloads need none. Dropping them keeps root in the container (a repo
 | `COOP_SHELL` | `bash` | The shell `coop shell` opens. |
 | `COOP_NO_UPDATE_CHECK` | off | Set it to opt out of the once-a-day "a newer coop/box is available" check. |
 
-`COOP_CONSULT_TIMEOUT` is unbounded by default, because a clock can't tell a long answer from a
-wedged one. Killing a working peer loses its answer and costs the retry that follows. The parent
-attempt's own tool cap and ceiling already bound it from outside. Set a whole-second value (max
-`86400`) to opt back into a bound. A peer that then doesn't answer in time is skipped, so the lead
-synthesizes from whoever did.
+`COOP_CONSULT_TIMEOUT` has no time limit by default. A time limit cannot distinguish a
+long answer from a stalled peer, and interrupting a working peer loses its answer and
+forces a retry. The parent attempt's tool cap and maximum duration still limit the
+consultation. Set a whole-second value (max `86400`) to opt back into a bound. A peer
+that then doesn't answer in time is skipped, so the lead synthesizes from whoever did.
 
 ### Forks and loop
 
@@ -119,8 +119,9 @@ you can't set them inside `coop.conf`.
 | `gate_sources:` | Exact project-specific paths that receive protected loop review. |
 | `context:` | The routes for [path-routed context](#path-routed-context). |
 
-`box:` and `gate:` fall below an explicit `COOP_*` setting in your environment or `coop.conf`. The
-file is committed and read on the host, so it can only ever tighten your posture:
+`box:` and `gate:` fall below an explicit `COOP_*` setting in your environment or
+`coop.conf`. The file is committed and read on the host, so it can only tighten the
+restrictions:
 
 - `egress` can pin `filtered` or `offline`.
 - `open` is a request that a human approves with `coop approve`.
@@ -128,9 +129,10 @@ file is committed and read on the host, so it can only ever tighten your posture
 
 ## Path-routed context
 
-In a big repo, an agent doesn't need every rule and KB card for every change. `coop context`
-compiles only the committed docs relevant to the paths in play, so a session carries less. It
-always includes the canonical `AGENTS.md`/`CLAUDE.md` whole, plus the routes whose globs match.
+In a big repo, an agent doesn't need every rule and KB card for every change.
+`coop context` compiles only the committed docs relevant to the paths you're working on,
+reducing the context the session needs. It always includes the canonical
+`AGENTS.md`/`CLAUDE.md` whole, plus the routes whose globs match.
 
 ```yaml
 # .agent/project.yaml
@@ -173,8 +175,8 @@ completed work. The code is `1` when no blocked-only outcome takes precedence. A
 
 ## JSON output
 
-Mutating commands use exit codes as their machine contract instead of growing a second control
-API, so `--json` is uncommon. Read-only views take it where a tool needs the state. The main two:
+Mutating commands report their status through exit codes, so few support `--json`.
+Read-only views offer it when tools need current state. The two main snapshots are:
 
 - `coop tasks watch --json` is the canonical project task and activity snapshot.
 - `coop fork ls --json` discovers workspace URLs plus fork status.

@@ -74,7 +74,7 @@ func (a *app) updateCoopBox(narration [2]string, build func() error) error {
 		return ui.Reported(err)
 	}
 	if err := build(); err != nil {
-		ui.Fail("Could not update the box", err.Error(), "Fix what the build reported above, then "+again+" — the update is retried automatically.")
+		ui.Fail("Could not update the box", err.Error(), "Fix what the build reported above, then "+again+". Coop retries the update automatically.")
 		return ui.Reported(err)
 	}
 	ui.Pass("Box updated")

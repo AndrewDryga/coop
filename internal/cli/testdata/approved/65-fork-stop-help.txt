@@ -1,4 +1,4 @@
-coop fork stop — stop a fork's background loop
+coop fork stop: stop a fork's background loop
 
 Usage: coop fork stop <name>
 

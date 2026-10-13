@@ -1,4 +1,4 @@
-coop fork logs — show a fork's loop output
+coop fork logs: show a fork's loop output
 
 Usage: coop fork logs [<name>] [--follow]
 

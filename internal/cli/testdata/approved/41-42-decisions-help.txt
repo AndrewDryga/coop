@@ -1,4 +1,4 @@
-coop tasks decisions — show questions waiting for your answer
+coop tasks decisions: show questions waiting for your answer
 
 Usage: coop tasks decisions [--tasks <path>]... [-i]
 

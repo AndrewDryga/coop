@@ -1,4 +1,4 @@
-coop net check — check whether network rules allow a connection
+coop net check: check whether network rules allow a connection
 
 Usage: coop net check <url-or-host> [<options>]
        coop net check <ip> --run <run> --protocol <tcp|udp> --port <n>

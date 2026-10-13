@@ -40,11 +40,11 @@ coop fork review research --stat
 coop fork merge research --yes
 ```
 
-This opt-in lane owns independent Git metadata and objects. The box cannot bind the parent
-checkout or its administrative/common Git stores through another path, service or inspected
-volume. Native commits, branches and rebase still work inside the fork. Direct shared-write
-runs and ordinary forks are unchanged; an existing ordinary fork cannot be upgraded in place.
-The mode persists for re-entry, detached loops and ACP.
+An isolated fork has independent Git metadata and objects. The box cannot bind the
+parent checkout or its administrative/common Git stores through another path, service or
+inspected volume. Native commits, branches and rebase still work inside the fork. Direct
+shared-write runs and ordinary forks are unchanged; an existing ordinary fork cannot be
+upgraded in place. The mode persists for re-entry, detached loops and ACP.
 
 Initialized, unchanged local submodules are independently reconstructed from their exact commits;
 their raw metadata is never copied. Changed gitlinks or `.gitmodules` require a separate workflow
@@ -88,8 +88,9 @@ untrusted execution workspace and warns that its native Git/editor metadata may 
 host; it is not custody review.
 
 Before publication starts, cancellation or refusal leaves parent source, index and refs
-unchanged. Publication is journaled roll-forward, not an atomic checkout. After its first
-material effect, interruption can leave a partial checkout. Keep the exact candidate and
+unchanged. Publication records its steps in a journal so interrupted work can continue.
+The checkout changes are not atomic: after publication first changes state, an interruption
+can leave a partial checkout. Keep the exact candidate and
 journal, then rerun `coop fork merge <name>`: only an exact original clean state or coherently
 published state can replay. Foreign edits, a partial checkout, changed branch or uncertain
 	`index.lock` stop for explicit reconciliation. Never reset, stash, delete an uncertain lock or
@@ -127,7 +128,7 @@ Blocked tasks and canonical proposals that were already imported stay canonical.
 
 ## Review
 
-`coop fork review <name>` opens with a dossier that maps the risk before you see the patch:
+`coop fork review <name>` shows a review summary before the patch:
 
 - the commits
 - the agent's claim, which is the latest task `log.md`, labeled as the fork's own voice
@@ -143,7 +144,7 @@ These flags change how you review:
 
 | Flag | What it does |
 |---|---|
-| `--stat` | shows the dossier only and skips the diff |
+| `--stat` | shows the review summary only and skips the diff |
 | `--tool` | opens each changed file in your GUI difftool |
 | `--open` | opens the fork in your editor |
 | `--gate` | rebases in a disposable scratch clone, then runs the parent's configured gate in the box with that clone mounted; the clone stays writable for ignored build output, and the gate fails if HEAD or the tracked tree changed |

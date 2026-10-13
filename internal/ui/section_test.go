@@ -14,14 +14,14 @@ func TestSectionShapes(t *testing.T) {
 		Section("Checking the Coop box")
 		Note("  Current image was built by Coop v1")
 		Pass("Box updated")
-		Caution("Unrestricted — nothing is blocked")
+		Caution("Unrestricted: nothing is blocked")
 		Fail("Could not update the box", "Docker is unavailable.", "Start Docker, then run 'coop codex' again.")
 		Fail("Could not start Codex", "first line\nsecond line", "")
 	})
 	want := "\nChecking the Coop box\n" +
 		"  Current image was built by Coop v1\n" +
 		"  ✓ Box updated\n" +
-		"  ⚠ Unrestricted — nothing is blocked\n" +
+		"  ⚠ Unrestricted: nothing is blocked\n" +
 		"  ✗ Could not update the box\n" +
 		"\n" +
 		"        Docker is unavailable.\n" +

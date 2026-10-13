@@ -1,4 +1,4 @@
-coop loop — let agents work through your task queue
+coop loop: let agents work through your task queue
 
 Usage: coop loop [<target|preset>] [<options>]
 
@@ -15,7 +15,8 @@ EXAMPLES
 OPTIONS
   --tasks <path>         choose a task queue; repeat for more queues
   --peer <target>        start with read-only peer agents; repeat for more peers
-  --review-task <id>     import one receipt-valid archived task into final review; repeatable
+  --review-task <id>     add a completed task with a valid completion record
+                         to the final review; repeat to add more
   --max-tasks <n>        pause after N tasks finish or become blocked
   --preflight            resolve answered decisions and release stale claims first
   --no-preflight         skip that preparation
@@ -33,7 +34,7 @@ STOP AND CONTINUE
   Press it again to stop immediately. Run the same command to continue.
   For a background fork loop: coop fork stop <name>
 
-CONFIGURE STEPS — .agent/loop.yaml
+CONFIGURE STEPS: .agent/loop.yaml
   preflight  optional preparation before starting
   work       the agent that works on each task
   between    optional review after each task

@@ -121,14 +121,14 @@ func TestApprovalReviewExplainsTheModeInHumanWords(t *testing.T) {
 		absent []string
 	}{
 		"first approval": {after: &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{approvalRule("github.com")}},
-			want: []string{"NETWORK ACCESS\n  Filtered — only approved network traffic is allowed.\n", "+ github.com:443 · TLS  new request"}},
+			want: []string{"NETWORK ACCESS\n  Filtered: only approved network traffic is allowed.\n", "+ github.com:443 · TLS  new request"}},
 		"escalation to open": {before: filtered, after: &networkstate.Approval{Posture: egress.Open},
-			want: []string{"  - Filtered — only approved network traffic is allowed.\n  + Unrestricted — nothing is blocked.\n",
+			want: []string{"  - Filtered: only approved network traffic is allowed.\n  + Unrestricted: nothing is blocked.\n",
 				netOpenWarning + "\n", "- github.com:443 · TLS  no longer requested"}},
 		"offline": {before: filtered, after: &networkstate.Approval{Posture: egress.None},
-			want: []string{"  - Filtered — only approved network traffic is allowed.\n  + Offline — internet access is blocked.\n"}},
+			want: []string{"  - Filtered: only approved network traffic is allowed.\n  + Offline: internet access is blocked.\n"}},
 		"open unchanged": {before: &networkstate.Approval{Posture: egress.Open}, after: &networkstate.Approval{Posture: egress.Open},
-			want:   []string{"NETWORK ACCESS\n  Unrestricted — nothing is blocked.\n", netOpenWarning},
+			want:   []string{"NETWORK ACCESS\n  Unrestricted: nothing is blocked.\n", netOpenWarning},
 			absent: []string{"NETWORK RULES"}},
 	} {
 		t.Run(name, func(t *testing.T) {

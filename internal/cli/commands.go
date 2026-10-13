@@ -270,10 +270,10 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 func (a *app) restrictedImage() (img string, code int, err error) {
 	mode := a.mode
 	if a.cfg.ImageOverride != "" {
-		return "", 2, fmt.Errorf("a %s run uses the shared base image — unset COOP_IMAGE", mode)
+		return "", 2, fmt.Errorf("a %s run uses the shared base image. Unset COOP_IMAGE", mode)
 	}
 	if mode == agents.ModeBare && (a.network.Domains != nil || a.network.RulesFile != "" || (a.network.Mode != nil && *a.network.Mode == egress.Filtered)) {
-		return "", 2, errors.New("a bare run has no project to admit network policy for — it takes --egress open or none only")
+		return "", 2, errors.New("a bare run has no project for network rules. Use --egress open or none")
 	}
 	if err := a.ensureRuntime(); err != nil {
 		return "", -1, err
@@ -463,7 +463,7 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 	if a.mode.Restricted() {
 		// A preset's roles run from inside the box, which a restricted run gives no credentials
 		// or wrappers to. The lead alone can run restricted, as a plain target.
-		return 2, fmt.Errorf("a preset runs its roles from the box, which a %s run has none of — run its lead directly: coop %s --%s", a.mode, tool, a.mode)
+		return 2, fmt.Errorf("preset roles are unavailable in %s mode. Run the lead directly: coop %s --%s", a.mode, tool, a.mode)
 	}
 	peerVals, args, err := extractPeer(a.launchCommand(), args)
 	if err != nil {
@@ -753,7 +753,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 		return code, err // the box already reported how the command ended
 	}
 	if err := box.ImportNativeSignIn(context.Background(), originalConfig, tool, profile, stagingConfig.AgentDir(tool), a.rt); err != nil {
-		return -1, fmt.Errorf("sign-in was not published; native output retained at %s: %w", stagingRoot, err)
+		return -1, fmt.Errorf("could not save the sign-in. The provider's files are kept at %s: %w", stagingRoot, err)
 	}
 	if err := os.RemoveAll(stagingRoot); err != nil {
 		return -1, fmt.Errorf("sign-in saved; temporary sign-in cleanup failed: %w", err)

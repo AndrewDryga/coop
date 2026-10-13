@@ -1,4 +1,4 @@
-coop presets init — create a preset you can edit
+coop presets init: create a preset you can edit
 
 Usage: coop presets init [<name>]
 

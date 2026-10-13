@@ -1,4 +1,4 @@
-coop fork open — open a fork in your editor
+coop fork open: open a fork in your editor
 
 Usage: coop fork open <name>
 

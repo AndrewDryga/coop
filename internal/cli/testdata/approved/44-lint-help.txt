@@ -1,4 +1,4 @@
-coop tasks lint — check task files for missing or inconsistent information
+coop tasks lint: check task files for missing or inconsistent information
 
 Usage: coop tasks lint [--tasks <path>]...
 

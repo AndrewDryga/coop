@@ -1,4 +1,4 @@
-coop sessions compact — back up session data and reduce its disk usage
+coop sessions compact: back up session data and reduce its disk usage
 
 Usage:
   coop sessions compact --backup <path> [--state <path>]

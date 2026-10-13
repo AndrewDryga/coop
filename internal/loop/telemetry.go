@@ -194,7 +194,7 @@ func (c *Control) recordStage(repo, run, stage, outcome string, tgt agents.Targe
 		rec.BlindWaitSeconds = res.BlindWaitSeconds
 	}
 	if err := appendStageRecord(repo, run, rec); err != nil {
-		ui.Warn("telemetry: could not record the %s stage: %v", stage, err)
+		ui.Warn("Could not save the %s stage result: %v", stage, err)
 	}
 }
 

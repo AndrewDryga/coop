@@ -166,7 +166,7 @@ func TestCheckCoopBoxFailureIsNestedAndReportedOnce(t *testing.T) {
 		"\n" +
 		"        rt build exited with status 1\n" +
 		"\n" +
-		"    Fix what the build reported above, then run 'coop codex' again — the update is retried automatically.\n"
+		"    Fix what the build reported above, then run 'coop codex' again. Coop retries the update automatically.\n"
 	if !strings.HasSuffix(got, want) {
 		t.Fatalf("build-failure section ended:\n%q\nwant:\n%q", got, want)
 	}

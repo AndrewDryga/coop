@@ -493,7 +493,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 				if _, ok := <-sig; !ok {
 					return
 				}
-				loopInterruptInfo("Stop requested — tearing down this attempt's box, then exiting.")
+				loopInterruptInfo("Stop requested. Removing this attempt's box, then exiting.")
 				requestStop()
 				cancel()
 			}()
@@ -526,7 +526,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		run, reviewErr := c.runCandidateReviewVerdict(iterCtx, repo, img, signoffRot, forkName, prompt,
 			reviewActivity("candidate review", review.TaskIDs), reviewCmd, hosts, review.TaskIDs, sink, peers, wake, observe)
 		if errors.Is(reviewErr, errReviewInterrupted) {
-			ui.Failure("Candidate review interrupted", "No review authority was recorded.", [2]string{"Continue:", continueCmd})
+			ui.Failure("Candidate review interrupted", "No approval from the review was recorded.", [2]string{"Continue:", continueCmd})
 			return LoopInterruptedExitCode, ui.Reported(reviewErr)
 		}
 		if reviewErr != nil {
@@ -582,7 +582,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			prev := rot.Active()
 			if wait, until, limited := rememberPreflightLimit(rot, pfClassification, time.Now()); limited {
 				if wait > 0 {
-					ui.Note("all %d targets are rate limited after pre-flight — waiting for the soonest reset", rot.Len())
+					ui.Note("All %d targets are currently rate limited. Waiting for the first reset", rot.Len())
 					sleepForLimit(wait, until, wake)
 					rot.ClearExpired(time.Now())
 				} else {

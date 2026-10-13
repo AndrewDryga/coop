@@ -89,7 +89,7 @@ precedence over your labels with the same key.
 
 ## Provider access
 
-Each agent brings the provider access its client needs to work, and nothing it merely chats to.
+Each agent includes only the provider endpoints its client needs to work.
 
 | Agent | Hosts a filtered run reaches |
 | --- | --- |
@@ -202,10 +202,10 @@ names its own message endpoint at runtime, on a path only that connection knows.
 `GET` on the stream's own path and `POST` on any path of the same host. Nothing else gets through:
 no other host, no other method, and still one secret header.
 
-The credential stays outside the box, which is the point. But the box can reach more of that host
-than a streamable-HTTP server's route allows, so the launch names those servers and says what to ask
-their vendor for. This is compatibility support. When the server offers a streamable HTTP url, use
-it, and the route narrows again.
+Legacy SSE compatibility keeps the credential outside the box, but lets the box reach
+more of that host than a streamable HTTP route. The launch names these servers and says
+what to request from their vendors. Use the server's streamable HTTP url when available
+to narrow the route.
 
 If such a server answers with an absolute endpoint url instead of a path, the client posts straight
 to it and skips co:op. A filtered run's policy refuses that post, and in an open run it carries only
@@ -325,8 +325,9 @@ build again when the sanitized build-context inputs changed (copied scripts and 
 included), when the clients changed, or when the image is missing. An old automatic-build cache
 record isn't approval, so an existing project needs one explicit filtered build.
 
-Two proofs stand between that image and the box. Neither reads the Dockerfile, because a `FROM` line
-is a claim about what was built, not evidence:
+Before launch, co:op verifies two facts about the built image. These checks inspect the
+image itself rather than reading the Dockerfile; a `FROM` line does not prove what was
+built:
 
 1. The locked image's layers must be the first layers of the built image, so the box is that exact
    image plus your own.

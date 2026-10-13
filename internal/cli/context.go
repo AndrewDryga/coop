@@ -129,7 +129,7 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 	// rejected, and nothing may escape the repo.
 	for _, arg := range paths {
 		if filepath.IsAbs(arg) {
-			return nil, fmt.Errorf("coop context: %q is absolute — pass a repo-relative path", arg)
+			return nil, fmt.Errorf("coop context: %q is an absolute path. Use a path relative to the repository", arg)
 		}
 		clean := filepath.Clean(arg)
 		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {

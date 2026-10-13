@@ -1,4 +1,4 @@
-coop backlog add — save an idea for later
+coop backlog add: save an idea for later
 
 Usage: coop backlog add "<title>" [<options>]
 

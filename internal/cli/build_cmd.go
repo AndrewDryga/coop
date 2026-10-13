@@ -282,7 +282,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 		err = a.buildFilteredBox(repo, plan, "Updating the filtered box image")
 	} else {
 		ui.Note("Updating the Coop box")
-		ui.Note("  Fetching newer base-image components. Agent clients stay at the versions this Coop qualifies.")
+		ui.Note("  Fetching newer base-image components. Agent clients stay at the versions tested with this Coop release.")
 		ui.Note("  Image:      %s", plan.Image)
 		ui.Note("")
 		err = box.BuildPlanned(a.rt, a.cfg, repo, plan, true, resolveVersion(), os.Stdin, os.Stdout)
@@ -463,7 +463,7 @@ func (a *app) cmdUpdateCheck() (int, error) {
 	}
 	if access.Mode == egress.Filtered {
 		ui.Note("This project uses filtered networking.")
-		ui.Note("Filtered image readiness is verified on launch; --check does not inspect Docker.")
+		ui.Note("Coop checks the filtered image when you start a box. --check does not inspect Docker.")
 		ui.Note("Use coop update --box-only to prepare this project's filtered image.")
 		return 0, nil
 	}

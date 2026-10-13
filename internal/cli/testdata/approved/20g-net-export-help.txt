@@ -1,4 +1,4 @@
-coop net export — export a run's network record
+coop net export: export a run's network record
 
 Usage: coop net export <run> [--include-addresses]
 

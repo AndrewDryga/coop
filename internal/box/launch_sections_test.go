@@ -94,9 +94,9 @@ func TestInternetSectionIsOneHeadingInEveryMode(t *testing.T) {
 		cfg  *config.Config
 		want string
 	}{
-		{"open", RunSpec{Agent: "codex"}, &config.Config{Egress: "open"}, "  ⚠ Unrestricted — nothing is blocked\n"},
-		{"offline agent", RunSpec{Agent: "codex"}, &config.Config{Egress: "none"}, "  ⚠ Offline — Codex cannot reach OpenAI\n"},
-		{"offline raw", RunSpec{Cmd: []string{"true"}}, &config.Config{Egress: "none"}, "  ⚠ Offline — nothing outside the box can be reached\n"},
+		{"open", RunSpec{Agent: "codex"}, &config.Config{Egress: "open"}, "  ⚠ Unrestricted: nothing is blocked\n"},
+		{"offline agent", RunSpec{Agent: "codex"}, &config.Config{Egress: "none"}, "  ⚠ Offline: Codex cannot reach OpenAI\n"},
+		{"offline raw", RunSpec{Cmd: []string{"true"}}, &config.Config{Egress: "none"}, "  ⚠ Offline: nothing outside the box can be reached\n"},
 	}
 	for _, c := range cases {
 		got := captureStderr(t, func() { newLaunchSections(c.spec).internet(c.cfg, c.spec, nil) })
@@ -268,10 +268,10 @@ func TestLoopLaunchSectionsNestSetupWithoutChangingBatchSilence(t *testing.T) {
 		"  Protecting secrets\n" +
 		"  ✓ 8 secret paths hidden from the box\n" +
 		"\n  Configuring network access\n" +
-		"  ⚠ Offline — Claude cannot reach Anthropic\n" +
+		"  ⚠ Offline: Claude cannot reach Anthropic\n" +
 		"\n  Starting services\n" +
 		"  ⚠ Services failed to start · exit 1\n" +
-		"    Continuing without sibling services.\n" +
+		"    Continuing without project services.\n" +
 		"    To retry: coop up\n"
 	if got != want {
 		t.Fatalf("loop setup = %q, want %q", got, want)
@@ -291,7 +291,7 @@ func TestLoopLaunchSectionsNestSetupWithoutChangingBatchSilence(t *testing.T) {
 	got = captureStderr(t, func() {
 		newLaunchSections(raw).internet(&config.Config{Egress: "none"}, raw, nil)
 	})
-	if got != "Preparing task environment\n  Configuring network access\n  ⚠ Offline — nothing outside the box can be reached\n" {
+	if got != "Preparing task environment\n  Configuring network access\n  ⚠ Offline: nothing outside the box can be reached\n" {
 		t.Fatalf("offline custom command must remain a caution, got %q", got)
 	}
 }
@@ -310,7 +310,7 @@ func TestLoopServiceWarningsStayNestedAndSanitized(t *testing.T) {
 		"    To allow the real file, run coop up and approve compose.yml.",
 		"Services failed to start · exit 1",
 		"    compose detail: red",
-		"    Continuing without sibling services.",
+		"    Continuing without project services.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("nested service output missing %q:\n%s", want, got)
@@ -350,7 +350,7 @@ func TestInteractiveServiceWarningsAreSeparateParagraphs(t *testing.T) {
 			s.internet(&config.Config{Egress: "open"}, RunSpec{Agent: "gemini"}, nil)
 			report(s)
 		})
-		if !strings.HasPrefix(got, "Configuring network access\n  ⚠ Unrestricted — nothing is blocked\n\n⚠ Project services") {
+		if !strings.HasPrefix(got, "Configuring network access\n  ⚠ Unrestricted: nothing is blocked\n\n⚠ Project services") {
 			t.Fatalf("service warning is not separated from network results: %q", got)
 		}
 		if strings.Contains(got, "\n\n\n") {
@@ -389,7 +389,7 @@ func TestLoginStartingNoticeRunOrdering(t *testing.T) {
 	if code != 0 || err != nil {
 		t.Fatalf("Run = %d, %v", code, err)
 	}
-	want := "Protecting secrets\n  ✓ No secret paths to hide\n\nConfiguring network access\n  ⚠ Unrestricted — nothing is blocked\n\nStarting Grok\nFollow Grok's sign-in instructions below\nPROVIDER OUTPUT\n\nThe Coop box has stopped — main process exited with status 0.\n"
+	want := "Protecting secrets\n  ✓ No secret paths to hide\n\nConfiguring network access\n  ⚠ Unrestricted: nothing is blocked\n\nStarting Grok\nFollow Grok's sign-in instructions below\nPROVIDER OUTPUT\n\nThe Coop box has stopped: main process exited with status 0.\n"
 	if got != want {
 		t.Fatalf("login launch = %q, want %q", got, want)
 	}
@@ -562,9 +562,9 @@ func TestRunNarratesAnInteractiveOpenLaunchAndItsStop(t *testing.T) {
 		t.Fatalf("Run = %d, %v; want the box's own exit 3", code, err)
 	}
 	want := "Protecting secrets\n  ✓ No secret paths to hide\n" +
-		"\nConfiguring network access\n  ⚠ Unrestricted — nothing is blocked\n" +
+		"\nConfiguring network access\n  ⚠ Unrestricted: nothing is blocked\n" +
 		"\nStarting sh\n" +
-		"\nThe Coop box has stopped — main process exited with status 3.\n"
+		"\nThe Coop box has stopped: main process exited with status 3.\n"
 	if got != want {
 		t.Fatalf("interactive open run narrated:\n%q\nwant:\n%q", got, want)
 	}

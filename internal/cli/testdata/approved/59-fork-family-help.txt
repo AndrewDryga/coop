@@ -1,4 +1,4 @@
-coop fork — let an agent work in a separate copy of your project
+coop fork: let an agent work in a separate copy of your project
 
 Usage: coop fork <name> [<target|preset>] [<options>]
        coop fork <command> [<args>...]
@@ -30,8 +30,9 @@ SESSION OPTIONS
   -f, --force     with --fresh, stop active work and discard unmerged changes
   -y, --yes       with --fresh, skip confirmation
 
-  Isolation persists on re-entry, loops and ACP; existing ordinary forks are not
-  upgraded in place. Shared-checkout runs and ordinary forks stay the default.
+  An isolated fork stays isolated when you reopen it, run a loop or use ACP.
+  Existing ordinary forks are not converted. Shared-checkout runs and ordinary
+  forks remain the default.
   Review isolated work with coop fork review; --force cannot bypass its policy.
 
 NETWORK OPTIONS

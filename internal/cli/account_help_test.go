@@ -10,9 +10,9 @@ import (
 // whichever account is named, so the page a reader reaches matches the command they ran.
 func TestAccountHelpResolvesOnTheSpellingPeopleType(t *testing.T) {
 	for _, tc := range []struct{ path, want string }{
-		{"credentials codex personal", "coop credentials <agent> <account> — show an account"},
-		{"credentials codex personal default", "coop credentials <agent> <account> default — choose the default account"},
-		{"credentials claude work rm", "coop credentials <agent> <account> rm — remove a saved account"},
+		{"credentials codex personal", "coop credentials <agent> <account>: show an account"},
+		{"credentials codex personal default", "coop credentials <agent> <account> default: choose the default account"},
+		{"credentials claude work rm", "coop credentials <agent> <account> rm: remove a saved account"},
 	} {
 		out := captureStdout(t, func() {
 			if code, err := helpForPath(strings.Fields(tc.path), freshConfig(t), true); code != 0 || err != nil {

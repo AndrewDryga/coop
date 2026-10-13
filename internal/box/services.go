@@ -81,7 +81,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 		// fails in its own way ("missing BEGIN PRIVATE KEY"), and this is the only line that names the
 		// cause and the fix.
 		ui.Note("")
-		ui.Warn("services get an empty source in place of %s (looks like a secret) — run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden",
+		ui.Warn("Services receive an empty replacement for %s because it looks like a secret. Run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden",
 			safeServicePaths(hidden))
 	}
 	// Publish each `expose`d sidecar port to its stable per-workspace host port via a merged

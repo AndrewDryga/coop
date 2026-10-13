@@ -105,7 +105,7 @@ func TestMainCommandHelpArg(t *testing.T) {
 	if code != 0 {
 		t.Errorf("`coop build help` exit = %d, want 0", code)
 	}
-	if s := string(out); !strings.Contains(s, "coop build — build the Coop box image") || !strings.Contains(s, "Usage:\n  coop build") {
+	if s := string(out); !strings.Contains(s, "coop build: build the Coop box image") || !strings.Contains(s, "Usage:\n  coop build") {
 		t.Errorf("`coop build help` should print build's help; got:\n%s", s)
 	}
 }
@@ -158,7 +158,7 @@ func TestMainHelpSubcommand(t *testing.T) {
 	if codeFork != 0 {
 		t.Errorf("helpForPath(fork) = %d, want 0", codeFork)
 	}
-	if codeClaude != 0 || !strings.Contains(string(out), "coop claude — run Claude") {
+	if codeClaude != 0 || !strings.Contains(string(out), "coop claude: run Claude") {
 		t.Errorf("helpForPath(claude) = %d; want 0 + coop's own Claude page, got:\n%s", codeClaude, out)
 	}
 	if codeLeaf != 0 {
@@ -312,7 +312,7 @@ func TestHelpForAgentIsTheApprovedPage(t *testing.T) {
 func TestHelpForAgentIsGeneratedPerAdapter(t *testing.T) {
 	codex := agentHelp("codex")
 	for _, want := range []string{
-		"coop codex — run Codex in a sandboxed box",
+		"coop codex: run Codex in the box",
 		"coop codex[:<model>][/<effort>][@<account>] [options] [-- <codex-args>...]",
 		"coop codex:gpt-6-astra",
 		"pass all remaining arguments directly to Codex",

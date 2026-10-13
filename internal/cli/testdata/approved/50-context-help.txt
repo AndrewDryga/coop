@@ -1,4 +1,4 @@
-coop context — show the instructions relevant to your work
+coop context: show the instructions relevant to your work
 
 Usage: coop context [<path>...] [<options>]
 
@@ -19,7 +19,7 @@ EXAMPLES
   coop context --changed
   coop context --task login-retries --rendered
 
-CONFIGURE ROUTES — .agent/project.yaml
+CONFIGURE ROUTES: .agent/project.yaml
   context:
     routes:
       - paths: ["web/**"]

@@ -1,4 +1,4 @@
-coop tasks unblock — record a decision and return a task to todo
+coop tasks unblock: record a decision and return a task to todo
 
 Usage: coop tasks unblock <id> ["<answer>"] [--tasks <path>]...
 

@@ -116,7 +116,7 @@
         <ul class="cmds" role="list">
           <li><code data-copy-source><span class="k">coop</span> build --egress open <span class="o">&amp;&amp;</span> <span class="k">coop</span> doctor</code></li>
         </ul>
-        <p>Docker is required for online provider runs, including open networking, because it supplies the run-private credential broker boundary. Apple <a href="https://github.com/apple/container" target="_blank" rel="nofollow noopener">container</a> (macOS 26+) remains available for raw uncredentialed open-network workloads. co:op detects both and prefers Docker.</p>
+        <p>Docker is required for online provider runs, including open networking, because it supports a private credential broker for each run. Apple <a href="https://github.com/apple/container" target="_blank" rel="nofollow noopener">container</a> (macOS 26+) remains available for raw uncredentialed open-network workloads. co:op detects both and prefers Docker.</p>
         <p class="callout">The one-line install trusts coop.dryga.com, which GitHub Pages serves from the repository's <code>main</code> branch, since it runs the script it downloads. The script then checks the release checksum with a local SHA-256 tool and stops if it can't; with <a href="https://github.com/sigstore/cosign" target="_blank" rel="nofollow noopener">cosign</a> on your <code>PATH</code>, it also checks that the checksum came from the exact release workflow and tag. To verify the download before running anything, follow the <a href="https://github.com/AndrewDryga/coop#verifying-a-download" target="_blank" rel="nofollow noopener">manual steps</a>.</p>
         <p>You can also build co:op from source:</p>
         <ul class="cmds" role="list">
@@ -239,7 +239,7 @@ box:
           <li><code data-copy-source><span class="k">coop</span> down</code><span class="cmd-note"># stop them, keep their data</span></li>
           <li><code data-copy-source><span class="k">coop</span> down --delete-volumes</code><span class="cmd-note"># also delete their data</span></li>
         </ul>
-        <p>Services are isolated like the box. Secrets in the files you mount into them are hidden the same way, and their ports open only on your computer. With filtered networking, the box reaches only the services you approved (with a <code>to: {service: "db"}</code> rule), and they run on a private network with no direct internet: their HTTPS goes through the same filter, and a service whose definition changes waits for your approval again.</p>
+        <p>Services are isolated like the box. Secrets in the files you mount into them are hidden the same way, and their ports open only on your computer. With filtered networking, the box reaches only services you approved with a <code>to: {service: "db"}</code> rule. Those services run on a private network with no direct internet; their HTTPS goes through the same filter. If a service's definition changes, it needs your approval again.</p>
         <p>When <code>coop up</code> finishes, it names the services Compose resolved, in Compose order; if Compose can't resolve them, co:op stops before starting anything and tells you what to fix. Agents can change data in any service they can reach, so give them disposable development databases. Deleting service volumes can't be undone, which is why it asks first.</p>
         <p>When the base image needs refreshing, <code>coop update</code> updates co:op itself and then rebuilds the box on fresh packages, and <code>coop update --box-only</code> rebuilds just the box. <code>coop build</code> is the stable, pinned rebuild (<code>coop build --egress filtered</code> for a project with filtered networking). Each one installs the agent versions your co:op release pins.</p>
       </section>
@@ -454,7 +454,7 @@ roles:
         <ul class="cmds" role="list">
           <li><code data-copy-source><span class="k">coop</span> eval run core codex --timeout 35m --dry-run</code></li>
         </ul>
-        <p>A real run needs a sign-in (<code>coop login codex</code>), a working container runtime and a current co:op box image; if the image is missing, run <code>coop build --egress open</code> from a folder without a project Dockerfile, which may download dependencies. Then run the suite and read the result:</p>
+        <p>A real run needs a sign-in (<code>coop login codex</code>), a working container runtime and a current co:op box image. If the image is missing, run <code>coop build --egress open</code> from a folder without a project Dockerfile. The build may download dependencies. Then run the suite and read the result:</p>
         <ul class="cmds" role="list">
           <li><code data-copy-source><span class="k">coop</span> eval run core codex --timeout 35m</code><span class="cmd-note"># run it for real</span></li>
           <li><code data-copy-source><span class="k">coop</span> eval inspect</code><span class="cmd-note"># read the result</span></li>
@@ -576,7 +576,7 @@ roles:
             </tr>
             <tr>
               <td><code>COOP_SPINNER</code></td>
-              <td>On by default: the live spinners animate. Set <code>0</code> or <code>false</code> to freeze them, and the loop's fast redraws, while debugging or recording.</td>
+              <td>On by default: the live spinners animate. Set <code>0</code> or <code>false</code> to freeze the spinners and stop the loop's fast redraws while debugging or recording.</td>
             </tr>
             <tr>
               <td><code>COOP_CONF</code></td>

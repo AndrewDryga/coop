@@ -88,7 +88,7 @@ func stopForkServices(rt runtime.Runtime, repo, name string, exposedRoots ...str
 	if rt.Name != "" {
 		ws := forkspace.Workspace(repo, name)
 		if err := box.DownServices(rt, ws, repo, true, io.Discard, io.Discard, exposedRoots...); err != nil {
-			ui.Note("fork %s: sibling services did not stop cleanly (%v) — check 'coop ps'", name, err)
+			ui.Note("fork %s: project services did not stop cleanly (%v). Check the reported service error and review any remaining containers or volumes", name, err)
 		}
 	}
 }

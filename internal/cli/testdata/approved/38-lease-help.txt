@@ -1,4 +1,4 @@
-coop tasks lease — reserve a task while work is running
+coop tasks lease: reserve a task while work is running
 
 Usage: coop tasks lease <id> [--tasks <path>]... [<options>] [-- <command>...]
 

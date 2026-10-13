@@ -1,4 +1,4 @@
-coop backlog — save ideas that need more planning
+coop backlog: save ideas that need more planning
 
 Usage: coop backlog [--tasks <path>]... [<command>]
 

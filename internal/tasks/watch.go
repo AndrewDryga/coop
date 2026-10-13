@@ -114,7 +114,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		return 0, nil
 	}
 	if board := read(); len(board.merged) == 0 && !snapshotHasVisibleActivity(board.snapshot) {
-		ui.Note("no tasks yet — add one with 'coop tasks add \"<title>\"'")
+		ui.Note("No tasks yet. Add one with 'coop tasks add \"<title>\"'")
 		return 0, nil
 	} else if err := board.snapshot.QueueError(); err != nil {
 		return 1, err
@@ -148,7 +148,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 	}
 	code, err := host.runWatchLoop(screen, tick, func() {
 		if queueErr == nil {
-			ui.OK("queue drained — every task is done")
+			ui.OK("Every task is done")
 		}
 	})
 	if err == nil && queueErr != nil {

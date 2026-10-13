@@ -1,4 +1,4 @@
-coop tasks release — return a task to the queue for another agent
+coop tasks release: return a task to the queue for another agent
 
 Usage: coop tasks release <id> [--tasks <path>]...
 

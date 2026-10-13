@@ -109,7 +109,7 @@ func (a *app) evalRuns(args []string) (int, error) {
 		} else if ok {
 			printEvalText("  ", evalResultLine(*sum))
 		} else {
-			fmt.Println("  No final summary — running or interrupted.")
+			fmt.Println("  No final summary: the run is still running or was interrupted.")
 		}
 	}
 	fmt.Println("\nInspect latest: coop eval inspect")
@@ -347,7 +347,7 @@ func renderEvalSummary(id string, s eval.RunSummary) {
 	fmt.Printf("\nRun %s\n", evalDisplayText(id))
 	printEvalText("  ", evalResultLine(s))
 	if covered < s.Requested {
-		fmt.Println("⚠ coverage is incomplete — trials without a graded verdict are not passes or failures")
+		fmt.Println("⚠ Grading is incomplete. Trials without a verdict count as neither passes nor failures")
 	}
 	fmt.Printf("\nInspect results: coop eval inspect %s\n", id)
 	fmt.Printf("Compare:         coop eval compare <before-id> %s\n", id)
@@ -464,7 +464,7 @@ func renderEvalComparison(c *eval.Comparison) {
 	line("Before", c.BaseID, c.Base)
 	line("After", c.NewID, c.New)
 	if c.Base.Covered() < c.Base.Requested || c.New.Covered() < c.New.Requested {
-		fmt.Println("⚠ Incomplete grading — no definitive winner.")
+		fmt.Println("⚠ Grading is incomplete; no definitive winner.")
 		fmt.Println("  Errors and timeouts are not model-quality failures.")
 	}
 	if c.Unpaired != "" {

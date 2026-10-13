@@ -1,4 +1,4 @@
-coop sessions — let other applications start and manage agents
+coop sessions: let other applications start and manage agents
 
 Usage: coop sessions <command>
 

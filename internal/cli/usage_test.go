@@ -149,7 +149,7 @@ func TestUsageDiscoversPrivateRootsAndKeepsAmbiguityUnknown(t *testing.T) {
 	}
 	var out bytes.Buffer
 	renderUsage(&out, ui.Palette{}, 100, time.Now(), []string{"codex"}, rows[:1], true)
-	if strings.Contains(out.String(), "≈$0") || !strings.Contains(out.String(), "attribution is ambiguous") {
+	if strings.Contains(out.String(), "≈$0") || !strings.Contains(out.String(), "history cannot be matched to one credential") {
 		t.Fatalf("ambiguous selected credential: %s", out.String())
 	}
 }

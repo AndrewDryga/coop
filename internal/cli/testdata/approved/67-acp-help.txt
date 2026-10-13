@@ -1,4 +1,4 @@
-coop acp — connect your editor to an agent running in a Coop box
+coop acp: connect your editor to an agent running in a Coop box
 
 Usage:
   coop acp [<agent|preset>] [options]

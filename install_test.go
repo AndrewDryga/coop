@@ -147,7 +147,7 @@ esac
 			if tc.build == "0" && !tc.noDocker && !strings.Contains(string(out), "sessions will reconnect with the new image.\n\nChecking the Coop box") {
 				t.Errorf("build and doctor output need a blank line between sections:\n%s", out)
 			}
-			if tc.noDocker && !strings.Contains(string(out), "online agents require Docker — install and start Docker") {
+			if tc.noDocker && !strings.Contains(string(out), "Online agents require Docker. Install and start Docker") {
 				t.Errorf("Apple-only setup must direct online agents to Docker:\n%s", out)
 			}
 			if tc.signed {
@@ -155,7 +155,7 @@ esac
 					"  Coop does not edit your shell files. Run once:\n\n" +
 					"    mkdir -p ~/.config/coop\n" +
 					"    coop completion zsh > ~/.config/coop/completion.zsh\n\n" +
-					"  Then add this to ~/.zshrc, AFTER your compinit line:\n\n" +
+					"  Then add this to ~/.zshrc, after your compinit line:\n\n" +
 					"    source ~/.config/coop/completion.zsh\n\n" +
 					"  Spelling correction stays on everywhere; only Coop's own arguments are exempt.\n"
 				if !strings.Contains(string(out), completion) || !strings.Contains(string(out), "  ✓ Release signature verified with Cosign\n") {
@@ -266,7 +266,7 @@ func TestInstallVerifyChecksumRequiresTool(t *testing.T) {
 	if err == nil {
 		t.Fatal("verification without sha256sum or shasum must fail")
 	}
-	if !strings.Contains(string(out), "no SHA-256 tool found") {
+	if !strings.Contains(string(out), "No SHA-256 tool found") {
 		t.Errorf("missing actionable SHA-tool error: %s", out)
 	}
 }
@@ -410,7 +410,7 @@ func TestInstallZshGuidanceOnly(t *testing.T) {
 	for _, want := range []string{
 		"mkdir -p ~/.config/coop",
 		"coop completion zsh > ~/.config/coop/completion.zsh",
-		"AFTER your compinit line",
+		"after your compinit line",
 		"source ~/.config/coop/completion.zsh",
 		"Coop does not edit your shell files",
 		"Spelling correction stays on everywhere",

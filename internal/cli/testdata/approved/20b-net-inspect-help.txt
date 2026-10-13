@@ -1,4 +1,4 @@
-coop net inspect — show a run's connections and blocked traffic
+coop net inspect: show a run's connections and blocked traffic
 
 Usage: coop net inspect [<run>] [--json]
 

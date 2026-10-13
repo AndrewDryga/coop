@@ -1191,7 +1191,7 @@ func TestCmdRunMetaCases(t *testing.T) {
 		if code != 0 || err != nil {
 			t.Errorf("cmdRun(%q) = (%d, %v), want (0, nil)", h, code, err)
 		}
-		if !strings.Contains(string(out), "coop run — run a command in the box") {
+		if !strings.Contains(string(out), "coop run: run a command in the box") {
 			t.Errorf("cmdRun(%q) should print run's help, got:\n%s", h, out)
 		}
 	}

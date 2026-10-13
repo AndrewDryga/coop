@@ -1,4 +1,4 @@
-coop tasks ls — list tasks and their progress
+coop tasks ls: list tasks and their progress
 
 Usage: coop tasks ls [--tasks <path>]... [<options>]
 

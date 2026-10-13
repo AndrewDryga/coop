@@ -1,4 +1,4 @@
-coop tasks queues — print task queue paths
+coop tasks queues: print task queue paths
 
 Usage: coop tasks queues [--tasks <path>]...
 

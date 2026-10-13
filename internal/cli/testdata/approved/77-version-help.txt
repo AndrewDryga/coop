@@ -1,4 +1,4 @@
-coop version — print the installed Coop version
+coop version: print the installed Coop version
 
 Usage:
   coop version

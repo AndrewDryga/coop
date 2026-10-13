@@ -1,4 +1,4 @@
-coop prompt — print a short project status for your shell or tmux
+coop prompt: print a short project status for your shell or tmux
 
 Usage:
   coop prompt

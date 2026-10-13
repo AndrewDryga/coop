@@ -122,8 +122,8 @@ func TestNetPostureShowsAWideningToOpen(t *testing.T) {
 	writeNetAccess(&b, ui.Palette{}, widening)
 	want := "⚠ New runs need your approval\n\n" +
 		"      .agent/project.yaml requests unrestricted internet access.\n\n" +
-		"  - Filtered — only approved network traffic is allowed.\n" +
-		"  + Unrestricted — nothing is blocked.\n" +
+		"  - Filtered: only approved network traffic is allowed.\n" +
+		"  + Unrestricted: nothing is blocked.\n" +
 		"  " + netOpenWarning + "\n\n" +
 		"  Access:\n  - github.com:443 · TLS  removed\n\n" +
 		"  Review changes: coop approve\n"
