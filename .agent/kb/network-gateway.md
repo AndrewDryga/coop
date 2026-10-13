@@ -2,12 +2,21 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
-updated: 2026-10-09
+sources: [internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
+updated: 2026-10-13
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
 (`cmd/coop-net/main.go`), and puts the agent in the controller's network namespace.
+
+Private helper IPC/observation uses protocol2 and kernel-qualified boot-clock coordinates.
+`OpenBootClock` pins the reading thread and verifies its current/child namespaces agree with
+the process leader's before and after reading bounded, canonical `timens_offsets`. Namespace
+inodes stay provenance; different namespaces are peer-compatible only on the same boot with
+verified zero boottime offsets. Missing proof, nonzero cross-namespace offsets and changed
+run/epoch/policy remain denied. Local component domains and the host's pinned guard observations
+still require exact identity. This fixes runtimes that isolate helper time namespaces without
+changing their clock values; it is not a repair of the unexplained native Claude account stop.
 
 **Controller** — UID `0:65532`, `CAP_ADD NET_ADMIN` and nothing else, on the bridge
 (`box/filtered_launch.go:151`, `:194`). It owns nftables table `coop_net`
@@ -225,6 +234,10 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-13 — qualified helper clocks by same boot and verified zero boottime offsets
+  across isolated namespaces, retaining exact local/host custody. Private protocol2 rejects
+  legacy/missing proof. Regression failed before repair; gateway race, capless Linux kernel
+  proof and all five real filtered setup checks passed on OrbStack/Docker29.8.2.
 - 2026-10-09 — root module metadata is embedded too: v11 retry exposed a missed refresh after
   a tidy classification change. Reverified generator file selection, added the missing inputs
   above and an early nonmutating canonical freshness check; no networking logic changed.

@@ -55,7 +55,7 @@ func TestOversizeObservationRetainsTerminalCountersAndExplicitlyOmitsDetail(t *t
 	c, now := collectorFixture(t)
 	c.terminal, c.envoyTotals.Stopped = true, true
 	publishFixture(c, *now, nil)
-	value := RuntimeObservation{Version: 1, Identity: c.identity, Network: c.Snapshot()}
+	value := RuntimeObservation{Version: PrivateProtocolVersion, Identity: c.identity, Network: c.Snapshot()}
 	value.Network.Connections = []networkview.Connection{{ID: "large", Name: strings.Repeat("x", MaxSnapshotBytes)}}
 	data, err := encodeObservation(value)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestFinalObservationSurvivesWriterAndCannotReplaceGeneration(t *testing.T) 
 	if err := prepareObservationDirectory(path); err != nil {
 		t.Fatal(err)
 	}
-	value := RuntimeObservation{Version: 1, Identity: c.identity, Network: c.Snapshot()}
+	value := RuntimeObservation{Version: PrivateProtocolVersion, Identity: c.identity, Network: c.Snapshot()}
 	if err := writeFinalObservation(path, value); err != nil {
 		t.Fatal(err)
 	}
@@ -115,13 +115,13 @@ func TestFinalObservationSurvivesWriterAndCannotReplaceGeneration(t *testing.T) 
 func TestObservationFramingRefusesOversizeMalformedAndForeignIdentity(t *testing.T) {
 	c, now := collectorFixture(t)
 	publishFixture(c, *now, nil)
-	value := RuntimeObservation{Version: 1, Identity: c.identity, Network: c.Snapshot()}
+	value := RuntimeObservation{Version: PrivateProtocolVersion, Identity: c.identity, Network: c.Snapshot()}
 	valid, err := encodeObservation(value)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, data := range []string{strings.Repeat(" ", MaxSnapshotBytes) + "\n", string(valid[:len(valid)-1]), "{}\n",
-		strings.Replace(string(valid), `"version":1`, `"version":2`, 1)} {
+		strings.Replace(string(valid), `"version":2`, `"version":1`, 1)} {
 		if _, err := ReadObservation(strings.NewReader(data), c.identity); err == nil {
 			t.Fatal("accepted invalid observation frame")
 		}

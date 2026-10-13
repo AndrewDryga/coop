@@ -89,7 +89,7 @@ func TestKernelSamplingIsCachedAndIndependentOfControl(t *testing.T) {
 	}
 	// Successful observation does not turn its endpoint into a control API.
 	for _, operation := range []string{"heartbeat", "ready", "lease"} {
-		if _, err := client.exchange(context.Background(), controlRequest{Version: 1, Operation: operation}, client.Path+".observe"); err == nil {
+		if _, err := client.exchange(context.Background(), controlRequest{Version: PrivateProtocolVersion, Operation: operation}, client.Path+".observe"); err == nil {
 			t.Fatalf("observation endpoint accepted %s", operation)
 		}
 	}

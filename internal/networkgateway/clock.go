@@ -45,6 +45,7 @@ func (b *BootInstant) UnmarshalJSON(data []byte) error {
 type ClockDomain struct {
 	BootID        string `json:"boot_id"`
 	TimeNamespace string `json:"time_namespace"`
+	BootOffset    string `json:"boottime_offset"`
 }
 
 func (d ClockDomain) Valid() bool {
@@ -58,11 +59,62 @@ func (d ClockDomain) Valid() bool {
 		}
 	}
 	n, err := strconv.ParseUint(d.TimeNamespace, 10, 64)
-	return err == nil && n > 0 && strconv.FormatUint(n, 10) == d.TimeNamespace
+	return err == nil && n > 0 && strconv.FormatUint(n, 10) == d.TimeNamespace && validClockOffset(d.BootOffset)
+}
+
+// Equivalent deadlines need the same kernel boot and proven coordinates, not
+// necessarily the same namespace inode. Only verified zero crosses namespaces.
+func (d ClockDomain) matchesPeer(other ClockDomain) bool {
+	return d.Valid() && other.Valid() && d.BootID == other.BootID && d.BootOffset == other.BootOffset &&
+		(d.TimeNamespace == other.TimeNamespace || d.BootOffset == "0:0")
+}
+
+func validClockOffset(value string) bool {
+	seconds, nanos, found := strings.Cut(value, ":")
+	sec, err := strconv.ParseInt(seconds, 10, 64)
+	if !found || err != nil || strconv.FormatInt(sec, 10) != seconds || sec < -(1<<63-1)/1_000_000_000 || sec > (1<<63-1)/1_000_000_000 {
+		return false
+	}
+	nsec, err := strconv.ParseInt(nanos, 10, 64)
+	return err == nil && nsec >= 0 && nsec < 1_000_000_000 && strconv.FormatInt(nsec, 10) == nanos
+}
+
+type clockNamespace struct{ device, inode uint64 }
+
+func qualifyClockDomain(boot string, namespaces func() (clockNamespace, error), offsets func() ([]byte, error)) (ClockDomain, error) {
+	before, err := namespaces()
+	if err != nil || before.inode == 0 {
+		return ClockDomain{}, Failure("clock_namespace_mismatch")
+	}
+	data, err := offsets()
+	if err != nil || len(data) > 4096 {
+		return ClockDomain{}, Failure("clock_unavailable")
+	}
+	values := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 3 || fields[0] != "monotonic" && fields[0] != "boottime" || values[fields[0]] != "" {
+			return ClockDomain{}, Failure("clock_unavailable")
+		}
+		value := fields[1] + ":" + fields[2]
+		if !validClockOffset(value) {
+			return ClockDomain{}, Failure("clock_unavailable")
+		}
+		values[fields[0]] = value
+	}
+	after, err := namespaces()
+	if err != nil || after != before {
+		return ClockDomain{}, Failure("clock_namespace_mismatch")
+	}
+	domain := ClockDomain{BootID: boot, TimeNamespace: strconv.FormatUint(before.inode, 10), BootOffset: values["boottime"]}
+	if len(values) != 2 || !domain.Valid() {
+		return ClockDomain{}, Failure("clock_unavailable")
+	}
+	return domain, nil
 }
 
 // BootClock's immutable domain binds the controller, guard and its future child
-// to the same boot/time namespace. A shared network namespace alone cannot do so.
+// to proven boot-clock coordinates. Namespace provenance remains separately exact.
 type BootClock struct {
 	domain ClockDomain
 	read   func() (BootInstant, error)

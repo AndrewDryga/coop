@@ -30,7 +30,7 @@ type RuntimeObservation struct {
 }
 
 func (g *GuardRuntime) observation() RuntimeObservation {
-	return RuntimeObservation{Version: 1, Identity: g.Identity, Network: g.collector.Snapshot()}
+	return RuntimeObservation{Version: PrivateProtocolVersion, Identity: g.Identity, Network: g.collector.Snapshot()}
 }
 
 func (g *GuardRuntime) finishObservation(path string, prior error) error {
@@ -70,7 +70,7 @@ func (g *GuardRuntime) serveObservation(ctx context.Context, path string, authen
 				return
 			}
 			var request controlRequest
-			if readControl(conn, &request) != nil || request.Version != 1 || request.Identity != g.Identity || request.Operation != "snapshot" || request.Lease != nil || request.AfterBoot != 0 {
+			if readControl(conn, &request) != nil || request.Version != PrivateProtocolVersion || !request.Identity.matchesPeer(g.Identity) || request.Operation != "snapshot" || request.Lease != nil || request.AfterBoot != 0 {
 				return
 			}
 			data, err := encodeObservation(g.observation())
@@ -108,6 +108,10 @@ func encodeObservation(value RuntimeObservation) ([]byte, error) {
 }
 
 func ReadObservation(reader io.Reader, identity Identity) (RuntimeObservation, error) {
+	return readObservation(reader, identity, false)
+}
+
+func readObservation(reader io.Reader, identity Identity, peer bool) (RuntimeObservation, error) {
 	line, err := bufio.NewReaderSize(io.LimitReader(reader, MaxSnapshotBytes+1), MaxSnapshotBytes+1).ReadSlice('\n')
 	if err != nil || len(line) > MaxSnapshotBytes {
 		return RuntimeObservation{}, Failure("observation_invalid")
@@ -115,7 +119,8 @@ func ReadObservation(reader io.Reader, identity Identity) (RuntimeObservation, e
 	var value RuntimeObservation
 	decoder := json.NewDecoder(bytes.NewReader(line))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF || value.Version != 1 || value.Identity != identity ||
+	if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF || value.Version != PrivateProtocolVersion || !identity.Valid() ||
+		(!peer && value.Identity != identity || peer && !value.Identity.matchesPeer(identity)) ||
 		value.Network.Version != networkview.Version || value.Network.RunID != identity.RunID || value.Network.Epoch != identity.Epoch || value.Network.PolicyFingerprint != identity.PolicyFingerprint {
 		return RuntimeObservation{}, Failure("observation_invalid")
 	}
@@ -146,10 +151,10 @@ func observeAt(ctx context.Context, path string, identity Identity) (RuntimeObse
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	deadline, _ := ctx.Deadline()
-	if conn.SetDeadline(deadline) != nil || json.NewEncoder(conn).Encode(controlRequest{Identity: identity, Version: 1, Operation: "snapshot"}) != nil {
+	if conn.SetDeadline(deadline) != nil || json.NewEncoder(conn).Encode(controlRequest{Identity: identity, Version: PrivateProtocolVersion, Operation: "snapshot"}) != nil {
 		return RuntimeObservation{}, Failure("observation_unavailable")
 	}
-	return ReadObservation(conn, identity)
+	return readObservation(conn, identity, true)
 }
 
 // This dedicated volume is writable only by the trusted helper and survives

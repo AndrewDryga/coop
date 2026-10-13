@@ -14,12 +14,13 @@ import (
 )
 
 const (
-	ControlTimeout    = 2 * time.Second
-	HeartbeatInterval = time.Second
-	HeartbeatTimeout  = 4 * time.Second
-	GuardStartTimeout = 30 * time.Second
-	maxControlBytes   = 4096
-	maxControlClients = 64
+	PrivateProtocolVersion = 2
+	ControlTimeout         = 2 * time.Second
+	HeartbeatInterval      = time.Second
+	HeartbeatTimeout       = 4 * time.Second
+	GuardStartTimeout      = 30 * time.Second
+	maxControlBytes        = 4096
+	maxControlClients      = 64
 )
 
 type controlRequest struct {
@@ -154,8 +155,8 @@ func (c *Controller) controlConnections(ctx context.Context, listener *net.UnixL
 			if err := readControl(conn, &request); err != nil {
 				return
 			}
-			reply := controlReply{Identity: c.identity, Version: 1, Reason: "controller_request_refused"}
-			if request.Version == 1 && request.Identity == c.identity {
+			reply := controlReply{Identity: c.identity, Version: PrivateProtocolVersion, Reason: "controller_request_refused"}
+			if request.Version == PrivateProtocolVersion && request.Identity.matchesPeer(c.identity) {
 				switch {
 				case endpoint == "health" && request.Operation == "heartbeat" && request.Lease == nil && request.AfterBoot == 0:
 					if c.Ready() {
@@ -218,15 +219,15 @@ type ControllerClient struct {
 }
 
 func (c ControllerClient) Admit(ctx context.Context, lease Lease) (BootInstant, error) {
-	return c.call(ctx, controlRequest{Version: 1, Operation: "lease", Lease: &lease})
+	return c.call(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: "lease", Lease: &lease})
 }
 
 func (c ControllerClient) AdmitBroker(ctx context.Context, lease Lease) (BootInstant, error) {
-	return c.call(ctx, controlRequest{Version: 1, Operation: "broker_lease", Lease: &lease})
+	return c.call(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: "broker_lease", Lease: &lease})
 }
 
 func (c ControllerClient) Ready(ctx context.Context) error {
-	_, err := c.call(ctx, controlRequest{Version: 1, Operation: "ready"})
+	_, err := c.call(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: "ready"})
 	return err
 }
 
@@ -236,7 +237,7 @@ func (c ControllerClient) Heartbeat(ctx context.Context) error {
 	ticker := time.NewTicker(HeartbeatInterval)
 	defer ticker.Stop()
 	for {
-		if _, err := c.call(ctx, controlRequest{Version: 1, Operation: "heartbeat"}); err != nil {
+		if _, err := c.call(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: "heartbeat"}); err != nil {
 			return err
 		}
 		select {
@@ -265,7 +266,7 @@ func (c ControllerClient) Counters(ctx context.Context) (KernelSample, error) {
 }
 
 func (c ControllerClient) countersAfter(ctx context.Context, cutoff BootInstant) (KernelSample, error) {
-	reply, err := c.exchange(ctx, controlRequest{Version: 1, Operation: "counters", AfterBoot: cutoff}, c.Path+".observe")
+	reply, err := c.exchange(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: "counters", AfterBoot: cutoff}, c.Path+".observe")
 	if err != nil || reply.Kernel == nil {
 		return KernelSample{}, Failure("kernel_counters_unavailable")
 	}
@@ -302,7 +303,7 @@ func (c ControllerClient) exchange(ctx context.Context, request controlRequest, 
 		return empty, Failure("enforcement_unavailable")
 	}
 	var reply controlReply
-	if err := readControl(conn, &reply); err != nil || reply.Version != 1 || reply.Identity != c.Identity {
+	if err := readControl(conn, &reply); err != nil || reply.Version != PrivateProtocolVersion || !reply.Identity.matchesPeer(c.Identity) {
 		return empty, Failure("enforcement_unavailable")
 	}
 	if !reply.Ready {

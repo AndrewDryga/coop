@@ -65,7 +65,7 @@ func TestPrivateControllerAPIAuthenticatesBoundsAndTerminates(t *testing.T) {
 	if _, err := client.Admit(ctx, lease); err != Failure("gateway_lease_refused") {
 		t.Fatalf("API changed refusal: %v", err)
 	}
-	if _, err := client.call(ctx, controlRequest{Version: 1, Operation: "open"}); err == nil {
+	if _, err := client.call(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: "open"}); err == nil {
 		t.Fatal("unknown operation succeeded")
 	}
 	cancel()
@@ -118,6 +118,34 @@ func startControlFixture(t *testing.T, c *Controller, authenticate func(*net.Uni
 	return client, cancel, done
 }
 
+func TestControllerAcceptsKernelEquivalentClockDomains(t *testing.T) {
+	c := testController(t, func(context.Context, string) error { return nil })
+	c.nativeOrigins = []string{"api.example.com"}
+	if err := c.Initialize(context.Background(), netip.MustParseAddr("1.1.1.1")); err != nil {
+		t.Fatal(err)
+	}
+	client, _, _ := startControlFixture(t, c, func(*net.UnixConn) bool { return true })
+	clock := *client.Clock
+	clock.domain.TimeNamespace = "67890"
+	client.Clock, client.Identity.Clock = &clock, clock.Domain()
+	if err := client.Ready(context.Background()); err != nil {
+		t.Fatalf("equivalent kernel clocks refused readiness: %v", err)
+	}
+	if _, err := client.call(context.Background(), controlRequest{Version: PrivateProtocolVersion, Operation: "heartbeat"}); err != nil {
+		t.Fatalf("equivalent kernel clocks refused heartbeat: %v", err)
+	}
+	lease := Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: testBootNow().Add(time.Minute)}
+	if until, err := client.Admit(context.Background(), lease); err != nil || until.After(lease.Expires) {
+		t.Fatalf("equivalent kernel clocks refused lease: %v", err)
+	}
+	if until, err := client.AdmitBroker(context.Background(), lease); err != nil || until.After(lease.Expires) {
+		t.Fatalf("equivalent kernel clocks refused broker lease: %v", err)
+	}
+	if _, err := client.Counters(context.Background()); err != nil {
+		t.Fatalf("equivalent kernel clocks refused observation: %v", err)
+	}
+}
+
 func TestLeaseSlowFramesCannotStarveIndependentHeartbeat(t *testing.T) {
 	c := testController(t, func(context.Context, string) error { return nil })
 	if err := c.Initialize(context.Background(), netip.MustParseAddr("1.1.1.1")); err != nil {
@@ -137,7 +165,7 @@ func TestLeaseSlowFramesCannotStarveIndependentHeartbeat(t *testing.T) {
 		}
 	}
 	wait.For(t, "all lease slots occupied", func() bool { return accepted.Load() >= baseline+maxControlClients })
-	if _, err := client.call(context.Background(), controlRequest{Version: 1, Operation: "heartbeat"}); err != nil || !c.Ready() {
+	if _, err := client.call(context.Background(), controlRequest{Version: PrivateProtocolVersion, Operation: "heartbeat"}); err != nil || !c.Ready() {
 		t.Fatalf("lease slowframes killed heartbeat: %v", err)
 	}
 	// Even an authenticated request cannot route lease mutation through the
@@ -148,7 +176,7 @@ func TestLeaseSlowFramesCannotStarveIndependentHeartbeat(t *testing.T) {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(ControlTimeout))
-	request := controlRequest{Identity: c.identity, Version: 1, Operation: "lease", Lease: &Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: testBootNow().Add(time.Minute)}}
+	request := controlRequest{Identity: c.identity, Version: PrivateProtocolVersion, Operation: "lease", Lease: &Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: testBootNow().Add(time.Minute)}}
 	if err := json.NewEncoder(conn).Encode(request); err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +314,7 @@ func TestReadinessPollingDoesNotKeepDeadGuardAlive(t *testing.T) {
 	})
 	client := ControllerClient{Path: path, Identity: c.identity, Clock: c.clock}
 	wait.For(t, "controller ready", func() bool { return client.Ready(ctx) == nil })
-	if _, err := client.call(ctx, controlRequest{Version: 1, Operation: "heartbeat"}); err != nil {
+	if _, err := client.call(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: "heartbeat"}); err != nil {
 		t.Fatal(err)
 	}
 	// No more actual guard heartbeats. An observer polling ready cannot hide

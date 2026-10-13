@@ -4,7 +4,7 @@ description: full implementation requests continue past verified slices through 
 scope: agent-workflow
 sources: [AGENTS.md, .agent/skills/work/SKILL.md, .agent/skills/spec/SKILL.md, .agent/skills/sweep/SKILL.md, internal/scaffold/templates/skills/work/SKILL.md, internal/scaffold/templates/skills/spec/SKILL.md, internal/scaffold/templates/skills/sweep/SKILL.md]
 check: none
-updated: 2026-10-08
+updated: 2026-10-13
 ---
 
 # Let the requested outcome control when work stops
@@ -45,7 +45,25 @@ red gates before proceeding. Continue into the next authorized step after green.
 and authority boundaries: a genuine blocker requiring human input still warrants a concise question;
 persistence never authorizes unrelated work, deployment, or destructive actions.
 
+A blocker question must be answerable without reconstructing prior chat or decoding engineering
+jargon. State the user-visible problem, why progress stopped, the available options and their
+consequences, and the recommended choice with its reason. Explain what approval changes and what
+safety, cost or permission boundaries stay unchanged. Never hand back only "approve A" or a
+technical label. When two blocked tasks depend on the same choice, explain that dependency instead
+of presenting duplicate questions as independent decisions. A dependent investigation is not fixed
+merely because its prerequisite is approved or repaired.
+
+The owner corrected an opaque blocker handoff on 2026-10-13: "List me reasons why tasks blocked
+and options using simple language and show recommended one". The final answer must contain those
+choices itself; a linked spec is supporting detail, not a substitute for an understandable question.
+
 ## Changelog
+- 2026-10-13 — recorded the plain-language blocker correction. Swept all seven listed instruction
+  sources: they already require explicit decisions and preserved authority, with no requirement
+  to ask a bare letter-only question. Inspected both current blocked notes: one prerequisite and
+  its dependent investigation were obscured by technical language; clarified their shared choice
+  in the owner handoff. Comprehensibility and real dependencies remain review judgments, so check
+  is none.
 - 2026-10-08 — the owner corrected a premature handoff after an added website rename while three
   tasks remained: "I told to finish all tasks". Swept all seven listed instruction sources:
   they already preserve full requested outcomes and independent authority boundaries, 0 conflicting

@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Filtered runs start with separately isolated helper clocks.** Coop now verifies the
+  helpers' actual clock offsets instead of requiring matching namespace labels. Network
+  restrictions, credential protection and expiry checks stay in place.
+
 - **Usage includes native CLI history outside Coop.** Supported Claude, Codex, Gemini and Grok
   histories on this computer now contribute to recorded estimates, with copied requests counted
   once and unmatched accounts kept unassigned. Optional host-only provider reports show API

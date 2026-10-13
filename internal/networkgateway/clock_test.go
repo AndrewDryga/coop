@@ -13,7 +13,7 @@ import (
 
 func testBootNow() BootInstant { return BootInstant(time.Now().UnixNano()) }
 func testBootClock() *BootClock {
-	return &BootClock{domain: ClockDomain{BootID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", TimeNamespace: "12345"}, read: func() (BootInstant, error) { return testBootNow(), nil }}
+	return &BootClock{domain: ClockDomain{BootID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", TimeNamespace: "12345", BootOffset: "0:0"}, read: func() (BootInstant, error) { return testBootNow(), nil }}
 }
 
 func TestResolverClockFailureAndSuspendCannotReuseCachedAuthority(t *testing.T) {

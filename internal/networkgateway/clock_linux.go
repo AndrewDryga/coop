@@ -3,13 +3,15 @@ package networkgateway
 import (
 	"io"
 	"os"
-	"strconv"
+	"runtime"
 	"strings"
 
 	"golang.org/x/sys/unix"
 )
 
 func OpenBootClock() (*BootClock, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	file, err := os.Open("/proc/sys/kernel/random/boot_id")
 	if err != nil {
 		return nil, Failure("clock_unavailable")
@@ -19,11 +21,18 @@ func OpenBootClock() (*BootClock, error) {
 	if err != nil || len(data) > 37 {
 		return nil, Failure("clock_unavailable")
 	}
-	var current, children unix.Stat_t
-	if unix.Stat("/proc/self/ns/time", &current) != nil || unix.Stat("/proc/self/ns/time_for_children", &children) != nil || current.Ino != children.Ino || current.Dev != children.Dev {
-		return nil, Failure("clock_namespace_mismatch")
+	domain, err := qualifyClockDomain(strings.TrimSpace(string(data)), currentClockNamespace, func() ([]byte, error) {
+		file, err := os.Open("/proc/self/timens_offsets")
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		return io.ReadAll(io.LimitReader(file, 4097))
+	})
+	if err != nil {
+		return nil, err
 	}
-	clock := &BootClock{domain: ClockDomain{BootID: strings.TrimSpace(string(data)), TimeNamespace: strconv.FormatUint(current.Ino, 10)}, read: func() (BootInstant, error) {
+	clock := &BootClock{domain: domain, read: func() (BootInstant, error) {
 		var value unix.Timespec
 		if err := unix.ClockGettime(unix.CLOCK_BOOTTIME, &value); err != nil {
 			return 0, Failure("clock_unavailable")
@@ -41,4 +50,22 @@ func OpenBootClock() (*BootClock, error) {
 		return nil, err
 	}
 	return clock, nil
+}
+
+func currentClockNamespace() (clockNamespace, error) {
+	var selected clockNamespace
+	// timens_offsets describes the leader's child namespace. Prove that it
+	// also describes this pinned thread; /proc/self alone cannot establish that.
+	for _, path := range []string{"/proc/self/ns/time", "/proc/self/ns/time_for_children", "/proc/thread-self/ns/time", "/proc/thread-self/ns/time_for_children"} {
+		var stat unix.Stat_t
+		if unix.Stat(path, &stat) != nil {
+			return clockNamespace{}, Failure("clock_namespace_mismatch")
+		}
+		next := clockNamespace{device: uint64(stat.Dev), inode: stat.Ino}
+		if selected.inode != 0 && selected != next {
+			return clockNamespace{}, Failure("clock_namespace_mismatch")
+		}
+		selected = next
+	}
+	return selected, nil
 }

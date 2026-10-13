@@ -13,6 +13,11 @@ func (i Identity) Valid() bool {
 	return i.Clock.Valid() && lowerHex(i.RunID, 32) && lowerHex(i.Epoch, 32) && lowerHex(i.PolicyFingerprint, 64)
 }
 
+func (i Identity) matchesPeer(other Identity) bool {
+	return i.Valid() && other.Valid() && i.RunID == other.RunID && i.Epoch == other.Epoch &&
+		i.PolicyFingerprint == other.PolicyFingerprint && i.Clock.matchesPeer(other.Clock)
+}
+
 func lowerHex(value string, size int) bool {
 	if len(value) != size {
 		return false

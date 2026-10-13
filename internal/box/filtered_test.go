@@ -469,8 +469,8 @@ func (d *filteredDaemonFixture) observation(terminal bool) []byte {
 	s.Coverage = networkview.Coverage{ProxyBytes: exact, Connections: exact, UpstreamFailures: exact, KernelPackets: exact, GuardDenials: exact, MaintenanceQueries: exact, MaintenanceBytes: exact, SocketInventory: exact, BoundaryAttribution: exact}
 	s.Counters = &networkview.Counters{SentBytes: networkview.Value(123)}
 	identity := networkgateway.Identity{RunID: s.RunID, Epoch: s.Epoch, PolicyFingerprint: s.PolicyFingerprint,
-		Clock: networkgateway.ClockDomain{BootID: "12345678-1234-1234-1234-123456789abc", TimeNamespace: "42"}}
-	data, _ := json.Marshal(networkgateway.RuntimeObservation{Version: 1, Identity: identity, Network: s})
+		Clock: networkgateway.ClockDomain{BootID: "12345678-1234-1234-1234-123456789abc", TimeNamespace: "42", BootOffset: "0:0"}}
+	data, _ := json.Marshal(networkgateway.RuntimeObservation{Version: networkgateway.PrivateProtocolVersion, Identity: identity, Network: s})
 	return append(data, '\n')
 }
 func (d *filteredDaemonFixture) ExecRead(_ context.Context, _ runtime.DockerRef, _ int, command ...string) ([]byte, error) {

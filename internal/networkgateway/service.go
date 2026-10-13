@@ -714,10 +714,10 @@ func (g *GuardRuntime) serveReadiness(ctx context.Context) error {
 				return
 			}
 			var request controlRequest
-			if readControl(conn, &request) != nil || request.Version != 1 || request.Identity != g.Identity || request.Operation != "ready" || request.Lease != nil || request.AfterBoot != 0 {
+			if readControl(conn, &request) != nil || request.Version != PrivateProtocolVersion || !request.Identity.matchesPeer(g.Identity) || request.Operation != "ready" || request.Lease != nil || request.AfterBoot != 0 {
 				return
 			}
-			_ = json.NewEncoder(conn).Encode(controlReply{Identity: g.Identity, Version: 1, Ready: g.phase.Load() == gatewayReady})
+			_ = json.NewEncoder(conn).Encode(controlReply{Identity: g.Identity, Version: PrivateProtocolVersion, Ready: g.phase.Load() == gatewayReady})
 		})
 	}
 }
@@ -733,6 +733,6 @@ func ProbeRuntime(ctx context.Context, config LaunchConfig) error {
 		return err
 	}
 	client := ControllerClient{Path: RuntimeSocket, Identity: config.identity(clock), Clock: clock}
-	_, err = client.callPath(ctx, controlRequest{Version: 1, Operation: "ready"}, RuntimeSocket)
+	_, err = client.callPath(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: "ready"}, RuntimeSocket)
 	return err
 }
