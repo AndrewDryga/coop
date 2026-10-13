@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Invalid native account access stays stopped.** Another request cannot slip through
+  while the first account refusal is being cleaned up.
+
 - **Filtered runs start with separately isolated helper clocks.** Coop now verifies the
   helpers' actual clock offsets instead of requiring matching namespace labels. Network
   restrictions, credential protection and expiry checks stay in place.

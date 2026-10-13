@@ -2,7 +2,7 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
+sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
 updated: 2026-10-13
 ---
 
@@ -17,6 +17,11 @@ verified zero boottime offsets. Missing proof, nonzero cross-namespace offsets a
 run/epoch/policy remain denied. Local component domains and the host's pinned guard observations
 still require exact identity. This fixes runtimes that isolate helper time namespaces without
 changing their clock values; it is not a repair of the unexplained native Claude account stop.
+
+The native broker chooses its permanent first denial while holding the snapshot comparison
+mutex, clears retained access there, then tears down streams outside the mutex. Every stop
+caller uses that same latch, so slow cleanup cannot admit a newer valid snapshot or replace
+the initiating credential-free diagnostic with a later lifecycle reason.
 
 **Controller** — UID `0:65532`, `CAP_ADD NET_ADMIN` and nothing else, on the bridge
 (`box/filtered_launch.go:151`, `:194`). It owns nftables table `coop_net`
@@ -234,6 +239,10 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-13 — native broker denial now latches under its comparison mutex before teardown;
+  first-stop metadata cannot be replaced by lifecycle cleanup. Deterministic admission test
+  fails on the old source and passes after repair; real stream and blocked-log cleanup tests
+  remain green. Separate from the historical Claude refusal investigation.
 - 2026-10-13 — qualified helper clocks by same boot and verified zero boottime offsets
   across isolated namespaces, retaining exact local/host custody. Private protocol2 rejects
   legacy/missing proof. Regression failed before repair; gateway race, capless Linux kernel

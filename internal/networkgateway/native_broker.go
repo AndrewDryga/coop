@@ -196,9 +196,17 @@ type NativeBroker struct {
 	mu              sync.Mutex
 	last            NativeAccessSnapshot
 	stopped         bool
+	stop            nativeBrokerStop
 	active          map[*nativeBrokerConn]struct{}
 	once            sync.Once
 	workers         sync.WaitGroup
+}
+
+type nativeBrokerStop struct {
+	reason                     string
+	previousRevision, revision uint64
+	attempts                   int
+	elapsed                    time.Duration
 }
 
 type nativeAccessKey struct{}
@@ -416,10 +424,12 @@ func (b *NativeBroker) current() (NativeAccessSnapshot, error) {
 	}
 	if reason == "" {
 		b.last = next
+	} else {
+		b.latchProtected(reason, next.Revision, attempts, time.Since(started))
 	}
 	b.mu.Unlock()
 	if reason != "" {
-		b.stopProtected(reason, next.Revision, attempts, time.Since(started))
+		b.finishProtected()
 		return NativeAccessSnapshot{}, Failure("native_broker_revoked")
 	}
 	return next, nil
@@ -558,15 +568,31 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 }
 
 func (b *NativeBroker) stopProtected(reason string, revision uint64, attempts int, elapsed time.Duration) {
+	b.mu.Lock()
+	b.latchProtected(reason, revision, attempts, elapsed)
+	b.mu.Unlock()
+	b.finishProtected()
+}
+
+// The caller holds mu: the first denial closes admission and clears access
+// before any queued reader can run, even when teardown or diagnostics are slow.
+func (b *NativeBroker) latchProtected(reason string, revision uint64, attempts int, elapsed time.Duration) {
+	if b.stopped {
+		return
+	}
+	b.stopped = true
+	b.stop = nativeBrokerStop{reason: reason, previousRevision: b.last.Revision, revision: revision, attempts: attempts, elapsed: elapsed}
+	b.last = NativeAccessSnapshot{}
+}
+
+func (b *NativeBroker) finishProtected() {
 	b.once.Do(func() {
 		b.mu.Lock()
-		b.stopped = true
-		previousRevision := b.last.Revision
+		stop := b.stop
 		conns := make([]*nativeBrokerConn, 0, len(b.active))
 		for conn := range b.active {
 			conns = append(conns, conn)
 		}
-		b.last = NativeAccessSnapshot{}
 		b.mu.Unlock()
 		b.cancel()
 		if b.server != nil {
@@ -581,7 +607,7 @@ func (b *NativeBroker) stopProtected(reason string, revision uint64, attempts in
 		}
 		// Shut protected traffic first: a blocked log sink must not delay
 		// revocation. Never log raw errors, account identifiers or documents.
-		log.Printf("native_broker_stopped reason=%s previous_revision=%d revision=%d attempts=%d load_ms=%d", reason, previousRevision, revision, attempts, elapsed.Milliseconds())
+		log.Printf("native_broker_stopped reason=%s previous_revision=%d revision=%d attempts=%d load_ms=%d", stop.reason, stop.previousRevision, stop.revision, stop.attempts, stop.elapsed.Milliseconds())
 	})
 }
 
