@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 11.2.0
 
 - **Task tools shut down cleanly.** A helper's normal exit no longer loses its final output
