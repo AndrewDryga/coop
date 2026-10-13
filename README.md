@@ -187,6 +187,9 @@ work to. `coop presets init` writes a starter team you can change, and `coop loo
 
 See [agents, accounts and presets](docs/agents.md).
 
+`coop usage` shows account limits and estimates recorded activity from Coop and native CLIs on
+this computer. Optional [provider reports](docs/usage-reports.md) show API spend separately.
+
 ## Your project's tools and services
 
 If your repo pins versions in `.tool-versions`, `coop init` builds them into the box's image. For

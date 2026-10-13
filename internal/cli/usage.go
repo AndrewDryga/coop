@@ -36,6 +36,7 @@ type usageCredential struct {
 	quotaErr          error
 	unpricedTurns     int
 	shared            bool
+	local             bool
 	ambiguous         bool
 }
 
@@ -74,6 +75,17 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	defer cancel()
 	state, _ := defaultSessionStateRoot()
 	now := time.Now()
+	var reports []agents.UsageReport
+	var reportErr error
+	reportsDone := make(chan struct{})
+	go func() {
+		defer close(reportsDone)
+		// An API organization is not a personal credential. Exact-account inspection never
+		// sends an organization reporting key or silently attaches its bill to this account.
+		if target.Account() == "" {
+			reports, reportErr = readUsageReports(ctx, a.cfg.BoxHome, names, now)
+		}
+	}()
 	retained, retainedErr := session.ReadUsageSnapshot(ctx, state, now.Add(-30*24*time.Hour), now)
 	rows, partial := a.usageCredentials(names, state)
 	unattributed := 0
@@ -164,6 +176,8 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	}
 	details := target.Account() != ""
 	renderUsage(os.Stdout, ui.For(os.Stdout), ui.TermWidth(os.Stdout), time.Now(), names, rows, details)
+	<-reportsDone
+	renderUsageReports(os.Stdout, ui.For(os.Stdout), ui.TermWidth(os.Stdout), reports, reportErr)
 	var footer []string
 	if details && len(retained.Turns) > 0 {
 		footer = append(footer, "Saved Coop turn totals have no price estimate and are excluded from provider-history totals.")
@@ -186,6 +200,11 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	for _, row := range rows {
 		quotaKnown := row.quotaErr == nil && (len(row.quota.Buckets) > 0 || row.quota.Resets != nil && row.quota.Resets.Available != nil)
 		if row.value.Available || row.unpricedTurns > 0 || quotaKnown {
+			return 0, nil
+		}
+	}
+	for _, report := range reports {
+		if report.Err == nil {
 			return 0, nil
 		}
 	}
@@ -229,6 +248,10 @@ func (a *app) usageCredentials(names []string, state string) ([]usageCredential,
 			paths = append(paths, box.ACPHistoryStores(privateCfg, name)...)
 		}
 		rows = append(rows, usageCredential{provider: name, account: "Unattributed ACP", shared: true, paths: paths})
+		ag, _ := agents.Get(name)
+		if homes := ag.Usage().HostHomes(); len(homes) > 0 {
+			rows = append(rows, usageCredential{provider: name, account: "Unattributed native", shared: true, local: true, paths: homes})
+		}
 	}
 	a.sortUsageCredentials(rows)
 	return rows, partial
@@ -291,7 +314,9 @@ func deduplicateUsageCredentials(rows []usageCredential) []usageCredential {
 	shared := map[string]int{}
 	for i, row := range rows {
 		if row.shared {
-			shared[row.provider] = i
+			if _, ok := shared[row.provider]; !ok || row.local {
+				shared[row.provider] = i
+			}
 		}
 	}
 	for i := range rows {
@@ -308,27 +333,44 @@ func deduplicateUsageCredentials(rows []usageCredential) []usageCredential {
 			}
 		}
 	}
+	kept := make([][]agents.UsageEvent, len(rows))
+	unassigned := map[string]int{}
 	for i := range rows {
-		kept := rows[i].history.Events[:0]
 		for _, event := range rows[i].history.Events {
-			owner, known := owners[rows[i].provider+":"+event.ID]
+			key := rows[i].provider + ":" + event.ID
+			owner, known := owners[key]
 			if rows[i].shared && known && owner >= 0 {
+				kept[owner] = append(kept[owner], event)
+				rows[owner].local = rows[owner].local || rows[i].local
 				continue
 			}
-			if !rows[i].shared && known && owner < 0 {
+			if known && owner < 0 {
 				if j, ok := shared[rows[i].provider]; ok {
-					rows[j].history.Events = append(rows[j].history.Events, event)
+					kept[j] = append(kept[j], event)
 					rows[j].history.Available = true
 					rows[j].history.Partial = true
 				}
-				rows[i].history.Partial = true
-				rows[i].ambiguous = true
+				if !rows[i].shared {
+					rows[i].history.Partial = true
+					rows[i].ambiguous = true
+				}
 				continue
 			}
-			kept = append(kept, event)
+			if rows[i].shared {
+				j, ok := unassigned[key]
+				if !ok {
+					j = i
+					unassigned[key] = i
+				}
+				kept[j] = append(kept[j], event)
+				continue
+			}
+			kept[i] = append(kept[i], event)
 		}
-		rows[i].history.Events = kept
-		if rows[i].ambiguous && len(kept) == 0 {
+	}
+	for i := range rows {
+		rows[i].history.Events = kept[i]
+		if (rows[i].ambiguous || rows[i].shared) && len(kept[i]) == 0 {
 			rows[i].history.Available = false
 		}
 	}
@@ -508,6 +550,11 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			}
 			if details {
 				fact("30-day API estimate", usageValueLabel(row, true))
+				coverage := "Coop history on this computer"
+				if row.local {
+					coverage = "Coop and native CLI history on this computer"
+				}
+				fact("History", coverage)
 				if row.shared {
 					fact("Credential", "unknown · excluded from credential totals")
 				}
@@ -661,6 +708,9 @@ func usageHeader(row usageCredential, details bool) string {
 	header := agents.DisplayTarget(row.account)
 	if row.shared {
 		header = "Unassigned editor usage"
+		if row.local {
+			header = "Unassigned local usage"
+		}
 	}
 	if row.quota.Auth != "" {
 		header += " (" + agents.DisplayTarget(row.quota.Auth) + ")"

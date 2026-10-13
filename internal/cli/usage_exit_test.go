@@ -26,6 +26,7 @@ func TestUsageResetOnlyResultExitStatus(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
+			t.Setenv("CODEX_HOME", "")
 			t.Setenv("NO_COLOR", "1")
 			cfg := &config.Config{ConfigDir: t.TempDir(), RuntimeName: "must-not-run"}
 			importNativeFixture(t, cfg, "codex", "work", nativeauth.Files(t, "codex", "work"))

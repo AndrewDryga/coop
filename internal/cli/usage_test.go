@@ -33,6 +33,7 @@ func (usageBlockingQuotaTransport) RoundTrip(request *http.Request) (*http.Respo
 func TestUsageSignalCancelsLookup(t *testing.T) {
 	if os.Getenv("COOP_USAGE_SIGNAL_HELPER") == "1" {
 		t.Setenv("HOME", t.TempDir())
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
 		t.Setenv("NO_COLOR", "1")
 		cfg := &config.Config{ConfigDir: t.TempDir()}
 		files := nativeauth.Files(t, "claude", "work")
@@ -89,6 +90,7 @@ func usageFixtureFile(t *testing.T, path, data string) {
 
 func TestUsageCommandOutsideRepositoryAndExactSelector(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("NO_COLOR", "1")
 	cfg := &config.Config{ConfigDir: t.TempDir(), RuntimeName: "must-not-run"}
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
@@ -121,13 +123,15 @@ func TestUsageCommandOutsideRepositoryAndExactSelector(t *testing.T) {
 }
 
 func TestUsageDiscoversPrivateRootsAndKeepsAmbiguityUnknown(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", "")
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	state := t.TempDir()
 	usageFixtureFile(t, filepath.Join(state, "acp", "session", "codex", "profiles", "retired", "sessions", "x.jsonl"), "fixture")
 	privateHome := filepath.Join(state, "acp", "session", "codex", "acp-homes", "repo-key", "home")
 	usageFixtureFile(t, filepath.Join(privateHome, "sessions", "new.jsonl"), "fixture")
 	rows, partial := a.usageCredentials([]string{"codex"}, state)
-	if partial || len(rows) != 2 || rows[0].account != "retired" || len(rows[0].paths) != 1 {
+	if partial || len(rows) != 3 || rows[0].account != "retired" || len(rows[0].paths) != 1 {
 		t.Fatalf("private discovery=%+v partial=%v", rows, partial)
 	}
 	if !rows[1].shared || !slices.Contains(rows[1].paths, privateHome) || slices.Contains(rows[0].paths, privateHome) {

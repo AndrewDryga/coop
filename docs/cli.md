@@ -426,8 +426,11 @@ EXAMPLES
   resets and reported expiry dates when the provider supplies them.
   Checking usage never redeems a reset. Credits use provider units, not dollars.
   Σ≈$.../30d is the 30-day API estimate, priced at standard API token rates,
-  including subscription activity. It reads local Coop account and editor history,
-  not the provider's billing records or usage on other devices.
+  including subscription activity. It reads local Coop account/editor history and
+  native CLI history on this computer, not web/mobile activity or other devices.
+  Native history uses the normal Claude, Codex, Gemini and Grok homes plus their
+  supported home overrides. Copied requests count once. A current login does not
+  identify an old request's account; unmatched records show as Unassigned local usage.
   Select provider@credential to see which history is included and how it is priced.
   Editor history that cannot be matched to an account is listed separately.
   Subtotals and Total sum the selected providers' recorded estimates,
@@ -443,9 +446,44 @@ EXAMPLES
   API-key and Vertex accounts may have priced token history even when they
   have no subscription limits to report.
 
+PROVIDER REPORTS
+  Optional API spend reports use ~/.config/coop/usage-reports.json (or the XDG
+  config home). Nothing is read from provider billing APIs unless you configure
+  a source. Keep reporting keys in host environment variables, not in this file,
+  project files or agents/env. Reports are never added to local estimates.
+
+  Example usage-reports.json:
+  {
+    "reports": [
+      {"provider": "codex", "name": "work", "organization": "org-example",
+       "key_env": "COOP_REPORT_OPENAI_KEY"},
+      {"provider": "claude", "name": "work", "key_env": "COOP_REPORT_CLAUDE_KEY"}
+    ]
+  }
+
+  codex needs an OpenAI organization Admin API key; organization selects its scope.
+  claude needs an Anthropic organization Admin API key; Priority Tier is excluded.
+  grok needs a separate xAI Management API key and a team field with its team ID.
+  Each provider supports one source. name labels the source; it is not a saved login.
+  Reports cover 30 completed UTC days and show the dates, scope and check time.
+  Providers may report late or revise amounts. Unsupported currencies, denied access,
+  malformed or truncated reports show unavailable, not zero. Incomplete scope is partial.
+  Provider selection filters reports; provider@credential never requests an org report.
+  Personal subscription activity is not covered by these API billing sources.
+
+  Gemini reports use a Google standard billing export, not a Gemini CLI login.
+  Configure provider gemini, name, project, billing_table (project.dataset.table),
+  sku_ids (only Gemini/Vertex API SKU IDs), location, gcloud_account (email), and
+  maximum_bytes_billed (1 to 1073741824). Host gcloud must be signed in to that
+  account, with query and export-read permissions. The fixed query reads only the
+  selected project/SKUs, includes credits and accepts USD billing only. It can incur
+  BigQuery charges up to your byte limit. Export gaps and unlisted SKUs stay partial;
+  no matching rows means unknown coverage, not zero spend.
+  Setup and examples: https://github.com/AndrewDryga/coop/blob/main/docs/usage-reports.md
+
 EXIT STATUS
-  0  at least one usable history or quota result; any failures appear beside it
-  1  no usable history or quota results
+  0  at least one usable history, quota or configured report; failures stay visible
+  1  no usable history, quota or configured report
   2  invalid selector or arguments
 
   Credentials: coop credentials

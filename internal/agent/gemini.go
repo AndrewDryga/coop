@@ -448,6 +448,8 @@ func (geminiAgent) NativeHistory(source string, ownsCWD func(string) bool) (Nati
 
 func (geminiAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: geminiUsageQuota, HistoryDirs: []string{"tmp"},
+		Reports:   usageReportSpec{format: reportBillingExport, label: "Gemini API", endpoint: "https://bigquery.googleapis.com/bigquery/v2/projects/", scope: func(s UsageReportSource) string { return "Project " + s.Project + "; selected Gemini/Vertex SKU IDs" }},
+		HostHomes: func() []string { return nativeUsageHomes(".gemini", "GEMINI_CLI_HOME", true) },
 		HistoryFile: func(path string) bool {
 			return strings.Contains(path, "/chats/") && (strings.HasSuffix(path, ".jsonl") || strings.HasSuffix(path, ".json"))
 		}, ParseHistory: geminiUsageHistory, Price: geminiUsagePrice,

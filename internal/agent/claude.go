@@ -292,6 +292,10 @@ func (claudeAgent) NativeHistory(source string, ownsCWD func(string) bool) (Nati
 
 func (claudeAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: claudeUsageQuota, HistoryDirs: []string{"projects"},
+		Reports: usageReportSpec{format: reportDailyCents, label: "Claude API", endpoint: "https://api.anthropic.com/v1/organizations/cost_report", scope: func(UsageReportSource) string {
+			return "API organization for the configured key; excludes Priority Tier"
+		}},
+		HostHomes:   func() []string { return nativeUsageHomes(".claude", "CLAUDE_CONFIG_DIR", false) },
 		HistoryFile: func(path string) bool { return strings.HasSuffix(path, ".jsonl") }, ParseHistory: claudeUsageHistory, Price: claudeUsagePrice}
 }
 

@@ -2,9 +2,9 @@
 name: usage-leads-with-limits
 description: Usage keeps quota bars first and an estimate last; account details hold coverage metadata, not blanket footers
 scope: cli-output
-sources: [internal/cli/usage.go, internal/cli/usage_test.go, internal/cli/help.go, internal/cli/profiles.go, internal/agent/usage.go, internal/agent/claude.go, internal/agent/codex.go]
+sources: [internal/cli/usage.go, internal/cli/usage_reports.go, internal/cli/usage_test.go, internal/cli/help.go, internal/cli/profiles.go, internal/agent/usage.go, internal/agent/claude.go, internal/agent/codex.go]
 check: "go test ./internal/cli -run TestUsage"
-updated: 2026-10-12
+updated: 2026-10-13
 ---
 
 # Usage answers how much capacity remains
@@ -61,7 +61,18 @@ understandable with NO_COLOR and narrow terminals.
 The existing `provider@credential` view holds plan, coverage, pricing and retained-record facts.
 Help explains the data scope. Neither view ends with an unsolicited disclaimer paragraph.
 
+Native host history with no historical account binding reads `Unassigned local usage`. Copied
+requests count once across all named/shared histories; a current login is not historical evidence.
+Optional provider API spend belongs in a separate reports section with explicit scope, reporting
+period and check time. Never add it to local estimates, silently attach an organization bill to a
+personal credential, or label a failed report zero. Exact-account inspection does not request
+organization reports. A successful fetch time does not imply complete provider freshness.
+
 ## Changelog
+- 2026-10-13 — applied the approved broader history/provider-report proposal. Swept usage
+  discovery, deduplication, renderer and new billing readers: native roots remain unassigned,
+  shared copies count once, empty deduped rows disappear, and reports never join local sums.
+  Focused tests cover provider filtering, report scope/period, errors, missing keys and widths.
 - 2026-10-12 — owner noted Claude also offers resets. Swept the four quota adapters and shared
   renderer: Codex already reports counts, Claude requires the pinned client's optional grant
   query, and Gemini/Grok have no verified reset-count metadata. Claude sums explicit per-grant

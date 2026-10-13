@@ -20,6 +20,8 @@ import (
 // Native is supplied lazily by the host; most quota reads need no container runtime.
 type UsageSpec struct {
 	Quota                 func(context.Context, UsageQuotaInput) (UsageQuota, error)
+	HostHomes             func() []string
+	Reports               usageReportSpec
 	HistoryDirs           []string
 	HistoryFile           func(string) bool
 	HistoryFilter         func(*os.Root, string) (bool, error)
@@ -28,6 +30,25 @@ type UsageSpec struct {
 	NativeCredentialLease bool
 	NativeCredentialCheck func(string) error
 	NativeEnv             []string
+}
+
+// Native host history has no historical account binding. Only the owning CLI's declared
+// home is scanned; a current login is never evidence about older requests.
+func nativeUsageHomes(dir, env string, parent bool) []string {
+	var homes []string
+	if home, err := os.UserHomeDir(); err == nil {
+		homes = append(homes, filepath.Join(home, dir))
+	}
+	if home := os.Getenv(env); home != "" {
+		if parent {
+			home = filepath.Join(home, dir)
+		}
+		home = filepath.Clean(home)
+		if !slices.Contains(homes, home) {
+			homes = append(homes, home)
+		}
+	}
+	return homes
 }
 
 type UsageQuotaInput struct {

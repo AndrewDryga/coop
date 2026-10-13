@@ -354,6 +354,8 @@ func (codexAgent) NativeHistory(source string, ownsCWD func(string) bool) (Nativ
 
 func (codexAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: codexUsageQuota, HistoryDirs: []string{"sessions", "archived_sessions"},
+		Reports:   usageReportSpec{format: reportDailyUSD, label: "OpenAI API", endpoint: "https://api.openai.com/v1/organization/costs", scope: func(s UsageReportSource) string { return "API organization " + s.Organization }},
+		HostHomes: func() []string { return nativeUsageHomes(".codex", "CODEX_HOME", false) },
 		HistoryFile: func(path string) bool {
 			return strings.HasSuffix(path, ".jsonl") && strings.HasPrefix(filepath.Base(path), "rollout-")
 		}, ParseHistory: codexUsageHistory, Price: codexUsagePrice}

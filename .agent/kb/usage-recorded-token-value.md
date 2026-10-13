@@ -2,11 +2,12 @@
 name: usage-recorded-token-value
 description: Usage reports native quota and recorded token value independently; historical account ambiguity and missing tariffs stay explicit
 subsystem: usage
-sources: [internal/agent/usage.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/run.go, internal/cli/usage.go, internal/session/usage.go]
-updated: 2026-10-12
+sources: [internal/agent/usage.go, internal/agent/usage_report.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/run.go, internal/cli/usage.go, internal/cli/usage_reports.go, internal/session/usage.go]
+updated: 2026-10-13
 ---
 
-`coop usage [<provider>[@credential]]` is an inspection, not a model run or a billing report.
+`coop usage [<provider>[@credential]]` never starts a model run. Local recorded value is not billing;
+explicitly configured provider reports are a separate API-spend inspection.
 Adapters own exact quota authority, native history decoding and current standard-price mappings.
 Quota and recorded value can fail independently; no percentage implies missing token use.
 
@@ -17,9 +18,14 @@ parent/child aggregates have different identity and token inclusion semantics. G
 is included only when its parent accounting is demonstrably absent; all Grok history remains
 partial. Unknown model, cache TTL or long-context tariff inputs stay unpriced.
 
-Provider quota is account-wide; the dollar estimate is not. The CLI reads only Coop-managed
-credential roots and default session-private ACP roots, not independent native host homes,
-web/mobile usage or other machines. Native runs that write into those same roots can be included.
+Provider quota is account-wide; the dollar estimate is not. The CLI reads Coop-managed credential
+roots, session-private ACP roots and adapter-declared native host homes (default plus supported
+override). Gemini's override is a parent home and gets `.gemini` appended; the others select the
+provider root. Web/mobile usage and other machines remain outside local coverage. Native records
+without a unique historical managed account owner stay `Unassigned local usage`. Shared/shared
+copies retain one source owner; unique managed account ownership wins, retaining better event
+versions from copied histories. Conflicting named owners stay unassigned. Deduped-away shared rows
+are unavailable, not a fabricated known zero.
 The compact view leads with quota bars, then the 30-day API estimate as a dim, aligned Sigma total
 as `Σ≈$N/30d` when one is priced; unavailable/unpriced results show no account total in the summary.
 Provider Subtotal and bold grand Total sum unrounded deduplicated rows, including unassigned
@@ -64,6 +70,11 @@ discards ordinary quota. Only positive remaining grants contribute reported `end
 This is inspection only: no organization reset route, grant IDs, event properties or redemption.
 
 ## Changelog
+- 2026-10-13 — added adapter-declared host history roots and generalized shared deduplication.
+  Optional host-only usage-reports.json sources read organization/team billing, or explicitly
+  selected Google project/SKUs, for 30 completed UTC days. Strict source schema, fixed endpoints,
+  bounded responses/pages, USD units and failure paths are fixture-tested. Scope/exclusions and
+  fetch time remain visible; reports never join rolling local estimates or personal accounts.
 - 2026-10-12 — verified Claude reset query, grants schema and remaining-count sum in the exact
   locked native client and the live selected-account OAuth response. Added optional failure-safe
   mapping with missing/null/invalid/overflow/expiry/authority regressions.

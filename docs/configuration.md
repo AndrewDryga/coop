@@ -106,6 +106,10 @@ unknown settings are errors, and an environment override never hides a broken fi
 `COOP_CONF`, `NO_COLOR`, `COOP_ACP_WARM` and `COOP_SPINNER` are process-environment controls, so
 you can't set them inside `coop.conf`.
 
+Optional [provider usage reports](usage-reports.md) use a separate host-only
+`~/.config/coop/usage-reports.json`. Their API spend is never added to local usage estimates.
+Reporting keys belong in host environment variables, not `coop.conf`, project files or `agents/env`.
+
 ## Project settings: .agent/project.yaml
 
 `.agent/project.yaml` is the committed per-project config.

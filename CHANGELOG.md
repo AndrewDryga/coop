@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Usage includes native CLI history outside Coop.** Supported Claude, Codex, Gemini and Grok
+  histories on this computer now contribute to recorded estimates, with copied requests counted
+  once and unmatched accounts kept unassigned. Optional host-only provider reports show API
+  organization/team spend, or selected Google billing SKUs, separately from local estimates.
+  Reporting dates, scope, partial coverage and failures remain visible; these are not personal
+  subscription bills.
+
 - **Usage makes capacity and estimates easier to read.** Claude and Codex show reset counts and
   reported expiry without redeeming them. Credit balances use readable digit grouping, reset
   times are quieter and dot-free, and account estimates show their `/30d` period. Provider

@@ -228,6 +228,8 @@ func (grokAgent) NativeHistory(source string, ownsCWD func(string) bool) (Native
 
 func (grokAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: grokUsageQuota, HistoryDirs: []string{"sessions"},
+		Reports:       usageReportSpec{format: reportTeamUSD, label: "xAI API", endpoint: "https://management-api.x.ai/v1/billing/teams/", scope: func(s UsageReportSource) string { return "API team " + s.Team }},
+		HostHomes:     func() []string { return nativeUsageHomes(".grok", "GROK_HOME", false) },
 		HistoryFile:   func(path string) bool { return filepath.Base(path) == "usage.json" },
 		HistoryFilter: grokUsageHistoryFilter, ParseHistory: grokUsageHistory, Price: grokUsagePrice}
 }
