@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
-
 ## 11.2.0
 
 - **Invalid native account access stays stopped.** Another request cannot slip through
@@ -54,6 +50,9 @@
 - **Two project reviews starting together no longer fail on their shared lock.** Creating the
   review lock could fail with "no such file or directory" when another review created it at the
   same moment. Coop now tries that open again.
+
+- **Known issue in filtered Claude sessions.** An intermittent proxy disconnect remains
+  under investigation. The networking fixes above do not claim to repair that earlier failure.
 
 ## 11.1.0
 
