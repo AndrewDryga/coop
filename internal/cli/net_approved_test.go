@@ -467,12 +467,6 @@ func TestApprovedNetWatchStream(t *testing.T) {
 
 // ---------------------------------------------------------------- export ----
 
-func TestApprovedNetExportRefusals(t *testing.T) {
-	err := &ui.UsageError{Headline: "Network run e644f07a has no final record yet",
-		Rows: [][2]string{{"Current report:", "coop net inspect e644f07a"}}}
-	assertApprovedOutput(t, "24a-net-export-unfinished", err.Render(ui.Palette{}))
-}
-
 // ---------------------------------------------------------------- forget ----
 
 // netForgetFixture is a review of one saved approval, with no store behind it:
@@ -506,13 +500,6 @@ func TestApprovedNetForget(t *testing.T) {
 	}
 	assertApprovedOutput(t, "25b-net-forget-decline", b.String())
 
-	// The two outcomes are fixed copy: no error marker for a declined answer.
-	for _, want := range []string{"Network approvals reset", "Cancelled. Network approvals were kept.",
-		"No network approval is saved for this project."} {
-		if want == "" {
-			t.Error("empty outcome copy")
-		}
-	}
 }
 
 func TestApprovedNetForgetRefusals(t *testing.T) {
@@ -543,5 +530,4 @@ func TestApprovedNetRecover(t *testing.T) {
 			assertApprovedOutput(t, fixture, b.String())
 		})
 	}
-	assertApprovedOutput(t, "26a-net-recover-nothing", "No interrupted network runs need cleanup.\n")
 }

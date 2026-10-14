@@ -22,6 +22,7 @@ type fakeChild struct {
 	inR, outR *io.PipeReader
 	inW, outW *io.PipeWriter
 	provider  string
+	mcp       string
 }
 
 type blockingWriteCloser struct {
@@ -58,7 +59,14 @@ func newFakeChild() *fakeChild {
 }
 
 func (f *fakeChild) child() *Child {
-	return &Child{In: f.inW, Out: f.outR, Provider: f.provider, Stop: func() { f.outW.Close(); f.inR.Close() }}
+	child := &Child{In: f.inW, Out: f.outR, Provider: f.provider, Stop: func() { f.outW.Close(); f.inR.Close() }}
+	if f.mcp != "" {
+		marker := f.mcp
+		child.MCPServers = func() ([]map[string]any, error) {
+			return []map[string]any{{"name": "shared", "command": "node", "args": []any{marker}}}, nil
+		}
+	}
+	return child
 }
 
 // proxyHarness wires a full Run around in-memory pipes — the prologue every restart-flavored
@@ -68,11 +76,23 @@ func (f *fakeChild) child() *Child {
 // restart consumes the next.
 type proxyHarness struct {
 	clientIn  *io.PipeWriter
-	clientOut *bufio.Reader
+	clientOut *harnessReader
 	children  []*fakeChild
-	childIn   []*bufio.Reader
+	childIn   []*harnessReader
 	done      chan error
+	runDone   chan struct{}
+	runErr    error
+	cancel    context.CancelFunc
+	pipes     []io.Closer
+	readers   sync.WaitGroup
+	waiting   chan struct{}
+	cleanup   sync.Once
 	t         *testing.T
+}
+
+type harnessReader struct {
+	*bufio.Reader
+	owner *proxyHarness
 }
 
 func newProxyHarness(t *testing.T, n int, hooks *Hooks, providers ...string) *proxyHarness {
@@ -83,23 +103,132 @@ func newProxyHarness(t *testing.T, n int, hooks *Hooks, providers ...string) *pr
 // newProxyHarnessWith is newProxyHarness with RunOpts (a binding store, a resume snapshot).
 func newProxyHarnessWith(t *testing.T, n int, hooks *Hooks, opts RunOpts, providers ...string) *proxyHarness {
 	t.Helper()
+	children := make([]*fakeChild, n)
+	for i := range children {
+		children[i] = newFakeChild()
+		children[i].provider = "codex"
+		if i < len(providers) {
+			children[i].provider = providers[i]
+		}
+	}
+	return newProxyHarnessChildren(t, children, hooks, opts)
+}
+
+func newProxyHarnessChildren(t *testing.T, children []*fakeChild, hooks *Hooks, opts RunOpts) *proxyHarness {
+	t.Helper()
 	clientInR, clientInW := io.Pipe()
 	clientOutR, clientOutW := io.Pipe()
-	h := &proxyHarness{clientIn: clientInW, clientOut: bufio.NewReader(clientOutR), done: make(chan error, 1), t: t}
-	queue := make(chan *fakeChild, n)
-	for i := 0; i < n; i++ {
-		c := newFakeChild()
-		c.provider = "codex"
-		if i < len(providers) {
-			c.provider = providers[i]
-		}
+	ctx, cancel := context.WithCancel(context.Background())
+	h := &proxyHarness{
+		clientIn: clientInW, done: make(chan error, 1), runDone: make(chan struct{}),
+		waiting: make(chan struct{}, 1),
+		cancel:  cancel, pipes: []io.Closer{clientInR, clientInW, clientOutR, clientOutW}, t: t,
+	}
+	h.clientOut = &harnessReader{bufio.NewReader(clientOutR), h}
+	t.Cleanup(h.close)
+	queue := make(chan *fakeChild, len(children))
+	for _, c := range children {
 		h.children = append(h.children, c)
-		h.childIn = append(h.childIn, bufio.NewReader(c.inR))
+		h.childIn = append(h.childIn, &harnessReader{bufio.NewReader(c.inR), h})
+		h.pipes = append(h.pipes, c.inR, c.inW, c.outR, c.outW)
 		queue <- c
 	}
-	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
-	go func() { h.done <- RunWith(context.Background(), clientInR, clientOutW, factory, hooks, opts) }()
+	factory := func(attempt context.Context) (*Child, error) {
+		select {
+		case child := <-queue:
+			return child.child(), nil
+		default:
+		}
+		select {
+		case h.waiting <- struct{}{}:
+		default:
+		}
+		select {
+		case child := <-queue:
+			return child.child(), nil
+		case <-attempt.Done():
+			return nil, attempt.Err()
+		}
+	}
+	go func() {
+		h.runErr = RunWith(ctx, clientInR, clientOutW, factory, hooks, opts)
+		h.done <- h.runErr
+		close(h.runDone)
+	}()
 	return h
+}
+
+func TestProxyHarnessCleanupOwnsAbandonedReadersAndFactoryWaits(t *testing.T) {
+	for _, phase := range []string{"no child", "blocked reader", "replacement wait", "consumed result"} {
+		t.Run(phase, func(t *testing.T) {
+			var h *proxyHarness
+			t.Run("abandoned without shutdown", func(t *testing.T) {
+				n := 1
+				if phase == "no child" {
+					n = 0
+				}
+				h = newProxyHarness(t, n, nil)
+				if phase == "replacement wait" {
+					h.initialize(0)
+					_ = h.children[0].outW.Close()
+				}
+				if phase == "no child" || phase == "replacement wait" {
+					select {
+					case <-h.waiting:
+					case <-time.After(3 * time.Second):
+						t.Fatal("fixture did not enter the empty factory queue")
+					}
+				}
+				if phase == "blocked reader" {
+					h.readers.Add(1)
+					go func() {
+						defer h.readers.Done()
+						_, _ = h.clientOut.ReadBytes('\n')
+					}()
+				}
+				if phase == "consumed result" {
+					_ = h.clientIn.Close()
+					select {
+					case <-h.done:
+					case <-time.After(3 * time.Second):
+						t.Fatal("fixture did not return on editor close")
+					}
+				}
+				// Returning without shutdown exercises the registered cleanup.
+			})
+			select {
+			case <-h.runDone:
+			default:
+				t.Fatal("fixture cleanup left Run alive")
+			}
+			h.close() // cleanup is idempotent, including an already-consumed result.
+		})
+	}
+}
+
+// Close every owned endpoint before joining: a failed assertion may leave either side blocked.
+func (h *proxyHarness) close() {
+	h.cleanup.Do(func() {
+		h.cancel()
+		for _, pipe := range h.pipes {
+			_ = pipe.Close()
+		}
+		for _, child := range h.children {
+			child.child().Stop()
+		}
+		select {
+		case <-h.runDone:
+		case <-time.After(3 * time.Second):
+			h.t.Error("proxy fixture Run did not stop after cleanup")
+		}
+		done := make(chan struct{})
+		go func() { h.readers.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			h.t.Error("proxy fixture readers did not stop after cleanup")
+		}
+	})
 }
 
 // initialize drives the plain initialize round-trip through child i (id 1, empty params and
@@ -128,22 +257,33 @@ func (h *proxyHarness) shutdown() error {
 	h.t.Helper()
 	h.clientIn.Close()
 	select {
-	case err := <-h.done:
-		return err
+	case <-h.runDone:
+		return h.runErr
 	case <-time.After(3 * time.Second):
 		h.t.Fatal("Run did not return after client close")
 		return nil
 	}
 }
 
-func readLine(t *testing.T, br *bufio.Reader) []byte {
+func readLine(t *testing.T, br interface{ ReadBytes(byte) ([]byte, error) }) []byte {
 	t.Helper()
 	type res struct {
 		line []byte
 		err  error
 	}
 	ch := make(chan res, 1)
-	go func() { l, e := br.ReadBytes('\n'); ch <- res{l, e} }()
+	var owner *proxyHarness
+	if reader, ok := br.(*harnessReader); ok {
+		owner = reader.owner
+		owner.readers.Add(1)
+	}
+	go func() {
+		if owner != nil {
+			defer owner.readers.Done()
+		}
+		l, e := br.ReadBytes('\n')
+		ch <- res{l, e}
+	}()
 	select {
 	case r := <-ch:
 		if len(r.line) == 0 && r.err != nil {
@@ -256,7 +396,7 @@ func TestProxyTargetSettingFailureBlocksPrompt(t *testing.T) {
 func TestProxyTargetSettingTimeoutBlocksPrompt(t *testing.T) {
 	original := forceReplyTimeout
 	forceReplyTimeout = 50 * time.Millisecond
-	defer func() { forceReplyTimeout = original }()
+	t.Cleanup(func() { forceReplyTimeout = original })
 	id := InjectPrefix + "timeout"
 	forwarded := 0
 	h := newProxyHarness(t, 1, &Hooks{
@@ -1626,7 +1766,7 @@ func TestProxyBestEffortDeletesUnavailableSameProviderSession(t *testing.T) {
 func TestProxyReplayTimeoutFailsPending(t *testing.T) {
 	orig1, orig2 := replayStartupGrace, replayIdleTimeout
 	replayStartupGrace, replayIdleTimeout = 150*time.Millisecond, 150*time.Millisecond
-	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
+	t.Cleanup(func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 })
 
 	h := newProxyHarness(t, 2, nil)
 	c1 := h.children[0]
@@ -1642,7 +1782,9 @@ func TestProxyReplayTimeoutFailsPending(t *testing.T) {
 	// child2 receives the replayed initialize but NEVER answers (a hang). Drain its input so the
 	// replay writer isn't blocked, then let the timeout fire.
 	childIn2 := h.childIn[1]
+	h.readers.Add(1)
 	go func() {
+		defer h.readers.Done()
 		for {
 			if _, err := childIn2.ReadBytes('\n'); err != nil {
 				return
@@ -1871,7 +2013,7 @@ func TestWithSessionID(t *testing.T) {
 func TestProxyRecreatesTurnlessSession(t *testing.T) {
 	orig1, orig2 := replayStartupGrace, replayIdleTimeout
 	replayStartupGrace, replayIdleTimeout = 2*time.Second, 2*time.Second
-	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
+	t.Cleanup(func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 })
 
 	// A coop-driven switch: an editor line carrying "__switch__" is handled here and restarts the box.
 	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
@@ -1962,7 +2104,7 @@ func TestProxyRecreatesTurnlessSession(t *testing.T) {
 func TestProxyHoldsPromptWhileIntentionalRestartReplays(t *testing.T) {
 	orig1, orig2 := replayStartupGrace, replayIdleTimeout
 	replayStartupGrace, replayIdleTimeout = 2*time.Second, 2*time.Second
-	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
+	t.Cleanup(func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 })
 
 	var recreated atomic.Bool
 	var promptSawRecreated atomic.Bool
@@ -2436,7 +2578,7 @@ func TestProxyLocalSessionRejectionRunsControllerResponseHook(t *testing.T) {
 func TestProxyDisconnectDuringReplayReturnsCleanly(t *testing.T) {
 	orig1, orig2 := replayStartupGrace, replayIdleTimeout
 	replayStartupGrace, replayIdleTimeout = 3*time.Second, 3*time.Second
-	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
+	t.Cleanup(func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 })
 
 	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
 		if bytes.Contains(line, []byte("__switch__")) {
@@ -2471,7 +2613,7 @@ func TestProxyDisconnectDuringReplayReturnsCleanly(t *testing.T) {
 func TestProxyNewerSwitchSupersedesCandidateReplay(t *testing.T) {
 	orig1, orig2 := replayStartupGrace, replayIdleTimeout
 	replayStartupGrace, replayIdleTimeout = 2*time.Second, 2*time.Second
-	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
+	t.Cleanup(func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 })
 
 	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
 		if bytes.Contains(line, []byte("__switch__")) {
@@ -2889,7 +3031,7 @@ func TestProxyDropsNotificationRetiredWhileToEditorRuns(t *testing.T) {
 
 // drainReader consumes a reader until EOF so a proxy write to the client side can't deadlock a test
 // that isn't asserting on client output.
-func drainReader(r *bufio.Reader) {
+func drainReader(r interface{ ReadBytes(byte) ([]byte, error) }) {
 	for {
 		if _, err := r.ReadBytes('\n'); err != nil {
 			return

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -166,6 +167,21 @@ func TestTracePrunesOldFiles(t *testing.T) {
 	}
 	// Five stale logs from dead pids (huge, non-existent), oldest→newest by mtime, each with a .1.
 	base := time.Now().Add(-time.Hour)
+	sleeper := exec.Command("sleep", "60")
+	if err := sleeper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sleeper.Process.Kill(); _ = sleeper.Wait() })
+	live := filepath.Join(cdir, fmt.Sprintf("acp-trace-%d.log", sleeper.Process.Pid))
+	liveBytes := map[string]string{live: "foreign live trace\n", live + ".1": "foreign live backup\n"}
+	for path, body := range liveBytes {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, base.Add(-time.Hour), base.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	stale := []int{2000000001, 2000000002, 2000000003, 2000000004, 2000000005}
 	for i, pid := range stale {
 		p := filepath.Join(cdir, fmt.Sprintf("acp-trace-%d.log", pid))
@@ -188,6 +204,16 @@ func TestTracePrunesOldFiles(t *testing.T) {
 	resetTrace(t)
 
 	Trace("hi") // opens our log and prunes
+	for path, want := range liveBytes {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != want {
+			t.Fatalf("live foreign trace changed: %s = %q, %v", path, got, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("live foreign trace not private: %s, %v", path, err)
+		}
+	}
 	if _, err := os.Stat(orphan); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("orphan trace backup survived prune: %v", err)
 	}

@@ -104,7 +104,7 @@ Linux Docker. Make the entire synthetic source tree traversable/readable only af
 (`readableLockedClientFixture`), while keeping the enclosing test directory private, the bind
 read-only and the client unprivileged. A Mac pass at umask 022 does not prove Linux/umask 077.
 
-- start — D `TestProviderScriptedProcessSmoke`, `TestProviderScriptedDirectMatrix`, ACP switch matrix;
+- start — D `TestProviderScriptedDirectMatrix` (including headless runtime/cwd/exit/cleanup), ACP switch matrix;
   L `provider-live-e2e-all`, `acp-e2e`.
 - resume — D `TestResume`, fork session process, ACP target replay, consult continuity;
   L `provider-resume-live-e2e-all`, `provider-network-live-e2e-all`.
@@ -243,6 +243,8 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-10-14 — stronger direct-matrix runtime/cwd/exit/cleanup keeper replaces redundant smoke
+  coverage; qualification rows still distinguish deterministic, offline-client and live proof.
 - 2026-10-14 — removed saved-record release admission and version-specific exceptions. Added
   free informational status and explicit strict verification; synthetic format/identity tests
   and historical evidence remain. Swept recorder, Make, release wiring and client-bump guidance.

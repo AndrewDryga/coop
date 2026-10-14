@@ -1117,17 +1117,42 @@ func assertConsultEnvironment(t *testing.T, environment []processEnv, lead, peer
 	}
 }
 
+func assertConsultAttemptArgv(t *testing.T, trace []*processTrace, steps []consultStepSpec) {
+	t.Helper()
+	for _, event := range processEvents(trace, "peer", "start") {
+		if event.Consult == nil || event.Consult.Step < 0 || event.Consult.Step >= len(steps) {
+			t.Fatalf("consult start lacks a planned attempt: %+v", event)
+		}
+		want := steps[event.Consult.Step]
+		argv := consultTraceArgv(want.Provider, want.Delivery, want.Model, want.Effort, want.Prompt, event.Consult.SessionHash)
+		if !reflect.DeepEqual(event.Argv, argv) {
+			t.Fatalf("%s %s argv = %q, want %q", want.Provider, want.Delivery, event.Argv, argv)
+		}
+	}
+}
+
 func consultFreshTraceArgv(provider, model, effort, prompt, sessionHash string) []string {
+	return consultTraceArgv(provider, "fresh", model, effort, prompt, sessionHash)
+}
+
+func consultTraceArgv(provider, delivery, model, effort, prompt, sessionHash string) []string {
 	value := processTraceValue
+	sessionFlag := "--session-id"
+	if delivery == "resume" {
+		sessionFlag = "--resume"
+		if provider == "codex" {
+			return []string{"codex", value("exec"), value("resume"), "--enable", value("use_legacy_landlock"), sessionHash, "-c", value("sandbox_mode=read-only"), "--model", value(model), "-c", value("model_reasoning_effort=" + effort), "--json", value(prompt)}
+		}
+	}
 	switch provider {
 	case "claude":
-		return []string{"claude", "-p", "--permission-mode", value("plan"), "--session-id", sessionHash, "--output-format", value("json"), "--model", value(model), "--effort", value(effort), "--", value(prompt)}
+		return []string{"claude", "-p", "--permission-mode", value("plan"), sessionFlag, sessionHash, "--output-format", value("json"), "--model", value(model), "--effort", value(effort), "--", value(prompt)}
 	case "codex":
 		return []string{"codex", value("exec"), "--enable", value("use_legacy_landlock"), "-s", value("read-only"), "--model", value(model), "-c", value("model_reasoning_effort=" + effort), "--json", value(prompt)}
 	case "gemini":
-		return []string{"gemini", "--approval-mode", value("plan"), "--session-id", sessionHash, "-o", value("stream-json"), "--model", value(model), "-p", value(prompt)}
+		return []string{"gemini", "--approval-mode", value("plan"), sessionFlag, sessionHash, "-o", value("stream-json"), "--model", value(model), "-p", value(prompt)}
 	case "grok":
-		return []string{"grok", "--tools", value("read_file,grep,list_dir"), "--session-id", sessionHash, "--output-format", value("streaming-json"), "--model", value(model), "--reasoning-effort", value(effort), "-p", value(prompt)}
+		return []string{"grok", "--tools", value("read_file,grep,list_dir"), sessionFlag, sessionHash, "--output-format", value("streaming-json"), "--model", value(model), "--reasoning-effort", value(effort), "-p", value(prompt)}
 	default:
 		panic("missing consult argv contract for " + provider)
 	}

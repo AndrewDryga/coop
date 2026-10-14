@@ -2,183 +2,78 @@ package acpctl
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"reflect"
 	"slices"
-	"strings"
 	"testing"
-	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// signInCred writes a minimal adapter-valid credential. Duplicated from
-// internal/cli/rotation_test.go (a small test fixture, genuinely shared, too small to be worth a
-// testutil leaf — same treatment as the sessions extraction's gitOut/pathExists).
-func signInCred(t *testing.T, cfg *config.Config, agent, name string) {
-	t.Helper()
-	dir := cfg.AgentProfileDir(agent, name)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	ag, ok := agents.Get(agent)
-	if !ok {
-		t.Fatalf("unknown agent %q", agent)
-	}
-	file, _ := ag.AuthMarker()
-	body := map[string]string{
-		"claude": `{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`,
-		"codex":  `{"auth_mode":"chatgpt","tokens":{"refresh_token":"refresh"}}`,
-		"gemini": `{"encrypted":"opaque"}`,
-		"grok":   `{"issuer::id":{"key":"access","refresh_token":"refresh","expires_at":"2000-01-01T00:00:00Z","auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2000-01-01T00:00:00Z"}}`,
-	}[agent]
-	if agent == "gemini" {
-		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func signInDeadCred(t *testing.T, cfg *config.Config, agent, name string) {
-	t.Helper()
-	dir := cfg.AgentProfileDir(agent, name)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	ag, _ := agents.Get(agent)
-	marker, _ := ag.AuthMarker()
-	if err := os.WriteFile(filepath.Join(dir, marker), []byte(`{}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// testHost returns a Host with real (duplicated, not injected) rotation policy for this package's
-// own tests. acpctl must not import internal/cli (see the internal-import-dag rule), so the functions
-// below mirror internal/cli/rotation.go's accountsFor/expandLadder. Production wires the real CLI
-// functions through this same Host shape; keep these test copies in sync if that policy changes.
-// WriteModelsCache defaults to a no-op: the on-disk cache format is cli-owned
-// (internal/cli/modelscache.go) and unreachable here, so a test that cares about a cache write uses
-// testHostCapturingModels instead (see control_test.go's two opportunistic-cache tests).
+// Host policy belongs to cli. These fixtures state its replies, not a second implementation.
 func testHost() Host {
 	return Host{
-		ExpandLadder:     testExpandLadder,
-		AccountsFor:      testAccountsFor,
+		AccountsFor: func(*config.Config, string) []string { return nil },
+		ExpandLadder: func(*config.Config, string, []agents.Target) ([]agents.Target, error) {
+			return nil, fmt.Errorf("no ladder fixture configured")
+		},
 		WriteModelsCache: func(*config.Config, string, []agents.Model) error { return nil },
 	}
 }
 
-// testHostCapturingModels is testHost with WriteModelsCache replaced by a fake that records what
-// was asked to be cached, per agent — see control_test.go's TestACPControlOpportunisticModelCache /
-// TestACPControlOpportunisticGeminiCache (RISK 2 in spec.md).
-func testHostCapturingModels(captured map[string][]agents.Model) Host {
-	h := testHost()
-	h.WriteModelsCache = func(_ *config.Config, agent string, models []agents.Model) error {
-		captured[agent] = models
-		return nil
+func withTestAccounts(h Host, accounts map[string][]string) Host {
+	replies := make(map[string][]string, len(accounts))
+	for provider, names := range accounts {
+		replies[provider] = slices.Clone(names)
+	}
+	previous := h.AccountsFor
+	h.AccountsFor = func(cfg *config.Config, provider string) []string {
+		if names, ok := replies[provider]; ok {
+			return slices.Clone(names)
+		}
+		return previous(cfg, provider)
 	}
 	return h
 }
 
-// testAccountsFor mirrors internal/cli/rotation.go's accountsFor.
-func testAccountsFor(cfg *config.Config, agent string) []string {
-	def := cfg.DefaultProfileOf(agent)
-	now := time.Now()
-	var out []string
-	if box.ProfileCredentialReady(cfg, agent, def, now) {
-		out = append(out, def)
-	}
-	for _, c := range box.EffectiveProfiles(cfg, agent) {
-		if c != def && box.ProfileCredentialReady(cfg, agent, c, now) {
-			out = append(out, c)
-		}
-	}
-	return out
+type testLadderReply struct {
+	provider string
+	rungs    []agents.Target
+	targets  []agents.Target
+	err      error
 }
 
-// testExpandLadder mirrors internal/cli/rotation.go's expandLadder.
-func testExpandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target) ([]agents.Target, error) {
-	if len(rungs) == 0 {
-		rungs = []agents.Target{{}} // defaultAgent, default model, all accounts
+func withTestLadderReplies(t *testing.T, h Host, replies ...testLadderReply) Host {
+	t.Helper()
+	clone := func(targets []agents.Target) []agents.Target {
+		out := slices.Clone(targets)
+		for i := range out {
+			out[i].Accounts = slices.Clone(out[i].Accounts)
+		}
+		return out
 	}
-	var out []agents.Target
-	seen := map[string]bool{}
-	add := func(t agents.Target) {
-		if !seen[t.String()] {
-			seen[t.String()] = true
-			out = append(out, t)
-		}
+	expected := slices.Clone(replies)
+	for i := range expected {
+		expected[i].rungs = clone(expected[i].rungs)
+		expected[i].targets = clone(expected[i].targets)
 	}
-	var missing []string // fan-out providers with no runnable account (reported only if NOTHING resolves)
-	type repair struct {
-		target  string
-		relogin bool
-	}
-	var repairs []repair // selected or fan-out credentials whose exact login fixes an empty ladder
-	recordRepair := func(agent, account string, pinned bool) {
-		if box.ProfileCredentialReady(cfg, agent, account, time.Now()) {
-			return
-		}
-		present := box.ProfileAuthed(cfg, agent, account)
-		if !present && !pinned {
-			return
-		}
-		target := agent + "@" + account
-		if !slices.ContainsFunc(repairs, func(r repair) bool { return r.target == target }) {
-			repairs = append(repairs, repair{target: target, relogin: present})
-		}
-	}
-	for _, e := range rungs {
-		agent := e.Provider
-		if agent == "" {
-			agent = defaultAgent
-		}
-		runnable := testAccountsFor(cfg, agent)
-		accounts := e.Accounts
-		if len(accounts) == 0 {
-			if len(runnable) == 0 {
-				for _, account := range box.EffectiveProfiles(cfg, agent) {
-					recordRepair(agent, account, false)
-				}
-				if !slices.Contains(missing, agent) {
-					missing = append(missing, agent)
-				}
-				continue
-			}
-			accounts = runnable
-		}
-		for _, acct := range accounts {
-			if box.ProfileCredentialReady(cfg, agent, acct, time.Now()) {
-				add(agents.Target{Provider: agent, Model: e.Model, Effort: e.Effort, Accounts: []string{acct}})
-			} else {
-				recordRepair(agent, acct, true)
+	h.ExpandLadder = func(_ *config.Config, provider string, rungs []agents.Target) ([]agents.Target, error) {
+		for _, reply := range expected {
+			if provider == reply.provider && reflect.DeepEqual(rungs, reply.rungs) {
+				return clone(reply.targets), reply.err
 			}
 		}
+		t.Errorf("unexpected ladder request: provider %q, rungs %+v", provider, rungs)
+		return nil, fmt.Errorf("unexpected ladder request")
 	}
-	if len(out) == 0 {
-		if len(repairs) == 1 {
-			state := "is not signed in"
-			if repairs[0].relogin {
-				state = "requires re-login"
-			}
-			return nil, fmt.Errorf("credential %s %s — run: %s", agents.DisplayTarget(repairs[0].target), state, agents.LoginCommand(repairs[0].target))
-		}
-		if len(repairs) > 1 {
-			targets, commands := make([]string, len(repairs)), make([]string, len(repairs))
-			for i, repair := range repairs {
-				targets[i] = agents.DisplayTarget(repair.target)
-				commands[i] = agents.LoginCommand(repair.target)
-			}
-			return nil, fmt.Errorf("credentials need login (%s) — run: %s", strings.Join(targets, ", "), strings.Join(commands, "; "))
-		}
-		if len(missing) > 0 {
-			return nil, fmt.Errorf("no signed-in account for %s — run: coop login %s[@account]", strings.Join(missing, ", "), missing[0])
-		}
-		return nil, fmt.Errorf("%s: none of the configured accounts are signed in. Run 'coop login', or edit the preset", defaultAgent)
+	return h
+}
+
+func testHostCapturingModels(captured map[string][]agents.Model) Host {
+	h := testHost()
+	h.WriteModelsCache = func(_ *config.Config, provider string, models []agents.Model) error {
+		captured[provider] = slices.Clone(models)
+		return nil
 	}
-	return out, nil
+	return h
 }

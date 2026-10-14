@@ -85,51 +85,6 @@ func TestConsultCmds(t *testing.T) {
 	}
 }
 
-// TestConsultWrapperMatchesAdapters guards against the wrapper's hardcoded read-only
-// flags drifting from each adapter's ConsultCmd — for the fresh form (every flag) and the
-// --continue/resume form (its read-only mode, which has no adapter source and so could
-// loosen unnoticed).
-func TestConsultWrapperMatchesAdapters(t *testing.T) {
-	for _, peer := range allAgents {
-		ag, _ := agents.Get(peer)
-		cmd := ag.ConsultCmd("Q") // e.g. [claude -p --permission-mode plan Q]
-		for _, tok := range cmd[:len(cmd)-1] {
-			if !strings.Contains(ConsultWrapper(), tok) {
-				t.Errorf("coop-consult wrapper missing %s consult flag %q (adapter ConsultCmd drifted?)", peer, tok)
-			}
-		}
-	}
-
-	// The --continue branch resumes with hand-written invocations (no adapter returns the resume
-	// form), so guard that each keeps its read-only sandbox flag — a drift here would silently
-	// un-sandbox a resumed peer.
-	for _, want := range []string{
-		"--permission-mode plan --resume",                                     // claude
-		"--approval-mode plan --resume",                                       // gemini
-		`resume --enable use_legacy_landlock "$id" -c sandbox_mode=read-only`, // codex
-	} {
-		if !strings.Contains(ConsultWrapper(), want) {
-			t.Errorf("coop-consult resume invocation missing %q — a --continue may have lost its read-only flag", want)
-		}
-	}
-}
-
-// TestConsultWrapperCarriesModelOverrides: each peer invocation expands COOP_PEER_MODEL_<PEER>
-// into its --model flag (box.Run exports the var when a model is configured), in the fresh
-// AND resume forms — so a profile-marked / COOP_<AGENT>_MODEL model reaches consults too.
-func TestConsultWrapperCarriesModelOverrides(t *testing.T) {
-	w := ConsultWrapper()
-	// The per-peer model (COOP_PEER_MODEL_<PEER>, exported by box.Run) is resolved once into a
-	// single $model via the generic eval, so a new agent is covered without a new arm.
-	if !strings.Contains(w, `eval "model=\${COOP_PEER_MODEL_${peerkey}:-}"`) {
-		t.Error("wrapper must resolve COOP_PEER_MODEL_<PEER> into $model generically")
-	}
-	// Every arm expands that $model — at least the fresh + resume form for each agent.
-	if n := strings.Count(w, `${model:+--model "$model"}`); n < 2*len(agents.Names()) {
-		t.Errorf("uniform $model expansion appears %d time(s), want >= %d (fresh+resume per agent)", n, 2*len(agents.Names()))
-	}
-}
-
 func TestConsultRoleDoesNotInheritAdHocPeerModel(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,7 +110,10 @@ func TestExecuteRunsEveryTrialBoundedAndSeals(t *testing.T) {
 func TestExecuteLeavesUnadmittedTrialsPending(t *testing.T) {
 	plan, frozen := agentPlan(t, 2, 1, 1, time.Hour)
 	root := t.TempDir()
-	store, _ := CreateRun(root, RunRecord{ID: "run2", Suite: "s", Runner: RunnerAgent})
+	store, err := CreateRun(root, RunRecord{ID: "run2", Suite: "s", Runner: RunnerAgent})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var ran int32
@@ -128,11 +132,20 @@ func TestExecuteLeavesUnadmittedTrialsPending(t *testing.T) {
 		t.Errorf("cancelled run summary = %+v, want 4 pending", sum)
 	}
 	// Every trial is on disk as pending.
-	trials, _ := LoadTrials(root, "run2")
+	trials, err := LoadTrials(root, "run2")
+	if err != nil || len(trials) != 4 {
+		t.Fatalf("durable pending trials=%+v, %v", trials, err)
+	}
+	want := map[string]bool{"a-0-0": true, "a-1-0": true, "b-0-0": true, "b-1-0": true}
 	for _, tr := range trials {
 		if tr.Status != TrialPending {
 			t.Errorf("trial %v not pending", tr)
 		}
+		key := fmt.Sprintf("%s-%d-%d", tr.Case, tr.ConfigIndex, tr.Repetition)
+		if tr.RunID != "run2" || !want[key] {
+			t.Fatalf("duplicate or foreign pending trial=%+v", tr)
+		}
+		delete(want, key)
 	}
 }
 

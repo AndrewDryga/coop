@@ -340,6 +340,15 @@ func TestParseRuntimeReadsOnlyRootOwnedEnvFiles(t *testing.T) {
 		t.Fatalf("parsed env file = env %#v files %#v", got.Run.Env, got.Run.EnvFiles)
 	}
 	outside := filepath.Join(canonicalTemp(t), "env")
+	if err := os.Chmod(envFile, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseRuntime(root, "fixture-image", args); err == nil || !strings.Contains(err.Error(), "env file is not private (0600)") {
+		t.Fatalf("public env file accepted: %v", err)
+	}
+	if err := os.Chmod(envFile, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(outside, []byte("SAFE=no\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

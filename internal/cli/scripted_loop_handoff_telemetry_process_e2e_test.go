@@ -64,7 +64,7 @@ func TestProviderScriptedReviewHandoffTelemetry(t *testing.T) {
 				}
 				trace := readProcessTrace(t, suite.layout.Trace)
 				assertLoopReviewContracts(t, suite, trace, taskID, attempts)
-				assertLoopTraceProcessesGone(t, trace)
+				assertProcessTraceGone(t, trace)
 				records := readLoopStageRecords(t, suite)
 				cost, summary := loop.WorkspaceCost(suite.layout.Repo)
 				wantCost := float64(len(attempts)) * 0.25

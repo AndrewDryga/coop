@@ -312,6 +312,9 @@ func (s *directProcessSuite) run(t *testing.T, args []string, scenario any) (pro
 		MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
 	})
 	trace := readProcessTrace(t, s.layout.Trace)
+	if plan, ok := scenario.(*consultProcessSpec); ok {
+		assertConsultAttemptArgv(t, trace, plan.Consult.Steps)
+	}
 	if t.Failed() {
 		t.Logf("scripted process trace:\n%s", readProcessFile(t, s.layout.Trace))
 	}
@@ -423,6 +426,10 @@ func directExpectedArgv(contract directProviderContract, model, effort string, e
 
 func assertDirectSuccess(t *testing.T, result procharness.Result, provider, marker string) {
 	t.Helper()
+	if result.PID <= 0 {
+		t.Fatalf("successful direct run has no owned PID: %+v", result)
+	}
+	awaitProcessGone(t, result.PID)
 	if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, marker) {
 		t.Fatalf("coop %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s", provider, result.ExitCode, result.Err, result.Stdout, result.Stderr)
 	}
@@ -440,13 +447,33 @@ func assertDirectRunContract(t *testing.T, suite *directProcessSuite, trace []*p
 	if run.Run == nil || run.Run.Provider != provider || !run.Run.Init || !reflect.DeepEqual(run.Run.ProviderArgv, wantArgv) {
 		t.Fatalf("runtime provider contract = %#v, want %s %q", run.Run, provider, wantArgv)
 	}
+	repo := processTracePath(suite.layout.Root, suite.layout.Repo)
+	if run.Run.Image != "fixture-image" || run.Run.Workdir != repo || run.Run.HostWorkdir != repo {
+		t.Fatalf("run identity = image %q workdir %q/%q", run.Run.Image, run.Run.Workdir, run.Run.HostWorkdir)
+	}
+	if run.Run.Network != "none" || len(run.Run.EnvFiles) != 1 || !recordedFixturePath(run.Run.EnvFiles[0]) {
+		t.Fatalf("scoped runtime network/env files = %q/%q", run.Run.Network, run.Run.EnvFiles)
+	}
+	if shape == noOrphanBoxSweep && (run.Run.Interactive || run.Run.TTY || !reflect.DeepEqual(boxLabelsWithoutDynamicAuthorities(t, run.Run.Labels, provider), []string{"coop=box"})) {
+		t.Fatalf("direct headless runtime labels/interactive/tty = %q/%v/%v", run.Run.Labels, run.Run.Interactive, run.Run.TTY)
+	}
 	assertProcessMounts(t, suite.layout, provider, account, run.Run.Mounts)
 	assertDirectEnvironment(t, run.Run.Environment, suite.allCredKeys, provider, directProviderContracts[provider], model, effort)
 	start := oneProcessEvent(t, trace, "provider", "start")
-	if !reflect.DeepEqual(start.Argv, wantArgv) {
+	if start.Cwd != repo || !reflect.DeepEqual(start.Argv, wantArgv) {
 		t.Fatalf("provider argv = %q, want %q", start.Argv, wantArgv)
 	}
 	assertDirectEnvironment(t, start.Environment, suite.allCredKeys, provider, directProviderContracts[provider], model, effort)
+	for _, source := range []string{"provider", "runtime"} {
+		event := oneProcessEvent(t, trace, source, "exit")
+		if event.ExitCode == nil || *event.ExitCode != 0 || event.Signal != "" {
+			t.Fatalf("%s exit = code %v signal %q", source, event.ExitCode, event.Signal)
+		}
+	}
+	assertProcessTraceGone(t, trace)
+	if info, err := os.Stat(suite.layout.Trace); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("trace mode = %v, %v; want 0600", info, err)
+	}
 }
 
 func assertDirectEnvironment(t *testing.T, env []processEnv, credentialKeys []string, provider string, contract directProviderContract, model, effort string) {

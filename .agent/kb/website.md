@@ -2,8 +2,8 @@
 name: website
 description: site/ is static and partly generated; tools/gen_site.py owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
 subsystem: website
-sources: [tools/gen_site.py, tools/services_bench.py, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/overnight.html, site/docs.html, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
-updated: 2026-10-13
+sources: [tools/gen_site.py, tools/services_bench.py, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/overnight.html, site/docs.html, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/site_picker_fixture.cjs, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
+updated: 2026-10-14
 ---
 
 The homepage and docs are static files in `site/`, published by `.github/workflows/pages.yml` on
@@ -48,8 +48,10 @@ slide past its edge. Its sandbox replays the homepage's four layers once on view
 `.night-sandbox.armed:not(.sN)` copying the homepage's `.stage:not(.sN)` gates, and is zoomed to its
 column on narrow phones. Every page's menu lists Sandbox, Orchestrator (the owner named it on
 2026-10-07), Features, Docs, GitHub and Install; phones keep Orchestrator, Docs and Install (tighter at 400 px, the mark alone at 340 px).
-The agent picker rewrites `data-cmd` login, run and loop; a test holds every page's start
-commands to what site.js handles.
+The agent picker rewrites `data-cmd` login, run and loop. Its free test executes the complete
+shipped site.js in Node against command nodes parsed from both landing pages. Literal command,
+clipboard, radio, keyboard and timer/error controls catch behavior changes, not just source tokens.
+Node is required by the tools gate; this small DOM fixture does not claim browser layout proof.
 
 The old public `site/overnight.html` is only a noindex redirect to `orchestrator.html`, with a
 meta refresh and link fallback; JavaScript preserves the query/fragment using `location.replace`.
@@ -180,6 +182,8 @@ with `--disable-javascript`, and `--blink-settings=scriptEnabled=false` makes `-
 nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 
 ## Changelog
+- 2026-10-14 — command-picker tests execute shipped JavaScript and parsed page ownership; missing
+  handlers and loop/run substitution fail, restored source passes. No page or script bytes changed.
 - 2026-10-13 — Orchestrator mobile steps now use the sandbox's measured-height sticky sheets.
   Recorded the content-flow spacer required for the final sheet; checked responsive rendering,
   timeline synchronization, citation exposure and desktop equivalence.

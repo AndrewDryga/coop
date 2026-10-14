@@ -31,19 +31,6 @@ import (
 
 const testForkSessionStoreID = "store_test"
 
-// A mistyped fork subcommand must be a usage error with a suggestion — never silently turned into
-// a new fork (clone + branch + agent). An explicit agent (a real create) bypasses the guard.
-func TestForkTypoSuggestsSubcommand(t *testing.T) {
-	repo := t.TempDir()
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	if code, err := a.cmdFork([]string{"reviw"}); code != 2 || err == nil || !strings.Contains(err.Error(), "review") {
-		t.Errorf("coop fork reviw = (%d, %v), want (2, did-you-mean review)", code, err)
-	}
-	if pathExists(forkspace.Workspace(repo, "reviw")) {
-		t.Error("a typo must not create a fork")
-	}
-}
-
 // Regression: a fork name that escapes the forks home or carries shell syntax must be refused by
 // EVERY name-taking verb before it reaches a workspace, subprocess, or runtime call. `coop fork rm
 // ..` used to filepath.Join-clean to the parent of all projects and delete it. Each guard runs before
@@ -102,29 +89,34 @@ func TestForkVerbNearMiss(t *testing.T) {
 
 // End-to-end: `coop fork lss` (no agent) is refused before any clone — exit 2 with the suggestion.
 func TestCmdForkRefusesVerbTypo(t *testing.T) {
-	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
-	code, err := a.cmdFork([]string{"lss"})
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "did you mean 'coop fork ls'") {
-		t.Fatalf("cmdFork([lss]) = (%d, %v), want (2, a 'did you mean ls' refusal)", code, err)
+	for _, tc := range []struct{ word, suggestion string }{{"lss", "ls"}, {"reviw", "review"}, {"list", "ls"}} {
+		t.Run(tc.word, func(t *testing.T) {
+			cfg := &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
+			a := &app{cfg: cfg}
+			code, err := a.cmdFork([]string{tc.word})
+			if code != 2 || err == nil || !strings.Contains(err.Error(), "did you mean 'coop fork "+tc.suggestion+"'") {
+				t.Fatalf("cmdFork(%q) = (%d, %v), want a suggestion for %s", tc.word, code, err, tc.suggestion)
+			}
+			entries, err := os.ReadDir(cfg.BoxHome)
+			if err != nil || len(entries) != 0 || pathExists(forkspace.Workspace(cfg.RepoOverride, tc.word)) {
+				t.Fatalf("refused typo created fork state: %v/%v", entries, err)
+			}
+		})
 	}
 }
 
-// v3 dropped the `list` alias: `coop fork list` (no agent) is refused as a near-miss of `ls`, not
-// treated as a lister. (A fork literally named "list" still works with an explicit agent.)
-func TestCmdForkListRetired(t *testing.T) {
-	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
-	code, err := a.cmdFork([]string{"list"})
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "coop fork ls") {
-		t.Fatalf("cmdFork([list]) = (%d, %v), want (2, a near-miss pointing at `coop fork ls`)", code, err)
+func TestForkCreateRejectsUnknownAccountBeforeClone(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), BoxHome: t.TempDir()}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+	if code, err := a.forkCreate([]string{"scratchfork", "claude@ghost"}); code != 2 || err == nil || err.Error() != "claude has no account \"ghost\" — sign in first: coop login claude@ghost" {
+		t.Fatalf("forkCreate with a missing account = (%d, %v)", code, err)
 	}
-}
-
-// A typo'd --profile must fail (exit 2) before any image/clone work, so it never leaves a stray
-// fork behind. The check runs before resolveLaunchImage, so it returns without a runtime.
-func TestForkCreateRejectsUnknownProfileBeforeClone(t *testing.T) {
-	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}} // no profiles signed in
-	if code, err := a.forkCreate([]string{"scratchfork", "claude", "--profile", "ghost"}); code != 2 || err == nil {
-		t.Fatalf("forkCreate with a bad --profile = (%d, %v), want (2, error before any clone)", code, err)
+	if pathExists(recorder) || pathExists(forkspace.Workspace(cfg.RepoOverride, "scratchfork")) {
+		t.Fatal("missing account reached runtime or created a workspace")
+	}
+	if entries, err := os.ReadDir(cfg.BoxHome); err != nil || len(entries) != 0 {
+		t.Fatalf("missing account created fork state: %v/%v", entries, err)
 	}
 }
 
@@ -149,28 +141,20 @@ func TestForkCreateAcceptsEnvOnlyDefaultProfileBeforeImage(t *testing.T) {
 	}
 }
 
-func TestParseForkCreateAgentSet(t *testing.T) {
-	if fa, _ := parseForkCreate([]string{"perf"}); fa.agentSet {
-		t.Error("parseForkCreate(perf): agentSet should be false (defaulted)")
-	}
-	if fa, _ := parseForkCreate([]string{"perf", "codex"}); !fa.agentSet || fa.agent != "codex" {
-		t.Errorf("parseForkCreate(perf codex): agentSet=%v agent=%q, want true/codex", fa.agentSet, fa.agent)
-	}
-}
-
 func TestParseForkCreate(t *testing.T) {
 	tests := []struct {
-		args      []string
-		wantAgent string
-		wantFresh bool
-		wantErr   bool
+		args         []string
+		wantAgent    string
+		wantFresh    bool
+		wantAgentSet bool
+		wantErr      bool
 	}{
-		{[]string{"perf"}, "", false, false}, // no positional who → "" (forkCreate errors later if no preset)
-		{[]string{"perf", "codex"}, "codex", false, false},
-		{[]string{"perf", "gemini", "--fresh"}, "gemini", true, false},
-		{[]string{}, "", false, true},
-		{[]string{"perf", "bogus"}, "", false, false}, // "bogus" is a preset NAME now (agent stays ""; validated later), not an error
-		{[]string{"ls"}, "", false, true},             // reserved name
+		{[]string{"perf"}, "", false, false, false},
+		{[]string{"perf", "codex"}, "codex", false, true, false},
+		{[]string{"perf", "gemini", "--fresh"}, "gemini", true, true, false},
+		{[]string{}, "", false, false, true},
+		{[]string{"perf", "bogus"}, "", false, false, false}, // preset, not an explicit provider
+		{[]string{"ls"}, "", false, false, true},
 	}
 	for _, tc := range tests {
 		fa, err := parseForkCreate(tc.args)
@@ -181,9 +165,9 @@ func TestParseForkCreate(t *testing.T) {
 		if tc.wantErr {
 			continue
 		}
-		if fa.agent != tc.wantAgent || fa.fresh != tc.wantFresh {
-			t.Errorf("parseForkCreate(%v) = {agent:%q fresh:%v}, want {agent:%q fresh:%v}",
-				tc.args, fa.agent, fa.fresh, tc.wantAgent, tc.wantFresh)
+		if fa.agent != tc.wantAgent || fa.fresh != tc.wantFresh || fa.agentSet != tc.wantAgentSet {
+			t.Errorf("parseForkCreate(%v) = {agent:%q fresh:%v agentSet:%v}, want {agent:%q fresh:%v agentSet:%v}",
+				tc.args, fa.agent, fa.fresh, fa.agentSet, tc.wantAgent, tc.wantFresh, tc.wantAgentSet)
 		}
 	}
 }

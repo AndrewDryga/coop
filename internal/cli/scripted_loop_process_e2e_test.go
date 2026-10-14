@@ -167,7 +167,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				t.Fatalf("background handoff provider exit[%d] = %#v, want %d", i, exits[i], want)
 			}
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("three background handoffs stop without a failure strike", func(t *testing.T) {
@@ -211,7 +211,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
 		assertLoopAttemptContracts(t, suite, trace, taskID, attempts)
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 	t.Run("rejects unbound completion", func(t *testing.T) {
 		for _, outcome := range []string{"unbound", "unbound-log-symlink", "unbound-state-symlink"} {
@@ -339,7 +339,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
 		assertLoopAttemptContracts(t, suite, trace, taskID, []loopProcessAttempt{{Target: target, Stage: "work", Result: "complete-extra-finalized"}})
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 	t.Run("rejects an archived task reopened by work", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
@@ -379,7 +379,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
 		assertLoopAttemptContracts(t, suite, trace, taskID, []loopProcessAttempt{attempt})
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 	t.Run("accepts a host-receipted foreign archived reopen during work", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
@@ -433,7 +433,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		if len(trace) < 2 {
 			t.Fatalf("work did not continue into its between audit: trace = %#v", trace)
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 	t.Run("rejects unowned completion when assigned binding also fails", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
@@ -462,7 +462,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
 		assertLoopAttemptContracts(t, suite, trace, taskID, []loopProcessAttempt{attempt})
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 }
 

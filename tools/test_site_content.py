@@ -1,4 +1,5 @@
 import html
+import json
 import re
 import subprocess
 import sys
@@ -45,6 +46,58 @@ class Page(HTMLParser):
         self.text.append(data)
         if self.copying:
             self.copy_sources[-1] += data
+
+
+class CommandDOM(HTMLParser):
+    """Require the actual flat command ownership consumed by the copy handlers."""
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+    def __init__(self, markup):
+        super().__init__()
+        self.stack = []
+        self.root = self.code = self.mutable = None
+        self.after_mutable = False
+        self.field = dict(prefix="", text="", suffix="", step=None, sources=0, buttons=0, statuses=0)
+        self.feed('<div class="command">' + markup + '</div>')
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.VOID:
+            return
+        attrs = dict(attrs)
+        frame = (tag, attrs)
+        parent = self.stack[-1] if self.stack else None
+        if self.root is None:
+            self.root = frame
+        if tag == "code" and "data-copy-source" in attrs:
+            assert parent is self.root, "copy source must belong to its command"
+            self.code = frame
+            self.field["sources"] += 1
+        if "data-cmd" in attrs:
+            assert tag == "span" and parent is self.code and self.field["step"] is None, "command must have one direct mutable span"
+            self.mutable = frame
+            self.field["step"] = attrs["data-cmd"]
+        if tag == "button" and "data-copy" in attrs:
+            assert parent is self.root, "copy button must belong to its command"
+            self.field["buttons"] += 1
+        if "data-copy-status" in attrs:
+            assert parent is self.root, "copy status must belong to its command"
+            self.field["statuses"] += 1
+        self.stack.append(frame)
+
+    def handle_endtag(self, tag):
+        if tag in self.VOID:
+            return
+        frame = self.stack.pop()
+        assert frame[0] == tag, f"command markup must be balanced: opened {frame[0]}, closed {tag}"
+        if frame is self.mutable:
+            self.mutable = None
+            self.after_mutable = True
+        if frame is self.code:
+            self.code = None
+
+    def handle_data(self, data):
+        if self.code is not None:
+            part = "text" if self.mutable is not None else "suffix" if self.after_mutable else "prefix"
+            self.field[part] += data
 
 
 class SiteContentTest(unittest.TestCase):
@@ -281,13 +334,28 @@ class SiteContentTest(unittest.TestCase):
         self.assertTrue((SITE.parent / tool.group(1)).is_file(), f"{tool.group(1)} does not exist")
 
     def test_every_start_command_follows_the_agent_picker(self):
-        script = (SITE / "assets" / "js" / "site.js").read_text()
-        handled = set(re.findall(r'\["(\w+)", `coop', script))
         for path in (SITE / "index.html", SITE / "orchestrator.html"):
             with self.subTest(page=path.name):
-                used = {attrs["data-cmd"] for _, attrs in Page(path).elements if "data-cmd" in attrs}
-                self.assertTrue(used, "the page has no start commands")
-                self.assertLessEqual(used, handled)
+                page = Page(path)
+                fields = [CommandDOM(markup).field for markup in re.findall(r'<div class="command">(.*?)</div>', path.read_text(), re.S)]
+                self.assertEqual(len(fields), len(page.copy_sources))
+                for field in fields:
+                    self.assertEqual((field["sources"], field["buttons"], field["statuses"]), (1, 1, 1))
+                self.assertEqual(sum(tag == "button" and "data-copy" in attrs for tag, attrs in page.elements), len(fields))
+                self.assertEqual(sum("data-copy-status" in attrs for _, attrs in page.elements), len(fields))
+                payload = {
+                    "script": str(SITE / "assets" / "js" / "site.js"),
+                    "agents": [attrs for tag, attrs in page.elements if tag == "button" and "data-agent" in attrs],
+                    "fields": fields,
+                    "steps": ["login", "run" if path.name == "index.html" else "loop"],
+                }
+                result = subprocess.run(
+                    ["node", str(SITE.parent / "tools" / "site_picker_fixture.cjs")],
+                    input=json.dumps(payload), text=True, capture_output=True, timeout=15, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "picker, clipboard, keyboard and reset controls passed\n",
+                                 "Node exited before the async fixture completed: " + result.stderr)
 
     def test_orchestrator_board_reads_whole_without_the_script(self):
         page = (SITE / "orchestrator.html").read_text()

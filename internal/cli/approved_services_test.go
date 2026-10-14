@@ -353,6 +353,17 @@ func TestApprovedServiceStop(t *testing.T) {
 		}
 		assertApprovedOutput(t, "29g-delete-volumes-yes", normalizeProject(t, repo, out))
 	})
+	t.Run("29g-delete-volumes-short-yes", func(t *testing.T) {
+		repo := serviceProject(t)
+		shim := composeShim{services: []string{"db", "redis"}, volumes: projectVolumes(t, repo)}
+		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: shim.build(t), rtSet: true}
+		var code int
+		out := captureTerminal(t, func() { code, _ = a.cmdDown([]string{"--delete-volumes", "-y"}) })
+		if code != 0 {
+			t.Fatalf("short confirmation exited %d:\n%s", code, out)
+		}
+		assertApprovedOutput(t, "29g-delete-volumes-yes", normalizeProject(t, repo, out))
+	})
 
 	// Nothing to delete is a fact the runtime supplied, not an assumption: it is said out loud,
 	// and the stop still runs.

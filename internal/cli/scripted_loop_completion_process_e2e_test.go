@@ -54,7 +54,7 @@ func TestProviderScriptedLoopUnfinishedChecklist(t *testing.T) {
 			if commits := tasks.CommitsForTask(suite.layout.Repo, "", id); len(commits) != 1 {
 				t.Fatalf("refusal changed the completed implementation binding: %v", commits)
 			}
-			assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+			assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 		})
 	}
 }
@@ -90,7 +90,7 @@ func TestProviderScriptedLoopResumesTerminalCorrectionInPlace(t *testing.T) {
 	if len(records) != 1 || records[0].Outcome != "success" {
 		t.Fatalf("terminal correction split one work attempt into extra telemetry: %#v", records)
 	}
-	assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 }
 
 func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
@@ -164,7 +164,7 @@ func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 			cancel()
 			output := result.Stdout + result.Stderr
 			trace := readProcessTrace(t, suite.layout.Trace)
-			assertLoopTraceProcessesGone(t, trace)
+			assertProcessTraceGone(t, trace)
 			providerStarts := 0
 			for _, event := range trace {
 				if event.Source == "provider" && event.Event == "start" {

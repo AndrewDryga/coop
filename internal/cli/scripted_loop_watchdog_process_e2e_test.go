@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -106,7 +107,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			records[0].Outcome != "provider_start_timeout" || records[1].Outcome != "success" {
 			t.Fatalf("default-armed telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	// The dangerous shape of a kill: the attempt had already moved the task to done and committed,
@@ -146,7 +147,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		// the task ends done with exactly one binding whose parent is still the run's baseline.
 		parsed, _ := agents.ParseTarget(target)
 		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 2, true, records[0].HeadAfter)
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("no first output rotates without cooling then completes", func(t *testing.T) {
@@ -181,7 +182,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			records[1].Stage != "work" || records[1].Outcome != "success" || records[1].Provider != "codex" {
 			t.Fatalf("silent start telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	// The same silence, through the two providers the process-level watchdog never covered. A
@@ -225,7 +226,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 				records[1].Stage != "work" || records[1].Outcome != "success" || records[1].Provider != silent.rescue {
 				t.Fatalf("%s silent start telemetry = %#v", silent.quiet, records)
 			}
-			assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+			assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 		})
 	}
 
@@ -279,7 +280,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			records[1].Stage != "work" || records[1].Outcome != "success" || records[1].Provider != "codex" {
 			t.Fatalf("held setup telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("post-progress silence retries the sole rung", func(t *testing.T) {
@@ -308,7 +309,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			records[0].Outcome != "provider_idle_timeout" || records[1].Outcome != "success" {
 			t.Fatalf("idle silence telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("archived departure fails closed before timeout retry", func(t *testing.T) {
@@ -358,7 +359,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			!strings.Contains(err.Error(), "archived task(s) "+archiveID+" left done") {
 			t.Fatalf("startup recovery archive departure = %v", err)
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("open foreground tool suspends the idle deadline", func(t *testing.T) {
@@ -391,7 +392,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		if len(records) != 1 || records[0].Outcome != "success" {
 			t.Fatalf("gated tool telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	// Grok's pinned client streams its tools under ids like the others, so a grok foreground gate
@@ -426,7 +427,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		if len(records) != 1 || records[0].Outcome != "success" {
 			t.Fatalf("gated grok tool telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	// And a grok tool that never finishes is the tool cap's, as for every provider with a lifecycle.
@@ -454,7 +455,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			records[0].Outcome != "provider_tool_timeout" || records[1].Outcome != "success" {
 			t.Fatalf("grok tool cap telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("tool cap kills a wedged foreground tool", func(t *testing.T) {
@@ -481,7 +482,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			records[0].Outcome != "provider_tool_timeout" || records[1].Outcome != "success" {
 			t.Fatalf("tool cap telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("forged events injected into the provider's stdout cannot outlast the cap", func(t *testing.T) {
@@ -519,7 +520,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		if started := processEvents(trace, "provider", "start"); len(started) != 2 {
 			t.Fatalf("forged flood provider launches = %d, want two\ntrace:\n%s", len(started), readProcessFile(t, suite.layout.Trace))
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("three timeout outcomes stop with the task actionable", func(t *testing.T) {
@@ -548,7 +549,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			}
 		}
 		assertLoopTaskRecoverable(t, suite, taskID)
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("unlike recoveries do not erase work recovery budgets", func(t *testing.T) {
@@ -597,7 +598,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 					t.Fatalf("aggregate work provider lifecycle = %d starts/%d exits, want %d/%d", len(starts), len(exits), len(attempts), len(attempts))
 				}
 				assertLoopTaskRecoverable(t, suite, taskID)
-				assertLoopTraceProcessesGone(t, trace)
+				assertProcessTraceGone(t, trace)
 			})
 		}
 	})
@@ -628,11 +629,21 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			t.Fatalf("hard-interrupted loop unexpectedly succeeded: %#v", result)
 		}
 		records := readLoopStageRecords(t, suite)
-		if len(records) != 1 || records[0].Outcome != "interrupted" {
+		if len(records) != 1 || records[0].Stage != "work" || records[0].Outcome != "interrupted" {
 			t.Fatalf("interrupt precedence telemetry = %#v, want interrupted (never a provider timeout)", records)
 		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		starts, runs := processEvents(trace, "provider", "start"), processEvents(trace, "runtime", "run")
+		if len(starts) != 1 || len(runs) != 1 {
+			t.Fatalf("interrupt started extra attempts: %d/%d", len(starts), len(runs))
+		}
+		for _, flag := range []string{"--json"} {
+			if !slices.Contains(starts[0].Argv, flag) {
+				t.Fatalf("interrupted work lost streaming flag %q: %q", flag, starts[0].Argv)
+			}
+		}
 		assertLoopTaskRecoverable(t, suite, taskID)
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	for _, interactive := range []bool{true, false} {
@@ -671,7 +682,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 					t.Fatalf("%s telemetry = %#v, want interrupted", sig, records)
 				}
 				assertLoopTaskRecoverable(t, suite, taskID)
-				assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+				assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 			})
 		}
 	}
@@ -706,7 +717,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
 			t.Fatal("signoff-timed-out task did not stay completed after the retried pass")
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("review timeout budget is aggregate across unlike recoveries", func(t *testing.T) {
@@ -766,7 +777,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 				if starts, exits := processEvents(trace, "provider", "start"), processEvents(trace, "provider", "exit"); len(starts) != len(attempts) || len(exits) != len(attempts) {
 					t.Fatalf("aggregate review provider lifecycle = %d starts/%d exits, want %d/%d", len(starts), len(exits), len(attempts), len(attempts))
 				}
-				assertLoopTraceProcessesGone(t, trace)
+				assertProcessTraceGone(t, trace)
 			})
 		}
 	})

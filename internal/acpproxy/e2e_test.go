@@ -593,34 +593,17 @@ func TestCodexTargetRolloutTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rollouts := filepath.Join(cfg.ConfigDir, "codex", "acp-sessions", "sessions")
+	home, err := box.NativeHomePath(cfg, "codex", "", cwd, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollouts := filepath.Join(home, "sessions")
 	model, effort, err := waitForCodexRolloutTarget(ctx, rollouts, sessionID)
 	if err != nil {
 		live.fail(t, "rollout_read", err)
 	}
 	if model != wantModel || effort != wantEffort {
 		live.fail(t, "rollout_target", nil)
-	}
-}
-
-func waitForCodexRolloutTarget(ctx context.Context, root, sessionID string) (string, string, error) {
-	var lastErr error
-	for {
-		model, effort, walkErr := codexStoredTarget(root, sessionID)
-		if model != "" || effort != "" {
-			return model, effort, nil
-		}
-		if walkErr != nil {
-			lastErr = walkErr
-		}
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return "", "", fmt.Errorf("%w (last rollout read: %v)", ctx.Err(), lastErr)
-			}
-			return "", "", ctx.Err()
-		case <-time.After(250 * time.Millisecond):
-		}
 	}
 }
 
@@ -653,7 +636,7 @@ func TestFrontierStoredTargetTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider, model, effort, err := waitForFrontierStoredTarget(ctx, cfg.ConfigDir, sessionID, marker)
+	provider, model, effort, err := waitForFrontierStoredTarget(ctx, cfg, cwd, sessionID, marker)
 	if err != nil {
 		live.fail(t, "provider_storage", err)
 	}
@@ -670,120 +653,6 @@ func TestFrontierStoredTargetTruth(t *testing.T) {
 		live.fail(t, "provider_target", nil)
 	}
 	t.Logf("completed preset target: provider=%s model=%s effort=%s", provider, model, effort)
-}
-
-func waitForFrontierStoredTarget(ctx context.Context, configDir, editorSessionID, marker string) (string, string, string, error) {
-	var lastErr error
-	for {
-		model, claudeErr := claudeStoredModel(filepath.Join(configDir, "claude", "acp-sessions", "projects"), editorSessionID, marker)
-		if model != "" {
-			return "claude", model, "", nil
-		}
-		model, effort, codexErr := codexStoredTargetByMarker(filepath.Join(configDir, "codex", "acp-sessions", "sessions"), marker)
-		if model != "" {
-			return "codex", model, effort, nil
-		}
-		if claudeErr != nil {
-			lastErr = claudeErr
-		}
-		if codexErr != nil {
-			lastErr = codexErr
-		}
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return "", "", "", fmt.Errorf("%w (last provider storage read: %v)", ctx.Err(), lastErr)
-			}
-			return "", "", "", ctx.Err()
-		case <-time.After(250 * time.Millisecond):
-		}
-	}
-}
-
-func claudeStoredModel(root, sessionID, marker string) (string, error) {
-	want := sessionID + ".jsonl"
-	model := ""
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info == nil || info.IsDir() || info.Name() != want {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		// The prompt text is present on every attempted rung; the exact reply is present only in the
-		// provider that completed the turn. Requiring both occurrences avoids reporting a failed rung.
-		if strings.Count(string(data), marker) < 2 {
-			return nil
-		}
-		decoder := json.NewDecoder(strings.NewReader(string(data)))
-		for {
-			var record struct {
-				Message struct {
-					Model string `json:"model"`
-				} `json:"message"`
-			}
-			if err := decoder.Decode(&record); errors.Is(err, io.EOF) {
-				break
-			} else if err != nil {
-				return err
-			}
-			if record.Message.Model != "" && record.Message.Model != "<synthetic>" {
-				model = record.Message.Model
-				return nil
-			}
-		}
-		return nil
-	})
-	return model, err
-}
-
-func codexStoredTarget(root, sessionID string) (string, string, error) {
-	return codexStoredTargetMatching(root, func(info os.FileInfo, _ []byte) bool {
-		return strings.Contains(info.Name(), sessionID)
-	})
-}
-
-func codexStoredTargetByMarker(root, marker string) (string, string, error) {
-	return codexStoredTargetMatching(root, func(_ os.FileInfo, data []byte) bool {
-		return strings.Count(string(data), marker) >= 2
-	})
-}
-
-func codexStoredTargetMatching(root string, matches func(os.FileInfo, []byte) bool) (string, string, error) {
-	model, effort := "", ""
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info == nil || info.IsDir() || !strings.HasSuffix(info.Name(), ".jsonl") {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if !matches(info, data) {
-			return nil
-		}
-		decoder := json.NewDecoder(strings.NewReader(string(data)))
-		for {
-			var record struct {
-				Type    string `json:"type"`
-				Payload struct {
-					Model  string `json:"model"`
-					Effort string `json:"effort"`
-				} `json:"payload"`
-			}
-			if err := decoder.Decode(&record); errors.Is(err, io.EOF) {
-				break
-			} else if err != nil {
-				return err
-			}
-			if record.Type == "turn_context" {
-				model, effort = record.Payload.Model, record.Payload.Effort
-			}
-		}
-		return nil
-	})
-	return model, effort, err
 }
 
 // TestPresetOwnsSelectorState drives coop's real outer ACP control layer. A direct preset owns the

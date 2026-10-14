@@ -4,7 +4,6 @@ package cli
 
 import (
 	"bufio"
-	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -22,7 +21,6 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 
-	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/taskchannel"
@@ -96,148 +94,6 @@ type processEnv struct {
 	Name     string `json:"name"`
 	Value    string `json:"value"`
 	Redacted bool   `json:"redacted"`
-}
-
-func TestProviderScriptedProcessSmoke(t *testing.T) {
-	expectedArgv := map[string][]string{
-		"claude": {"claude", "--dangerously-skip-permissions"},
-		"codex":  {"codex", "--dangerously-bypass-approvals-and-sandbox"},
-		"gemini": {"gemini", "--yolo"},
-		"grok":   {"grok", "--permission-mode", "bypassPermissions"},
-	}
-	credentialKey := map[string]string{
-		"claude": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY",
-		"gemini": "GEMINI_API_KEY", "grok": "XAI_API_KEY",
-	}
-	providers := agents.Names()
-	for _, provider := range providers {
-		if _, ok := expectedArgv[provider]; !ok {
-			t.Fatalf("registered provider %q has no scripted process fixture contract", provider)
-		}
-	}
-	if len(expectedArgv) != len(providers) {
-		t.Fatalf("fixture contracts = %v, registered providers = %v", sortedKeys(expectedArgv), providers)
-	}
-
-	for _, provider := range providers {
-		t.Run(provider, func(t *testing.T) {
-			layout, err := procharness.NewLayout(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			moduleRoot, err := filepath.Abs("../..")
-			if err != nil {
-				t.Fatal(err)
-			}
-			moduleRoot, err = filepath.EvalSymlinks(moduleRoot)
-			if err != nil {
-				t.Fatal(err)
-			}
-			coopBin := filepath.Join(layout.Bin, "coop")
-			fixtureBin := filepath.Join(layout.Bin, "providerfixture")
-			buildProcessBinary(t, moduleRoot, coopBin, ".")
-			buildProcessBinary(t, moduleRoot, fixtureBin, "./internal/cli/testdata/providerfixture")
-			runtimeBin := installDockerRuntimeFixture(t, fixtureBin)
-
-			gitBin, err := exec.LookPath("git")
-			if err != nil {
-				t.Fatal("git is required for the scripted process suite")
-			}
-			seedNativeFixture(t, &config.Config{ConfigDir: layout.Config}, provider, "default")
-			envFile := filepath.Join(layout.Config, "env")
-			envContents := fmt.Sprintf("FIXTURE_SAFE=visible\n%s=must-be-stripped\n", credentialKey[provider])
-			if err := os.WriteFile(envFile, []byte(envContents), 0o600); err != nil {
-				t.Fatal(err)
-			}
-
-			scenarioPath := filepath.Join(layout.Plans, provider+".json")
-			scenario, err := json.Marshal(map[string]any{
-				"version": 1, "provider": provider, "provider_homes": providers,
-				"marker": "fixture-ok-" + provider,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(scenarioPath, append(scenario, '\n'), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			path := controlledPath(layout.Bin, filepath.Dir(gitBin))
-			env, err := procharness.Environment(layout, map[string]string{
-				"PATH": path, "COOP_RUNTIME": runtimeBin, "COOP_IMAGE": "fixture-image",
-				"COOP_HOMES": "1", "COOP_PROVIDER_FIXTURE_ROOT": layout.Root,
-				"COOP_PROVIDER_FIXTURE_IMAGE": "fixture-image", "COOP_PROVIDER_FIXTURE_TRACE": layout.Trace,
-				"COOP_PROVIDER_FIXTURE_SCENARIO": scenarioPath,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			initProcessRepo(t, gitBin, layout.Repo, env)
-			t.Cleanup(func() {
-				if t.Failed() {
-					t.Logf("scripted process trace:\n%s", readProcessFile(t, layout.Trace))
-				}
-			})
-
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			result := procharness.Run(ctx, procharness.Command{
-				Path: coopBin, Args: []string{provider}, Dir: layout.Repo, Env: env,
-				MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
-			})
-			if result.Err != nil || result.ExitCode != 0 {
-				t.Fatalf("coop %s = exit %d, err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", provider, result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, layout.Trace))
-			}
-			if !strings.Contains(result.Stdout, "fixture-ok-"+provider) {
-				t.Fatalf("coop %s stdout lost fixture marker:\n%s", provider, result.Stdout)
-			}
-
-			trace := readProcessTrace(t, layout.Trace)
-			assertSequentialTrace(t, trace, directTraceEvents)
-			assertDirectRuntimeInvocations(t, trace, noOrphanBoxSweep, provider)
-			run := oneProcessEvent(t, trace, "runtime", "run")
-			if run.Run == nil {
-				t.Fatal("runtime run event has no parsed contract")
-			}
-			traceRepo := processTracePath(layout.Root, layout.Repo)
-			if run.Run.Provider != provider || run.Run.Image != "fixture-image" || run.Run.Workdir != traceRepo || run.Run.HostWorkdir != traceRepo {
-				t.Fatalf("run identity = provider %q image %q workdir %q/%q", run.Run.Provider, run.Run.Image, run.Run.Workdir, run.Run.HostWorkdir)
-			}
-			traceArgv := processTraceArgv(expectedArgv[provider])
-			if !reflect.DeepEqual(run.Run.ProviderArgv, traceArgv) {
-				t.Fatalf("provider argv = %q, want %q", run.Run.ProviderArgv, traceArgv)
-			}
-			if run.Run.Network != "none" || !reflect.DeepEqual(boxLabelsWithoutDynamicAuthorities(t, run.Run.Labels, provider), []string{"coop=box"}) || !run.Run.Init || run.Run.Interactive || run.Run.TTY {
-				t.Fatalf("runtime boundary = network %q labels %q init %v interactive/tty %v/%v", run.Run.Network, run.Run.Labels, run.Run.Init, run.Run.Interactive, run.Run.TTY)
-			}
-			assertProcessMounts(t, layout, provider, "default", run.Run.Mounts)
-			assertProcessEnvironment(t, run.Run.Environment, provider, credentialKey[provider])
-			if len(run.Run.EnvFiles) != 1 || !recordedFixturePath(run.Run.EnvFiles[0]) {
-				t.Fatalf("scoped env files = %q, want one fixture-owned file", run.Run.EnvFiles)
-			}
-
-			providerStart := oneProcessEvent(t, trace, "provider", "start")
-			providerExit := oneProcessEvent(t, trace, "provider", "exit")
-			runtimeExit := oneProcessEvent(t, trace, "runtime", "exit")
-			if providerStart.Cwd != traceRepo || !reflect.DeepEqual(providerStart.Argv, traceArgv) {
-				t.Fatalf("provider start = cwd %q argv %q", providerStart.Cwd, providerStart.Argv)
-			}
-			for _, event := range []*processTrace{providerExit, runtimeExit} {
-				if event.ExitCode == nil || *event.ExitCode != 0 || event.Signal != "" {
-					t.Fatalf("%s exit = code %v signal %q", event.Source, event.ExitCode, event.Signal)
-				}
-			}
-			pids := map[int]bool{result.PID: true}
-			for _, event := range trace {
-				pids[event.PID] = true
-			}
-			for pid := range pids {
-				awaitProcessGone(t, pid)
-			}
-			if info, err := os.Stat(layout.Trace); err != nil || info.Mode().Perm() != 0o600 {
-				t.Fatalf("trace mode = %v, %v; want 0600", info, err)
-			}
-		})
-	}
 }
 
 // processLeaseAuthorityRoot is where a spawned coop resolves its task-authority registry: the

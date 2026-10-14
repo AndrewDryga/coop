@@ -16,22 +16,20 @@ import (
 	"github.com/AndrewDryga/coop/internal/preset"
 )
 
-// Every provider is signed in; Gemini's login is host-bound OAuth, which filtered mode refuses by
-// design. Grok's carries a refresh token, so its box renews an expired access token itself and it
-// is offered like Claude and Codex.
-func TestACPNetworkScope(t *testing.T) {
+// Native credentials use guard-only routing. Startup must retain each available concrete
+// provider/account closure without handing the workload direct provider grants.
+func TestACPNetworkScopeCarriesNativeClientClosureWithoutDirectGrants(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		lead   string
 		peers  []agents.Target
 		preset *preset.Preset
-		refuse bool
 	}{
 		{name: "unrelated signed-in providers"},
-		{name: "explicit unsupported lead", lead: "gemini", refuse: true},
-		{name: "explicit unsupported peer", peers: []agents.Target{{Provider: "gemini"}}, refuse: true},
-		{name: "entire selected ladder", preset: &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}, {Provider: "gemini"}}}, refuse: true},
-		{name: "entire selected role", preset: &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}}, Roles: []preset.Role{{Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "gemini"}}}}}, refuse: true},
+		{name: "native Gemini lead", lead: "gemini"},
+		{name: "native Gemini peer", peers: []agents.Target{{Provider: "gemini"}}},
+		{name: "entire selected ladder", preset: &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}, {Provider: "gemini"}}}},
+		{name: "entire selected role", preset: &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}}, Roles: []preset.Role{{Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "gemini"}}}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
@@ -47,16 +45,21 @@ func TestACPNetworkScope(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			var identities []string
+			for _, target := range scope {
+				if !slices.Contains(identities, target.String()) {
+					identities = append(identities, target.String())
+				}
+			}
+			slices.Sort(identities)
+			if !slices.Equal(identities, []string{"claude@default", "codex@default", "gemini@default", "grok@default"}) {
+				t.Fatalf("native ACP scope = %v, want every available concrete default", identities)
+			}
 			bundles, err := box.NetworkProviderBundles(cfg, box.RunSpec{
 				Agent: lead, Homes: true, Peers: scope, Preset: tc.preset, NetworkClient: egress.ClientACP,
 			})
 			if err != nil || len(bundles) != 0 {
 				t.Fatalf("supported ACP startup blocked by optional providers: %v, %v", bundles, err)
-			}
-			for _, bundle := range bundles {
-				if bundle.Client != egress.ClientACP || bundle.Provider != "codex" && bundle.Provider != "claude" && bundle.Provider != "grok" {
-					t.Fatalf("unexpected ACP bundle: %+v", bundle)
-				}
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -49,12 +50,18 @@ func TestNetworkShapeExcludesRotatingBearerEnvironmentValue(t *testing.T) {
 	// The reference identifies the routing shape; only its value rotates, and a
 	// renewal must not look like a configuration change requiring requalification.
 	snapshot := `{"mcpServers":{"tool":{"url":"https://mcp.example.com","bearer_token_env_var":"TOOL_TOKEN"}}}`
+	t.Setenv("TOOL_TOKEN", "first-secret-value")
 	first := networkShape(t, snapshot)
-	if bytes.Contains(first, []byte("TOOL_TOKEN_VALUE")) || !bytes.Contains(first, []byte("bearer-env")) {
+	if bytes.Contains(first, []byte("first-secret-value")) || !bytes.Contains(first, []byte("bearer-env")) || !bytes.Contains(first, []byte("TOOL_TOKEN")) {
 		t.Fatal("bearer projection is wrong", string(first))
 	}
-	if !bytes.Equal(first, networkShape(t, snapshot)) {
+	t.Setenv("TOOL_TOKEN", "second-secret-value")
+	second := networkShape(t, snapshot)
+	if !bytes.Equal(first, second) || bytes.Contains(second, []byte("second-secret-value")) {
 		t.Fatal("shape is not stable")
+	}
+	if bytes.Equal(first, networkShape(t, strings.ReplaceAll(snapshot, "TOOL_TOKEN", "OTHER_TOKEN"))) {
+		t.Fatal("bearer reference change disappeared")
 	}
 }
 

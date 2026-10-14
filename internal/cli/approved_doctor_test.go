@@ -1,7 +1,15 @@
 package cli
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/config"
+	boxruntime "github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // The approved `coop doctor` reports. Rendering is a pure function of what the probes measured,
@@ -186,11 +194,41 @@ func TestApprovedDoctorReports(t *testing.T) {
 // project to check against.
 func TestApprovedDoctorRefusals(t *testing.T) {
 	t.Run("18l-doctor-no-runtime", func(t *testing.T) {
+		bin := t.TempDir()
+		if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin)
+		a := &app{cfg: &config.Config{}, rt: boxruntime.Runtime{Name: "docker"}}
+		var code int
+		var err error
 		out := captureStderr(t, func() {
-			failBlock("Could not check the Coop box", "Docker is unavailable.",
-				"Start Docker, then run coop doctor again.")
+			code, err = a.cmdDoctor(nil)
 		})
+		if code != 1 || !errors.Is(err, ui.ErrReported) {
+			t.Fatalf("doctor runtime refusal=%d %v", code, err)
+		}
 		assertApprovedOutput(t, "18l-doctor-no-runtime", out)
+	})
+	t.Run("actual fixture allocation refusal", func(t *testing.T) {
+		bin := t.TempDir()
+		if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		repo := evalTestRepo(t)
+		tmp := filepath.Join(t.TempDir(), "not-a-directory")
+		if err := os.WriteFile(tmp, []byte("kept"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin)
+		t.Setenv("TMPDIR", tmp)
+		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: boxruntime.Runtime{Name: "docker"}}
+		var code int
+		var err error
+		out := captureStderr(t, func() { code, err = a.cmdDoctor(nil) })
+		if code != 1 || !errors.Is(err, ui.ErrReported) || !strings.Contains(out, "Could not prepare the isolation checks") || !strings.Contains(out, "not a directory") || !strings.Contains(out, "Fix the temporary-directory permissions") {
+			t.Fatalf("doctor allocation refusal=%d %v\n%s", code, err, out)
+		}
 	})
 	t.Run("18m-doctor-fixture-failed", func(t *testing.T) {
 		out := captureStderr(t, func() {

@@ -73,7 +73,7 @@ func TestProviderScriptedClaudeToolFailure(t *testing.T) {
 			}
 			trace := readProcessTrace(t, suite.layout.Trace)
 			assertLoopAttemptContracts(t, suite, trace, id, attempts)
-			assertLoopTraceProcessesGone(t, trace)
+			assertProcessTraceGone(t, trace)
 			records := readLoopStageRecords(t, suite)
 			if len(records) != 1 || records[0].Outcome != "success" || !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) {
 				t.Fatalf("tool error changed provider outcome or completion: %#v", records)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	boxruntime "github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestDoctorDefaultMatchesCredentialFixture(t *testing.T) {
@@ -268,6 +270,20 @@ func TestDoctorCoopignoreCheckNeedsCoopignore(t *testing.T) {
 // that buildFixture leaves the tree world-traversable/readable — MkdirTemp defaults to 0700, which
 // silently produced an unreadable /workspace on rootful Linux Docker (the box read nothing).
 func TestBuildFixtureWorldReadable(t *testing.T) {
+	if os.Getenv("COOP_TEST_FIXTURE_UMASK") != "1" {
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), wait.Deadline)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, exe, "-test.run=^TestBuildFixtureWorldReadable$")
+		cmd.Env = append(os.Environ(), "COOP_TEST_FIXTURE_UMASK=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("isolated umask fixture: %v\n%s", err, out)
+		}
+		return
+	}
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}

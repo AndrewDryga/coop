@@ -30,10 +30,21 @@ func TestInstallSetupOutcome(t *testing.T) {
 		{"doctor fails", "0", "24", "build --egress open\ndoctor\n", false, false, false},
 		{"ready", "0", "0", "build --egress open\ndoctor\n", true, false, false},
 		{"ready with signed release and Zsh", "0", "0", "build --egress open\ndoctor\n", true, true, false},
+		{"signed Zsh with absent shell files", "0", "0", "build --egress open\ndoctor\n", true, true, false},
 		{"Apple container needs Docker", "0", "0", "", true, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
+			rcFiles := map[string]string{}
+			for _, rc := range []string{".zshrc", ".bashrc", ".bash_profile", ".profile", ".zprofile"} {
+				if tc.signed && tc.name != "signed Zsh with absent shell files" {
+					body := "# existing user file " + rc + "\nexport USER_SETTING=kept\n"
+					rcFiles[rc] = body
+					if err := os.WriteFile(filepath.Join(root, rc), []byte(body), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
 			bin := filepath.Join(root, "tools")
 			if err := os.Mkdir(bin, 0o755); err != nil {
 				t.Fatal(err)
@@ -123,6 +134,16 @@ esac
 				"COOP_VERSION=v9.9.9", "COOP_NO_BUILD=0", "COOP_BIN_DIR=" + filepath.Dir(installed),
 				"TEST_ROOT=" + root, "TEST_CALLS=" + calls, "TEST_BUILD_EXIT=" + tc.build, "TEST_DOCTOR_EXIT=" + tc.doctor}
 			out, err := cmd.CombinedOutput()
+			for _, rc := range []string{".zshrc", ".bashrc", ".bash_profile", ".profile", ".zprofile"} {
+				got, readErr := os.ReadFile(filepath.Join(root, rc))
+				if want, present := rcFiles[rc]; present {
+					if readErr != nil || string(got) != want {
+						t.Errorf("installer changed %s: %q %v", rc, got, readErr)
+					}
+				} else if !os.IsNotExist(readErr) {
+					t.Errorf("installer created missing %s: %q %v", rc, got, readErr)
+				}
+			}
 			if (err == nil) != tc.ok {
 				t.Errorf("installer success = %v, want %v: %v\n%s", err == nil, tc.ok, err, out)
 			}
@@ -160,6 +181,9 @@ esac
 					"  Spelling correction stays on everywhere; only Coop's own arguments are exempt.\n"
 				if !strings.Contains(string(out), completion) || !strings.Contains(string(out), "  ✓ Release signature verified with Cosign\n") {
 					t.Errorf("signed Zsh setup output is incomplete or incorrectly spaced:\n%s", out)
+				}
+				if strings.Contains(string(out), "fpath[1]") {
+					t.Error("installer directs Zsh to an unowned completion directory")
 				}
 				t.Logf("installer output:\n%s", out)
 			} else if strings.Contains(string(out), "✓ Release signature verified") || strings.Contains(string(out), "Zsh completion") {
@@ -395,42 +419,5 @@ func TestInstallZshGuidanceActuallyWorks(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "nocorrect coop") {
 		t.Errorf("sourcing the integration did not define the nocorrect alias:\n%s", out)
-	}
-}
-
-// TestInstallZshGuidanceOnly pins the supported Zsh setup path: the installer TELLS a Zsh user
-// where the generated integration goes — sourced after compinit, because autoloading alone never
-// runs the file's nocorrect alias — and never edits a shell startup file itself.
-func TestInstallZshGuidanceOnly(t *testing.T) {
-	script, err := os.ReadFile("install.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(script)
-	for _, want := range []string{
-		"mkdir -p ~/.config/coop",
-		"coop completion zsh > ~/.config/coop/completion.zsh",
-		"after your compinit line",
-		"source ~/.config/coop/completion.zsh",
-		"Coop does not edit your shell files",
-		"Spelling correction stays on everywhere",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("install.sh is missing the Zsh guidance %q", want)
-		}
-	}
-	// The retired form, which sent the user at ${fpath[1]}: on a clean macOS Zsh that is
-	// /usr/local/share/zsh/site-functions — absent and unwritable — and where another tool's
-	// completions come first in fpath, it is that tool's directory.
-	if strings.Contains(text, "fpath[1]") {
-		t.Error("install.sh still points Zsh users at ${fpath[1]}, which is not theirs to write")
-	}
-	// The guidance is printed, never applied: no redirect at any shell startup file.
-	for _, rc := range []string{".zshrc", ".bashrc", ".bash_profile", ".profile", ".zprofile"} {
-		for _, line := range strings.Split(text, "\n") {
-			if strings.Contains(line, rc) && (strings.Contains(line, ">>") || strings.Contains(line, "tee")) {
-				t.Errorf("install.sh writes to %s — setup guidance must stay guidance: %s", rc, line)
-			}
-		}
 	}
 }

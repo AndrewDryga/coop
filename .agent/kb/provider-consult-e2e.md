@@ -3,13 +3,15 @@ name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
 sources: [Makefile, internal/box/image.go, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/preset/wrapper.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go, docs/agents.md]
-updated: 2026-10-05
+updated: 2026-10-14
 ---
 
 `make provider-scripted-e2e` is the blocking consult contract. A strict external Coop binary mounts
 the production-generated wrapper into the fixture box, which validates its exact bytes and invokes
 only fixed semantic provider aliases. The registry-derived suite covers all four fresh/resume arms
-and all 12 ordered distinct fallback pairs. It owns rate limits, failed resume, missing ids,
+and all 12 ordered distinct fallback pairs. Independent whole-argv expectations cover every
+started fresh/resumed attempt, including model, effort and read-only policy; source-token tests
+are not the oracle. It owns rate limits, failed resume, missing ids,
 timeouts, empty/malformed/stderr-only/ordinary failure, bounds, scope denial, Codex telemetry,
 repository integrity, and process cleanup without real credentials or quota.
 
@@ -117,6 +119,8 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-10-14 — fresh/resume argv checked across scripted consumers; expanded Grok resumed tools
+  and dropped Codex resumed model fail the keepers. Source-only wrapper clones retired.
 - 2026-09-24 — reverified the shared delegate pipeline against `internal/preset/wrapper.go` and
   all four adapter decoders. A malformed Gemini stream with a later tail reproduced raw reply
   loss; the wrapper now drains after parse failure and uses the full bounded raw fallback.

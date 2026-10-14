@@ -228,7 +228,7 @@ func TestProviderScriptedPresetTerminalPinsFirstLeadRung(t *testing.T) {
 	step := consultPairStep(roleTarget, "fresh", "usable", question, "terminal rung reply")
 	result, trace := suite.run(t, []string{name}, consultProcessScenario(first, suite.providers,
 		[]consultCallSpec{{Target: "critic", Mode: "fresh", Prompt: question, ExitCode: 0}}, []consultStepSpec{step}))
-	if result.Err != nil || result.ExitCode != 0 {
+	if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "terminal rung reply") {
 		t.Fatalf("terminal first rung = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
 	}
 	runs := processEvents(trace, "runtime", "run")
@@ -239,6 +239,26 @@ func TestProviderScriptedPresetTerminalPinsFirstLeadRung(t *testing.T) {
 	if !reflect.DeepEqual(runs[0].Run.ProviderArgv, wantArgv) {
 		t.Errorf("terminal first-rung argv = %q, want %q", runs[0].Run.ProviderArgv, wantArgv)
 	}
+	if got := processEnvironmentValue(runs[0].Run.Environment, "COOP_CONSULT_CRITIC_TARGETS"); got != roleTarget.String() {
+		t.Fatalf("critic target environment = %q, want %q", got, roleTarget)
+	}
+	consultMounted := 0
+	for _, mount := range runs[0].Run.Mounts {
+		if mount.Target == "<container>"+consult.ConsultWrapperPath {
+			if !mount.ReadOnly || !recordedGeneratedMountPath(mount.Source) {
+				t.Fatalf("unsafe critic wrapper: %+v", mount)
+			}
+			consultMounted++
+		}
+	}
+	if consultMounted != 1 {
+		t.Fatal("critic has no fixture-owned read-only consult wrapper")
+	}
+	starts := processEvents(trace, "peer", "start")
+	if len(starts) != 1 || starts[0].Consult == nil || starts[0].Consult.Provider != roleProvider || starts[0].Consult.Model != roleTarget.Model || starts[0].Consult.Effort != roleTarget.Effort || starts[0].Consult.PromptHash != processTraceValue(question) {
+		t.Fatalf("critic attempt = %+v", starts)
+	}
+	assertProcessTraceGone(t, trace)
 }
 
 func compositionRole(provider string) string { return "role-" + provider }

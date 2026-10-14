@@ -85,6 +85,9 @@ shellcheck: ## ShellCheck every tracked .sh: the installer, both sweep queue gua
 require-python3:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is not installed — run: brew install python3 (macOS) or apt-get install -y python3 (Debian)"; exit 1; }
 
+require-node:
+	@command -v node >/dev/null 2>&1 || { echo "Node.js is not installed — run: brew install node (macOS) or apt-get install -y nodejs (Debian)"; exit 1; }
+
 require-git-lfs:
 	@command -v git-lfs >/dev/null 2>&1 || { echo "git-lfs is not installed — run: brew install git-lfs (macOS) or apt-get install -y git-lfs (Debian)"; exit 1; }
 
@@ -105,10 +108,10 @@ docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make do
 align: require-python3 ## Check trailing-# comment alignment in README + site + CLI docs (--write to fix)
 	@python3 tools/align-comments.py --check
 
-tools-test: require-python3 ## Run standard-library tests for repository maintenance tools
+tools-test: require-python3 require-node ## Run standard-library tests for repository maintenance tools
 	@python3 -m unittest discover -s tools -p 'test_*.py'
 
-docs-tools-test: require-python3 ## Test only docs/site/alignment/rules tools, without process benchmarks
+docs-tools-test: require-python3 require-node ## Test only docs/site/alignment/rules tools, without process benchmarks
 	@python3 -m unittest discover -s tools -p 'test_site_content.py'
 	@python3 -m unittest discover -s tools -p 'test_align_comments.py'
 	@python3 -m unittest discover -s tools -p 'test_check_rules.py'
@@ -305,5 +308,6 @@ help: ## List targets
 .PHONY: provider-status provider-verify
 .PHONY: check-local docs-tools-test
 .PHONY: require-git-lfs
+.PHONY: require-node
 .PHONY: mod-check
 .PHONY: gateway-sources-check

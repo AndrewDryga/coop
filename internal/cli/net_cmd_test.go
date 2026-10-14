@@ -800,9 +800,10 @@ func assertCleanRecoveryWithoutRuntime(t *testing.T, args []string) {
 	var code int
 	var err error
 	out := captureStderr(t, func() { code, err = a.cmdNetRecover(args) })
-	if code != 0 || err != nil || out != "No interrupted network runs need cleanup.\n" {
+	if code != 0 || err != nil {
 		t.Fatalf("clean recovery without a runtime = (%d, %v, %q)", code, err, out)
 	}
+	assertApprovedOutput(t, "26a-net-recover-nothing", out)
 }
 
 func TestNetRecoverStillRequiresRuntimeForPendingCleanup(t *testing.T) {
@@ -989,9 +990,16 @@ func TestNetExportWithholdsDestinationsUnlessAsked(t *testing.T) {
 
 	// A run with nothing sealed has no record to share.
 	pending := netRecordRun(t, store, project)
-	if code, err := a.cmdNetExport([]string{pending.ID}); code != 1 || err == nil || !strings.Contains(err.Error(), "has no final record yet") {
-		t.Errorf("exporting an unsealed run = (%d, %v)", code, err)
+	code, exportErr := a.cmdNetExport([]string{pending.ID})
+	var usage *ui.UsageError
+	if code != 1 || !errors.As(exportErr, &usage) {
+		t.Fatalf("exporting unsealed run=%d %v", code, exportErr)
 	}
+	shortID := pending.ID[:8]
+	if usage.Headline != "Network run "+shortID+" has no final record yet" || len(usage.Rows) != 1 || usage.Rows[0] != [2]string{"Current report:", "coop net inspect " + shortID} {
+		t.Fatalf("unsealed export remedy=%+v", usage)
+	}
+	assertApprovedOutput(t, "24a-net-export-unfinished", strings.ReplaceAll(usage.Render(ui.Palette{}), shortID, "e644f07a"))
 	for name, args := range map[string][]string{
 		"no run":       nil,
 		"two runs":     {record.ID, "cb375d22"},
@@ -1025,13 +1033,38 @@ func TestNetListingDTOPublishesOnlyItsAllowlist(t *testing.T) {
 }
 
 func TestNetFilterProjectMatchesThroughSymlinks(t *testing.T) {
-	runs := []networkstate.ExecutionSummary{{ID: "a", Project: "/private/tmp/x"}, {ID: "b", Project: "/other"}}
-	got := netFilterProject(runs, "/private/tmp/x")
-	if len(got) != 1 || got[0].ID != "a" {
-		t.Fatalf("netFilterProject = %+v", got)
+	project := filepath.Join(t.TempDir(), "project")
+	if err := os.Mkdir(project, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if got := netFilterProject(runs, "/nothing/here"); got != nil {
-		t.Errorf("unrelated project matched: %+v", got)
+	project, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(project, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{{project, alias}, {alias, project}} {
+		runs := []networkstate.ExecutionSummary{{ID: "a", Project: pair[0]}, {ID: "b", Project: t.TempDir()}}
+		got := netFilterProject(runs, pair[1])
+		if len(got) != 1 || got[0].ID != "a" {
+			t.Fatalf("real symlink identity=%+v", got)
+		}
+	}
+	if got := netFilterProject([]networkstate.ExecutionSummary{{ID: "a", Project: project}}, t.TempDir()); got != nil {
+		t.Fatalf("unrelated project matched: %+v", got)
+	}
+	if err := os.Remove(project); err != nil {
+		t.Fatal(err)
+	}
+	// A vanished target has no symlink identity; only the same cleaned path matches.
+	runs := []networkstate.ExecutionSummary{{ID: "a", Project: project}}
+	if got := netFilterProject(runs, filepath.Join(project, ".")); len(got) != 1 || got[0].ID != "a" {
+		t.Fatalf("nonexistent clean-path fallback=%+v", got)
+	}
+	if got := netFilterProject(runs, alias); got != nil {
+		t.Fatalf("broken alias invented identity=%+v", got)
 	}
 }
 

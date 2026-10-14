@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -384,18 +385,51 @@ printf '<%s>\n' "${COMPREPLY[@]}"
 }
 
 func TestZshCompletionPreservesEmptyWord(t *testing.T) {
-	if !strings.Contains(zshCompletion, `coop __complete "${(@)words[2,$CURRENT]}"`) {
-		t.Fatalf("zsh completion must quote the word array expansion:\n%s", zshCompletion)
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is not installed")
 	}
-	// The generated comments name the SAME user-controlled path the help page does, so following
-	// either one lands in the same place; the executable body is unchanged.
+	for _, tc := range []struct {
+		name, words string
+		current     int
+		want        []string
+	}{
+		{"top-level empty", `words=(coop "")`, 2, []string{"__complete", ""}},
+		{"fork empty after spaced name", `words=(coop fork "name with spaces" "")`, 4, []string{"__complete", "fork", "name with spaces", ""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			script := filepath.Join(dir, "completion.zsh")
+			log := filepath.Join(dir, "argv")
+			if err := os.WriteFile(script, []byte(zshCompletion), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			command := `compdef() { :; }; compadd() { :; }
+coop() { printf '%s\0' "$@" > "$TEST_ARGV"; printf 'candidate\n'; }
+source "$TEST_COMPLETION"
+` + tc.words + fmt.Sprintf("\nCURRENT=%d\n_coop\n", tc.current)
+			cmd := exec.Command(zsh, "-f", "-c", command)
+			cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + dir, "TEST_ARGV=" + log, "TEST_COMPLETION=" + script}
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("completion execution: %v\n%s", err, out)
+			}
+			data, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := strings.Join(tc.want, "\x00") + "\x00"
+			if string(data) != want {
+				t.Fatalf("completion argv=%q, want %q", data, want)
+			}
+		})
+	}
 	for _, want := range []string{
 		"# Source this file after compinit in ~/.zshrc.",
 		"coop completion zsh > ~/.config/coop/completion.zsh",
 		"compdef _coop coop", "alias coop='nocorrect coop'",
 	} {
 		if !strings.Contains(zshCompletion, want) {
-			t.Fatalf("zsh integration missing %q:\n%s", want, zshCompletion)
+			t.Fatalf("zsh integration missing %q", want)
 		}
 	}
 }

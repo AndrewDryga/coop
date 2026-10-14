@@ -69,7 +69,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("Codex wrapper matrix telemetry = %#v", records)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("background review receipts are discarded and retried with explicit telemetry", func(t *testing.T) {
@@ -113,7 +113,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
 		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("failed final verification cannot claim the completed batch passed", func(t *testing.T) {
@@ -152,7 +152,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("failed verification telemetry = %#v", records)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("two malformed final verification verdicts leave the batch unverified", func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("malformed verification telemetry = %#v", records)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("soft stop during final verification exits before the success verdict", func(t *testing.T) {
@@ -233,7 +233,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if len(records) != len(attempts) || records[2].Stage != "verify" || records[2].Outcome != "success" || records[2].Exit != 0 {
 			t.Fatalf("interrupted verification telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("Codex split footer echo is accepted without a malformed-verdict retry", func(t *testing.T) {
@@ -266,7 +266,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("Codex split footer echo telemetry = %#v", records)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("malformed verdict gets one corrected full-review attempt at every review stage", func(t *testing.T) {
@@ -334,7 +334,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			}
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("two malformed signoff verdicts fail closed", func(t *testing.T) {
@@ -365,7 +365,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("double-malformed telemetry = %#v", records)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("four provider stage and usage matrix", func(t *testing.T) {
@@ -432,7 +432,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				t.Fatalf("review stage telemetry[%d] = %#v, want %+v", i, record, expected)
 			}
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("mid-run loop.yaml edit warns once and keeps the startup snapshot", func(t *testing.T) {
@@ -505,7 +505,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
 		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("signoff cannot complete an unowned task", func(t *testing.T) {
@@ -532,7 +532,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
 			t.Fatal("signoff ownership rejection disturbed the reviewed task")
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("concurrent host completion during passing signoff forces another round", func(t *testing.T) {
@@ -690,7 +690,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			records[1].Account != "work" || records[1].Outcome != "success" || records[1].Retries != 1 {
 			t.Fatalf("between rotation telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("between reopen is reworked before signoff", func(t *testing.T) {
@@ -1437,7 +1437,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if len(records) != 2 || records[1].Stage != "between" || records[1].Outcome != "interrupted" || records[1].Exit != loop.LoopInterruptedExitCode || records[1].Reopened != 0 {
 			t.Fatalf("hard stop after reopen telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
 	t.Run("signoff output exhaustion fails closed", func(t *testing.T) {
@@ -1501,7 +1501,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if len(records) != 2 || records[0].Stage != "work" || records[1].Stage != "between" || records[1].Outcome != "success" {
 			t.Fatalf("soft-stop audit telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("hard stop interrupts between audit backoff", func(t *testing.T) {
@@ -1544,7 +1544,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if len(records) != 2 || records[1].Stage != "between" || records[1].Outcome != "interrupted" || records[1].Exit != loop.LoopInterruptedExitCode || records[1].Provider != "codex" || records[1].Retries != 1 || records[1].QueueDone != 1 || records[1].QueueDoing != 0 {
 			t.Fatalf("hard-stop audit telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 }
 

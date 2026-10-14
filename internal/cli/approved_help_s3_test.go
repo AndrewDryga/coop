@@ -28,10 +28,8 @@ func TestApprovedFamilyHelpPages(t *testing.T) {
 	}
 }
 
-// Every option the page documents has to exist in the parser, and every option the parser takes
-// has to be on the page: a flag nobody can discover and a flag that does not work are the same
-// bug seen from two sides.
-func TestFamilyHelpMatchesTheParser(t *testing.T) {
+// Pin documented spellings. Actual parser acceptance/refusal has its own owners.
+func TestFamilyHelpDocumentsSupportedSpellings(t *testing.T) {
 	cases := []struct {
 		command string
 		accepts []string

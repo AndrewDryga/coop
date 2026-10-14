@@ -1,20 +1,18 @@
 package acpctl
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/config"
 )
 
 func TestACPNetworkScopeFencesSelectorsAndSpawns(t *testing.T) {
 	c := newTestControl(t)
-	for _, provider := range []string{"codex", "gemini", "grok"} {
-		signInCred(t, c.cfg, provider, "default")
-	}
+	c.host = withTestAccounts(c.host, map[string][]string{"codex": {"default"}, "gemini": {"default"}, "grok": {"default"}})
 	if got := c.SpawnableProviders("claude"); len(got) != 3 {
 		t.Fatalf("open ACP lost providers: %v", got)
 	}
@@ -35,26 +33,19 @@ func TestACPNetworkScopeFencesSelectorsAndSpawns(t *testing.T) {
 	}
 }
 
-func TestACPNetworkScopeDoesNotGrowAfterSignIn(t *testing.T) {
+func TestACPNetworkScopeDoesNotGrowAfterAccountAvailabilityChanges(t *testing.T) {
 	c := newTestControl(t)
 	c.LimitNetworkTargets([]agents.Target{{Provider: "claude", Accounts: []string{"personal"}}})
-	signInCred(t, c.cfg, "codex", "default")
+	c.host = withTestAccounts(c.host, map[string][]string{"codex": {"default"}})
 	if got := c.SpawnableProviders("claude"); len(got) != 0 {
 		t.Fatalf("new sign-in widened frozen provider scope: %v", got)
 	}
 }
 
 func TestACPNetworkScopeFiltersAccountsWithinAProvider(t *testing.T) {
-	c := newTestControlWithHost(t, Host{
-		ExpandLadder: testExpandLadder,
-		AccountsFor: func(cfg *config.Config, provider string) []string {
-			if provider == "gemini" {
-				return []string{"portable", "oauth"}
-			}
-			return testAccountsFor(cfg, provider)
-		},
-		WriteModelsCache: func(*config.Config, string, []agents.Model) error { return nil },
-	})
+	c := newTestControlWithHost(t, withTestAccounts(testHost(), map[string][]string{
+		"claude": {"personal", "work"}, "gemini": {"portable", "oauth"},
+	}))
 	c.LimitNetworkTargets([]agents.Target{{Provider: "claude", Accounts: []string{"personal"}}, {Provider: "gemini", Accounts: []string{"portable"}}})
 	if got := c.networkAccountsFor("gemini"); !slices.Equal(got, []string{"portable"}) {
 		t.Fatalf("filtered account selector = %v, want portable only", got)
@@ -66,7 +57,12 @@ func TestACPNetworkScopeFiltersAccountsWithinAProvider(t *testing.T) {
 
 func TestACPNetworkScopeRevalidatesWholePreset(t *testing.T) {
 	c := newTestControl(t)
-	signInCred(t, c.cfg, "codex", "default")
+	c.host = withTestAccounts(c.host, map[string][]string{"codex": {"default"}})
+	c.host = withTestLadderReplies(t, c.host,
+		testLadderReply{provider: "claude", rungs: []agents.Target{{Provider: "claude"}}, targets: []agents.Target{{Provider: "claude", Accounts: []string{"personal"}}, {Provider: "claude", Accounts: []string{"work"}}}},
+		testLadderReply{provider: "claude", rungs: []agents.Target{{Provider: "codex"}}, targets: []agents.Target{{Provider: "codex", Accounts: []string{"default"}}}},
+		testLadderReply{provider: "claude", rungs: []agents.Target{{Provider: "gemini"}}, err: fmt.Errorf("no Gemini account available")},
+	)
 	c.LimitNetworkTargets([]agents.Target{
 		{Provider: "claude", Accounts: []string{"personal", "work"}},
 		{Provider: "codex", Accounts: []string{"default"}},
@@ -101,18 +97,11 @@ func TestACPNetworkScopeRevalidatesWholePreset(t *testing.T) {
 
 func TestACPNetworkScopeRefusesPresetAccountBorrowing(t *testing.T) {
 	c := newTestControl(t)
-	signInCred(t, c.cfg, "codex", "default")
-	signInCred(t, c.cfg, "gemini", "portable")
-	oauth := c.cfg.AgentProfileDir("gemini", "default")
-	if err := os.MkdirAll(oauth, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(oauth, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(oauth, "gemini-credentials.json"), []byte(`{"encrypted":"host-bound"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	c.host = withTestAccounts(c.host, map[string][]string{"codex": {"default"}, "gemini": {"default", "portable"}})
+	c.host = withTestLadderReplies(t, c.host,
+		testLadderReply{provider: "codex", rungs: []agents.Target{{Provider: "codex"}}, targets: []agents.Target{{Provider: "codex", Accounts: []string{"default"}}}},
+		testLadderReply{provider: "codex", rungs: []agents.Target{{Provider: "gemini", Accounts: []string{"default"}}}, targets: []agents.Target{{Provider: "gemini", Accounts: []string{"default"}}}},
+	)
 	c.LimitNetworkTargets([]agents.Target{
 		{Provider: "claude", Accounts: []string{"personal", "work"}},
 		{Provider: "codex", Accounts: []string{"default"}},

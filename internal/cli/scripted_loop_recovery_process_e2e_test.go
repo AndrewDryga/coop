@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -61,7 +60,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 					if records[0].Provider != source || records[0].Outcome != "rate_limit" || records[0].Exit != 23 || len(records[0].Finished) != 0 || records[1].Provider != destination || records[1].Outcome != "success" || records[1].Exit != 0 {
 						t.Fatalf("directed rotation telemetry = %#v", records)
 					}
-					assertLoopTraceProcessesGone(t, trace)
+					assertProcessTraceGone(t, trace)
 				})
 			}
 		}
@@ -110,7 +109,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 			records[2].Outcome != "success" || records[2].Provider != "codex" {
 			t.Fatalf("Claude credit-limit rotation telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("authentication fails fast for every provider", func(t *testing.T) {
@@ -133,7 +132,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 					t.Fatalf("authentication telemetry = %#v", records)
 				}
 				assertLoopTaskRecoverable(t, suite, taskID)
-				assertLoopTraceProcessesGone(t, trace)
+				assertProcessTraceGone(t, trace)
 			})
 		}
 	})
@@ -171,7 +170,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 			records[1].Outcome != "success" || records[1].Account != "work" {
 			t.Fatalf("authentication rotation telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("output exhaustion resumes the same target", func(t *testing.T) {
@@ -196,7 +195,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		if records[0].Outcome != "output_limit" || records[0].Exit != 23 || records[0].Retries != 1 || records[1].Outcome != "success" || records[1].Exit != 0 {
 			t.Fatalf("output resume telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("ordinary failures and diagnostic prose do not rotate", func(t *testing.T) {
@@ -228,7 +227,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 					t.Fatalf("ordinary telemetry = %#v, want process_failure", records)
 				}
 				assertLoopTaskRecoverable(t, suite, taskID)
-				assertLoopTraceProcessesGone(t, trace)
+				assertProcessTraceGone(t, trace)
 			})
 		}
 	})
@@ -266,7 +265,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 					t.Fatalf("stream failure telemetry = %#v, want malformed_stream", records)
 				}
 				assertLoopTaskRecoverable(t, suite, taskID)
-				assertLoopTraceProcessesGone(t, trace)
+				assertProcessTraceGone(t, trace)
 			})
 		}
 	})
@@ -295,7 +294,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		assertLoopAttemptContracts(t, suite, trace, taskID, attempts)
 		parsed, _ := agents.ParseTarget(targets[2])
 		assertLoopProcessResult(t, suite, "claude", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 3, false)
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("all targets limited wait is cancelable", func(t *testing.T) {
@@ -331,7 +330,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 			}
 		}
 		assertLoopTaskRecoverable(t, suite, taskID)
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("all targets limited wait resumes work", func(t *testing.T) {
@@ -375,7 +374,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		if records[3].Outcome != "success" || records[3].Exit != 0 {
 			t.Fatalf("all-limited wait/resume telemetry = %#v", records)
 		}
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("interrupted provider resumes the same task", func(t *testing.T) {
@@ -404,7 +403,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		}
 		firstTrace := readProcessTrace(t, suite.layout.Trace)
 		assertLoopTaskRecoverable(t, suite, taskID)
-		assertLoopTraceProcessesGone(t, firstTrace)
+		assertProcessTraceGone(t, firstTrace)
 		// The redirected loop handles the stop signal itself now — the box is torn down and
 		// the attempt is recorded as interrupted before exit. Clear that run's telemetry so
 		// the resumed run's records stand alone below.
@@ -432,58 +431,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		assertLoopAttemptContracts(t, suite, trace, taskID, attempts[1:])
 		parsed, _ := agents.ParseTarget(target)
 		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 1, false)
-		assertLoopTraceProcessesGone(t, trace)
-	})
-
-	t.Run("hard interrupt records interrupted work", func(t *testing.T) {
-		resetLoopProcessRepo(t, suite)
-		taskID := "hard-interrupt-telemetry"
-		seedLoopProcessTask(t, suite.layout.Repo, taskID)
-		target := loopRecoveryTarget("codex", "interrupt-model", "work")
-		attempts := []loopProcessAttempt{{Target: target, Stage: "work", Result: "wait"}}
-		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		process := startLoopRecoveryPTY(t, suite, target)
-		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
-		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), 5*time.Second)
-		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
-			t.Fatal(err)
-		}
-		awaitLoopProcessOutput(t, process, "Finishing this attempt and its review, then stopping", 5*time.Second)
-		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		result := process.Wait(ctx)
-		cancel()
-		if result.ExitCode == 0 {
-			t.Fatalf("hard-interrupted loop unexpectedly succeeded: %#v", result)
-		}
-		trace := readProcessTrace(t, suite.layout.Trace)
-		adapter, _ := agents.Get("codex")
-		var starts, runs int
-		for _, event := range trace {
-			if event.Source == "provider" && event.Event == "start" {
-				starts++
-				for _, flag := range adapter.Stream().Flags {
-					if !slices.Contains(event.Argv, flag) {
-						t.Fatalf("hard-interrupted provider argv lacks streaming flag %q: %q", flag, event.Argv)
-					}
-				}
-			}
-			if event.Source == "runtime" && event.Event == "run" {
-				runs++
-			}
-		}
-		if runs != 1 || starts != 1 {
-			t.Fatalf("hard interrupt attempts runs/starts = %d/%d, want 1/1\n%#v", runs, starts, trace)
-		}
-		records := readLoopStageRecords(t, suite)
-		if len(records) != 1 || records[0].Stage != "work" || records[0].Outcome != "interrupted" {
-			t.Fatalf("hard-interrupt telemetry = %#v", records)
-		}
-		assertLoopTaskRecoverable(t, suite, taskID)
-		assertLoopTraceProcessesGone(t, trace)
+		assertProcessTraceGone(t, trace)
 	})
 
 	t.Run("removed interrupted completion stays removed on restart", func(t *testing.T) {
@@ -515,7 +463,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		}
 		killedTrace := readProcessTrace(t, suite.layout.Trace)
 		terminateOrphanedProviders(t, killedTrace)
-		assertLoopTraceProcessesGone(t, killedTrace)
+		assertProcessTraceGone(t, killedTrace)
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
 			t.Fatal("fixture did not leave a completed task under the killed controller")
 		}
@@ -582,7 +530,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				}
 				firstTrace := readProcessTrace(t, suite.layout.Trace)
 				terminateOrphanedProviders(t, firstTrace)
-				assertLoopTraceProcessesGone(t, firstTrace)
+				assertProcessTraceGone(t, firstTrace)
 				done := filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)
 				_, metadataPath := processLeaseRecordPaths(t, suite.layout, taskID)
 				if !fileExists(metadataPath) {
@@ -605,7 +553,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				}
 				parsed, _ := agents.ParseTarget(target)
 				assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), crashParent, 1, tc.name == "bound", crashHead)
-				assertLoopTraceProcessesGone(t, trace)
+				assertProcessTraceGone(t, trace)
 			})
 		}
 	})
@@ -874,13 +822,6 @@ func assertLoopTaskRecoverable(t *testing.T, suite *directProcessSuite, taskID s
 	}
 }
 
-func assertLoopTraceProcessesGone(t *testing.T, trace []*processTrace) {
-	t.Helper()
-	for _, event := range trace {
-		awaitProcessGone(t, event.PID)
-	}
-}
-
 // terminateOrphanedProviders reaps provider fixtures that survive a killed controller. The box
 // runs in its own process group (the provider watchdog's cancel seam), so kill -9 of coop no
 // longer takes the box down with it — matching a real container runtime, where the container
@@ -956,7 +897,7 @@ func TestProviderScriptedLoopRotatesAccountsBeforeProviders(t *testing.T) {
 				records[2].Provider != rescue || records[2].Outcome != "success" {
 				t.Fatalf("%s rotation telemetry = %#v", provider, records)
 			}
-			assertLoopTraceProcessesGone(t, trace)
+			assertProcessTraceGone(t, trace)
 		})
 	}
 }

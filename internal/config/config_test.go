@@ -726,34 +726,6 @@ func dirNames(t *testing.T, dir string) []string {
 	return names
 }
 
-// TestModelResolution: ModelFor's precedence — a per-run selection (--model) beats the
-// agent-wide COOP_<AGENT>_MODEL, and clearing the selection falls back to it. The model is
-// an axis of its own, never a credential property (see TestModelForTiers for the full ladder).
-func TestModelResolution(t *testing.T) {
-	clearAgentEnv(t)
-	dir := t.TempDir()
-	c := &Config{ConfigDir: dir}
-
-	// Nothing chosen anywhere → "" (the agent CLI's own default).
-	if got := c.ModelFor("claude"); got != "" {
-		t.Errorf("ModelFor with nothing set = %q, want \"\"", got)
-	}
-	// Agent-wide env default.
-	t.Setenv("COOP_CLAUDE_MODEL", "sonnet")
-	if got := c.ModelFor("claude"); got != "sonnet" {
-		t.Errorf("ModelFor with env = %q, want sonnet", got)
-	}
-	// A per-run selection beats everything.
-	c.SetActiveModel("claude", "fable")
-	if got := c.ModelFor("claude"); got != "fable" {
-		t.Errorf("ModelFor with active selection = %q, want fable", got)
-	}
-	c.SetActiveModel("claude", "") // clearing falls back to the env default
-	if got := c.ModelFor("claude"); got != "sonnet" {
-		t.Errorf("ModelFor after clearing selection = %q, want sonnet", got)
-	}
-}
-
 // TestEffortResolution: EffortFor's precedence mirrors ModelFor — an explicit target /effort
 // beats the rotation target, which beats the agent-wide COOP_<AGENT>_MODEL's /effort;
 // clearing falls through.
@@ -845,9 +817,12 @@ func TestLoadRejectsInvalidEgress(t *testing.T) {
 // its own axis — never a credential property.
 func TestModelForTiers(t *testing.T) {
 	clearAgentEnv(t)
-	t.Setenv("COOP_CLAUDE_MODEL", "env-model")
 	dir := t.TempDir()
 	c := &Config{ConfigDir: dir}
+	if got := c.ModelFor("claude"); got != "" {
+		t.Fatalf("empty model tiers=%q", got)
+	}
+	t.Setenv("COOP_CLAUDE_MODEL", "env-model")
 
 	if got := c.ModelFor("claude"); got != "env-model" {
 		t.Errorf("env is the floor: got %q", got)

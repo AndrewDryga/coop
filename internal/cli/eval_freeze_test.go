@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,7 +61,20 @@ func TestEvalBuildIdentityDigestsTheExecutable(t *testing.T) {
 	id := a.evalBuildIdentity()
 	// The test binary exists and is readable, so a digest is always computed; the digest is what
 	// keeps two builds of one version distinct.
-	if id.Digest == "" {
-		t.Error("build identity has no executable digest")
+	path, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("sha256:%x", hash.Sum(nil)); id.Digest != want {
+		t.Fatalf("executable digest=%q, want %q", id.Digest, want)
 	}
 }

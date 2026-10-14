@@ -27,7 +27,7 @@ const (
 // fell back to fresh. The peer stays READ-ONLY throughout.
 //
 // The per-agent read-only flags come from each adapter's ConsultCmd family —
-// TestConsultWrapperMatchesAdapters asserts each rendered arm carries them.
+// The scripted consult matrix checks each executed fresh/resume argv independently.
 func ConsultWrapper() string { return renderConsult(registeredConsults()) }
 
 // consultInput is the narrow slice of an Agent the consult generator needs — so a drift

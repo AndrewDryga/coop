@@ -941,6 +941,10 @@ func readEnvFile(root string, env map[string]string, path string) error {
 		return err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.Mode().Perm() != 0o600 {
+		return fmt.Errorf("env file is not private (0600): %v", err)
+	}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())

@@ -198,6 +198,16 @@ func TestDelegateFlockHelper(t *testing.T) {
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
 			os.Exit(1)
 		}
+		if marker := os.Getenv("COOP_DELEGATE_BLOCKED_MARKER"); marker != "" {
+			if _, err := os.Stat(marker); os.IsNotExist(err) {
+				if err := os.WriteFile(marker+".tmp", []byte("blocked\n"), 0o600); err != nil {
+					os.Exit(2)
+				}
+				if err := os.Rename(marker+".tmp", marker); err != nil {
+					os.Exit(2)
+				}
+			}
+		}
 		if !time.Now().Before(deadline) {
 			os.Exit(1)
 		}
@@ -494,22 +504,6 @@ func TestDelegateWrapperReportsAllUnmountedTargetsBeforeDispatch(t *testing.T) {
 	}
 }
 
-func TestDelegateWrapperDoesNotFallbackOnOrdinaryFailure(t *testing.T) {
-	h := newDelegateHarness(t)
-	calls := filepath.Join(h.dir, "calls")
-	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex gemini")
-	h.stub("codex", "echo codex >>"+calls+"; echo ordinary-failure >&2; exit 7")
-	h.stub("gemini", "echo gemini >>"+calls)
-	out, code := h.run("fast", "task")
-	if code != 7 {
-		t.Fatalf("exit = %d, want original failure 7:\n%s", code, out)
-	}
-	got, _ := os.ReadFile(calls)
-	if string(got) != "codex\n" {
-		t.Fatalf("calls = %q, want no fallback", got)
-	}
-}
-
 func TestDelegateWrapperStopsFallbackAfterEdit(t *testing.T) {
 	h := newDelegateHarness(t)
 	calls := filepath.Join(h.dir, "calls")
@@ -751,6 +745,12 @@ func TestDelegateWrapperFallbackDecisionMatrix(t *testing.T) {
 		wantGemini bool
 		wantText   string
 	}{
+		{
+			name:       "ordinary stderr failure",
+			codexBody:  `echo codex >>"$CALLS"; echo ordinary-failure >&2; exit 7`,
+			geminiBody: `echo gemini >>"$CALLS"`,
+			wantCode:   7, wantText: "ordinary-failure",
+		},
 		{
 			name:       "successful prose mentioning a limit",
 			codexBody:  `echo codex >>"$CALLS"; echo "rate limit handling documented"`,
@@ -1216,24 +1216,57 @@ func TestDelegateWrapperWaitsForLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lock.Close()
+	t.Cleanup(func() { _ = lock.Close() })
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		t.Fatal(err)
 	}
-	released := make(chan struct{})
-	go func() {
-		defer close(released)
-		time.Sleep(1200 * time.Millisecond)
-		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	}()
-	start := time.Now()
-	out, code := h.run("fast", "task")
-	<-released
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 after waiting for the lock:\n%s", code, out)
+	marker := filepath.Join(h.dir, "blocked")
+	cmd := exec.Command(filepath.Join(h.dir, "coop-delegate"), "fast", "task")
+	cmd.Dir, cmd.Env = h.repo, append(h.env, "COOP_DELEGATE_BLOCKED_MARKER="+marker)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
 	}
-	if time.Since(start) < time.Second {
-		t.Error("wrapper did not wait for the delegate lock (concurrent: never)")
+	done := make(chan struct{})
+	var runErr error
+	t.Cleanup(func() {
+		select {
+		case <-done:
+		default:
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		select {
+		case <-done:
+		case <-time.After(wait.Deadline):
+			t.Error("delegate cleanup did not finish")
+		}
+	})
+	go func() { runErr = cmd.Wait(); close(done) }()
+	wait.For(t, "delegate's actual conflicting flock", func() bool {
+		select {
+		case <-done:
+			t.Fatalf("delegate returned before lock release: %v\n%s", runErr, output.String())
+		default:
+		}
+		body, err := os.ReadFile(marker)
+		return err == nil && string(body) == "blocked\n"
+	})
+	if _, err := os.Lstat(h.argsLog); !os.IsNotExist(err) {
+		t.Fatalf("provider dispatched while lock held: %v", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+		if runErr != nil {
+			t.Fatalf("delegate after lock release: %v\n%s", runErr, output.String())
+		}
+	case <-time.After(wait.Deadline):
+		t.Fatal("delegate stayed blocked after release")
 	}
 }
 
@@ -1389,8 +1422,19 @@ func (fakeDelegate) UsagePrelude() string { return "" }
 // registry with no hand-edit, and the rendered script still shellchecks clean.
 func TestDelegateWrapperDispatchesNewAgent(t *testing.T) {
 	w := renderDelegate(append(registeredDelegates(), fakeDelegate{}))
-	if !strings.Contains(w, `grokfake) run_delegate_with_usage grokfake grokfake --write`) {
-		t.Fatalf("the new agent's delegate arm is missing:\n%s", w)
+	h := newDelegateHarness(t)
+	if err := os.WriteFile(filepath.Join(h.dir, "coop-delegate"), []byte(w), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=grokfake:future-model", "COOP_PEERS=grokfake")
+	h.stub("grokfake", "")
+	out, code := h.run("fast", "future provider task")
+	if code != 0 {
+		t.Fatalf("future provider dispatch exit=%d\n%s", code, out)
+	}
+	args, err := os.ReadFile(h.argsLog)
+	if err != nil || !strings.HasPrefix(string(args), "--write\n--model\nfuture-model\n") || !strings.Contains(string(args), "ROLE CONTRACT TEXT") || !strings.Contains(string(args), "future provider task") {
+		t.Fatalf("future provider arguments=%q %v", args, err)
 	}
 	sc := shellcheckPath(t)
 	f := filepath.Join(t.TempDir(), "coop-delegate")

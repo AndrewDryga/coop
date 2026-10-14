@@ -45,45 +45,6 @@ func TestDropDashDash(t *testing.T) {
 	}
 }
 
-// The loop's leading positional is a target (provider[:model][/effort][@account]); no positional →
-// no target (hasTarget=false) and the provider is required (caller errors or a preset lead
-// supplies it). A malformed/unknown token errors; --model/--credential are unexpected args now.
-func TestLoopTargetResolution(t *testing.T) {
-	if _, has, ps, _, _, _, _, err := parseLoopArgs(nil, false); err != nil || has || ps != "" {
-		t.Errorf("parseLoopArgs(nil) = (has=%v, preset=%q, %v), want (false, \"\", nil) — no implicit default", has, ps, err)
-	}
-	for _, ag := range agents.Names() {
-		tg, has, ps, _, _, _, _, err := parseLoopArgs([]string{ag}, false)
-		if err != nil || !has || ps != "" || tg.Provider != ag {
-			t.Errorf("parseLoopArgs(%q) = (%+v, has=%v, preset=%q, %v), want provider=%q", ag, tg, has, ps, err, ag)
-		}
-	}
-	if tg, has, ps, _, _, _, _, err := parseLoopArgs([]string{"claude:opus-4.8@work"}, false); err != nil || !has || ps != "" ||
-		tg.Provider != "claude" || tg.Model != "opus-4.8" || len(tg.Accounts) != 1 || tg.Accounts[0] != "work" {
-		t.Errorf("parseLoopArgs(claude:opus-4.8@work) = (%+v, has=%v, preset=%q, %v)", tg, has, ps, err)
-	}
-	// Keep the documented preset invocation tied to the parser: cmdLoop passes the words after
-	// "coop loop" to parseLoopArgs, so its positional preset must remain accepted.
-	const documentedPresetLoop = "coop loop frontier"
-	words := strings.Fields(documentedPresetLoop)
-	if tg, has, ps, _, _, _, _, err := parseLoopArgs(words[2:], false); err != nil || has || ps != "frontier" || tg.Provider != "" {
-		t.Errorf("%q = (%+v, has=%v, preset=%q, %v), want positional preset frontier", documentedPresetLoop, tg, has, ps, err)
-	}
-	// A bare non-target word is a PRESET NAME now (its existence is validated later by
-	// loadRunPreset), not an unknown-token error.
-	if tg, has, ps, _, _, _, _, err := parseLoopArgs([]string{"frontier"}, false); err != nil || has || ps != "frontier" || tg.Provider != "" {
-		t.Errorf("parseLoopArgs(frontier) = (%+v, has=%v, preset=%q, %v), want a preset name and no target", tg, has, ps, err)
-	}
-	// The model/account ride the target and a preset is the positional, so --model/--credential/
-	// --preset are options loop does not have — rejected as options, not as stray positionals.
-	for _, bad := range [][]string{{"claude", "--model", "opus"}, {"claude", "--credential", "work"}, {"claude", "--preset", "frontier"}} {
-		_, _, _, _, _, _, _, err := parseLoopArgs(bad, false)
-		if err == nil || !strings.Contains(err.Error(), `for "coop loop"`) || !strings.Contains(err.Error(), "Unknown option") {
-			t.Errorf("parseLoopArgs(%v) should be an unknown option for coop loop, got %v", bad, err)
-		}
-	}
-}
-
 func TestResolveWorkAgentKeepsBarePresetTargetInMixedLadder(t *testing.T) {
 	repo := t.TempDir()
 	dir := filepath.Join(repo, ".agent", "presets", "bare")
@@ -117,19 +78,24 @@ func TestParseLoopArgs(t *testing.T) {
 	// --peer is pre-extracted by cmdLoop (see TestExtractPeer), so parseLoopArgs never sees it — it
 	// resolves the who-runs positional (a target OR a preset name) + the boolean flags only.
 	cases := []struct {
-		args          []string
-		def           bool // the loop.yaml preflight.enabled default
-		wantAgent     string
-		wantModel     string
-		wantPreset    string
-		wantDebug     bool
-		wantPreflight bool
-		wantNoMCP     bool
-		wantMaxTasks  int
-		wantErr       bool
+		args            []string
+		def             bool // the loop.yaml preflight.enabled default
+		wantAgent       string
+		wantModel       string
+		wantPreset      string
+		wantAccount     string
+		wantDebug       bool
+		wantPreflight   bool
+		wantNoMCP       bool
+		wantMaxTasks    int
+		wantErr         bool
+		wantOptionError bool
 	}{
 		{args: nil},
 		{args: []string{"codex"}, wantAgent: "codex"},
+		{args: []string{"claude"}, wantAgent: "claude"},
+		{args: []string{"gemini"}, wantAgent: "gemini"},
+		{args: []string{"grok"}, wantAgent: "grok"},
 		{args: []string{"--debug-on-fail"}, wantDebug: true},
 		{args: []string{"--max-tasks", "1"}, wantMaxTasks: 1},
 		{args: []string{"codex", "--max-tasks", "3"}, wantAgent: "codex", wantMaxTasks: 3},
@@ -154,20 +120,33 @@ func TestParseLoopArgs(t *testing.T) {
 		{args: []string{"claude", "--no-mcp", "--preflight"}, wantAgent: "claude", wantPreflight: true, wantNoMCP: true},
 		// The model/account ride the target now; --model/--credential are unexpected args (error).
 		{args: []string{"codex:gpt-5"}, wantAgent: "codex", wantModel: "gpt-5"},
-		{args: []string{"claude:opus@work"}, wantAgent: "claude", wantModel: "opus"},
-		{args: []string{"--model", "haiku"}, wantErr: true},               // unexpected arg
-		{args: []string{"claude", "--credential", "work"}, wantErr: true}, // unexpected arg
-		{args: []string{"claude", "--preset", "frontier"}, wantErr: true}, // --preset retired → unexpected arg
+		{args: []string{"claude:opus-4.8@work"}, wantAgent: "claude", wantModel: "opus-4.8", wantAccount: "work"},
+		{args: []string{"--model", "haiku"}, wantErr: true, wantOptionError: true},
+		{args: []string{"claude", "--model", "opus"}, wantErr: true, wantOptionError: true},
+		{args: []string{"claude", "--credential", "work"}, wantErr: true, wantOptionError: true},
+		{args: []string{"claude", "--preset", "frontier"}, wantErr: true, wantOptionError: true},
 	}
 	for _, c := range cases {
-		tg, _, ps, debug, preflight, noMCP, maxTasks, err := parseLoopArgs(c.args, c.def)
+		tg, hasTarget, ps, debug, preflight, noMCP, maxTasks, err := parseLoopArgs(c.args, c.def)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseLoopArgs(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
 			continue
 		}
+		if c.wantOptionError && (!strings.Contains(err.Error(), "Unknown option") || !strings.Contains(err.Error(), `for "coop loop"`)) {
+			t.Errorf("retired option %v lacks loop remedy: %v", c.args, err)
+		}
 		if !c.wantErr && (tg.Provider != c.wantAgent || tg.Model != c.wantModel || ps != c.wantPreset || debug != c.wantDebug || preflight != c.wantPreflight || noMCP != c.wantNoMCP || maxTasks != c.wantMaxTasks) {
 			t.Errorf("parseLoopArgs(%v, def=%v) = (provider=%q model=%q preset=%q debug=%v preflight=%v noMCP=%v maxTasks=%d), want (%q, %q, %q, %v, %v, %v, %d)",
 				c.args, c.def, tg.Provider, tg.Model, ps, debug, preflight, noMCP, maxTasks, c.wantAgent, c.wantModel, c.wantPreset, c.wantDebug, c.wantPreflight, c.wantNoMCP, c.wantMaxTasks)
+		}
+		if !c.wantErr {
+			var accounts []string
+			if c.wantAccount != "" {
+				accounts = []string{c.wantAccount}
+			}
+			if hasTarget != (c.wantAgent != "") || !slices.Equal(tg.Accounts, accounts) {
+				t.Errorf("parseLoopArgs(%v) target/account = %v/%v, want %v/%v", c.args, hasTarget, tg.Accounts, c.wantAgent != "", accounts)
+			}
 		}
 	}
 }
@@ -191,49 +170,6 @@ func TestLoopContinueCommandPreservesExplicitQueues(t *testing.T) {
 	}
 	if got := loopContinueCommand(agents.Target{}, false, "", nil); got != "coop loop" {
 		t.Fatalf("default continuation = %q", got)
-	}
-}
-
-func TestLaunchPresetPinsFirstRungAndWiresConsultRole(t *testing.T) {
-	repo := t.TempDir()
-	presetDir := filepath.Join(repo, ".agent", "presets", "duo")
-	if err := os.MkdirAll(presetDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(presetDir, "preset.yaml"), []byte(`lead:
-  agent: [claude:one/high, codex:two/xhigh]
-roles:
-  critic:
-    mode: consult
-    agent: gemini
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	configDir := t.TempDir()
-	cfg := &config.Config{
-		ConfigDir: configDir, RepoOverride: repo, HomeInBox: "/home/node", BoxHome: t.TempDir(),
-		BaseImage: "test-base", ImageOverride: "test-image", Homes: true, Egress: "none",
-	}
-	cfg.SetEgress("none")
-	signInCred(t, cfg, "gemini", "default")
-	recorder := filepath.Join(t.TempDir(), "runtime-args")
-	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
-	p, err := a.loadRunPreset("duo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, runErr := a.launchPreset(p, nil)
-	if runErr != nil || code != 0 {
-		t.Fatalf("launchPreset(duo) = (%d, %v), want success", code, runErr)
-	}
-	args, err := os.ReadFile(recorder)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"COOP_CONSULT_CRITIC_TARGETS=gemini", ":/usr/local/bin/coop-consult:ro"} {
-		if !strings.Contains(string(args), want) {
-			t.Errorf("runtime assembly missing %q:\n%s", want, args)
-		}
 	}
 }
 

@@ -3,7 +3,6 @@ package acpproxy
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -97,22 +96,9 @@ func TestProxySessionMCPStoresOnlyEditorParams(t *testing.T) {
 func TestProxyReplayMCPUsesReplacementProjection(t *testing.T) {
 	first, second := newFakeChild(), newFakeChild()
 	first.provider, second.provider = "claude", "claude"
-	c1, c2 := first.child(), second.child()
-	for marker, child := range map[string]*Child{"old-standin": c1, "new-standin": c2} {
-		child.MCPServers = func() ([]map[string]any, error) {
-			return []map[string]any{{"name": "shared", "command": "node", "args": []any{marker}}}, nil
-		}
-	}
-	queue := make(chan *Child, 2)
-	queue <- c1
-	queue <- c2
-	clientR, clientW := io.Pipe()
-	outR, outW := io.Pipe()
-	done := make(chan error, 1)
-	go func() {
-		done <- Run(context.Background(), clientR, outW, func(context.Context) (*Child, error) { return <-queue, nil }, nil)
-	}()
-	h := &proxyHarness{clientIn: clientW, clientOut: bufio.NewReader(outR), children: []*fakeChild{first, second}, childIn: []*bufio.Reader{bufio.NewReader(first.inR), bufio.NewReader(second.inR)}, done: done, t: t}
+	first.mcp, second.mcp = "old-standin", "new-standin"
+	h := newProxyHarnessChildren(t, []*fakeChild{first, second}, nil, RunOpts{})
+	clientW := h.clientIn
 	h.initialize(0)
 	writeLine(t, clientW, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/work","mcpServers":[{"name":"editor","command":"other"}]}}`)
 	if line := readLine(t, h.childIn[0]); !bytes.Contains(line, []byte("old-standin")) {

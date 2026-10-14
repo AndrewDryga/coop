@@ -62,7 +62,9 @@ CI's check job installs the pinned tools and runs `make check`, so the two can't
 runs the doctor and review-writes jobs. They stay out of `make check` because they need a container
 runtime.
 
-The gate needs `staticcheck`, `govulncheck`, `shellcheck`, `python3` and `git-lfs`.
+The gate needs `staticcheck`, `govulncheck`, `shellcheck`, `python3`, `node` and `git-lfs`.
+Node runs the shipped site's picker and copy handlers in a small DOM fixture; it needs no
+npm install or browser. Missing Node fails that owner instead of skipping the script checks.
 The Makefile pins `govulncheck` and installs Staticcheck with `make install-staticcheck` from
 `internal/box/staticcheck.mod`. That separate dependency graph pins both the analyzer and its
 Go importer without changing Coop's runtime dependencies. CI and the shipped images use the same
