@@ -397,13 +397,12 @@ func QualifiedClientSet() (lock string, clients map[string][]string, err error) 
 // build contexts. Files and Clients are fresh per closure, never mutable globals.
 func (c ClientClosure) FileNames() []string { return slices.Sorted(maps.Keys(c.Files)) }
 
-// QualificationMismatch explains why a committed qualification does not describe the client set this
-// binary would actually build. It is the check a gate runs so a pin cannot move without re-running
-// the paid conformance suites: a client bump, a dependency bump, or a platform that lost coverage.
-// Empty means the record matches.
+// QualificationMismatch explains why saved live evidence does not describe today's client set.
+// It is informational unless an operator explicitly asks to verify that report. Empty means the
+// client identities match, not that a model was called or every platform was exercised.
 func QualificationMismatch(q Qualification, lock string, clients map[string][]string) string {
 	if q.Lock != lock {
-		return fmt.Sprintf("the locked dependency set changed (record %.12s…, built %.12s…): re-run make provider-qualify", q.Lock, lock)
+		return fmt.Sprintf("the locked dependency set changed (record %.12s…, built %.12s…)", q.Lock, lock)
 	}
 	for platform, want := range clients {
 		got, ok := q.Clients[platform]

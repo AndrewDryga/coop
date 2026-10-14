@@ -41,7 +41,7 @@ type QualificationSuite struct {
 	Evidence  QualificationEvidence
 }
 
-// QualificationRequirements is shared by the recorder and committed-record gate. Returned data
+// QualificationRequirements is shared by the recorder and explicit saved-report verifier. Returned data
 // is fresh; only the accounts row can honestly lack a configured second account.
 func QualificationRequirements() []QualificationSuite {
 	return []QualificationSuite{

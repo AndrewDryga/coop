@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +12,120 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 )
+
+func TestSavedProviderReportIsOptionalAndNeverLoadsHostConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	// A broken host config would fail live preflight. Saved-report commands must not read it.
+	t.Setenv("COOP_CONFIG_DIR", "/dev/null/not-a-directory")
+	for _, args := range [][]string{{"-status"}, {"-verify"}} {
+		var out bytes.Buffer
+		err := command(args, &out)
+		if args[0] == "-status" {
+			if err != nil || !strings.Contains(out.String(), "UNVERIFIED") || !strings.Contains(out.String(), "No provider calls made") {
+				t.Fatalf("missing report must be informational: %v, %s", err, &out)
+			}
+		} else if err == nil || !os.IsNotExist(err) {
+			t.Fatalf("explicit verification must refuse missing evidence, not load host config: %v", err)
+		}
+	}
+}
+
+func TestSavedProviderReportVerification(t *testing.T) {
+	lock, clients, err := agents.QualifiedClientSet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := agents.PinnedCLIVersions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := agents.Qualification{Schema: 2, QualifiedOn: "2026-10-14", Platform: "linux/arm64", Lock: lock, Clients: clients, Suites: map[string]map[string]string{}}
+	for _, suite := range agents.QualificationRequirements() {
+		row := map[string]string{}
+		for _, provider := range suite.Providers {
+			row[provider] = pinned[provider]
+			if suite.Evidence == agents.QualificationPassedTest {
+				row[provider] = "passed"
+			}
+		}
+		valid.Suites[suite.Name] = row
+	}
+	data, err := json.Marshal(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid.Suites["provider-accounts-live-e2e-all"]["grok"] = agents.QualificationNotConfigured
+	partial, err := json.Marshal(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"valid", data, ""},
+		{"unconfigured second account", partial, ""},
+		{"malformed", []byte("{"), "unexpected EOF"},
+		{"unknown field", bytes.Replace(data, []byte(`"schema":2`), []byte(`"schema":2,"made_up":true`), 1), "unknown field"},
+		{"trailing value", append(append([]byte(nil), data...), []byte("{}")...), "trailing data"},
+		{"stale lock", bytes.Replace(data, []byte(lock), []byte(strings.Repeat("0", 64)), 1), "locked dependency set changed"},
+		{"false test result", bytes.Replace(data, []byte(`"passed"`), []byte(`"failed"`), 1), "failed"},
+		{"missing scopes", []byte(`{"schema":2,"qualified_on":"2026-10-14","platform":"linux/arm64"}`), "locked dependency set changed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			if err := os.MkdirAll(filepath.Dir(record), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(record, tc.data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			err := command([]string{"-verify"}, &out)
+			if tc.want == "" {
+				if err != nil || !strings.Contains(out.String(), "2026-10-14 on linux/arm64") || !strings.Contains(out.String(), "not a new live test") {
+					t.Fatalf("valid dated report: %v, %s", err, &out)
+				}
+				for _, mode := range []string{"-status", "-verify"} {
+					out.Reset()
+					if err := command([]string{mode}, &out); err != nil {
+						t.Fatal(err)
+					}
+					wantGap := tc.name == "unconfigured second account"
+					if strings.Contains(out.String(), "grok: account recovery not verified") != wantGap || strings.Contains(out.String(), "wrote ") {
+						t.Fatalf("%s hid recovery coverage or claimed a new recording: %s", mode, &out)
+					}
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("expected refusal containing %q, got %v", tc.want, err)
+				}
+				out.Reset()
+				if err := command([]string{"-status"}, &out); err != nil || !strings.Contains(out.String(), "UNVERIFIED") {
+					t.Fatalf("invalid report must remain informational in status mode: %v, %s", err, &out)
+				}
+			}
+		})
+	}
+}
+
+func TestSavedProviderReportModeCannotFallThroughToLivePreflight(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, args := range [][]string{
+		{"-status", "-preflight"}, {"-verify", "-logs", "logs"}, {"-status", "-targets"},
+		{"-status", "-verify"}, {"-status", "extra"}, {},
+	} {
+		var out bytes.Buffer
+		if err := command(args, &out); err == nil || !strings.Contains(err.Error(), "choose exactly one") || out.Len() != 0 {
+			t.Fatalf("mixed/empty mode %v was not refused before execution: %v, %s", args, err, &out)
+		}
+	}
+	var help bytes.Buffer
+	if err := command([]string{"-help"}, &help); err != nil || !strings.Contains(help.String(), "-status") || !strings.Contains(help.String(), "-verify") {
+		t.Fatalf("help should explain free report modes and succeed: %v, %s", err, &help)
+	}
+}
 
 func TestQualificationReportNamesAccountCoverageGaps(t *testing.T) {
 	for _, missing := range [][]string{nil, {"claude", "grok"}} {

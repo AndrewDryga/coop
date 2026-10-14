@@ -335,13 +335,13 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 			t.Errorf("release qualification lost CI job %s", job)
 		}
 	}
-	qualify := release.Jobs["qualify"]
-	if qualify.Uses != "./.github/workflows/ci.yml" || !reflect.DeepEqual(qualify.Permissions, readOnly) {
+	ciGate := release.Jobs["ci"]
+	if ciGate.Uses != "./.github/workflows/ci.yml" || !reflect.DeepEqual(ciGate.Permissions, readOnly) {
 		t.Error("release must reuse the same-commit CI workflow with read-only permission")
 	}
 	publish := release.Jobs["goreleaser"]
-	if publish.Needs != "qualify" {
-		t.Error("publication must depend on successful exact-commit qualification")
+	if publish.Needs != "ci" {
+		t.Error("publication must depend on successful exact-commit CI")
 	}
 	if !reflect.DeepEqual(publish.Permissions, map[string]string{
 		"contents": "write", "id-token": "write", "attestations": "write",

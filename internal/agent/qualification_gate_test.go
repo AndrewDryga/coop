@@ -2,19 +2,14 @@ package agent
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// Synthetic records prove the comparison independently of the paid qualification. The committed
-// record gate below stays dormant until an operator runs provider-qualify and commits real evidence.
+// Ordinary tests validate the evidence format without requiring a saved live-provider report.
 func TestQualificationMismatchNamesWhatMoved(t *testing.T) {
 	lock, clients, err := QualifiedClientSet()
 	if err != nil {
@@ -67,145 +62,6 @@ func TestQualificationMismatchNamesWhatMoved(t *testing.T) {
 	}
 	if got := QualificationMismatch(Qualification{Lock: lock, Clients: extra}, lock, clients); !strings.Contains(got, "no longer builds") {
 		t.Errorf("a record qualifying an unbuilt platform was accepted: %q", got)
-	}
-}
-
-// A missing record remains dormant. Once recorded, drift fails unless the operator approved the
-// exact, explicitly unqualified release below. That exception never changes qualification evidence.
-func TestTheLockedClientsMatchTheirQualification(t *testing.T) {
-	const record = "locked-clients/qualification.json"
-	data, err := os.ReadFile(filepath.Join(".", record))
-	if os.IsNotExist(err) {
-		t.Skipf("no %s yet: the locked clients are UNQUALIFIED, and no gate stops a pin move until "+
-			"an operator runs `make provider-qualify` and commits the record (PAID)", record)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var q Qualification
-	if err := decodeQualification(data, &q); err != nil {
-		t.Fatalf("the committed qualification does not parse: %v", err)
-	}
-	lock, clients, err := QualifiedClientSet()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidateQualification(q, lock, clients); err != nil {
-		changelog, readErr := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
-		if readErr == nil {
-			if release := approvedQualificationExceptionRelease(data, lock, clients, string(changelog)); release != "" {
-				t.Logf("UNQUALIFIED: operator approved v%s without a fresh full upstream qualification; exact client identity and historical evidence remain unchanged: %v", release, err)
-				return
-			}
-		}
-		t.Fatalf("the committed qualification is incomplete or no longer describes this binary's clients: %v", err)
-	}
-}
-
-// Delete after v11.2.0. Pin both the retained evidence and every platform's native/adapter identity;
-// the latest numbered release binds the exception even after Unreleased is reopened on main.
-func approvedQualificationExceptionRelease(record []byte, lock string, clients map[string][]string, changelog string) string {
-	if fmt.Sprintf("%x", sha256.Sum256(record)) != "b5afd7bdfef2fa016e04b9062ec7306df354bd9615764f2f84dfd870686d4876" {
-		return ""
-	}
-	identity, err := json.Marshal(Qualification{Lock: lock, Clients: clients})
-	if err != nil || fmt.Sprintf("%x", sha256.Sum256(identity)) != "7cc82deafd1a85be711553ce4c18d7101275c4d0fedadcba9e3ae2dfeb0d6a70" {
-		return ""
-	}
-	for line := range strings.SplitSeq(changelog, "\n") {
-		if strings.HasPrefix(line, "## ") && line != "## Unreleased" {
-			if line == "## 11.0.1" || line == "## 11.0.2" || line == "## 11.1.0" || line == "## 11.2.0" {
-				return strings.TrimPrefix(line, "## ")
-			}
-			return ""
-		}
-	}
-	return ""
-}
-
-func TestApprovedQualificationExceptionsAreBoundToReleaseClientsAndEvidence(t *testing.T) {
-	record, err := os.ReadFile("locked-clients/qualification.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct {
-		name, changelog string
-		changeLock      bool
-		changeEvidence  bool
-		changePlatforms bool
-		want            string
-	}{
-		{name: "previous approved release", changelog: "## 11.0.1\n", want: "11.0.1"},
-		{name: "previous reopened main", changelog: "## Unreleased\n\n## 11.0.1\n", want: "11.0.1"},
-		{name: "previous approved patch", changelog: "## 11.0.2\n\n## 11.0.1\n", want: "11.0.2"},
-		{name: "previous reopened patch", changelog: "## Unreleased\n\n## 11.0.2\n\n## 11.0.1\n", want: "11.0.2"},
-		{name: "approved release", changelog: "## 11.1.0\n\n## 11.0.2\n\n## 11.0.1\n", want: "11.1.0"},
-		{name: "reopened main", changelog: "## Unreleased\n\n## 11.1.0\n\n## 11.0.2\n\n## 11.0.1\n", want: "11.1.0"},
-		{name: "current approved release", changelog: "## 11.2.0\n\n## 11.1.0\n", want: "11.2.0"},
-		{name: "current reopened main", changelog: "## Unreleased\n\n## 11.2.0\n\n## 11.1.0\n", want: "11.2.0"},
-		{name: "older release", changelog: "## 10.1.2\n"},
-		{name: "previous release", changelog: "## 11.0.0\n"},
-		{name: "unapproved older patch", changelog: "## 11.0.3\n\n## 11.0.2\n\n## 11.0.1\n"},
-		{name: "next patch", changelog: "## 11.1.1\n\n## 11.1.0\n\n## 11.0.2\n\n## 11.0.1\n"},
-		{name: "next current patch", changelog: "## 11.2.1\n\n## 11.2.0\n\n## 11.1.0\n"},
-		{name: "next minor", changelog: "## 11.3.0\n\n## 11.2.0\n\n## 11.1.0\n"},
-		{name: "next major", changelog: "## 12.0.0\n\n## 11.2.0\n\n## 11.1.0\n"},
-		{name: "no release", changelog: "## Unreleased\n"},
-		{name: "previous changed dependency", changelog: "## 11.0.1\n", changeLock: true},
-		{name: "previous changed evidence", changelog: "## 11.0.1\n", changeEvidence: true},
-		{name: "previous missing platform", changelog: "## 11.0.1\n", changePlatforms: true},
-		{name: "changed dependency", changelog: "## 11.0.2\n", changeLock: true},
-		{name: "changed evidence", changelog: "## 11.0.2\n", changeEvidence: true},
-		{name: "missing platform", changelog: "## 11.0.2\n", changePlatforms: true},
-		{name: "current changed dependency", changelog: "## 11.1.0\n", changeLock: true},
-		{name: "current changed evidence", changelog: "## 11.1.0\n", changeEvidence: true},
-		{name: "current missing platform", changelog: "## 11.1.0\n", changePlatforms: true},
-		{name: "new changed dependency", changelog: "## 11.2.0\n", changeLock: true},
-		{name: "new changed evidence", changelog: "## 11.2.0\n", changeEvidence: true},
-		{name: "new missing platform", changelog: "## 11.2.0\n", changePlatforms: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			lock, clients, err := QualifiedClientSet()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tc.changeLock {
-				lock = strings.Repeat("0", 64)
-			}
-			if tc.changePlatforms {
-				delete(clients, "linux/arm64")
-			}
-			evidence := append([]byte(nil), record...)
-			if tc.changeEvidence {
-				evidence = append(evidence, '\n')
-			}
-			if got := approvedQualificationExceptionRelease(evidence, lock, clients, tc.changelog); got != tc.want {
-				t.Fatalf("approved release=%q, want %q", got, tc.want)
-			}
-		})
-	}
-	lock, clients, err := QualifiedClientSet()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, release := range []string{"11.0.1", "11.0.2", "11.1.0", "11.2.0"} {
-		for platform, lines := range clients {
-			for i, line := range lines {
-				t.Run(release+"/"+platform+"/"+line, func(t *testing.T) {
-					lines[i] = line + " changed"
-					defer func() { lines[i] = line }()
-					if approvedQualificationExceptionRelease(record, lock, clients, "## "+release+"\n") != "" {
-						t.Fatal("changed native or adapter identity accepted")
-					}
-				})
-			}
-		}
-	}
-	clients["linux/s390x"] = []string{"unexpected client"}
-	for _, release := range []string{"11.0.1", "11.0.2", "11.1.0", "11.2.0"} {
-		if approvedQualificationExceptionRelease(record, lock, clients, "## "+release+"\n") != "" {
-			t.Fatalf("additional platform accepted for %s", release)
-		}
 	}
 }
 

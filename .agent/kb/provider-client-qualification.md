@@ -3,7 +3,7 @@ name: provider-client-qualification
 description: locked clients, strict schema2 qualification requirements and Linux/amd64 live evidence
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-10-13
+updated: 2026-10-14
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -36,7 +36,7 @@ Included subscription access needs no additional spend permission; unknown API-k
 paid overage does. Credentials being present does not prove an account's billing allowance.
 It rebuilds this host's images, runs offline probes first and every required live suite, then
 atomically writes `locked-clients/qualification.json`. `QualificationRequirements` is the single
-schema2 suite/provider/evidence map used by the recorder and `TestTheLockedClientsMatchTheirQualification`.
+schema2 suite/provider/evidence map used by the recorder and explicit saved-report verifier.
 Every CLI row must report the exact pinned version; test-only rows must pass their stated scope.
 Only second-account recovery permits `not_configured` (fewer than two configured accounts), never
 a pass implied by missing prerequisites. Unreadable account catalogs fail, and the recorder's
@@ -53,20 +53,16 @@ earlier green suites and that replay. The recorder validated all required logs a
 writing the record. This is not a claim that one uninterrupted `make provider-qualify`
 invocation passed, or that macOS/Linux-arm64 live provider parity was exercised. Only one
 account was configured per provider, so all four second-account recovery entries remain
-`not_configured`, not proved. A missing-file gate is dormant, not proof of compatibility.
+`not_configured`, not proved. Missing or stale evidence is not proof of compatibility.
 
-**Temporary exact-client gate policy.** The separately approved v11.0.1, v11.0.2, v11.1.0 and v11.2.0 exceptions
-hash the retained historical record, the lock and every platform's complete client/native identity,
-and require
-one of those four exact versions to be the latest numbered changelog section. Reopening Unreleased
-permits ordinary main checks; other releases, altered evidence or any client/dependency/platform
-change refuse. An approved older section cannot authorize a newer unapproved release.
-Release preflight independently binds the finalized first section to the actual event tag.
-No environment bypass exists. The validator and historical record are unchanged; the gate
-reports UNQUALIFIED for the matched approved version rather than claiming fresh compatibility
-evidence. Remove the temporary exception after v11.2.0. Run the qualification gate uncached
-after finalizing the release heading: a green Unreleased gate still uses the preceding
-published version and cannot prove acceptance of the next release.
+**Permanent policy.** Saved live-provider evidence is not build or release permission.
+`make provider-status` reads the report without loading credentials or starting a runtime/model;
+missing, malformed or mismatched evidence prints UNVERIFIED and remains informational.
+`make provider-verify` performs the same free, strict validation but refuses invalid or missing
+evidence. A valid report names its original date/platform, not a new live test. Ordinary tests
+retain locked-client integrity and synthetic evidence-parser tests; there is no release-number
+allowlist or waiver. Historical records remain unchanged. Local restricted-network, kernel,
+approval identity and credential-lease admission checks remain mandatory.
 
 Live harnesses route brokered API keys through the host's filtered gateway automatically, using
 `BrokersKey`/`AnyBrokersKey` and `NetworkStateHome`; native sign-ins retain the open path except
@@ -204,8 +200,11 @@ read-only and the client unprivileged. A Mac pass at umask 022 does not prove Li
 --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org` in `locked-clients/`);
 move the adapter's `LockedClients` (versions, platform paths; Grok's URL and both digests) and any
 `NetworkBundle` source URLs; re-read what the pins encode (`TestGeminiThinkingIsQualifiedOnTheLockedClient`,
-the captured `login-failures` and `grok-*-tools.jsonl` fixtures); then run `make provider-qualify`
-and commit the record with the bump. `validateClientClosure` also pins Playwright's version.
+the captured `login-failures` and `grok-*-tools.jsonl` fixtures), and run the affected deterministic
+closure/request/adaptor tests. Offer the smallest affected live check with its scope and billing
+clear; a missing live run is reported, not waived. A full dated report can be refreshed explicitly
+with `make provider-qualify`; never rewrite old results to match new pins.
+`validateClientClosure` also pins Playwright's version.
 
 A brokered client's request shape is pinned too: `TestCredentialBrokerRoutesAdmitWhatThePinnedClientsSend`
 holds the request line each client version really sends (a synthetic fixture once hid that Claude
@@ -244,6 +243,9 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-10-14 — removed saved-record release admission and version-specific exceptions. Added
+  free informational status and explicit strict verification; synthetic format/identity tests
+  and historical evidence remain. Swept recorder, Make, release wiring and client-bump guidance.
 - 2026-10-13 — added the explicitly approved v11.2.0-only exception. Both pinned hashes,
   client identities, validator and historical evidence stay unchanged. Finalized/reopened
   acceptance and future patch/minor/major, dependency, evidence, every native/adapter and

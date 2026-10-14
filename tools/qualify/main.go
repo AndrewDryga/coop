@@ -32,7 +32,7 @@ import (
 const record = "internal/agent/locked-clients/qualification.json"
 
 // suites owns log parsing only. Required names, provider scopes and evidence kinds have one home
-// in agents.QualificationRequirements, shared with the committed-record gate.
+// in agents.QualificationRequirements, shared with the explicit saved-report verifier.
 var suites = map[string]struct {
 	summary, test string
 }{
@@ -57,30 +57,89 @@ var suites = map[string]struct {
 const qualifyEffort = "high"
 
 func main() {
-	logs := flag.String("logs", "", "directory holding <suite>.log for every suite provider-qualify ran")
-	targets := flag.Bool("targets", false, "print the model+effort live targets, in registry order, and exit")
-	preflight := flag.Bool("preflight", false, "refuse, before any paid suite, a run that cannot qualify Coop's own clients")
-	flag.Parse()
-	if *preflight {
-		if err := preflightCheck(); err != nil {
-			fmt.Fprintf(os.Stderr, "qualify: %v\n", err)
-			os.Exit(1)
+	if err := command(os.Args[1:], os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "qualify: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func command(args []string, out io.Writer) error {
+	flags := flag.NewFlagSet("qualify", flag.ContinueOnError)
+	flags.SetOutput(out)
+	logs := flags.String("logs", "", "directory holding <suite>.log for every suite provider-qualify ran")
+	targets := flags.Bool("targets", false, "print the model+effort live targets, in registry order, and exit")
+	preflight := flags.Bool("preflight", false, "refuse, before any paid suite, a run that cannot qualify Coop's own clients")
+	status := flags.Bool("status", false, "show saved live-provider evidence without calling providers")
+	verify := flags.Bool("verify", false, "strictly verify saved evidence against today's clients; no provider calls")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
 		}
-		return
+		return err
+	}
+	modes := 0
+	for _, selected := range []bool{*logs != "", *targets, *preflight, *status, *verify} {
+		if selected {
+			modes++
+		}
+	}
+	if modes != 1 || flags.NArg() != 0 {
+		return errors.New("choose exactly one of -status, -verify, -logs, -targets or -preflight")
+	}
+	if *status || *verify {
+		return savedReport(out, *verify)
+	}
+	if *preflight {
+		return preflightCheck()
 	}
 	if *targets {
 		list, err := effortTargets()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "qualify: %v\n", err)
-			os.Exit(1)
+			return err
 		}
-		fmt.Println(list)
-		return
+		_, err = fmt.Fprintln(out, list)
+		return err
 	}
-	if err := run(*logs); err != nil {
-		fmt.Fprintf(os.Stderr, "qualify: %v\n", err)
-		os.Exit(1)
+	return run(*logs)
+}
+
+// Saved reports are dated evidence, not release permission. This path must not load host
+// credentials, detect a runtime or start a provider; even strict verification only reads a file.
+func savedReport(out io.Writer, strict bool) error {
+	q, err := readSavedReport()
+	if err != nil {
+		if strict {
+			return err
+		}
+		_, writeErr := fmt.Fprintf(out, "Live-provider evidence: UNVERIFIED (%q)\nNo provider calls made; builds and releases do not require this report.\n", err.Error())
+		return writeErr
 	}
+	if _, err = fmt.Fprintf(out, "Saved live-provider evidence: %s on %s\nClient identities and required evidence match; this is a dated report, not a new live test.\n", q.QualifiedOn, q.Platform); err != nil {
+		return err
+	}
+	return printAccountCoverage(out, q)
+}
+
+func readSavedReport() (agents.Qualification, error) {
+	var q agents.Qualification
+	data, err := os.ReadFile(record)
+	if err != nil {
+		return q, err
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&q); err != nil {
+		return q, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return q, errors.New("saved report has trailing data")
+	}
+	lock, clients, err := agents.QualifiedClientSet()
+	if err != nil {
+		return q, err
+	}
+	return q, agents.ValidateQualification(q, lock, clients)
 }
 
 func run(logs string) error {
@@ -150,11 +209,18 @@ func run(logs string) error {
 
 func printQualification(w io.Writer, q agents.Qualification) {
 	fmt.Fprintf(w, "recorded locked-client qualification evidence for %s — wrote %s\n", q.Platform, record)
+	_ = printAccountCoverage(w, q)
+}
+
+func printAccountCoverage(w io.Writer, q agents.Qualification) error {
 	for _, provider := range agents.Names() {
 		if q.Suites["provider-accounts-live-e2e-all"][provider] == agents.QualificationNotConfigured {
-			fmt.Fprintf(w, "  %s: account recovery not verified — sign in a second compatible account and rerun qualification\n", provider)
+			if _, err := fmt.Fprintf(w, "  %s: account recovery not verified — sign in a second compatible account and rerun qualification\n", provider); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 // preflightCheck refuses what would otherwise fail only after paid suites ran: an image override (the

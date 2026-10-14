@@ -209,10 +209,16 @@ provider-delegate-live-e2e-all: ## Strict write-capable coop-delegate probe for 
 # strict live suite against them, and records the result. Every provider answers real
 # prompts. Full logs stay in the printed directory; a failure shows its tail.
 # Included subscriptions need no new spend permission; unknown API-key billing or overage does.
+provider-status: ## Show saved live-provider evidence; no provider calls or release requirement
+	@go run ./tools/qualify -status
+
+provider-verify: ## Strictly verify the saved report against today's clients; no provider calls
+	@go run ./tools/qualify -verify
+
 # The three offline suites run FIRST: they need only the image the setup step just built and call no
 # model, so a red there costs nothing — behind the paid suites, the same red would arrive after every
 # provider had already answered real prompts.
-provider-qualify: ## Live model calls: qualify all locked clients and record it (qualification.json)
+provider-qualify: ## Opt-in live model calls: record dated evidence (not a release requirement)
 	@go run ./tools/qualify -preflight
 	@logs="$$(mktemp -d)"; echo "logs: $$logs"; \
 	go build -o "$$logs/coop" . && mkdir "$$logs/repo" \
@@ -261,6 +267,7 @@ help: ## List targets
 
 .PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
+.PHONY: provider-status provider-verify
 .PHONY: require-git-lfs
 .PHONY: mod-check
 .PHONY: gateway-sources-check

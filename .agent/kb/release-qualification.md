@@ -3,12 +3,13 @@ name: release-qualification
 description: "tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity"
 subsystem: release
 sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/release_preflight.py, release_test.go]
-updated: 2026-10-09
+updated: 2026-10-14
 ---
 
-Release `qualify` locally calls ci.yml from the event commit; its canonical gate, Docker
+Release `ci` locally calls ci.yml from the event commit; its canonical gate, Docker
 doctor and Docker review-write jobs must succeed before the privileged publisher starts.
-Every checkout explicitly uses github.sha. Qualification remains contents-read only.
+Every checkout explicitly uses github.sha. CI remains contents-read only. It makes no live model
+calls and does not require a fresh saved provider report or a version-specific waiver.
 
 The preflight helper compares the event tag's peeled commit to HEAD and extracts the first real
 ATX H2 section of CHANGELOG.md. Its heading must exactly match the SemVer tag without `v`;
@@ -29,6 +30,8 @@ tag or protection during build/publication. Local fixture tests cannot prove hos
 or publication succeeded. Test refs/remotes are confined to temporary filesystem repositories.
 
 ## Changelog
+- 2026-10-14 — renamed the reusable release job to ci and removed saved-provider-report release
+  permission. Exact-tag free CI, Docker checks, publisher isolation and signing are unchanged.
 - 2026-10-09 — v11 publication refused untidy direct-dependency classification and stale sums
   after qualification. Kept the publisher refusal and added the identical early canonical check;
   dependency versions remain unchanged. Focused release contract and four-platform snapshot

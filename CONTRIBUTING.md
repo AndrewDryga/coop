@@ -164,8 +164,11 @@ providers with unverified account recovery. Only that row may say `not_configure
 unreadable account directory fails. Offline MCP (`make mcp-e2e`) covers Codex, Gemini and Grok.
 The live network suite requires a shared MCP tool call from every provider.
 
-`make check` rejects stale, malformed or incomplete existing records. An absent record leaves this
-gate dormant. That does not imply live qualification, or parity between platforms or providers.
+Saved reports are optional dated evidence, not build or release permission. `make provider-status`
+shows missing or stale evidence as UNVERIFIED without failing a build. `make provider-verify`
+strictly checks the saved report and refuses missing, malformed or incomplete evidence.
+Neither command calls providers or reads credentials. Ordinary CI makes no model calls and needs
+no provider waiver. A matching report still does not prove a new live run or platform parity.
 
 The [client qualification KB](.agent/kb/provider-client-qualification.md) covers the locked
 clients and the schema-2 record in detail.

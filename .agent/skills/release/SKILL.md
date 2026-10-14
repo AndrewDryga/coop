@@ -17,6 +17,9 @@ each time — this is the contract; follow it.
 ## 1. Pre-flight — is there anything real to ship?
 - On `main`, clean tree, not behind `origin/main` (the only ahead commits should be your own
   release prep). Gate green: `make check`.
+- The gate is free and deterministic. Saved live-provider reports are optional dated evidence,
+  not release permission; do not request a waiver or run paid models to finalize a version.
+  `make provider-status` is informational; `make provider-verify` is an explicit free strict check.
 - Identify the latest published, non-draft, non-prerelease version with
   `gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt` before comparing
   changes. A local or failed tag is not a published release.
