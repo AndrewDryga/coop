@@ -29,14 +29,20 @@ var ErrJobSourceIntegrity = errors.New("job source identity or working tree does
 // running in the background: the command is tried again on its next delivery.
 var errJobSourceDownloading = errors.New("a repository the job needs is still being fetched")
 
+// errJobSourceStagingStarted is errJobSourceDownloading for a copy this try began staging in the
+// background (backgroundStaging); stageCreateJobSources gives those a moment to finish.
+var errJobSourceStagingStarted = fmt.Errorf("%w: staging started", errJobSourceDownloading)
+
 // firstDownloadTimeout bounds a repository's first download. theblitzapp/blitz-core's 15 GB
 // took about 45 minutes at 6 MiB/s (2026-10-03); a transfer that stalls is git's own to give up.
 const firstDownloadTimeout = 6 * time.Hour
 
-// stagingInForeground is how long a create waits for a new copy before the staging finishes in
-// the background (backgroundStaging) and the create is held and tried again (firstDownloadWaits).
-// The worker runs one command at a time: on a tenant install a create staging three moved
-// repositories held it for 18 minutes, and every routing turn sent meanwhile waited (2026-10-14).
+// stagingInForeground is how long, in all, a create waits for the copies it began staging in the
+// background (backgroundStaging) before it is held and tried again (firstDownloadWaits). The
+// worker runs one command at a time: on a tenant install a create staging three moved
+// repositories held it for 18 minutes, and every routing turn sent meanwhile waited; with each
+// repository's grant and wait still in the foreground, one staging 17 held routing for 70 s
+// (2026-10-14).
 const stagingInForeground = 3 * time.Second
 
 type firstDownload struct {
@@ -90,15 +96,12 @@ type privateJobSourceStager struct {
 	backgroundFirstDownload bool
 	downloadsMu             sync.Mutex
 	downloads               map[string]*firstDownload
-	// A new copy not staged within stagingInForeground finishes in the background when set, as
+	// A new copy with an earlier one to start from stages in the background when set, as
 	// NewJobSourceStager sets it, and Stage reports errJobSourceDownloading until it is there.
-	// A source with submodules stages in the foreground: their grants are asked of the controller
-	// while the copy is staged. Unset, as tests build a stager, staging waits for it.
+	// Unset, as tests build a stager, staging waits for it.
 	backgroundStaging bool
 	stagingsMu        sync.Mutex
 	stagings          map[string]*firstDownload
-	// Tests shorten stagingInForeground.
-	foregroundForTest time.Duration
 }
 
 func NewJobSourceStager(transport JobSourceTransport, stateRoot string) (*privateJobSourceStager, error) {
@@ -137,25 +140,55 @@ func (e *Executor) stageCreateJobSources(ctx context.Context, body []byte) error
 	}
 	// Every repository whose history is still downloading starts its download now, so a job
 	// with several new repositories does not discover them one delivery at a time.
-	downloading := false
-	for _, source := range sources {
-		if err := e.jobSourceStager.Stage(ctx, job.JobRef, source); err != nil {
-			if errors.Is(err, errJobSourceDownloading) {
-				downloading = true
-				continue
+	pending, started, err := e.stageJobSources(ctx, job.JobRef, sources)
+	if err != nil {
+		return err
+	}
+	// The copies this try began staging get stagingInForeground in all, so most creates finish
+	// in one try, and the worker is never held longer than that whatever the job's size.
+	if started {
+		deadline := time.Now().Add(stagingInForeground)
+		for len(pending) > 0 && time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(stagingPoll):
 			}
-			if errors.Is(err, ErrJobSourceIntegrity) {
-				return fmt.Errorf("%w: %v", ErrRequestRejected, err)
+			if pending, _, err = e.stageJobSources(ctx, job.JobRef, pending); err != nil {
+				return err
 			}
-			return classifyArtifactFetch(err, "fetch job source")
 		}
 	}
-	if downloading {
+	if len(pending) > 0 {
 		// Still a transfer for now, and recognizably a download, so the connector can hold the
 		// command back instead of staging it again at every delivery (firstDownloadWaits).
 		return fmt.Errorf("%w: fetch job source: %w", errArtifactTransfer, errJobSourceDownloading)
 	}
 	return nil
+}
+
+// stagingPoll is how often a create looks at the copies it began staging while it waits for them.
+const stagingPoll = 200 * time.Millisecond
+
+// stageJobSources stages each source and returns those still being fetched, and whether this try
+// began staging any of them.
+func (e *Executor) stageJobSources(ctx context.Context, jobRef string, sources []workerproto.JobSource) ([]workerproto.JobSource, bool, error) {
+	var pending []workerproto.JobSource
+	started := false
+	for _, source := range sources {
+		err := e.jobSourceStager.Stage(ctx, jobRef, source)
+		switch {
+		case err == nil:
+		case errors.Is(err, errJobSourceDownloading):
+			pending = append(pending, source)
+			started = started || errors.Is(err, errJobSourceStagingStarted)
+		case errors.Is(err, ErrJobSourceIntegrity):
+			return nil, false, fmt.Errorf("%w: %v", ErrRequestRejected, err)
+		default:
+			return nil, false, classifyArtifactFetch(err, "fetch job source")
+		}
+	}
+	return pending, started, nil
 }
 
 func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, source workerproto.JobSource) error {
@@ -203,6 +236,9 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 	if seed == "" && s.stillDownloading(parent, source.RepositoryIdentity()) {
 		return errJobSourceDownloading
 	}
+	if seed != "" && s.backgroundStaging {
+		return s.stageInBackground(ctx, jobRef, source, parent, final, seed)
+	}
 	grant, err := s.sourceGrant(ctx, jobRef, source.RepositoryIdentity())
 	if err != nil {
 		return err
@@ -213,48 +249,39 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 			return err
 		}
 	}
-	if !s.backgroundStaging || len(source.Submodules) > 0 {
-		return s.stageCopy(ctx, jobRef, source, parent, final, seed, remote, protocol, grant.Token)
-	}
-	return s.stageInBackground(ctx, jobRef, source, parent, final, seed, remote, protocol, grant.Token)
+	return s.stageCopy(ctx, jobRef, source, parent, final, seed, remote, protocol, grant.Token)
 }
 
-// stageInBackground stages a new copy, waiting stagingInForeground for it. One not ready by then
-// goes on in the background and is reported as errJobSourceDownloading, so the connector holds the
-// create and every other command runs meanwhile; a later Stage collects how it ended.
+// stageInBackground stages a new copy from an earlier one in the background, asking the
+// controller for its grants there too, its submodules' included, and reports
+// errJobSourceStagingStarted at once: the connector holds the create, every other command runs
+// meanwhile, and a later Stage collects how the staging ended. A repository's first staging stays
+// in the foreground.
 func (s *privateJobSourceStager) stageInBackground(ctx context.Context, jobRef string, source workerproto.JobSource,
-	parent, final, seed, remote, protocol, token string) error {
+	parent, final, seed string) error {
 	s.stagingsMu.Lock()
+	defer s.stagingsMu.Unlock()
 	if s.stagings == nil {
 		s.stagings = map[string]*firstDownload{}
 	}
 	if s.stagings[final] != nil {
-		s.stagingsMu.Unlock()
 		return errJobSourceDownloading
 	}
 	staging := &firstDownload{done: make(chan struct{})}
 	s.stagings[final] = staging
-	s.stagingsMu.Unlock()
 	go func() {
 		defer close(staging.done)
 		background, cancel := context.WithTimeout(context.WithoutCancel(ctx), firstDownloadTimeout)
 		defer cancel()
-		staging.err = s.stageCopy(background, jobRef, source, parent, final, seed, remote, protocol, token)
+		grant, err := s.sourceGrant(background, jobRef, source.RepositoryIdentity())
+		if err != nil {
+			staging.err = err
+			return
+		}
+		remote, protocol := s.remote(source.RepositoryIdentity())
+		staging.err = s.stageCopy(background, jobRef, source, parent, final, seed, remote, protocol, grant.Token)
 	}()
-	foreground := stagingInForeground
-	if s.foregroundForTest > 0 {
-		foreground = s.foregroundForTest
-	}
-	timer := time.NewTimer(foreground)
-	defer timer.Stop()
-	select {
-	case <-staging.done:
-		_, err := s.stagedInBackground(final)
-		return err
-	case <-timer.C:
-	case <-ctx.Done():
-	}
-	return errJobSourceDownloading
+	return errJobSourceStagingStarted
 }
 
 // stagedInBackground reports a copy still staging in the background, or collects, once, the error

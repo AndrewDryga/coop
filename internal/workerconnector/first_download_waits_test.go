@@ -154,3 +154,59 @@ func createWithJobSource(t *testing.T) workerproto.Command {
 	command.Payload = payload
 	return command
 }
+
+// One create whose job named 17 repositories, each new to the worker, held routing's commands
+// for 70 s while each repository's grant and wait ran in turn (2026-10-14). A create gives the
+// stagings it began stagingInForeground in all, then is held and tried again.
+func TestACreateNeedingManyNewCopiesHoldsTheWorkerOnlyBriefly(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		stager := &startedStagingStager{tries: map[string]int{}}
+		executor, err := NewExecutor(ExecutorConfig{API: unreachableAPI{}, JobSourceStager: stager,
+			JournalDir: t.TempDir(), Now: time.Now, WorkerID: "worker-a"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		job := workerproto.JobSpec{
+			Version: 2, JobRef: "job:many", Source: ptrJobSource(testJobSource()),
+			Targets: []string{"codex"}, Mode: "readonly", RepositoryReadOnly: true,
+			Egress: workerproto.JobEgress{Mode: "none", Rules: []workerproto.JobRule{}},
+			Limits: workerproto.JobLimits{MaxTurns: 1, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
+				TurnTimeoutMS: 60_000, MaxPatchBytes: 1024},
+			Environment: map[string]string{}, Check: workerproto.JobCheck{Argv: []string{}, Environment: map[string]string{}},
+			Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
+		}
+		for n := range 16 {
+			source := testJobSource()
+			source.RepositoryRef = fmt.Sprintf("repo:companion-%d", n)
+			source.GitHubRepository = fmt.Sprintf("example/companion-%d", n)
+			source.GitHubRepositoryID = int64(100 + n)
+			job.Companions = append(job.Companions, workerproto.JobCompanion{Name: fmt.Sprintf("companion-%d", n), Source: source})
+		}
+		body, err := json.Marshal(map[string]any{"task": job.JobRef, "job": job})
+		if err != nil {
+			t.Fatal(err)
+		}
+		began := time.Now()
+		err = executor.stageCreateJobSources(context.Background(), body)
+		if !errors.Is(err, errJobSourceDownloading) {
+			t.Fatalf("a create whose copies are still staging = %v, want it held", err)
+		}
+		if held := time.Since(began); held > stagingInForeground+stagingPoll {
+			t.Fatalf("held the worker %s for 17 new copies, want at most %s", held, stagingInForeground)
+		}
+		if len(stager.tries) != 17 {
+			t.Fatalf("began staging %d repositories, want all 17 at once", len(stager.tries))
+		}
+	})
+}
+
+// startedStagingStager begins every copy in the background and never finishes one.
+type startedStagingStager struct{ tries map[string]int }
+
+func (s *startedStagingStager) Stage(_ context.Context, _ string, source workerproto.JobSource) error {
+	s.tries[source.RepositoryRef]++
+	if s.tries[source.RepositoryRef] == 1 {
+		return errJobSourceStagingStarted
+	}
+	return errJobSourceDownloading
+}

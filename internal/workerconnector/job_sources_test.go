@@ -29,6 +29,8 @@ type jobSourceGrantFixture struct {
 	public map[string]bool
 	// token, when set, replaces whatever the grant would carry.
 	token *string
+	// slow, when set, holds every grant until it is closed, as a controller that answers late.
+	slow chan struct{}
 }
 
 func TestSourceStagingRequiresAndMaterializesTheEntireAuthorizedGitlinkTree(t *testing.T) {
@@ -133,6 +135,9 @@ func TestSourceStagingRequiresAndMaterializesTheEntireAuthorizedGitlinkTree(t *t
 }
 
 func (f *jobSourceGrantFixture) FetchJobSourceGrant(_ context.Context, _ string, source workerproto.RepositoryIdentity) (JobSourceGrant, error) {
+	if f.slow != nil {
+		<-f.slow
+	}
 	f.calls++
 	expires := time.Now().Add(time.Hour)
 	if f.expired {
@@ -392,26 +397,122 @@ func TestJobSourceStagerFetchesPrivateVerifiedRepository(t *testing.T) {
 // still fetching, a try meanwhile asks the controller for nothing, and a later try finds the copy.
 func TestASlowStagingGoesOnInTheBackgroundAndALaterTryFindsTheCopy(t *testing.T) {
 	ctx := context.Background()
-	remote, source := backgroundStagingFixture(t)
+	remote, first := backgroundStagingFixture(t)
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
 	transport := &jobSourceGrantFixture{}
 	stager := &privateJobSourceStager{transport: transport, stateRoot: root, remoteForTest: remote,
-		backgroundStaging: true, foregroundForTest: time.Nanosecond}
+		backgroundStaging: true}
+	// A repository's first copy stages in the foreground; later ones start from it.
+	if err := stager.Stage(ctx, "job:one", first); err != nil {
+		t.Fatal(err)
+	}
+	source := first
+	source.Binding.ResolvedAt = first.Binding.ResolvedAt.Add(time.Hour)
 	if err := stager.Stage(ctx, "job:one", source); !errors.Is(err, errJobSourceDownloading) {
-		t.Fatalf("a staging not done at once = %v, want the create held as still fetching", err)
+		t.Fatalf("a new copy = %v, want the create held as still fetching", err)
 	}
 	if err := stageUntilSettled(t, stager, source); err != nil {
 		t.Fatalf("a later try = %v, want the staged copy", err)
 	}
-	if transport.calls != 1 {
-		t.Fatalf("asked the controller for %d grants, want 1: a try while the copy stages asks for none", transport.calls)
+	if transport.calls != 2 {
+		t.Fatalf("asked the controller for %d grants, want 2: a try while a copy stages asks for none", transport.calls)
 	}
 	key, _ := source.StagingKey()
 	if err := verifyStagedJobSource(ctx, filepath.Join(root, "job-sources", key), source); err != nil {
 		t.Fatalf("the copy staged in the background: %v", err)
+	}
+}
+
+// A create that needed 17 new copies held the worker for 70 s on a tenant install, each asking the
+// controller for its grant before it went to the background (2026-10-14). The grant is asked for
+// in the background too: a try returns at once, however slowly the controller answers.
+func TestABackgroundStagingAsksForItsGrantInTheBackground(t *testing.T) {
+	ctx := context.Background()
+	remote, good := backgroundStagingFixture(t)
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	transport := &jobSourceGrantFixture{}
+	stager := &privateJobSourceStager{transport: transport, stateRoot: root, remoteForTest: remote, backgroundStaging: true}
+	_ = stager.Stage(ctx, "job:one", good)
+	if err := stageUntilSettled(t, stager, good); err != nil {
+		t.Fatal(err)
+	}
+	transport.slow = make(chan struct{})
+	source := good
+	source.Binding.ResolvedAt = good.Binding.ResolvedAt.Add(time.Hour)
+	began := time.Now()
+	err := stager.Stage(ctx, "job:one", source)
+	if !errors.Is(err, errJobSourceStagingStarted) {
+		t.Fatalf("a new copy = %v, want its staging started in the background", err)
+	}
+	if waited := time.Since(began); waited > time.Second {
+		t.Fatalf("the try waited %s for a controller that had not answered", waited)
+	}
+	close(transport.slow)
+	if err := stageUntilSettled(t, stager, source); err != nil {
+		t.Fatalf("a later try = %v, want the staged copy", err)
+	}
+}
+
+// A tenant's largest repository carries submodules, and a copy with submodules still staged in
+// the foreground: a create fetching only that repository held routing's create and close for 46 s
+// (2026-10-14 09:13 UTC). It stages in the background too, submodules and their grants included.
+func TestASourceWithSubmodulesStagesInTheBackgroundToo(t *testing.T) {
+	ctx := context.Background()
+	leaf, leafGit := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(leaf, "code"), []byte("nested content\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	leafGit("add", "code")
+	leafGit("commit", "-qm", "leaf")
+	value := func(repo, revision string) string {
+		t.Helper()
+		out, err := sourceGitValue(ctx, repo, "", "file", "rev-parse", revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	remote, git := gitrepo.New(t)
+	git("update-index", "--add", "--cacheinfo", "160000,"+value(leaf, "HEAD")+",vendor/leaf")
+	if err := os.WriteFile(filepath.Join(remote, ".gitmodules"), []byte("[submodule \"leaf\"]\npath = vendor/leaf\nurl = https://example.invalid/leaf\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitmodules")
+	git("commit", "-qm", "parent")
+	first := testJobSource()
+	first.Binding.DefaultCommit = value(remote, "HEAD")
+	first.Binding.SelectedCommit, first.Binding.BaseCommit = first.Binding.DefaultCommit, first.Binding.DefaultCommit
+	first.Binding.AdmittedTree = value(remote, "HEAD^{tree}")
+	first.Submodules = []workerproto.JobSubmodule{{Path: "vendor/leaf", RepositoryRef: "leaf",
+		GitHubRepository: "example/leaf", GitHubRepositoryID: 19, Commit: value(leaf, "HEAD"), Tree: value(leaf, "HEAD^{tree}"),
+		Submodules: []workerproto.JobSubmodule{}}}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	stager := &privateJobSourceStager{transport: &jobSourceGrantFixture{}, stateRoot: root, remoteForTest: remote,
+		submoduleRemotesForTest: map[string]string{"example/leaf": leaf}, backgroundStaging: true}
+	if err := stager.Stage(ctx, "job:modules", first); err != nil {
+		t.Fatal(err)
+	}
+	source := first
+	source.Binding.ResolvedAt = first.Binding.ResolvedAt.Add(time.Hour)
+	if err := stager.Stage(ctx, "job:modules", source); !errors.Is(err, errJobSourceStagingStarted) {
+		t.Fatalf("a new copy with submodules = %v, want its staging started in the background", err)
+	}
+	if err := stageUntilSettled(t, stager, source); err != nil {
+		t.Fatalf("a later try = %v, want the staged copy", err)
+	}
+	key, _ := source.StagingKey()
+	nested := filepath.Join(root, "job-sources", key, "repository", "vendor", "leaf", "code")
+	if data, err := os.ReadFile(nested); err != nil || string(data) != "nested content\n" {
+		t.Fatalf("the background copy's submodule: %q, %v", data, err)
 	}
 }
 
@@ -425,7 +526,7 @@ func TestABackgroundStagingThatFailsSaysWhyOnceAndStartsOver(t *testing.T) {
 		t.Fatal(err)
 	}
 	stager := &privateJobSourceStager{transport: &jobSourceGrantFixture{}, stateRoot: root, remoteForTest: remote,
-		backgroundStaging: true, foregroundForTest: time.Nanosecond}
+		backgroundStaging: true}
 	// An earlier copy is the head start, as on a worker that has staged the repository before.
 	_ = stager.Stage(ctx, "job:one", good)
 	if err := stageUntilSettled(t, stager, good); err != nil {
