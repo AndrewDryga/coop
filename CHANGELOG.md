@@ -16,6 +16,12 @@
   seconds now finishes in the background. The create is tried again until its repositories are
   ready, every 15 seconds at most, while the worker runs every other command.
 
+- **A branch that moved on no longer refuses its job.** A worker staged a job's repository only
+  if the branch still pointed at the job's commit, so a create failed whenever the branch moved
+  while it was being set up, and a task's next session failed for good once its main branch had
+  moved. The commit now only has to be on the branch: its head or in its history. A branch
+  rewritten past it, by a force push, is still refused.
+
 ## 11.2.0
 
 - **Task tools shut down cleanly.** A helper's normal exit no longer loses its final output

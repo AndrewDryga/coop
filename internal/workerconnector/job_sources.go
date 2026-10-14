@@ -575,15 +575,15 @@ func fetchVerifiedSource(ctx context.Context, destination, remote, protocol, tok
 	if err := runSourceGit(ctx, destination, token, protocol, "fetch", "--quiet", "--no-tags", "origin", "+"+binding.DefaultRef+":refs/remotes/origin/job-default"); err != nil {
 		return err
 	}
-	if actual, err := sourceGitValue(ctx, destination, token, protocol, "rev-parse", "refs/remotes/origin/job-default^{commit}"); err != nil || actual != binding.DefaultCommit {
-		return ErrJobSourceIntegrity
+	if err := onBranch(ctx, destination, binding.DefaultCommit, "refs/remotes/origin/job-default"); err != nil {
+		return err
 	}
 	if selected := binding.SelectedRefValue(); selected != "" && selected != binding.DefaultRef {
 		if err := runSourceGit(ctx, destination, token, protocol, "fetch", "--quiet", "--no-tags", "origin", "+"+selected+":refs/remotes/origin/job-selected"); err != nil {
 			return err
 		}
-		if actual, err := sourceGitValue(ctx, destination, token, protocol, "rev-parse", "refs/remotes/origin/job-selected^{commit}"); err != nil || actual != binding.SelectedCommit {
-			return ErrJobSourceIntegrity
+		if err := onBranch(ctx, destination, binding.SelectedCommit, "refs/remotes/origin/job-selected"); err != nil {
+			return err
 		}
 	} else if selected == "" {
 		if err := runSourceGit(ctx, destination, token, protocol, "fetch", "--quiet", "--no-tags", "origin", binding.SelectedCommit); err != nil {
@@ -605,6 +605,25 @@ func fetchVerifiedSource(ctx context.Context, destination, remote, protocol, tok
 		return err
 	}
 	return verifySourceHead(ctx, destination, binding.SelectedCommit, binding.AdmittedTree)
+}
+
+// onBranch proves a frozen commit is its branch's head, or in its history, as the remote has the
+// branch now. A branch that only moved forward since the job froze it still holds the same code:
+// it moved while the copy was staged, which refused Ryker's creates on a busy repository, or the
+// copy was removed and is staged again for a session that runs the same frozen job (2026-10-14). A
+// branch rewritten past the commit, by a force push, does not hold it, and is refused.
+func onBranch(ctx context.Context, repository, commit, ref string) error {
+	head, err := sourceGitValue(ctx, repository, "", "", "rev-parse", ref+"^{commit}")
+	if err != nil {
+		return ErrJobSourceIntegrity
+	}
+	if head == commit {
+		return nil
+	}
+	if _, err := sourceGitValue(ctx, repository, "", "", "merge-base", "--is-ancestor", commit, head); err != nil {
+		return ErrJobSourceIntegrity
+	}
+	return nil
 }
 
 // stagedSeedRef names an earlier copy's default commit while a new copy fetches, so Git asks

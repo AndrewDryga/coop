@@ -207,7 +207,7 @@ func TestSourceStagingFetchesAPublicSubmoduleWithoutACredential(t *testing.T) {
 }
 
 func TestSourceStagingRefusesChangedOrUnprovenFrozenObjects(t *testing.T) {
-	for _, scenario := range []string{"moved-default", "moved-selected", "wrong-tree", "wrong-base", "unavailable", "cancelled", "expired"} {
+	for _, scenario := range []string{"rewritten-default", "rewritten-selected", "wrong-tree", "wrong-base", "unavailable", "cancelled", "expired"} {
 		t.Run(scenario, func(t *testing.T) {
 			remote, git := gitrepo.New(t)
 			git("commit", "--allow-empty", "-qm", "default")
@@ -237,11 +237,12 @@ func TestSourceStagingRefusesChangedOrUnprovenFrozenObjects(t *testing.T) {
 			defer cancel()
 			grant := &jobSourceGrantFixture{expired: scenario == "expired"}
 			switch scenario {
-			case "moved-default":
+			case "rewritten-default":
+				// A force push past the frozen commit: main no longer holds it.
 				git("checkout", "-q", "main")
-				git("commit", "--allow-empty", "-qm", "moved")
-			case "moved-selected":
-				git("commit", "--allow-empty", "-qm", "moved")
+				git("commit", "--amend", "--allow-empty", "-qm", "rewritten")
+			case "rewritten-selected":
+				git("commit", "--amend", "-qm", "rewritten")
 			case "wrong-tree":
 				source.Binding.AdmittedTree = value("main^{tree}")
 			case "wrong-base":
@@ -265,6 +266,60 @@ func TestSourceStagingRefusesChangedOrUnprovenFrozenObjects(t *testing.T) {
 			}
 			if _, err := os.Lstat(filepath.Join(root, "job-sources", key)); !os.IsNotExist(err) {
 				t.Fatalf("failed fetch published source authority: %v", err)
+			}
+		})
+	}
+}
+
+// A worker proves a frozen source against its branch as the remote has it now. Requiring the
+// branch still to point at the frozen commit refused every create whose branch moved while the
+// copy staged, which a busy repository does within minutes, and every task whose copy was removed
+// once its branch had moved: the job is frozen, and the same code is still on the branch
+// (2026-10-14). A branch that only moved forward stages the frozen commit itself.
+func TestSourceStagingTakesAFrozenCommitItsBranchMovedPast(t *testing.T) {
+	for _, scenario := range []string{"moved-default", "moved-selected"} {
+		t.Run(scenario, func(t *testing.T) {
+			remote, git := gitrepo.New(t)
+			git("commit", "--allow-empty", "-qm", "default")
+			value := func(revision string) string {
+				t.Helper()
+				value, err := sourceGitValue(context.Background(), remote, "", "file", "rev-parse", revision)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return value
+			}
+			base := value("HEAD")
+			git("checkout", "-qb", "feature")
+			if err := os.WriteFile(filepath.Join(remote, "work.txt"), []byte("selected\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			git("add", "work.txt")
+			git("commit", "-qm", "selected")
+			selected := value("HEAD")
+			source := testJobSource()
+			ref := "refs/heads/feature"
+			source.Binding.Kind, source.Binding.Requested = session.SourceBranch, session.SourceSelector{Kind: session.SourceBranch, Name: "feature"}
+			source.Binding.DefaultCommit, source.Binding.BaseCommit = base, base
+			source.Binding.SelectedRef, source.Binding.SelectedCommit = &ref, selected
+			source.Binding.AdmittedTree = value("HEAD^{tree}")
+			if scenario == "moved-default" {
+				git("checkout", "-q", "main")
+			}
+			git("commit", "--allow-empty", "-qm", "moved on")
+			root := t.TempDir()
+			if err := os.Chmod(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			stager := &privateJobSourceStager{transport: &jobSourceGrantFixture{}, stateRoot: root, remoteForTest: remote}
+			if err := stager.Stage(context.Background(), "job:frozen-source", source); err != nil {
+				t.Fatalf("a branch that moved forward refused its frozen commit: %v", err)
+			}
+			key, _ := source.StagingKey()
+			repository := filepath.Join(root, "job-sources", key, "repository")
+			head, err := sourceGitValue(context.Background(), repository, "", "file", "rev-parse", "HEAD")
+			if err != nil || head != selected {
+				t.Fatalf("staged %q (%v), want the frozen commit %s", head, err, selected)
 			}
 		})
 	}
