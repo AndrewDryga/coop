@@ -6,10 +6,16 @@ sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, .go
 updated: 2026-10-14
 ---
 
-Release `ci` locally calls ci.yml from the event commit; its canonical gate, Docker
+Release `ci` locally calls ci.yml from the event commit; its four Make-owned broad checks, Docker
 doctor and Docker review-write jobs must succeed before the privileged publisher starts.
 Every checkout explicitly uses github.sha. CI remains contents-read only. It makes no live model
 calls and does not require a fresh saved provider report or a version-specific waiver.
+
+Reusable release calls always take broad checks, never the direct-main CHANGELOG shortcut.
+The status-only `check` job runs even after a dependency fails and admits only a complete
+successful broad or metadata outcome, with both runtime jobs successful. Read-only jobs may
+cache modules and compiled objects; tests rerun. The publisher remains fresh, uncached and
+without imported CI artifacts. See [[ci-free-checks]].
 
 The preflight helper compares the event tag's peeled commit to HEAD and extracts the first real
 ATX H2 section of CHANGELOG.md. Its heading must exactly match the SemVer tag without `v`;
@@ -30,6 +36,8 @@ tag or protection during build/publication. Local fixture tests cannot prove hos
 or publication succeeded. Test refs/remotes are confined to temporary filesystem repositories.
 
 ## Changelog
+- 2026-10-14 — verified Make partition coverage, strict metadata routing and aggregate refusal
+  controls; exact-tag broad checks and uncached publisher identity/signing remain unchanged.
 - 2026-10-14 — renamed the reusable release job to ci and removed saved-provider-report release
   permission. Exact-tag free CI, Docker checks, publisher isolation and signing are unchanged.
 - 2026-10-09 — v11 publication refused untidy direct-dependency classification and stale sums

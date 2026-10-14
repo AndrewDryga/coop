@@ -12,32 +12,113 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  scope:
     runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.scope.outputs.mode }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
-          persist-credentials: false # don't leave the token in .git/config for later steps
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select only proven metadata changes
+        id: scope
+        run: python3 tools/ci_scope.py
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_REF: ${{ github.ref }}
+          CI_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_SHA: ${{ github.sha }}
+
+  checks:
+    needs: scope
+    if: needs.scope.outputs.mode != 'metadata'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        target: [check-static, check-unit, check-process, check-race]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod # pin the toolchain to the repo, not a floating "stable"
-          cache: false # no Actions cache → no cache-poisoning surface
+          go-version-file: go.mod
+          cache: true # read-only CI only; the publisher never consumes this cache
+          cache-dependency-path: |
+            go.mod
+            go.sum
+            internal/box/staticcheck.mod
+            internal/box/staticcheck.sum
       - name: install Go analyzers at the repo's pins
-        # The Makefile owns both versions and the gate rejects any other builds, so CI and a
-        # laptop cannot analyze with different rule or vulnerability sets. The other required
-        # tools, shellcheck and python3, are preinstalled on the runner image.
+        if: matrix.target == 'check-static'
         run: |
           make install-staticcheck
           go install golang.org/x/vuln/cmd/govulncheck@"$(make -s govulncheck-version)"
       - name: install Git LFS for source and workspace integration tests
         run: sudo apt-get update && sudo apt-get install -y git-lfs
-      - name: gate
-        # ONE recipe: everything this job checks is `make check` — the same target a laptop and a
-        # box run — so the two can never drift again. A new check goes in the Makefile, never as a
-        # step here. (The container-boundary jobs below are the deliberate exception: they need a
-        # real runtime, which `make check` deliberately does not.)
-        run: make check
+      - name: Make-owned free checks
+        run: make "${{ matrix.target }}"
+
+  metadata:
+    needs: scope
+    if: needs.scope.outputs.mode == 'metadata'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            go.sum
+            internal/box/staticcheck.mod
+            internal/box/staticcheck.sum
+      - name: Make-owned metadata checks
+        run: make check-metadata
+
+  # Keep the existing required status. Skipped dependencies are not proof of a pass.
+  # This job reads only status data: no checkout, cache, action or repository code.
+  check:
+    name: check
+    if: always()
+    needs: [scope, checks, metadata, doctor, review-writes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every selected check and runtime boundary
+        env:
+          CI_MODE: ${{ needs.scope.outputs.mode }}
+          CI_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          needed = json.loads(os.environ["CI_RESULTS"])
+          outcomes = tuple(needed.get(name, {}).get("result", "") for name in
+                           ("scope", "checks", "metadata", "doctor", "review-writes"))
+          state = (os.environ["CI_MODE"], *outcomes)
+          accepted = {
+              ("broad", "success", "success", "skipped", "success", "success"),
+              ("metadata", "success", "skipped", "success", "success", "success"),
+          }
+          if state not in accepted:
+              raise SystemExit("Selected CI checks did not all succeed.")
+          if state[0] == "metadata":
+              print("Metadata checks passed; broad free checks were not run.")
+          else:
+              print("All free checks and runtime jobs passed.")
+          PY
 
   # Exercise the real container boundary per runtime, so a change that breaks isolation,
   # process reaping, signal forwarding, or a runtime's run-args fails CI. (The fork-merge
@@ -58,7 +139,12 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            go.sum
+            internal/box/staticcheck.mod
+            internal/box/staticcheck.sum
       - name: doctor
         run: make doctor
         env:
@@ -82,6 +168,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            go.sum
+            internal/box/staticcheck.mod
+            internal/box/staticcheck.sum
       - name: prove report-only review mounts at the Docker boundary
         run: make review-writes-e2e

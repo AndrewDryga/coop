@@ -1,17 +1,19 @@
 ---
 name: gate-is-one-recipe
-description: "a new check goes in `make check`; CI installs the tools and calls that target, never its own step list"
+description: "Make owns the broad check union and its CI partitions, never a second workflow check list"
 scope: agent-workflow
-sources: [Makefile, .github/workflows/ci.yml]
-check: "none"
+sources: [Makefile, .github/workflows/ci.yml, release_test.go, tools/test_make_checks.py, tools/ci_scope.py, tools/test_ci_scope.py]
+check: "go test ./. -run 'TestReleaseModuleHygiene|TestReleaseWorkflowQualification|TestReleaseCIAggregateRejectsFalseGreenDependencyStates'"
 updated: 2026-10-14
 ---
 
 # There is ONE gate recipe: `make check`
 
-Add a check to the `check` target in the `Makefile` — never as a step in `.github/workflows/ci.yml`.
-CI's check job is setup plus `make check`, so what a laptop, a box, and CI run is the same list by
-construction. A tool the gate needs is REQUIRED: missing, it fails with the one-line command that
+Add a check to a broad partition of `check` in the `Makefile` — never as a separate step in
+`.github/workflows/ci.yml`. CI runs `check-static`, `check-unit`, `check-process` and `check-race`
+on isolated runners; local `make check` is their union. The literal required `check` status runs
+after failures too and refuses incomplete selected checks or runtime jobs.
+A tool the gate needs is REQUIRED: missing, it fails with the one-line command that
 installs it, and a version-pinned tool fails when the local build isn't the pin. Never soft-skip.
 
 Local iteration uses Make-owned explicit scopes, not a second check list in agent prompts.
@@ -29,7 +31,7 @@ local Staticcheck also skipped itself when it wasn't installed — the check sil
 on the machine where the code was written, and main rotted red with no local gate able to see it.
 
 **How to apply:**
-- New check → a Makefile target, added to `check`'s prerequisites. Order it so cheap and common
+- New check → a Makefile target, added to one of `check`'s partitions. Order it so cheap and common
   failures come first and the slowest step (`-race`) runs last.
 - Needs a container runtime? That's the one exception: its own CI job, plus a Makefile comment on
   `check` saying it's CI-only and why — `make check` stays runtime-independent.
@@ -39,9 +41,16 @@ on the machine where the code was written, and main rotted red with no local gat
 - A check that only ever ran locally has never been proven against a clean checkout: before wiring
   it into CI, run it on `git archive HEAD` output, where gitignored working state doesn't exist.
 
-Related: [[static-bounded-supervision]].
+Only a proven single regular CHANGELOG edit in an ordinary single-parent main push may use
+the explicit metadata owner. PRs, tags, reusable calls, merges, multi-commit pushes and unknown
+inputs remain broad. Report the narrower coverage honestly. Never reuse low-privilege caches
+or artifacts in the signing publisher. Related: [[ci-free-checks]], [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-10-14 — swept Make, both workflows, contributor guide and development/release KB. Real
+  Make execution proves partition union, required tool calls and failure propagation; actual
+  workflow aggregate execution rejects failed/skipped/missing states. Git fixtures cover
+  parent history, modes and caller contexts. Publisher isolation remains unchanged.
 - 2026-10-14 — added scoped local iteration without changing the broad free gate. Swept Make,
   AGENTS, project gate, contributor guide and root/embedded workflow skills; preserved broad
   fork landing and actual required tools. Real Make fixtures prove docs/rules execute only

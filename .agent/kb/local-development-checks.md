@@ -25,6 +25,11 @@ ownership facts current when a subprocess caller changes.
 Docs/rules run actual docs, alignment, site and KB checks; they do not run Docker, race,
 process benchmarks or live models. A local scope pass is not the completed broad candidate gate.
 
+CI runs the four Make-owned broad partitions on isolated runners; `make check` remains their
+union. Module/build caches reuse compilation, not behavioral test results: child-built or read
+inputs can be invisible to Go's result cache, so unit, race and scoped tests use `-count=1`.
+The narrow CI metadata path is separate from local scopes; see [[ci-free-checks]].
+
 Scripted CLI/ACP fixture builds reuse immutable bytes only within one package test process.
 The TestMain owns a private cache root and freezes the Go executable/environment before cases
 change PATH/HOME. Canonical source root, package and normalized build tags distinguish entries;
@@ -42,6 +47,8 @@ owners still build their real inputs. Pure log cap/rune tests avoid full review 
 large-output pager, HTTP, session custody and failed-review owners remain.
 
 ## Changelog
+- 2026-10-14 — verified the broad Make union, CI partitions and uncached behavioral test results;
+  real Make fixtures cover every partition, independent tool calls and failure propagation.
 - 2026-10-14 — added explicit scopes and import/fixture ownership guard. Real Make fixtures cover
   each accepted scope, invalid broad fallback, owner errors and formatter failure/output.
   Canonical/embedded workflow skills remain byte-identical and generic for other projects.

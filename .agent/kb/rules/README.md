@@ -174,7 +174,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [requested-outcome-controls-stopping](requested-outcome-controls-stopping.md) — full implementation requests continue past verified slices through the requested final acceptance criteria
 - [run-the-real-invocation-last](run-the-real-invocation-last.md) — a green gate is not proof a feature works; the last check is the user’s own command, in a real repo, after the last commit
 - [fix-the-bug-not-the-feature](fix-the-bug-not-the-feature.md) — root-cause the misbehavior; deleting the feature is never the fix without the human
-- [gate-is-one-recipe](gate-is-one-recipe.md) — a new check goes in `make check`; CI installs the tools and calls that target, never its own step list
+- [gate-is-one-recipe](gate-is-one-recipe.md) — Make owns the broad check union and its CI partitions, never a second workflow check list
 - [small-work-to-the-queue](small-work-to-the-queue.md) — ready work goes to `00_todo/`; only the genuinely large or unscoped goes to the backlog
 - [static-bounded-supervision](static-bounded-supervision.md) — supervised long commands keep output static and only a bounded excerpt in context
 - [read-a-mutation-result-whole](read-a-mutation-result-whole.md) — a state-changing command's result is read whole, or its effect checked, before it is ever re-run

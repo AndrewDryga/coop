@@ -9,22 +9,13 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
-)
-
-// Test-only shorthands for the task-tree constants these tests seed fixtures with; internal/tasks
-// keeps the canonical exported ones (internal/cli's own tests alias the same way).
-const (
-	tasksRoot = tasks.TasksRoot
-	stateTodo = tasks.StateTodo
-	stateDone = tasks.StateDone
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
 func mustCurrentTask(t testing.TB, root, id string) (tasks.Item, bool) {

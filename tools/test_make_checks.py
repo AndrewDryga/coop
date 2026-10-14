@@ -23,12 +23,19 @@ class MakeChecksTest(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.log = self.root / "commands.jsonl"
+        (self.root / "tmp").mkdir()
+        versions = dict(line.strip().split()[:2] for line in (graph / "staticcheck.mod").read_text().splitlines()
+                        if line.strip().startswith(("honnef.co/go/tools ", "golang.org/x/tools ")))
         self.env = {
             "PATH": str(self.bin) + os.pathsep + "/usr/bin:/bin",
             "HOME": str(self.root),
             "GIT_CONFIG_GLOBAL": "/dev/null",
             "GIT_CONFIG_SYSTEM": "/dev/null",
             "COMMAND_LOG": str(self.log),
+            "TMPDIR": str(self.root / "tmp"),
+            "STUB_TMP_PATH": str(self.root / "tmp/tagged-test"),
+            "STATICCHECK_PIN": versions["honnef.co/go/tools"].removeprefix("v"),
+            "XTOOLS_PIN": versions["golang.org/x/tools"],
         }
         # Every executable recipe dependency is inert and recorded. Real Make selects and
         # executes the repository recipes; no compiler, model, Docker or host config is used.
@@ -39,10 +46,17 @@ class MakeChecksTest(unittest.TestCase):
             "    log.write(json.dumps([Path(sys.argv[0]).name, *sys.argv[1:]]) + '\\n')\n"
             "if Path(sys.argv[0]).name == 'git': print('fixture-version')\n"
             "if Path(sys.argv[0]).name == 'gofmt' and os.environ.get('STUB_FMT_OUTPUT'): print('unformatted.go')\n"
+            "if Path(sys.argv[0]).name == 'staticcheck' and sys.argv[1:] == ['-version']: print('staticcheck (' + os.environ['STATICCHECK_PIN'] + ')')\n"
+            "if Path(sys.argv[0]).name == 'staticcheck' and sys.argv[1:] == ['-debug.version']: print('golang.org/x/tools@' + os.environ['XTOOLS_PIN'])\n"
+            "if Path(sys.argv[0]).name == 'govulncheck' and sys.argv[1:] == ['-version']: print('Scanner: govulncheck@v1.8.0')\n"
+            "if Path(sys.argv[0]).name == 'mktemp':\n"
+            "    if sys.argv[1:]: sys.exit('unexpected mktemp arguments')\n"
+            "    Path(os.environ['STUB_TMP_PATH']).touch()\n"
+            "    print(os.environ['STUB_TMP_PATH'])\n"
             "fail = os.environ.get('STUB_FAIL_COMMAND')\n"
             "sys.exit(int(os.environ.get('STUB_EXIT', '0')) if not fail or fail == Path(sys.argv[0]).name else 0)\n"
         )
-        for name in ("go", "gofmt", "python3", "node", "git", "git-lfs", "docker"):
+        for name in ("go", "gofmt", "python3", "node", "git", "git-lfs", "docker", "staticcheck", "govulncheck", "shellcheck", "mktemp"):
             path = self.bin / name
             path.write_text(stub)
             path.chmod(0o700)
@@ -78,7 +92,7 @@ class MakeChecksTest(unittest.TestCase):
             ["go", "run", "./tools/gendocs", "-check"],
             ["python3", "tools/align-comments.py", "--check"],
             ["python3", "tools/check_rules.py"],
-            ["go", "test", "./internal/agent", "-run", "TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard"],
+            ["go", "test", "-count=1", "./internal/agent", "-run", "TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard"],
             *[["python3", "-m", "unittest", "discover", "-s", "tools", "-p", name]
               for name in ("test_site_content.py", "test_align_comments.py", "test_check_rules.py", "test_make_checks.py")],
         ])
@@ -89,7 +103,7 @@ class MakeChecksTest(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual([cmd for cmd in self.commands() if cmd[0] != "git"], [
             ["python3", "tools/check_rules.py"],
-            ["go", "test", "./internal/agent", "-run", "TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard"],
+            ["go", "test", "-count=1", "./internal/agent", "-run", "TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard"],
         ])
 
     def test_each_go_scope_runs_nonempty_owner_tests_without_a_live_suite(self):
@@ -105,8 +119,8 @@ class MakeChecksTest(unittest.TestCase):
                 commands = [cmd for cmd in self.commands() if cmd[0] != "git"]
                 tests = [cmd for cmd in commands if cmd[:2] == ["go", "test"]]
                 self.assertEqual(len(tests), 1)
-                self.assertEqual(tests[0][2:6], ["-p", "4", "-timeout", "20m"])
-                self.assertIn(owner, tests[0][6:])
+                self.assertEqual(tests[0][2:7], ["-count=1", "-p", "4", "-timeout", "20m"])
+                self.assertIn(owner, tests[0][7:])
                 self.assertNotIn("-race", tests[0])
                 self.assertNotIn("-tags", tests[0])
                 self.assertFalse(any(cmd[0] in ("docker", "python3") for cmd in commands))
@@ -131,6 +145,70 @@ class MakeChecksTest(unittest.TestCase):
         self.assertNotIn("Local checks: docs", run.stdout)
         self.assertEqual([cmd for cmd in self.commands() if cmd[0] != "git"],
                          [["go", "run", "./tools/gendocs", "-check"]])
+
+    def test_free_partition_union_executes_all_owners_and_every_failure_propagates(self):
+        partitions = ("check-static", "check-unit", "check-process", "check-race")
+        union = []
+        for target in partitions:
+            self.log.unlink(missing_ok=True)
+            (self.root / target).touch()  # A same-named file must not skip the owner.
+            run = self.make(target)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            commands = [cmd for cmd in self.commands() if cmd[0] != "git"]
+            union.extend(commands)
+            tests = [cmd for cmd in commands if cmd[:2] == ["go", "test"]]
+            if target == "check-unit":
+                self.assertEqual(tests, [["go", "test", "-count=1", "-p", "4", "-timeout", "20m", "./..."]])
+            elif target == "check-race":
+                self.assertEqual(tests, [["go", "test", "-count=1", "-race", "-p", "4", "-timeout", "30m", "./..."]])
+            elif target == "check-static":
+                self.assertEqual(commands[:2], [
+                    ["go", "mod", "tidy", "-diff"],
+                    ["go", "test", "./internal/gatewayimage", "-run",
+                     "^TestEmbeddedGatewaySourcesExactlyMatchCheckout$", "-count=1"],
+                ])
+                for expected in (
+                    ["go", "mod", "tidy", "-diff"], ["gofmt", "-l", "."],
+                    ["go", "build", "./..."], ["govulncheck", "./..."],
+                    ["python3", "tools/align-comments.py", "--check"],
+                    ["go", "run", "./tools/gendocs", "-check"],
+                    ["python3", "-m", "unittest", "discover", "-s", "tools", "-p", "test_*.py"],
+                    ["python3", "tools/check_rules.py"],
+                ):
+                    self.assertIn(expected, commands)
+                self.assertEqual(sum(cmd[0] == "shellcheck" for cmd in commands), 1)
+                self.assertEqual(commands.count(["go", "vet", "./..."]), 2)
+                self.assertEqual(commands.count(["go", "vet", "-tags",
+                    "acpe2e,boxruntimee2e,cooplivetest,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e", "./..."]), 2)
+                self.assertEqual(commands.count(["staticcheck", "./..."]), 2)
+                self.assertEqual(len(tests), 2)  # gateway freshness plus provider/rules guard
+            else:
+                self.assertEqual(len(tests), 4)  # fixtures, scripted consumers, ownership race, tagged compile
+                self.assertIn(["go", "test", "-count=1", "./internal/testutil/procharness",
+                               "./internal/cli/testdata/providerfixture"], tests)
+                self.assertTrue(any("-tags" in cmd and "providere2e" in cmd and "-count=1" in cmd for cmd in tests))
+                self.assertTrue(any("-race" in cmd and "providerlivee2e,cooplivetest" in cmd and "-count=1" in cmd for cmd in tests))
+                self.assertTrue(any("-c" in cmd and "acpe2e" in cmd for cmd in tests))
+            self.assertFalse(any(cmd[0] == "docker" for cmd in commands))
+            self.log.unlink(missing_ok=True)
+            failed = self.make(target, exit_code=17, fail_command="go")
+            self.assertNotEqual(failed.returncode, 0, target)
+            if target == "check-static":
+                self.assertEqual([cmd for cmd in self.commands() if cmd[0] != "git"],
+                                 [["go", "mod", "tidy", "-diff"]])
+        self.log.unlink(missing_ok=True)
+        run = self.make("check")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual([cmd for cmd in self.commands() if cmd[0] != "git"], union)
+
+    def test_metadata_owner_executes_docs_and_artifact_checks_without_process_or_race(self):
+        run = self.make("check-metadata")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        commands = [cmd for cmd in self.commands() if cmd[0] != "git"]
+        self.assertIn(["go", "test", "-count=1", ".", "-run",
+                       "^Test(DocsArtifactDetector|NoDocArtifactsInTrackedMarkdown)$"], commands)
+        self.assertFalse(any("-race" in cmd or "-tags" in cmd or cmd[0] == "docker" for cmd in commands))
+        self.assertFalse(any(cmd[:2] == ["go", "test"] and "./..." in cmd for cmd in commands))
 
     def test_formatting_checks_preserve_failure_and_unformatted_output(self):
         for target in (("check-local", "SCOPE=cli"), ("lint",)):

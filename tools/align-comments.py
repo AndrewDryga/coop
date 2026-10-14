@@ -113,7 +113,8 @@ def stanzas(block, lines, markup=True):
 
 
 def process(path, write):
-    lines = open(path).read().split("\n")
+    with open(path) as source:
+        lines = source.read().split("\n")
     markup = path.endswith(".html")
     offenders, dirty = [], False
     for block in blocks(lines, path):
@@ -138,7 +139,8 @@ def process(path, write):
                     if new != lines[i]:
                         lines[i], dirty = new, True
     if write and dirty:
-        open(path, "w").write("\n".join(lines))
+        with open(path, "w") as target:
+            target.write("\n".join(lines))
     return offenders
 
 

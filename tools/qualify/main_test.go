@@ -190,7 +190,6 @@ func TestQualificationPreflightAcceptsEnvOnlyDefaults(t *testing.T) {
 	}
 }
 
-
 func summaryLine(t *testing.T, strict bool, results []liveprovider.ProviderResult) string {
 	t.Helper()
 	summary := liveprovider.Summary{Schema: 1, Strict: strict, Results: results}

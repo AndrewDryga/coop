@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,13 +20,23 @@ type releaseWorkflow struct {
 	On          map[string]any    `yaml:"on"`
 	Permissions map[string]string `yaml:"permissions"`
 	Jobs        map[string]struct {
-		Uses            string            `yaml:"uses"`
-		Needs           string            `yaml:"needs"`
-		If              string            `yaml:"if"`
+		Uses     string            `yaml:"uses"`
+		Needs    any               `yaml:"needs"`
+		Name     string            `yaml:"name"`
+		If       string            `yaml:"if"`
+		Outputs  map[string]string `yaml:"outputs"`
+		Timeout  int               `yaml:"timeout-minutes"`
+		Strategy struct {
+			FailFast    *bool               `yaml:"fail-fast"`
+			MaxParallel int                 `yaml:"max-parallel"`
+			Matrix      map[string][]string `yaml:"matrix"`
+		} `yaml:"strategy"`
 		ContinueOnError any               `yaml:"continue-on-error"`
 		Secrets         any               `yaml:"secrets"`
 		Permissions     map[string]string `yaml:"permissions"`
 		Steps           []struct {
+			ID              string            `yaml:"id"`
+			Name            string            `yaml:"name"`
 			Uses            string            `yaml:"uses"`
 			Run             string            `yaml:"run"`
 			If              string            `yaml:"if"`
@@ -262,8 +275,9 @@ func TestReleaseModuleHygiene(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "\ncheck: mod-check gateway-sources-check ") {
-		t.Error("canonical gate must check module hygiene before the slow suites")
+	if !strings.Contains(text, "\ncheck: check-static check-unit check-process check-race ") ||
+		!strings.Contains(text, "\ncheck-static: mod-check gateway-sources-check ") {
+		t.Error("canonical union must begin with static module/freshness checks before behavioral owners")
 	}
 	if !strings.Contains(text, "\nmod-check: ## Verify module metadata is tidy without changing qualified sources\n\t@go mod tidy -diff\n") {
 		t.Error("module check must refuse drift without rewriting qualified sources")
@@ -277,21 +291,25 @@ func TestReleaseModuleHygiene(t *testing.T) {
 	}
 }
 
-func TestReleaseWorkflowQualification(t *testing.T) {
-	readWorkflow := func(path string) releaseWorkflow {
-		t.Helper()
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var workflow releaseWorkflow
-		if err := yaml.Unmarshal(data, &workflow); err != nil {
-			t.Fatal(err)
-		}
-		return workflow
+func readReleaseWorkflow(t *testing.T, path string) releaseWorkflow {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	ci := readWorkflow(".github/workflows/ci.yml")
-	release := readWorkflow(".github/workflows/release.yml")
+	var workflow releaseWorkflow
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	return workflow
+}
+
+func TestReleaseWorkflowQualification(t *testing.T) {
+	ci := readReleaseWorkflow(t, ".github/workflows/ci.yml")
+	release := readReleaseWorkflow(t, ".github/workflows/release.yml")
+	if len(ci.Jobs) != 6 {
+		t.Fatal("CI must contain exactly its selector, two free paths, aggregate and two runtime boundaries")
+	}
 	if len(release.Jobs) != 2 {
 		t.Error("release must have only qualification and its dependent publisher")
 	}
@@ -304,7 +322,15 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 			t.Errorf("%s workflow must default to contents-read only", name)
 		}
 		for id, job := range workflow.Jobs {
-			if job.If != "" || job.ContinueOnError != nil || job.Secrets != nil {
+			expectedIf := ""
+			if name == "ci" {
+				expectedIf = map[string]string{
+					"checks":   "needs.scope.outputs.mode != 'metadata'",
+					"metadata": "needs.scope.outputs.mode == 'metadata'",
+					"check":    "always()",
+				}[id]
+			}
+			if job.If != expectedIf || job.ContinueOnError != nil || job.Secrets != nil {
 				t.Errorf("%s.%s must not skip qualification, ignore failure, or inherit secrets", name, id)
 			}
 			if name == "ci" && job.Permissions != nil && !reflect.DeepEqual(job.Permissions, readOnly) {
@@ -315,7 +341,11 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 				if step.ContinueOnError != nil {
 					t.Errorf("%s.%s ignores a failed step", name, id)
 				}
-				if step.If != "" {
+				stepIf := ""
+				if name == "ci" && id == "checks" && step.Name == "install Go analyzers at the repo's pins" {
+					stepIf = "matrix.target == 'check-static'"
+				}
+				if step.If != stepIf {
 					t.Errorf("%s.%s unexpectedly skips a step: %s", name, id, step.If)
 				}
 				if strings.HasPrefix(step.Uses, "actions/checkout@") {
@@ -325,14 +355,70 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 					}
 				}
 			}
-			if job.Uses == "" && checkouts != 1 {
+			statusOnly := name == "ci" && id == "check"
+			if statusOnly {
+				if checkouts != 0 || job.Uses != "" || job.Name != "check" || job.Timeout != 2 {
+					t.Error("literal check aggregate must stay status-only and bounded, with no checkout")
+				}
+				for _, step := range job.Steps {
+					if step.Uses != "" {
+						t.Error("status aggregate must not use actions, caches or executable artifacts")
+					}
+				}
+			} else if job.Uses == "" && checkouts != 1 {
 				t.Errorf("%s.%s needs one exact checkout", name, id)
 			}
 		}
 	}
-	for _, job := range []string{"check", "doctor", "review-writes"} {
+	for _, job := range []string{"scope", "checks", "metadata", "check", "doctor", "review-writes"} {
 		if _, ok := ci.Jobs[job]; !ok {
 			t.Errorf("release qualification lost CI job %s", job)
+		}
+	}
+	aggregate := ci.Jobs["check"]
+	if !reflect.DeepEqual(aggregate.Needs, []any{"scope", "checks", "metadata", "doctor", "review-writes"}) || len(aggregate.Steps) != 1 {
+		t.Fatal("required status must account for all selected free and runtime jobs")
+	}
+	if !reflect.DeepEqual(aggregate.Steps[0].Env, map[string]string{"CI_MODE": "${{ needs.scope.outputs.mode }}", "CI_RESULTS": "${{ toJSON(needs) }}"}) {
+		t.Error("aggregate must receive only its scope and direct dependency results as data")
+	}
+	checks := ci.Jobs["checks"]
+	if checks.Needs != "scope" || checks.Strategy.FailFast == nil || *checks.Strategy.FailFast || checks.Strategy.MaxParallel != 4 ||
+		!slices.Equal(checks.Strategy.Matrix["target"], []string{"check-static", "check-unit", "check-process", "check-race"}) ||
+		checks.Steps[len(checks.Steps)-1].Run != `make "${{ matrix.target }}"` {
+		t.Error("free CI matrix must run exactly the four Make owners, capped at four isolated jobs")
+	}
+	metadata := ci.Jobs["metadata"]
+	if metadata.Needs != "scope" || metadata.Steps[len(metadata.Steps)-1].Run != "make check-metadata" {
+		t.Error("metadata path must use only its Make-owned checks")
+	}
+	selector := ci.Jobs["scope"]
+	if !reflect.DeepEqual(selector.Outputs, map[string]string{"mode": "${{ steps.scope.outputs.mode }}"}) ||
+		len(selector.Steps) != 2 || selector.Steps[0].With["fetch-depth"] != "0" ||
+		selector.Steps[1].ID != "scope" || selector.Steps[1].Run != "python3 tools/ci_scope.py" {
+		t.Error("scope selector must read exact-commit/full history and expose only its fixed mode")
+	}
+	for key, expression := range map[string]string{
+		"CI_EVENT_NAME": "${{ github.event_name }}", "CI_REF": "${{ github.ref }}",
+		"CI_WORKFLOW_REF": "${{ github.workflow_ref }}", "CI_REPOSITORY": "${{ github.repository }}", "CI_SHA": "${{ github.sha }}",
+	} {
+		if selector.Steps[1].Env[key] != expression {
+			t.Errorf("selector lost trusted caller context %s", key)
+		}
+	}
+	for _, id := range []string{"checks", "metadata", "doctor", "review-writes"} {
+		setups := 0
+		for _, step := range ci.Jobs[id].Steps {
+			if strings.HasPrefix(step.Uses, "actions/setup-go@") {
+				setups++
+				if step.With["cache"] != "true" || step.With["go-version-file"] != "go.mod" ||
+					step.With["cache-dependency-path"] != "go.mod\ngo.sum\ninternal/box/staticcheck.mod\ninternal/box/staticcheck.sum\n" {
+					t.Errorf("low-privilege %s must use the repo toolchain and cache only reviewed Go inputs", id)
+				}
+			}
+		}
+		if setups != 1 {
+			t.Errorf("low-privilege %s needs exactly one pinned-toolchain setup", id)
 		}
 	}
 	ciGate := release.Jobs["ci"]
@@ -348,8 +434,17 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 	}) {
 		t.Error("publisher permissions must remain explicitly scoped")
 	}
-	notes, remote, publisher := -1, -1, -1
+	notes, remote, publisher, setups := -1, -1, -1, 0
 	for i, step := range publish.Steps {
+		if strings.HasPrefix(step.Uses, "actions/setup-go@") {
+			setups++
+			if step.With["cache"] != "false" || step.With["go-version-file"] != "go.mod" {
+				t.Error("privileged publisher must use the repo toolchain without the unprivileged CI cache")
+			}
+		}
+		if strings.HasPrefix(step.Uses, "actions/cache@") || strings.HasPrefix(step.Uses, "actions/download-artifact@") {
+			t.Error("publisher must never consume cached or downloaded executable build artifacts")
+		}
 		if strings.HasPrefix(step.Uses, "actions/checkout@") && step.With["fetch-depth"] != "0" {
 			t.Error("publisher needs full tag history")
 		}
@@ -369,6 +464,9 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 				t.Error("GoReleaser must publish the validated event tag and notes, without skipped checks")
 			}
 		}
+	}
+	if setups != 1 {
+		t.Error("publisher needs exactly one fresh pinned-toolchain setup")
 	}
 	if notes != 1 || remote < notes || publisher != remote+1 {
 		t.Errorf("preflight must follow checkout and remote recheck immediately precede publisher: notes=%d remote=%d publisher=%d", notes, remote, publisher)
@@ -391,4 +489,58 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 		!strings.Contains(config.Before.Hooks[1], "go run . completion") {
 		t.Error("before hooks must verify, not mutate, the qualified module graph and still generate completions")
 	}
+}
+
+func TestReleaseCIAggregateRejectsFalseGreenDependencyStates(t *testing.T) {
+	workflow := readReleaseWorkflow(t, ".github/workflows/ci.yml")
+	aggregate := workflow.Jobs["check"]
+	if aggregate.If != "always()" || len(aggregate.Steps) != 1 {
+		t.Fatal("aggregate must always execute its one status-only check")
+	}
+	script := aggregate.Steps[0].Run
+	names := []string{"scope", "checks", "metadata", "doctor", "review-writes"}
+	run := func(mode string, statuses []string, missing string, want bool) {
+		t.Helper()
+		results := map[string]map[string]string{}
+		for i, name := range names {
+			if name != missing {
+				results[name] = map[string]string{"result": statuses[i]}
+			}
+		}
+		data, err := json.Marshal(results)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "CI_MODE=" + mode, "CI_RESULTS=" + string(data)}
+		output, err := cmd.CombinedOutput()
+		if (err == nil) != want {
+			t.Fatalf("aggregate %q/%v missing=%q = %v, want success=%v\n%s", mode, statuses, missing, err, want, output)
+		}
+		if want && strings.Contains(string(output), "broad free checks were not run") != (mode == "metadata") {
+			t.Fatalf("aggregate misrepresented coverage: %s", output)
+		}
+	}
+	for _, mode := range []string{"broad", "metadata"} {
+		accepted := []string{"success", "success", "skipped", "success", "success"}
+		if mode == "metadata" {
+			accepted[1], accepted[2] = "skipped", "success"
+		}
+		run(mode, accepted, "", true)
+		for i, name := range names {
+			run(mode, accepted, name, false)
+			for _, value := range []string{"failure", "cancelled", "skipped", "success", "unknown", ""} {
+				if value == accepted[i] {
+					continue
+				}
+				wrong := slices.Clone(accepted)
+				wrong[i] = value
+				t.Run(fmt.Sprintf("%s/%s/%s", mode, name, value), func(t *testing.T) { run(mode, wrong, "", false) })
+			}
+		}
+		for _, unknown := range []string{"", "unknown", "metadata\nmode=broad"} {
+			run(unknown, accepted, "", false)
+		}
+	}
+	run("broad", []string{"skipped", "skipped", "skipped", "skipped", "skipped"}, "", false)
 }

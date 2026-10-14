@@ -6,8 +6,8 @@ To build co:op from source, clone the repo and run `make install`:
 git clone https://github.com/AndrewDryga/coop && cd coop && make install
 ```
 
-`make install` puts the binary at `~/.local/bin/coop`. `make check` is the gate, and CI runs the
-same target.
+`make install` puts the binary at `~/.local/bin/coop`. `make check` is the gate; CI runs its four
+Make-owned parts on separate runners.
 
 ## Layout
 
@@ -58,9 +58,20 @@ The tasks scope is `internal/tasks`, not every task-related package: shared prim
 Run `make check` once on the completed executable candidate. Review can proceed while it runs;
 do not repeat unchanged broad proof after every small edit. A pending check is not a pass.
 
-CI's check job installs the pinned tools and runs `make check`, so the two can't drift. CI also
-runs the doctor and review-writes jobs. They stay out of `make check` because they need a container
-runtime.
+CI runs `check-static`, `check-unit`, `check-process` and `check-race` in at most four isolated
+jobs. Their union is `make check`. The required `check` status waits for the selected checks,
+doctor and review-writes; a failed, cancelled or missing check cannot pass it. The two runtime
+jobs stay out of `make check` because they need Docker.
+
+A proven single-commit push to main that changes only the regular `CHANGELOG.md` file uses
+`make check-metadata` instead. The runtime jobs still run, and the status says that broad free
+checks were not run. PRs, tags, reusable-workflow calls, merges, multi-commit pushes, file-mode
+changes and uncertain inputs take the broad path.
+
+Read-only CI jobs cache downloaded modules and compiled Go objects, but behavioral tests always
+rerun: Go's test-result cache cannot see every input that a child process builds or reads. The
+release publisher starts fresh without that cache or imported artifacts. Metadata checks are
+not proof for a release tag.
 
 The gate needs `staticcheck`, `govulncheck`, `shellcheck`, `python3`, `node` and `git-lfs`.
 Node runs the shipped site's picker and copy handlers in a small DOM fixture; it needs no

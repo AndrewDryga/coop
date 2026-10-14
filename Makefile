@@ -26,7 +26,7 @@ test: require-git-lfs ## Run unit tests (no container runtime needed)
 	@# Serial session Git/LFS fixtures exceeded Go's default 10 m package timeout under gate load.
 	@# This 20 m bound guards a hung package, not operation deadlines; behavioral
 	@# timing assertions remain tight, as in the race target.
-	@go test -p 4 -timeout 20m ./...
+	@go test -count=1 -p 4 -timeout 20m ./...
 
 cover: require-git-lfs ## Run unit tests with a coverage summary
 	@go test -cover ./...
@@ -126,7 +126,7 @@ lifecycle-bench: require-python3 build ## Measure real box start/stop latency (n
 
 rules-check: require-python3 ## Fail if a .agent/kb card or rule is malformed, unindexed, or names a source/check that doesn't exist
 	@python3 tools/check_rules.py
-	@go test ./internal/agent -run 'TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard'
+	@go test -count=1 ./internal/agent -run 'TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard'
 
 build-all: ## Compile every package (a package no test imports can still break the build)
 	@go build ./...
@@ -142,10 +142,10 @@ race: require-git-lfs ## Full unit suite under the race detector (the slowest ga
 	@# Serial session Git/LFS fixtures take over 20 m with race instrumentation. The 30 m bound
 	@# gives this whole-package hang guard contention headroom, not a longer per-operation deadline.
 	@# Keep behavioral timing assertions tight.
-	@go test -race -p 4 -timeout 30m ./...
+	@go test -count=1 -race -p 4 -timeout 30m ./...
 
-# THE GATE. One recipe, run identically on a laptop, in a box, and by CI's check job — which
-# installs the pinned tools and then calls this target. A new check belongs HERE, never in the
+# THE GATE. One Make-owned union: local runs it in order; CI runs its four owners separately.
+# CI installs the pinned tools. A new check belongs HERE, never in the
 # workflow's step list: the two were maintained separately, drifted in both directions (race and
 # build were CI-only; cast/rules/tools checks were local-only), and main rotted red with no local
 # gate able to see it. Ordered so the cheap and most common failures surface first and the race
@@ -154,7 +154,15 @@ race: require-git-lfs ## Full unit suite under the race detector (the slowest ga
 # CI-only by necessity: the doctor runtime matrix and the review-writes job need a real container
 # runtime, so they stay separate CI jobs and this target stays runtime-independent. Run them by
 # hand with 'make doctor', 'make box-runtime-e2e', and 'make review-writes-e2e'.
-check: mod-check gateway-sources-check lint shellcheck build-all vuln align docs-check tools-test rules-check test provider-scripted-e2e live-process-control race ## The gate, identical to CI's check job: lint + vulnerability scan + freshness + tests (plain, e2e, race) + build
+check: check-static check-unit check-process check-race ## Full free gate, the same union CI runs in isolated jobs
+
+check-static: mod-check gateway-sources-check lint shellcheck build-all vuln align docs-check tools-test rules-check ## Free source, analyzer, build, docs and tool checks
+check-unit: test ## Free ordinary unit tests
+check-process: provider-scripted-e2e live-process-control ## Free scripted-provider and process-control tests
+check-race: race ## Free race-detector tests
+
+check-metadata: docs-check align rules-check docs-tools-test ## Only for proven single-commit CHANGELOG edits on main
+	@go test -count=1 . -run '^Test(DocsArtifactDetector|NoDocArtifactsInTrackedMarkdown)$$'
 
 # Explicit reviewed owners, not an automatic changed-file router. The import-closure test
 # includes tagged/test/root/tool consumers; shared foundations/build inputs still need check.
@@ -173,7 +181,7 @@ check-local: require-git-lfs ## Scoped local checks; SCOPE=docs|rules|agent|runt
 	@files="$$(gofmt -l .)" || exit 1; [ -z "$$files" ] || { printf '%s\n' "$$files"; echo 'gofmt: files need formatting'; exit 1; }
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,cooplivetest,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
-	@go test -p 4 -timeout 20m $(LOCAL_$(ITERATION_SCOPE))
+	@go test -count=1 -p 4 -timeout 20m $(LOCAL_$(ITERATION_SCOPE))
 else ifeq ($(SCOPE),docs)
 check-local: docs-check align rules-check docs-tools-test
 	@echo 'Local checks: docs, site content, alignment and rules'
@@ -186,7 +194,7 @@ check-local: check
 endif
 
 provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
-	@go test ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
+	@go test -count=1 ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
 # The suite runs ~9 minutes on a quiet host, so Go's 10-minute default failed it under ordinary
 # load with every test passing. This is a hang guard; the behavior deadlines live inside the tests.
 	@go test -tags providere2e -run '^TestProviderScripted' -count=1 -timeout 20m -v ./internal/cli/
@@ -307,6 +315,7 @@ help: ## List targets
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: provider-status provider-verify
 .PHONY: check-local docs-tools-test
+.PHONY: check-static check-unit check-process check-race check-metadata
 .PHONY: require-git-lfs
 .PHONY: require-node
 .PHONY: mod-check
