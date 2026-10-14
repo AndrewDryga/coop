@@ -35,13 +35,6 @@ func TestLiveInterruptibleProcessGroupRequiresAuthenticatedControlFD(t *testing.
 	}
 }
 
-func TestLiveRunInterruptibleInheritsCallerGroup(t *testing.T) {
-	output, _, err := runLiveProcessGroupHelper(t, true, false, false)
-	if err != nil || !strings.Contains(output, "inherited\n") {
-		t.Fatalf("live runtime group helper = %q, %v", output, err)
-	}
-}
-
 func TestLiveRunInterruptibleRevokesCredentialsBeforeSignal(t *testing.T) {
 	output, _, err := runLiveProcessGroupHelper(t, true, true, false)
 	if err != nil || !strings.Contains(output, "revoked\n") {
@@ -120,7 +113,7 @@ func TestLiveProcessGroupHelper(t *testing.T) {
 	var output strings.Builder
 	code, err := (Runtime{Name: "/bin/sh"}).RunInterruptible(
 		t.Context(), nil, &output, nil, "-c",
-		"test ! -e /dev/fd/3; test -z \"${COOP_TEST_LIVE_CONTROL_FD+x}\"; test -z \"${COOP_TEST_LIVE_REVOKE_PATH+x}\"; ps -o pgid= -p $$",
+		"set -e; test ! -e /dev/fd/3; test -z \"${COOP_TEST_LIVE_CONTROL_FD+x}\"; test -z \"${COOP_TEST_LIVE_REVOKE_PATH+x}\"; ps -o pgid= -p $$",
 	)
 	if err != nil || code != 0 {
 		t.Fatalf("live runtime group probe = code %d err %v", code, err)

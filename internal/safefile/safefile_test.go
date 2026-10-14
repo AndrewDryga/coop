@@ -49,6 +49,9 @@ func TestOpenRootRejectsLinkAndPinsDirectory(t *testing.T) {
 	if err := os.Mkdir(original, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(original, "value"), []byte("pinned"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	alias := filepath.Join(parent, "alias")
 	if err := os.Symlink(original, alias); err != nil {
 		t.Fatal(err)
@@ -63,6 +66,15 @@ func TestOpenRootRejectsLinkAndPinsDirectory(t *testing.T) {
 	defer root.Close()
 	if err := os.Rename(original, filepath.Join(parent, "moved")); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.Mkdir(original, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(original, "value"), []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadRegular(root, "value", 64); err != nil || string(got) != "pinned" {
+		t.Fatalf("held root followed its replaced path: %q, %v", got, err)
 	}
 	if _, err := OpenDir(root, "missing"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("pinned root lookup error = %v", err)

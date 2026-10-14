@@ -57,7 +57,7 @@ func TestCredentialStreamLineBoundariesPreserveTheWholePattern(t *testing.T) {
 	for _, prefix := range []string{"", strings.Repeat("a", 64<<10-8), strings.Repeat("a", 200_000)} {
 		for _, suffix := range []string{"", "\n", "\n" + strings.Repeat("b", 200_000)} {
 			input := prefix + "\n" + token + suffix
-			want := credentialStreamPattern.MatchString(input)
+			want := true
 			got, err := ContainsCredential(strings.NewReader(input))
 			if err != nil || got != want {
 				t.Fatalf("prefix=%d suffix=%d: found=%v want=%v err=%v", len(prefix), len(suffix), got, want, err)

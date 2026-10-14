@@ -3,7 +3,6 @@
 package box
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -49,8 +48,8 @@ func TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
-	docker, err := runtime.InspectDocker(ctx, rt)
+	ctx := t.Context()
+	docker, err := runtime.BindDocker(ctx, rt, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,8 +171,10 @@ func TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient(t *testing.T) {
 				script := `mkdir -p ` + boxHome + ` ` + boxCwd + ` && cp -R /src/. ` + boxHome + `/ && cd ` + boxCwd +
 					` && { ` + test.check + `; } 2>&1 | tail -6; echo '` + marker + `'; ` +
 					`test -e ` + boxTouch + ` && echo server-process-started; cat ` + boxLog + ` 2>/dev/null`
-				out, _ := exec.CommandContext(ctx, rt.Name, "run", "--rm", "--network", "none", "-e", "HOME="+boxHome,
-					"-v", source+":/src:ro", "--entrypoint", "sh", definition.Tag, "-c", script).CombinedOutput()
+				out, err := lockedClientProbe(ctx, docker, imageID, source, boxHome, script)
+				if err != nil {
+					t.Fatalf("native MCP probe: %v\n%s", err, out)
+				}
 				report := string(out)
 				// LastIndex, not Cut: if a client ever echoed the marker, splitting on the first one
 				// would fold its own output into the server's.

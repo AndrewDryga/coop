@@ -24,6 +24,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 // This is the transport half of the release matrix: every combination the
@@ -174,41 +175,68 @@ timeout 45 python3 -m http.server %d --bind 0.0.0.0 --directory /tmp/s || test $
 `, port)
 		reached := make(chan string, 1)
 		sibling := make(chan siblingProbe, 1)
-		runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script, serve: port, whileRunning: func(repo string) {
+		runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script, serve: port, whileRunning: func(ctx context.Context, repo, executionID string) {
 			// The host proof runs FIRST: the box's server is bounded, and the
 			// sibling probe below is allowed to spend that bound waiting.
 			defer func() {
 				// A published port is HOST ingress. A sibling container on the same
 				// bridge is not the host, and must not reach it.
-				sibling <- siblingReachesServePort(docker, port)
+				record, err := store.Execution(executionID)
+				if err != nil {
+					sibling <- siblingProbe{err: err}
+					return
+				}
+				controllerID := ""
+				for _, resource := range record.Resources {
+					if resource.Role == "controller" {
+						controllerID = resource.ID
+					}
+				}
+				if controllerID == "" {
+					sibling <- siblingProbe{err: errors.New("registered controller has no exact identity")}
+					return
+				}
+				probe := siblingReachesServePort(ctx, docker, controllerID, port)
+				if probe.err == nil && !probe.reached {
+					body, err := transportHostBody(ctx, repo, port)
+					if err != nil || !strings.Contains(body, "served-from-the-box") {
+						probe.err = errors.Join(errors.New("serve fixture expired or disappeared before sibling refusal was proved"), err)
+					}
+				}
+				sibling <- probe
 			}()
-			host := project.HostPort(repo, port)
 			deadline := time.Now().Add(30 * time.Second)
-			for time.Now().Before(deadline) {
-				conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", host), time.Second)
+			for time.Now().Before(deadline) && ctx.Err() == nil {
+				body, err := transportHostBody(ctx, repo, port)
 				if err != nil {
 					time.Sleep(250 * time.Millisecond)
 					continue
 				}
-				_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-				fmt.Fprintf(conn, "GET /index.html HTTP/1.0\r\nHost: localhost\r\n\r\n")
-				body, _ := io.ReadAll(conn)
-				_ = conn.Close()
 				// The runtime's forwarder accepts on the host side before the
 				// box's own server is listening, so an empty answer is "not yet",
 				// not "refused". Only a body settles this.
 				if len(body) != 0 {
-					reached <- string(body)
+					reached <- body
 					return
 				}
 				time.Sleep(250 * time.Millisecond)
 			}
 			reached <- ""
 		}})
-		if body := <-reached; !strings.Contains(body, "served-from-the-box") {
-			t.Fatalf("the published serve port did not reach the box: %q", body)
+		select {
+		case body := <-reached:
+			if !strings.Contains(body, "served-from-the-box") {
+				t.Fatalf("the published serve port did not reach the box: %q", body)
+			}
+		case <-time.After(wait.Deadline):
+			t.Fatal("host serve callback never reported its result")
 		}
-		probe := <-sibling
+		var probe siblingProbe
+		select {
+		case probe = <-sibling:
+		case <-time.After(wait.Deadline):
+			t.Fatal("sibling callback never reported its result")
+		}
 		if probe.err != nil {
 			t.Fatalf("the sibling probe could not run, so it proved nothing: %v", probe.err)
 		}
@@ -313,7 +341,7 @@ type transportCase struct {
 	script       string
 	serve        int    // the published container port, 0 for none
 	compose      string // the .agent/compose.yml document, "" for none
-	whileRunning func(repo string)
+	whileRunning func(context.Context, string, string)
 }
 
 // runTransportCase drives one real filtered run through the private smoke seam
@@ -369,7 +397,25 @@ func runTransportCase(t *testing.T, store *networkstate.Store, candidate network
 		}()
 	}
 	if c.whileRunning != nil {
-		spec.OnRuntimeLaunch = func() { go c.whileRunning(repo) }
+		callbackCtx, cancelCallback := context.WithCancel(ctx)
+		defer cancelCallback()
+		started, done := make(chan struct{}), make(chan struct{})
+		t.Cleanup(func() {
+			cancelCallback()
+			select {
+			case <-started:
+				select {
+				case <-done:
+				case <-time.After(wait.Deadline):
+					t.Error("transport callback did not drain")
+				}
+			default:
+			}
+		})
+		spec.OnRuntimeLaunch = func() {
+			close(started)
+			go func() { defer close(done); c.whileRunning(callbackCtx, repo, registered.ID) }()
+		}
 	}
 	code, runErr := runWithNetworkSmoke(cfg, runtime.Runtime{Name: "docker"}, spec, defaultCompositionArtifactOps(), permit)
 	t.Logf("case output:\n%s", output.String())
@@ -413,32 +459,36 @@ type siblingProbe struct {
 	err     error
 }
 
+func transportHostBody(ctx context.Context, repo string, port int) (string, error) {
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", project.HostPort(repo, port)))
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return "", err
+	}
+	if _, err := fmt.Fprint(conn, "GET /index.html HTTP/1.0\r\nHost: localhost\r\n\r\n"); err != nil {
+		return "", err
+	}
+	body, err := io.ReadAll(conn)
+	return string(body), err
+}
+
 // siblingReachesServePort tries the box's published container port from the
 // neighbour container this suite already owns. The host reaches that port
 // through the bridge gateway; a sibling is not the gateway, so its packets meet
 // the protected drop instead.
-func siblingReachesServePort(docker *runtime.Docker, port int) siblingProbe {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func siblingReachesServePort(parent context.Context, docker *runtime.Docker, controllerID string, port int) siblingProbe {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
-	controllers, err := runtime.Runtime{Name: "docker"}.ContainersByLabel(ctx, "coop.network.role", "controller")
-	if err != nil {
-		return siblingProbe{err: fmt.Errorf("controller listing: %w", err)}
-	}
-	if len(controllers) != 1 {
-		return siblingProbe{err: fmt.Errorf("expected one live controller, got %d", len(controllers))}
-	}
 	members, err := docker.NetworkMembers(ctx, "bridge")
 	if err != nil {
 		return siblingProbe{err: fmt.Errorf("bridge members: %w", err)}
 	}
-	// A listing gives short ids; the network's own inventory is keyed by full
-	// ones, so the two are related by prefix.
-	address := netip.Addr{}
-	for id, member := range members {
-		if strings.HasPrefix(id, controllers[0].ID) {
-			address = member
-		}
-	}
+	address := members[controllerID]
 	if !address.IsValid() {
 		return siblingProbe{err: errors.New("the controller has no bridge address")}
 	}
@@ -451,13 +501,13 @@ func siblingReachesServePort(docker *runtime.Docker, port int) siblingProbe {
 	// A working curl in the same container proves the probe itself is sound: the
 	// sidecar's own loopback answers nothing, so 7 (connection refused) is the
 	// shape of "curl ran". Anything else here is a harness failure.
-	if _, err := docker.ExecRead(ctx, fixture, 4096, "curl", "-q", "--proxy", "", "-sS", "--max-time", "5",
-		"-o", "/dev/null", "http://127.0.0.1:1/"); err == nil {
-		return siblingProbe{err: errors.New("the neighbour's control probe unexpectedly connected")}
+	control, transport := docker.ExecRead(ctx, fixture, 4096, "sh", "-c", siblingCurlScript, "coop-serve-probe", "http://127.0.0.1:1/")
+	if code, err := siblingCurlExit(control, transport); err != nil || code != 7 {
+		return siblingProbe{err: errors.Join(errors.New("the neighbour's control probe did not prove curl refusal"), err)}
 	}
-	data, err := docker.ExecRead(ctx, fixture, 4096, "curl", "-q", "--proxy", "", "-sS", "--max-time", "5",
-		"-o", "/dev/null", "-w", "%{http_code}", fmt.Sprintf("http://%s:%d/index.html", address, port))
-	return siblingProbe{reached: err == nil, from: address.String(), detail: strings.TrimSpace(string(data)) + fmt.Sprintf(" (%v)", err)}
+	data, transport := docker.ExecRead(ctx, fixture, 4096, "sh", "-c", siblingCurlScript, "coop-serve-probe", fmt.Sprintf("http://%s:%d/index.html", address, port))
+	code, err := siblingCurlExit(data, transport)
+	return siblingProbe{reached: code == 0, from: address.String(), detail: fmt.Sprintf("curl exit%d", code), err: err}
 }
 
 // startTransportFixture runs one exactly-owned UDP echo neighbour on the

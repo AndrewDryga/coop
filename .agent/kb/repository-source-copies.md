@@ -3,7 +3,7 @@ name: repository-source-copies
 description: skills and fallback copies retain rooted content authority and validate links only after relocation; a lead's own agents are copied without following any link
 subsystem: box
 sources: [internal/box/sourcecopies.go, internal/box/run.go, internal/box/services.go, internal/shadowpath/shadowpath.go, internal/safefile/safefile.go]
-updated: 2026-09-23
+updated: 2026-10-14
 ---
 
 Skills and adapter fallback settings/hooks become writable provider-home copies. The source is
@@ -51,7 +51,15 @@ Pinned roots are not immutable snapshots of in-repository contents. Project arti
 independently, inactive providers do not read their fallbacks, and the legacy shared Claude source
 still requires a real directory rather than a symlink.
 
+Synthesized home fallbacks are intentionally writable PRIVATE copies (`synthHomeFallbackMounts`
+and `assembleOptions`), not read-only binds to committed sources or credentials. Cleanup tests
+must parse their actual writable mount shape, count the selected provider's targets, and Lstat
+each temporary source after Run. Making those copies read-only changes native CLI behavior;
+it is not an assertion repair. Instruction and MCP mounts have separate read-only contracts.
+
 ## Changelog
+- 2026-10-14 — verified private writable fallback mounts against current source; repaired exact
+  provider/count/temporary-source cleanup assertions without adopting a stale read-only assumption.
 - 2026-09-23 — re-verified the raw no-follow source read, alias/target visibility union,
   descendant policy capture, bounded copy, and stable runfiles placement; corrected stale
   root/temporary-directory claims after the filesystem authority repair.

@@ -45,7 +45,8 @@ func TestRuntimeEntrypointDescendantSupervision(t *testing.T) {
 	})
 
 	t.Run("double setsid descendant drains", func(t *testing.T) {
-		code, err := run("setsid setsid sh -c 'sleep 1; echo drained > /workspace/drained' &", "-e", "COOP_DESCENDANT_TIMEOUT=5")
+		// Only Coop's explicit ownership marker skips drain; arbitrary background work does not.
+		code, err := run("unset COOP_CONSULT_OWNED; setsid setsid sh -c 'sleep 1; echo drained > /workspace/drained' &", "-e", "COOP_DESCENDANT_TIMEOUT=5")
 		if err != nil || code != DescendantsDrainedExit {
 			t.Fatalf("drained descendant = exit %d, err %v; want exit %d, nil", code, err, DescendantsDrainedExit)
 		}
@@ -89,15 +90,6 @@ func TestRuntimeEntrypointDescendantSupervision(t *testing.T) {
 		if elapsed := finished.Sub(start); elapsed > 20*time.Second {
 			t.Fatalf("a coop-owned consult run took %s, of which supervision was %s — the rest is container create/start/teardown (a starved runtime), not the drain window", elapsed, supervision)
 		}
-	})
-
-	// The marker is narrow on purpose: unmarked background work keeps its full drain.
-	t.Run("unmarked background work still drains", func(t *testing.T) {
-		code, err := run("setsid setsid sh -c 'sleep 1; echo still > /workspace/still' &", "-e", "COOP_DESCENDANT_TIMEOUT=5")
-		if err != nil || code != DescendantsDrainedExit {
-			t.Fatalf("unmarked descendant = exit %d, err %v; want exit %d (still drains)", code, err, DescendantsDrainedExit)
-		}
-		awaitRuntimeInitMarker(t, filepath.Join(repo, "still"), "still\n")
 	})
 
 	t.Run("forwarder does not delay a failed provider", func(t *testing.T) {

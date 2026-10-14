@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 // The one pending check: what the file asks for, compared exactly with what a
@@ -83,20 +84,36 @@ func TestLockSetupSerializesAcrossHandles(t *testing.T) {
 	defer other.Close()
 	held := make(chan struct{})
 	release := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
+	done := make(chan struct{})
 	go func() {
-		defer wg.Done()
+		defer close(done)
 		_ = s.LockSetup(context.Background(), func() error { close(held); <-release; return nil })
 	}()
-	<-held
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(func() {
+		unblock()
+		select {
+		case <-done:
+		case <-time.After(wait.Deadline):
+			t.Error("setup lock holder did not drain")
+		}
+	})
+	select {
+	case <-held:
+	case <-time.After(wait.Deadline):
+		t.Fatal("setup lock holder did not start")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	if err := other.LockSetup(ctx, func() error { t.Error("the lock was taken twice"); return nil }); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("waiting on a held lock = %v, want the caller's deadline", err)
 	}
-	close(release)
-	wg.Wait()
+	unblock()
+	select {
+	case <-done:
+	case <-time.After(wait.Deadline):
+		t.Fatal("released setup lock holder did not drain")
+	}
 	ran := false
 	if err := other.LockSetup(context.Background(), func() error { ran = true; return nil }); err != nil || !ran {
 		t.Fatalf("a released lock was not taken: ran=%v err=%v", ran, err)

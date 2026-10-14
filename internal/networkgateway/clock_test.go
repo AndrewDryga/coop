@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"golang.org/x/net/dns/dnsmessage"
+	"net"
 	"net/netip"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func testBootNow() BootInstant { return BootInstant(time.Now().UnixNano()) }
@@ -41,13 +45,52 @@ func TestBootClockDomainMismatchCannotConstructControllerOrClient(t *testing.T) 
 	clock := testBootClock()
 	policy := testPolicy(t)
 	identity := Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint}
+	if _, err := NewController(identity, 1000, policy, nil, nil, nil, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil }); err != nil {
+		t.Fatalf("matching controller clock positive control: %v", err)
+	}
+	path := shortControlPath(t)
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path + ".health", Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var connections atomic.Int32
+	serverIdentity := identity
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := listener.AcceptUnix()
+			if err != nil {
+				return
+			}
+			connections.Add(1)
+			_ = conn.SetDeadline(time.Now().Add(ControlTimeout))
+			var request controlRequest
+			if readControl(conn, &request) == nil && request.Version == PrivateProtocolVersion && request.Operation == "ready" && request.Identity.matchesPeer(serverIdentity) {
+				_ = json.NewEncoder(conn).Encode(controlReply{Identity: serverIdentity, Version: PrivateProtocolVersion, Ready: true})
+			}
+			_ = conn.Close()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		select {
+		case <-done:
+		case <-time.After(wait.Deadline):
+			t.Error("clock health fixture did not drain")
+		}
+	})
+	client := ControllerClient{Path: path, Identity: identity, Clock: clock}
+	if err := client.Ready(t.Context()); err != nil || connections.Load() != 1 {
+		t.Fatalf("matching client health positive control: %v, connections%d", err, connections.Load())
+	}
 	identity.Clock.TimeNamespace = "54321"
 	if _, err := NewController(identity, 1000, policy, nil, nil, nil, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil }); err == nil {
 		t.Fatal("controller accepted a different time namespace")
 	}
-	client := ControllerClient{Path: "/not-a-real-socket", Identity: identity, Clock: clock}
-	if client.Ready(context.Background()) == nil {
-		t.Fatal("client accepted a different time namespace")
+	client.Identity = identity
+	if err := client.Ready(t.Context()); err != Failure("enforcement_unavailable") || connections.Load() != 1 {
+		t.Fatalf("mismatched local clock reached health: %v, connections%d", err, connections.Load())
 	}
 }
 

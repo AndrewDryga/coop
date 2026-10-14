@@ -19,19 +19,22 @@ import (
 // Detect validates a COOP_RUNTIME override up front, so a bogus value fails clearly here instead
 // of later as a misleading "image not built".
 func TestDetectOverride(t *testing.T) {
-	// A known runtime that's actually installed is accepted on PATH alone.
-	accepted := false
-	for _, rt := range []string{"docker", "container"} {
-		if _, err := exec.LookPath(rt); err == nil {
-			if got, err := Detect(rt); err != nil || got.Name != rt {
-				t.Errorf("Detect(%q) = (%+v, %v), want it accepted", rt, got, err)
-			}
-			accepted = true
-			break
+	// Selection does not need a real daemon: every acceptance/refusal runs on any host.
+	dir := t.TempDir()
+	for _, name := range []string{"docker", "container", "false"} {
+		body := "#!/bin/sh\nexit 0\n"
+		if name == "false" {
+			body = "#!/bin/sh\nexit 1\n"
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o700); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if !accepted {
-		t.Skip("no container runtime installed to test the accept path")
+	t.Setenv("PATH", dir)
+	for _, rt := range []string{"docker", "container"} {
+		if got, err := Detect(rt); err != nil || got.Name != rt {
+			t.Errorf("Detect(%q) = (%+v, %v), want it accepted", rt, got, err)
+		}
 	}
 	// A name that doesn't resolve on PATH → a clear "not found".
 	if _, err := Detect("definitely-not-a-runtime-xyz"); err == nil || !strings.Contains(err.Error(), "not found") {
@@ -281,8 +284,8 @@ func TestRunInterruptibleCancelKillsDescendantAfterLeaderExits(t *testing.T) {
 	// The runtime leader exits promptly on TERM while its child ignores TERM. Cleanup must keep
 	// owning the process group after cmd.Wait returns and escalate the surviving child to KILL.
 	pidfile := filepath.Join(t.TempDir(), "leader-first-gpid")
-	childScript := "trap '' TERM; while :; do sleep 1; done"
-	script := "trap 'exit 0' TERM; sh -c " + shellQuote(childScript) + " & echo $! > " + shellQuote(pidfile) + "; while :; do sleep 1; done"
+	childScript := "trap '' TERM; printf '%s\\n' $$ > " + shellQuote(pidfile+".tmp") + "; mv " + shellQuote(pidfile+".tmp") + " " + shellQuote(pidfile) + "; while :; do sleep 1; done"
+	script := "trap 'exit 0' TERM; sh -c " + shellQuote(childScript) + " & while :; do sleep 1; done"
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

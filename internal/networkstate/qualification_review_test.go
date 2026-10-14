@@ -100,15 +100,3 @@ func TestExecutionInspectionRetainsGoodRecordsAndDoesNotInventPartialCursor(t *t
 		t.Fatal("partial directory inventory invented a lexical cursor", page, err)
 	}
 }
-
-func TestExecutionAmbiguousIntentCannotAuthorizeAnotherSubmission(t *testing.T) {
-	s, r := executionFixture(t)
-	r = prepareFixtureLaunch(t, s, r)
-	r, err := s.BeginResourceCreation(context.Background(), r.ID, r.Revision, "controller")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.BeginResourceCreation(context.Background(), r.ID, r.Revision, "controller"); err == nil {
-		t.Fatal("unknown create outcome authorized a repeated external submission")
-	}
-}

@@ -53,9 +53,10 @@ func TestFingerprintChangesWithValueOrPath(t *testing.T) {
 func TestFingerprintIsStableAcrossCheckouts(t *testing.T) {
 	content := "key = \"" + openAIKey + "\"\n"
 	first := only(t, ScanFile("config/client.go", content))
-	second := only(t, ScanFile("config/client.go", content))
-	if first.Fingerprint != second.Fingerprint {
-		t.Errorf("the same content produced two ids: %s and %s", first.Fingerprint, second.Fingerprint)
+	// Fixed length-prefixed fp-v1 material, independent of the current scanner.
+	const persisted = "fp-v1:b2758b3a796f81888b6f896f9c420ee855608fdcb828dfc2b83f736768171a6c"
+	if first.Fingerprint != persisted {
+		t.Errorf("persisted fingerprint changed: %s, want %s", first.Fingerprint, persisted)
 	}
 	if !strings.HasPrefix(first.Fingerprint, FingerprintVersion+":") {
 		t.Errorf("id %q is not versioned", first.Fingerprint)

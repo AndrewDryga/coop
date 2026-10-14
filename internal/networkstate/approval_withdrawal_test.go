@@ -2,6 +2,7 @@ package networkstate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -226,10 +227,27 @@ func TestWithdrawalIsPersistedBeforeTheGrantIsCleared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The interrupted state, written by hand: the marker is down, the approval
-	// is not yet gone.
-	if err := s.recordWithdrawal(id); err != nil {
+	record, err := s.ApprovalAt(project)
+	if err != nil {
 		t.Fatal(err)
+	}
+	failure := errors.New("interrupted withdrawal directory barrier")
+	observed := false
+	s.syncDir = func(dir *os.File) error {
+		observed = true
+		data, err := os.ReadFile(filepath.Join(s.Path(), withdrawalRecord(id)))
+		var marker Withdrawal
+		if err != nil || json.Unmarshal(data, &marker) != nil || marker.Version != 1 || marker.ProjectID != id {
+			t.Fatalf("withdrawal was not published before its barrier: %s, %v", data, err)
+		}
+		if _, err := s.root.Lstat(approvalRecord(id)); err != nil {
+			t.Fatalf("approval removed before durable withdrawal: %v", err)
+		}
+		return errors.Join(dir.Sync(), failure)
+	}
+	t.Cleanup(func() { s.syncDir = nil })
+	if removed, err := s.Forget(context.Background(), record); removed || !errors.Is(err, failure) || !observed {
+		t.Fatalf("interrupted real Forget = removed%v, err%v, barrier observed%v", removed, err, observed)
 	}
 	request := Admission{Requests: []egress.Rule{rule("c.example.com")}}
 	if pending := pendingAfter(t, s, project, request); pending == nil || !strings.Contains(pending.Reason, "withdrawn") {
@@ -239,10 +257,11 @@ func TestWithdrawalIsPersistedBeforeTheGrantIsCleared(t *testing.T) {
 		t.Fatal("Admit reused a stale approval after the withdrawal barrier was durable")
 	}
 	// A retry still finishes the retained anchor and approval cleanup.
-	record, err := s.ApprovalAt(project)
+	record, err = s.ApprovalAt(project)
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.syncDir = nil
 	if removed, err := s.Forget(context.Background(), record); err != nil || !removed {
 		t.Fatalf("Forget = (%v, %v)", removed, err)
 	}

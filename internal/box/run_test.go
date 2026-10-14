@@ -105,6 +105,8 @@ func TestLoopRefusesUnsafeComposeBeforeAgentLaunch(t *testing.T) {
 		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"claude"}, Agent: "claude",
 		AgentCommand: true, Network: true, Batch: true, LoopPresentation: true,
 	}
+	launches := 0
+	spec.OnRuntimeLaunch = func() { launches++ }
 	var code int
 	var runErr error
 	output := captureStderr(t, func() { code, runErr = Run(cfg, recorderRuntime(t, recorder), spec) })
@@ -113,7 +115,7 @@ func TestLoopRefusesUnsafeComposeBeforeAgentLaunch(t *testing.T) {
 		t.Fatalf("loop launch = (%d, %v), want a Compose refusal", code, runErr)
 	}
 	if !strings.Contains(output, "Starting services") || !strings.Contains(output, "Services were not started") ||
-		strings.Contains(output, "Starting claude") {
+		strings.Contains(output, "Starting Claude") || launches != 0 {
 		t.Fatalf("refused service launch narration = %q", output)
 	}
 	if data, err := os.ReadFile(recorder); err == nil && strings.Contains(string(data), " up ") {
@@ -2216,24 +2218,31 @@ func TestRunMountsGeminiSettingsForGeminiScope(t *testing.T) {
 // exactly "open"; "none", a typo, or an unnormalized empty value all yield --network none, so a
 // missed config.normalizeEgress can never silently grant outbound at the box boundary.
 func TestAssembleArgsEgressFailsClosed(t *testing.T) {
-	netArgs := func(egress, servicesNet string) []string {
-		cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: egress}
-		spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, Network: true}
-		return assembleArgs(cfg, true, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-			"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, servicesNet, "")
-	}
-	// "open" joins a services net; "open" with no services leaves the default bridge (no --network).
-	if !containsSeq(netArgs("open", "coop-r_default"), []string{"--network", "coop-r_default"}) {
-		t.Error(`Egress "open" should join the services network`)
-	}
-	if slices.Contains(netArgs("open", ""), "--network") {
-		t.Error(`Egress "open" with no services should leave the default bridge (no --network)`)
-	}
-	// Anything else fails closed to --network none — even a typo, and even with a services net present.
-	for _, egress := range []string{"none", "None", "off", "", "yes", "full"} {
-		if !containsSeq(netArgs(egress, "coop-r_default"), []string{"--network", "none"}) {
-			t.Errorf("Egress %q must fail closed to --network none", egress)
-		}
+	for _, shape := range []struct {
+		name string
+		spec RunSpec
+	}{
+		{"agent homes", RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, Network: true}},
+		{"raw command", RunSpec{Image: "i", Repo: "/r"}},
+	} {
+		t.Run(shape.name, func(t *testing.T) {
+			netArgs := func(egress, servicesNet string) []string {
+				cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: egress}
+				return assembleArgs(cfg, true, shape.spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+					"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, servicesNet, "")
+			}
+			if !containsSeq(netArgs("open", "coop-r_default"), []string{"--network", "coop-r_default"}) {
+				t.Error("open egress must join the services network")
+			}
+			if slices.Contains(netArgs("open", ""), "--network") {
+				t.Error("open egress without services must leave the default bridge")
+			}
+			for _, egress := range []string{"none", "None", "off", "", "yes", "full"} {
+				if !containsSeq(netArgs(egress, "coop-r_default"), []string{"--network", "none"}) {
+					t.Errorf("Egress %q must fail closed to --network none", egress)
+				}
+			}
+		})
 	}
 }
 
@@ -3471,26 +3480,6 @@ func TestRunPreparesSharedSessionsOnlyWhenRequested(t *testing.T) {
 	}
 }
 
-func TestAssembleArgsEgress(t *testing.T) {
-	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
-	args := func(egress, networkName string) []string {
-		c := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: egress}
-		return assembleArgs(c, true, RunSpec{Image: "i", Repo: "/r"}, mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, networkName, "")
-	}
-	// COOP_EGRESS=none → --network none, overriding any services-net join.
-	if got := args("none", "coop-x_default"); !containsSeq(got, []string{"--network", "none"}) {
-		t.Errorf("COOP_EGRESS=none should force --network none:\n%v", got)
-	}
-	// Default (open) with no services net → no --network flag (runtime default bridge, full outbound).
-	if got := args("open", ""); containsSeq(got, []string{"--network"}) {
-		t.Errorf("default egress + no services net should add no --network:\n%v", got)
-	}
-	// Default (open) WITH a services net → joins it.
-	if got := args("open", "coop-x_default"); !containsSeq(got, []string{"--network", "coop-x_default"}) {
-		t.Errorf("default egress should join the services net:\n%v", got)
-	}
-}
-
 // frontierPreset is a loaded-preset literal for box tests (no YAML round-trip needed):
 // one role per mode, matching the docs' frontier recipe.
 func frontierPreset() *preset.Preset {
@@ -4290,14 +4279,24 @@ func TestRunSynthesizesClaudeConfigForClaudeScope(t *testing.T) {
 				t.Fatalf("hooks mount present=%v, want %v in:\n%s", hasHooks, c.wantHooks, args)
 			}
 			for _, target := range []string{"/home/node/.claude/settings.json", "/home/node/.claude/hooks"} {
+				count := 0
 				for _, arg := range strings.Fields(string(args)) {
+					// Fallbacks are writable private copies, unlike read-only instruction mounts.
 					host, found := strings.CutSuffix(arg, ":"+target)
 					if !found {
 						continue
 					}
-					if _, err := os.Stat(host); !os.IsNotExist(err) {
+					count++
+					if _, err := os.Lstat(host); !os.IsNotExist(err) {
 						t.Errorf("temporary mount source %s remains after Run: %v", host, err)
 					}
+				}
+				want := 0
+				if c.agent == "claude" {
+					want = 1
+				}
+				if count != want {
+					t.Fatalf("private writable %s mounts = %d, want%d in:\n%s", target, count, want, args)
 				}
 			}
 		})

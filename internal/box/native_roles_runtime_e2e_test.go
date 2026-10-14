@@ -3,9 +3,7 @@
 package box
 
 import (
-	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -25,8 +23,8 @@ func TestRuntimeNativeRolesAreCheckedByPinnedClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
-	docker, err := runtime.InspectDocker(ctx, rt)
+	ctx := t.Context()
+	docker, err := runtime.BindDocker(ctx, rt, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +34,8 @@ func TestRuntimeNativeRolesAreCheckedByPinnedClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := docker.Image(ctx, definition.Tag); err != nil {
+	imageID, _, err := docker.Image(ctx, definition.Tag)
+	if err != nil {
 		t.Fatalf("the locked client image %s is not on this daemon; run `coop net setup` first: %v", definition.Tag, err)
 	}
 	for _, test := range []struct {
@@ -100,8 +99,10 @@ func TestRuntimeNativeRolesAreCheckedByPinnedClients(t *testing.T) {
 			// <cwd>/.<agent>/agents as project-scope roles, so a run from $HOME would keep passing for
 			// a client that had dropped the user-level root entirely — the regression this catches.
 			script := `mkdir -p /tmp/h /tmp/w && cp -R /src/. /tmp/h/ && cd /tmp/w && ` + test.check + ` 2>&1`
-			out, _ := exec.CommandContext(ctx, rt.Name, "run", "--rm", "--network", "none", "-e", "HOME=/tmp/h",
-				"-v", source+":/src:ro", "--entrypoint", "sh", definition.Tag, "-c", script).CombinedOutput()
+			out, err := lockedClientProbe(ctx, docker, imageID, source, "/tmp/h", script)
+			if err != nil {
+				t.Fatalf("native role probe: %v\n%s", err, out)
+			}
 			if !test.found(string(out)) {
 				t.Fatalf("%s did not load the rendered native role:\n%s\n--- rendered %s ---\n%s", test.provider, out, file, content)
 			}

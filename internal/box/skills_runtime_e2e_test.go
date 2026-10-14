@@ -3,9 +3,7 @@
 package box
 
 import (
-	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,8 +28,8 @@ func TestRuntimeSharedSkillsAreCheckedByPinnedClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
-	docker, err := runtime.InspectDocker(ctx, rt)
+	ctx := t.Context()
+	docker, err := runtime.BindDocker(ctx, rt, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +39,8 @@ func TestRuntimeSharedSkillsAreCheckedByPinnedClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := docker.Image(ctx, definition.Tag); err != nil {
+	imageID, _, err := docker.Image(ctx, definition.Tag)
+	if err != nil {
 		t.Fatalf("the locked client image %s is not on this daemon; run `coop net setup` first: %v", definition.Tag, err)
 	}
 	const (
@@ -109,8 +108,10 @@ func TestRuntimeSharedSkillsAreCheckedByPinnedClients(t *testing.T) {
 			readableLockedClientFixture(t, source)
 
 			script := `mkdir -p ` + boxHome + ` ` + boxCwd + ` && cp -R /src/. ` + boxHome + `/ && cd ` + boxCwd + ` && ` + test.check + ` 2>&1`
-			out, _ := exec.CommandContext(ctx, rt.Name, "run", "--rm", "--network", "none", "-e", "HOME="+boxHome,
-				"-v", source+":/src:ro", "--entrypoint", "sh", definition.Tag, "-c", script).CombinedOutput()
+			out, err := lockedClientProbe(ctx, docker, imageID, source, boxHome, script)
+			if err != nil {
+				t.Fatalf("native skill probe: %v\n%s", err, out)
+			}
 			report := string(out)
 			if want := boxHome + "/" + test.want; !strings.Contains(report, want) {
 				t.Fatalf("%s never reported the skill at %s:\n%s", test.provider, want, report)

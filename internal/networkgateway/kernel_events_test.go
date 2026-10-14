@@ -163,20 +163,36 @@ func TestKernelTerminalBarrierRequiresSampleStartedAfterCutoff(t *testing.T) {
 // sample starts after the cutoff — so a run's teardown pays one counter read, not up to a second.
 func TestKernelTerminalBarrierWakesTheSampler(t *testing.T) {
 	clock := testBootClock()
+	first := make(chan struct{})
 	var reads atomic.Int32
 	k := &kernelEvents{read: func(context.Context) (KernelCounters, error) {
-		reads.Add(1)
+		if reads.Add(1) == 1 {
+			close(first)
+		}
 		return KernelCounters{DeniedAgent: 1}, nil
 	}}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go k.run(ctx, clock)
-	for reads.Load() == 0 { // the first tick's sample
-		time.Sleep(time.Millisecond)
+	done := make(chan struct{})
+	go func() { defer close(done); k.run(ctx, clock) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(wait.Deadline):
+			t.Error("kernel sampler did not drain")
+		}
+	})
+	select {
+	case <-first:
+	case <-time.After(wait.Deadline):
+		t.Fatal("first kernel sample did not start")
 	}
+	wait.For(t, "first kernel sample published", func() bool { return k.snapshot().Sequence > 0 })
 	cutoff := clock.instant()
 	began := time.Now()
-	got := k.after(ctx, cutoff)
+	barrier, stop := context.WithTimeout(ctx, wait.Deadline)
+	defer stop()
+	got := k.after(barrier, cutoff)
 	if got.Counters == nil || got.StartedBoot.Before(cutoff) {
 		t.Fatalf("terminal sample = %#v, want one started after the cutoff", got)
 	}

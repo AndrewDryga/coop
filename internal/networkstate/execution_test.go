@@ -50,6 +50,9 @@ func TestExecutionIntentsBindExactResourcesWithoutRestartOrRebind(t *testing.T) 
 	if err != nil || persisted.Resources[1].State != "creating" || persisted.Resources[1].ID != "" {
 		t.Fatal("unknown create outcome became absence")
 	}
+	if _, err := s.BeginResourceCreation(ctx, record.ID, record.Revision, "guard"); err == nil {
+		t.Fatal("unknown create outcome authorized a repeated external submission")
+	}
 	record, err = s.RecordResourceCreated(ctx, record.ID, record.Revision, "guard", object)
 	if err != nil {
 		t.Fatal(err)

@@ -44,6 +44,10 @@ func TestNativeBrokerManagedSettingsPreservesPolicySemantics(t *testing.T) {
 					if response.StatusCode != status || body != want || response.Header.Get("ETag") != "provider-cache" || response.Header.Get("X-Policy-Signature") != "provider-signature" {
 						t.Fatal("genuine upstream policy/status/cache/signature changed")
 					}
+					// Admission happens before upstream status exists; exercise each denial once.
+					if status != http.StatusOK {
+						return
+					}
 					before := f.forwarded.Load()
 					wrongFamily := "Authorization"
 					if family.header == wrongFamily {

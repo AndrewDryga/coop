@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -237,10 +238,12 @@ func TestControlFramingRefusesLargeUnknownAndTrailingMessages(t *testing.T) {
 }
 
 func TestControlPeerRefusalNeverReachesLeaseMutation(t *testing.T) {
-	c := testController(t, func(context.Context, string) error { return nil })
+	var applies atomic.Int32
+	c := testController(t, func(context.Context, string) error { applies.Add(1); return nil })
 	if err := c.Initialize(context.Background(), netip.MustParseAddr("1.1.1.1")); err != nil {
 		t.Fatal(err)
 	}
+	applies.Store(0)
 	ctx, cancel := context.WithCancel(context.Background())
 	path := shortControlPath(t)
 	done := make(chan error, 1)
@@ -262,13 +265,22 @@ func TestControlPeerRefusalNeverReachesLeaseMutation(t *testing.T) {
 		}
 		conn, err := net.Dial("unix", path)
 		if err == nil {
+			defer conn.Close()
 			_ = conn.SetDeadline(time.Now().Add(wait.Deadline))
-			_, _ = conn.Write([]byte("{\"version\":1,\"operation\":\"ready\"}\n"))
+			request := controlRequest{Version: PrivateProtocolVersion, Identity: c.identity, Operation: "lease",
+				Lease: &Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: c.now().Add(time.Minute)}}
+			// Peer authentication can close before the valid frame is written.
+			if err := json.NewEncoder(conn).Encode(request); err != nil && !errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) {
+				t.Fatal(err)
+			}
 			var reply [1]byte
 			n, _ := conn.Read(reply[:])
 			_ = conn.Close()
 			if n != 0 {
 				t.Fatal("unauthenticated peer received successful response")
+			}
+			if applies.Load() != 0 {
+				t.Fatal("unauthenticated peer reached kernel lease mutation")
 			}
 			break
 		}

@@ -165,18 +165,23 @@ func TestProviderExpansionPreservesRequestingVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	matched := 0
 	for _, grant := range snapshot.Grants {
 		if grant.Rule.To.Domain != "mcp.example.com" {
 			continue
 		}
+		matched++
 		if len(grant.Origins) != 2 || grant.Origins[0].Version == grant.Origins[1].Version {
 			t.Fatal("requesting versions were overwritten or collapsed", grant.Origins)
 		}
 		for _, origin := range grant.Origins {
-			if origin.BundleVersion != bundle.Version {
+			if origin.BundleVersion != "1" || (origin.Version != "source-1" && origin.Version != "source-2") {
 				t.Fatal("derived version was lost", origin)
 			}
 		}
+	}
+	if matched != 1 {
+		t.Fatalf("expanded MCP grant count = %d, want exactly one", matched)
 	}
 }
 

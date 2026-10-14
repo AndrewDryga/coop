@@ -136,7 +136,7 @@ func TestTaskChannelServesTheBoxAndTearsDownAfterTheRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(sockDir)
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	sock := filepath.Join(sockDir, "mcp.sock")
 	rt, log := fakeChannelRuntime(t, sock)
 	artifacts := defaultCompositionArtifactOps()
@@ -150,6 +150,7 @@ func TestTaskChannelServesTheBoxAndTearsDownAfterTheRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("startTaskChannel: %v", err)
 	}
+	t.Cleanup(func() { _ = channel.close() })
 	calls, _ := os.ReadFile(log)
 	if !strings.Contains(string(calls), "volume create --label coop=task-channel "+volume+"\n") {
 		t.Fatalf("volume not created: %s", calls)
@@ -172,6 +173,7 @@ func TestTaskChannelServesTheBoxAndTearsDownAfterTheRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dial the channel: %v", err)
 		}
+		t.Cleanup(func() { _ = conn.Close() })
 		return conn, bufio.NewReader(conn)
 	}
 	ask := func(conn net.Conn, reader *bufio.Reader, req string) string {

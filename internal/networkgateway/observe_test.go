@@ -120,6 +120,19 @@ func TestObservationFramingRefusesOversizeMalformedAndForeignIdentity(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	foreign := value
+	foreign.Identity.RunID, foreign.Identity.Epoch = strings.Repeat("c", 32), strings.Repeat("d", 32)
+	foreign.Network.RunID, foreign.Network.Epoch = foreign.Identity.RunID, foreign.Identity.Epoch
+	foreignBytes, err := encodeObservation(foreign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadObservation(strings.NewReader(string(foreignBytes)), foreign.Identity); err != nil {
+		t.Fatalf("coherent foreign positive control: %v", err)
+	}
+	if _, err := ReadObservation(strings.NewReader(string(foreignBytes)), c.identity); err == nil {
+		t.Fatal("accepted a coherent foreign run/epoch")
+	}
 	for _, data := range []string{strings.Repeat(" ", MaxSnapshotBytes) + "\n", string(valid[:len(valid)-1]), "{}\n",
 		strings.Replace(string(valid), `"version":2`, `"version":1`, 1)} {
 		if _, err := ReadObservation(strings.NewReader(data), c.identity); err == nil {
