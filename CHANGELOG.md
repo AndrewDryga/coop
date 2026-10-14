@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Usage includes recent requests in large histories.** Old transcripts no longer fill a scan
+  budget that excludes newer usage. Coop caches parsed token records from unchanged files,
+  rereads changed files and recovers later requests after an oversized JSONL record. The cache
+  contains no conversation text; estimates still use the rolling 30-day window and current rates.
+  GPT-6 Sol, GPT-5.6 Terra and GPT-5.6 Luna now have their documented API tariffs.
+
 - **A worker removes the repository copies no session can still use.** A worker staged a copy of
   every repository a job named and never removed one, so a controller that started sessions
   often filled the worker's disk: on one install, about 3 GB an hour. Each maintenance pass now

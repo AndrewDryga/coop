@@ -2,8 +2,8 @@
 name: usage-recorded-token-value
 description: Usage reports native quota and recorded token value independently; historical account ambiguity and missing tariffs stay explicit
 subsystem: usage
-sources: [internal/agent/usage.go, internal/agent/usage_report.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/run.go, internal/cli/usage.go, internal/cli/usage_reports.go, internal/session/usage.go]
-updated: 2026-10-13
+sources: [internal/agent/usage.go, internal/agent/usage_cache.go, internal/agent/usage_report.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/run.go, internal/cli/usage.go, internal/cli/usage_reports.go, internal/session/usage.go]
+updated: 2026-10-14
 ---
 
 `coop usage [<provider>[@credential]]` never starts a model run. Local recorded value is not billing;
@@ -11,7 +11,16 @@ explicitly configured provider reports are a separate API-spend inspection.
 Adapters own exact quota authority, native history decoding and current standard-price mappings.
 Quota and recorded value can fail independently; no percentage implies missing token use.
 
-`ReadUsageHistory` bounds native roots/files and sees old records needed as cumulative baselines.
+`ReadUsageHistory` streams every declared history file and sees old records needed as cumulative
+baselines. It has no lifetime byte/entry budget; Claude/Codex bound individual JSONL records and
+skip oversized records without dropping later requests. Snapshot JSON retains a size bound.
+Private `BoxHome/usage-cache` entries retain normalized tokens and coverage flags per source,
+versioned by decoder schema and provider/root/file keys. Device/inode, size, mtime and ctime
+invalidate changed sources, including same-size rewrites with restored mtime. Only stable,
+uncancelled reads are saved atomically. Invalid/unwritable caches fall back to native parsing.
+Changed files are fully reparsed; unchanged files are not reopened. Prices, account attribution
+and the rolling window are not cached. Grok's dependent parent filter runs before cache reuse.
+Quota/report timeouts never cancel a cold local history scan; signals still cancel both.
 `ValueUsageHistory` uses one rolling 30-day window and unrounded, request-ID-deduplicated values.
 Claude message revisions, Codex paired response/cumulative rows, Gemini updates/rewinds and Grok
 parent/child aggregates have different identity and token inclusion semantics. Grok child usage
@@ -70,6 +79,13 @@ discards ordinary quota. Only positive remaining grants contribute reported `end
 This is inspection only: no organization reset route, grant IDs, event properties or redemption.
 
 ## Changelog
+- 2026-10-14 — fixed lifetime 256 MiB/root and 128 MiB/JSONL truncation, added private persistent
+  per-file token caches and independent quota deadlines. Regressions cover later requests across
+  the old limits, oversized record recovery, cold/warm reuse, rewrite/append/truncate/replacement,
+  corrupt/unsafe caches, interrupted reads, rolling prices/windows and Grok parent changes.
+  The full scan also exposed missing gpt-6-sol/gpt-5.6-terra tariffs (26,354 native events).
+  Added these and the sibling gpt-5.6-luna rates from official OpenAI standard pricing, including
+  cache writes and the 272K context boundary; cached histories reprice without transcript reads.
 - 2026-10-13 — added adapter-declared host history roots and generalized shared deduplication.
   Optional host-only usage-reports.json sources read organization/team billing, or explicitly
   selected Google project/SKUs, for 30 completed UTC days. Strict source schema, fixed endpoints,

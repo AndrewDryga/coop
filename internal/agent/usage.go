@@ -25,6 +25,8 @@ type UsageSpec struct {
 	HistoryDirs           []string
 	HistoryFile           func(string) bool
 	HistoryFilter         func(*os.Root, string) (bool, error)
+	HistoryCacheID        string
+	StreamHistory         bool // The decoder bounds individual records rather than whole files.
 	ParseHistory          func(io.Reader) (UsageHistory, error)
 	Price                 func(UsageEvent) (float64, bool)
 	NativeCredentialLease bool
@@ -216,15 +218,38 @@ func usageReset(value string) time.Time {
 }
 
 func readUsageLines(reader io.Reader, visit func([]byte) bool) bool {
-	lines := bufio.NewScanner(reader)
-	lines.Buffer(make([]byte, 64<<10), 8<<20)
+	lines := bufio.NewReaderSize(reader, 64<<10)
 	partial := false
-	for lines.Scan() {
-		if len(lines.Bytes()) != 0 && !visit(lines.Bytes()) {
+	var line []byte
+	oversized := false
+	for {
+		part, err := lines.ReadSlice('\n')
+		if !oversized {
+			if len(line)+len(part) > 8<<20 {
+				oversized, partial = true, true
+				line = line[:0]
+			} else {
+				line = append(line, part...)
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if len(line) != 0 && line[len(line)-1] == '\n' {
+			line = line[:len(line)-1]
+		}
+		if len(line) != 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
+		if !oversized && len(line) != 0 && !visit(line) {
 			partial = true
 		}
+		line = line[:0]
+		oversized = false
+		if err != nil {
+			return partial || err != io.EOF
+		}
 	}
-	return partial || lines.Err() != nil
 }
 
 func usageTokens(value *int64) int64 {
@@ -264,9 +289,9 @@ func readRootUsageArtifact(root *os.Root, path string, limit int64) ([]byte, err
 	return data, nil
 }
 
-// ReadUsageHistory scans only adapter-declared native paths. Limits bound hostile/very large
-// stores, not the time interval: the decoder sees old records needed as cumulative baselines.
-func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec) UsageHistory {
+// ReadUsageHistory scans every adapter-declared history file, retaining old cumulative baselines.
+// Unchanged files reuse normalized token records; prices and the rolling window stay uncached.
+func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec, cacheDir string) UsageHistory {
 	var out UsageHistory
 	root, err := openSessionRoot(profile)
 	if err != nil {
@@ -274,11 +299,13 @@ func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec) Usage
 		return out
 	}
 	defer root.Close()
-	var readBytes int64
-	entries := 0
+	cache := openUsageCache(cacheDir, profile, spec.HistoryCacheID)
+	if cache != nil {
+		defer cache.root.Close()
+	}
 	var walk func(string, int)
 	walk = func(path string, depth int) {
-		if ctx.Err() != nil || readBytes >= 256<<20 || entries >= 50000 || depth > 8 {
+		if ctx.Err() != nil || depth > 64 {
 			out.Partial = true
 			return
 		}
@@ -300,7 +327,6 @@ func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec) Usage
 			for {
 				batch, err := dir.ReadDir(128)
 				for _, entry := range batch {
-					entries++
 					walk(filepath.Join(path, entry.Name()), depth+1)
 				}
 				if err != nil {
@@ -309,7 +335,7 @@ func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec) Usage
 					}
 					break
 				}
-				if ctx.Err() != nil || readBytes >= 256<<20 || entries >= 50000 {
+				if ctx.Err() != nil {
 					out.Partial = true
 					break
 				}
@@ -319,7 +345,7 @@ func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec) Usage
 		if !spec.HistoryFile(path) {
 			return
 		}
-		if !info.Mode().IsRegular() || info.Size() > 128<<20 || info.Size() > (256<<20)-readBytes {
+		if !info.Mode().IsRegular() || !spec.StreamHistory && info.Size() > 128<<20 {
 			out.Partial = true
 			return
 		}
@@ -333,6 +359,17 @@ func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec) Usage
 				return
 			}
 		}
+		if history, ok := cache.read(path, info); ok {
+			current, err := root.Lstat(path)
+			if err != nil || !current.Mode().IsRegular() || usageFingerprint(info) != usageFingerprint(current) {
+				out.Partial = true
+				return
+			}
+			out.Partial = out.Partial || history.Partial
+			out.Events = append(out.Events, history.Events...)
+			out.Available = out.Available || len(history.Events) > 0
+			return
+		}
 		file, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 		if err != nil {
 			out.Partial = true
@@ -340,12 +377,21 @@ func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec) Usage
 		}
 		defer file.Close()
 		after, err := file.Stat()
-		if err != nil || !os.SameFile(info, after) || !after.Mode().IsRegular() || after.Size() > 128<<20 || after.Size() > (256<<20)-readBytes {
+		if err != nil || !os.SameFile(info, after) || !after.Mode().IsRegular() || !spec.StreamHistory && after.Size() > 128<<20 {
 			out.Partial = true
 			return
 		}
-		readBytes += after.Size()
-		history, err := spec.ParseHistory(usageContextReader{ctx, io.LimitReader(file, 128<<20)})
+		reader := &usageContextReader{ctx: ctx, reader: io.LimitReader(file, after.Size())}
+		history, err := spec.ParseHistory(reader)
+		final, statErr := file.Stat()
+		current, pathErr := root.Lstat(path)
+		stable := statErr == nil && pathErr == nil && current.Mode().IsRegular() &&
+			usageFingerprint(after) == usageFingerprint(final) && usageFingerprint(after) == usageFingerprint(current)
+		if !stable || ctx.Err() != nil || reader.err != nil {
+			history.Partial = true
+		} else if err == nil {
+			cache.write(path, after, history)
+		}
 		out.Partial = out.Partial || history.Partial || err != nil
 		out.Events = append(out.Events, history.Events...)
 		out.Available = out.Available || len(history.Events) > 0
@@ -359,11 +405,16 @@ func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec) Usage
 type usageContextReader struct {
 	ctx    context.Context
 	reader io.Reader
+	err    error
 }
 
-func (r usageContextReader) Read(data []byte) (int, error) {
+func (r *usageContextReader) Read(data []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	}
-	return r.reader.Read(data)
+	n, err := r.reader.Read(data)
+	if err != nil && err != io.EOF {
+		r.err = err
+	}
+	return n, err
 }

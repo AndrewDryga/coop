@@ -81,6 +81,7 @@ updated: <YYYY-MM-DD>                # last edit
 
 ## Index
 - [usage-leads-with-limits](usage-leads-with-limits.md) — quota bars first, estimate last; account details hold coverage facts, no blanket footers
+- [usage-history-covers-requested-window](usage-history-covers-requested-window.md) — lifetime scan budgets must not omit recent token use; caches preserve request accounting
 
 - [replacements-remove-old-paths](replacements-remove-old-paths.md) — simplification removes obsolete configuration, adapters and callers in the same change
 

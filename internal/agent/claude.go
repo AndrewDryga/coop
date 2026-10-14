@@ -295,7 +295,8 @@ func (claudeAgent) Usage() UsageSpec {
 		Reports: usageReportSpec{format: reportDailyCents, label: "Claude API", endpoint: "https://api.anthropic.com/v1/organizations/cost_report", scope: func(UsageReportSource) string {
 			return "API organization for the configured key; excludes Priority Tier"
 		}},
-		HostHomes:   func() []string { return nativeUsageHomes(".claude", "CLAUDE_CONFIG_DIR", false) },
+		HostHomes:      func() []string { return nativeUsageHomes(".claude", "CLAUDE_CONFIG_DIR", false) },
+		HistoryCacheID: "claude", StreamHistory: true,
 		HistoryFile: func(path string) bool { return strings.HasSuffix(path, ".jsonl") }, ParseHistory: claudeUsageHistory, Price: claudeUsagePrice}
 }
 

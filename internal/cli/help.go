@@ -626,6 +626,9 @@ EXAMPLES
   Native history uses the normal Claude, Codex, Gemini and Grok homes plus their
   supported home overrides. Copied requests count once. A current login does not
   identify an old request's account; unmatched records show as Unassigned local usage.
+  Parsed token records are cached in Coop's host configuration folder, under
+  usage-cache. The first check reads full history; later checks reuse unchanged
+  files. Changed files are read again. The cache contains no conversation text.
   Select provider@credential to see which history is included and how it is priced.
   Editor history that cannot be matched to an account is listed separately.
   Subtotals and Total sum the selected providers' recorded estimates,

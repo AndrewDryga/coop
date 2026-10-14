@@ -452,7 +452,7 @@ func (geminiAgent) Usage() UsageSpec {
 		HostHomes: func() []string { return nativeUsageHomes(".gemini", "GEMINI_CLI_HOME", true) },
 		HistoryFile: func(path string) bool {
 			return strings.Contains(path, "/chats/") && (strings.HasSuffix(path, ".jsonl") || strings.HasSuffix(path, ".json"))
-		}, ParseHistory: geminiUsageHistory, Price: geminiUsagePrice,
+		}, HistoryCacheID: "gemini", ParseHistory: geminiUsageHistory, Price: geminiUsagePrice,
 		NativeCredentialLease: true, NativeCredentialCheck: geminiUsageCredentialCheck,
 		NativeEnv: []string{"NO_BROWSER=true", "GEMINI_FORCE_ENCRYPTED_FILE_STORAGE=false"}}
 }

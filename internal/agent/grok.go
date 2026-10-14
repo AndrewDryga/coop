@@ -231,7 +231,7 @@ func (grokAgent) Usage() UsageSpec {
 		Reports:       usageReportSpec{format: reportTeamUSD, label: "xAI API", endpoint: "https://management-api.x.ai/v1/billing/teams/", scope: func(s UsageReportSource) string { return "API team " + s.Team }},
 		HostHomes:     func() []string { return nativeUsageHomes(".grok", "GROK_HOME", false) },
 		HistoryFile:   func(path string) bool { return filepath.Base(path) == "usage.json" },
-		HistoryFilter: grokUsageHistoryFilter, ParseHistory: grokUsageHistory, Price: grokUsagePrice}
+		HistoryFilter: grokUsageHistoryFilter, HistoryCacheID: "grok", ParseHistory: grokUsageHistory, Price: grokUsagePrice}
 }
 
 // Global standard endpoint, https://docs.x.ai/developers/pricing — 2026-10-01.

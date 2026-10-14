@@ -71,9 +71,13 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	}
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	quotaCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	state, _ := defaultSessionStateRoot()
+	cacheDir := ""
+	if a.cfg.BoxHome != "" {
+		cacheDir = filepath.Join(a.cfg.BoxHome, "usage-cache")
+	}
 	now := time.Now()
 	var reports []agents.UsageReport
 	var reportErr error
@@ -83,7 +87,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 		// An API organization is not a personal credential. Exact-account inspection never
 		// sends an organization reporting key or silently attaches its bill to this account.
 		if target.Account() == "" {
-			reports, reportErr = readUsageReports(ctx, a.cfg.BoxHome, names, now)
+			reports, reportErr = readUsageReports(quotaCtx, a.cfg.BoxHome, names, now)
 		}
 	}()
 	retained, retainedErr := session.ReadUsageSnapshot(ctx, state, now.Add(-30*24*time.Hour), now)
@@ -135,7 +139,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 			}
 			ag, _ := agents.Get(row.provider)
 			for _, path := range row.paths {
-				history := agents.ReadUsageHistory(ctx, path, ag.Usage())
+				history := agents.ReadUsageHistory(ctx, path, ag.Usage(), cacheDir)
 				row.history.Events = append(row.history.Events, history.Events...)
 				row.history.Available = row.history.Available || history.Available
 				row.history.Partial = row.history.Partial || history.Partial || partial
@@ -143,6 +147,8 @@ func (a *app) cmdUsage(args []string) (int, error) {
 			if row.shared || target.Account() != "" && row.account != target.Account() {
 				return
 			}
+			quotaCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
 			if !box.ProfileAuthed(a.cfg, row.provider, row.account) {
 				row.quotaErr = agents.ErrUsageSignIn
 				return
@@ -162,7 +168,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 				}
 				return box.ReadUsageQuotaNative(nativeCtx, a.cfg, rt, ag, row.account, command)
 			}
-			row.quota, row.quotaErr = ag.Usage().Quota(ctx, input)
+			row.quota, row.quotaErr = ag.Usage().Quota(quotaCtx, input)
 		}()
 	}
 	wg.Wait()
