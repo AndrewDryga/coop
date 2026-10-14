@@ -45,15 +45,27 @@ mechanical — and skip peers. The single-writer rule above still holds: advisor
 think; you edit, gate, and commit.
 
 ## The gate
-`make check`: lint, ShellCheck, the builds, the vulnerability scan, comment alignment, generated
-docs, tool tests, rule cards, the tests, the scripted provider suite, live process control and the
-race detector. CI runs the same target.
+Start locally with `make check-local SCOPE=<owner>`: rules, docs, agent, runtime, sessions,
+tasks, connector or cli. It names the checks it runs; missing/unknown scope falls back to
+`make check`. Use a focused `go test ... -run ...` while editing a known boundary.
+Cross-cutting inputs (modules, toolchains, build tags, shared foundations, harnesses or workflows)
+need broad proof, not a guessed narrow owner.
+
+`make check` is the broad free gate: lint, ShellCheck, builds, vulnerability scan, generated
+docs, tool tests, rules, unit/scripted-process tests and race checks. Run it once on the completed
+executable candidate, not after each small edit. CI uses the same Make-owned checks. Live provider
+calls are explicit and never a release prerequisite. Prose-only changes use their actual owner.
+
+Review alongside checks. One independent reviewer is enough for substantive routine changes;
+use two for consequential architecture/security decisions. Spelling and fully specified
+mechanical edits need a self-review, not a heavyweight board. Keep a durable final-proof ledger
+when batching: a green slice is not proof that deferred checks passed.
 
 ## The contract
 - A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change: on the host use `coop tasks` (never a manual `mv`); inside the box — where `coop` isn't installed — move the folder yourself. There is no status field and no fifth state.
 - **Every folder in `00_todo/` is live.** The loop picks the next from `00_todo/` and resumes one already in `10_in_progress/`; `50_blocked/` is parked, `99_done/` is the archive. The queue is for READY work — including a simple task you discovered and can state in a line; only the genuinely large (work one iteration couldn't finish, or that needs a spec, a decision, or real scoping before anyone can start) goes in the backlog (`coop backlog add`). When the call is close, it belongs in `00_todo/`.
 - Claim a task with `coop tasks claim <id>` (moves it to `10_in_progress/`) BEFORE you start it.
-- `coop tasks done <id>` (moves it to `99_done/`) only when the gate is green, the change is committed, and `state.md` has its final snapshot. The folder move is the final filesystem action; Coop atomically normalizes `Status` to `complete` and `Next action` to `none`, then removes `tmp/`. The queue is gitignored working state, not part of the commit.
+- `coop tasks done <id>` (moves it to `99_done/`) only when the relevant checks and review are green, the change is committed, and `state.md` has its final snapshot. Batched broad proof stays explicit in the campaign ledger until it passes; task closure must not claim it passed. The folder move is the final filesystem action; Coop atomically normalizes `Status` to `complete` and `Next action` to `none`, then removes `tmp/`. The queue is gitignored working state, not part of the commit.
 - Blocked? `coop tasks block <id>`, then fill in its `decision.md` (the question, options, your recommendation). Never guess on a one-way door.
 - One implemented task = one commit. A task already satisfied by existing work, or an investigation closed as could-not-reproduce / won't-fix, records an explicit evidence-backed no-change outcome instead of a fake commit. A human decision is blocked, not made by the agent. Spot unrelated work? → `coop tasks add` (the queue works it soon); only a genuinely large one → `coop backlog add`. Either way, stay on the task you're on.
 - **Tag the commit with its task.** End the commit message with a `Coop-Task: <id>` trailer (the id is the task's folder name), so the host can bind the commit to its task — the linchpin for resuming correctly after a crash between commit and folder-move, and for reconciling the queue after a fork merge. A loop box gets this instruction in its prompt; on the host, add it yourself.
@@ -115,8 +127,8 @@ churn.
   inside a subproject, also honor its own `.agent/kb/rules/` and `AGENTS.md` if present.
 
 ## Skills
-Use the workflow skills instead of hand-rolling: `/spec` before a multi-file
-change, `/work` to execute a plan step by step against the gate, `/sweep` to
+Use the workflow skills instead of hand-rolling: a short written plan for routine specified work,
+`/spec` for a non-obvious or cross-owner change, `/work` to execute it against relevant checks, `/sweep` to
 drain `.agent/tasks/` unattended, `/investigate` to root-cause a failure before
 fixing, `/verify-api` before calling anything you're not sure exists,
 `/review-board` for a thorough multi-hat review before landing, `/rules-propose` to

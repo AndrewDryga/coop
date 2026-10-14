@@ -32,7 +32,31 @@ internal/config·runtime·ui/   settings · runtime detection · terminal output
 install.sh            the curl one-liner: download the prebuilt binary onto PATH
 ```
 
-## The gate: make check
+## Local checks and the broad gate
+
+Use the smallest owner while editing:
+
+```bash
+make check-local SCOPE=rules     # KB cards and rules
+make check-local SCOPE=docs      # docs, site content and comment alignment
+make check-local SCOPE=agent     # adapters and their reverse consumers
+make check-local SCOPE=runtime   # runtime and its reverse consumers
+make check-local SCOPE=sessions  # session store/service and their reverse consumers
+make check-local SCOPE=tasks     # internal/tasks and its reverse consumers
+make check-local SCOPE=connector # worker connector and its reverse consumers
+make check-local SCOPE=cli       # CLI, entrypoint and docs generator
+```
+
+These are explicit scopes, not an automatic changed-file selector. Use a focused
+`go test ./internal/<owner> -run <TestName>` for a quick boundary check while editing.
+Missing or unknown scope falls back to the full gate. Modules, toolchains, build tags,
+shared foundations, subprocess fixtures and workflow changes need broad proof, not a guessed
+owner. Prose-only checks do not run Docker, race or a provider process matrix.
+The tasks scope is `internal/tasks`, not every task-related package: shared primitives such as
+`taskstate`, `taskchannel`, `safefile`, `config` and process identity use the broad gate.
+
+Run `make check` once on the completed executable candidate. Review can proceed while it runs;
+do not repeat unchanged broad proof after every small edit. A pending check is not a pass.
 
 CI's check job installs the pinned tools and runs `make check`, so the two can't drift. CI also
 runs the doctor and review-writes jobs. They stay out of `make check` because they need a container
@@ -58,6 +82,7 @@ These test layers apply to a source checkout.
 
 | Layer | Targets | What they prove |
 |---|---|---|
+| Local iteration | `make check-local SCOPE=<owner>` | actual docs/rules or owner and reverse-consumer checks; unknown scope takes the broad path |
 | Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, govulncheck, unit tests plain and under `-race`, deterministic provider process E2E, tagged process-control races, generated docs, rules cards, maintenance tools, and comment alignment; no runtime or credentials |
 | Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork policy, ACP switching/recovery, and live-harness ownership denials with fixtures |
 | Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` | real box isolation, process reaping/signal forwarding, and report-only review mounts; requires Docker (or Apple `container` for doctor) |

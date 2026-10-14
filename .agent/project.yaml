@@ -37,5 +37,6 @@ box:
 # gate: the revalidation 'coop fork merge' runs IN THE BOX before landing a fork (rolled back on
 # failure). Same shape as COOP_GATE; an explicit COOP_GATE wins. Add exact project-specific files
 # that implement the command to gate_sources; Makefiles, CI, hooks and Coop config are built in.
+# Iteration uses make check-local SCOPE=<owner>; fork landing keeps the full free gate below.
 gate: make check
 # gate_sources: [run, tools/internal/devtool/gates.go]

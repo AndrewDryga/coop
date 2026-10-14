@@ -38,7 +38,7 @@ gateway-sources-check: ## Verify embedded network helper sources match the check
 	@go test ./internal/gatewayimage -run '^TestEmbeddedGatewaySourcesExactlyMatchCheckout$$' -count=1
 
 lint: ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and macOS alike
-	@gofmt -l . | (! grep .) || { echo "gofmt: files need formatting (run: gofmt -w .)"; exit 1; }
+	@files="$$(gofmt -l .)" || exit 1; [ -z "$$files" ] || { printf '%s\n' "$$files"; echo 'gofmt: files need formatting (run: gofmt -w .)'; exit 1; }
 # Coop ships Linux and macOS and CI runs Linux, while this gate often runs on a Mac, where a
 # *_linux.go file never compiles: a stale Linux-only test kept CI red for a week while every local
 # gate passed. So each check below covers both platforms, whichever host runs it — with cgo off,
@@ -108,6 +108,12 @@ align: require-python3 ## Check trailing-# comment alignment in README + site + 
 tools-test: require-python3 ## Run standard-library tests for repository maintenance tools
 	@python3 -m unittest discover -s tools -p 'test_*.py'
 
+docs-tools-test: require-python3 ## Test only docs/site/alignment/rules tools, without process benchmarks
+	@python3 -m unittest discover -s tools -p 'test_site_content.py'
+	@python3 -m unittest discover -s tools -p 'test_align_comments.py'
+	@python3 -m unittest discover -s tools -p 'test_check_rules.py'
+	@python3 -m unittest discover -s tools -p 'test_make_checks.py'
+
 # Deliberately OUT of `check`: it launches real boxes, so it needs a container runtime and takes
 # minutes, and its numbers are a measurement to compare against — not a threshold to fail on. A
 # wall-clock assertion in the gate fails on a busy laptop and says nothing about the change.
@@ -146,6 +152,35 @@ race: require-git-lfs ## Full unit suite under the race detector (the slowest ga
 # runtime, so they stay separate CI jobs and this target stays runtime-independent. Run them by
 # hand with 'make doctor', 'make box-runtime-e2e', and 'make review-writes-e2e'.
 check: mod-check gateway-sources-check lint shellcheck build-all vuln align docs-check tools-test rules-check test provider-scripted-e2e live-process-control race ## The gate, identical to CI's check job: lint + vulnerability scan + freshness + tests (plain, e2e, race) + build
+
+# Explicit reviewed owners, not an automatic changed-file router. The import-closure test
+# includes tagged/test/root/tool consumers; shared foundations/build inputs still need check.
+# LOCAL_* package lists are guarded by TestLocalCheckScopesCoverReverseConsumers.
+LOCAL_agent := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/agent ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/consult ./internal/forkctl ./internal/ladder ./internal/loop ./internal/loopcfg ./internal/preset ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/qualify
+LOCAL_runtime := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/gatewayimage ./internal/loop ./internal/runtime ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./internal/testutil/nativedocker ./tools/gendocs ./tools/qualify
+LOCAL_sessions := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/session ./internal/sessionsvc ./internal/workerconnector ./internal/workerproto ./tools/gendocs ./internal/box/testdata/mcpprobe
+LOCAL_tasks := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/loop ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/qualify
+LOCAL_connector := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/sessionsvc ./internal/workerconnector ./tools/gendocs ./internal/box/testdata/mcpprobe
+LOCAL_cli := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./tools/gendocs ./internal/box/testdata/mcpprobe
+
+ITERATION_SCOPE := $(if $(filter 1,$(words $(SCOPE))),$(filter agent runtime sessions tasks connector cli,$(SCOPE)))
+ifneq ($(ITERATION_SCOPE),)
+check-local: require-git-lfs ## Scoped local checks; SCOPE=docs|rules|agent|runtime|sessions|tasks|connector|cli (unknown = broad)
+	@echo 'Local checks: $(ITERATION_SCOPE) owner and reverse consumers; no race or live providers'
+	@files="$$(gofmt -l .)" || exit 1; [ -z "$$files" ] || { printf '%s\n' "$$files"; echo 'gofmt: files need formatting'; exit 1; }
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,cooplivetest,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
+	@go test -p 4 -timeout 20m $(LOCAL_$(ITERATION_SCOPE))
+else ifeq ($(SCOPE),docs)
+check-local: docs-check align rules-check docs-tools-test
+	@echo 'Local checks: docs, site content, alignment and rules'
+else ifeq ($(SCOPE),rules)
+check-local: rules-check
+	@echo 'Local checks: rules'
+else
+check-local: check
+	@echo 'Local checks: missing/unknown scope used the full free gate'
+endif
 
 provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
 	@go test ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
@@ -268,6 +303,7 @@ help: ## List targets
 .PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: provider-status provider-verify
+.PHONY: check-local docs-tools-test
 .PHONY: require-git-lfs
 .PHONY: mod-check
 .PHONY: gateway-sources-check

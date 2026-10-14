@@ -54,6 +54,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 `sources` does that.
 
 ## Index
+- [local-development-checks](local-development-checks.md) — explicit Make owner scopes, reverse-consumer guard and broad fallback; no automatic selector or implicit live calls
 - [coop-repo-box-go](coop-repo-box-go.md) — coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and three approved Go domains; big modules redirect to a blocked host, so the shared cache is filled from the host
 - [website](website.md) — site/ is static and partly generated: gen_site.py owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; night-board, code-block, cache-bust and social-card traps
 - [shell-completion-current-word](shell-completion-current-word.md) — current-word replacement and the Bash 3.2 COMP_WORDS/IFS trap in generated completion

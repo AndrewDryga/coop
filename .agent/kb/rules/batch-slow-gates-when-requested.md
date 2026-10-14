@@ -4,7 +4,7 @@ description: validation matches the changed surface; unrelated slow suites run o
 scope: agent-workflow
 sources: [AGENTS.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, .agent/skills/review-board/SKILL.md, Makefile]
 check: none
-updated: 2026-10-08
+updated: 2026-10-14
 ---
 
 # Match validation to the changed surface and honor focused verification requests
@@ -15,19 +15,21 @@ behavioral or provider matrix for prose or metadata it cannot exercise:
 - `.agent/kb/**` or `.agent/kb/rules/**` only → `make rules-check`;
 - local `.agent/tasks/**` only → `coop tasks lint --tasks .agent/tasks`;
 - generated docs only → the owning docs check;
-- executable source → focused tests while iterating, then the repository gate required by the
-  task's actual acceptance and risk.
+- executable source → focused tests and `make check-local SCOPE=<owner>` while iterating,
+  then broad free proof once on the completed candidate; shared/build/workflow or unknown
+  inputs fall back to broad checks.
 
 A copied task-template line saying `make check` does not override this rule. Correct the task to
 name the relevant validation instead of spending time on unrelated tests. Run the full gate for a
 rules-only or docs-only change only when that change also alters the gate itself, executable source,
 or a broader requested outcome explicitly requires the full repository result.
 
-When the human explicitly asks to avoid long tests while iterating, run focused behavioral tests
+By default, run focused behavioral tests
 and quick compile/static checks after each slice. At final qualification, run the smallest native
 or slow checks that prove the changed boundaries; do not run unrelated provider matrices merely
-because they exist. A generic request to hurry is not that authorization. Ordinary per-task gate
-defaults and the product's CI checks remain unchanged unless the human explicitly narrows them.
+because they exist. Prose-only work uses its actual docs/rules checks. Keep product CI and
+required safety proof; the scoped local default is not permission to omit them or call an
+unrun check green. Live-provider evidence is optional, never release permission.
 
 An explicit instruction to stop review agents or broad reviews also controls execution: stop those
 workers and repair the demonstrated failures directly. Do not schedule another board or multi-role
@@ -47,7 +49,7 @@ unknown upstream behavior unrelated to the feature into an ever-expanding accept
 
 Keep a durable final-verification ledger before closing the first affected task. Record
 each task/commit, its focused evidence and its still-required slow or native checks.
-Task closure under this explicit direction means implementation is finished, not that
+Task closure while batching means the reviewed slice is finished, not that
 deferred verification passed. The overall requested outcome remains open until final
 qualification passes; failures still need repair and relevant rechecks.
 
@@ -67,9 +69,14 @@ checks, and add a slow suite only when those files can affect the behavior it pr
 
 Follow [[static-bounded-supervision]] for logs and [[requested-outcome-controls-stopping]]
 for the final stop condition. Batching never supplies missing access, review or destructive
-operation approval. Do not change CI or runtime acceptance checks to speed agent supervision.
+operation approval. CI stays Make-owned and preserves its complete free acceptance checks;
+do not change runtime acceptance to speed supervision.
 
 ## Changelog
+- 2026-10-14 — user approved scoped iteration as the default, proportional review and one broad
+  proof on the final executable candidate. Swept AGENTS, project gate, task template and
+  work/spec/sweep/review/release skills. Preserved broad fork landing and explicit pending-proof
+  ledger; routine two-file edits no longer require another plan approval or heavyweight board.
 - 2026-10-08 — owner corrected multi-day validation blocking review of two new features. Swept
   AGENTS.md, work/sweep/review-board skills, Makefile and both active task plans. Removed three
   gate-before-review/each-step blanket constraints and superseded the auth plan's exhaustive

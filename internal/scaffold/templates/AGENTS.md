@@ -36,14 +36,21 @@ never edit credential stores from inside the box.
 
 ## The gate (fill this in for this repo)
 `<format-check> && <the strictest build/typecheck this stack has> && <tests>`
-One command that must exit 0 before anything is committed. If a step doesn't exist here
+The broad free command for a completed executable candidate. Relevant owner checks and review
+must be green before each commit; record deferred broad proof before archiving a slice.
+While editing, run the smallest check that exercises the changed owner and failure path.
+Prose-only work needs its docs/rules checks, not runtime, race or provider matrices.
+Unknown, shared foundation, build/toolchain or workflow inputs need broad proof.
+Review alongside checks: one independent review for substantive work, two for consequential
+architecture/security decisions, and self-review for spelling or specified mechanical edits.
+If a step doesn't exist here
 (no compiler, no formatter), drop it — don't substitute a weaker check for it.
 
 ## The contract
 - A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change: on the host use `coop tasks` (never a manual `mv`); inside the box — where `coop` isn't installed — move the folder yourself. There is no status field and no fifth state.
 - **Every folder in `00_todo/` is live.** The loop picks the next from `00_todo/` and resumes one already in `10_in_progress/`; `50_blocked/` is parked, `99_done/` is the archive. The queue is for READY work — including a simple task you discovered and can state in a line; only the NOT-yet-ready (needs a spec, a decision, or real scoping) goes in the backlog (`coop backlog add`), never in `00_todo/`.
 - Claim a task with `coop tasks claim <id>` (moves it to `10_in_progress/`) BEFORE you start it.
-- `coop tasks done <id>` (moves it to `99_done/`) only when the gate is green, the change is committed, and `state.md` has its final snapshot. The folder move is the final filesystem action; Coop atomically normalizes `Status` to `complete` and `Next action` to `none`, then removes `tmp/`. The queue is gitignored working state, not part of the commit.
+- `coop tasks done <id>` (moves it to `99_done/`) only when relevant checks/review are green, the change is committed, and `state.md` has its final snapshot. Deferred broad proof stays explicit in the campaign ledger; closure must not claim it passed. The folder move is the final filesystem action; Coop atomically normalizes `Status` to `complete` and `Next action` to `none`, then removes `tmp/`. The queue is gitignored working state, not part of the commit.
 - Blocked? `coop tasks block <id>`, then fill in its `decision.md` (the question, options, your recommendation). Never guess on a one-way door.
 - One implemented task = one commit. A task already satisfied by existing work, or an investigation closed as could-not-reproduce / won't-fix, records an explicit evidence-backed no-change outcome instead of a fake commit. A human decision is blocked, not made by the agent. Spot unrelated work? A simple, ready task → `coop tasks add` (the queue works it soon); a big or not-yet-ready one → `coop backlog add`. Either way, stay on the task you're on.
 - **Stay on the branch you're given.** Never create, switch, or delete a git branch unless explicitly asked — commit onto the current branch. (Coop checks you out on a branch already; a new one strands your work where the human isn't looking.)
@@ -88,8 +95,8 @@ churn.
   inside a subproject, also honor its own `.agent/kb/rules/` and `AGENTS.md` if present.
 
 ## Skills
-Use these workflow skills when present instead of hand-rolling: `/spec` before a multi-file
-change, `/work` to execute a plan step by step against the gate, `/sweep` to
+Use these workflow skills when present instead of hand-rolling: a short written plan for routine
+specified work, `/spec` for non-obvious or cross-owner decisions, `/work` against relevant checks, `/sweep` to
 drain `.agent/tasks/` unattended, `/investigate` to root-cause a failure before
 fixing, `/verify-api` before calling anything you're not sure exists, and
 `/review-board` for a thorough multi-hat review before landing. A fresh scaffold keeps them in

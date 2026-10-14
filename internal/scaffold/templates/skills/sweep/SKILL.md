@@ -38,16 +38,20 @@ Build *to* them, then *check the diff against them*.
    `log.md`, claim and current diff. Resume your continuing assignment; reconcile an older claim
    with the user's current direction. Do not take over a separate worker's active task.
 2. **Build** — wear the hats; obey `AGENTS.md`, match `.agent/kb/rules/` and the
-   surrounding style exactly. `/spec` first if it spans more than one file (writes the
-   task's `spec.md`). `/verify-api` before calling anything you're not certain exists.
+   surrounding style exactly. A short written plan suffices for routine specified work;
+   `/spec` for a non-obvious or cross-owner change. `/verify-api` before uncertain APIs.
 3. **Verify the changed boundaries** — focused happy/denial-path checks while iterating;
-   the repo's gate remains the final default. Honor explicit scope/batching direction under
-   `.agent/kb/rules/batch-slow-gates-when-requested.md`. Retain failed or missing evidence honestly;
+   use the repo's actual owner checks; prose needs no runtime or broad process/race suite.
+   Run broad free checks once on the completed executable candidate; unknown/shared/build
+   inputs require broad proof. Keep pending campaign proof explicit before archiving a slice.
+   Honor the repo's validation rules. Retain failed or missing evidence honestly;
    do not require exhaustive upstream certification merely to review a new feature.
 4. **Self-review the diff** without waiting for slow gates, from every angle it touches — correctness, security /
    abuse path, UX, tests (including the failure path), docs, readability — against
    the house rules. Fix what you find; iterate until you'd defend it. Review and test results
-   jointly determine readiness; a green test does not replace review or vice versa.
+   jointly determine readiness; a green test does not replace review or vice versa. Use one
+   independent reviewer for substantive work, two for consequential architecture/security
+   decisions, and self-review for spelling or fully specified mechanical edits.
 5. **Commit** — one focused commit for this task; keep `log.md` (the *what + why*) current.
 6. **Final snapshot** — after the commit, refresh `state.md` in `10_in_progress/`: preserve the
    useful summary and traps, set `Status` to `complete`, and set `Next action` to `none`.
@@ -66,6 +70,7 @@ Build *to* them, then *check the diff against them*.
 ## 3. Finish
 - When `00_todo/` and `10_in_progress/` are empty, run a completeness pass: re-check every task
   you moved to `99_done/` against `git log` —
-  gate green *and* a commit exists. Reopen anything that doesn't hold up with
+  relevant checks/review green *and* a commit exists. Run pending campaign-wide checks before
+  declaring the requested outcome finished. Reopen anything that doesn't hold up with
   `coop tasks claim <id>` when available, or move it back to `10_in_progress/`, and go again.
 - Report: tasks shipped, anything parked in the backlog or `50_blocked/`, gate status.

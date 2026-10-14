@@ -1,11 +1,15 @@
 ---
 name: spec
-description: Design an opinionated, boring-by-default implementation plan before writing code. Use when a change spans more than one file or context, when the approach isn't obvious, or when asked to plan/design/think through a feature. Produces a small-step, verifiable plan to approve before /work.
+description: Design a boring-by-default implementation plan for a non-obvious or cross-owner change, or when asked to plan/design a feature. Routine fully specified work needs a short plan, not another approval round. Produces small verifiable steps.
 argument-hint: "<what you want to build>"
 allowed-tools: Read, Grep, Glob, Bash
 ---
 
 # Plan a change (the boring, shippable way)
+
+For routine fully specified work, write a short plan and proceed under the existing approval;
+do not add an approval round merely because two files change. Use this fuller workflow for a
+non-obvious approach or a consequential cross-owner/product/security decision.
 
 Produce a plan the user can approve, then hand to `/work`. Optimize for the
 smallest correct slice, not the grandest design. Read `AGENTS.md` and the code
@@ -40,4 +44,6 @@ serves one caller.
 - Anything you're unsure of → a `/verify-api` to run, or a `decision.md` in the task folder
   entry if it needs a human call.
 
-Stop and let the user approve before `/work`. Don't start building from `/spec`.
+Ask for approval when the plan needs a new product/security choice or authority. Existing
+approval covers its specified implementation; do not ask for it again. Do not build while the
+user only asked for a plan.

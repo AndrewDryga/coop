@@ -4,7 +4,7 @@ description: "a new check goes in `make check`; CI installs the tools and calls 
 scope: agent-workflow
 sources: [Makefile, .github/workflows/ci.yml]
 check: "none"
-updated: 2026-10-09
+updated: 2026-10-14
 ---
 
 # There is ONE gate recipe: `make check`
@@ -13,6 +13,13 @@ Add a check to the `check` target in the `Makefile` — never as a step in `.git
 CI's check job is setup plus `make check`, so what a laptop, a box, and CI run is the same list by
 construction. A tool the gate needs is REQUIRED: missing, it fails with the one-line command that
 installs it, and a version-pinned tool fails when the local build isn't the pin. Never soft-skip.
+
+Local iteration uses Make-owned explicit scopes, not a second check list in agent prompts.
+`make check-local SCOPE=<owner>` checks actual docs/rules or an owner plus its reviewed reverse
+consumers; missing, unknown, wildcard or multiword scope takes the broad gate. The independent
+scope test reads tagged/test/root/tool imports and observed subprocess owners. New consumers
+must expand the reviewed constants or use broad checks, never silently escape local proof.
+Shared foundations, modules, toolchains, harnesses and workflows require broad proof.
 
 **Why:** the two were maintained as separate step lists and drifted in BOTH directions — the race
 detector, `go build ./...`, ShellCheck and a pinned Staticcheck ran only in CI, while cast hygiene,
@@ -35,6 +42,10 @@ on the machine where the code was written, and main rotted red with no local gat
 Related: [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-10-14 — added scoped local iteration without changing the broad free gate. Swept Make,
+  AGENTS, project gate, contributor guide and root/embedded workflow skills; preserved broad
+  fork landing and actual required tools. Real Make fixtures prove docs/rules execute only
+  their owners and invalid scopes take the full gate; an AST guard checks reverse consumers.
 - 2026-10-09 — Go1.27.2 introduced V5 export data beyond Staticcheck0.8.1's published importer.
   Swept host/CI/base/filtered/project-image installs: one embedded alternate module pins the
   upstream-compatible importer, and the gate rejects the old same-version binary. No check skipped.

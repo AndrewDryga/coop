@@ -16,7 +16,9 @@ each time — this is the contract; follow it.
 
 ## 1. Pre-flight — is there anything real to ship?
 - On `main`, clean tree, not behind `origin/main` (the only ahead commits should be your own
-  release prep). Gate green: `make check`.
+  release prep). Broad free gate green for the executable candidate: `make check`.
+  A later changelog-only finalization/reopening uses the actual notes/docs checks; do not repeat
+  unchanged local broad proof. The exact-tag release workflow still runs all free CI checks.
 - The gate is free and deterministic. Saved live-provider reports are optional dated evidence,
   not release permission; do not request a waiver or run paid models to finalize a version.
   `make provider-status` is informational; `make provider-verify` is an explicit free strict check.

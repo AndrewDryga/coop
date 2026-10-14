@@ -13,6 +13,11 @@ The hats read this repo's **own** taste — `AGENTS.md` plus every `.agent/kb/ru
 — not any fixed checklist, so the review sharpens as the project's rules grow.
 **Read-only: the board reviews; it never edits.** The deliverable is a *fix plan*, not just notes.
 
+This is the heavyweight on-demand review, not the default for every edit. Routine substantive
+work gets one independent reviewer covering its relevant lenses; consequential architecture or
+security decisions get two independent opinions. Spelling and fully specified mechanical edits
+need self-review. Use the full board when explicitly requested or the change warrants it.
+
 ## 1. Scope the change
 Resolve the argument into a concrete diff + file list, then read it yourself first:
 - **nothing (default)** → uncommitted local changes: `git diff HEAD` plus untracked files from `git status --porcelain`.
@@ -28,13 +33,14 @@ Resolve the argument into a concrete diff + file list, then read it yourself fir
 
 ## 2. Record validation without blocking review
 Inspect existing evidence for the exact inputs. Run the relevant checks under
-`.agent/kb/rules/batch-slow-gates-when-requested.md`; the repository gate is the final default,
-not a prerequisite to reading code. Review can proceed while it runs or with a red/unverified
+the repo's validation rules: use changed-owner checks, with broad free proof once on the completed
+executable candidate, never as a prerequisite to reading code. Review can proceed while checks
+run or with a red/unverified
 result. Report failures, missing evidence and their actual bearing on readiness. Do not restart
 unchanged slow suites or require a broad upstream-client certification for ordinary feature review.
 
 ## 3. Convene the hats the change earns
-**Standing — always, for any code change:**
+**Standing — for a full board:**
 - **Staff engineer** — correctness & edge cases, the simplest thing that works, over-engineering, maintainability, "would I approve this PR?"
 - **Rules** — does it obey `AGENTS.md` (the creed) and **every** `.agent/kb/rules/*.md`? Read them; check the diff against each. (No rules yet → just the creed; don't invent any.)
 - **Security** — lead with the abuse case: untrusted input, secrets, authz, injection, data leak.
