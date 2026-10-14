@@ -331,6 +331,48 @@ func TestJobSourceStagerFetchesPrivateVerifiedRepository(t *testing.T) {
 	}
 }
 
+// A worker's maintenance removes copies no session names once they have gone unused for an hour,
+// and a create's session is recorded only after its sources are staged. A copy a create reuses is
+// marked used first, so the cleanup leaves it to that create.
+func TestStagingMarksTheCopyItReusesAsUsed(t *testing.T) {
+	remote, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "source")
+	source := testJobSource()
+	commit, err := sourceGitValue(context.Background(), remote, "", "file", "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := sourceGitValue(context.Background(), remote, "", "file", "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Binding.DefaultCommit, source.Binding.SelectedCommit, source.Binding.BaseCommit, source.Binding.AdmittedTree = commit, commit, commit, tree
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	stager := &privateJobSourceStager{transport: &jobSourceGrantFixture{}, stateRoot: root, remoteForTest: remote}
+	if err := stager.Stage(context.Background(), "job:one", source); err != nil {
+		t.Fatal(err)
+	}
+	key, _ := source.StagingKey()
+	directory := filepath.Join(root, "job-sources", key)
+	unused := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(directory, unused, unused); err != nil {
+		t.Fatal(err)
+	}
+	if err := stager.Stage(context.Background(), "job:two", source); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(info.ModTime()) > time.Minute {
+		t.Fatalf("a reused copy still looks unused since %s", info.ModTime())
+	}
+}
+
 // emisar's default branch moved on 2026-10-01, and the next session cloned all 93,414 of its
 // objects again at 93 KB/s, past the command's lease, from scratch on every retry, while every
 // other worker command, routing's too, waited behind it. A new commit of a repository already

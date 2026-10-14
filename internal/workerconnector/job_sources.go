@@ -3,7 +3,6 @@ package workerconnector
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -165,6 +164,12 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 	}
 	final := filepath.Join(parent, key)
 	if _, err := os.Lstat(final); err == nil {
+		// A copy this create reuses is marked used first, so the worker's cleanup of copies no
+		// session needs (sessionsvc.pruneJobSources) leaves it to the session about to fork it.
+		now := time.Now()
+		if err := os.Chtimes(final, now, now); err != nil {
+			return err
+		}
 		if err := verifyStagedJobSource(ctx, final, source); err != nil {
 			return err
 		}
@@ -256,9 +261,7 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 // name is a digest like a staged source's, so the storage inventory accepts it, and its
 // source.json names the repository, so later stagings take it as their earlier copy.
 func firstDownloadRepository(parent string, identity workerproto.RepositoryIdentity) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("coop-first-download\x00%s\x00%s\x00%d",
-		identity.RepositoryRef, identity.GitHubRepository, identity.GitHubRepositoryID)))
-	return filepath.Join(parent, hex.EncodeToString(sum[:]), "repository")
+	return filepath.Join(parent, identity.FirstDownloadKey(), "repository")
 }
 
 // firstDownload returns the repository's whole history for a staging to start from, and

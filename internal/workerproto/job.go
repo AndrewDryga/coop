@@ -70,6 +70,15 @@ func (r RepositoryIdentity) Validate() error {
 	return nil
 }
 
+// FirstDownloadKey names the staged-source directory where a worker keeps a repository's first
+// download, its whole history, which later stagings of the repository start from. A worker's
+// cleanup keeps it.
+func (r RepositoryIdentity) FirstDownloadKey() string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("coop-first-download\x00%s\x00%s\x00%d",
+		r.RepositoryRef, r.GitHubRepository, r.GitHubRepositoryID)))
+	return hex.EncodeToString(sum[:])
+}
+
 func (s JobSource) RepositoryIdentity() RepositoryIdentity {
 	return RepositoryIdentity{s.RepositoryRef, s.GitHubRepository, s.GitHubRepositoryID}
 }

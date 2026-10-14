@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A worker removes the repository copies no session can still use.** A worker staged a copy of
+  every repository a job named and never removed one, so a controller that started sessions
+  often filled the worker's disk: on one install, about 3 GB an hour. Each maintenance pass now
+  removes copies no open or closed session uses. It keeps each repository's newest copy and its
+  first download, a task session's own copy for 30 days, and any copy used in the last hour.
+
 ## 11.2.0
 
 - **Task tools shut down cleanly.** A helper's normal exit no longer loses its final output

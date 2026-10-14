@@ -216,8 +216,9 @@ type StorageReport struct {
 
 // StorageReclaim is one bounded reclamation pass.
 type StorageReclaim struct {
-	StagedPurged int      `json:"staged_purged"`
-	Problems     []string `json:"problems"`
+	StagedPurged  int      `json:"staged_purged"`
+	SourcesPruned int      `json:"sources_pruned"`
+	Problems      []string `json:"problems"`
 }
 
 // StoragePressureError refuses one NEW fork and names the limit that refused it, so a controller
@@ -808,9 +809,10 @@ func (s *Service) admitNewFork(repo, _ string) (func(), error) {
 	}, nil
 }
 
-// ReclaimStorage finishes removals already staged by an authorized discard. An unbound fork
-// generation is not proof of an orphan: its owner may live in another session store, or its create
-// operation may have stopped before publishing a reservation. Such workspaces require manual review.
+// ReclaimStorage finishes removals already staged by an authorized discard, then removes staged job
+// sources no session can still use (pruneJobSources). An unbound fork generation is not proof of an
+// orphan: its owner may live in another session store, or its create operation may have stopped
+// before publishing a reservation. Such workspaces require manual review.
 func (s *Service) ReclaimStorage(ctx context.Context) (StorageReclaim, error) {
 	if !s.storage.reclaimMu.TryLock() {
 		return StorageReclaim{}, nil
@@ -837,6 +839,9 @@ func (s *Service) ReclaimStorage(ctx context.Context) (StorageReclaim, error) {
 			result.Problems = append(result.Problems, err.Error())
 		}
 	}
+	pruned, problems := s.pruneJobSources(ctx, sessions, time.Now())
+	result.SourcesPruned = pruned
+	result.Problems = append(result.Problems, problems...)
 	return result, nil
 }
 
@@ -853,5 +858,8 @@ func (s *Service) reclaimStorageOnce(ctx context.Context) {
 	}
 	if result.StagedPurged > 0 {
 		s.log.Info("finished staged fork discards", "staged_purged", result.StagedPurged)
+	}
+	if result.SourcesPruned > 0 {
+		s.log.Info("removed staged job sources no session can still use", "sources_pruned", result.SourcesPruned)
 	}
 }
