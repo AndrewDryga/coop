@@ -15,8 +15,9 @@ import (
 )
 
 // blitz-core's first download took 45 minutes, and the create that needed it was staged again,
-// and logged, at every poll (2026-10-03). A command waiting on a first download is tried after
-// 5 s, then 10, 20, 40, 80 and 120 s; other commands keep the ordinary pace.
+// and logged, at every poll (2026-10-03). A command waiting on a fetch is tried after 5 s, then
+// 10 s, then every 15 s: a try only looks the fetch up, and a finished copy should not wait long
+// for its create (2026-10-14). Other commands keep the ordinary pace.
 func TestCommandWaitingOnAFirstDownloadBacksOff(t *testing.T) {
 	var waits firstDownloadWaits
 	start := time.Date(2026, 10, 3, 21, 38, 0, 0, time.UTC)
@@ -31,8 +32,10 @@ func TestCommandWaitingOnAFirstDownloadBacksOff(t *testing.T) {
 		}
 		now = now.Add(time.Second) // the controller delivers it again every poll
 	}
-	want := []time.Duration{0, 5 * time.Second, 15 * time.Second, 35 * time.Second, 75 * time.Second,
-		155 * time.Second, 275 * time.Second, 395 * time.Second, 515 * time.Second}
+	want := []time.Duration{0, 5 * time.Second}
+	for at := 15 * time.Second; at < 10*time.Minute; at += 15 * time.Second {
+		want = append(want, at)
+	}
 	if fmt.Sprint(tries) != fmt.Sprint(want) {
 		t.Fatalf("tried at %v, want %v", tries, want)
 	}
@@ -64,7 +67,7 @@ func TestWaitForAnUndeliveredCommandIsDropped(t *testing.T) {
 
 // The whole loop, for 80 seconds of a first download: the controller delivers the create, with a
 // fresh lease, at every five-second poll. Run keeps polling, stages the create only after each
-// back-off (five times in seventeen polls), and reports the wait once instead of on every try.
+// back-off (seven times in seventeen polls), and reports the wait once instead of on every try.
 // Every poll fsyncs the journal, so the run stays short.
 func TestRunStagesACreateWaitingOnAFirstDownloadCalmly(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -98,8 +101,8 @@ func TestRunStagesACreateWaitingOnAFirstDownloadCalmly(t *testing.T) {
 		if err := connector.Run(ctx, 5*time.Second, func(err error) { reports = append(reports, err) }); !errors.Is(err, context.DeadlineExceeded) && !t.Failed() {
 			t.Fatalf("run: %v", err)
 		}
-		if stager.calls != 5 {
-			t.Errorf("staged the waiting create %d times in 80 s, want 5 (after 0, 5, 15, 35 and 75 s)", stager.calls)
+		if stager.calls != 7 {
+			t.Errorf("staged the waiting create %d times in 80 s, want 7 (after 0, 5, 15, 30, 45, 60 and 75 s)", stager.calls)
 		}
 		if len(reports) != 1 || !errors.Is(reports[0], errJobSourceDownloading) {
 			t.Errorf("reported %d times, want the download wait once: %v", len(reports), reports)

@@ -5,16 +5,18 @@ import (
 	"time"
 )
 
-// A command whose job source is a repository still downloading its whole history for the first
-// time (errJobSourceDownloading) has no result yet, so the controller delivers it again on every
-// poll, and staging it again only finds the download still running. blitz-core's 45-minute first
-// download was tried, and logged, at every poll (2026-10-03). A held command is tried again
-// after five seconds, then twice as long each time, up to two minutes; every other command keeps
+// A command whose job source is still being fetched in the background (errJobSourceDownloading):
+// a repository's first download, its whole history, or a new copy that outlasted
+// stagingInForeground. It has no result yet, so the controller delivers it again on every poll,
+// and staging it again only finds the fetch still running. A tenant repository's 45-minute first
+// download was tried, and logged, at every poll (2026-10-03). A held command is tried again after five
+// seconds, then twice as long each time, up to fifteen: a try only looks the fetch up, and a copy
+// that finished waits for at most that long before its create goes on. Every other command keeps
 // the ordinary pace. Polling goes on meanwhile, so the controller keeps redelivering the command
 // and renewing its lease, and Run reports the wait once, when it begins.
 const (
 	firstDownloadRetry    = 5 * time.Second
-	firstDownloadRetryMax = 2 * time.Minute
+	firstDownloadRetryMax = 15 * time.Second
 )
 
 type firstDownloadWaits struct {

@@ -10,6 +10,12 @@
   removes copies no open or closed session uses. It keeps each repository's newest copy and its
   first download, a task session's own copy for 30 days, and any copy used in the last hour.
 
+- **A slow repository fetch no longer holds up the worker.** A worker runs one command at a time,
+  and a session create waited for every repository it had to fetch: on one install a create took
+  18 minutes, and every other session's work waited behind it. A fetch that takes more than a few
+  seconds now finishes in the background. The create is tried again until its repositories are
+  ready, every 15 seconds at most, while the worker runs every other command.
+
 ## 11.2.0
 
 - **Task tools shut down cleanly.** A helper's normal exit no longer loses its final output

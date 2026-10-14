@@ -331,6 +331,108 @@ func TestJobSourceStagerFetchesPrivateVerifiedRepository(t *testing.T) {
 	}
 }
 
+// The worker runs one command at a time, and on a tenant install a create staging three moved
+// repositories held it for 18 minutes while every routing turn sent meanwhile waited (2026-10-14).
+// A copy not staged within stagingInForeground goes on in the background: the create is held as
+// still fetching, a try meanwhile asks the controller for nothing, and a later try finds the copy.
+func TestASlowStagingGoesOnInTheBackgroundAndALaterTryFindsTheCopy(t *testing.T) {
+	ctx := context.Background()
+	remote, source := backgroundStagingFixture(t)
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	transport := &jobSourceGrantFixture{}
+	stager := &privateJobSourceStager{transport: transport, stateRoot: root, remoteForTest: remote,
+		backgroundStaging: true, foregroundForTest: time.Nanosecond}
+	if err := stager.Stage(ctx, "job:one", source); !errors.Is(err, errJobSourceDownloading) {
+		t.Fatalf("a staging not done at once = %v, want the create held as still fetching", err)
+	}
+	if err := stageUntilSettled(t, stager, source); err != nil {
+		t.Fatalf("a later try = %v, want the staged copy", err)
+	}
+	if transport.calls != 1 {
+		t.Fatalf("asked the controller for %d grants, want 1: a try while the copy stages asks for none", transport.calls)
+	}
+	key, _ := source.StagingKey()
+	if err := verifyStagedJobSource(ctx, filepath.Join(root, "job-sources", key), source); err != nil {
+		t.Fatalf("the copy staged in the background: %v", err)
+	}
+}
+
+// A copy that fails in the background says why on the next try, once, publishes nothing, and the
+// try after that stages it again rather than waiting on a staging that ended.
+func TestABackgroundStagingThatFailsSaysWhyOnceAndStartsOver(t *testing.T) {
+	ctx := context.Background()
+	remote, good := backgroundStagingFixture(t)
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	stager := &privateJobSourceStager{transport: &jobSourceGrantFixture{}, stateRoot: root, remoteForTest: remote,
+		backgroundStaging: true, foregroundForTest: time.Nanosecond}
+	// An earlier copy is the head start, as on a worker that has staged the repository before.
+	_ = stager.Stage(ctx, "job:one", good)
+	if err := stageUntilSettled(t, stager, good); err != nil {
+		t.Fatal(err)
+	}
+	source := good
+	source.Binding.ResolvedAt = good.Binding.ResolvedAt.Add(time.Hour)
+	source.Binding.AdmittedTree = strings.Repeat("d", 40)
+	if err := stager.Stage(ctx, "job:one", source); !errors.Is(err, errJobSourceDownloading) {
+		t.Fatalf("a staging not done at once = %v, want the create held as still fetching", err)
+	}
+	if err := stageUntilSettled(t, stager, source); !errors.Is(err, ErrJobSourceIntegrity) {
+		t.Fatalf("a later try = %v, want the integrity failure", err)
+	}
+	key, _ := source.StagingKey()
+	if _, err := os.Lstat(filepath.Join(root, "job-sources", key)); !os.IsNotExist(err) {
+		t.Fatalf("a failed staging published a copy: %v", err)
+	}
+	if err := stager.Stage(ctx, "job:one", source); !errors.Is(err, errJobSourceDownloading) {
+		t.Fatalf("the try after a failure = %v, want a new staging", err)
+	}
+	_ = stageUntilSettled(t, stager, source)
+}
+
+func backgroundStagingFixture(t *testing.T) (string, workerproto.JobSource) {
+	t.Helper()
+	remote, git := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(remote, "code"), []byte("staged in the background"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "code")
+	git("commit", "-qm", "source")
+	source := testJobSource()
+	commit, err := sourceGitValue(context.Background(), remote, "", "file", "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := sourceGitValue(context.Background(), remote, "", "file", "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Binding.DefaultCommit, source.Binding.SelectedCommit, source.Binding.BaseCommit, source.Binding.AdmittedTree = commit, commit, commit, tree
+	return remote, source
+}
+
+// stageUntilSettled tries a held create again, as the connector does, until it is no longer
+// still fetching.
+func stageUntilSettled(t *testing.T, stager *privateJobSourceStager, source workerproto.JobSource) error {
+	t.Helper()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		err := stager.Stage(context.Background(), "job:one", source)
+		if !errors.Is(err, errJobSourceDownloading) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the background staging never settled")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // A worker's maintenance removes copies no session names once they have gone unused for an hour,
 // and a create's session is recorded only after its sources are staged. A copy a create reuses is
 // marked used first, so the cleanup leaves it to that create.
