@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 11.3.0
 
 - **Usage includes recent requests in large histories.** Old transcripts no longer fill a scan
   budget that excludes newer usage. Coop caches parsed token records from unchanged files,
