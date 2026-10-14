@@ -4,14 +4,18 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
+
+var fixtureBinaries *procharness.BinaryCache
 
 const (
 	detachedHandoffModeEnv        = "COOP_TEST_DETACHED_HANDOFF_MODE"
@@ -54,6 +58,12 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	if err := os.Setenv(tasks.TestLeaseAuthorityRootEnv, root); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		_ = os.RemoveAll(root)
+		os.Exit(1)
+	}
+	fixtureBinaries, err = procharness.NewBinaryCache(filepath.Join(root, "binaries"))
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		_ = os.RemoveAll(root)
 		os.Exit(1)

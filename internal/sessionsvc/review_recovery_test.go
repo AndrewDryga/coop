@@ -14,8 +14,7 @@ import (
 )
 
 func TestSessionServiceRunReviewCompletesAfterClientCancellation(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	started := make(chan context.Context, 1)
 	release := make(chan struct{})
 	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(ctx context.Context, _ ReviewGateRequest) (ReviewGateResult, error) {

@@ -1,11 +1,12 @@
 package tasks
 
 import (
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
@@ -177,17 +178,11 @@ func mustParseTaskFolder(t testing.TB, dir, state string) (Item, bool) {
 // git.go.
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stderr
-	r, w, err := os.Pipe()
+	out, err := procharness.CaptureOutput(fn, &os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stderr = w
-	fn()
-	_ = w.Close()
-	os.Stderr = old
-	out, _ := io.ReadAll(r)
-	return string(out)
+	return out
 }
 
 // captureStdout returns whatever fn writes to os.Stdout (list/decisions print there;
@@ -196,15 +191,9 @@ func captureStderr(t *testing.T, fn func()) string {
 // task views) for the same reason gitOut does; see git.go.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stdout
-	r, w, err := os.Pipe()
+	out, err := procharness.CaptureOutput(fn, &os.Stdout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout = w
-	fn()
-	_ = w.Close()
-	os.Stdout = old
-	out, _ := io.ReadAll(r)
-	return string(out)
+	return out
 }

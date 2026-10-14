@@ -22,8 +22,7 @@ import (
 )
 
 func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	var gateCalls atomic.Int32
 	var stagedRepository string
 	var gateRequest ReviewGateRequest
@@ -99,8 +98,7 @@ func TestSessionServiceReviewReportsMissingIdentityAsAnErrorNotAConflict(t *test
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "no-system"))
-	repo, git := gitrepo.New(t)
-	git("commit", "--allow-empty", "-qm", "base")
+	repo, git := gitrepo.NewCommitted(t)
 	fixture := newReviewTestService(t, repo, 1<<20, nil)
 	defer fixture.Stop()
 	created := createReviewSession(t, fixture, "missing-identity")
@@ -138,8 +136,7 @@ func (r *reviewWarmRunner) EvictWarmSession(string) error {
 }
 
 func TestSessionServiceRunReviewEvictsWarmWriterBeforeGate(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	runner := &reviewWarmRunner{}
 	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		if !runner.evicted.Load() {
@@ -165,8 +162,7 @@ func TestSessionServiceRunReviewEvictsWarmWriterBeforeGate(t *testing.T) {
 func TestSessionServiceRunReviewRejectsDetachedHeadWithoutRetry(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	service := newReviewTestService(t, repo, 1<<20, nil)
 	defer service.Stop()
 	sess := createReviewSession(t, service, "detached")
@@ -186,8 +182,7 @@ func TestSessionServiceRunReviewRejectsDetachedHeadWithoutRetry(t *testing.T) {
 func TestSessionServiceRunReviewDoesNotMisclassifyGitFailureAsDetached(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	service := newReviewTestService(t, repo, 1<<20, nil)
 	defer service.Stop()
 	sess := createReviewSession(t, service, "corrupt-head")
@@ -395,8 +390,7 @@ func TestSessionServiceRunReviewGateOutcomes(t *testing.T) {
 		{name: "green", gate: ReviewGateResult{Configured: true, Passed: true}, wantGate: ReviewGatePassed, wantPublish: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo, git := gitrepo.New(t)
-			git("commit", "-q", "--allow-empty", "-m", "base")
+			repo, _ := gitrepo.NewCommitted(t)
 			service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 				return tc.gate, nil
 			}))
@@ -465,8 +459,7 @@ func TestSessionServiceRunReviewConflictAndDirtyReject(t *testing.T) {
 	})
 
 	t.Run("dirty", func(t *testing.T) {
-		repo, git := gitrepo.New(t)
-		git("commit", "-q", "--allow-empty", "-m", "base")
+		repo, _ := gitrepo.NewCommitted(t)
 		service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 			t.Fatal("gate ran for dirty source")
 			return ReviewGateResult{}, nil
@@ -489,8 +482,7 @@ func TestSessionServiceRunReviewConflictAndDirtyReject(t *testing.T) {
 }
 
 func TestSessionServiceRunReviewMovementMakesDossierNonPublishable(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, git := gitrepo.NewCommitted(t)
 	var moved atomic.Bool
 	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		if moved.Swap(true) {
@@ -532,8 +524,7 @@ func TestSessionServiceRunReviewMovementMakesDossierNonPublishable(t *testing.T)
 }
 
 func TestSessionReviewIntentUsesCapturedObjectsBeforePublishabilityCheck(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, git := gitrepo.NewCommitted(t)
 	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
@@ -589,8 +580,7 @@ func TestSessionReviewIntentUsesCapturedObjectsBeforePublishabilityCheck(t *test
 // ZERO value: a struct still naming that directory invites a caller to clean up or read a path that
 // no longer exists. forkctl.prepareForkReviewCandidate zeroes its named result the same way.
 func TestSessionReviewScratchIsZeroedOnFailedPrepare(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	tmp := t.TempDir()
 	service := &Service{stateRoot: tmp}
 
@@ -613,8 +603,7 @@ func TestSessionServiceRunReviewResumesFrozenRunningAndUncertainIntent(t *testin
 		session.OperationUncertain,
 	} {
 		t.Run(string(initialState), func(t *testing.T) {
-			repo, git := gitrepo.New(t)
-			git("commit", "-q", "--allow-empty", "-m", "base")
+			repo, _ := gitrepo.NewCommitted(t)
 			var gateCalls atomic.Int32
 			service := newReviewTestService(
 				t,
@@ -693,8 +682,7 @@ func TestSessionServiceRunReviewResumesFrozenRunningAndUncertainIntent(t *testin
 }
 
 func TestSessionServiceRunReviewMalformedRunningIntentBecomesUncertain(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	var gateCalls atomic.Int32
 	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		gateCalls.Add(1)
@@ -736,8 +724,7 @@ func TestSessionServiceRunReviewMalformedRunningIntentBecomesUncertain(t *testin
 }
 
 func TestSessionServiceRunReviewConcurrentReplayWaitsForFirst(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var gateCalls atomic.Int32
@@ -805,8 +792,7 @@ func TestSessionServiceRunReviewConcurrentReplayWaitsForFirst(t *testing.T) {
 }
 
 func TestSessionServiceRunReviewKeepsBoundedPreviewAndExactCandidate(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	service := newReviewTestService(t, repo, 48, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
@@ -839,8 +825,7 @@ func TestSessionServiceRunReviewKeepsBoundedPreviewAndExactCandidate(t *testing.
 }
 
 func TestSessionReviewArtifactIsRemovedWithDiscardedSession(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	service := newReviewTestService(
 		t,
 		repo,
@@ -972,8 +957,7 @@ func containsReviewReason(reasons []string, want string) bool {
 // checkout and a developer's clone both name the default branch as origin/<branch>; the candidate
 // a review prepares named none, so Ryker's emisar task still could not open its pull request.
 func TestSessionReviewCandidateNamesTheDefaultBranchForTheGate(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	var named string
 	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
 		named = strings.TrimSpace(gitOut(request.Candidate, "rev-parse", "--verify", "--quiet", "origin/main^{commit}"))
@@ -1016,8 +1000,7 @@ func TestSessionReviewCandidateNamesTheDefaultBranchForTheGate(t *testing.T) {
 }
 
 func TestSessionReviewCandidateNamesItsTrustedParentForTheGate(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	var named string
 	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
 		named = strings.TrimSpace(gitOut(request.Candidate, "rev-parse", "--verify", "--quiet", "refs/coop/session-parent^{commit}"))

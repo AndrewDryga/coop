@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -28,17 +30,11 @@ import (
 // sink owns the terminal. The test binary's stderr is not a terminal, so the bytes carry no ANSI.
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stderr
-	r, w, err := os.Pipe()
+	out, err := procharness.CaptureOutput(fn, &os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stderr = w
-	fn()
-	_ = w.Close()
-	os.Stderr = old
-	out, _ := io.ReadAll(r)
-	return string(out)
+	return out
 }
 
 // grant is one compiled allowance with the provenance the section reads.

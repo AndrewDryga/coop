@@ -747,28 +747,19 @@ func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
 	if err := os.WriteFile(shim, []byte("#!/bin/sh\ncase \"$*\" in *\"config --services\"*) echo kc ;; esac\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	old := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = w
 	var composeWriter bytes.Buffer
-	sections := newLaunchSections(RunSpec{Agent: "gemini"})
-	sections.internet(&config.Config{Egress: "open"}, RunSpec{Agent: "gemini"}, nil)
-	_, runErr := startAutomaticTestServices(runtime.Runtime{Name: shim}, repo, compose, io.Discard, &composeWriter)
-	sections.servicesFailed("Container project-db Running\nContainer project-keycloak Waiting")
-	os.Stderr = old
-	w.Close()
-	var seen bytes.Buffer
-	if _, err := io.Copy(&seen, r); err != nil {
-		t.Fatal(err)
-	}
+	var runErr error
+	seen := captureStderr(t, func() {
+		sections := newLaunchSections(RunSpec{Agent: "gemini"})
+		sections.internet(&config.Config{Egress: "open"}, RunSpec{Agent: "gemini"}, nil)
+		_, runErr = startAutomaticTestServices(runtime.Runtime{Name: shim}, repo, compose, io.Discard, &composeWriter)
+		sections.servicesFailed("Container project-db Running\nContainer project-keycloak Waiting")
+	})
 	if runErr != nil {
 		t.Fatalf("start = %v", runErr)
 	}
-	if !strings.Contains(seen.String(), "empty replacement for tls.key") {
-		t.Fatalf("the notice never reached the user:\nstderr: %q\ncompose writer: %q", seen.String(), composeWriter.String())
+	if !strings.Contains(seen, "empty replacement for tls.key") {
+		t.Fatalf("the notice never reached the user:\nstderr: %q\ncompose writer: %q", seen, composeWriter.String())
 	}
 	if strings.Contains(composeWriter.String(), "empty replacement for") {
 		t.Fatalf("the notice went to the compose writer, which a box start discards: %q", composeWriter.String())
@@ -777,8 +768,8 @@ func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
 		"⚠ Services receive an empty replacement for tls.key because it looks like a secret. Run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden\n\n" +
 		"⚠ Project services could not start\n\n" +
 		"      Container project-db Running\n      Container project-keycloak Waiting\n\n  Run coop up to retry.\n"
-	if seen.String() != want {
-		t.Fatalf("service warnings lost their separating paragraphs:\ngot %q\nwant %q", seen.String(), want)
+	if seen != want {
+		t.Fatalf("service warnings lost their separating paragraphs:\ngot %q\nwant %q", seen, want)
 	}
 }
 

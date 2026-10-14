@@ -66,7 +66,7 @@ class OwnProjectOnlyTest(unittest.TestCase):
             summary = self.bench()
         self.assertEqual({case: row["n"] for case, row in summary.items()}, {"stopped": 2, "running": 2})
         calls = self.calls()
-        self.assertTrue(calls)
+        self.assertEqual([call[1].split()[0] for call in calls], ["down", "run", "up", "run"] * 3 + ["down"])
         for cwd, args, project, auto_up in calls:
             with self.subTest(call=args):
                 self.assertEqual(cwd, str(self.repo.resolve()))
@@ -80,17 +80,21 @@ class OwnProjectOnlyTest(unittest.TestCase):
 
     def test_a_launch_that_hangs_after_its_marker_is_stopped(self):
         with patch.dict(os.environ, {"STAND_IN_HANG": "1"}), patch.object(services_bench, "TIMEOUT", 1):
-            summary = self.bench(samples=1)
-        self.assertEqual(summary["stopped"]["n"], 1, "the start itself was timed")
+            row = services_bench.sample(str(self.coop), str(self.repo), "stopped")
+        self.assertIsNotNone(row["seconds"], "the start itself was timed")
+        self.assertNotEqual(row["exit"], 0)
         with self.assertRaises(ProcessLookupError, msg="the hung launch was left running"):
             os.kill(int(Path(str(self.log) + ".pid").read_text()), 0)
-        self.assertEqual(self.calls()[-1][1], "down")
+        self.assertEqual([call[1].split()[0] for call in self.calls()], ["down", "run"])
 
     def test_a_child_that_ignores_term_is_stopped_too(self):
         # the launch leaves on TERM, its child does not: the stop goes on until the session is empty
         with patch.dict(os.environ, {"STAND_IN_HANG": "1", "STAND_IN_STUBBORN": "1"}), \
                 patch.object(services_bench, "TIMEOUT", 1), patch.object(services_bench, "STOP_GRACE", 0.5):
-            self.bench(samples=1)
+            row = services_bench.sample(str(self.coop), str(self.repo), "stopped")
+        self.assertIsNotNone(row["seconds"])
+        self.assertNotEqual(row["exit"], 0)
+        self.assertEqual([call[1].split()[0] for call in self.calls()], ["down", "run"])
         children = [int(pid) for pid in Path(str(self.log) + ".child").read_text().split()]
         self.assertTrue(children)
         for child in children:

@@ -1,7 +1,6 @@
 package tasks
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -883,9 +882,7 @@ func TestTaskLeaseProcess(t *testing.T) {
 }
 
 type leaseProcess struct {
-	cmd   *exec.Cmd
-	stdin io.WriteCloser
-	out   *bufio.Reader
+	*taskHelperProcess
 }
 
 func startLeaseProcess(t *testing.T, root, mode, gate string) *leaseProcess {
@@ -896,40 +893,18 @@ func startLeaseProcess(t *testing.T, root, mode, gate string) *leaseProcess {
 		"COOP_LEASE_ROOT="+root,
 		"COOP_LEASE_GATE="+gate,
 	)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	return &leaseProcess{cmd: cmd, stdin: stdin, out: bufio.NewReader(stdout)}
+	return &leaseProcess{startTaskHelperProcess(t, cmd)}
 }
 
 func (p *leaseProcess) result(t *testing.T) string {
 	t.Helper()
-	line := make(chan string, 1)
-	go func() {
-		s, _ := p.out.ReadString('\n')
-		line <- strings.TrimSpace(s)
-	}()
-	select {
-	case got := <-line:
-		return got
-	case <-time.After(5 * time.Second):
-		t.Fatal("lease helper did not report a result")
-		return ""
-	}
+	return p.line(t, "lease")
 }
 
 func (p *leaseProcess) release(t *testing.T) {
 	t.Helper()
 	_ = p.stdin.Close()
-	if err := p.cmd.Wait(); err != nil {
+	if err := p.wait(t); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -971,7 +946,7 @@ func TestTaskLeaseProcessRaces(t *testing.T) {
 		if err := owner.cmd.Process.Kill(); err != nil {
 			t.Fatal(err)
 		}
-		_ = owner.cmd.Wait()
+		_ = owner.wait(t)
 		adopter := testLeaseOwner()
 		adopter.Now = time.Now
 		assignment, err := assignLoopTask([]string{root}, adopter)

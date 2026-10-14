@@ -3,13 +3,14 @@ package forkctl
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
@@ -138,17 +139,11 @@ func writeTaskFile(t *testing.T, path, content string) {
 // goes to stderr — see captureStderr). Colors are off under `go test` (no tty), so output is plain.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stdout
-	r, w, err := os.Pipe()
+	out, err := procharness.CaptureOutput(fn, &os.Stdout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout = w
-	fn()
-	_ = w.Close()
-	os.Stdout = old
-	out, _ := io.ReadAll(r)
-	return string(out)
+	return out
 }
 
 type forkCommandResult struct {

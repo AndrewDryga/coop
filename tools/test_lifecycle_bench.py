@@ -10,6 +10,7 @@ import contextlib
 import io
 import json
 import os
+import select
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lifecycle_bench as bench
 
 
@@ -373,12 +375,29 @@ class OtherRunsTest(unittest.TestCase):
             self.assertEqual(bench.tagged_env("tok")["COOP_RUN_ARGS"], "--label coop-bench.sample=tok")
 
     def test_a_stopped_process_hands_back_what_it_printed_after_a_timeout(self):
-        # A sample whose coop outlives its timeout still names its network run on the way out.
-        process = subprocess.Popen(["sh", "-c", "echo 'coop net inspect 6f'; sleep 30"], stdout=subprocess.PIPE,
+        # One real escalation owner: INT is acknowledged but does not stop the child;
+        # TERM prints its final network identity. Keep the production grace unchanged.
+        script = """import signal, time
+def interrupt(*args):
+    print('ACK INT', flush=True)
+def terminate(*args):
+    print('ACK TERM\\ncoop net inspect 6f', flush=True)
+    raise SystemExit(0)
+signal.signal(signal.SIGINT, interrupt)
+signal.signal(signal.SIGTERM, terminate)
+print('READY', flush=True)
+while True: time.sleep(1)
+"""
+        process = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True, start_new_session=True)
+        self.addCleanup(lambda: bench.stop_process(process) if process.poll() is None else None)
+        self.assertTrue(select.select([process.stdout], [], [], 60)[0], "child did not install its signal handlers")
+        self.assertEqual(process.stdout.readline(), "READY\n")
         with self.assertRaises(subprocess.TimeoutExpired):
             process.communicate(timeout=0.3)
-        self.assertEqual(bench.network_runs(bench.stop_process(process)), {"6f"})
+        output = bench.stop_process(process)
+        self.assertIn("ACK INT\nACK TERM\n", output)
+        self.assertEqual(bench.network_runs(output), {"6f"})
 
     def test_it_reads_the_network_run_a_launch_prints(self):
         said = "Networking stats:\n  Allowed   no external connections\nFull details: coop net inspect 61727efd6e10631b31d8ae600cfa3a4d --json\n"
@@ -403,15 +422,22 @@ STAND_IN_COOP = """#!/bin/sh
 echo $$ > "@LAUNCHED@.pid"
 printf '%s' "$COOP_RUN_ARGS" > "@LAUNCHED@"
 echo "Full details: coop net inspect 8b --json" >&2
-: > "@LAUNCHED@.ready"
 case "$1" in
 run)
     while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done
     shift
-    [ -n "$STAND_IN_HANG" ] && exec sleep 30
+    if [ -n "$STAND_IN_HANG" ]; then
+        exec "@PYTHON@" -c 'import os, signal, sys, time
+signal.signal(signal.SIGINT, lambda *args: sys.exit(0))
+signal.signal(signal.SIGTERM, lambda *args: sys.exit(0))
+open("@LAUNCHED@.ready", "w").close()
+while True: time.sleep(1)'
+    fi
+    : > "@LAUNCHED@.ready"
     [ -n "$COOP_IMAGE" ] && exit 1
     exec "$@" ;;
 acp)
+    : > "@LAUNCHED@.ready"
     IFS= read -r line
     [ -n "$COOP_ACP_TRACE" ] && exit 0
     printf '%s\\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'
@@ -435,7 +461,7 @@ class EveryCaseCleansOnlyItsOwnTest(unittest.TestCase):
         self.repo.mkdir()
         launched = self.launched = root / "launched"
         self.coop = root / "coop"
-        self.coop.write_text(STAND_IN_COOP.replace("@LAUNCHED@", str(launched)))
+        self.coop.write_text(STAND_IN_COOP.replace("@LAUNCHED@", str(launched)).replace("@PYTHON@", sys.executable))
         self.coop.chmod(0o755)
         self.fake = FakeRuntime(
             appear=([("our-box", self.BOX), ("their-box", self.BOX)],

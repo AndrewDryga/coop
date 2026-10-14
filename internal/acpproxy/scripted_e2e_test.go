@@ -18,15 +18,19 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 type scriptedACP struct {
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	client  *acpClient
-	stderr  *lockedBuffer
-	done    chan error
-	stopped bool
+	cmd      *exec.Cmd
+	stdin    io.WriteCloser
+	client   *acpClient
+	stderr   *lockedBuffer
+	done     chan error
+	readDone chan struct{}
+	stdout   *os.File
+	stopped  bool
 }
 
 func TestScriptedACPDriver(t *testing.T) {
@@ -785,10 +789,8 @@ func fixtureWireMethods(t *testing.T, path string) []string {
 
 func buildTestBinary(t *testing.T, root, output, pkg string) {
 	t.Helper()
-	cmd := exec.Command("go", "build", "-trimpath", "-o", output, pkg)
-	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build %s: %v\n%s", pkg, err, out)
+	if err := fixtureBinaries.Copy(t.Context(), root, output, pkg); err != nil {
+		t.Fatalf("build %s: %v", pkg, err)
 	}
 }
 
@@ -844,24 +846,22 @@ func startScriptedACPArgs(t *testing.T, coopBin, fixtureBin, repo, tmp, plan str
 	}
 	cmd.Env = testEnv(os.Environ(), values)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
 	stderr := &lockedBuffer{}
 	cmd.Stderr = stderr
-	if err := cmd.Start(); err != nil {
+	stdin, stdout, err := procharness.StartStdio(cmd)
+	if err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	client := newACPClient(stdin)
-	go client.read(stdout)
-	proc := &scriptedACP{cmd: cmd, stdin: stdin, client: client, stderr: stderr, done: done}
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		defer stdout.Close()
+		client.read(stdout)
+	}()
+	proc := &scriptedACP{cmd: cmd, stdin: stdin, stdout: stdout, client: client, stderr: stderr, done: done, readDone: readDone}
 	t.Cleanup(func() { proc.stop(t) })
 	return proc
 }
@@ -889,6 +889,19 @@ func (p *scriptedACP) stop(t *testing.T) {
 		return // a test that stopped its first process explicitly; the cleanup finds nothing to do
 	}
 	p.stopped = true
+	defer func() {
+		select {
+		case <-p.readDone:
+		case <-time.After(wait.Deadline):
+			t.Error("scripted ACP reader did not drain after process reaping")
+			_ = p.stdout.Close()
+			select {
+			case <-p.readDone:
+			case <-time.After(wait.Deadline):
+				t.Error("scripted ACP reader still blocked after forced pipe close")
+			}
+		}
+	}()
 	_ = p.stdin.Close()
 	select {
 	case err := <-p.done:

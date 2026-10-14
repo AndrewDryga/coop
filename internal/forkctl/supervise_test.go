@@ -886,6 +886,12 @@ func TestRecordStartedForkKillsChildWhenStateWriteFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldReplace := forkspace.ReplaceState
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
 	forkspace.ReplaceState = func(string, string, []byte) error { return errors.New("injected state write failure") }
 	t.Cleanup(func() { forkspace.ReplaceState = oldReplace })
 	if err := recordStartedFork(repo, "perf", cmd); err == nil {
@@ -1188,6 +1194,12 @@ func TestRecordStartedForkLeavesAnotherOwnersClaim(t *testing.T) {
 	if err := child.Start(); err != nil {
 		t.Skipf("cannot start a child: %v", err)
 	}
+	t.Cleanup(func() {
+		if child.ProcessState == nil {
+			_ = child.Process.Kill()
+			_ = child.Wait()
+		}
+	})
 	// An invalid generation makes the publish fail deterministically, without touching the disk.
 	if err := recordStartedFork(repo, name, child, forkspace.Generation("not a generation")); err == nil {
 		t.Fatal("recordStartedFork with an invalid generation should fail")

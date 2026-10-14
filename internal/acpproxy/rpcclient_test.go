@@ -17,6 +17,7 @@ var (
 	errACPTranscriptLimit = errors.New("ACP transcript limit exceeded")
 	errACPFrameCountLimit = errors.New("ACP frame count limit exceeded")
 	errACPRateLimitWait   = errors.New("ACP is waiting for a provider usage reset")
+	errACPDuplicateReply  = errors.New("ACP duplicate reply for a pending request")
 )
 
 type lockedBuffer struct {
@@ -104,25 +105,31 @@ func (c *acpClient) req(ctx context.Context, method string, params any) (map[str
 	if err := c.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 		return nil, err
 	}
+	var m map[string]any
 	select {
-	case m := <-ch:
-		if e, ok := m["error"]; ok && e != nil {
-			b, _ := json.Marshal(e)
-			obj, ok := e.(map[string]any)
-			codeNumber, codeOK := obj["code"].(float64)
-			message, messageOK := obj["message"].(string)
-			code := int(codeNumber)
-			if !ok || !codeOK || float64(code) != codeNumber || !messageOK || message == "" {
-				return nil, fmt.Errorf("malformed JSON-RPC error: %s", b)
-			}
-			return nil, &rpcErr{code: code, raw: string(b)}
-		}
-		return m, nil
+	case m = <-ch:
 	case <-c.closed:
-		return nil, c.streamError()
+		// EOF cannot discard a reply already published by the reader.
+		select {
+		case m = <-ch:
+		default:
+			return nil, c.streamError()
+		}
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	if e, ok := m["error"]; ok && e != nil {
+		b, _ := json.Marshal(e)
+		obj, ok := e.(map[string]any)
+		codeNumber, codeOK := obj["code"].(float64)
+		message, messageOK := obj["message"].(string)
+		code := int(codeNumber)
+		if !ok || !codeOK || float64(code) != codeNumber || !messageOK || message == "" {
+			return nil, fmt.Errorf("malformed JSON-RPC error: %s", b)
+		}
+		return nil, &rpcErr{code: code, raw: string(b)}
+	}
+	return m, nil
 }
 
 func (c *acpClient) mark() int {
@@ -181,6 +188,7 @@ func acpLimitWaitStatus(frame wireFrame, sessionID string) bool {
 }
 
 func (c *acpClient) await(ctx context.Context, after int, match func(wireFrame) bool) (wireFrame, int, error) {
+	closed := false
 	for {
 		c.mu.Lock()
 		for i := after; i < len(c.frames); i++ {
@@ -191,10 +199,13 @@ func (c *acpClient) await(ctx context.Context, after int, match func(wireFrame) 
 			}
 		}
 		c.mu.Unlock()
+		if closed {
+			return wireFrame{}, after, c.streamError()
+		}
 		select {
 		case <-c.wake:
 		case <-c.closed:
-			return wireFrame{}, after, c.streamError()
+			closed = true // one final scan includes events published immediately before EOF
 		case <-ctx.Done():
 			return wireFrame{}, after, ctx.Err()
 		}
@@ -243,7 +254,10 @@ func (c *acpClient) read(r io.Reader) {
 	for {
 		line, err := br.ReadBytes('\n')
 		if len(line) > 0 {
-			c.recordFrame(line)
+			if frameErr := c.recordFrame(line); frameErr != nil {
+				c.finishRead(frameErr)
+				return
+			}
 		}
 		if err != nil {
 			c.finishRead(err)
@@ -281,7 +295,10 @@ func (c *acpClient) readLimited(r io.Reader) {
 				c.finishRead(errACPTranscriptLimit)
 				return
 			default:
-				c.recordFrame(line)
+				if frameErr := c.recordFrame(line); frameErr != nil {
+					c.finishRead(frameErr)
+					return
+				}
 			}
 		}
 		if err != nil {
@@ -291,10 +308,10 @@ func (c *acpClient) readLimited(r io.Reader) {
 	}
 }
 
-func (c *acpClient) recordFrame(line []byte) {
+func (c *acpClient) recordFrame(line []byte) error {
 	var m map[string]any
 	if json.Unmarshal(line, &m) != nil {
-		return
+		return nil
 	}
 	c.mu.Lock()
 	if c.limits.MaxTranscriptBytes == 0 && c.limits.MaxFrames == 0 && c.limits.MaxFrameBytes == 0 {
@@ -318,9 +335,14 @@ func (c *acpClient) recordFrame(line []byte) {
 		ch := c.pending[key]
 		c.mu.Unlock()
 		if ch != nil {
-			ch <- m
+			select {
+			case ch <- m:
+			default:
+				return errACPDuplicateReply // never strand cleanup behind an unconsumed reply
+			}
 		}
 	}
+	return nil
 }
 
 func (c *acpClient) finishRead(err error) {

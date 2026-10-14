@@ -2,12 +2,13 @@ package cli
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -150,33 +151,21 @@ func writeUmbrellaProject(t *testing.T, repo string, subs ...string) {
 // ui.Info goes to stderr). Colors are off under `go test` (no tty), so output is plain.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stdout
-	r, w, err := os.Pipe()
+	out, err := procharness.CaptureOutput(fn, &os.Stdout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout = w
-	fn()
-	_ = w.Close()
-	os.Stdout = old
-	out, _ := io.ReadAll(r)
-	return string(out)
+	return out
 }
 
 // captureStderr returns whatever fn writes to os.Stderr (ui.Info/ui.Warn go there).
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stderr
-	r, w, err := os.Pipe()
+	out, err := procharness.CaptureOutput(fn, &os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stderr = w
-	fn()
-	_ = w.Close()
-	os.Stderr = old
-	out, _ := io.ReadAll(r)
-	return string(out)
+	return out
 }
 
 // TestStateDirOrderingInvariant pins the whole point of the numeric prefix: a plain lexical

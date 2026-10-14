@@ -304,10 +304,8 @@ func assertProcessLeaseHeld(t *testing.T, layout procharness.Layout, taskID, pro
 
 func buildProcessBinary(t *testing.T, root, output, pkg string) {
 	t.Helper()
-	cmd := exec.Command("go", "build", "-trimpath", "-o", output, pkg)
-	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build %s: %v\n%s", pkg, err, out)
+	if err := fixtureBinaries.Copy(t.Context(), root, output, pkg); err != nil {
+		t.Fatalf("build %s: %v", pkg, err)
 	}
 }
 

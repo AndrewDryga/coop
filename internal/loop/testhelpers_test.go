@@ -1,10 +1,11 @@
 package loop
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/ladder"
@@ -71,17 +72,11 @@ func taskForLease(t *testing.T, root, state, id string) tasks.Item {
 // captureStderr returns whatever fn writes to os.Stderr (ui.Info/ui.Warn go there).
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stderr
-	r, w, err := os.Pipe()
+	out, err := procharness.CaptureOutput(fn, &os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stderr = w
-	fn()
-	_ = w.Close()
-	os.Stderr = old
-	out, _ := io.ReadAll(r)
-	return string(out)
+	return out
 }
 
 // rts builds a claude rotation over the named accounts, one rung each.

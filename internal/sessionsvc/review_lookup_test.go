@@ -15,8 +15,7 @@ import (
 func TestCompletedReviewCanBeReadWithoutRunningTheGateAgain(t *testing.T) {
 	// A real 54-second review outlived the worker's 30-second HTTP request.
 	// The saved failed gate must reach the controller, not replay uncertainty forever.
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	var gateCalls atomic.Int32
 	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		gateCalls.Add(1)

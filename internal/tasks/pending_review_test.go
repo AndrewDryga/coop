@@ -19,6 +19,13 @@ func pendingReviewTestCompletion(t *testing.T) (repo, root, base string, assignm
 	taskWithCompletedChecklist(t, root, StateTodo, "review-me")
 	var err error
 	assignment, err = AssignLoopTaskOnly([]string{root}, testLeaseOwner(), "")
+	if lease := assignment.Lease; lease != nil {
+		t.Cleanup(func() {
+			if err := lease.Release(); err != nil {
+				t.Error(err)
+			}
+		})
+	}
 	if err != nil || assignment.Lease == nil {
 		t.Fatalf("assign = %+v, %v", assignment, err)
 	}

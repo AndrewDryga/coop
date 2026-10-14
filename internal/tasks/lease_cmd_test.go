@@ -306,8 +306,19 @@ func TestLoopSkipsATaskLeasedOutside(t *testing.T) {
 		defer close(done)
 		_, _ = holdTaskLease(ctx, root, leaseRequest{id: "outside", actor: ClaimActor{Label: "codex"}}, 20*time.Millisecond)
 	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(wait.Deadline):
+			t.Error("outside lease holder did not drain")
+		}
+	})
 	waitLease(t, item, leaseBusy)
 	assignment, err := AssignLoopTaskOnly([]string{root}, testLeaseOwner(), "")
+	if lease := assignment.Lease; lease != nil {
+		t.Cleanup(func() { _ = lease.Release() })
+	}
 	if err != nil || assignment.Outcome != AssignmentUnavailable || assignment.Busy.Busy != 1 {
 		t.Fatalf("loop assignment beside an outside lease = %+v, %v; want unavailable with one busy task", assignment, err)
 	}
@@ -315,6 +326,9 @@ func TestLoopSkipsATaskLeasedOutside(t *testing.T) {
 	<-done
 	waitLease(t, item, leaseUnleased)
 	assignment, err = AssignLoopTaskOnly([]string{root}, testLeaseOwner(), "")
+	if lease := assignment.Lease; lease != nil {
+		t.Cleanup(func() { _ = lease.Release() })
+	}
 	if err != nil || assignment.Outcome != assignmentReady || assignment.Task.Item.ID != "outside" {
 		t.Fatalf("loop assignment after the holder stopped = %+v, %v; want the task resumed", assignment, err)
 	}

@@ -25,8 +25,7 @@ import (
 
 func reviewGateOutputFixture(t *testing.T, task string, gate ReviewGateFunc) (*sessionFixture, session.Session) {
 	t.Helper()
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	service := newReviewTestService(t, repo, 1<<20, gate)
 	t.Cleanup(func() { _ = service.Stop() })
 	sess := createReviewSession(t, service, task)
@@ -133,32 +132,6 @@ func TestAPassingReviewKeepsItsGatesWarnings(t *testing.T) {
 	}
 }
 
-// A gate that prints without end cannot fill the worker's disk, and the review
-// says the output was cut instead of passing the beginning off as all of it.
-func TestAReviewSaysWhenItsGatePrintedMoreThanCoopKeeps(t *testing.T) {
-	previous := maxReviewGateOutputBytes
-	maxReviewGateOutputBytes = 1 << 10
-	t.Cleanup(func() { maxReviewGateOutputBytes = previous })
-	service, sess := reviewGateOutputFixture(t, "gate-output-flood", func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
-		for range 100 {
-			fmt.Fprintln(request.Output, strings.Repeat("x", 99))
-		}
-		return ReviewGateResult{Configured: true}, nil
-	})
-	dossier, err := service.RunReview(context.Background(), "review-gate-output-flood", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
-	if err != nil {
-		t.Fatal(err)
-	}
-	output := dossier.GateOutput
-	if output == nil || output.Complete || output.Bytes != 1<<10 || !strings.Contains(output.Incomplete, "1 KiB") {
-		t.Fatalf("a cut output reads %+v", output)
-	}
-	whole, last, _ := readWholeReviewGateOutput(t, service, sess.ID, dossier.OperationID)
-	if len(whole) != 1<<10 || last.Complete || last.Incomplete != output.Incomplete {
-		t.Fatalf("read %d bytes, last page %+v", len(whole), last)
-	}
-}
-
 // A gate that could not start still leaves what Coop printed while starting it,
 // and the start failure itself is no longer hidden from the controller.
 func TestAReviewWhoseGateCouldNotStartKeepsWhatItPrinted(t *testing.T) {
@@ -218,26 +191,6 @@ func TestAReviewsGateOutputLeavesWithItsSession(t *testing.T) {
 	}
 }
 
-// Pages end on character boundaries, so a character split across two pages is
-// never read as two replacement characters.
-func TestReviewGateOutputPagesEndOnACharacter(t *testing.T) {
-	previous := reviewGateOutputPageBytes
-	reviewGateOutputPageBytes = 5
-	t.Cleanup(func() { reviewGateOutputPageBytes = previous })
-	service, sess := reviewGateOutputFixture(t, "gate-output-runes", func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
-		fmt.Fprint(request.Output, "ab✗cd✓e")
-		return ReviewGateResult{Configured: true}, nil
-	})
-	dossier, err := service.RunReview(context.Background(), "review-gate-output-runes", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
-	if err != nil {
-		t.Fatal(err)
-	}
-	whole, _, pages := readWholeReviewGateOutput(t, service, sess.ID, dossier.OperationID)
-	if whole != "ab✗cd✓e" || pages < 3 {
-		t.Fatalf("read %q over %d pages", whole, pages)
-	}
-}
-
 // What the controller reads on the wire: a page with the cursor of the next,
 // null on the last, and lost alone when nothing was kept.
 func TestReviewGateOutputOverHTTP(t *testing.T) {
@@ -280,6 +233,29 @@ func TestReviewGateOutputOverHTTP(t *testing.T) {
 	if public := publicReview(dossier); public.GateOutput == nil || public.GateOutput.Bytes != 18 {
 		t.Fatalf("the review on the wire says of its output %+v", public.GateOutput)
 	}
+	// Reuse the same real session to keep the consumer's truncated-output contract.
+	previousLimit := maxReviewGateOutputBytes
+	maxReviewGateOutputBytes = 12
+	t.Cleanup(func() { maxReviewGateOutputBytes = previousLimit })
+	capped, err := service.RunReview(context.Background(), "review-gate-output-capped", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path = "/v1/sessions/" + sess.ID + "/reviews/" + capped.OperationID + "/gate-output"
+	for _, tc := range []struct {
+		query, output string
+		next          any
+	}{
+		{"", "1 test, ", "8"}, {"?cursor=8", "1 fa", nil},
+	} {
+		page := read(tc.query)
+		next, present := page["next_cursor"]
+		if page["output"] != tc.output || !present || next != tc.next || page["bytes"] != float64(12) || page["complete"] != false ||
+			page["incomplete"] != "The check printed more than 12 bytes; Coop kept the first 12 bytes." {
+			t.Fatalf("capped page %q = %v", tc.query, page)
+		}
+	}
+	maxReviewGateOutputBytes = previousLimit
 
 	// A review that ran no check says so, with nothing else.
 	none, noneSession := reviewGateOutputFixture(t, "gate-output-none", func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {

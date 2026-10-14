@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
 // The backlog's human views are approved copy, not incidental formatting. These pin the exact
@@ -126,27 +128,9 @@ func onlyBacklogID(t *testing.T, root string) string {
 // stderr, and the approved block is what a person sees when both land on one terminal.
 func captureBacklog(t *testing.T, fn func()) string {
 	t.Helper()
-	oldOut, oldErr := os.Stdout, os.Stderr
-	r, w, err := os.Pipe()
+	out, err := procharness.CaptureOutput(fn, &os.Stdout, &os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout, os.Stderr = w, w
-	done := make(chan string)
-	go func() {
-		var b strings.Builder
-		buf := make([]byte, 4096)
-		for {
-			n, readErr := r.Read(buf)
-			b.Write(buf[:n])
-			if readErr != nil {
-				break
-			}
-		}
-		done <- b.String()
-	}()
-	fn()
-	_ = w.Close()
-	os.Stdout, os.Stderr = oldOut, oldErr
-	return <-done
+	return out
 }

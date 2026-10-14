@@ -1,7 +1,6 @@
 package tasks
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -190,9 +189,7 @@ func TestRefAuthorityWindowRejectsConcurrentHeadMove(t *testing.T) {
 // point below — the same re-exec-the-test-binary idiom lease_test.go uses (startLeaseProcess/
 // leaseProcess) for a genuinely multi-process regression.
 type refAuthorityProcess struct {
-	cmd   *exec.Cmd
-	stdin io.WriteCloser
-	out   *bufio.Reader
+	*taskHelperProcess
 }
 
 func startRefAuthorityProcess(t *testing.T, configDir, repo string) *refAuthorityProcess {
@@ -203,34 +200,12 @@ func startRefAuthorityProcess(t *testing.T, configDir, repo string) *refAuthorit
 		"COOP_REFAUTH_CONFIGDIR="+configDir,
 		"COOP_REFAUTH_REPO="+repo,
 	)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	return &refAuthorityProcess{cmd: cmd, stdin: stdin, out: bufio.NewReader(stdout)}
+	return &refAuthorityProcess{startTaskHelperProcess(t, cmd)}
 }
 
 func (p *refAuthorityProcess) readLine(t *testing.T) string {
 	t.Helper()
-	line := make(chan string, 1)
-	go func() {
-		s, _ := p.out.ReadString('\n')
-		line <- strings.TrimSpace(s)
-	}()
-	select {
-	case got := <-line:
-		return got
-	case <-time.After(5 * time.Second):
-		t.Fatal("ref authority helper did not report a result")
-		return ""
-	}
+	return p.line(t, "ref authority")
 }
 
 // TestRefAuthorityHelperProcess is not a test on its own: run normally (no env var) it does
@@ -248,6 +223,12 @@ func TestRefAuthorityHelperProcess(t *testing.T) {
 		return
 	}
 	fmt.Println("LOCKED")
+	if os.Getenv("COOP_TEST_HELPER_ABORT") != "" {
+		// The abort keeper must require cleanup, not pass because parent exit closes stdin.
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 	_, _ = io.Copy(io.Discard, os.Stdin) // blocks until the parent closes stdin or kills this process
 	release()
 	fmt.Println("RELEASED")
@@ -274,7 +255,7 @@ func TestLockRefAuthorityBlocksAcrossRealProcesses(t *testing.T) {
 	if got := holder.readLine(t); got != "RELEASED" {
 		t.Fatalf("holder reported %q, want RELEASED", got)
 	}
-	if err := holder.cmd.Wait(); err != nil {
+	if err := holder.wait(t); err != nil {
 		t.Fatal(err)
 	}
 
@@ -301,7 +282,7 @@ func TestLockRefAuthorityRecoversAfterHolderIsKilled(t *testing.T) {
 	if err := holder.cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	if err := holder.cmd.Wait(); err == nil {
+	if err := holder.wait(t); err == nil {
 		t.Fatal("killed helper process reported a clean exit")
 	}
 

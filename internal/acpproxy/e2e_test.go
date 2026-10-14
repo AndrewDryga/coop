@@ -34,6 +34,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 var (
@@ -54,7 +55,7 @@ const (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(runLiveACPTests(m))
+	os.Exit(runWithFixtureBinaries(func() int { return runLiveACPTests(m) }))
 }
 
 func runLiveACPTests(m *testing.M) int {
@@ -143,6 +144,8 @@ type liveACP struct {
 	client      *acpClient
 	stderr      *liveprovider.BoundedBuffer
 	done        chan error
+	readDone    chan struct{}
+	stdout      *os.File
 	runtime     runtime.Runtime
 	supervisor  string
 	cleanupRoot string
@@ -231,21 +234,12 @@ func startLiveACP(t *testing.T, provider string, requiredProviders ...string) *l
 	cmd.Env = append([]string(nil), environment...)
 	cmd.ExtraFiles = []*os.File{control}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		failLiveACPSetup(t, "stdin")
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = stdin.Close()
-		failLiveACPSetup(t, "stdout")
-	}
 	stderr := liveprovider.NewBoundedBuffer(liveACPStderrLimit)
 	cmd.Stderr = stderr
-	if err := cmd.Start(); err != nil {
+	stdin, stdout, err := procharness.StartStdio(cmd)
+	if err != nil {
 		control.Close()
-		_ = stdin.Close()
-		failLiveACPSetup(t, "process_start")
+		failLiveACPSetup(t, "stdio_start")
 	}
 	control.Close()
 	done := make(chan error, 1)
@@ -254,9 +248,15 @@ func startLiveACP(t *testing.T, provider string, requiredProviders ...string) *l
 		MaxFrameBytes: liveACPFrameLimit, MaxTranscriptBytes: liveACPTranscriptLimit,
 		MaxFrames: liveACPFrameCountLimit,
 	})
-	go c.read(stdout)
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		defer stdout.Close()
+		c.read(stdout)
+	}()
 	live := &liveACP{
 		cmd: cmd, stdin: stdin, client: c, stderr: stderr, done: done,
+		stdout: stdout, readDone: readDone,
 		runtime: coopE2ERuntime, supervisor: supervisor,
 		cleanupRoot: processLayout.Root, cidDir: processLayout.State,
 		processDir: processDir, credentials: credentials, filtered: brokered,
@@ -319,6 +319,19 @@ func liveACPSelections(targetOrPreset string, extraProviders ...string) ([]livep
 
 func (a *liveACP) stop(t *testing.T) {
 	t.Helper()
+	defer func() {
+		select {
+		case <-a.readDone:
+		case <-time.After(wait.Deadline):
+			t.Error("live ACP reader did not drain after process cleanup")
+			_ = a.stdout.Close()
+			select {
+			case <-a.readDone:
+			case <-time.After(wait.Deadline):
+				t.Error("live ACP reader still blocked after forced pipe close")
+			}
+		}
+	}()
 	var shutdownPhase string
 	var shutdownErr error
 	revokeErr := a.credentials.Revoke()

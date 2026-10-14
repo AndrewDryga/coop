@@ -2,7 +2,7 @@
 name: local-development-checks
 description: explicit local check scopes, reverse-consumer guard and conservative broad fallback
 subsystem: development
-sources: [Makefile, internal/local_checks_test.go, tools/test_make_checks.py, AGENTS.md, CONTRIBUTING.md, .agent/project.yaml]
+sources: [Makefile, internal/local_checks_test.go, tools/test_make_checks.py, AGENTS.md, CONTRIBUTING.md, .agent/project.yaml, internal/testutil/procharness/binaries.go, internal/testutil/procharness/stdio.go, internal/testutil/procharness/capture.go, internal/testutil/gitrepo/committed.go]
 updated: 2026-10-14
 ---
 
@@ -25,7 +25,26 @@ ownership facts current when a subprocess caller changes.
 Docs/rules run actual docs, alignment, site and KB checks; they do not run Docker, race,
 process benchmarks or live models. A local scope pass is not the completed broad candidate gate.
 
+Scripted CLI/ACP fixture builds reuse immutable bytes only within one package test process.
+The TestMain owns a private cache root and freezes the Go executable/environment before cases
+change PATH/HOME. Canonical source root, package and normalized build tags distinguish entries;
+ordinary and cooplivetest builds never alias. Every case gets a new writable executable inode.
+Do not change source/build inputs during m.Run or treat this as persistent cross-version caching.
+
+ACP/task helpers own their stdout reader independently of Cmd.Wait; final buffered frames cannot
+be lost when the child is reaped. Cleanup is registered before readiness and joins readers and
+the one Wait receipt. Shared capture drains concurrently and restores streams on panic/Goexit,
+but callers must still own process-global streams serially. This is not a production lock.
+
+Review fixtures copy an in-memory empty Git seed into independent .git files; no mutable refs,
+worktrees, databases, credentials or task authority are shared. Cold initialization/LFS/hydration
+owners still build their real inputs. Pure log cap/rune tests avoid full review staging; the real
+large-output pager, HTTP, session custody and failed-review owners remain.
+
 ## Changelog
 - 2026-10-14 — added explicit scopes and import/fixture ownership guard. Real Make fixtures cover
   each accepted scope, invalid broad fallback, owner errors and formatter failure/output.
   Canonical/embedded workflow skills remain byte-identical and generic for other projects.
+- 2026-10-14 — package-owned binary/seed reuse and abort-safe stdio/capture/lease helpers.
+  Queued-frame, missing-close, missing-cleanup, output-limit and rune mutations fail the keepers.
+  Production signal grace is unchanged; one real tool escalation owner remains.

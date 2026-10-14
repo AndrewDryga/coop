@@ -15,8 +15,7 @@ import (
 )
 
 func TestRetainedReviewSurvivesLostCompletionWithoutRebuildingWorkspace(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "--allow-empty", "-qm", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	gateCalls := 0
 	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		gateCalls++
@@ -137,8 +136,7 @@ func TestRetainedReviewOwnsLFSPayloadWithoutWorkingFiles(t *testing.T) {
 // Every Ryker task commit read "Reviewed changes" because the reviewed commit's message was fixed
 // here. The controller now names the change; the review receipt stays in the trailer.
 func TestReviewCommitCarriesTheRequestedMessage(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "--allow-empty", "-qm", "base")
+	repo, _ := gitrepo.NewCommitted(t)
 	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))

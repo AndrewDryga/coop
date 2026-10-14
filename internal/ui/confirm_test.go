@@ -2,10 +2,11 @@ package ui
 
 import (
 	"errors"
-	"io"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
 // DestroyGate proceeds with --yes; without it in a non-TTY (the test env) it refuses and names --yes,
@@ -53,18 +54,11 @@ func confirmAnswer(t *testing.T, s string) {
 // captureStderr returns whatever fn wrote to os.Stderr — here, Confirm's prompt.
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stderr
-	r, w, err := os.Pipe()
+	out, err := procharness.CaptureOutput(fn, &os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
-	os.Stderr = w
-	fn()
-	_ = w.Close()
-	os.Stderr = old
-	out, _ := io.ReadAll(r)
-	return string(out)
+	return out
 }
 
 // Confirm's answer handling, driven through the reader seam because the branches below are

@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
 // captureTerminal records what a person at a terminal would SEE: coop's own lines and the
@@ -14,17 +16,11 @@ import (
 // around, and one that captured only stdout would drop every line coop speaks.
 func captureTerminal(t *testing.T, fn func()) string {
 	t.Helper()
-	oldOut, oldErr := os.Stdout, os.Stderr
-	r, w, err := os.Pipe()
+	out, err := procharness.CaptureOutput(fn, &os.Stdout, &os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout, os.Stderr = w, w
-	fn()
-	_ = w.Close()
-	os.Stdout, os.Stderr = oldOut, oldErr
-	out, _ := io.ReadAll(r)
-	return string(out)
+	return out
 }
 
 // typedAnswers installs the answers a person would type at init's questions, through the same seam
