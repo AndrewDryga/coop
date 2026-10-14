@@ -459,6 +459,63 @@ func TestABackgroundStagingAsksForItsGrantInTheBackground(t *testing.T) {
 	}
 }
 
+// A tenant's largest repository carries submodules, and a copy with submodules still staged in
+// the foreground: a create fetching only that repository held routing's create and close for 46 s
+// (2026-10-14 09:13 UTC). It stages in the background too, submodules and their grants included.
+func TestASourceWithSubmodulesStagesInTheBackgroundToo(t *testing.T) {
+	ctx := context.Background()
+	leaf, leafGit := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(leaf, "code"), []byte("nested content\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	leafGit("add", "code")
+	leafGit("commit", "-qm", "leaf")
+	value := func(repo, revision string) string {
+		t.Helper()
+		out, err := sourceGitValue(ctx, repo, "", "file", "rev-parse", revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	remote, git := gitrepo.New(t)
+	git("update-index", "--add", "--cacheinfo", "160000,"+value(leaf, "HEAD")+",vendor/leaf")
+	if err := os.WriteFile(filepath.Join(remote, ".gitmodules"), []byte("[submodule \"leaf\"]\npath = vendor/leaf\nurl = https://example.invalid/leaf\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitmodules")
+	git("commit", "-qm", "parent")
+	first := testJobSource()
+	first.Binding.DefaultCommit = value(remote, "HEAD")
+	first.Binding.SelectedCommit, first.Binding.BaseCommit = first.Binding.DefaultCommit, first.Binding.DefaultCommit
+	first.Binding.AdmittedTree = value(remote, "HEAD^{tree}")
+	first.Submodules = []workerproto.JobSubmodule{{Path: "vendor/leaf", RepositoryRef: "leaf",
+		GitHubRepository: "example/leaf", GitHubRepositoryID: 19, Commit: value(leaf, "HEAD"), Tree: value(leaf, "HEAD^{tree}"),
+		Submodules: []workerproto.JobSubmodule{}}}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	stager := &privateJobSourceStager{transport: &jobSourceGrantFixture{}, stateRoot: root, remoteForTest: remote,
+		submoduleRemotesForTest: map[string]string{"example/leaf": leaf}, backgroundStaging: true}
+	if err := stager.Stage(ctx, "job:modules", first); err != nil {
+		t.Fatal(err)
+	}
+	source := first
+	source.Binding.ResolvedAt = first.Binding.ResolvedAt.Add(time.Hour)
+	if err := stager.Stage(ctx, "job:modules", source); !errors.Is(err, errJobSourceStagingStarted) {
+		t.Fatalf("a new copy with submodules = %v, want its staging started in the background", err)
+	}
+	if err := stageUntilSettled(t, stager, source); err != nil {
+		t.Fatalf("a later try = %v, want the staged copy", err)
+	}
+	key, _ := source.StagingKey()
+	nested := filepath.Join(root, "job-sources", key, "repository", "vendor", "leaf", "code")
+	if data, err := os.ReadFile(nested); err != nil || string(data) != "nested content\n" {
+		t.Fatalf("the background copy's submodule: %q, %v", data, err)
+	}
+}
+
 // A copy that fails in the background says why on the next try, once, publishes nothing, and the
 // try after that stages it again rather than waiting on a staging that ended.
 func TestABackgroundStagingThatFailsSaysWhyOnceAndStartsOver(t *testing.T) {

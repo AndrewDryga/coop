@@ -15,8 +15,8 @@
   18 minutes, and every other session's work waited behind it. Every new copy a create needs now
   starts fetching in the background at once, its grant included, and the create waits for them
   three seconds in all. It is then tried again until its repositories are ready, every 15 seconds
-  at most, while the worker runs every other command. A repository's first copy, and one with
-  submodules, still fetch in the foreground.
+  at most, while the worker runs every other command. A repository with submodules does too. Only a
+  repository's first copy asks for its grant first, and its download then runs in the background.
 
 - **A branch that moved on no longer refuses its job.** A worker staged a job's repository only
   if the branch still pointed at the job's commit, so a create failed whenever the branch moved

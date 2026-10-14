@@ -96,10 +96,9 @@ type privateJobSourceStager struct {
 	backgroundFirstDownload bool
 	downloadsMu             sync.Mutex
 	downloads               map[string]*firstDownload
-	// A new copy not staged within stagingInForeground finishes in the background when set, as
+	// A new copy with an earlier one to start from stages in the background when set, as
 	// NewJobSourceStager sets it, and Stage reports errJobSourceDownloading until it is there.
-	// A source with submodules stages in the foreground: their grants are asked of the controller
-	// while the copy is staged. Unset, as tests build a stager, staging waits for it.
+	// Unset, as tests build a stager, staging waits for it.
 	backgroundStaging bool
 	stagingsMu        sync.Mutex
 	stagings          map[string]*firstDownload
@@ -237,7 +236,7 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 	if seed == "" && s.stillDownloading(parent, source.RepositoryIdentity()) {
 		return errJobSourceDownloading
 	}
-	if seed != "" && s.backgroundStaging && len(source.Submodules) == 0 {
+	if seed != "" && s.backgroundStaging {
 		return s.stageInBackground(ctx, jobRef, source, parent, final, seed)
 	}
 	grant, err := s.sourceGrant(ctx, jobRef, source.RepositoryIdentity())
@@ -254,10 +253,10 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 }
 
 // stageInBackground stages a new copy from an earlier one in the background, asking the
-// controller for its grant there too, and reports errJobSourceStagingStarted at once: the
-// connector holds the create, every other command runs meanwhile, and a later Stage collects how
-// the staging ended. A source with submodules, or a repository's first staging, stays in the
-// foreground.
+// controller for its grants there too, its submodules' included, and reports
+// errJobSourceStagingStarted at once: the connector holds the create, every other command runs
+// meanwhile, and a later Stage collects how the staging ended. A repository's first staging stays
+// in the foreground.
 func (s *privateJobSourceStager) stageInBackground(ctx context.Context, jobRef string, source workerproto.JobSource,
 	parent, final, seed string) error {
 	s.stagingsMu.Lock()
