@@ -13,21 +13,24 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 // session drives one Serve loop over an in-memory connection pair.
 type session struct {
-	t      *testing.T
-	conn   net.Conn
-	reader *bufio.Reader
-	done   chan error
-	cancel context.CancelFunc
-	next   int
+	t       *testing.T
+	conn    net.Conn
+	reader  *bufio.Reader
+	done    chan error
+	stopped chan struct{}
+	cancel  context.CancelFunc
+	next    int
 }
 
 func newSession(t *testing.T, s *Server) *session {
@@ -35,12 +38,18 @@ func newSession(t *testing.T, s *Server) *session {
 	client, server := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- s.Serve(ctx, server) }()
-	sess := &session{t: t, conn: client, reader: bufio.NewReaderSize(client, 8<<20), done: done, cancel: cancel}
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); done <- s.Serve(ctx, server) }()
+	sess := &session{t: t, conn: client, reader: bufio.NewReaderSize(client, 8<<20), done: done, stopped: stopped, cancel: cancel}
 	t.Cleanup(func() {
 		cancel()
 		client.Close()
 		server.Close()
+		select {
+		case <-stopped:
+		case <-time.After(wait.Deadline):
+			t.Error("task MCP server did not stop")
+		}
 	})
 	return sess
 }
@@ -752,12 +761,109 @@ func TestConcurrentSessionsShareTheQueue(t *testing.T) {
 	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
 	s := newServer(t, root, "t1")
 	a, b := newSession(t, s), newSession(t, s)
-	for i := 0; i < 20; i++ {
-		a.mustCall("tasks_append_log", map[string]any{"id": "t1", "entry": fmt.Sprintf("a%d", i)})
-		b.mustCall("tasks_append_log", map[string]any{"id": "t1", "entry": fmt.Sprintf("b%d", i)})
+	start := make(chan struct{})
+	done := make(chan struct{})
+	errors := make(chan error, 2)
+	t.Cleanup(func() {
+		for _, client := range []*session{a, b} {
+			client.cancel()
+			_ = client.conn.Close()
+		}
+		select {
+		case <-done:
+		case <-time.After(wait.Deadline):
+			t.Error("concurrent task clients did not stop")
+		}
+	})
+	var workers sync.WaitGroup
+	for _, actor := range []struct {
+		name, field string
+		client      *session
+	}{{"a", "done_so_far", a}, {"b", "next_action", b}} {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			for i := 0; i < 20; i++ {
+				value := fmt.Sprintf("%s%d", actor.name, i)
+				for _, call := range []struct {
+					name string
+					args map[string]any
+				}{
+					{"tasks_update_state", map[string]any{"id": "t1", actor.field: value}},
+					{"tasks_append_log", map[string]any{"id": "t1", "entry": value}},
+				} {
+					if err := actor.client.callChecked(call.name, call.args); err != nil {
+						errors <- err
+						return
+					}
+				}
+			}
+		}()
 	}
-	log, _ := os.ReadFile(filepath.Join(root, tasks.StateInProgress, "t1", "log.md"))
+	close(start)
+	go func() { workers.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(wait.Deadline):
+		t.Fatal("concurrent task sessions did not finish")
+	}
+	close(errors)
+	for err := range errors {
+		t.Error(err)
+	}
+	if t.Failed() {
+		return
+	}
+	log, err := os.ReadFile(filepath.Join(root, tasks.StateInProgress, "t1", "log.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if strings.Count(string(log), "\na") != 20 || strings.Count(string(log), "\nb") != 20 {
 		t.Fatalf("log.md lost entries:\n%s", log)
 	}
+	for _, actor := range []string{"a", "b"} {
+		for i := range 20 {
+			entry := fmt.Sprintf("\n%s%d\n", actor, i)
+			if got := strings.Count(string(log), entry); got != 1 {
+				t.Fatalf("log entry %q occurred %d times", entry, got)
+			}
+		}
+	}
+	state, err := os.ReadFile(filepath.Join(root, tasks.StateInProgress, "t1", "state.md"))
+	if err != nil || !strings.Contains(string(state), "**Done so far:** a19\n") || !strings.Contains(string(state), "**Next action:** b19\n") {
+		t.Fatalf("concurrent disjoint state patches lost fields:\n%s\n%v", state, err)
+	}
+}
+
+// Concurrent actors return failures to the owning goroutine; they never call Fatal.
+func (s *session) callChecked(name string, args map[string]any) error {
+	s.next++
+	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": s.next, "method": "tools/call", "params": map[string]any{"name": name, "arguments": args}})
+	if err != nil {
+		return err
+	}
+	_ = s.conn.SetDeadline(time.Now().Add(10 * time.Second))
+	if _, err := s.conn.Write(append(body, '\n')); err != nil {
+		return err
+	}
+	line, err := s.reader.ReadBytes('\n')
+	if err != nil {
+		return err
+	}
+	var reply struct {
+		ID     int             `json:"id"`
+		Error  json.RawMessage `json:"error"`
+		Result *struct {
+			IsError bool `json:"isError"`
+			Content []struct{ Type, Text string }
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(line, &reply); err != nil {
+		return err
+	}
+	if reply.ID != s.next || len(reply.Error) != 0 || reply.Result == nil || reply.Result.IsError || len(reply.Result.Content) == 0 || reply.Result.Content[0].Type != "text" {
+		return fmt.Errorf("%s failed: %s", name, line)
+	}
+	return nil
 }

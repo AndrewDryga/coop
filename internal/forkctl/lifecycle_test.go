@@ -512,22 +512,6 @@ func TestForkUpdatedShowsOwnActivityNotInheritedBase(t *testing.T) {
 	}
 }
 
-// review's "why" reads only COMPLETED (99_done) task logs, so a seeded 00_todo template — even with a
-// newer mtime — never masquerades as the fork's work; no completed task → empty (caller says none yet).
-func TestLatestTaskLogOnlyDone(t *testing.T) {
-	ws := t.TempDir()
-	writeTaskFile(t, filepath.Join(ws, tasksRoot, stateDone, "mine", "log.md"), "FORK OWN WORK\n")
-	writeTaskFile(t, filepath.Join(ws, tasksRoot, stateTodo, "seed", "log.md"), "SEEDED TEMPLATE\n") // newer mtime
-	if got := latestTaskLog(ws, 5); !strings.Contains(got, "FORK OWN WORK") || strings.Contains(got, "SEEDED") {
-		t.Errorf("latestTaskLog = %q, want the 99_done log, not the newer seeded todo template", got)
-	}
-	empty := t.TempDir()
-	writeTaskFile(t, filepath.Join(empty, tasksRoot, stateTodo, "x", "log.md"), "todo only\n")
-	if got := latestTaskLog(empty, 5); got != "" {
-		t.Errorf("latestTaskLog with no completed tasks = %q, want empty (caller renders 'none yet')", got)
-	}
-}
-
 func TestParseShortstat(t *testing.T) {
 	ins, del := parseShortstat(" 3 files changed, 42 insertions(+), 7 deletions(-)")
 	if ins != 42 || del != 7 {
@@ -538,15 +522,9 @@ func TestParseShortstat(t *testing.T) {
 	}
 }
 
-func TestIndentLastLines(t *testing.T) {
+func TestIndent(t *testing.T) {
 	if got := indent("a\nb"); got != "  a\n  b" {
 		t.Errorf("indent = %q, want %q", got, "  a\n  b")
-	}
-	if got := lastLines("a\nb\nc\nd", 2); got != "c\nd" {
-		t.Errorf("lastLines(.., 2) = %q, want %q", got, "c\nd")
-	}
-	if got := lastLines("a\nb", 5); got != "a\nb" {
-		t.Errorf("lastLines short = %q, want %q", got, "a\nb")
 	}
 }
 
@@ -704,6 +682,7 @@ func TestResolveEditor(t *testing.T) {
 	// that runs on `coop fork review --open`. (`git config --global` ignores -C, writing the env file.)
 	git(t, repo, "config", "--global", "core.editor", "zed --wait")
 	git(t, repo, "config", "core.editor", "/tmp/evil --pwn") // repo-local: must NEVER be used
+	t.Chdir(repo)
 
 	// $COOP_EDITOR wins over everything.
 	if got := resolveEditor("nvim"); got != "nvim" {

@@ -2077,6 +2077,13 @@ func TestOperationalErrorDetailSanitizesBeforeByteBounding(t *testing.T) {
 	if strings.Contains(detail, repo) || strings.Contains(detail, secret) || strings.Contains(detail, "aB3xK9") {
 		t.Fatalf("boundary diagnostic leaked: %q", detail)
 	}
+	// The secret-bearing line starts inside the limit and ends beyond it.
+	// Truncating first would leave its innocent-looking prefix visible.
+	prefix := strings.Repeat("x", session.MaxErrorDetailBytes-8) + "\n"
+	detail = service.operationalErrorDetail(errors.New(prefix + "LEAKTHIS " + secret))
+	if want := prefix + "<redact"; detail != want {
+		t.Fatalf("redaction must precede truncation: got %q, want %q", detail, want)
+	}
 }
 
 func TestOperationalErrorDetailRepairsShortInvalidUTF8BeforeReceipt(t *testing.T) {
@@ -4149,6 +4156,8 @@ func TestSessionServiceCloseUsesKnownRuntimeCleanupWithoutStartupScan(t *testing
 
 type periodicCleanupRunner struct {
 	calls      atomic.Int32
+	mu         sync.Mutex
+	cleaned    []string
 	started    chan struct{}
 	release    chan struct{}
 	fail       bool
@@ -4162,7 +4171,10 @@ func (r *periodicCleanupRunner) Run(_ context.Context, _ session.Session, turn s
 	return turn, errors.New("test turn complete")
 }
 
-func (r *periodicCleanupRunner) CleanupSession(_ context.Context, _ session.Session) error {
+func (r *periodicCleanupRunner) CleanupSession(_ context.Context, sess session.Session) error {
+	r.mu.Lock()
+	r.cleaned = append(r.cleaned, sess.ID)
+	r.mu.Unlock()
 	r.calls.Add(1)
 	if r.fail {
 		return errors.New("runtime inventory unavailable")
@@ -4359,10 +4371,13 @@ func TestSessionMaintenanceAdvancesPastParkedCleanupFailures(t *testing.T) {
 	}
 	defer service.Stop()
 	ctx := context.Background()
+	want := make(map[string]bool)
 	for i := 0; i < cleanupBatchSize+2; i++ {
-		if _, err := service.CreateRemoteSession(ctx, fmt.Sprintf("failing-parked-cleanup-%02d", i), service.request(t, "failing-parked-cleanup")); err != nil {
+		sess, err := service.CreateRemoteSession(ctx, fmt.Sprintf("failing-parked-cleanup-%02d", i), service.request(t, "failing-parked-cleanup"))
+		if err != nil {
 			t.Fatal(err)
 		}
+		want[sess.ID] = true
 	}
 
 	service.cleanupIdleSessionRuntimes(ctx)
@@ -4370,6 +4385,17 @@ func TestSessionMaintenanceAdvancesPastParkedCleanupFailures(t *testing.T) {
 	if got := runner.calls.Load(); got != cleanupBatchSize*2 {
 		t.Fatalf("cleanup failure did not retain its per-sweep budget: calls=%d, want %d",
 			got, cleanupBatchSize*2)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.cleaned) != len(want) {
+		t.Fatalf("cleanup identities=%v, want %v", runner.cleaned, want)
+	}
+	for _, id := range runner.cleaned {
+		if !want[id] {
+			t.Fatalf("repeated or foreign cleanup %q: %v", id, runner.cleaned)
+		}
+		delete(want, id)
 	}
 }
 
@@ -5118,7 +5144,7 @@ func waitForSessionTest(t *testing.T, condition func() bool) {
 // shape. The digest guard stops a drifted policy from steering a running
 // session; teardown steers nothing, and refusing it leaves workspaces nobody
 // can ever reclaim — cleanup retried into permanent failure while forks leaked.
-func TestSessionServiceDiscardsSessionsWhosePolicyDrifted(t *testing.T) {
+func TestSessionServiceDiscardsFrozenJobsAfterRestart(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	repo, err := filepath.EvalSymlinks(repo)
@@ -5142,8 +5168,8 @@ func TestSessionServiceDiscardsSessionsWhosePolicyDrifted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Committed-but-unpublished work in the second fork: the safety the drift
-	// fallback must not weaken.
+	// Frozen historical jobs remain removable after restart without losing
+	// custody of committed-but-unpublished work in the second fork.
 	if err := os.WriteFile(filepath.Join(unmerged.Workspace, "wip.txt"), []byte("kept\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -5153,6 +5179,7 @@ func TestSessionServiceDiscardsSessionsWhosePolicyDrifted(t *testing.T) {
 
 	// No policy registry is needed for exact-owned cleanup after restart.
 	service := newTestSessionService(t, stateRoot, repo, nil)
+	// These targets govern future admission, not this session's frozen job.
 	service.Job.Targets = []string{"codex:another-model@work"}
 	defer service.Stop()
 

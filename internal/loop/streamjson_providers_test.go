@@ -922,36 +922,28 @@ func TestGrokStreamDecoder(t *testing.T) {
 func TestProviderDecodersCaptureExactNativeSession(t *testing.T) {
 	const id = "11111111-2222-4333-8444-555555555555"
 	tests := []struct {
-		name string
-		run  func() *iterResult
+		name   string
+		frames string
 	}{
-		{"claude", func() *iterResult {
-			d := newStreamDecoder(io.Discard, io.Discard, "claude", "", "/repo")
-			d.event([]byte(`{"type":"system","subtype":"init","session_id":"` + id + `"}`))
-			d.event([]byte(`{"type":"result","session_id":"` + id + `","num_turns":1}`))
-			return d.lastIterResult()
-		}},
-		{"codex", func() *iterResult {
-			d := newCodexStreamDecoder(io.Discard, io.Discard, "codex", "", "/repo", "")
-			d.event([]byte(`{"type":"thread.started","thread_id":"` + id + `"}`))
-			d.event([]byte(`{"type":"turn.completed","usage":{}}`))
-			return d.lastIterResult()
-		}},
-		{"gemini", func() *iterResult {
-			d := newGeminiStreamDecoder(io.Discard, io.Discard, "gemini", "", "/repo", "")
-			d.event([]byte(`{"type":"init","session_id":"` + id + `"}`))
-			d.event([]byte(`{"type":"result","status":"success","stats":{}}`))
-			return d.lastIterResult()
-		}},
-		{"grok", func() *iterResult {
-			d := newGrokStreamDecoder(io.Discard, io.Discard, "grok", "", "/repo", "")
-			d.event([]byte(`{"type":"end","sessionId":"` + id + `","usage":{}}`))
-			return d.lastIterResult()
-		}},
+		{"claude", `{"type":"system","subtype":"init","session_id":"` + id + `"}
+{"type":"result","session_id":"` + id + `","num_turns":1}`},
+		{"codex", `{"type":"thread.started","thread_id":"` + id + `"}
+{"type":"turn.completed","usage":{}}`},
+		{"gemini", `{"type":"init","session_id":"` + id + `"}
+{"type":"result","status":"success","stats":{}}`},
+		{"grok", `{"type":"end","sessionId":"` + id + `","usage":{}}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := test.run()
+			d := newIterationStreamDecoder(test.name, io.Discard, io.Discard, nil, "", "/repo", "", nil)
+			if d == nil {
+				t.Fatal("registered provider has no decoder")
+			}
+			if _, err := d.Write([]byte(test.frames + "\n")); err != nil {
+				t.Fatal(err)
+			}
+			d.flush()
+			got := d.lastIterResult()
 			if got == nil || got.SessionID != id {
 				t.Fatalf("session result = %#v, want %s", got, id)
 			}
@@ -959,6 +951,9 @@ func TestProviderDecodersCaptureExactNativeSession(t *testing.T) {
 				t.Fatalf("absent Grok output was marked reported: %#v", got.ReportedOutTok)
 			}
 		})
+	}
+	if d := newIterationStreamDecoder("other", io.Discard, io.Discard, nil, "", "", "", nil); d != nil {
+		t.Fatalf("unknown provider dispatch=%T, want nil", d)
 	}
 }
 
@@ -1010,30 +1005,6 @@ func TestBufferedStreamTextFlushesBeforeRawLine(t *testing.T) {
 			t.Errorf("Grok raw-line tail = %q", tail.String())
 		}
 	})
-}
-
-func TestIterationStreamDecoderDispatch(t *testing.T) {
-	var out, tail bytes.Buffer
-	cases := []struct {
-		agent string
-		check func(iterationStreamDecoder) bool
-	}{
-		{"claude", func(d iterationStreamDecoder) bool { _, ok := d.(*streamDecoder); return ok }},
-		{"codex", func(d iterationStreamDecoder) bool { _, ok := d.(*codexStreamDecoder); return ok }},
-		{"gemini", func(d iterationStreamDecoder) bool { _, ok := d.(*geminiStreamDecoder); return ok }},
-		{"grok", func(d iterationStreamDecoder) bool { _, ok := d.(*grokStreamDecoder); return ok }},
-	}
-	for _, c := range cases {
-		t.Run(c.agent, func(t *testing.T) {
-			d := newIterationStreamDecoder(c.agent, &out, &tail, nil, "", "", "model", nil)
-			if !c.check(d) {
-				t.Errorf("dispatch for %s returned %T", c.agent, d)
-			}
-		})
-	}
-	if d := newIterationStreamDecoder("other", &out, &tail, nil, "", "", "model", nil); d != nil {
-		t.Errorf("unknown provider dispatch returned %T, want nil", d)
-	}
 }
 
 func TestProviderStreamDecoderRejectsTruncatedTerminalEvent(t *testing.T) {

@@ -516,24 +516,6 @@ func QueueCounts(dir string) (TaskCounts, string, error) {
 	return counts, active, nil
 }
 
-// latestTaskLog returns the last n lines of the most-recently-modified per-task log.md under
-// ws's .agent/tasks tree (the agent's "why") — surfaced by `coop fork review`; "" if none.
-func LatestTaskLog(ws string, n int) string {
-	// Only COMPLETED tasks (99_done): a review's "why" is what this queue FINISHED. Scanning every
-	// state can select a newer todo template instead; empty means the queue has finished nothing.
-	matches, _ := filepath.Glob(filepath.Join(ws, TasksRoot, StateDone, "*", "log.md"))
-	newest, newestMod := "", time.Time{}
-	for _, m := range matches {
-		if fi, err := os.Stat(m); err == nil && fi.ModTime().After(newestMod) {
-			newest, newestMod = m, fi.ModTime()
-		}
-	}
-	if newest == "" {
-		return ""
-	}
-	return lastLines(readFileString(newest), n)
-}
-
 // LatestForkTaskLog reads reviewed execution projections through the generation registry. It
 // replaces review's old assumption that a fork owns a copied .agent/tasks tree.
 func LatestForkTaskLog(repo, name string, n int) (string, error) {

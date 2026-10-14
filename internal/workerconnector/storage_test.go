@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -43,15 +44,15 @@ func TestLiveStorageForwardsTheDaemonsOwnAccountingVerbatim(t *testing.T) {
 // The field is optional for a reason: a daemon too old to answer, a measurement that failed, or an
 // object that does not satisfy its own contract must leave the poll exactly as it was.
 func TestLiveStorageIsAbsentRatherThanWrong(t *testing.T) {
+	if LiveStorage(context.Background(), &capabilityAPI{response: json.RawMessage(liveStorageReport)}) == nil {
+		t.Fatal("coherent report control refused")
+	}
 	for name, scripted := range map[string]*capabilityAPI{
 		"no endpoint":      {err: errors.New("404 not_found")},
 		"no measurement":   {response: json.RawMessage(`{"budget":{"reserve_bytes":1}}`)},
 		"null measurement": {response: json.RawMessage(`{"storage":null}`)},
 		"not json":         {response: json.RawMessage(`not json`)},
-		"unknown field": {response: json.RawMessage(`{"storage":{"version":1,"measured_at":"2026-09-11T04:05:06Z",` +
-			`"capacity_bytes":1,"free_bytes":1,"reserve_bytes":0,"high_watermark_bytes":2,"low_watermark_bytes":1,` +
-			`"disposable_bytes":0,"protected_bytes":0,"unattributed_bytes":null,"allocation":"open",` +
-			`"refusal_reason":null,"secret_path":"/home/me/.ssh"}}`)},
+		"unknown field":    {response: json.RawMessage(strings.Replace(liveStorageReport, `"storage":{`, `"storage":{"secret_path":"/home/me/.ssh",`, 1))},
 		"incoherent": {response: json.RawMessage(`{"storage":{"version":1,"measured_at":"2026-09-11T04:05:06Z",` +
 			`"capacity_bytes":100,"free_bytes":200,"reserve_bytes":0,"high_watermark_bytes":90,` +
 			`"low_watermark_bytes":80,"disposable_bytes":0,"protected_bytes":0,"unattributed_bytes":null,` +

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
@@ -212,34 +214,31 @@ func TestSessionServiceRunReviewUsesConfiguredRemoteParent(t *testing.T) {
 	seedGit("add", "version.txt")
 	seedGit("commit", "-qm", "v1")
 	seedGit("branch", "-M", "main")
+	base := gitOut(seed, "rev-parse", "HEAD")
 	remote := filepath.Join(t.TempDir(), "remote.git")
 	runGitTest(t, "", "init", "-q", "--bare", remote)
 	seedGit("remote", "add", "origin", remote)
 	seedGit("push", "-q", "-u", "origin", "main")
 
-	checkout := filepath.Join(t.TempDir(), "checkout")
-	runGitTest(t, "", "clone", "-q", "-b", "main", remote, checkout)
-	runGitTest(t, checkout, "config", "user.email", "t@t")
-	runGitTest(t, checkout, "config", "user.name", "T")
-	localMain := gitOut(checkout, "rev-parse", "HEAD")
-	runGitTest(t, checkout, "checkout", "-qb", "local-feature")
-	runGitTest(t, checkout, "commit", "-q", "--allow-empty", "-m", "local-only")
-	localHead := gitOut(checkout, "rev-parse", "HEAD")
-
-	if err := os.WriteFile(filepath.Join(seed, "version.txt"), []byte("v2\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	seedGit("commit", "-qam", "v2")
-	seedGit("push", "-q", "origin", "main")
-	remoteHead := gitOut(seed, "rev-parse", "HEAD")
-
-	service := newReviewTestService(t, seed, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
+	var gateCalls int
+	service := newReviewTestService(t, seed, 1<<20, ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
+		gateCalls++
+		for path, want := range map[string]string{"version.txt": "v2\n", "change.txt": "reviewed\n"} {
+			data, err := os.ReadFile(filepath.Join(request.Candidate, path))
+			if err != nil || string(data) != want {
+				t.Errorf("candidate %s=%q, %v", path, data, err)
+			}
+		}
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
 	defer service.Stop()
 	sess := createReviewSession(t, service, "remote-parent")
-	if sess.BaseCommit != remoteHead {
-		t.Fatalf("session base = %s, want remote %s", sess.BaseCommit, remoteHead)
+	if sess.BaseCommit != base {
+		t.Fatalf("captured base=%s, want v1 %s", sess.BaseCommit, base)
+	}
+	savedJob, err := workerproto.DecodeJobSpec(sess.JobDocument)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -247,21 +246,45 @@ func TestSessionServiceRunReviewUsesConfiguredRemoteParent(t *testing.T) {
 	sessionWorkspaceGit(t, sess.Workspace, "add", "change.txt")
 	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "review change")
 
-	dossier, err := service.RunReview(
-		context.Background(), "review-remote-parent",
-		RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision},
-	)
+	// The remote advances AFTER admission and task work. Returning the saved
+	// admission head cannot pass: review must refresh its frozen source authority.
+	if err := os.WriteFile(filepath.Join(seed, "version.txt"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedGit("commit", "-qam", "v2")
+	seedGit("push", "-q", "origin", "main")
+	remoteHead := gitOut(seed, "rev-parse", "HEAD")
+	parentBefore, sourceBefore := reviewSourceSnapshot(seed), reviewSourceSnapshot(sess.Workspace)
+	refreshCalls := 0
+	service.sourceRefresher = func(ctx context.Context, jobRef string, source workerproto.JobSource, staged string) (string, error) {
+		refreshCalls++
+		if jobRef != savedJob.JobRef || !reflect.DeepEqual(source, *savedJob.Source) || staged != sess.Repository || staged == seed || staged == sess.Workspace {
+			t.Errorf("refresh lost frozen authority: %q %+v %q", jobRef, source, staged)
+		}
+		const ref = "refs/coop/review-default"
+		cmd := exec.CommandContext(ctx, "git", "-C", staged, "fetch", "--quiet", "--no-tags", remote, "+"+source.Binding.DefaultRef+":"+ref)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("refresh: %s: %w", out, err)
+		}
+		return sessionWorkspaceCommitContext(ctx, staged, ref)
+	}
+	dossier, err := service.RunReview(context.Background(), "review-remote-parent", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dossier.ParentHead != remoteHead || !dossier.Publishable || dossier.Rebase != ReviewRebaseClean {
-		t.Fatalf("remote review = %+v, want publishable against %s", dossier, remoteHead)
+	// Admission and the post-gate freshness check both refresh the same authority.
+	if refreshCalls != 2 || gateCalls != 1 || dossier.ParentHead != remoteHead || !dossier.Publishable || dossier.Rebase != ReviewRebaseClean {
+		t.Fatalf("refreshed review=%+v, refreshes=%d gates=%d, want v2 %s", dossier, refreshCalls, gateCalls, remoteHead)
 	}
-	if got := gitOut(checkout, "rev-parse", "HEAD"); got != localHead {
-		t.Fatalf("local HEAD moved to %s, want %s", got, localHead)
+	if got := reviewSourceSnapshot(seed); got != parentBefore {
+		t.Fatal("review mutated controller source")
 	}
-	if got := gitOut(checkout, "rev-parse", "refs/remotes/origin/main"); got != localMain {
-		t.Fatalf("tracking ref moved to %s, want %s", got, localMain)
+	if got := reviewSourceSnapshot(sess.Workspace); got != sourceBefore {
+		t.Fatal("review mutated task source")
+	}
+	bound, err := service.Store().GetSession(context.Background(), sess.ID)
+	if err != nil || bound.BaseCommit != base || !bytes.Equal(bound.JobDocument, sess.JobDocument) || bound.JobDigest != sess.JobDigest {
+		t.Fatalf("review rewrote frozen admission: %+v %v", bound, err)
 	}
 }
 

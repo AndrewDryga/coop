@@ -44,13 +44,8 @@ type Store struct {
 	closeErr  error
 }
 
-func Open(root string, opts ...Option) (*Store, error) {
+func Open(root string) (*Store, error) {
 	settings := options{clock: func() time.Time { return time.Now().UTC() }, id: randomID}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&settings)
-		}
-	}
 	return openStore(root, settings, true)
 }
 

@@ -53,51 +53,8 @@ func TestVerifyWALModeFailsLoudlyOnANonWALConnection(t *testing.T) {
 	}
 }
 
-// One state root, one daemon: every guarantee this package makes about the operations journal
-// assumes a single writer, so the kernel flock in openStateLock is the authority that enforces
-// it. flock conflicts across separate open file descriptions, so a second Open is refused even
-// from inside this process — which is what makes the invariant testable without spawning one.
-// The release half matters just as much: a lock that outlived Close would lock an operator out
-// of their own state root until the process exited.
-func TestOpenRefusesASecondDaemonOnTheSameStateRoot(t *testing.T) {
-	root := t.TempDir()
-	first, err := Open(root)
-	if err != nil {
-		t.Fatalf("first Open: %v", err)
-	}
-
-	second, err := Open(root)
-	if err == nil {
-		_ = second.Close()
-		t.Fatal("second Open on a held state root succeeded, want refusal")
-	}
-	if !strings.Contains(err.Error(), "another session daemon owns this state root") {
-		t.Fatalf("second Open error = %v, want it to name the owning daemon", err)
-	}
-
-	// A different root is unaffected — the lock is per state root, not process-wide.
-	other, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("Open of an unrelated state root: %v", err)
-	}
-	if err := other.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := first.Close(); err != nil {
-		t.Fatalf("close first: %v", err)
-	}
-	reopened, err := Open(root)
-	if err != nil {
-		t.Fatalf("Open after the owner closed: %v — the lock outlived its Store", err)
-	}
-	if err := reopened.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // The default generator itself — the one real callers get, as opposed to the counting
-// stand-in every other test in this package injects via WithIDGenerator — is otherwise never
+// stand-in every other test in this package sets on its own Store — is otherwise never
 // exercised in this suite. Prove it produces the shape the schema and callers depend on.
 func TestRandomIDProducesAPrefixedUniqueID(t *testing.T) {
 	first := randomID("op")

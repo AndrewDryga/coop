@@ -93,6 +93,21 @@ func TestGitViewNeverExecutesRepositoryDrivers(t *testing.T) {
 					t.Fatal(err)
 				}
 				invoked := func() bool { data, err := os.ReadFile(marker); return err == nil && string(data) == "invoked" }
+				// Prove each planted driver is live before trusting its absence.
+				control := []string{"status", "--porcelain"}
+				if kind == "textconv" {
+					control = []string{"diff", "--textconv", "--no-ext-diff", "--", "tracked.txt"}
+				}
+				raw := exec.Command("git", append(append([]string{"-C", repo}, GitHardening...), control...)...)
+				if out, err := raw.CombinedOutput(); err != nil {
+					t.Fatalf("raw driver control: %v\n%s", err, out)
+				}
+				if !invoked() {
+					t.Fatalf("positive control did not execute %s driver", kind)
+				}
+				if err := os.Remove(marker); err != nil {
+					t.Fatal(err)
+				}
 
 				for _, command := range [][]string{
 					{"status", "--porcelain"},
@@ -117,17 +132,6 @@ func TestGitViewNeverExecutesRepositoryDrivers(t *testing.T) {
 					t.Fatal("rebase under the view did not move the real branch onto main")
 				}
 
-				// Positive control: the same hardened command on the real git dir still runs the driver.
-				if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("again!\n"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				raw := exec.Command("git", append(append([]string{"-C", repo}, GitHardening...), "status", "--porcelain")...)
-				if out, err := raw.CombinedOutput(); err != nil {
-					t.Fatalf("raw status: %v\n%s", err, out)
-				}
-				if kind == "clean" && !invoked() {
-					t.Fatal("positive control: the raw hardened status did not execute the clean driver — the probe proves nothing")
-				}
 			})
 		}
 	}

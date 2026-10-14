@@ -55,8 +55,20 @@ func TestTurnOperationResultContainsOnlyPublicReplayData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := turnOperationResultFromTurn(replayed), turnOperationResultFromTurn(turn); !reflect.DeepEqual(got, want) {
-		t.Fatalf("public replay changed:\n got  %+v\n want %+v", got, want)
+	want := Turn{
+		ID: "turn-1", SessionID: "session-1", Ordinal: 7,
+		State: TurnAwaitingValidation, SendState: SendStateSent,
+		QueuedAt: now, StartedAt: now.Add(time.Second), FinishedAt: now.Add(2 * time.Second),
+		StopReason: StopEndTurn, AssistantMessage: "public-answer", ErrorCode: CodeOutputContractFailed, ErrorDetail: "public-error",
+		Usage:           Usage{InputTokens: 4, OutputTokens: 2},
+		OutputArtifacts: []OutputArtifact{{ID: "artifact-1", Name: "chart.png", MediaType: "image/png", SHA256: "public-artifact-digest", Bytes: 4}},
+		Candidate:       &TurnCandidate{Message: "public-candidate", SHA256: "public-candidate-digest", Attempt: 2},
+		CandidateSHA256: "public-candidate-digest", ValidationAttempt: 2,
+		ValidationError: "public-validation-error", ValidationReceipt: "public-validation-receipt",
+		ControllerToolsDigest: ControllerToolsDigest(turn.ControllerTools),
+	}
+	if !reflect.DeepEqual(replayed, want) {
+		t.Fatalf("public replay changed:\n got  %+v\n want %+v", replayed, want)
 	}
 	if replayed.Prompt != "" || replayed.IdempotencyKey != "" || replayed.RequestHash != "" ||
 		replayed.OutputContract != nil || replayed.RuntimeRunID != "" || replayed.ControllerTools != nil {

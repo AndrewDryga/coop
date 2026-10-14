@@ -11,9 +11,8 @@ import (
 )
 
 // buildLegacyDatabase creates a session.sqlite file shaped exactly like one a real daemon
-// would have left behind at the given historical schema version: the literal DDL migrate() has
-// always used to build that version (schemaV1..schemaVN, embedded verbatim — never regenerated
-// by running today's migrate()), followed by hand-written INSERTs using only the columns that
+// would have left behind at the given historical schema version: test-owned frozen literal DDL,
+// never current schema constants or today's migrate(), followed by hand-written INSERTs using only the columns that
 // existed at that version. A bug in migrate() itself therefore cannot silently launder into a
 // "passing" fixture the way replaying Open() to build the fixture could.
 func buildLegacyDatabase(t *testing.T, path string, version int) {
@@ -23,76 +22,10 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	ddl := schemaV1
-	if version >= 2 {
-		ddl += schemaV2
+	if version < 1 || version > len(legacySchemas) {
+		t.Fatalf("unsupported historical fixture version%d", version)
 	}
-	if version >= 3 {
-		ddl += schemaV3
-	}
-	if version >= 4 {
-		ddl += schemaV4
-	}
-	if version >= 5 {
-		ddl += schemaV5
-	}
-	if version >= 6 {
-		ddl += schemaV6
-	}
-	if version >= 7 {
-		ddl += schemaV7
-	}
-	if version >= 8 {
-		ddl += schemaV8
-	}
-	if version >= 9 {
-		ddl += schemaV9
-	}
-	if version >= 10 {
-		ddl += schemaV10
-	}
-	if version >= 11 {
-		ddl += schemaV11
-	}
-	if version >= 12 {
-		ddl += schemaV12
-	}
-	if version >= 13 {
-		ddl += schemaV13
-	}
-	if version >= 14 {
-		ddl += schemaV14
-	}
-	if version >= 15 {
-		ddl += schemaV15
-	}
-	if version >= 16 {
-		ddl += schemaV16
-	}
-	if version >= 17 {
-		ddl += schemaV17
-	}
-	if version >= 18 {
-		ddl += schemaV18
-	}
-	if version >= 19 {
-		ddl += schemaV19
-	}
-	if version >= 20 {
-		ddl += schemaV20
-	}
-	if version >= 21 {
-		ddl += schemaV21
-	}
-	if version >= 22 {
-		ddl += schemaV22
-	}
-	if version >= 23 {
-		ddl += schemaV23
-	}
-	if version >= 24 {
-		ddl += schemaV24
-	}
+	ddl := strings.Join(legacySchemas[:version], "")
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("build v%d schema: %v", version, err)
 	}
@@ -230,7 +163,7 @@ func TestFailedMigrationRollsBackAndLeavesUserVersionUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(schemaV1); err != nil {
+	if _, err := db.Exec(legacySchemas[0]); err != nil {
 		t.Fatal(err)
 	}
 	// Sabotage the v1->v2 step: pre-create the column schemaV2's ALTER TABLE is about to add,

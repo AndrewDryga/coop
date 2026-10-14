@@ -1043,19 +1043,25 @@ func TestForkLifecycleLockBlocksClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed := make(chan error, 1)
-	go func() { claimed <- claimForkPid(repo, "perf") }()
+	var release sync.Once
+	unlockOnce := func() { release.Do(unlock) }
+	claimed := make(chan forkCommandResult, 1)
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		unlockOnce()
+		select {
+		case <-done:
+		case <-time.After(wait.Deadline):
+			t.Error("claim cleanup did not finish")
+		}
+	})
+	go func() { defer close(done); claimed <- forkCommandResult{err: claimForkPid(repo, "perf")} }()
+	waitForLockWaiter(t, claimed)
+	unlockOnce()
 	select {
-	case err := <-claimed:
-		unlock()
-		t.Fatalf("claim returned before lifecycle unlock: %v", err)
-	case <-time.After(80 * time.Millisecond):
-	}
-	unlock()
-	select {
-	case err := <-claimed:
-		if err != nil {
-			t.Fatalf("claim after lifecycle unlock: %v", err)
+	case result := <-claimed:
+		if result.err != nil {
+			t.Fatalf("claim after lifecycle unlock: %v", result.err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("claim remained blocked after lifecycle unlock")

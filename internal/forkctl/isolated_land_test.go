@@ -204,7 +204,27 @@ func TestIsolatedReviewKeepsCanonicalAgentNotes(t *testing.T) {
 	if !ok {
 		t.Fatal("fixture projection missing")
 	}
-	writeTaskFile(t, filepath.Join(item.Dir, "log.md"), "Exact canonical review note\n")
+	var lines []string
+	for i := 1; i <= 14; i++ {
+		lines = append(lines, fmt.Sprintf("Exact canonical review note%02d", i))
+	}
+	writeTaskFile(t, filepath.Join(item.Dir, "log.md"), strings.Join(lines, "\n")+"\n")
+	for _, dir := range []string{
+		filepath.Join(ws, tasks.TasksRoot, tasks.StateDone, "copied"),
+		filepath.Join(repo, tasks.TasksRoot, tasks.StateDone, "foreign"),
+		filepath.Join(owner.Projection, tasks.StateDone, "foreign"),
+		filepath.Join(owner.Projection, tasks.StateTodo, "template"),
+	} {
+		path := filepath.Join(dir, "log.md")
+		writeTaskFile(t, path, "FOREIGN NEWER NOTES\n")
+		future := time.Now().Add(time.Hour)
+		if err := os.Chtimes(path, future, future); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := tasks.LatestForkTaskLog(repo, identity.Name, 12); err != nil || got != strings.Join(lines[2:], "\n") {
+		t.Fatalf("review notes suffix=%q, %v", got, err)
+	}
 	out := captureStdout(t, func() {
 		code, err := c.forkReviewIsolated(repo, ws, identity.Name, identity, true, false, false, false)
 		if err != nil || code != 0 {
@@ -213,6 +233,23 @@ func TestIsolatedReviewKeepsCanonicalAgentNotes(t *testing.T) {
 	})
 	if !strings.Contains(out, "Exact canonical review note") || !strings.Contains(out, "Into: main") {
 		t.Fatal("review lost original authority/target", out)
+	}
+	if strings.Contains(out, "FOREIGN") || strings.Contains(out, "note01") || strings.Contains(out, "note02") || !strings.Contains(out, "note14") {
+		t.Fatal("review chose copied/foreign/template notes or lost its suffix", out)
+	}
+	emptyRepo, emptyWS, emptyIdentity, emptyControl := isolatedTestFork(t)
+	writeTaskFile(t, filepath.Join(emptyWS, tasks.TasksRoot, tasks.StateDone, "copied", "log.md"), "FOREIGN NEWER NOTES\n")
+	if got, err := tasks.LatestForkTaskLog(emptyRepo, emptyIdentity.Name, 12); err != nil || got != "" {
+		t.Fatalf("unreviewed notes=%q %v", got, err)
+	}
+	out = captureStdout(t, func() {
+		code, err := emptyControl.forkReviewIsolated(emptyRepo, emptyWS, emptyIdentity.Name, emptyIdentity, true, false, false, false)
+		if err != nil || code != 0 {
+			t.Fatalf("empty review: %d %v", code, err)
+		}
+	})
+	if strings.Contains(out, "FOREIGN") {
+		t.Fatal("unassigned copied notes reached review", out)
 	}
 }
 

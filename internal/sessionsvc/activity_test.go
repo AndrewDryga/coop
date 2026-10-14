@@ -211,14 +211,35 @@ func TestProgressPrecedesFollowingToolCompletionAndPermission(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			seen := false
+			var progress, following []session.Event
 			for _, event := range events {
 				if event.Type == session.EventModelProgress {
-					seen = true
+					progress = append(progress, event)
 				}
-				if (event.Type == session.EventToolCompleted || event.Type == session.EventPermission) && !seen {
-					t.Fatal("later event overtook public progress")
+				if event.Type == session.EventToolCompleted || event.Type == session.EventPermission {
+					following = append(following, event)
 				}
+			}
+			if len(progress) != 1 || len(following) != 1 {
+				t.Fatalf("want one progress and one following event, got %+v", events)
+			}
+			first, last := progress[0], following[0]
+			if first.SessionID != sess.ID || last.SessionID != sess.ID || first.TurnID != "turn-progress" || last.TurnID != "turn-progress" || first.Sequence >= last.Sequence {
+				t.Fatalf("event identity/order lost: %+v then %+v", first, last)
+			}
+			if payload := activityPayload(t, first); payload["text"] != "Checking the result." {
+				t.Fatalf("progress=%v", payload)
+			}
+			payload := activityPayload(t, last)
+			if payload["tool_call_id"] != "t1" {
+				t.Fatalf("following tool=%v", payload)
+			}
+			if next == "completion" {
+				if last.Type != session.EventToolCompleted || payload["status"] != "completed" {
+					t.Fatalf("completion=%v", payload)
+				}
+			} else if last.Type != session.EventPermission || payload["outcome"] != "selected" || payload["option_id"] != "allow" || payload["option_kind"] != "allow_once" {
+				t.Fatalf("permission=%v", payload)
 			}
 		})
 	}

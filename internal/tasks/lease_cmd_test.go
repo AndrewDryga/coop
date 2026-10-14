@@ -352,7 +352,7 @@ func TestCmdTasksFolderLeaseDispatch(t *testing.T) {
 	if !slices.Contains(TasksVerbs, "lease") {
 		t.Error("lease must be a recognized tasks verb")
 	}
-	if code, err := CmdTasksFolder("", root, []string{"lease", "dispatch", "--pid", "999999999"}); code != 1 || err == nil || !errors.Is(err, err) {
+	if code, err := CmdTasksFolder("", root, []string{"lease", "dispatch", "--pid", "999999999"}); code != 1 || err == nil || err.Error() != "coop tasks lease: no live process with a readable identity at pid 999999999 — it is not running, or its identity cannot be read" {
 		t.Fatalf("lease bound to a missing process = %d, %v; want a refusal", code, err)
 	}
 	if _, err := os.Stat(filepath.Join(root, StateInProgress, "dispatch")); err != nil {

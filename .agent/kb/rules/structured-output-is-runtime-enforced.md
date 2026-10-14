@@ -3,8 +3,8 @@ name: structured-output-is-runtime-enforced
 description: "a structured-output schema is durable execution control, validated before completion, never prompt-only advice"
 scope: architecture
 sources: [internal/session/output_contract.go, internal/session/store.go, internal/session/operation_result.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/sessionsvc/http.go, docs/session-api.md]
-check: "go test ./internal/sessionsvc -run 'TestStructuredResponsesDoNotRequireRedundantModelToolValidation|TestCompactTurnResultOmitsCandidateAfterValidation|TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes|TestRepeatedInvalidStructuredResultNeverCompletes|TestSchemaValidSemanticResultWaitsForCallerAcceptance|TestRejectedSemanticResultRepromptsTheSameNativeTurn|TestSchemaRepairDoesNotSpendASemanticCandidateAttempt|TestSessionTurnRunnerPublishesSemanticCandidateWhenCleanupFails|TestSessionServiceStartupReapsAwaitingValidationRuntimeWithoutChangingCandidate|TestSessionServiceCandidateDecisionsReapRuntimeBeforeTransition|TestSessionServiceAwaitingCancelRequiresFreshKeyAfterCleanupFailure|TestSessionServiceDoesNotRestartRejectedCandidateWhenRuntimeReapFails'"
-updated: 2026-09-05
+check: "go test ./internal/sessionsvc -run 'TestStructuredResponsesDoNotRequireRedundantModelToolValidation|TestPublicTurnHidesHistoricalCandidateAfterValidation|TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes|TestRepeatedInvalidStructuredResultNeverCompletes|TestSchemaValidSemanticResultWaitsForCallerAcceptance|TestRejectedSemanticResultRepromptsTheSameNativeTurn|TestSchemaRepairDoesNotSpendASemanticCandidateAttempt|TestSessionTurnRunnerPublishesSemanticCandidateWhenCleanupFails|TestSessionServiceStartupReapsAwaitingValidationRuntimeWithoutChangingCandidate|TestSessionServiceCandidateDecisionsReapRuntimeBeforeTransition|TestSessionServiceAwaitingCancelRequiresFreshKeyAfterCleanupFailure|TestSessionServiceDoesNotRestartRejectedCandidateWhenRuntimeReapFails'"
+updated: 2026-10-14
 ---
 
 # Enforce structured output at the runtime completion boundary
@@ -41,6 +41,9 @@ receipt only after exact runtime cleanup succeeds; reject and cancel use the sam
 durable transition never erases the last cleanup signal.
 
 ## Changelog
+- 2026-10-14 — retired a copied receipt-filter test after the session-owned encoder/replay
+  keeper failed a real filter mutation and passed restoration. This rule's service check
+  retains the separate historical public-DTO filter; storage and HTTP owners remain intact.
 - 2026-09-05 — narrowed schema advice to preserve mandatory caller tools and retained first
   start across semantic repair after a live run mislabeled 26 seconds as queue time.
 - 2026-09-05 — removed mandatory file/jv instructions from both ACP prompt builders after a

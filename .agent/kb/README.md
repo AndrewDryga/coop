@@ -82,6 +82,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [trusted-git-view](trusted-git-view.md) — host git runs under a coop-owned GIT_DIR view with an allowlisted config, so repository-defined filter/textconv/merge drivers never execute; ref-store writes stay on the real git dir
 - [isolated-fork-publication](isolated-fork-publication.md) — optional independent execution, exact private review, semantic parent preconditions and durable forward-only publication
 - [test-fixture-guards-vs-timing-bounds](test-fixture-guards-vs-timing-bounds.md) — a wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight bound is only for timing that IS the behavior, and attributes its phases
+- [session-migration-fixtures](session-migration-fixtures.md) — frozen historical DDL and rows stay independent of current migrations; fixture clocks and IDs are private store state
 - [secret-shadow-walk](secret-shadow-walk.md) — every launch walks the whole checkout, gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs
 - [repository-source-copies](repository-source-copies.md) — skills and fallback copies retain rooted content authority and validate links only after relocation; a lead's own agents are copied without following any link
 - [credentials-expired-is-a-false-alarm](credentials-expired-is-a-false-alarm.md) — refreshable OAuth stays signed in; re-login required means the stored login cannot recover

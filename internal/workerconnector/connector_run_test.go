@@ -14,6 +14,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
@@ -559,7 +560,7 @@ func TestEventStreamScanDeadlinePreservesRotation(t *testing.T) {
 	})
 }
 
-func TestConnectorRunRetriesTransportFailureWithoutDroppingCustody(t *testing.T) {
+func TestConnectorRunRetriesTransportFailure(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	api := &fakeAPI{}
 	executor, err := NewExecutor(ExecutorConfig{API: api, JournalDir: t.TempDir(), Now: time.Now, WorkerID: "worker-a"})
@@ -577,22 +578,36 @@ func TestConnectorRunRetriesTransportFailureWithoutDroppingCustody(t *testing.T)
 	ctx, cancel := context.WithCancel(context.Background())
 	errorsSeen := make(chan error, 1)
 	done := make(chan error, 1)
-	go func() { done <- connector.Run(ctx, time.Millisecond, func(err error) { errorsSeen <- err }) }()
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		done <- connector.Run(ctx, time.Millisecond, func(err error) { errorsSeen <- err })
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-stopped:
+		case <-time.After(wait.Deadline):
+			t.Error("connector retry fixture did not drain")
+		}
+	})
 	select {
 	case err := <-errorsSeen:
 		if err == nil {
 			t.Fatal("nil transport error")
 		}
-	case <-time.After(time.Second):
+	case <-time.After(wait.Deadline):
 		t.Fatal("transport error was not reported")
 	}
-	deadline := time.Now().Add(time.Second)
-	for transport.calls.Load() < 2 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
+	wait.For(t, "healthy poll after transport failure", func() bool { return transport.calls.Load() >= 2 })
 	cancel()
-	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatalf("run = %v", err)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run = %v", err)
+		}
+	case <-time.After(wait.Deadline):
+		t.Fatal("connector did not stop after cancellation")
 	}
 	if transport.calls.Load() < 2 {
 		t.Fatalf("poll calls = %d", transport.calls.Load())

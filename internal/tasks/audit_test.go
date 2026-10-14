@@ -3269,6 +3269,8 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 	// to be closed, so a forged extra commit corrupts that closed record without needing to move its
 	// folder. (TestProviderScriptedLoopReviewProcess/worker_cannot_forge_review_authority_for_an_
 	// archived_task exercises this exact scenario end to end, through the real internal/loop wiring.)
+	// Reopening that archived folder supplies the same touched identity via departures();
+	// it is not a separate unbindableTasks input or a reason to duplicate this row.
 	t.Run("adversarial: forged trailer for an archived task, never touched, still rejects", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
@@ -3281,27 +3283,6 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
 		if !slices.Equal(missing, []string{"task-42"}) {
 			t.Fatalf("forged archived-task binding was not rejected: missing=%v", missing)
-		}
-		if len(tolerated) != 0 {
-			t.Fatalf("a rejected completion must not also report tolerated ids: %v", tolerated)
-		}
-	})
-
-	// adversarial: forged trailer for an archived task the box ALSO reopens (moves out of 99_done)
-	// this iteration — an independent, second reason the same id ends up touched
-	// (windows.departures()), on top of baselineDoneIDs above.
-	t.Run("adversarial: forged trailer for an archived task this iteration also reopened still rejects", func(t *testing.T) {
-		repo, git := gitRepo(t)
-		git("commit", "-q", "--allow-empty", "-m", "base")
-		base := gitOut(repo, "rev-parse", "HEAD")
-		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
-		git("commit", "-q", "--allow-empty", "-m", "touch the archived task too\n\nCoop-Task: archived-task")
-		head := gitOut(repo, "rev-parse", "HEAD")
-
-		touched := map[string]bool{"task-42": true, "archived-task": true}
-		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
-		if !slices.Equal(missing, []string{"task-42"}) {
-			t.Fatalf("widened authority over archived-task was not rejected: missing=%v", missing)
 		}
 		if len(tolerated) != 0 {
 			t.Fatalf("a rejected completion must not also report tolerated ids: %v", tolerated)

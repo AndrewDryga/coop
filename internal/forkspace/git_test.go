@@ -46,6 +46,7 @@ func TestWantsSigning(t *testing.T) {
 		t.Error("WantsSigning = true with commit.gpgsign unset, want false")
 	}
 	gitIn(t, repo, "config", "commit.gpgsign", "true") // repo-local: must NOT turn signing on
+	t.Chdir(repo)
 	if WantsSigning() {
 		t.Error("WantsSigning = true from a repo-local commit.gpgsign, want false (global only)")
 	}
@@ -69,6 +70,7 @@ func TestTrustedSignArgs(t *testing.T) {
 		gitIn(t, repo, "config", "--global", "commit.gpgsign", "true")
 		gitIn(t, repo, "config", "--global", "user.signingkey", "ABCD1234")
 		gitIn(t, repo, "config", "gpg.program", "/tmp/evil") // repo-local: must be ignored
+		t.Chdir(repo)
 		want := []string{
 			"-c", "commit.gpgsign=true",
 			"-c", "user.signingkey=",
@@ -86,6 +88,8 @@ func TestTrustedSignArgs(t *testing.T) {
 		gitIn(t, repo, "config", "--global", "commit.gpgsign", "true")
 		gitIn(t, repo, "config", "--global", "gpg.format", "ssh")
 		gitIn(t, repo, "config", "--global", "user.signingkey", "/k.pub")
+		gitIn(t, repo, "config", "gpg.ssh.program", "/tmp/evil")
+		t.Chdir(repo)
 		want := []string{
 			"-c", "commit.gpgsign=true",
 			"-c", "user.signingkey=",
@@ -103,6 +107,8 @@ func TestTrustedSignArgs(t *testing.T) {
 		repo := initRepo(t)
 		gitIn(t, repo, "config", "--global", "gpg.format", "ssh")
 		gitIn(t, repo, "config", "--global", "gpg.ssh.defaultKeyCommand", "trusted-key-command")
+		gitIn(t, repo, "config", "gpg.ssh.defaultKeyCommand", "untrusted-local-command")
+		t.Chdir(repo)
 		want := []string{
 			"-c", "commit.gpgsign=true",
 			"-c", "user.signingkey=",

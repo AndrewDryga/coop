@@ -130,27 +130,59 @@ func TestRuntimeCapacityWaitDoesNotLeaseOrSpendTurnTimeout(t *testing.T) {
 	})
 }
 
+type capacityWaitContext struct {
+	context.Context
+	once    sync.Once
+	waiting chan struct{}
+}
+
+func (c *capacityWaitContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
+}
+
 func TestRuntimeCapacityWaitIsCancellableAndDoesNotHoldSessionLock(t *testing.T) {
 	s := &Service{runtimeLocks: make(map[string]*sessionOperationLock)}
 	for i := range sessionRuntimeSlots {
 		s.reserveRuntimeSlot(fmt.Sprint(i))
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
+	witness := &capacityWaitContext{Context: ctx, waiting: make(chan struct{})}
+	done := make(chan struct{})
+	var waitErr error
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("capacity waiter cleanup did not finish")
+		}
+	})
 	go func() {
-		unlock, err := s.lockRuntimeCapacity(ctx, "waiting", nil)
+		defer close(done)
+		unlock, err := s.lockRuntimeCapacity(witness, "waiting", nil)
 		if unlock != nil {
 			unlock()
 		}
-		done <- err
+		waitErr = err
 	}()
-	unlocked := s.lockSessionRuntime("waiting")
+	select {
+	case <-witness.waiting:
+	case <-done:
+		t.Fatalf("waiter returned before observing capacity wait: %v", waitErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter never reached capacity select")
+	}
+	unlocked, ok := s.tryLockSessionRuntime("waiting")
+	if !ok {
+		t.Fatal("capacity waiter holds the session lock")
+	}
 	unlocked()
 	cancel()
 	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("capacity cancellation=%v", err)
+	case <-done:
+		if !errors.Is(waitErr, context.Canceled) {
+			t.Fatalf("capacity cancellation=%v", waitErr)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("capacity wait ignored cancellation")

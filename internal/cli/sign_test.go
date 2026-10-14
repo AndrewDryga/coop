@@ -367,6 +367,7 @@ func TestSignUnpushedIgnoresLocalSSHDefaultKeyCommand(t *testing.T) {
 	run("commit", "-q", "--allow-empty", "-m", "unsigned")
 	marker := filepath.Join(t.TempDir(), "local-key-command-ran")
 	run("config", "gpg.ssh.defaultKeyCommand", "touch "+marker)
+	t.Chdir(repo)
 
 	a := &app{cfg: &config.Config{}}
 	if _, err := a.signUnpushed(repo, base); err == nil {

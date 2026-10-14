@@ -118,12 +118,24 @@ func TestOpenProtectsRootDatabaseAndRejectsUnsafeRoots(t *testing.T) {
 	}
 }
 
+// Separate open descriptions must conflict on one root, never on another;
+// Close releases that kernel authority even when called twice.
 func TestOpenExclusivelyOwnsStateRootLockAndReopensAfterClose(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
+	t.Cleanup(func() { _ = store.Close() })
 	assertMode(t, filepath.Join(root, lockName), 0o600)
-	if _, err := Open(root); err == nil || !strings.Contains(err.Error(), "another session daemon owns this state root") {
+	second, err := Open(root)
+	if second != nil {
+		t.Cleanup(func() { _ = second.Close() })
+	}
+	if err == nil || !strings.Contains(err.Error(), "another session daemon owns this state root") {
 		t.Fatalf("second state-root open error = %v", err)
+	}
+	other := openTestStore(t, t.TempDir())
+	t.Cleanup(func() { _ = other.Close() })
+	if err := other.Close(); err != nil {
+		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -132,6 +144,7 @@ func TestOpenExclusivelyOwnsStateRootLockAndReopensAfterClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	reopened := openTestStore(t, root)
+	t.Cleanup(func() { _ = reopened.Close() })
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -2188,15 +2201,12 @@ func containsEvent(events []Event, want EventType) bool {
 func openTestStore(t *testing.T, root string) *Store {
 	t.Helper()
 	clock := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
-	store, err := Open(root,
-		WithClock(func() time.Time { return clock }),
-		WithIDGenerator(func(prefix string) string {
-			return fmt.Sprintf("%s-%03d", prefix, testIDCounter.Add(1))
-		}),
-	)
+	store, err := Open(root)
 	if err != nil {
 		t.Fatal(err)
 	}
+	store.clock = func() time.Time { return clock }
+	store.id = func(prefix string) string { return fmt.Sprintf("%s-%03d", prefix, testIDCounter.Add(1)) }
 	return store
 }
 

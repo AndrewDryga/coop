@@ -169,13 +169,23 @@ func TestRepositoryFetchRemainsCancellableAtItsOwnDeadline(t *testing.T) {
 		t.Fatalf("cancelled fetch = %v", err)
 	}
 	cmd := sourceGitCommand(context.Background(), repository, "https", "fetch")
-	for _, setting := range []string{
-		"GIT_CONFIG_KEY_1=http.lowSpeedLimit", "GIT_CONFIG_VALUE_1=1",
-		"GIT_CONFIG_KEY_2=http.lowSpeedTime", "GIT_CONFIG_VALUE_2=120",
-	} {
-		if !slices.Contains(cmd.Env, setting) {
-			t.Fatal("transfer lacks its HTTP stall bound:", setting)
+	env := map[string]string{}
+	for _, item := range cmd.Env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			env[key] = value
 		}
+	}
+	count, err := strconv.Atoi(env["GIT_CONFIG_COUNT"])
+	if err != nil {
+		t.Fatal("Git config count:", err)
+	}
+	settings := map[string]string{}
+	for i := 0; i < count; i++ {
+		settings[env["GIT_CONFIG_KEY_"+strconv.Itoa(i)]] = env["GIT_CONFIG_VALUE_"+strconv.Itoa(i)]
+	}
+	if settings["http.lowSpeedLimit"] != "1" || settings["http.lowSpeedTime"] != "120" {
+		t.Fatalf("HTTP transfer stall settings = %v", settings)
 	}
 }
 

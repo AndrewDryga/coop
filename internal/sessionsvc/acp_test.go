@@ -1630,7 +1630,14 @@ func TestSessionTurnRunnerRotatesOnlyOnAProvenRateLimit(t *testing.T) {
 			fixture.signIn(t, "codex", "backup")
 			leased := fixture.submit(t, "investigate")
 			ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
-			_, _ = fixture.runner.Run(ctx, fixture.session, leased)
+			result, runErr := fixture.runner.Run(ctx, fixture.session, leased)
+			if scenario == "limit-prose" {
+				if runErr != nil || result.State != session.TurnCompleted || result.AssistantMessage != "the runbook says: Claude AI usage limit reached|2000000000" {
+					t.Fatalf("prose did not complete normally: %+v, %v", result, runErr)
+				}
+			} else if runErr == nil || !strings.Contains(runErr.Error(), "ACP request was rejected") || !strings.Contains(runErr.Error(), "initialize failed") {
+				t.Fatalf("rejected initialize changed failure: %+v, %v", result, runErr)
+			}
 			bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
 			if err != nil {
 				t.Fatal(err)

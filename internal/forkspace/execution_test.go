@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -140,7 +142,20 @@ func TestForkExecutionReservationSerializesMutationAndWarmDoesNotCountActive(t *
 	}
 	result := make(chan error, 1)
 	var record ExecutionRecord
+	var release sync.Once
+	unlockOnce := func() { release.Do(unlock) }
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		unlockOnce()
+		select {
+		case <-done:
+			_ = EndExecution(repo, record)
+		case <-time.After(5 * time.Second):
+			t.Error("execution publisher cleanup did not finish")
+		}
+	})
 	go func() {
+		defer close(done)
 		var beginErr error
 		record, beginErr = BeginExecution(repo, ExecutionSpec{
 			Kind: ExecutionForkACP, Role: ExecutionRoleWarm,
@@ -148,16 +163,41 @@ func TestForkExecutionReservationSerializesMutationAndWarmDoesNotCountActive(t *
 		})
 		result <- beginErr
 	}()
+	deadline := time.NewTimer(60 * time.Second)
+	defer deadline.Stop()
+	for {
+		buf := make([]byte, 1<<20)
+		stacks := string(buf[:runtime.Stack(buf, true)])
+		blocked := false
+		for _, stack := range strings.Split(stacks, "\n\n") {
+			if strings.Contains(stack, "internal/forkspace.BeginExecution") && strings.Contains(stack, "internal/forkspace.LockStateContext") {
+				blocked = true
+				break
+			}
+		}
+		select {
+		case err := <-result:
+			t.Fatalf("activity publication ignored lifecycle lock: %v", err)
+		default:
+		}
+		if blocked {
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("execution publisher never entered the held lifecycle lock")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	unlockOnce()
 	select {
 	case err := <-result:
-		t.Fatalf("activity publication ignored lifecycle lock: %v", err)
-	default:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("execution publisher did not finish after unlock")
 	}
-	unlock()
-	if err := <-result; err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = EndExecution(repo, record) })
 	observations, problems := Executions(repo)
 	if len(problems) != 0 || len(observations) != 1 || observations[0].Active || !observations[0].Running {
 		t.Fatalf("warm execution = %+v, problems=%v", observations, problems)

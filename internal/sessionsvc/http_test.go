@@ -151,25 +151,35 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	service, repo := newHTTPTestSessionService(t)
 	defer service.Stop()
 	handler := NewHTTPHandler(service.Service)
+	validBody := service.body(t, "strict-control")
+	control := sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", validBody, "strict-control", "application/json")
+	if control.Code != http.StatusOK {
+		t.Fatalf("valid body rejected: %d %s", control.Code, control.Body.String())
+	}
 
 	response := sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", service.body(t, "task"), "", "application/json")
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
 		t.Fatalf("missing idempotency response = %d %s", response.Code, response.Body.String())
 	}
-	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"task","extra":true}`, "create-unknown", "application/json")
-	if response.Code != http.StatusBadRequest {
+	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", strings.TrimSuffix(validBody, "}")+`,"extra":true}`, "create-unknown", "application/json")
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) || !strings.Contains(response.Body.String(), "request body is invalid JSON") {
 		t.Fatalf("unknown body field status = %d body=%s", response.Code, response.Body.String())
 	}
-	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder"}`, "create-content", "text/plain")
-	if response.Code != http.StatusBadRequest {
+	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", validBody, "create-content", "text/plain")
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) || !strings.Contains(response.Body.String(), "Content-Type must be application/json") {
 		t.Fatalf("content type status = %d body=%s", response.Code, response.Body.String())
 	}
-	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"task"} {}`, "create-two", "application/json")
-	if response.Code != http.StatusBadRequest {
+	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", validBody+" {}", "create-two", "application/json")
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) || !strings.Contains(response.Body.String(), "request body must contain exactly one JSON value") {
 		t.Fatalf("multiple values status = %d body=%s", response.Code, response.Body.String())
 	}
-	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", strings.Repeat("x", sessionHTTPMaxBody+1), "create-large", "application/json")
-	if response.Code != http.StatusRequestEntityTooLarge {
+	padded := validBody + strings.Repeat(" ", sessionHTTPMaxBody-len(validBody))
+	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", padded, "strict-control", "application/json")
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid exact-limit body rejected: %d %s", response.Code, response.Body.String())
+	}
+	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", padded+" ", "create-large", "application/json")
+	if response.Code != http.StatusRequestEntityTooLarge || !strings.Contains(response.Body.String(), `"code":"request_too_large"`) || !strings.Contains(response.Body.String(), "request body exceeds 131072 bytes") {
 		t.Fatalf("oversize status = %d body=%s", response.Code, response.Body.String())
 	}
 	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions?unexpected=true", service.body(t, "task"), "create-query", "application/json")

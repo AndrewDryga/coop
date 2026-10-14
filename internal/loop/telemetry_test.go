@@ -236,7 +236,23 @@ func TestRunTelemetryReadersRejectUnsafeFiles(t *testing.T) {
 			case "fifo":
 				err = syscall.Mkfifo(target, 0o600)
 			case "oversized":
-				err = os.WriteFile(target, make([]byte, maxRunTelemetryBytes+1), 0o600)
+				const recordedLimit = 8 << 20
+				row := []byte(`{"run":"unsafe","stage":"work","cost_usd":99}` + "\n")
+				padding := strings.Repeat(" \n", (recordedLimit-len(row))/2)
+				if len(row)+len(padding) < recordedLimit {
+					padding += " "
+				}
+				body := append(row, padding...)
+				if err := os.WriteFile(target, body, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if records := readStageRecords(repo, "unsafe"); len(records) != 1 || records[0].CostUSD != 99 {
+					t.Fatalf("valid exact-limit telemetry refused: %#v", records)
+				}
+				if got := costForRepo(repo); got.total.usd != 99 {
+					t.Fatalf("valid exact-limit telemetry cost=%+v", got)
+				}
+				err = os.WriteFile(target, append(body, '\n'), 0o600)
 			}
 			if err != nil {
 				t.Fatal(err)

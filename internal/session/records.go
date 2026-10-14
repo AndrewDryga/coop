@@ -873,27 +873,9 @@ type AppendEventRequest struct {
 	Payload   []byte
 }
 
-type Option func(*options)
-
 type options struct {
 	clock func() time.Time
 	id    func(string) string
-}
-
-func WithClock(clock func() time.Time) Option {
-	return func(o *options) {
-		if clock != nil {
-			o.clock = clock
-		}
-	}
-}
-
-func WithIDGenerator(id func(string) string) Option {
-	return func(o *options) {
-		if id != nil {
-			o.id = id
-		}
-	}
 }
 
 func CanonicalRequestHash(request any) (string, error) {

@@ -27,8 +27,6 @@ const (
 	stateDone = tasks.StateDone
 )
 
-var latestTaskLog = tasks.LatestTaskLog
-
 func mustCurrentTask(t testing.TB, root, id string) (tasks.Item, bool) {
 	t.Helper()
 	item, ok, err := tasks.CurrentTask(root, id)
@@ -36,15 +34,6 @@ func mustCurrentTask(t testing.TB, root, id string) (tasks.Item, bool) {
 		t.Fatalf("CurrentTask(%q, %q): %v", root, id, err)
 	}
 	return item, ok
-}
-
-// lastLines returns the last n lines of s (trailing blank lines trimmed first).
-func lastLines(s string, n int) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }
 
 // git runs a git command in dir with a fixed committer identity, failing the test on a non-zero
