@@ -19,8 +19,9 @@
 #   cpus: "4"
 #   pids: 2048          # the fork-bomb cap (default 4096; 0/unlimited turns it off)
 
-# Go's module proxy, checksum database and vulnerability database, so an agent can build coop and
-# run the gate in the box (the toolchain comes from .agent/Dockerfile).
+# Go's module proxy (plus the storage host it redirects zips to), checksum database and
+# vulnerability database, so an agent can build coop and run the gate in the box (the toolchain
+# comes from .agent/Dockerfile).
 box:
   egress: filtered
   egress_rules:
@@ -31,6 +32,10 @@ box:
       protocol: tls
       ports: [443]
     - to: {domain: "vuln.go.dev"}
+      protocol: tls
+      ports: [443]
+    # proxy.golang.org redirects module zips here.
+    - to: {domain: "storage.googleapis.com"}
       protocol: tls
       ports: [443]
 
