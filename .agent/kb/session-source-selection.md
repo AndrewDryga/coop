@@ -3,7 +3,7 @@ name: session-source-selection
 description: controller jobs freeze exact source bindings; the worker verifies private staging and refreshes the default separately without changing the admitted checkout
 subsystem: sessions
 sources: [internal/workerproto/job.go, internal/box/image.go, internal/box/network_session.go, internal/workerconnector/job_sources.go, internal/forkspace/lfs.go, internal/forkctl/merge.go, internal/sessionsvc/job.go, internal/sessionsvc/job_resources.go, internal/sessionsvc/acp.go, internal/sessionsvc/job_tree.go, internal/sessionsvc/empty_source.go, internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/sessionsvc/review.go, internal/sessionsvc/workspace.go, internal/box/authority_mounts.go, internal/session/records.go]
-updated: 2026-09-30
+updated: 2026-10-14
 ---
 
 A create carries one canonical controller job and its digest, not a local policy name or a
@@ -12,6 +12,10 @@ default/selected/base commits, admitted tree, selector and resolved timestamp. T
 stages the source privately before forwarding create. The service derives its path from the
 source staging key and checks the exact source receipt, selected HEAD and tree; the controller
 cannot supply a worker filesystem path.
+
+A background staging publishes its copy before closing its completion signal. Stage collects
+that signal before reusing an existing copy: publication alone is not completion, and the retry
+must release the in-memory receipt on success as well as report a failure once.
 
 The worker fetches the complete Git object closure for the pinned refs, not a partial/promisor
 clone. Every recursive gitlink must exactly match the controller's repository-ID/path/commit/tree
@@ -77,6 +81,9 @@ fetch the selected commit. Neither a branch advance nor an idempotent create ret
 code. The API exposes source metadata through explicit DTO projection, never JobDocument.
 
 ## Changelog
+- 2026-10-14 — background success skipped receipt collection through the existing-copy fast path.
+  A real completed-download regression and a deterministic publication-window test cover the
+  reordered collection; integrity verification and retry-after-failure remain unchanged.
 - 2026-09-30 — traced the controller gate's missing-base failure to candidate preparation. The
   service now names its verified captured parent in the scratch; the real preparation regression
   fails without the ref write and preserves the frozen job authority path with it.

@@ -23,6 +23,7 @@
   three seconds in all. It is then tried again until its repositories are ready, every 15 seconds
   at most, while the worker runs every other command. A repository with submodules does too. Only a
   repository's first copy asks for its grant first, and its download then runs in the background.
+  Finished downloads release their bookkeeping before the worker reuses the copy.
 
 - **A branch that moved on no longer refuses its job.** A worker staged a job's repository only
   if the branch still pointed at the job's commit, so a create failed whenever the branch moved

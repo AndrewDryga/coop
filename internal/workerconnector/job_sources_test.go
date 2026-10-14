@@ -454,8 +454,23 @@ func TestABackgroundStagingAsksForItsGrantInTheBackground(t *testing.T) {
 		t.Fatalf("the try waited %s for a controller that had not answered", waited)
 	}
 	close(transport.slow)
+	key, _ := source.StagingKey()
+	stager.stagingsMu.Lock()
+	done := stager.stagings[filepath.Join(root, "job-sources", key)].done
+	stager.stagingsMu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(time.Minute):
+		t.Fatal("the background staging never finished")
+	}
 	if err := stageUntilSettled(t, stager, source); err != nil {
 		t.Fatalf("a later try = %v, want the staged copy", err)
+	}
+	stager.stagingsMu.Lock()
+	remaining := len(stager.stagings)
+	stager.stagingsMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("successful staging retained %d background receipts", remaining)
 	}
 }
 
@@ -549,6 +564,35 @@ func TestABackgroundStagingThatFailsSaysWhyOnceAndStartsOver(t *testing.T) {
 		t.Fatalf("the try after a failure = %v, want a new staging", err)
 	}
 	_ = stageUntilSettled(t, stager, source)
+}
+
+func TestStagingWaitsForPublishedBackgroundCompletion(t *testing.T) {
+	ctx := context.Background()
+	remote, source := backgroundStagingFixture(t)
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	stager := &privateJobSourceStager{transport: &jobSourceGrantFixture{}, stateRoot: root, remoteForTest: remote}
+	if err := stager.Stage(ctx, "job:one", source); err != nil {
+		t.Fatal(err)
+	}
+	// Publication precedes the goroutine's completion signal. Model that window without
+	// timing a retry against the download's final rename.
+	key, _ := source.StagingKey()
+	final := filepath.Join(root, "job-sources", key)
+	done := make(chan struct{})
+	stager.stagings = map[string]*firstDownload{final: {done: done}}
+	if err := stager.Stage(ctx, "job:one", source); !errors.Is(err, errJobSourceDownloading) {
+		t.Fatalf("published but still staging = %v, want the create held", err)
+	}
+	close(done)
+	if err := stager.Stage(ctx, "job:one", source); err != nil {
+		t.Fatalf("completed staging = %v", err)
+	}
+	if len(stager.stagings) != 0 {
+		t.Fatal("completed staging retained its background receipt")
+	}
 }
 
 func backgroundStagingFixture(t *testing.T) (string, workerproto.JobSource) {

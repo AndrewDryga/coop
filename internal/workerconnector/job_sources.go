@@ -211,6 +211,11 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 		return err
 	}
 	final := filepath.Join(parent, key)
+	if running, err := s.stagedInBackground(final); running {
+		return errJobSourceDownloading
+	} else if err != nil {
+		return err
+	}
 	if _, err := os.Lstat(final); err == nil {
 		// A copy this create reuses is marked used first, so the worker's cleanup of copies no
 		// session needs (sessionsvc.pruneJobSources) leaves it to the session about to fork it.
@@ -223,11 +228,6 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 		}
 		return configureSourceGitIdentity(ctx, filepath.Join(final, "repository"))
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if running, err := s.stagedInBackground(final); running {
-		return errJobSourceDownloading
-	} else if err != nil {
 		return err
 	}
 	seed := previousStagedRepository(parent, key, source.RepositoryIdentity())
