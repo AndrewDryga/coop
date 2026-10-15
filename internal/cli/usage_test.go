@@ -46,10 +46,44 @@ func TestUsageSignalCancelsLookup(t *testing.T) {
 		}
 		return
 	}
+	interruptUsageHelper(t, "TestUsageSignalCancelsLookup", "COOP_USAGE_SIGNAL_HELPER=1")
+}
+
+func TestUsageInterruptedCheckKeepsCache(t *testing.T) {
+	if boxHome := os.Getenv("COOP_USAGE_INTERRUPT_BOX_HOME"); boxHome != "" {
+		t.Setenv("HOME", t.TempDir())
+		for _, key := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "GROK_HOME"} {
+			t.Setenv(key, "")
+		}
+		t.Setenv("NO_COLOR", "1")
+		cfg := &config.Config{ConfigDir: t.TempDir(), BoxHome: boxHome}
+		files := nativeauth.Files(t, "claude", "work")
+		files[".credentials.json"] = []byte(strings.Replace(string(files[".credentials.json"]), "account:read", "user:profile", 1))
+		importNativeFixture(t, cfg, "claude", "work", files)
+		http.DefaultTransport = usageBlockingQuotaTransport{}
+		if _, err := (&app{cfg: cfg}).cmdUsage(nil); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	boxHome := t.TempDir()
+	// The cache of a root no check reads any more; only a finished full check may remove it.
+	retired := filepath.Join(boxHome, "usage-cache", strings.Repeat("0", 64))
+	usageFixtureFile(t, filepath.Join(retired, strings.Repeat("1", 64)+".json"), "{}")
+	interruptUsageHelper(t, "TestUsageInterruptedCheckKeepsCache", "COOP_USAGE_INTERRUPT_BOX_HOME="+boxHome)
+	if _, err := os.Stat(retired); err != nil {
+		t.Fatalf("an interrupted check pruned the cache: %v", err)
+	}
+}
+
+// interruptUsageHelper reruns test as a helper process and interrupts it once a quota lookup is in
+// flight. The command must cancel the lookup and exit cleanly instead of being killed.
+func interruptUsageHelper(t *testing.T, test string, env ...string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestUsageSignalCancelsLookup$")
-	cmd.Env = append(os.Environ(), "COOP_USAGE_SIGNAL_HELPER=1")
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+test+"$")
+	cmd.Env = append(os.Environ(), env...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

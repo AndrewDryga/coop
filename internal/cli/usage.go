@@ -78,6 +78,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	if a.cfg.BoxHome != "" {
 		cacheDir = filepath.Join(a.cfg.BoxHome, "usage-cache")
 	}
+	cache := agents.NewUsageCache(cacheDir)
 	now := time.Now()
 	var reports []agents.UsageReport
 	var reportErr error
@@ -139,7 +140,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 			}
 			ag, _ := agents.Get(row.provider)
 			for _, path := range row.paths {
-				history := agents.ReadUsageHistory(ctx, path, ag.Usage(), cacheDir)
+				history := agents.ReadUsageHistory(ctx, path, ag.Usage(), cache)
 				row.history.Events = append(row.history.Events, history.Events...)
 				row.history.Available = row.history.Available || history.Available
 				row.history.Partial = row.history.Partial || history.Partial || partial
@@ -172,6 +173,11 @@ func (a *app) cmdUsage(args []string) (int, error) {
 		}()
 	}
 	wg.Wait()
+	// Only an uninterrupted check of every provider whose root listing reported no failure can tell
+	// unused cache entries from live ones; to a narrower check, live entries look unused.
+	if target.Provider == "" && !partial && ctx.Err() == nil {
+		cache.Prune()
+	}
 	rows = deduplicateUsageCredentials(rows)
 	for i := range rows {
 		ag, _ := agents.Get(rows[i].provider)

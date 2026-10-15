@@ -78,19 +78,19 @@ func TestUsageHistoryScanExcludesChildrenAndLinks(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(profile, "sessions", "linked")); err != nil {
 		t.Fatal(err)
 	}
-	history := ReadUsageHistory(context.Background(), profile, (grokAgent{}).Usage(), cacheDir)
+	history := ReadUsageHistory(context.Background(), profile, (grokAgent{}).Usage(), NewUsageCache(cacheDir))
 	if len(history.Events) != 1 || !history.Available {
 		t.Fatalf("parent/child counted twice: %+v", history)
 	}
 	if err := os.Remove(filepath.Join(parent, "usage.json")); err != nil {
 		t.Fatal(err)
 	}
-	history = ReadUsageHistory(context.Background(), profile, (grokAgent{}).Usage(), cacheDir)
+	history = ReadUsageHistory(context.Background(), profile, (grokAgent{}).Usage(), NewUsageCache(cacheDir))
 	if len(history.Events) != 1 || !history.Available || !history.Partial {
 		t.Fatalf("orphaned child usage disappeared: %+v", history)
 	}
 	mustWriteSessionHistory(t, filepath.Join(parent, "usage.json"), data)
-	history = ReadUsageHistory(context.Background(), profile, (grokAgent{}).Usage(), cacheDir)
+	history = ReadUsageHistory(context.Background(), profile, (grokAgent{}).Usage(), NewUsageCache(cacheDir))
 	if len(history.Events) != 1 {
 		t.Fatalf("cached child was included after parent returned: %+v", history)
 	}

@@ -2,7 +2,7 @@
 name: usage-recorded-token-value
 description: Usage reports native quota and recorded token value independently; historical account ambiguity and missing tariffs stay explicit
 subsystem: usage
-sources: [internal/agent/usage.go, internal/agent/usage_cache.go, internal/agent/usage_report.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/native_selection.go, internal/box/native_home.go, internal/box/run.go, internal/cli/usage.go, internal/cli/usage_reports.go, internal/session/usage.go]
+sources: [internal/agent/usage.go, internal/agent/usage_report.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/native_selection.go, internal/box/native_home.go, internal/box/run.go, internal/cli/usage.go, internal/cli/usage_reports.go, internal/session/usage.go]
 updated: 2026-10-15
 ---
 
@@ -14,12 +14,7 @@ Quota and recorded value can fail independently; no percentage implies missing t
 `ReadUsageHistory` streams every declared history file and sees old records needed as cumulative
 baselines. It has no lifetime byte/entry budget; Claude/Codex bound individual JSONL records and
 skip oversized records without dropping later requests. Snapshot JSON retains a size bound.
-Private `BoxHome/usage-cache` entries retain normalized tokens and coverage flags per source,
-versioned by decoder schema and provider/root/file keys. Device/inode, size, mtime and ctime
-invalidate changed sources, including same-size rewrites with restored mtime. Only stable,
-uncancelled reads are saved atomically. Invalid/unwritable caches fall back to native parsing.
-Changed files are fully reparsed; unchanged files are not reopened. Prices, account attribution
-and the rolling window are not cached. Grok's dependent parent filter runs before cache reuse.
+Unchanged transcripts reuse cached token records; see [[usage-history-cache]].
 Quota/report timeouts never cancel a cold local history scan; signals still cancel both.
 `ValueUsageHistory` uses one rolling 30-day window and unrounded, request-ID-deduplicated values.
 Claude message revisions, Codex paired response/cumulative rows, Gemini updates/rewinds and Grok
@@ -91,6 +86,8 @@ discards ordinary quota. Only positive remaining grants contribute reported `end
 This is inspection only: no organization reset route, grant IDs, event properties or redemption.
 
 ## Changelog
+- 2026-10-15 — moved the cache facts to [[usage-history-cache]], which also covers the new
+  per-folder pruning; this card keeps a pointer.
 - 2026-10-15 — audit said the Gemini helper still mounts the pre-v11 profile; verified that only
   pre-cutover accounts reach it (box/usage.go, native_selection.go, native_home.go) and pinned
   the routing before and after cutover. Its hashed bundle module was hard-coded and unchecked

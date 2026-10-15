@@ -57,7 +57,7 @@ func TestUsageHistoryBeyondFormerByteLimits(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			history := ReadUsageHistory(context.Background(), profile, (claudeAgent{}).Usage(), "")
+			history := ReadUsageHistory(context.Background(), profile, (claudeAgent{}).Usage(), nil)
 			if len(history.Events) != tc.files || !history.Available || !history.Partial {
 				t.Fatalf("later requests lost: events=%d partial=%v available=%v", len(history.Events), history.Partial, history.Available)
 			}
@@ -74,7 +74,7 @@ func TestUsageHistoryCacheReuseAndInvalidation(t *testing.T) {
 	spec := countedUsageSpec(&calls)
 	read := func(expectedCalls, expectedEvents, expectedOutput int) UsageHistory {
 		t.Helper()
-		h := ReadUsageHistory(context.Background(), profile, spec, dir)
+		h := ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir))
 		var output int64
 		for _, e := range h.Events {
 			output += e.Output
@@ -149,11 +149,11 @@ func TestUsageHistoryCacheFailureAndPrivacy(t *testing.T) {
 			mustWriteSessionHistory(t, path, usageCacheFixture("r", 10))
 			calls := 0
 			spec := countedUsageSpec(&calls)
-			h := ReadUsageHistory(context.Background(), profile, spec, dir)
+			h := ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir))
 			if len(h.Events) != 1 || h.Partial {
 				t.Fatalf("initial read: %+v", h)
 			}
-			cache := openUsageCache(dir, profile, spec.HistoryCacheID)
+			cache := NewUsageCache(dir).open(profile, spec.HistoryCacheID)
 			if cache == nil {
 				t.Fatal("cache was not created")
 			}
@@ -220,7 +220,7 @@ func TestUsageHistoryCacheFailureAndPrivacy(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			h = ReadUsageHistory(context.Background(), profile, spec, dir)
+			h = ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir))
 			if calls != 2 || len(h.Events) != 1 || h.Partial {
 				t.Fatalf("cache failure lost native usage: calls=%d history=%+v", calls, h)
 			}
@@ -268,13 +268,13 @@ func TestUsageHistoryInterruptedReadsAreNotCached(t *testing.T) {
 				}
 				return h, err
 			}
-			if h := ReadUsageHistory(ctx, profile, spec, dir); !h.Partial {
+			if h := ReadUsageHistory(ctx, profile, spec, NewUsageCache(dir)); !h.Partial {
 				t.Fatal("interrupted read looked complete")
 			}
-			if h := ReadUsageHistory(context.Background(), profile, spec, dir); h.Partial || calls != 2 {
+			if h := ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir)); h.Partial || calls != 2 {
 				t.Fatalf("interrupted result reused: %+v calls=%d", h, calls)
 			}
-			ReadUsageHistory(context.Background(), profile, spec, dir)
+			ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir))
 			if calls != 2 {
 				t.Fatalf("stable result not cached: calls=%d", calls)
 			}
@@ -287,7 +287,7 @@ func TestUsageHistoryDeepPathsAndSourceLink(t *testing.T) {
 	path := filepath.Join(profile, "projects", strings.Repeat("nested/", 10), "s.jsonl")
 	mustWriteSessionHistory(t, path, usageCacheFixture("r", 10))
 	spec := (claudeAgent{}).Usage()
-	if h := ReadUsageHistory(context.Background(), profile, spec, dir); len(h.Events) != 1 || h.Partial {
+	if h := ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir)); len(h.Events) != 1 || h.Partial {
 		t.Fatalf("deep native request lost: %+v", h)
 	}
 	if err := os.Remove(path); err != nil {
@@ -298,8 +298,192 @@ func TestUsageHistoryDeepPathsAndSourceLink(t *testing.T) {
 	if err := os.Symlink(outside, path); err != nil {
 		t.Fatal(err)
 	}
-	if h := ReadUsageHistory(context.Background(), profile, spec, dir); len(h.Events) != 0 || !h.Partial {
+	if h := ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir)); len(h.Events) != 0 || !h.Partial {
 		t.Fatalf("source link or stale entry accepted: %+v", h)
+	}
+}
+
+func usageCacheEntryPath(t *testing.T, dir, profile, name string) string {
+	t.Helper()
+	key, ok := usageCacheKey(profile, (claudeAgent{}).Usage().HistoryCacheID)
+	if !ok {
+		t.Fatal("no cache key")
+	}
+	return filepath.Join(dir, key, usageCacheFile(filepath.Join("projects", "p", name)))
+}
+
+func TestUsageCachePruneAfterCompleteScan(t *testing.T) {
+	profile, retired, unlisted, dir := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	write := func(root, name, data string) {
+		mustWriteSessionHistory(t, filepath.Join(root, "projects", "p", name), data)
+	}
+	write(profile, "kept.jsonl", usageCacheFixture("kept", 10))
+	write(profile, "gone.jsonl", usageCacheFixture("gone", 20))
+	// A record the decoder rejects makes the history partial, not the walk.
+	write(profile, "rejected.jsonl", "{\n"+usageCacheFixture("rejected", 30))
+	write(retired, "s.jsonl", usageCacheFixture("retired", 40))
+	write(unlisted, "s.jsonl", usageCacheFixture("unlisted", 50))
+	calls := 0
+	spec := countedUsageSpec(&calls)
+	first := NewUsageCache(dir)
+	for _, root := range []string{profile, retired, unlisted} {
+		ReadUsageHistory(context.Background(), root, spec, first)
+	}
+	first.Prune()
+	kept, gone := usageCacheEntryPath(t, dir, profile, "kept.jsonl"), usageCacheEntryPath(t, dir, profile, "gone.jsonl")
+	rejected := usageCacheEntryPath(t, dir, profile, "rejected.jsonl")
+	retiredEntry, unlistedEntry := usageCacheEntryPath(t, dir, retired, "s.jsonl"), usageCacheEntryPath(t, dir, unlisted, "s.jsonl")
+	for _, entry := range []string{kept, gone, rejected, retiredEntry, unlistedEntry} {
+		if _, err := os.Stat(entry); err != nil {
+			t.Fatalf("a scan that used every entry pruned one: %v", err)
+		}
+	}
+	if err := os.Remove(filepath.Join(profile, "projects", "p", "gone.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(retired); err != nil {
+		t.Fatal(err)
+	}
+	// Only private regular files named like Coop's entries are Coop's to delete.
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := usageCacheEntryPath(t, dir, profile, "linked.jsonl")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	shared := usageCacheEntryPath(t, dir, profile, "shared.jsonl")
+	if err := os.WriteFile(shared, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o644); err != nil { // Independent of the umask.
+		t.Fatal(err)
+	}
+	note := filepath.Join(filepath.Dir(unlistedEntry), "notes.json")
+	if err := os.WriteFile(note, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// os.Root follows a relative link to a sibling root; Prune must not prune through it.
+	rootLink := filepath.Join(dir, strings.Repeat("a", 64))
+	if err := os.Symlink(filepath.Base(filepath.Dir(kept)), rootLink); err != nil {
+		t.Fatal(err)
+	}
+
+	second := NewUsageCache(dir)
+	h := ReadUsageHistory(context.Background(), profile, spec, second)
+	ReadUsageHistory(context.Background(), retired, spec, second)
+	second.Prune()
+	if calls != 5 || len(h.Events) != 2 || !h.Partial {
+		t.Fatalf("live entries were not reused: calls=%d history=%+v", calls, h)
+	}
+	for _, removed := range []string{gone, filepath.Dir(retiredEntry), unlistedEntry} {
+		if _, err := os.Lstat(removed); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("unused cache entry %s survived a complete scan: %v", removed, err)
+		}
+	}
+	for _, survivor := range []string{kept, rejected, link, outside, shared, note, rootLink} {
+		if _, err := os.Lstat(survivor); err != nil {
+			t.Fatalf("prune removed %s: %v", survivor, err)
+		}
+	}
+	ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir))
+	if calls != 5 {
+		t.Fatalf("prune invalidated a live entry: calls=%d", calls)
+	}
+}
+
+func TestUsageCachePartialScanDeletesNothing(t *testing.T) {
+	for _, cause := range []string{"interrupted", "linked directory", "unreadable directory", "filter error", "unreadable root"} {
+		t.Run(cause, func(t *testing.T) {
+			profile, dir := t.TempDir(), t.TempDir()
+			spec := (claudeAgent{}).Usage()
+			mustWriteSessionHistory(t, filepath.Join(profile, "projects", "p", "kept.jsonl"), usageCacheFixture("kept", 10))
+			path := filepath.Join(profile, "projects", "p", "gone.jsonl")
+			mustWriteSessionHistory(t, path, usageCacheFixture("gone", 20))
+			ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir))
+			gone := usageCacheEntryPath(t, dir, profile, "gone.jsonl")
+			if _, err := os.Stat(gone); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			switch cause {
+			case "interrupted":
+				mustWriteSessionHistory(t, filepath.Join(profile, "projects", "p", "new.jsonl"), usageCacheFixture("new", 30))
+				parse := spec.ParseHistory
+				spec.ParseHistory = func(r io.Reader) (UsageHistory, error) {
+					cancel()
+					return parse(r)
+				}
+			case "linked directory":
+				if err := os.Symlink(t.TempDir(), filepath.Join(profile, "projects", "linked")); err != nil {
+					t.Fatal(err)
+				}
+			case "unreadable directory":
+				if os.Geteuid() == 0 {
+					t.Skip("root reads a directory regardless of its mode")
+				}
+				locked := filepath.Join(profile, "projects", "p2")
+				mustWriteSessionHistory(t, filepath.Join(locked, "s.jsonl"), usageCacheFixture("locked", 30))
+				if err := os.Chmod(locked, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+			case "filter error":
+				spec.HistoryFilter = func(*os.Root, string) (bool, error) {
+					return false, errors.New("parent session unreadable")
+				}
+			case "unreadable root":
+				moved := profile + ".moved"
+				if err := os.Rename(profile, moved); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(moved, profile); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cache := NewUsageCache(dir)
+			if h := ReadUsageHistory(ctx, profile, spec, cache); !h.Partial {
+				t.Fatalf("partial scan looked complete: %+v", h)
+			}
+			cache.Prune()
+			if _, err := os.Stat(gone); err != nil {
+				t.Fatalf("partial scan deleted an entry: %v", err)
+			}
+		})
+	}
+}
+
+// A cache folder the walk could not use keeps its entries even when Prune can open it again,
+// as after a transient failure; the walk itself then reads history uncached and complete.
+func TestUsageCacheUnusableFolderKeepsEntries(t *testing.T) {
+	profile, dir := t.TempDir(), t.TempDir()
+	spec := (claudeAgent{}).Usage()
+	path := filepath.Join(profile, "projects", "p", "gone.jsonl")
+	mustWriteSessionHistory(t, path, usageCacheFixture("gone", 20))
+	ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir))
+	gone := usageCacheEntryPath(t, dir, profile, "gone.jsonl")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	folder := filepath.Dir(gone)
+	if err := os.Chmod(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cache := NewUsageCache(dir)
+	if h := ReadUsageHistory(context.Background(), profile, spec, cache); h.Partial {
+		t.Fatalf("an unusable cache made history partial: %+v", h)
+	}
+	if err := os.Chmod(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cache.Prune()
+	if _, err := os.Stat(gone); err != nil {
+		t.Fatalf("an unusable cache folder lost its entries: %v", err)
 	}
 }
 
@@ -327,13 +511,13 @@ func TestUsageHistoryReadErrorIsNotCached(t *testing.T) {
 		}
 		return parse(r)
 	}
-	if h := ReadUsageHistory(context.Background(), profile, spec, dir); !h.Partial {
+	if h := ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir)); !h.Partial {
 		t.Fatal("read error looked complete")
 	}
-	if h := ReadUsageHistory(context.Background(), profile, spec, dir); h.Partial || calls != 2 {
+	if h := ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir)); h.Partial || calls != 2 {
 		t.Fatalf("disk error cached indefinitely: partial=%v calls=%d", h.Partial, calls)
 	}
-	ReadUsageHistory(context.Background(), profile, spec, dir)
+	ReadUsageHistory(context.Background(), profile, spec, NewUsageCache(dir))
 	if calls != 2 {
 		t.Fatalf("recovered read not cached: %d", calls)
 	}

@@ -291,22 +291,27 @@ func readRootUsageArtifact(root *os.Root, path string, limit int64) ([]byte, err
 
 // ReadUsageHistory scans every adapter-declared history file, retaining old cumulative baselines.
 // Unchanged files reuse normalized token records; prices and the rolling window stay uncached.
-func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec, cacheDir string) UsageHistory {
+func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec, cache *UsageCache) UsageHistory {
 	var out UsageHistory
 	root, err := openSessionRoot(profile)
 	if err != nil {
 		out.Partial = !errors.Is(err, os.ErrNotExist)
+		if out.Partial {
+			cache.skip(profile, spec.HistoryCacheID)
+		}
 		return out
 	}
 	defer root.Close()
-	cache := openUsageCache(cacheDir, profile, spec.HistoryCacheID)
-	if cache != nil {
-		defer cache.root.Close()
-	}
+	entries := cache.open(profile, spec.HistoryCacheID)
+	// The walk is complete when every history file reached its cache lookup; only then may the
+	// root's other entries be pruned. A record the decoder rejects leaves it complete.
+	complete := true
+	defer func() { entries.finish(complete) }()
+	missed := func() { out.Partial, complete = true, false }
 	var walk func(string, int)
 	walk = func(path string, depth int) {
 		if ctx.Err() != nil || depth > 64 {
-			out.Partial = true
+			missed()
 			return
 		}
 		info, err := root.Lstat(path)
@@ -314,13 +319,13 @@ func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec, cache
 			return
 		}
 		if err != nil || info.Mode()&os.ModeSymlink != 0 {
-			out.Partial = true
+			missed()
 			return
 		}
 		if info.IsDir() {
 			dir, err := root.Open(path)
 			if err != nil {
-				out.Partial = true
+				missed()
 				return
 			}
 			defer dir.Close()
@@ -331,12 +336,12 @@ func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec, cache
 				}
 				if err != nil {
 					if err != io.EOF {
-						out.Partial = true
+						missed()
 					}
 					break
 				}
 				if ctx.Err() != nil {
-					out.Partial = true
+					missed()
 					break
 				}
 			}
@@ -346,20 +351,20 @@ func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec, cache
 			return
 		}
 		if !info.Mode().IsRegular() || !spec.StreamHistory && info.Size() > 128<<20 {
-			out.Partial = true
+			missed()
 			return
 		}
 		if spec.HistoryFilter != nil {
 			keep, err := spec.HistoryFilter(root, path)
 			if err != nil {
-				out.Partial = true
+				missed()
 				return
 			}
 			if !keep {
 				return
 			}
 		}
-		if history, ok := cache.read(path, info); ok {
+		if history, ok := entries.read(path, info); ok {
 			current, err := root.Lstat(path)
 			if err != nil || !current.Mode().IsRegular() || usageFingerprint(info) != usageFingerprint(current) {
 				out.Partial = true
@@ -390,7 +395,7 @@ func ReadUsageHistory(ctx context.Context, profile string, spec UsageSpec, cache
 		if !stable || ctx.Err() != nil || reader.err != nil {
 			history.Partial = true
 		} else if err == nil {
-			cache.write(path, after, history)
+			entries.write(path, after, history)
 		}
 		out.Partial = out.Partial || history.Partial || err != nil
 		out.Events = append(out.Events, history.Events...)
