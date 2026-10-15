@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Docker-excluded source edits no longer block filtered editor sessions.** Project image builds
+  and startup checks now honor the configured Dockerfile's `.dockerignore`, or the root file when
+  there is no specific one. Excluded files are omitted from both the build and its fingerprint;
+  Dockerfile, ignore rules and included build inputs still require an explicit rebuild when they
+  change. Coop's own toolchain image excludes runtime source, so other tasks can keep editing while
+  Zed connects. Run `coop build --egress filtered` once to prepare that narrower context.
+
 - **Coop cleans up its git views of deleted repositories.** Coop keeps a small trusted view of each
   repository it runs git in, and never removed one, so every evaluation, session and temporary
   repository left its view behind (about 14,000 on one Mac, almost all for repositories long gone).

@@ -5,6 +5,7 @@ go 1.27
 toolchain go1.27.2
 
 require (
+	github.com/moby/patternmatcher v0.6.1
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	golang.org/x/crypto v0.57.0

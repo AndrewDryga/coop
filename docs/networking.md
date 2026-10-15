@@ -325,6 +325,14 @@ build again when the sanitized build-context inputs changed (copied scripts and 
 included), when the clients changed, or when the image is missing. An old automatic-build cache
 record isn't approval, so an existing project needs one explicit filtered build.
 
+Use `.agent/Dockerfile.dockerignore` to exclude files that this image does not build from, or name
+the ignore file after your configured Dockerfile. Its rules take precedence over root
+`.dockerignore`. Excluded source changes do not require another build; the running box still sees
+that source through its repository mount. For a toolchain-only image, exclude everything with
+`**` and add `!path/to/input` for each file it copies. The Dockerfile and active ignore file always
+remain part of the build fingerprint. Changes to them or to an included input require a rebuild.
+Docker exceptions cannot restore secrets, Git metadata or generated output co:op omits.
+
 Before launch, co:op verifies two facts about the built image. These checks inspect the
 image itself rather than reading the Dockerfile; a `FROM` line does not prove what was
 built:

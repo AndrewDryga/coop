@@ -530,7 +530,7 @@ func coopIgnoreStanza() []string {
 		lines = append(lines, ag.Scaffold().KnowledgeIgnore...)
 	}
 	return append(lines,
-		"!**/.agent/loop.yaml", "!**/.agent/compose.yml", "!**/.agent/Dockerfile", "!.agent/project.yaml",
+		"!**/.agent/loop.yaml", "!**/.agent/compose.yml", "!**/.agent/Dockerfile", "!**/.agent/Dockerfile.dockerignore", "!.agent/project.yaml",
 		"# the queue is local state, but its layout doc is a BOOT entry point — commit just that",
 		"!**/.agent/tasks/", "**/.agent/tasks/*", "!**/.agent/tasks/README.md",
 	)

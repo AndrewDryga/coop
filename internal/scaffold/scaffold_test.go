@@ -210,7 +210,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	// Knowledge (kb, including rules, plus skills) is un-ignored at any depth so a member may carry
 	// its own; only project.yaml is top-level.
-	for _, want := range []string{"**/.agent/*\n", "!**/.agent/kb/", "!**/.agent/skills/", "!**/.agent/claude/", "!**/.agent/Dockerfile", "!.agent/project.yaml"} {
+	for _, want := range []string{"**/.agent/*\n", "!**/.agent/kb/", "!**/.agent/skills/", "!**/.agent/claude/", "!**/.agent/Dockerfile", "!**/.agent/Dockerfile.dockerignore", "!.agent/project.yaml"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf("coop's block missing %q after a broad .agent/*.log line:\n%s", want, gi)
 		}
@@ -245,7 +245,7 @@ func TestUpdateGitignoreCompletesMinimalCurrentBlock(t *testing.T) {
 	ordered := []string{
 		"**/.agent/*", "!**/.agent/kb/", "!**/.agent/skills/", "!**/.agent/presets/",
 		"!**/.agent/claude/", "!**/.agent/loop.yaml", "!**/.agent/compose.yml",
-		"!**/.agent/Dockerfile", "!.agent/project.yaml", "!**/.agent/tasks/",
+		"!**/.agent/Dockerfile", "!**/.agent/Dockerfile.dockerignore", "!.agent/project.yaml", "!**/.agent/tasks/",
 		"**/.agent/tasks/*", "!**/.agent/tasks/README.md",
 	}
 	last := -1

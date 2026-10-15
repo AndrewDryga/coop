@@ -2,9 +2,9 @@
 name: restricted-project-builds-are-explicit
 description: restricted launches consume explicit host project builds; open mode permits automatic preparation only where implemented
 scope: security
-sources: [internal/box/derived_image.go, internal/box/project_build.go, internal/box/project_preparation.go, internal/box/image.go, internal/networkstate/project_builds.go, internal/cli/project_build.go, internal/cli/build_cmd.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/forkctl/merge.go]
-check: "go test ./internal/box -run 'TestFilteredProjectImageRequiresExplicitBuild|TestFilteredProjectImageReusesAnUnchangedBuild|TestAutomaticProjectBuildRequiresOpenNetworking|TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot'"
-updated: 2026-10-11
+sources: [internal/box/build_context_ignore.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/project_preparation.go, internal/box/image.go, internal/networkstate/project_builds.go, internal/cli/project_build.go, internal/cli/build_cmd.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/forkctl/merge.go]
+check: "go test ./internal/box -run 'TestFilteredProjectImageRequiresExplicitBuild|TestFilteredProjectImageReusesAnUnchangedBuild|TestAutomaticProjectBuildRequiresOpenNetworking|TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot|TestDockerignoredEditsDoNotChangeBuildInputs|TestDockerignoreCannotRestoreSanitizedInputs'"
+updated: 2026-10-16
 ---
 
 # Require explicit host builds when project networking is restricted
@@ -24,7 +24,10 @@ adding: "But we can have automatic builds when networking is not restricted."
 
 **How to apply:** bind filtered reuse to the actual staged context, including copied files and
 modes, the qualified client base and immutable output image. Keep approval outside agent mounts;
-legacy automatic-build memos cannot become approval. Missing/changed inputs or missing images must
+apply Dockerfile-specific/root Docker ignore rules to both staging and readiness, so excluded
+source edits do not revoke the build. Always cover the Dockerfile and active ignore control file;
+Docker exceptions cannot restore secrets, Git or generated output omitted by the sanitizer.
+Legacy automatic-build memos cannot become approval. Missing/changed inputs or missing images must
 refuse with a usable host command. Preserve both image proofs and fail if approval cannot be saved.
 Cover direct, fork, loop and editor callers; do not require an unused ordinary image for filtered
 runs. Keep offline image-existence checks so Docker cannot implicitly pull. Embedded Coop image
@@ -34,6 +37,10 @@ turns and review gates consume no project image in any mode, and a worker never 
 instructions.
 
 ## Changelog
+- 2026-10-16 — user rebuilt successfully but source edits 13 seconds later blocked ACP again.
+  Swept project staging, explicit build, readiness and editor image identity: they share one
+  selection; it now respects Docker exclusions while keeping control files and selected copied
+  inputs exact. Added excluded-source reuse and sanitization regressions to the check.
 - 2026-10-11 — owner approved explicit host Build and continue after a late launch refusal.
   Swept 13 listed source files: unattended/ACP/fork/loop/controller paths retain refusal;
   only the direct host-terminal path confirms a private snapshot. Added the snapshot check;

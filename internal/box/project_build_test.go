@@ -349,6 +349,7 @@ func TestFilteredProjectImageReusesAnUnchangedBuild(t *testing.T) {
 	d.images[definition.Tag] = d.images[fixtureLockedImage]
 	d.mu.Unlock()
 	repo, write := gitProject(t, reusableDockerfile)
+	write(".dockerignore", "docs/\n")
 
 	// The runtime's build writes the id in produced to its --iidfile and counts itself, and every
 	// invocation is recorded: a launch that REUSED a remembered image must not scan for images to
@@ -392,6 +393,9 @@ func TestFilteredProjectImageReusesAnUnchangedBuild(t *testing.T) {
 		if err != nil || got != image || builds() != wantBuilds {
 			t.Fatalf("%s: image %q (%v) after %d builds, want %q after %d", step, got, err, builds(), image, wantBuilds)
 		}
+		if err := checkFilteredProjectReadiness(t.Context(), d, f.store, RunSpec{Repo: repo}, fixtureCandidate().Runtime); err != nil {
+			t.Fatalf("%s: editor startup refused the explicitly built image: %v", step, err)
+		}
 		// One scan per build and none per reuse: a launch that changed nothing must not go looking
 		// for images to reclaim.
 		if scans() != wantBuilds {
@@ -415,6 +419,10 @@ func TestFilteredProjectImageReusesAnUnchangedBuild(t *testing.T) {
 	deny("the first launch", true, 0)
 	build()
 	expect("an unchanged tree", true, fixtureBuiltImage, 1)
+	write("docs/new/source.txt", "authored after the build\n")
+	expect("new Docker-excluded source", true, fixtureBuiltImage, 1)
+	write("docs/new/source.txt", "edited while the editor reconnects\n")
+	expect("edited Docker-excluded source", true, fixtureBuiltImage, 1)
 	write("main.go", "package main // edited\n")
 	deny("an edited copied file", true, 1)
 	build()

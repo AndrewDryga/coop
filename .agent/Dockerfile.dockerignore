@@ -1,0 +1,8 @@
+# This image installs tools; source is mounted into the running box separately.
+# Keep this list aligned with the Dockerfile's COPY inputs.
+**
+!.agent/Dockerfile
+!.agent/Dockerfile.dockerignore
+!.tool-versions
+!internal/box/staticcheck.mod
+!internal/box/staticcheck.sum

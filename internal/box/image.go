@@ -809,8 +809,9 @@ type contextEntry struct {
 
 // buildContextSelection is the one decision about what a project build may read: every path under
 // repo EXCEPT .git, a shadowed path (NewShadowDecider — the same denylist that hides secrets from a
-// run) and gitignored build output. Tracked files remain even when a later ignore rule matches them,
-// as do ordinary untracked inputs an agent is still authoring; irregular files are left out. It is
+// run) and gitignored build output, then filtered by Docker's context exclusions. Tracked files
+// remain even when a later Git ignore rule matches them, as do ordinary untracked inputs an agent
+// is still authoring; irregular files are left out. It is
 // recomputed for every build: an ignore rule, a .coopignore or the built-in denylist changing what
 // is selected has to change what is built, so the selection itself must never be cached.
 func buildContextSelection(ctx context.Context, repo string) ([]contextEntry, error) {
@@ -858,7 +859,10 @@ func buildContextSelection(ctx context.Context, repo string) ([]contextEntry, er
 		}
 		return nil
 	})
-	return entries, err
+	if err != nil {
+		return nil, err
+	}
+	return filterDockerBuildContext(ctx, repo, entries)
 }
 
 // contextDigest hashes entries as a build reads them: each entry's kind, path, and mode or link
