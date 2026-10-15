@@ -52,10 +52,18 @@ class OwnProjectOnlyTest(unittest.TestCase):
         self.coop.write_text(STAND_IN.replace("@LOG@", str(self.log)))
         self.coop.chmod(self.coop.stat().st_mode | stat.S_IXUSR)
 
-    def bench(self, samples=2):
+    def bench(self, samples=2, coop=None):
         with contextlib.redirect_stdout(io.StringIO()):
             return services_bench.main(["--repo", str(self.repo), "--samples", str(samples), "--out", str(self.out),
-                                        "--coop", str(self.coop)])
+                                        "--coop", coop or str(self.coop)])
+
+    def test_a_relative_coop_is_the_one_beside_the_caller(self):
+        # make passes ./coop, but every call runs inside the project
+        cwd = os.getcwd()
+        os.chdir(self.coop.parent)
+        self.addCleanup(os.chdir, cwd)
+        summary = self.bench(samples=1, coop="./coop")
+        self.assertEqual({case: row["n"] for case, row in summary.items()}, {"stopped": 1, "running": 1})
 
     def calls(self):
         return [line.split("|") for line in self.log.read_text().splitlines()]

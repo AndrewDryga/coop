@@ -12,7 +12,10 @@ output is a measurement to compare against, not a threshold to fail on. Cases:
 `repeat_start`, `filtered_start`, `acp_initialize`, `acp_switch_cold`, `acp_switch_warm`,
 `normal_stop`, `filtered_stop`, `cancelled_stop`, `failed_start_preflight`,
 `failed_start_after_create`. `WORKSPACE=` picks the workspace; a bare one-file git repo is the
-control that separates what filtering costs from what the tree costs. What the stop boundary
+control that separates what filtering costs from what the tree costs. The benches' own unit tests
+(`tools/test_lifecycle_bench.py`, `tools/test_services_bench.py`) run in `make bench-tools-test`,
+which `make lifecycle-bench` and `make services-bench` run first, stopping if it fails; they are not part of
+`make tools-test` or the gate, which never runs a bench. What the stop boundary
 covers — gateway containers AND volumes, both label families — is pinned by `OwnershipTest` in
 `tools/test_lifecycle_bench.py`, because a stop number is only as honest as that question.
 
@@ -39,7 +42,8 @@ case with a stand-in coop and another run's resources appearing mid-sample.
 ## A start with services: tools/services_bench.py
 
 `tools/services_bench.py` times a warm start in a project with Compose services, the Orchestrator
-page's Project services figure. Same boundary as the start cases (launch to the box's command
+page's Project services figure. `make services-bench WORKSPACE=<project>` builds `./coop`, tests
+the bench, then measures that build. Same boundary as the start cases (launch to the box's command
 running, seen as a marker file on the host), two cases taken in turns after one warm-up each:
 `stopped` (`coop down` first, so the launch starts the services) and `running` (`coop up` first).
 It removes nothing itself; between samples it runs `coop up`/`coop down` in its own project, so it
@@ -134,6 +138,9 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 until 2026-09-20's paired A/B put a number against it. Both now state the number.
 
 ## Changelog
+- 2026-10-15 — the bench tests moved out of `make tools-test` into `make bench-tools-test`, which
+  `make lifecycle-bench` and the new `make services-bench` run first (task
+  2026-10-15-run-the-benchmark-tool-tests-only-with-make-life).
 - 2026-10-15 — the services figure's page is called by its current name, the Orchestrator page
   (checked in site/orchestrator.html); nothing else in the card was rechecked (task
   2026-10-15-delete-the-unused-release-notes-config-and-the-o).

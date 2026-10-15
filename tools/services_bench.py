@@ -14,8 +14,8 @@ Two cases, taken in turns so both see the same load, each after one throwaway sa
   stopped   the services are stopped (`coop down`); the launch starts them
   running   the services are already up (`coop up`), as after a first launch
 
-Usage:
-    tools/services_bench.py --repo <project with approved services> --samples 7 --out <dir>
+Usage (make runs the bench's own tests first):
+    make services-bench WORKSPACE=<project with approved services> OUT=<dir> BENCH_ARGS='--samples 7'
 
 Output: <dir>/samples.json (every sample, with the load average when it started) and a summary on
 stdout: per case the count, failures, median, fastest and slowest.
@@ -32,6 +32,7 @@ import statistics
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 MARK = ".coop-services-ready"
 CASES = ("stopped", "running")
@@ -138,15 +139,18 @@ def main(argv: list[str] | None = None) -> dict:
     parser.add_argument("--out", required=True, help="directory for samples.json")
     parser.add_argument("--coop", default=shutil.which("coop") or "coop", help="the coop binary to measure")
     args = parser.parse_args(argv)
+    # Absolute, always: every call runs in the project, so a relative name such as ./coop would
+    # resolve against the project there (lifecycle_bench.py does the same).
+    coop = str(Path(shutil.which(args.coop) or args.coop).resolve())
     samples: dict[str, list[dict]] = {case: [] for case in CASES}
     try:
         for case in CASES:
-            sample(args.coop, args.repo, case)  # warm-up, not counted
+            sample(coop, args.repo, case)  # warm-up, not counted
         for _ in range(args.samples):
             for case in CASES:
-                samples[case].append(sample(args.coop, args.repo, case))
+                samples[case].append(sample(coop, args.repo, case))
     finally:
-        coop_step(args.coop, args.repo, "down", strict=False)  # leave the services stopped, however it ended
+        coop_step(coop, args.repo, "down", strict=False)  # leave the services stopped, however it ended
     summary = {case: summarize(rows) for case, rows in samples.items()}
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "samples.json"), "w") as out:

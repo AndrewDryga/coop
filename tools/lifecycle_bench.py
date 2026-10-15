@@ -16,7 +16,8 @@ Two boundaries, both chosen so a UI label cannot flatter them:
 Both epochs come from the same machine's clock, and a container shares the host's clock, so the
 subtraction is honest. Only the timezone differs, which the epoch form does not use.
 
-Usage:
+Usage (make runs the bench's own tests first):
+    make lifecycle-bench OUT=<dir> BENCH_ARGS='--samples 10'
     tools/lifecycle_bench.py --samples 10 --out <dir>
     tools/lifecycle_bench.py --cases cold_start,repeat_start --samples 5 --out <dir>
 

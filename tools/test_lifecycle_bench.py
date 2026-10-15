@@ -190,7 +190,7 @@ class SamplingLoopTest(unittest.TestCase):
         import sys
         original_argv, sys.argv = sys.argv, argv
         try:
-            # main() reports where it wrote; swallow it so `make tools-test` output stays the
+            # main() reports where it wrote; swallow it so `make bench-tools-test` output stays the
             # test result and not a stray path per case.
             with contextlib.redirect_stdout(io.StringIO()):
                 code = bench.main()

@@ -108,20 +108,29 @@ docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make do
 align: require-python3 ## Check trailing-# comment alignment in README + site + CLI docs (--write to fix)
 	@python3 tools/align-comments.py --check
 
-tools-test: require-python3 require-node ## Run standard-library tests for repository maintenance tools
-	@python3 -m unittest discover -s tools -p 'test_*.py'
+# The benches' own tests run with the benches (bench-tools-test), not in the gate: the gate never
+# runs a bench, and their tests were most of this suite's time. Every other tools/test_*.py runs here.
+BENCH_TOOL_TESTS := test_lifecycle_bench.py test_services_bench.py
+tools-test: require-python3 require-node ## Test the repository tools other than the benches
+	@for t in $(filter-out $(BENCH_TOOL_TESTS),$(notdir $(wildcard tools/test_*.py))); do \
+	  python3 -m unittest discover -s tools -p "$$t" || exit 1; done
 
-docs-tools-test: require-python3 require-node ## Test only docs/site/alignment/rules tools, without process benchmarks
-	@python3 -m unittest discover -s tools -p 'test_site_content.py'
-	@python3 -m unittest discover -s tools -p 'test_align_comments.py'
-	@python3 -m unittest discover -s tools -p 'test_check_rules.py'
+bench-tools-test: require-python3 ## Test the lifecycle and services benches (each bench runs this first)
+	@for t in $(BENCH_TOOL_TESTS); do python3 -m unittest discover -s tools -p "$$t" || exit 1; done
 
-# Deliberately OUT of `check`: it launches real boxes, so it needs a container runtime and takes
-# minutes, and its numbers are a measurement to compare against — not a threshold to fail on. A
-# wall-clock assertion in the gate fails on a busy laptop and says nothing about the change.
-lifecycle-bench: require-python3 build ## Measure real box start/stop latency (needs a runtime; writes samples + a report)
+# Deliberately OUT of `check`: the benches launch real boxes, so they need a container runtime and
+# take minutes, and their numbers are a measurement to compare against — not a threshold to fail on.
+# A wall-clock assertion in the gate fails on a busy laptop and says nothing about the change.
+lifecycle-bench: require-python3 build bench-tools-test ## Measure real box start/stop latency (needs a runtime; writes samples + a report)
 	@python3 tools/lifecycle_bench.py --coop ./coop --repo $(or $(WORKSPACE),$(CURDIR)) \
 	  --out $(or $(OUT),$(shell mktemp -d)/coop-lifecycle-bench) $(BENCH_ARGS)
+
+services-bench: require-services-workspace require-python3 build bench-tools-test ## Measure a warm start beside Compose services (needs a runtime; WORKSPACE=<project with approved services>)
+	@python3 tools/services_bench.py --coop ./coop --repo $(WORKSPACE) \
+	  --out $(or $(OUT),$(shell mktemp -d)/coop-services-bench) $(BENCH_ARGS)
+
+require-services-workspace:
+	@test -n "$(WORKSPACE)" || { echo 'WORKSPACE is required: a project whose Compose services are approved'; exit 2; }
 
 rules-check: require-python3 ## Fail if a .agent/kb card or rule is malformed, unindexed, or names a source/check that doesn't exist
 	@python3 tools/check_rules.py
@@ -226,7 +235,7 @@ check-local: require-git-lfs ## Scoped local checks; SCOPE=docs|rules|agent|runt
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,cooplivetest,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
 	@go test -count=1 -p 4 -timeout 20m $(LOCAL_$(ITERATION_SCOPE))
 else ifeq ($(SCOPE),docs)
-check-local: docs-check align rules-check docs-tools-test
+check-local: docs-check align rules-check tools-test
 	@echo 'Local checks: docs, site content, alignment and rules'
 else ifeq ($(SCOPE),rules)
 check-local: rules-check
@@ -370,7 +379,7 @@ help: ## List targets
 .PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: provider-status provider-verify
-.PHONY: check-local docs-tools-test
+.PHONY: check-local bench-tools-test services-bench require-services-workspace
 .PHONY: check-static check-unit check-process check-race
 .PHONY: check-process-loop check-process-rest check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2
 .PHONY: provider-scripted-loop-e2e provider-scripted-other-e2e FORCE
