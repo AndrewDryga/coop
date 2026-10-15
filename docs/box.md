@@ -136,19 +136,20 @@ cd ~/code/phoenix-app   # has a .tool-versions
 coop claude             # provisions elixir/erlang/node/… from it, then runs the agent
 ```
 
-This runtime setup is for open networking only. A filtered run (the default once you run
-`coop init`) uses the locked client image, which has no asdf, so nothing is installed when the box
-starts. There the toolchain has to be built into an `.agent/Dockerfile`:
-
-- `coop init` writes one when it finds a `.tool-versions`.
-- `coop init --stack asdf` writes one later.
-- `coop build` builds it.
-
 The first install of a new toolchain can be slow (Erlang compiles, for example). After that it is
 reused across runs and repos.
 
 Set `COOP_NO_ASDF=1` (in `agents/env`) to skip provisioning from `.tool-versions`. co:op still
 repairs a stale persisted Node shim when needed, so the agent CLIs keep running.
+
+This runtime setup is for open networking only. A filtered run (the default once you run
+`coop init`) uses the locked client image. It carries the asdf binary but no asdf shims on `PATH`,
+and nothing is installed when the box starts. There the toolchain has to be built into an
+`.agent/Dockerfile`:
+
+- `coop init` writes one when it finds a `.tool-versions`.
+- `coop init --stack asdf` writes one later.
+- `coop build` builds it.
 
 For a baked, fully reproducible image instead, `coop init --stack asdf` scaffolds an asdf
 `.agent/Dockerfile` that installs the same `.tool-versions` at build time.

@@ -2420,8 +2420,9 @@ func Workdir(cfg *config.Config, repo string) string {
 //
 // Where other toolchains come from depends on the image. An open box runs the base image, whose
 // entrypoint installs a repo's .tool-versions pins with asdf on start. A filtered box runs the
-// locked client image or a project image built on it; neither has asdf (lockedPath), so only the
-// project's .agent/Dockerfile can put a toolchain there.
+// locked client image or a project image built on it; both carry the asdf binary but install
+// nothing on start and keep its shims off PATH (lockedPath), so only the project's
+// .agent/Dockerfile can put a toolchain there.
 func boxEnvNote(filtered bool) string {
 	toolchains := "Other toolchains (go, ruby, erlang, …) exist only if the repo pins\n" +
 		"  them in .tool-versions, which is provisioned automatically on start."

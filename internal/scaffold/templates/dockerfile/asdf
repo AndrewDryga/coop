@@ -4,7 +4,7 @@
 ARG COOP_BASE_IMAGE=coop-box
 FROM ${COOP_BASE_IMAGE}
 @SYSTEM_PACKAGES@
-# Coop's filtered client image keeps asdf off PATH, so put the shims back — after the client
+# Coop's filtered client image keeps asdf's shims off PATH, so put them back — after the client
 # launchers, which nothing may shadow.
 ENV PATH="/opt/coop/bin:/home/node/.asdf/shims:${PATH}"@TOOLCHAIN_ENV@
 

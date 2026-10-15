@@ -3264,7 +3264,7 @@ func TestAgentBaseInstructions(t *testing.T) {
 		}
 	}
 	// Toolchains: the open box's base image installs .tool-versions pins on start; a filtered box's
-	// image has no asdf, so its note must send the agent to the project's .agent/Dockerfile instead.
+	// image installs nothing, so its note must send the agent to the project's .agent/Dockerfile.
 	if !strings.Contains(got, "in .tool-versions, which is provisioned automatically on start.") {
 		t.Errorf("an open box's note must keep the .tool-versions promise:\n%s", got)
 	}

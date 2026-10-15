@@ -3,12 +3,12 @@ name: coop-repo-box-go
 description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and three approved Go domains; big modules redirect to a blocked host, so the shared cache is filled from the host
 subsystem: box
 sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, internal/box/staticcheck.mod, Makefile, .tool-versions]
-updated: 2026-10-09
+updated: 2026-10-15
 ---
 
-A filtered box runs the locked client image, which has no asdf, so a repo's `.tool-versions` never
-reaches it: only the project's `.agent/Dockerfile` can put a toolchain there
-(`internal/box/run.go:2317-2329`). Until 2026-10-07 coop had none, and a loop agent working on coop
+A filtered box runs the locked client image, which carries the asdf binary but installs nothing on
+start and keeps its shims off `PATH`, so a repo's `.tool-versions` never reaches it: only the
+project's `.agent/Dockerfile` can put a toolchain there (`boxEnvNote` in `internal/box/run.go`). Until 2026-10-07 coop had none, and a loop agent working on coop
 blocked with `go: not found` before it could run `make check`.
 
 `.agent/Dockerfile` (from `coop init --stack asdf`) installs `.tool-versions` (Go) at build time and
@@ -32,6 +32,8 @@ again when a new large dependency fails to download in a box.
 doesn't use them, so they were removed after running it.
 
 ## Changelog
+- 2026-10-15 — the locked client image does carry the asdf binary (only its shims are off `PATH`);
+  the code reference names `boxEnvNote` instead of a line range.
 - 2026-10-09 — documented the shared analyzer graph and V5 importer compatibility; Go1.27.2 keeps
   current security fixes without retaining an older compiler just for lint.
 - 2026-10-07 — created with the Dockerfile and the Go egress rules (task 2026-10-07-give-this-repo-s-filtered-boxes-go-and-the-gate).
