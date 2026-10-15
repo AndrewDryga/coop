@@ -494,13 +494,13 @@ it again. `coop approve` applies the same capability gate a launch does, so a ru
 could never enforce (an IPv6 destination, say) is refused at review, instead of being remembered and
 refused at every launch.
 
-The review is one diff against what's already approved. Unchanged rows are marked
-`already approved`, additions `new request` and removals `no longer requested`. A mode change is
-explained in plain words. A request for `open` gets a red warning, because nothing would be blocked.
-You confirm at `Approve this access for new runs? [y/N]`.
+The review is one diff against what's already approved. Unchanged rules have no marker, additions
+are marked `+` and removals `-`, and the `NETWORK RULES` heading explains the markers it uses. A mode
+change is explained in plain words. A request for `open` gets a red warning, because nothing would be
+blocked. You confirm at `Approve this access for new runs? [y/N]`.
 
 If the file is already exactly what was approved, `coop approve` prints
-`No approval needed — this project's requested access has not changed.` and grants nothing new.
+`No approval needed: this project's requested access has not changed.` and grants nothing new.
 Provider endpoints an agent brings with it aren't part of this diff. co:op grants those itself, and
 they're never shown as project access.
 

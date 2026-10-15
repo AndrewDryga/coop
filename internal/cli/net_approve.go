@@ -146,8 +146,9 @@ func confirmNetApproval(ctx context.Context, review netApprovalReview, out io.Wr
 
 // writeNetAccessChange is the review a person reads before approving: the
 // access mode under NETWORK ACCESS — as a before/after pair when it changes,
-// one line when it does not — and then the rules, each row saying whether it is
-// retained, added or removed. A section with nothing to say is not printed.
+// one line when it does not — and then the rules, each row's marker saying
+// whether it is retained, added or removed. A section with nothing to say is not
+// printed.
 func writeNetAccessChange(w io.Writer, p ui.Palette, before *networkstate.Approval, mode egress.Mode, requested []egress.Rule) {
 	var approved []egress.Rule
 	var approvedMode egress.Mode
@@ -157,8 +158,8 @@ func writeNetAccessChange(w io.Writer, p ui.Palette, before *networkstate.Approv
 	fmt.Fprintf(w, "\n%s\n", p.Bold(p.Cyan("NETWORK ACCESS")))
 	writeNetModeChange(w, p, approvedMode, mode)
 	add, remove := box.NetworkRuleDiff(approved, requested)
-	if rows := netRuleDiffRows(approved, add, remove, netApprovalLabels); len(rows) != 0 {
-		fmt.Fprintf(w, "\n%s\n", p.Bold(p.Cyan("NETWORK RULES")))
+	if rows := netRuleDiffRows(approved, add, remove, netRuleLabels{}); len(rows) != 0 {
+		fmt.Fprintf(w, "\n%s%s\n", p.Bold(p.Cyan("NETWORK RULES")), netRuleLegend(p, rows))
 		writeNetRuleRows(w, p, rows, 2)
 	}
 }

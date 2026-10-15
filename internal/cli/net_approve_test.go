@@ -33,9 +33,11 @@ func approvalRule(domain string) egress.Rule {
 }
 
 // The review is one stable diff under two uppercase sections: the access mode,
-// then every rule with what it is — already approved, new, or no longer
-// requested. Its exact bytes are the approved transcript.
+// then every rule marked as it is — unchanged, new or removed — with one legend
+// for the markers and no label column. Its exact bytes, with color off, are the
+// approved transcript: the markers and the legend carry the meaning alone.
 func TestApprovalReviewIsOneStableDiff(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
 	review := &fakeApprovalReview{
 		before: &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{approvalRule("github.com"), approvalRule("registry.npmjs.org")}},
 		after:  &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{approvalRule("github.com"), approvalRule("api.example.com")}}}
@@ -60,6 +62,7 @@ func TestApprovalReviewIsOneStableDiff(t *testing.T) {
 // A mode change is the same review with a before/after pair under NETWORK
 // ACCESS, in the shared mode words.
 func TestApprovalReviewShowsTheModeChange(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
 	review := &fakeApprovalReview{
 		before: &networkstate.Approval{Posture: egress.None},
 		after:  &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{approvalRule("docs.example.com")}}}
@@ -71,6 +74,7 @@ func TestApprovalReviewShowsTheModeChange(t *testing.T) {
 }
 
 func TestApprovalReviewExplainsIdentityOnlyReapproval(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
 	for name, cause := range map[string]string{
 		"older approval":  "This project's network access was approved by an older Coop.",
 		"replaced folder": "This project folder was replaced after its network access was approved.",
@@ -82,7 +86,7 @@ func TestApprovalReviewExplainsIdentityOnlyReapproval(t *testing.T) {
 			if err := confirmNetApproval(context.Background(), review, &out, func() bool { return true }); err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"Why approval is needed:", cause, "already approved"} {
+			for _, want := range []string{"Why approval is needed:", cause, "NETWORK RULES\n    docs.example.com:443 · TLS\n"} {
 				if !strings.Contains(out.String(), want) {
 					t.Errorf("identity-only review lacks %q:\n%s", want, out.String())
 				}
@@ -100,11 +104,14 @@ func TestApprovalReviewColorsAdditionsYellowNeverGreen(t *testing.T) {
 	var b bytes.Buffer
 	writeNetAccessChange(&b, ui.Colored(), review.before, review.after.Posture, review.after.Envelope)
 	text := b.String()
-	if !strings.Contains(text, "\x1b[33m  + new.example:443 · TLS  new request\x1b[0m") {
+	if !strings.Contains(text, "\x1b[33m  + new.example:443 · TLS\x1b[0m\n") {
 		t.Errorf("the addition is not the yellow row:\n%q", text)
 	}
-	if !strings.Contains(text, "\x1b[2m  - old.example:443 · TLS  no longer requested\x1b[0m") {
+	if !strings.Contains(text, "\x1b[2m  - old.example:443 · TLS\x1b[0m\n") {
 		t.Errorf("the removal is not a dim row:\n%q", text)
+	}
+	if !strings.Contains(text, "NETWORK RULES\x1b[0m\x1b[0m \x1b[2m(+ new, - removed)\x1b[0m\n") {
+		t.Errorf("the legend is not a dim hint after the heading:\n%q", text)
 	}
 	if strings.Contains(text, "\x1b[32m") {
 		t.Errorf("a review colored something green:\n%q", text)
@@ -122,10 +129,10 @@ func TestApprovalReviewExplainsTheModeInHumanWords(t *testing.T) {
 		absent []string
 	}{
 		"first approval": {after: &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{approvalRule("github.com")}},
-			want: []string{"NETWORK ACCESS\n  Filtered: only approved network traffic is allowed.\n", "+ github.com:443 · TLS  new request"}},
+			want: []string{"NETWORK ACCESS\n  Filtered: only approved network traffic is allowed.\n", "NETWORK RULES (+ new)\n  + github.com:443 · TLS\n"}},
 		"escalation to open": {before: filtered, after: &networkstate.Approval{Posture: egress.Open},
 			want: []string{"  - Filtered: only approved network traffic is allowed.\n  + Unrestricted: nothing is blocked.\n",
-				netOpenWarning + "\n", "- github.com:443 · TLS  no longer requested"}},
+				netOpenWarning + "\n", "NETWORK RULES (- removed)\n  - github.com:443 · TLS\n"}},
 		"offline": {before: filtered, after: &networkstate.Approval{Posture: egress.None},
 			want: []string{"  - Filtered: only approved network traffic is allowed.\n  + Offline: internet access is blocked.\n"}},
 		"open unchanged": {before: &networkstate.Approval{Posture: egress.Open}, after: &networkstate.Approval{Posture: egress.Open},

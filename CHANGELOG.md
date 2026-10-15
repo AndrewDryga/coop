@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop approve` no longer labels each rule.** The rule diff no longer repeats "already approved",
+  "new request" or "no longer requested" after every rule. The `+` and `-` markers say it, and the
+  `NETWORK RULES` heading explains the ones it uses, so the meaning survives without color.
+  `coop net` keeps its labels: there they tell a requested rule from an approved one.
+
 - **A running editor session picks up the network rules you approve.** Before, `coop approve`
   changed only new runs, so a filtered `coop acp` session kept the old rules until the editor
   reconnected. Now the session picks up the change once no prompt is running: it starts a new box

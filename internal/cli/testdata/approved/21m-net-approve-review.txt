@@ -3,7 +3,7 @@ Review the requested project access.
 NETWORK ACCESS
   Filtered: only approved network traffic is allowed.
 
-NETWORK RULES
-    github.com:443 · TLS          already approved
-  + api.example.com:443 · TLS     new request
-  - registry.npmjs.org:443 · TLS  no longer requested
+NETWORK RULES (+ new, - removed)
+    github.com:443 · TLS
+  + api.example.com:443 · TLS
+  - registry.npmjs.org:443 · TLS

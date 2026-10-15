@@ -430,15 +430,13 @@ func writeNetModeChange(w io.Writer, p ui.Palette, before, after egress.Mode) {
 	}
 }
 
-// netRuleLabels is what each row of a rule diff is called. The access view and
-// the approval prompt ask different questions — what is pending versus what you
-// are about to decide — so they label the same three rows differently.
+// netRuleLabels is what each row of a rule diff is called. The access view
+// labels its rows because a pending request is not access yet: a "+" row there
+// is only requested. The approval prompt passes none — its rows are the decision
+// itself, and the heading's legend explains the markers (netRuleLegend).
 type netRuleLabels struct{ retained, added, removed string }
 
-var (
-	netAccessLabels   = netRuleLabels{retained: "approved", added: "requested", removed: "removed"}
-	netApprovalLabels = netRuleLabels{retained: "already approved", added: "new request", removed: "no longer requested"}
-)
+var netAccessLabels = netRuleLabels{retained: "approved", added: "requested", removed: "removed"}
 
 type netRuleRow struct{ marker, text, label string }
 
@@ -466,9 +464,10 @@ func netRuleDiffRows(approved, add, remove []egress.Rule, labels netRuleLabels) 
 }
 
 // writeNetRuleRows prints a rule diff with every label starting past the widest
-// rule, measured on PLAIN text so color never shifts the column. Additions are
-// yellow because they expand access, removals dim because they reduce it —
-// never green for a new grant, and the markers carry the meaning without color.
+// rule, measured on PLAIN text so color never shifts the column; a row without a
+// label ends at its rule. Additions are yellow because they expand access,
+// removals dim because they reduce it — never green for a new grant, and the
+// markers carry the meaning without color.
 func writeNetRuleRows(w io.Writer, p ui.Palette, rows []netRuleRow, indent int) {
 	width := 0
 	for _, r := range rows {
@@ -476,7 +475,10 @@ func writeNetRuleRows(w io.Writer, p ui.Palette, rows []netRuleRow, indent int) 
 	}
 	pad := strings.Repeat(" ", indent)
 	for _, r := range rows {
-		line := pad + r.marker + " " + padRight(r.text, width+2) + r.label
+		line := pad + r.marker + " " + r.text
+		if r.label != "" {
+			line = pad + r.marker + " " + padRight(r.text, width+2) + r.label
+		}
 		switch r.marker {
 		case "+":
 			line = p.Yellow(line)
@@ -485,6 +487,22 @@ func writeNetRuleRows(w io.Writer, p ui.Palette, rows []netRuleRow, indent int) 
 		}
 		fmt.Fprintln(w, line)
 	}
+}
+
+// netRuleLegend explains, once, the markers rows without labels carry — only
+// those that appear — so their meaning never depends on color.
+func netRuleLegend(p ui.Palette, rows []netRuleRow) string {
+	var keys []string
+	if slices.ContainsFunc(rows, func(r netRuleRow) bool { return r.marker == "+" }) {
+		keys = append(keys, "+ new")
+	}
+	if slices.ContainsFunc(rows, func(r netRuleRow) bool { return r.marker == "-" }) {
+		keys = append(keys, "- removed")
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	return " " + p.Dim("("+strings.Join(keys, ", ")+")")
 }
 
 // netRuleText renders a rule the way a destination row reads — the name or
