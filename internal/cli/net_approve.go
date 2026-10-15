@@ -47,10 +47,21 @@ func (a *app) cmdApprove(args []string) (int, error) {
 	err = confirmNetApproval(ctx, review, os.Stderr, func() bool {
 		return confirmNetApprovalPrompt(ctx)
 	})
-	if err = errors.Join(err, review.Close()); err != nil {
+	return reportNetChange(errors.Join(err, review.Close()), netApproveApproved)
+}
+
+// reportNetChange finishes a confirmed approval change. One that was saved but could not reach
+// running editor sessions is still a success — new runs use it, and only those sessions wait for a
+// reconnect — so it gets its ✓ and a caution, never a ✗.
+func reportNetChange(err error, done string) (int, error) {
+	untold := errors.Is(err, networkstate.ErrSessionsNotTold)
+	if err != nil && !untold {
 		return 1, err
 	}
-	ui.OK("%s", netApproveApproved)
+	ui.OK("%s", done)
+	if untold {
+		ui.Warn("%s", netSessionsNotTold)
+	}
 	return 0, nil
 }
 
@@ -79,6 +90,7 @@ const (
 	netApprovePrompt    = "Approve this access for new runs?"
 	netApproveApproved  = "Approved for new runs"
 	netApproveUnchanged = "No approval needed: this project's requested access has not changed."
+	netSessionsNotTold  = "Running editor sessions keep their current network rules until you reconnect them."
 )
 
 func approveMovedError() error {

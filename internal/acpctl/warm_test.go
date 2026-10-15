@@ -31,13 +31,13 @@ func TestWarmPool(t *testing.T) {
 	}
 	// checkout hands the box to the caller and empties the slot.
 	// A box serves only the account it started on; a switch to another account leaves it parked.
-	if c := p.Checkout("codex", "work", "img"); c != nil {
+	if c := p.Checkout("codex", "work", "img", ""); c != nil {
 		t.Error("checkout handed a default-account box to a switch to another account")
 	}
-	if c := p.Checkout("codex", "default", "img"); c == nil {
+	if c := p.Checkout("codex", "default", "img", ""); c == nil {
 		t.Error("checkout should return the warmed box")
 	}
-	if c := p.Checkout("codex", "", "img"); c != nil {
+	if c := p.Checkout("codex", "", "img", ""); c != nil {
 		t.Error("checkout should empty the slot")
 	}
 	// After checkout, refill re-populates.
@@ -51,13 +51,13 @@ func TestWarmPool(t *testing.T) {
 	if stopped["codex"] != 1 || stopped["gemini"] != 1 {
 		t.Errorf("reap should Stop every held box: codex=%d gemini=%d", stopped["codex"], stopped["gemini"])
 	}
-	if c := p.Checkout("codex", "", "img"); c != nil {
+	if c := p.Checkout("codex", "", "img", ""); c != nil {
 		t.Error("reap should have cleared the pool")
 	}
 	// A disabled pool warms nothing.
 	d := NewWarmPool(false, mk)
 	d.Refill("claude")
-	if c := d.Checkout("claude", "", "img"); c != nil {
+	if c := d.Checkout("claude", "", "img", ""); c != nil {
 		t.Error("a disabled pool must warm nothing")
 	}
 }
@@ -70,16 +70,78 @@ func TestWarmPoolStopsABoxFromAReplacedImage(t *testing.T) {
 		return &acpproxy.Child{Provider: provider, Account: "default", Image: "img", Stop: func() { stopped++ }}, nil
 	})
 	p.Refill("codex")
-	if c := p.Checkout("codex", "default", "rebuilt"); c != nil || stopped != 1 {
+	if c := p.Checkout("codex", "default", "rebuilt", ""); c != nil || stopped != 1 {
 		t.Fatalf("a box from an older image was reused or kept (stopped=%d)", stopped)
 	}
 	p.Refill("codex")
-	if c := p.Checkout("codex", "default", ""); c != nil || stopped != 1 {
+	if c := p.Checkout("codex", "default", "", ""); c != nil || stopped != 1 {
 		t.Fatalf("a box was reused, or stopped, without knowing the current image (stopped=%d)", stopped)
 	}
-	if p.Checkout("codex", "default", "img") == nil {
+	if p.Checkout("codex", "default", "img", "") == nil {
 		t.Fatal("a box checked against an image nobody could tell was not left parked")
 	}
+}
+
+// A filtered session that adopted a newly approved policy must never lend a box admitted under the
+// one it replaced: like a rebuilt image's box, it is stopped, and a box of the current policy serves.
+func TestWarmPoolNeverLendsABoxFromAnotherPolicy(t *testing.T) {
+	policy, stopped := "old-policy", 0
+	p := NewWarmPool(true, func(provider string) (*acpproxy.Child, error) {
+		return &acpproxy.Child{Provider: provider, Account: "default", Image: "img", Policy: policy, Stop: func() { stopped++ }}, nil
+	})
+	p.Refill("codex")
+	if c := p.Checkout("codex", "default", "img", "new-policy"); c != nil || stopped != 1 {
+		t.Fatalf("a box admitted under the replaced policy was lent or kept (stopped=%d)", stopped)
+	}
+	policy = "new-policy"
+	p.Refill("codex")
+	if c := p.Checkout("codex", "default", "img", "new-policy"); c == nil || c.Policy != "new-policy" {
+		t.Fatalf("a box of the current policy was not lent: %+v", c)
+	}
+}
+
+// Draining for a replaced policy stops what is parked now and keeps the pool open; a fill already in
+// flight stops the box it brings back and starts another, so its slot is filled under the current
+// policy instead of left empty.
+func TestWarmPoolDrainStopsParkedBoxesAndRestartsAnInFlightFill(t *testing.T) {
+	var mu sync.Mutex
+	stopped, spawns := map[string]int{}, map[string]int{}
+	spawning, release := make(chan struct{}), make(chan struct{})
+	p := NewWarmPool(true, func(provider string) (*acpproxy.Child, error) {
+		mu.Lock()
+		spawns[provider]++
+		first := spawns[provider] == 1
+		mu.Unlock()
+		if provider == "claude" && first {
+			close(spawning)
+			<-release
+		}
+		return &acpproxy.Child{Provider: provider, Image: "img", Stop: func() {
+			mu.Lock()
+			stopped[provider]++
+			mu.Unlock()
+		}}, nil
+	})
+	p.Refill("codex")
+	filled := make(chan struct{})
+	go func() { p.Refill("claude"); close(filled) }()
+	<-spawning // started before the drain
+	p.Drain()
+	close(release)
+	<-filled
+	mu.Lock()
+	gotStopped, gotSpawns := map[string]int{"codex": stopped["codex"], "claude": stopped["claude"]}, spawns["claude"]
+	mu.Unlock()
+	if gotStopped["codex"] != 1 || gotStopped["claude"] != 1 || gotSpawns != 2 {
+		t.Fatalf("drain stopped %v after %d claude spawns, want the parked codex box and the overtaken claude box stopped and claude spawned again", gotStopped, gotSpawns)
+	}
+	if p.Checkout("codex", "", "img", "") != nil {
+		t.Fatal("a drained pool lent a box it held before the drain")
+	}
+	if p.Checkout("claude", "", "img", "") == nil {
+		t.Fatal("the overtaken fill left its slot empty")
+	}
+	p.Reap()
 }
 
 // Stopping a parked box it will not lend — a spare of the active provider, or one from a replaced
@@ -152,7 +214,7 @@ func TestWarmPoolRebalanceCentresOnTheActiveProvider(t *testing.T) {
 	if spawns["codex"] != 1 || spawns["gemini"] != 1 || spawns["claude"] != 0 {
 		t.Fatalf("launch warmed %v, want codex and gemini only", spawns)
 	}
-	if c := p.Checkout("codex", "default", "img"); c == nil { // switch claude → codex, served warm
+	if c := p.Checkout("codex", "default", "img", ""); c == nil { // switch claude → codex, served warm
 		t.Fatal("no warm codex box")
 	}
 	p.Rebalance("codex", []string{"claude", "gemini"})
@@ -161,7 +223,7 @@ func TestWarmPoolRebalanceCentresOnTheActiveProvider(t *testing.T) {
 	}
 	p.Refill("codex") // a spare of the active provider, as a cold switch to a pinned model would leave it
 	p.Rebalance("codex", []string{"claude", "gemini"})
-	if stopped["codex"] != 1 || p.Checkout("codex", "", "img") != nil {
+	if stopped["codex"] != 1 || p.Checkout("codex", "", "img", "") != nil {
 		t.Fatalf("the active provider's spare was not stopped: stopped=%v", stopped)
 	}
 	p.Reap()
@@ -252,7 +314,7 @@ func TestWarmPoolReapDrainsAnInFlightRefill(t *testing.T) {
 	if want := []string{"late child stopped", "reap returned"}; !slices.Equal(order.events, want) {
 		t.Fatalf("Reap must return only after the in-flight fill stopped its child, got %v", order.events)
 	}
-	if c := p.Checkout("late", "", "img"); c != nil {
+	if c := p.Checkout("late", "", "img", ""); c != nil {
 		t.Error("a box spawned after Reap must never be stored in the pool")
 	}
 }
@@ -278,10 +340,10 @@ func TestWarmPoolCallbacksRunOutsideTheLock(t *testing.T) {
 			SetActive: func(bool) { probe("SetActive") },
 		}, nil
 	})
-	p.Refill("codex")              // parks the box: SetActive(false)
-	p.Checkout("codex", "", "img") // hands it to the caller: SetActive(true)
-	p.Refill("codex")              // warm again, so Reap has something to stop
-	p.Reap()                       // stops it: Stop()
+	p.Refill("codex")                  // parks the box: SetActive(false)
+	p.Checkout("codex", "", "img", "") // hands it to the caller: SetActive(true)
+	p.Refill("codex")                  // warm again, so Reap has something to stop
+	p.Reap()                           // stops it: Stop()
 	if len(underLock) > 0 {
 		t.Fatalf("pool callbacks ran while the pool mutex was held: %v", underLock)
 	}

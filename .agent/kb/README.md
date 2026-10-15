@@ -61,7 +61,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [shell-completion-current-word](shell-completion-current-word.md) — current-word replacement and the Bash 3.2 COMP_WORDS/IFS trap in generated completion
 - [restricted-networking](restricted-networking.md) — the layers between an `--egress filtered` flag and `docker run`, where authority lives (never a repo, never a box), the precedence ladder, and what a filtered run refuses
 - [network-gateway](network-gateway.md) — the controller/guard pair that enforces a capture: nftables capture and grants, SNI and DNS admission, what observation measures versus counts, exact-owned cleanup
-- [network-consumers](network-consumers.md) — how the loop, direct runs and remote sessions consume ONE frozen capture, and which `coop net` verb reads which evidence
+- [network-consumers](network-consumers.md) — how the loop, direct runs and remote sessions consume ONE frozen capture per box (a filtered `coop acp` session replaces boxes after an approval), and which `coop net` verb reads which evidence
 - [box-egress-poc](box-egress-poc.md) — transparent HTTPS experiment guards hidden Docker DNS ports and shared control sockets; not a production mode
 - [in-box-task-channel](in-box-task-channel.md) — the loop box changes task state through the coop-owned `coop-tasks` MCP server over a helper-container unix socket (never a host-created one, never HTTP), refusing only a task another live process holds
 - [release-qualification](release-qualification.md) — tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity
@@ -115,7 +115,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [fork-lifecycle-test-barriers](fork-lifecycle-test-barriers.md) — lifecycle race tests observe command lock entry after preflight, never infer it from a fixed delay
 - [fork-candidate-review-rounds](fork-candidate-review-rounds.md) — immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 - [acp-preset-owns-toolbar](acp-preset-owns-toolbar.md) — active ACP presets own the whole lead target and refuse stale Provider/Account editor replays
-- [acp-warm-pool-identity](acp-warm-pool-identity.md) — the editor warm pool lends a parked box only to an identical switch (plain target, default model/effort, same account and image); prove hits from the trace
+- [acp-warm-pool-identity](acp-warm-pool-identity.md) — the editor warm pool lends a parked box only to an identical switch (plain target, default model/effort, same account, image and network policy); prove hits from the trace
 - [lifecycle-latency-measurement](lifecycle-latency-measurement.md) — pair the two builds and alternate them for any start/stop claim; never bisect a noisy wall-clock metric single-shot; build the comparison binary outside the checkout or its version stamp lies; an old binary cannot start in an approved project
 - [acp-auth-is-provider-account-scoped](acp-auth-is-provider-account-scoped.md) — initialize capability truth and successful authentication belong to one provider account
 - [acp-scripted-e2e](acp-scripted-e2e.md) — test the real ACP supervisor/control/proxy path with a scripted runtime and isolated state

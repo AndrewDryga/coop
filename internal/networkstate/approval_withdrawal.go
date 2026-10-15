@@ -51,6 +51,16 @@ func (s *Store) withdrawn(id string) (bool, error) {
 	return true, nil
 }
 
+// Withdrawn reports whether this project's approval was withdrawn on this host and not approved
+// again since: a running editor session that is refused names the withdrawal, not a review.
+func (s *Store) Withdrawn(project string) (bool, error) {
+	id, err := s.projectID(project)
+	if err != nil {
+		return false, err
+	}
+	return s.withdrawn(id)
+}
+
 // recordWithdrawal persists the barrier and fsyncs it. It runs BEFORE the
 // approval is removed, so a crash between the two leaves the safe half done:
 // a barrier with a stale grant still refuses, a grant with no barrier is what

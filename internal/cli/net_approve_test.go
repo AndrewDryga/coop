@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -220,5 +221,23 @@ func TestRetiredNetApprovePointsAtApprove(t *testing.T) {
 	code, err = helpForPath([]string{"net", "approve"}, nil, true)
 	if code != 2 || err == nil || !strings.Contains(err.Error(), `"coop net approve" has moved`) || !strings.Contains(err.Error(), "coop approve") {
 		t.Fatalf("coop help net approve = (%d, %v)", code, err)
+	}
+}
+
+// A change that was saved but could not reach running editor sessions is still the success a person
+// confirmed: it gets its ✓ and one caution, exits 0, and only a real failure exits 1.
+func TestNetChangeSavedButUntoldIsASuccessWithACaution(t *testing.T) {
+	var code int
+	var err error
+	out := captureStderr(t, func() {
+		code, err = reportNetChange(fmt.Errorf("%w (disk full)", networkstate.ErrSessionsNotTold), netApproveApproved)
+	})
+	if code != 0 || err != nil || !strings.Contains(out, netApproveApproved) || !strings.Contains(out, netSessionsNotTold) || strings.Contains(out, "disk full") {
+		t.Fatalf("an untold change = (%d, %v), printed %q; want the ✓, one caution and no cause", code, err, out)
+	}
+	failure := errors.New("the request changed while you were reviewing it")
+	out = captureStderr(t, func() { code, err = reportNetChange(failure, netApproveApproved) })
+	if code != 1 || !errors.Is(err, failure) || strings.Contains(out, netApproveApproved) {
+		t.Fatalf("a failed change = (%d, %v), printed %q; want exit 1 and no success line", code, err, out)
 	}
 }

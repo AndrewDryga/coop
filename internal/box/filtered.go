@@ -32,6 +32,10 @@ type CapturedEgress struct {
 	Project, Fingerprint, QualificationID string
 	SessionID, AttemptID                  string
 	JobDigest                             string
+	// ApprovalGeneration is the host's approval generation read just before this capture's
+	// approval was: a later change advances past it. Zero when it could not be read, which a
+	// supervisor treats as "check again".
+	ApprovalGeneration uint64
 }
 
 // Close releases the authority handle a capture holds. A nil capture closes

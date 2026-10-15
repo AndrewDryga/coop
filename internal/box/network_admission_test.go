@@ -1,6 +1,7 @@
 package box
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 )
 
 // admissionFixture gives every case its own private state root and project, so
@@ -302,5 +304,37 @@ func TestAdmitNetworkClassifiesOperatorInputBeforeCapture(t *testing.T) {
 	if _, err := admitFixture(t, cfg, repo, NetworkAdmission{RulesFile: outside}); err == nil ||
 		!strings.Contains(err.Error(), filteredReachedRuntimePreflight) {
 		t.Fatal("an operator rules file did not grant its own authority", err)
+	}
+}
+
+// A running editor session re-admits between turns with ExistingQualification: a host with no current
+// proof is refused, naming the one command that prepares it, and nothing is built in the meantime.
+func TestAdmissionWithExistingQualificationNeverSetsTheHostUp(t *testing.T) {
+	cfg, repo, _ := admissionFixture(t)
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
+		return dockersock.Info{ID: "fixture-daemon", ServerVersion: "29.4.0", KernelVersion: "fixture", OSType: "linux", Architecture: "aarch64"}, nil
+	}))
+	calls := filepath.Join(t.TempDir(), "calls")
+	script := filepath.Join(t.TempDir(), "docker")
+	body := "#!/bin/sh\nwhile [ \"$1\" = --host ] || [ \"$1\" = --config ]; do shift 2; done\nprintf '%s\\n' \"$1\" >> " + calls + "\n" +
+		"case \"$1\" in\ninfo) printf '%s\\n' '{\"ID\":\"fixture-daemon\",\"ServerVersion\":\"29.4.0\",\"KernelVersion\":\"fixture\",\"OSType\":\"linux\",\"Architecture\":\"aarch64\",\"SecurityOptions\":[]}' ;;\nimage) exit 1 ;;\n*) exit 91 ;;\nesac\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mode := egress.Filtered
+	capture, err := AdmitNetwork(cfg, runtime.Runtime{Name: script}, RunSpec{Repo: repo, Workdir: repo},
+		NetworkAdmission{InvocationMode: &mode, ExistingQualification: true})
+	if capture != nil {
+		_ = capture.Close()
+	}
+	if !errors.Is(err, ErrNetworkSetupRequired) || !strings.Contains(err.Error(), "run 'coop net setup' first") {
+		t.Fatalf("admission without a host proof = %v, want the coop net setup refusal", err)
+	}
+	ran, _ := os.ReadFile(calls)
+	for _, command := range strings.Fields(string(ran)) {
+		if command != "info" && command != "image" {
+			t.Fatalf("admission that may not set the host up ran docker %s (all: %q)", command, ran)
+		}
 	}
 }

@@ -1,13 +1,15 @@
 ---
 name: network-consumers
-description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture, and which surface reads which evidence
+description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture per box, and which surface reads which evidence
 subsystem: networking
-sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/session/schema.go, internal/workerproto/protocol.go]
-updated: 2026-09-26
+sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/session/schema.go, internal/workerproto/protocol.go, internal/cli/acp_refresh.go]
+updated: 2026-10-15
 ---
 
-Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; no
-consumer admits twice. See [[restricted-networking]] for what admission decides.
+Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; a
+box never admits for itself and its capture never changes. The one consumer that admits again is a
+filtered `coop acp` supervisor after an approval change, and it replaces boxes rather than changing
+one (below). See [[restricted-networking]] for what admission decides.
 
 **Direct runs** admit in the CLI and hand the capture to `box.Run` on the same host process
 (`cli/commands.go`). Interactive forks and remote/restricted fork ACP children do the same in
@@ -19,10 +21,15 @@ the operator's flags in their exact spelling so the detached worker admits what 
 would have (`cli/network_flags.go`). `box.Run` reloads project policy before its final capture check,
 so a future caller that misses admission fails before mounts or runtime execution.
 
-**An ACP session** admits ONCE, in the outer supervisor, before the first child
-(`cli/acp_cmd.go:204`): its scope unions every provider the toolbar could switch to, so a provider
-switch reuses that capture instead of meeting a mid-session denial. Each spawned child receives a
-per-child REFERENCE through `COOP_NETWORK_CAPTURE` (`cli/acp_cmd.go:493`) — the same envelope a
+**An ACP session** admits in the outer supervisor, before the first child (`cli/acp_cmd.go`
+`cmdACP`): its scope unions every provider the toolbar could switch to, so a provider switch reuses
+that capture instead of meeting a mid-session denial. That scope is frozen, with the rest of the
+startup admission's spec and options. When `coop approve` or `coop net forget` advances the host's
+approval generation, a filtered `coop acp` supervisor (not fork ACP) re-runs that exact admission —
+existing host setup only — once every thread is idle, or at once when its factory starts a box anyway
+(a respawn, a switch), and replaces its boxes under the new capture instead of changing a running
+one (`cli/acp_refresh.go`; see [[restricted-networking]]). Each spawned child receives a
+per-child REFERENCE through `COOP_NETWORK_CAPTURE` (`acpChildCapture` in `cli/acp_cmd.go`) — the same envelope a
 remote session uses — and an inherited one is stripped from the child environment. A filtered ACP
 child gets no `--cidfile` (the gateway engine owns its container ids) and a SIGTERM-cancelable
 context, and the supervisor's stop (`stopACPChild`) sends SIGTERM and waits up to 30 s
@@ -137,6 +144,9 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-10-15 — a filtered `coop acp` session now re-admits after an approval change (the frozen
+  startup spec, between turns or when a box starts anyway) and replaces its boxes; per-child
+  references are unchanged. Fixed the "no consumer admits twice" claim and a stale line reference.
 - 2026-09-26 — removed the retired policy-resolution path and its unused box adapter; reverified
   controller admission, job-scoped snapshots, child proofs and generic API network reads. Local
   project/ACP/loop admission is unchanged.

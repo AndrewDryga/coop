@@ -1700,7 +1700,7 @@ func TestACPParsesTheNetworkFlagsAndAdmitsInTheSupervisor(t *testing.T) {
 	if a.acpCapture != nil {
 		t.Fatal("an open ACP session captured a policy")
 	}
-	if value, err := a.acpChildCapture("abc"); err != nil || value != "" {
+	if value, err := acpChildCapture(a.acpCapture, "abc"); err != nil || value != "" {
 		t.Fatalf("an open session handed a child %q (%v)", value, err)
 	}
 }
@@ -1711,11 +1711,11 @@ func TestACPChildCaptureIsAPerChildReference(t *testing.T) {
 	a := &app{cfg: &config.Config{}, acpCapture: &box.CapturedEgress{
 		Project: t.TempDir(), Fingerprint: strings.Repeat("a", 64), QualificationID: strings.Repeat("b", 64),
 	}}
-	first, err := a.acpChildCapture("sup1")
+	first, err := acpChildCapture(a.acpCapture, "sup1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := a.acpChildCapture("sup1")
+	second, err := acpChildCapture(a.acpCapture, "sup1")
 	if err != nil {
 		t.Fatal(err)
 	}

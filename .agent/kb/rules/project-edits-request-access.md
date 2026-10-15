@@ -2,9 +2,9 @@
 name: project-edits-request-access
 description: project configuration requests access; one host approval grants it, checked before execution and enforced throughout agent and service runs
 scope: security
-sources: [internal/cli/net_approve.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/box/run.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/composecheck.go]
+sources: [internal/cli/net_approve.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/box/run.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/composecheck.go, internal/cli/acp_refresh.go]
 check: none
-updated: 2026-10-11
+updated: 2026-10-15
 ---
 
 # Approve added access, not ordinary development
@@ -15,9 +15,11 @@ and access to existing outside data. Store grants outside everything exposed to 
 Check the effective permissions before starting affected code or mounting protected data. Use the
 same captured configuration for checking and execution; save only what the operator reviewed.
 
-Enforce grants with actual mounts/firewalls throughout agent and service lifetimes. Configuration
-edits and later approvals do not widen running boxes. New permissions require approval and a new
-run. A request field or process/API carrier cannot become authority; see
+Enforce grants with actual mounts/firewalls throughout agent and service lifetimes. A box's policy is
+fixed for its lifetime: configuration edits and later approvals never widen a running box. New
+permissions require approval and a new box: a new run, or a running `coop acp` supervisor replacing
+its boxes with ones admitted again under its startup scope. A refused admission keeps the rules the
+live box runs. A request field or process/API carrier cannot become authority; see
 [[network-authority-is-proven-not-passed]].
 
 **Why:** the user asked how unapproved edits could be kept from taking effect, then approved one
@@ -39,6 +41,13 @@ denial from agent-controlled services. A command rename or UI warning is not enf
 
 ## Changelog
 
+- 2026-10-15 — human-approved rewording: a box's policy stays immutable, but a running `coop acp`
+  session may replace its boxes with freshly admitted ones (task
+  2026-10-14-acp-sessions-adopt-new-network-approval-at-idle). Swept every admission call site
+  (direct, fork and fork ACP, loop, fork gates, eval, project builds, model probes, controller
+  sessions, ACP): each admits once per run or box; only the ACP refresh admits again mid-session, from
+  its frozen startup spec, and it replaces boxes — no path changes a running box's gateway, and a
+  refusal reverts to the rules the live box runs.
 - 2026-10-11 — synchronized the owner-approved host-terminal snapshot build exception.
   Swept the direct, fork, ACP and controller launch callers with the linked build rule;
   no network or service permission grant is widened by this one build decision.

@@ -110,5 +110,13 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	return removed, s.intactAuthority()
+	if err := s.intactAuthority(); err != nil {
+		return removed, err
+	}
+	if !removed {
+		return false, nil // nothing changed that a running session has to hear about
+	}
+	// After the withdrawal is durable, as in Approve: a running editor session admits again and
+	// finds this project withdrawn.
+	return true, s.announceApprovalChange(ctx)
 }

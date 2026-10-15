@@ -3047,3 +3047,37 @@ func TestACPControlSelectProviderForReopenedThread(t *testing.T) {
 		t.Fatal("a preset owns the selection; SelectProvider must not override it")
 	}
 }
+
+// A peek answers what the next spawn would run — an in-place model change included — and records
+// nothing; a selection that hands the lead to another provider has nothing to peek at.
+func TestACPPeekSpawnTargetMatchesTheNextSpawnWithoutSideEffects(t *testing.T) {
+	dir := t.TempDir()
+	c := New(&config.Config{ConfigDir: dir}, "claude", "", "", dir, Selection{}, nil, nil,
+		withTestAccounts(testHost(), map[string][]string{"claude": {"work"}, "codex": {"default"}}))
+	peek, _, ok := c.PeekSpawnTarget()
+	if !ok || peek.String() != "claude@work" || c.autoAccount != "" {
+		t.Fatalf("peek = (%q, %v) with autoAccount %q, want claude@work and nothing recorded", peek, ok, c.autoAccount)
+	}
+	if spawn, _, _ := c.SpawnTarget(); spawn.String() != peek.String() {
+		t.Fatalf("the spawn ran %q, the peek said %q", spawn, peek)
+	}
+	// The editor's model dropdown changes the plain target in place, without a spawn.
+	c.mu.Lock()
+	c.plainTargets["claude"] = targetPreference{Model: "claude-fable-5", Effort: "high"}
+	before := c.target
+	c.mu.Unlock()
+	peek, _, ok = c.PeekSpawnTarget()
+	if !ok || peek.String() != "claude:claude-fable-5/high@work" {
+		t.Fatalf("peek after a model change = (%q, %v), want claude:claude-fable-5/high@work", peek, ok)
+	}
+	if c.target.String() != before.String() {
+		t.Fatalf("the peek recorded its target: %q", c.target)
+	}
+	if spawn, _, _ := c.SpawnTarget(); spawn.String() != peek.String() {
+		t.Fatalf("the spawn ran %q, the peek said %q", spawn, peek)
+	}
+	c.sel = Selection{Provider: "codex"}
+	if _, _, ok := c.PeekSpawnTarget(); ok || c.lead != "claude" {
+		t.Fatalf("a peek across a provider switch answered (%v) or moved the lead to %q", ok, c.lead)
+	}
+}

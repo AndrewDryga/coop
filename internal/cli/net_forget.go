@@ -89,17 +89,14 @@ func (a *app) cmdNetForget(args []string) (int, error) {
 	if declined {
 		err = nil
 	}
-	if err = errors.Join(err, review.Close()); err != nil {
-		return 1, err
-	}
+	err = errors.Join(err, review.Close())
 	// Answering no is an answer, not a failure: nothing changed, and the run
 	// says so without an error marker or a nonzero status.
-	if declined {
+	if declined && err == nil {
 		ui.Note("%s", netForgetCancelled)
 		return 0, nil
 	}
-	ui.OK("%s", netForgetForgotten)
-	return 0, nil
+	return reportNetChange(err, netForgetForgotten)
 }
 
 // errNetDeclined is a confirmation answered "no". It carries no message of its

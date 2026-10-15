@@ -2,9 +2,9 @@
 name: network-authority-is-proven-not-passed
 description: a filtered child proves its network authority against the owner-private store; controller grants are admitted once, never passed to the child
 scope: security
-sources: [internal/box/run.go, internal/box/network_session.go, internal/box/authority_mounts.go, internal/networkstate/authority.go, internal/networkstate/job.go, internal/networkstate/approval_review.go, internal/sessionsvc/network.go, internal/sessionsvc/review.go, internal/forkctl/merge.go, internal/cli/net_approve.go]
+sources: [internal/box/run.go, internal/box/network_session.go, internal/box/authority_mounts.go, internal/networkstate/authority.go, internal/networkstate/job.go, internal/networkstate/approval_review.go, internal/sessionsvc/network.go, internal/sessionsvc/review.go, internal/forkctl/merge.go, internal/cli/net_approve.go, internal/networkstate/approval_generation.go]
 check: "go test ./internal/box -run 'TestFilteredPublicLaunchRequiresCaptureAndRejectsExtraArgs|TestProjectFilteredLaunchRequiresCaptureBeforeRuntime|TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore|TestControllerJobChildReprovesItsOwnSnapshot'"
-updated: 2026-09-29
+updated: 2026-10-14
 ---
 
 # Network authority is proven against the owner store, never accepted from its carrier
@@ -39,6 +39,9 @@ proves it.
   that command; it is not a second local approval path. See [[project-edits-request-access]].
   `CaptureJob` is a separate authenticated-controller admission path: it never consumes a local
   approval or repository request, and cannot be called by a child.
+- The approval generation (`networkstate/approval_generation.go`) is a cue, not a carrier: it names no
+  project and grants nothing. A `coop acp` supervisor that sees it move admits again through the
+  ordinary path; its children receive the new capture only as a reference they prove like any other.
 - Verify after the fact too: the daemon checks every run's recorded fingerprint against the
   immutable session row and fails the turn on a mismatch.
 - A controller-job review gate also uses the saved session mode and exact capture reference. Its
@@ -49,6 +52,8 @@ Background: [[restricted-networking]] (where authority lives), [[network-consume
 reference).
 
 ## Changelog
+- 2026-10-14 — recorded the approval generation as a cue, not authority. Swept its readers: only the
+  `coop acp` refresh polls it, and every capture it adopts comes from `box.AdmitNetwork`.
 - 2026-09-29 — swept the controller turn and review launch paths. Review had discarded the saved
   network binding and used ordinary admission; it now reopens the exact snapshot. Focused box,
   forkctl, CLI and service tests cover the review boundary; no second grant writer was added.

@@ -479,6 +479,13 @@ on the host. The repository file is only a request. The approval is remembered o
 repository, so editing or deleting the file can't widen access, and nothing inside a box can approve
 itself. Approvals apply to new runs. A box that's already running keeps the policy it launched with.
 
+A running editor session (`coop acp`) follows a new approval without reconnecting. Once no prompt
+is running, it starts a new box under the new rules and only then stops the old one. Anything still
+running in the old box stops, and the editor shows one line saying so. A box that starts anyway,
+after a crash or a provider switch, also gets the new rules. If they can't be applied, or the new box
+stops before the switch, the session keeps the rules it had and says why. After `coop net forget`, a
+running session keeps its rules until you reconnect the editor.
+
 ### Reviewing a request
 
 The approval is the exact snapshot of the file: its mode, its rules and the reviewed definition of

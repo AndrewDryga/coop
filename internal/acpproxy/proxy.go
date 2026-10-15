@@ -45,6 +45,7 @@ type Child struct {
 	Provider  string     // native session ids are scoped to this provider
 	Account   string     // successful authentication is scoped to this concrete credential too
 	Image     string     // the box image it started from, when known; a warm box is reused only on it
+	Policy    string     // the network policy fingerprint it proved, if filtered; a warm box is reused only under it
 	// MCPServers returns this child's final shared tool projection, after initialize. The caller
 	// owns credential rendering; the proxy adds it only to wire-bound session setup, never snapshots.
 	MCPServers func() ([]map[string]any, error)
@@ -206,6 +207,8 @@ type RunOpts struct {
 	// done — before it stops its child, so a caller can tear down its own independent resources at the
 	// same time instead of after. It must not block.
 	Stopping func()
+	// Restarter, when set, is bound to this run so the caller can restart its child between turns.
+	Restarter *Restarter
 }
 
 // reloadError is returned by RunWith when a reload fires; it carries the snapshot to hand the
@@ -256,6 +259,10 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		forceBySess:    map[string]*forceChain{},
 		forceFailed:    map[string]string{},
 		restartHeld:    map[string]clientLine{},
+	}
+	if opts.Restarter != nil {
+		opts.Restarter.bind(p)
+		defer opts.Restarter.bind(nil)
 	}
 	// Resume: seed the restored session state before the first child, then replay onto it below.
 	if opts.Resume != nil {

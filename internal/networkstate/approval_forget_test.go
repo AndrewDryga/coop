@@ -39,6 +39,7 @@ func TestForgetRemovesOneApprovalAndKeepsEveryOtherRecord(t *testing.T) {
 		t.Fatalf("the lexical id %q is not the id an approval is filed under (%q, %v)", record.ID, id, err)
 	}
 	before := inventory(t, s)
+	generation := approvalGenerationOf(t, s)
 	removed, err := s.Forget(ctx, record)
 	if err != nil || !removed {
 		t.Fatalf("Forget = (%v, %v)", removed, err)
@@ -57,6 +58,12 @@ func TestForgetRemovesOneApprovalAndKeepsEveryOtherRecord(t *testing.T) {
 		t.Fatalf("forget left no withdrawal marker:\n%v", got)
 	}
 	want[withdrawalRecord(record.ID)] = barrier
+	// The one host-wide record a forget also moves: it names no project and tells open editor
+	// sessions to admit again.
+	want[approvalGenerationRecord] = got[approvalGenerationRecord]
+	if got := approvalGenerationOf(t, s); got != generation+1 {
+		t.Errorf("forget moved the approval generation from %d to %d, want one step", generation, got)
+	}
 	if !reflect.DeepEqual(want, got) {
 		t.Errorf("forget changed more than the one approval and its marker:\nwant %v\ngot  %v", want, got)
 	}

@@ -269,3 +269,25 @@ func TestWithdrawalIsPersistedBeforeTheGrantIsCleared(t *testing.T) {
 		t.Fatal("the completed withdrawal did not fail closed")
 	}
 }
+
+// Withdrawn names exactly the state `coop net forget` leaves until the next approval, so a running
+// editor session can say "withdrawn" instead of "needs review".
+func TestWithdrawnLastsUntilTheNextApproval(t *testing.T) {
+	s, project := openStore(t), t.TempDir()
+	if err := approve(s, project, egress.Filtered, []egress.Rule{rule("docs.example.com")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if withdrawn, err := s.Withdrawn(project); err != nil || withdrawn {
+		t.Fatalf("an approved project reads as withdrawn: %v %v", withdrawn, err)
+	}
+	withdraw(t, s, project)
+	if withdrawn, err := s.Withdrawn(project); err != nil || !withdrawn {
+		t.Fatalf("a forgotten project does not read as withdrawn: %v %v", withdrawn, err)
+	}
+	if err := approve(s, project, egress.Filtered, []egress.Rule{rule("docs.example.com")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if withdrawn, err := s.Withdrawn(project); err != nil || withdrawn {
+		t.Fatalf("a project approved again still reads as withdrawn: %v %v", withdrawn, err)
+	}
+}

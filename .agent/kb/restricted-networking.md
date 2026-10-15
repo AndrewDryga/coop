@@ -2,8 +2,8 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go]
-updated: 2026-10-09
+sources: [internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go]
+updated: 2026-10-15
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -68,6 +68,27 @@ policy and pending state, then creates or re-enrolls the pair. `Store.Approve` n
 transition later at the prompt boundary; it reuses the reviewed pair exactly or returns
 `ErrApprovalChanged`. This prevents marker deletion or checkout movement between an unlocked probe
 and enrollment from crossing an active sandbox mount window.
+
+A box's policy never changes after launch. What `coop approve` and `coop net forget` do to running
+work is one host-wide counter, `approval-generation.json` (`networkstate/approval_generation.go`),
+advanced under its own lock after the approval change is durable: it names no project, grants
+nothing, and only tells a long-running supervisor to admit again. Readers compare for any
+difference, so a missing or unreadable counter restarts at a random value; a change that cannot be
+announced is still saved (`ErrSessionsNotTold`: ✓ plus a caution, never ✗). A filtered `coop acp`
+supervisor (`cli/acp_refresh.go`) polls it every two seconds and at turn end and re-runs its startup
+admission — the frozen spec, options and provider/account scope, `ExistingQualification` (no host
+setup; `box.ErrNetworkSetupRequired`) — once every thread is idle, or at once when its factory
+starts a box anyway (a respawn, a switch). A new capture drains the warm pool; the live box is then
+REPLACED: a replacement starts parked for `Control.PeekSpawnTarget` (what the next spawn will run,
+an in-place model change included), must keep running for `acpRefreshSettle` (about a filtered box's
+start), and only then does the proxy restart the idle child (`Restarter.RestartIfIdle`) with the
+factory handing it over. Any refusal reverts to the capture the live box runs and drops a prepared
+replacement, so an announced withdrawal is never followed by a swap onto the withdrawn rules; while
+the counter cannot be read nothing is switched (an approval change that could not be announced
+reaches the session only when it reconnects). There is deliberately no way back after the switch:
+returning to the old box's rules would widen a session whose new approval narrowed them, and an
+agent can make its own box exit. Editor notices are fixed text; a withdrawal is notice-only. Fork
+ACP, loops and direct runs keep the policy they started with.
 
 ACP supervision carries this explicit mode through `spawnBox` to initial, replacement and warm
 children, removing any conflicting ambient `COOP_EGRESS`. Each ACP-backed `coop models` probe
@@ -271,6 +292,10 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-10-15 — added the approval generation and the filtered `coop acp` refresh that replaces boxes
+  between turns, with refusal revert and no way back after a switch (task
+  2026-10-14-acp-sessions-adopt-new-network-approval-at-idle); verified against the new store, box,
+  proxy, control and CLI tests.
 - 2026-10-09 — actual Grok catalog returned auth-required despite a selected broker account.
   Verified the retained exact1.0.44 external-helper ACP fixture and added guarded adapter-owned
   bootstrap, with sequence, cache/canary and authentication deadline/cancellation tests.

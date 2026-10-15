@@ -1583,7 +1583,9 @@ Usage: coop approve
   Confirm the changes to allow new runs to use them.
   If nothing changed, there is nothing to approve.
 
-  Existing boxes keep the rules they started with.
+  Running boxes keep the rules they started with. A running editor session
+  (coop acp) that has network rules moves to a new box with these rules
+  between prompts.
   Run this command in your terminal.
 
 See current access: coop net

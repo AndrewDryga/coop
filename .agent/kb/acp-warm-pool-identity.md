@@ -1,9 +1,9 @@
 ---
 name: acp-warm-pool-identity
-description: coop acp parks one box per signed-in provider the session is not using and lends it to a switch only on an identical identity — plain target at the default model/effort, same account, same box image; prove a hit from the trace, never from timing
+description: coop acp parks one box per signed-in provider the session is not using and lends it to a switch only on an identical identity — plain target at the default model/effort, same account, box image and network policy; prove a hit from the trace, never from timing
 subsystem: acp
-sources: [internal/acpctl/warm.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, internal/box/derived_image.go, tools/lifecycle_bench.py]
-updated: 2026-09-22
+sources: [internal/acpctl/warm.go, internal/cli/acp_refresh.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, internal/box/derived_image.go, tools/lifecycle_bench.py]
+updated: 2026-10-15
 ---
 `coop acp` keeps a parked box (`acpctl.WarmPool`) for each signed-in provider the session is not
 using. After every factory spawn — the first one included, which is what fans the pool out —
@@ -15,12 +15,17 @@ A switch takes the parked box only when it would start the same box cold:
   parked box runs. The Provider selector always resolves an account (Auto → the provider's first
   signed-in one), so the account cannot be part of that test; before 2026-09-19 the pool required a
   bare `Target{Provider}` and therefore NEVER served an editor switch on a host with accounts.
-- `WarmPool.Checkout(provider, account, image)`: the parked child's `Account` must equal the target's,
-  and its recorded `Image` must equal the box image a cold start would use now (`Runtime.ImageID` of
-  `box.ImageForRepo` for ordinary runs, `box.FilteredImageIdentity` for filtered runs). A box from a replaced image is stopped (a `coop build` mid-session); an
+- `WarmPool.Checkout(provider, account, image, policy)`: the parked child's `Account` must equal the
+  target's, its recorded `Image` must equal the box image a cold start would use now (`Runtime.ImageID`
+  of `box.ImageForRepo` for ordinary runs, `box.FilteredImageIdentity` for filtered runs), and its
+  `Policy` must equal the network policy fingerprint a cold start would prove now ("" when open). A box
+  from a replaced image or policy is stopped (a `coop build` mid-session, a newly approved policy); an
   unknown image ("", e.g. Apple container) reuses nothing; a box on another account stays parked.
-Why these and not more: the workspace, network capture, MCP config and roles are the supervisor's
-own and the same for both spawns.
+  When a filtered session adopts a new approval (`cli/acp_refresh.go`), `WarmPool.Drain` stops every
+  parked box at once, a fill already in flight stops the box it brings back and spawns again, and
+  `Rebalance` refills the rest under the new policy. A refused approval drains back the same way.
+Why these and not more: the workspace, MCP config and roles are the supervisor's own and the same
+for both spawns; the network policy is the one part a session can change, hence the key.
 `spawnBox` strips ambient `COOP_EGRESS` and exports the resolved explicit config value to every
 initial, replacement and warm child. Admission marks that value explicit; inner children skip
 admission and must not lose a one-off or remembered offline decision. Filtered mode still needs
@@ -62,6 +67,9 @@ deferred reap waits for that same teardown. Measured on a filtered project with 
 editor close → everything gone in ~1.4 s.
 
 ## Changelog
+- 2026-10-15 — the checkout key gained the network policy fingerprint and the pool gained `Drain`
+  (an overtaken in-flight fill spawns again), for a filtered session that adopts a newly approved
+  policy; verified by the warm pool tests.
 - 2026-09-22 — recorded the shared child-mode handoff, verified by actual spawned-process
   offline/open/conflicting-environment regressions, including standalone-probe controls.
 - 2026-09-22 — filtered warming checks the actual explicitly built image and its current approved

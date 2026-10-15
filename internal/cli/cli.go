@@ -56,15 +56,18 @@ type app struct {
 	preset               *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
 	network              networkFlags                                 // this launch's --egress/--allow-domain/--egress-rules, resolved by box.AdmitNetwork
 	mode                 agents.ExecutionMode                         // this launch's --readonly/--bare; "" (normal) is every launch that takes neither
-	acpCapture           *box.CapturedEgress                          // an ACP supervisor's frozen policy; every child it spawns gets a reference to this one
+	acpCapture           *box.CapturedEgress                          // an ACP supervisor's startup policy; children get a reference to it or a refresh's (currentACPCapture)
+	acpAdmission         acpAdmit                                     // a filtered `coop acp` supervisor's startup admission, run again by its refresh
+	acpRefresh           *acpNetworkRefresh                           // a filtered `coop acp` session's move onto newly approved policies; set before serving
 	acpPeers             []agents.Target                              // exact ad-hoc peers whose accounts a filtered ACP supervisor freezes for its children
-	acpNetworkTargets    []agents.Target                              // exact provider/accounts admitted with acpCapture, including optional warm/probe choices
+	acpNetworkTargets    []agents.Target                              // exact provider/accounts admitted at startup, including optional warm/probe choices; never re-derived
 	acpAccountBindings   map[string]acpAccountBinding                 // filtered child-only account/default handoff, checked against its reloaded preset before mounts
 	acpResume            *acpctl.ResumeState                          // consumed once before admission; restored by the supervisor afterward
 	beforeSignRefUpdate  func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
 	afterDetachedPublish func()                                       // test seam for state replacement before repeated child validation
 	acpModels            func(agent string) ([]agents.Model, error)   // test seam for account-scoped model refresh; nil → a real ACP box
 	acpSupervise         func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor
+	admitNetwork         admitNetworkFunc                             // test seam for an ACP supervisor's admission; nil → box.AdmitNetwork
 }
 
 // ensureRuntime lazily detects and caches the container runtime the first time a box-running command

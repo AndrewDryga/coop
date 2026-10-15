@@ -148,7 +148,7 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 	if !hmac.Equal([]byte(review.Digest), []byte(digest)) {
 		return ErrApprovalChanged
 	}
-	return s.lockRecord(ctx, "approval", review.After.ProjectID, func() error {
+	err = s.lockRecord(ctx, "approval", review.After.ProjectID, func() error {
 		current, _, err := s.reviewApproval(project, mode, requests, bundles, services, false)
 		if errors.Is(err, errProjectAnchorTransition) {
 			return ErrApprovalChanged
@@ -177,6 +177,12 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 		}
 		return s.intactAuthority()
 	})
+	if err != nil {
+		return err
+	}
+	// Only once the approval is durable: a running editor session that sees the new generation
+	// admits again and reads this approval.
+	return s.announceApprovalChange(ctx)
 }
 
 // approvedServices keeps the reviewed definitions of direct services and their

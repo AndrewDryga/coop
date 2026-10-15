@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A running editor session picks up the network rules you approve.** Before, `coop approve`
+  changed only new runs, so a filtered `coop acp` session kept the old rules until the editor
+  reconnected. Now the session picks up the change once no prompt is running: it starts a new box
+  under the newly approved rules and only then stops the old one, so the conversation continues,
+  and the editor shows one line saying so. A running box's own rules never change. If the approval
+  can't be applied, for example because the project file changed again, or the new box stops before
+  the switch, the session keeps the rules it had and says why. After `coop net forget`, a running
+  session keeps its rules until you reconnect the editor.
+
 ## 11.3.0
 
 - **Usage includes recent requests in large histories.** Old transcripts no longer fill a scan

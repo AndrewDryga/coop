@@ -269,17 +269,25 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		// The capture belongs to the SUPERVISOR: it lives as long as the editor
-		// session, and each child receives a reference to it, never authority.
-		a.acpCapture, err = box.AdmitNetwork(a.cfg, a.rt, box.RunSpec{
+		// Admission marks the posture it resolved on the configuration it is given; a refresh
+		// repeats it — this spec, these options — from the configuration as it stood before.
+		admissionCfg := a.cfg.Clone()
+		spec := box.RunSpec{
 			Repo: repo, Workdir: repo, Agent: tool, Peers: scope, Preset: a.preset, NetworkClient: egress.ClientACP,
 			Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
-		}, a.network.admission())
+		}
+		options := a.network.admission()
+		// The capture belongs to the SUPERVISOR: it lives as long as the editor
+		// session, and each child receives a reference to it, never authority.
+		a.acpCapture, err = a.admitACPNetwork(a.cfg, spec, options)
 		if err != nil {
 			return 1, err
 		}
 		if a.acpCapture != nil {
 			a.acpNetworkTargets = slices.Clone(scope)
+			a.acpAdmission = func(ctx context.Context) (*box.CapturedEgress, error) {
+				return a.acpReadmit(ctx, admissionCfg, spec, options)
+			}
 		}
 		defer a.acpCapture.Close()
 		// Ports the inner box will publish (.agent/project.yaml serve), reported to the editor once per
@@ -369,7 +377,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	// This child's network authority arrives from the supervisor that started it,
 	// as a reference it must prove against the owner-private store. A child
-	// admits nothing: an approval that lands mid-session cannot widen it.
+	// admits nothing: an approval that lands mid-session cannot widen it — the
+	// supervisor replaces the child instead (acp_refresh.go).
 	capture, err := box.CapturedEgressFromEnvironment(a.cfg, spec)
 	if err != nil {
 		return 1, err
@@ -543,7 +552,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// `coop build` mid-session must not leave a switch on the old one.
 	currentImage := func() string {
 		if a.acpCapture != nil {
-			image, _ := box.FilteredImageIdentity(context.Background(), a.rt, a.acpCapture)
+			image, _ := box.FilteredImageIdentity(context.Background(), a.rt, a.currentACPCapture())
 			return image
 		}
 		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -607,6 +616,24 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 			rebalanceNow(ctrl.LeadProvider())
 		})
 	}
+	// A filtered session follows `coop approve` without the editor reconnecting: it admits again when
+	// the host's approval generation moves and replaces its boxes between turns (acp_refresh.go). A
+	// replacement starts parked, like a warm box, on the selection the next spawn would use; parked
+	// boxes of a replaced policy stop at once, and the pool refills from the current one.
+	restarter := &acpproxy.Restarter{}
+	a.acpRefresh = a.newACPNetworkRefresh(ctrl, restarter, func() {
+		go func() {
+			pool.Drain()
+			rebalance(ctrl.LeadProvider())
+		}()
+	}, func(ctx context.Context, want acpSpawn) (*acpproxy.Child, error) {
+		child, err := a.spawnBox(ctx, self, inner, superID, ctrl, want.target, want.preset, want.ok, os.Stderr, forkspace.ExecutionRoleWarm)
+		if err == nil && child.SetActive != nil {
+			child.SetActive(false)
+		}
+		return child, err
+	})
+	// Armed only now: a warm fill reads the refresh (currentACPCapture) built just above.
 	ctrl.OnInitialized(startFanOut)
 	fanOutFallback := time.AfterFunc(leadAnswerGrace, startFanOut)
 	defer fanOutFallback.Stop()
@@ -615,21 +642,26 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		if err := ctrl.ValidateNetworkTarget(t, psName); err != nil {
 			return nil, err
 		}
+		// A box starting anyway starts under the newest approval. Admitting may take a moment, so it
+		// comes before the check below.
+		a.acpRefresh.adopt()
 		if err := ctx.Err(); err != nil {
 			return nil, err // a superseded spawn launches nothing — nor takes a parked box it would leak
 		}
-		if acpctl.WarmSwitch(t, psName, ok, a.cfg.ModelFor(t.Provider), a.cfg.EffortFor(t.Provider)) && a.warmCheckoutProven(ctrl, t, psName) {
-			if c := pool.Checkout(t.Provider, t.Account(), currentImage()); c != nil {
-				acpproxy.Trace("spawn: warm box for %s@%s", c.Provider, c.Account)
-				rebalance(c.Provider)
-				return c, nil
+		spawn := acpSpawn{target: t, preset: psName, ok: ok}
+		child, kind := a.acpRefresh.take(spawn), "replacement"
+		if child == nil && acpctl.WarmSwitch(t, psName, ok, a.cfg.ModelFor(t.Provider), a.cfg.EffortFor(t.Provider)) && a.warmCheckoutProven(ctrl, t, psName) {
+			child, kind = pool.Checkout(t.Provider, t.Account(), currentImage(), acpPolicy(a.currentACPCapture())), "warm"
+		}
+		if child == nil {
+			var err error
+			if child, err = a.spawnBox(ctx, self, inner, superID, ctrl, t, psName, ok, os.Stderr, forkspace.ExecutionRoleActive); err != nil {
+				return nil, err
 			}
+			kind = "cold"
 		}
-		child, cerr := a.spawnBox(ctx, self, inner, superID, ctrl, t, psName, ok, os.Stderr, forkspace.ExecutionRoleActive)
-		if cerr != nil {
-			return nil, cerr
-		}
-		acpproxy.Trace("spawn: cold box for %s@%s", child.Provider, child.Account)
+		acpproxy.Trace("spawn: %s box for %s@%s", kind, child.Provider, child.Account)
+		a.acpRefresh.started(child)
 		rebalance(child.Provider)
 		return child, nil
 	}
@@ -667,16 +699,19 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	}); err != nil {
 		return 1, err
 	}
-	// The parked boxes are independent of the active one, so they stop while it does; the deferred
-	// Reap then waits for that same teardown to finish.
-	stopping := func() { go reapPool() }
-	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.Hooks(), acpproxy.RunOpts{Resume: resume, Reload: reload, Bindings: bindings, Stopping: stopping})
+	closeRefresh := a.acpRefresh.start(ctrl)
+	defer closeRefresh()
+	// The parked boxes — and a replacement still waiting — are independent of the active one, so they
+	// stop while it does; the deferred Reap and close then wait for that same teardown to finish.
+	stopping := func() { go reapPool(); go closeRefresh() }
+	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.Hooks(), acpproxy.RunOpts{Resume: resume, Reload: reload, Bindings: bindings, Stopping: stopping, Restarter: restarter})
 	// A SIGHUP reload: write the combined state to a 0600 temp file and re-exec THIS binary in place —
 	// same PID + fd 0/1/2, so the editor's transport never breaks. Run's reload path already stopped
 	// the box; reap the warm boxes here (execve replaces the image, so deferred reap won't run) and
 	// skip the label sweep — the re-exec'd process regenerates its own superID and owns the next box.
 	if snap, ok := acpproxy.ReloadSnapshot(err); ok {
 		reapPool()
+		closeRefresh()
 		// Sweep any box still labelled with THIS superID before exec — a warm spawn that was mid-flight
 		// (reap only stops boxes already parked) would otherwise reparent to init and never be reaped
 		// (the re-exec'd process uses a fresh superID). Safe here: Run already stopped the active box
@@ -742,12 +777,12 @@ func (a *app) reapACPBoxes(superID string) error {
 	return forkspace.RemoveDeadExecutionsBySource(authorityRepo, superID)
 }
 
-// acpChildCapture renders this supervisor's frozen network authority as the
-// reference ONE child launch proves. Each child gets its own attempt identity,
-// so `coop net runs` relates a run to the child that produced it; the session
-// identity is the supervisor's, which is what the editor session is.
-func (a *app) acpChildCapture(superID string) (string, error) {
-	if a.acpCapture == nil {
+// acpChildCapture renders a supervisor's network authority as the reference ONE
+// child launch proves. Each child gets its own attempt identity, so `coop net
+// runs` relates a run to the child that produced it; the session identity is the
+// supervisor's, which is what the editor session is.
+func acpChildCapture(capture *box.CapturedEgress, superID string) (string, error) {
+	if capture == nil {
 		return "", nil
 	}
 	attempt, err := newSupervisorID()
@@ -755,10 +790,32 @@ func (a *app) acpChildCapture(superID string) (string, error) {
 		return "", err
 	}
 	return box.SessionNetworkCapture{
-		Project: a.acpCapture.Project, Fingerprint: a.acpCapture.Fingerprint,
-		Qualification: a.acpCapture.QualificationID,
+		Project: capture.Project, Fingerprint: capture.Fingerprint,
+		Qualification: capture.QualificationID,
 		SessionID:     "acp-" + superID, AttemptID: "acp-" + attempt,
 	}.Encode()
+}
+
+// errACPAccountCooling refuses a parked box — warm or a network refresh's replacement — on an account
+// waiting out a rate limit: it would only sleep until the reset, and its slot can wait instead.
+var errACPAccountCooling = errors.New("waiting out a rate limit")
+
+// currentACPCapture is the capture a child started now proves: the one a refresh adopted after
+// `coop approve`, else the one admitted at startup. A box keeps the capture it started with.
+func (a *app) currentACPCapture() *box.CapturedEgress {
+	if a.acpRefresh != nil {
+		return a.acpRefresh.current()
+	}
+	return a.acpCapture
+}
+
+// acpPolicy is the network policy fingerprint a child started under capture proves: "" when the
+// session is open or offline. A warm box is lent only under the policy a cold start would prove now.
+func acpPolicy(capture *box.CapturedEgress) string {
+	if capture == nil {
+		return ""
+	}
+	return capture.Fingerprint
 }
 
 func newSupervisorID() (string, error) {
@@ -1020,7 +1077,10 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	if a.cfg.Explicit("COOP_EGRESS") {
 		env = append(env, "COOP_EGRESS="+a.cfg.Egress)
 	}
-	capture, err := a.acpChildCapture(superID)
+	// Read once: this child proves exactly one policy even if a refresh adopts another meanwhile.
+	admitted := a.currentACPCapture()
+	policy := acpPolicy(admitted)
+	capture, err := acpChildCapture(admitted, superID)
 	if err != nil {
 		inR.Close()
 		inW.Close()
@@ -1042,7 +1102,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 				inW.Close()
 				outR.Close()
 				outW.Close()
-				return nil, fmt.Errorf("%s account %q is waiting out a rate limit", t.Provider, acct)
+				return nil, fmt.Errorf("%s account %q is %w", t.Provider, acct, errACPAccountCooling)
 			case acct != "":
 				ctrl.WaitForReset(ctx, t.Provider, acct)
 			}
@@ -1197,7 +1257,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		}
 		_ = forkspace.UpdateExecutionRoleByPID(activityRepo, pid, role)
 	}
-	child := &acpproxy.Child{In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, WaitDone: waitDone}
+	child := &acpproxy.Child{In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, Policy: policy, WaitDone: waitDone}
 	if mcpPath != "" {
 		var once sync.Once
 		var servers []map[string]any

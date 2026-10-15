@@ -74,6 +74,7 @@ func normalizeACPSelection(sel Selection) Selection {
 type Control struct {
 	cfg             *config.Config              // for expanding a selected preset's model ladder into rotation targets
 	onInitialized   func()                      // deferred work to start once the editor has its initialize answer
+	onTurnEnd       func()                      // work to start whenever the last running turn ends
 	host            Host                        // injected seams (rotation/models-cache/wait policy) — internal/cli owns the real implementations
 	repo            string                      // repo root, to load a preset selected from the toolbar
 	lead            string                      // the CURRENT lead agent — re-derived on a provider switch (see retarget)
@@ -121,6 +122,7 @@ type Control struct {
 
 	serveURLs []string        // published-port lines to show the editor (e.g. "box :5173 → http://localhost:24187")
 	reported  map[string]bool // editor sessionId -> the serve URLs were already announced in this session
+	notice    string          // one queued Notify text, shown with the next session update
 
 	// Best-effort conversation carry across a session re-create (a provider switch, or a lost
 	// transcript): coop retains a budgeted plain-text history per session — it already sees both
@@ -379,20 +381,29 @@ func (c *Control) presetRotation() *ladder.Rotation {
 // switch or a cross-provider preset rung). ok=false only when the
 // selection is unrecognizable (the factory then spawns on the launch args alone).
 func (c *Control) SpawnTarget() (t agents.Target, presetName string, ok bool) {
+	return c.spawnTarget(true)
+}
+
+// PeekSpawnTarget is what SpawnTarget would return now, without changing anything: a box prepared
+// ahead of the next spawn is checked against it. ok is also false when the next spawn hands the lead
+// to another provider — that spawn re-derives the lead's state first, so nothing can be prepared for it.
+func (c *Control) PeekSpawnTarget() (t agents.Target, presetName string, ok bool) {
+	return c.spawnTarget(false)
+}
+
+// spawnTarget resolves the next spawn; commit records it, as a spawn does.
+func (c *Control) spawnTarget(commit bool) (t agents.Target, presetName string, ok bool) {
 	sel := c.selection()
-	var rung *agents.Target
+	var rot *ladder.Rotation
 	if sel.Preset != "" {
-		if rot := c.presetRotation(); rot != nil { // locks internally — resolve before taking c.mu
-			r := rot.Active()
-			rung = &r
-		}
+		rot = c.presetRotation() // locks internally — resolve before taking c.mu
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	switch {
 	case sel.Preset != "":
-		if rung != nil {
-			t = *rung // the active ladder rung — provider included (a cross-provider rung swaps the lead)
+		if rot != nil {
+			t = rot.Active() // the active ladder rung — provider included (a cross-provider rung swaps the lead)
 		} else {
 			// No rotation means either no signed-in rungs or an unloadable preset. The inner
 			// still mounts the preset's roles and applies this target last.
@@ -404,7 +415,7 @@ func (c *Control) SpawnTarget() (t agents.Target, presetName string, ok bool) {
 		if provider == "" {
 			provider = c.lead
 		}
-		if provider == "" {
+		if provider == "" || !commit && provider != c.lead {
 			return agents.Target{}, "", false
 		}
 		// Retarget before resolving Auto: autoAccount and accounts belong to the provider that will
@@ -417,9 +428,13 @@ func (c *Control) SpawnTarget() (t agents.Target, presetName string, ok bool) {
 		pref, ok := c.plainTargets[provider]
 		if !ok {
 			pref = targetPreference{Model: c.cfg.ModelFor(provider), Effort: c.cfg.EffortFor(provider)}
-			c.plainTargets[provider] = pref
+			if commit {
+				c.plainTargets[provider] = pref
+			}
 		}
-		c.model = pref.Model
+		if commit {
+			c.model = pref.Model
+		}
 		model, effort := pref.Model, pref.Effort
 		t = agents.Target{Provider: provider, Model: model, Effort: effort}
 		account := sel.Account
@@ -427,12 +442,17 @@ func (c *Control) SpawnTarget() (t agents.Target, presetName string, ok bool) {
 			account = c.autoAccount
 			if account == "" && len(c.accounts) > 0 {
 				account = c.accounts[0]
-				c.autoAccount = account
+				if commit {
+					c.autoAccount = account
+				}
 			}
 		}
 		if account != "" {
 			t.Accounts = []string{account}
 		}
+	}
+	if !commit && t.Provider != c.lead {
+		return agents.Target{}, "", false
 	}
 	c.retargetLocked(t.Provider)
 	if t.Model == "" {
@@ -441,7 +461,9 @@ func (c *Control) SpawnTarget() (t agents.Target, presetName string, ok bool) {
 	if t.Effort == "" {
 		t.Effort = c.cfg.EffortFor(t.Provider)
 	}
-	c.target = t
+	if commit {
+		c.target = t
+	}
 	return t, sel.Preset, true
 }
 
@@ -564,6 +586,9 @@ func (c *Control) toEditor(line []byte) (out []byte, restart bool) {
 	} else {
 		c.captureTurn(line)
 		out = c.rewriteToEditor(line)
+	}
+	if notice := c.noticeFor(line); notice != nil {
+		out = append(notice, out...)
 	}
 	// Announce this repo's published ports once, when a session is established (its session/new result).
 	if notice := c.serveNoticeFor(line); notice != nil {
@@ -1479,6 +1504,7 @@ func (c *Control) captureTurn(line []byte) {
 	}
 	if id := terminalResponseID(line); id != "" {
 		c.mu.Lock()
+		ended := false
 		if s := c.promptSession[id]; s != "" {
 			if len(c.turnText[s]) > 0 {
 				c.appendHistoryLocked(s, c.turnProvider[s], "assistant", string(c.turnText[s]))
@@ -1489,9 +1515,14 @@ func (c *Control) captureTurn(line []byte) {
 			delete(c.toolTitle, s) // any tool call without a terminal update dies with its turn
 			delete(c.echoPreamble, s)
 			delete(c.waits, s) // a finished turn breaks the consecutive-wait chain
+			ended = true
 		}
 		delete(c.promptSession, id)
+		quiet := ended && len(c.turnActive) == 0
 		c.mu.Unlock()
+		if quiet && c.onTurnEnd != nil {
+			c.onTurnEnd()
+		}
 	}
 }
 
@@ -3131,6 +3162,48 @@ func itoa(n int) string {
 // CLI keeps preparation that only a LATER request needs — warming other providers — off the critical
 // path of the one request an editor actually waits on.
 func (c *Control) OnInitialized(fn func()) { c.onInitialized = fn }
+
+// OnTurnEnd registers fn to run whenever a prompt's turn ends with no other turn running — the
+// supervisor's cue that an idle-only box replacement may go ahead. A hint only: the proxy's own check
+// decides whether anything is still in flight. fn runs inside the proxy's hook, under its control
+// lock, so it must return at once (a non-blocking send). Set it before serving.
+func (c *Control) OnTurnEnd(fn func()) { c.onTurnEnd = fn }
+
+// Notify shows text to the editor once. The control writes only through hook output, so the notice
+// rides the next session update the agent sends — usually the start of the next turn — in that
+// session, and a newer notice replaces one not yet shown.
+func (c *Control) Notify(text string) {
+	c.mu.Lock()
+	c.notice = text
+	c.mu.Unlock()
+}
+
+// noticeFor takes the queued notice when line is a session update, addressed to its session.
+func (c *Control) noticeFor(line []byte) []byte {
+	c.mu.Lock()
+	pending := c.notice != ""
+	c.mu.Unlock()
+	if !pending {
+		return nil
+	}
+	var m struct {
+		Method string `json:"method"`
+		Params struct {
+			SessionID string `json:"sessionId"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(line, &m) != nil || m.Method != "session/update" || m.Params.SessionID == "" {
+		return nil
+	}
+	c.mu.Lock()
+	text := c.notice
+	c.notice = ""
+	c.mu.Unlock()
+	if text == "" {
+		return nil
+	}
+	return c.statusMessage(m.Params.SessionID, text)
+}
 
 func (c *Control) initialized() {
 	if c.onInitialized != nil {

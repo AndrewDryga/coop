@@ -45,6 +45,10 @@ type NetworkAdmission struct {
 	// RulesFile is --egress-rules. Its authority depends on where the file
 	// lives: outside every agent mount it grants, inside one it only requests.
 	RulesFile string
+	// ExistingQualification refuses, naming `coop net setup`, when no current
+	// host proof covers the policy, instead of setting the host up. A running
+	// editor session re-admitting between turns must not wait on host setup.
+	ExistingQualification bool
 }
 
 // AdmitNetwork resolves this launch's network posture and, for filtered mode,
@@ -100,7 +104,7 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if err != nil {
 		var pending *networkstate.PendingApproval
 		if errors.As(err, &pending) {
-			return nil, fmt.Errorf("%s cannot start because %s\n\n  Review it: coop approve", networkLaunchName(spec), pending.Reason)
+			return nil, fmt.Errorf("%s cannot start because %w\n\n  Review it: coop approve", networkLaunchName(spec), pending)
 		}
 		return nil, err
 	}
@@ -128,12 +132,16 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	// performs it when no current proof exists — the same bounded work as
 	// `coop net setup`, transcript included — and continues. It grants nothing:
 	// the approval above was already settled without it.
-	capture, err := admitFilteredNetwork(cfg, rt, spec, store, canonical, input, func(ctx context.Context) error {
-		if _, err := SetupNetwork(ctx, cfg, rt, networkLaunchStderr(spec), networkLaunchStderr(spec)); err != nil {
-			return fmt.Errorf("%s cannot start — %w", networkLaunchName(spec), err)
+	var qualify func(context.Context) error
+	if !options.ExistingQualification {
+		qualify = func(ctx context.Context) error {
+			if _, err := SetupNetwork(ctx, cfg, rt, networkLaunchStderr(spec), networkLaunchStderr(spec)); err != nil {
+				return fmt.Errorf("%s cannot start — %w", networkLaunchName(spec), err)
+			}
+			return nil
 		}
-		return nil
-	})
+	}
+	capture, err := admitFilteredNetwork(cfg, rt, spec, store, canonical, input, qualify)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
@@ -288,6 +296,10 @@ func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, 
 	if err != nil {
 		return nil, err
 	}
+	// Read before the approval: an approval change published after this read advances the
+	// generation past it, so a supervisor that polls from this value cannot miss one. It is a
+	// hint, never authority, so an unreadable one only means "check again" (zero).
+	generation, _ := store.ApprovalGeneration()
 	policy, err := store.Admit(canonicalProject, input)
 	if err != nil {
 		return nil, err
@@ -312,8 +324,12 @@ func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, 
 	if err != nil {
 		return nil, err
 	}
-	return &CapturedEgress{Store: store, Project: canonicalProject, Fingerprint: policy.Fingerprint, QualificationID: qualification.ID}, nil
+	return &CapturedEgress{Store: store, Project: canonicalProject, Fingerprint: policy.Fingerprint, QualificationID: qualification.ID, ApprovalGeneration: generation}, nil
 }
+
+// ErrNetworkSetupRequired refuses a launch that may not set the host up (ExistingQualification) when
+// no current host proof covers it.
+var ErrNetworkSetupRequired = errors.New("this host is not set up for filtered runs with this Docker and these agents — run 'coop net setup' first")
 
 // ensureNetworkQualification is the proof a launch runs under: the current one,
 // or — when there is none and this launch may set the host up — the one setup
@@ -325,7 +341,7 @@ func ensureNetworkQualification(ctx context.Context, current func() (*networksta
 		return qualification, err
 	}
 	if qualify == nil {
-		return nil, errors.New("this host is not set up for filtered runs with this Docker and these agents — run 'coop net setup' first")
+		return nil, ErrNetworkSetupRequired
 	}
 	if err := qualify(ctx); err != nil {
 		return nil, err
