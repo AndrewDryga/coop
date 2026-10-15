@@ -23,8 +23,9 @@ import (
 // own line for what is safe to rewrite), so a signed or pushed commit keeps the ID others recorded.
 
 // signBase resolves the base of the unpushed range: @{upstream} when the branch tracks one, else the
-// explicit from ref (required with no upstream). It REFUSES a range that contains a merge commit (a
-// rebase would linearize it). The git reads make it env-dependent, but the decisions are testable.
+// explicit from ref (required with no upstream). A merge in that range is signUnpushed's to judge:
+// only the part a pass rewrites must be linear. The git reads make it env-dependent, but the
+// decisions are testable.
 func signBase(repo, from string) (string, error) {
 	base := from
 	if base == "" {
@@ -38,13 +39,6 @@ func signBase(repo, from string) (string, error) {
 	}
 	if gitOut(repo, "rev-parse", "--verify", "--quiet", base+"^{commit}") == "" {
 		return "", fmt.Errorf("no such commit: %s", base)
-	}
-	if merges := gitOut(repo, "rev-list", "--merges", base+"..HEAD"); merges != "" {
-		// Re-signing rebases the range, which would linearize a merge; a linear range is the only
-		// safe answer, and pushing the merge unsigned first is not one.
-		return "", ui.CommandFailed("Could not sign these commits", "The selected range contains a merge commit.",
-			[2]string{"", "Choose a linear range with --from."},
-			[2]string{"Help:", "coop help sign"})
 	}
 	return base, nil
 }
@@ -79,13 +73,15 @@ func signRangeBase(repo, base, head string) (string, error) {
 	return common[0], nil
 }
 
-// signingStart returns where signing the linear range base..head begins: the last of the signed
-// commits the range starts with — base when its first commit is unsigned, head when every commit
-// is signed. Those signed commits keep their IDs: another agent's commit in the same checkout, an
-// earlier cycle's, one already pushed. Signing never reaches history the branch's upstream has
-// either: when the first unsigned commit is already pushed, it stops instead of rewriting it.
+// signingStart returns where signing base..head begins: the last of the signed commits the range
+// starts with, in topological order — base when its first commit is unsigned, head when every
+// commit is signed. A signed merge among those leading commits stays below the start, so only the
+// rewritten part has to be linear. Those signed commits keep their IDs: another agent's commit in
+// the same checkout, an earlier cycle's, one already pushed. Signing never reaches history the
+// branch's upstream has either: when the first unsigned commit is already pushed, it stops instead
+// of rewriting it.
 func signingStart(repo, branchRef, base, head string) (string, error) {
-	out, err := gitOutputBytes(repo, "rev-list", "--reverse", "--header", base+".."+head)
+	out, err := gitOutputBytes(repo, "rev-list", "--reverse", "--topo-order", "--header", base+".."+head)
 	if err != nil {
 		return "", fmt.Errorf("read the commits in %s..%s: %w", base, head, err)
 	}
@@ -169,13 +165,15 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if base, err = signingStart(repo, branchRef, base, oldHead); err != nil {
+		return 0, err
+	}
+	// Re-signing rebases what it rewrites, which would linearize a merge. A signed merge below the
+	// first unsigned commit is not rewritten, so only this part has to be linear.
 	if merges := gitOut(repo, "rev-list", "--merges", base+".."+oldHead); merges != "" {
 		return 0, ui.CommandFailed("Could not sign these commits", "The selected range contains a merge commit.",
 			[2]string{"", "Choose a linear range with --from."},
 			[2]string{"Help:", "coop help sign"})
-	}
-	if base, err = signingStart(repo, branchRef, base, oldHead); err != nil {
-		return 0, err
 	}
 	n := rangeCount(repo, base, oldHead)
 	if n == 0 {

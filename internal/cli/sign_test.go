@@ -39,13 +39,13 @@ func TestSignBase(t *testing.T) {
 	if _, err := signBase(repo, "deadbeef"); err == nil {
 		t.Error("a nonexistent --from ref should error")
 	}
-	// A range containing a merge commit is refused (a rebase would linearize it).
+	// A merge in the range is signUnpushed's to judge: it may sit below the commits a pass rewrites.
 	git("checkout", "-q", "-b", "side")
 	git("commit", "-q", "--allow-empty", "-m", "side work")
 	git("checkout", "-q", "-")
 	git("merge", "--no-ff", "--no-edit", "-q", "side")
-	if _, err := signBase(repo, base); err == nil {
-		t.Error("a range with a merge commit should be refused")
+	if got, err := signBase(repo, base); err != nil || got != base {
+		t.Errorf("signBase(--from base) over a merge = %q, %v; want %q", got, err, base)
 	}
 }
 
@@ -460,6 +460,53 @@ func TestSignUnpushedStartsAtTheFirstUnsignedCommit(t *testing.T) {
 	}
 	if !hasSignature(repo, "HEAD~1") || !hasSignature(repo, "HEAD") {
 		t.Error("both replayed commits should carry a signature")
+	}
+}
+
+// A signed merge below the first unsigned commit — a mid-run git pull, say — is not rewritten, so
+// it no longer stops the pass; a merge among the commits a pass would rewrite still does, because
+// re-signing would linearize it.
+func TestSignUnpushedSignsAroundASignedMerge(t *testing.T) {
+	repo, git := signingRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	git("checkout", "-q", "-b", "side")
+	git("commit", "-q", "--allow-empty", "-S", "-m", "signed side work")
+	git("checkout", "-q", "main")
+	git("commit", "-q", "--allow-empty", "-S", "-m", "signed main work")
+	git("merge", "--no-ff", "--no-edit", "-q", "-S", "side")
+	merge := gitOut(repo, "rev-parse", "HEAD")
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+
+	// Everything signed, the merge included: nothing to do, and no refusal.
+	if n, err := a.signUnpushed(repo, base); err != nil || n != 0 {
+		t.Fatalf("an all-signed range with a merge = %d, %v; want a no-op", n, err)
+	}
+
+	git("commit", "-q", "--allow-empty", "-m", "box commit")
+	git("commit", "-q", "--allow-empty", "-m", "another box commit")
+	if n, err := a.signUnpushed(repo, base); err != nil || n != 2 {
+		t.Fatalf("signUnpushed above a signed merge = %d, %v; want the 2 unsigned commits signed", n, err)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD~2"); got != merge {
+		t.Fatalf("signing rewrote the signed merge %s into %s", merge, got)
+	}
+	if !hasSignature(repo, "HEAD") || !hasSignature(repo, "HEAD~1") {
+		t.Error("both commits above the merge should carry a signature")
+	}
+
+	// An unsigned commit below a merge would need the merge rewritten too: still refused.
+	git("checkout", "-q", "-b", "later-side")
+	git("commit", "-q", "--allow-empty", "-S", "-m", "signed later side work")
+	git("checkout", "-q", "main")
+	git("commit", "-q", "--allow-empty", "-m", "unsigned below the next merge")
+	git("merge", "--no-ff", "--no-edit", "-q", "-S", "later-side")
+	head := gitOut(repo, "rev-parse", "HEAD")
+	if _, err := a.signUnpushed(repo, base); err == nil || !strings.Contains(err.Error(), "merge commit") {
+		t.Fatalf("an unsigned commit below a merge = %v; want the merge refusal", err)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("a refused pass moved HEAD from %s to %s", head, got)
 	}
 }
 

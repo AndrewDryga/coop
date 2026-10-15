@@ -1825,8 +1825,9 @@ HOW IT WORKS
 
   Signing changes the IDs of the first unsigned commit and the commits
   after it. It never rewrites a commit the upstream already has, and it
-  preserves the committed files and your working changes. The selected
-  range must not contain merge commits.
+  preserves the committed files and your working changes. It stops at a
+  merge among the commits it would rewrite; a signed merge below them
+  stays as it is.
 
   Coop uses your host's Git signing settings.
 

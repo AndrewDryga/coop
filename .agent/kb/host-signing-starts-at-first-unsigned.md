@@ -12,8 +12,8 @@ successful iteration (`iterHead`), the loop's end-of-run sweep (`loopStartHead`)
 interactive or `coop run` box (`signOnBoxExit`, HEAD before the session), and `coop sign`
 (`@{upstream}`, or `--from`).
 
-The requested base only bounds what may change. `signingStart` walks the range oldest first
-(`rev-list --reverse --header`) and moves the base past the signed commits the range starts with,
+The requested base only bounds what may change. `signingStart` walks the range parents first
+(`rev-list --reverse --topo-order --header`) and moves the base past the signed commits the range starts with,
 so the rebase begins at the first unsigned commit. Until 2026-10-15 every pass ran `rebase -f` from
 the requested base and re-signed everything: the end-of-run sweep rewrote every commit since the run
 started, including commits pushed mid-run and outside agents' commits in the same checkout, and
@@ -40,19 +40,23 @@ Traps:
   cannot split a `--header` record to choose the rebase base: git stops printing a message at an
   embedded NUL (probed with a `hash-object --literally` commit), so every record starts with the ID
   rev-list printed.
-- **Merges are still refused over the whole requested range**, before trimming, so a signed merge
-  below the first unsigned commit still stops the pass, as it did before.
+- **Merges are refused only in the rewritten part**, after trimming: `signingStart` walks the range in
+  `--topo-order`, so a signed merge among the leading signed commits (a mid-run `git pull`) stays
+  below the start and the pass signs what is above it. A merge at or above the first unsigned commit
+  would be linearized by the rebase, so that pass is refused as before (`signBase` no longer checks).
 - The tree-equality check and the old-SHA compare-and-swap guard the rewritten tail unchanged, and
   the signing journal (`RecordPendingReviewSigning`) maps only those commits: review evidence bound
   to an untouched signed commit keeps its SHA. See [[signoff-scope-is-run-anchored]], and
   [[loop-range-rejects-outside-commits]] for the ref-authority lock the compare-and-swap takes.
 
-Regressions: `TestSignUnpushedStartsAtTheFirstUnsignedCommit`,
+Regressions: `TestSignUnpushedStartsAtTheFirstUnsignedCommit`, `TestSignUnpushedSignsAroundASignedMerge`,
 `TestSignUnpushedNeverRewritesPushedCommits` (including a push made while the pass holds the lock),
 `TestSignUnpushed` (no-op second pass, key-failure and compare-and-swap paths) and
 `TestCommitSigned`, all in `internal/cli`.
 
 ## Changelog
+- 2026-10-15 — merges are refused only where the pass rewrites; a signed merge below the first
+  unsigned commit no longer stops it (task 2026-10-15-sign-around-a-signed-merge-instead-of-refusing-t).
 - 2026-10-15 — created with the fix for task 2026-10-15-stop-signing-passes-from-rewriting-signed-and-pu.
   Checked every pass against `signUnpushed`: per-cycle, end-of-run and box exit all route through it,
   so the one fix covers them; fork landing (`internal/forkctl/merge.go`) is separate and replays

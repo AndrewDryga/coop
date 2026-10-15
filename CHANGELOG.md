@@ -54,7 +54,8 @@
   signed commits before it keep their IDs. It never rewrites a commit the branch's upstream already
   has: when the first unsigned commit is already pushed, Coop stops and says so, and `coop sign`
   then signs only the commits you have not pushed. When every commit is already signed, `coop sign`
-  leaves them alone and says so.
+  leaves them alone and says so. A signed merge below the commits to sign, such as one a mid-run
+  `git pull` made, no longer stops signing.
 
 - **The daily cleanup of what killed runs leave behind now finishes.** Coop marked the day's
   cleanup done before starting it, so a quick first command such as `coop tasks ls` cut it short
