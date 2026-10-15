@@ -162,8 +162,6 @@
 
 ## 11.0.1
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
-
 - **Codex starts with the selected workspace.** Native account discovery now matches the
   public broker identity while preserving upstream workspace routing and sibling accounts.
 

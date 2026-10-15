@@ -54,7 +54,8 @@ each time — this is the contract; follow it.
   against the previous published release; do not let GitHub choose an unpublished tag as baseline.
 
 ## 3. Finalize + tag (all local, still reversible)
-- Rename `## Unreleased` → `## <version>` (NO date — house format is a bare `## X.Y.Z`).
+- Rename `## Unreleased` → `## <version>` (NO date — house format is a bare `## X.Y.Z`) and
+  delete the placeholder comment under it; it lives only under `## Unreleased`.
   Keep entries as `- **Bold headline.** explanation`.
 - Commit CHANGELOG-only: `changelog: finalize <version> (<one-line summary>)`.
 - Annotated tag on THAT finalize commit: `git tag -a "v<version>" -m "v<version>"`
