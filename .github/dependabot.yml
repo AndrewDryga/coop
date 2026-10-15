@@ -1,18 +1,26 @@
 # Keep the SHA-pinned GitHub Actions current — Dependabot bumps the commit SHA and
 # the trailing "# vN" comment together, so pinning doesn't mean going stale on
-# security patches. Go module updates get their own weekly lane. Gate-tool and
-# GoReleaser pins are bumped deliberately because they define released tooling.
+# security patches. Version updates come in monthly batches: each ecosystem opens
+# one grouped PR a month instead of one per dependency. Security updates are not
+# grouped, so a fix still arrives on its own right away. Gate-tool and GoReleaser
+# pins are bumped deliberately because they define released tooling.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      all:
+        patterns: ["*"]
     commit-message:
       prefix: ci
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      all:
+        patterns: ["*"]
     commit-message:
       prefix: deps
