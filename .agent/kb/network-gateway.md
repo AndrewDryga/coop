@@ -2,7 +2,7 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
+sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/Dockerfile, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
 updated: 2026-10-15
 ---
 
@@ -202,13 +202,25 @@ launches, kept both containers and both volumes until 2026-09-18. `coop net setu
 the exact path a workload gets, and it can never appear on a `RunSpec` a caller builds.
 
 The image is built from an embedded source tar plus a pinned Dockerfile, with no host compiler and
-no repository build context (`gatewayimage/image.go:43`). After ANY change to `cmd/coop-net`,
+no repository build context (`Context` in `gatewayimage/image.go`). After ANY change to `cmd/coop-net`,
 `internal/egress`, `internal/networkgateway`, `internal/networkview`, `internal/safefile`,
 root `go.mod`, `go.sum` or `LICENSE`, run
 `go generate ./internal/gatewayimage` — the canonical test compares every embedded byte against the
 checkout. Makefile's early `gateway-sources-check` refuses stale bytes without regenerating during
 qualification, so a stale tar is a red gate, and a filtered launch only ever runs the exact image pair a
 [[restricted-networking]] qualification names.
+
+The Dockerfile is embedded on its own, not in the tar: editing it leaves `source.tar` byte-identical
+but still moves `Fingerprint()` (recipe plus tar), so every host sets up networking again. Its nine
+Ubuntu packages are pinned to exact versions and install from a dated
+`snapshot.ubuntu.com/ubuntu/<YYYYMMDDTHHMMSSZ>` archive written into `sources.list`. Six of the nine
+versions are jammy's release versions, which never leave the archive; nftables, libnftables1 and
+libxtables12 come from jammy-updates, which keeps only each package's newest version, so a pin
+against the live archive breaks at the next nftables or iptables update. Move the date with the
+versions. Canonical says it intends to keep snapshots for at least two years, so the date set on
+2026-10-15 must move before 2028-10. The `ubuntu` path serves every architecture (`ubuntu-ports`
+answers 401); the Release files carry no `Valid-Until` and are signed with the 2018 archive key the
+jammy keyring trusts, so apt's signature check stays on with no override.
 
 **Stop latency.** A run's teardown ends with the guard's terminal counters barrier
 (`kernelEvents.after`): it needs a kernel sample STARTED after its cutoff, and the controller samples
@@ -241,6 +253,11 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-15 — the image's Ubuntu packages install from a dated snapshot. Recorded the snapshot facts
+  (every architecture under `ubuntu`, no `Valid-Until`, intended two-year retention, which three pins
+  come from jammy-updates) and that a Dockerfile edit moves the fingerprint while `source.tar` stays
+  identical; verified against `gatewayimage/Dockerfile`, `image.go` and apt installs of all nine pins
+  from the snapshot in throwaway arm64 and amd64 containers.
 - 2026-10-15 — the `--disable-hot-restart` trap now cites `GuardRuntime.Run` and says why (abstract
   sockets belong to the shared network namespace); this card holds it since the retired egress
   experiment and its card are deleted. The rest of the card was not re-verified.

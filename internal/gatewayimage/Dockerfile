@@ -7,7 +7,15 @@ FROM envoyproxy/envoy:v1.39.1@sha256:57e14a549d7bd43c8d3f6d03e8cfa653e037d4b38e1
 USER root
 # Pin the complete added package closure; inherited libc/GMP/tinfo/CA versions
 # come from the digest-pinned base. Missing versions fail the build, never float.
-RUN apt-get update \
+# Three of these come from jammy-updates, which keeps only each package's newest
+# version, so the next nftables or iptables update would break a pin against the
+# live archive. The pins install from a dated snapshot that never changes instead;
+# snapshot.ubuntu.com intends to keep at least two years, so move the date, with
+# the pins, before 2028-10. Its ubuntu path serves every architecture.
+RUN snapshot=https://snapshot.ubuntu.com/ubuntu/20261015T000000Z \
+ && echo "deb $snapshot jammy main" > /etc/apt/sources.list \
+ && echo "deb $snapshot jammy-updates main" >> /etc/apt/sources.list \
+ && apt-get update \
  && apt-get install -y --no-install-recommends \
       nftables=1.0.2-1ubuntu3.1 libnftables1=1.0.2-1ubuntu3.1 \
       libnftnl11=1.2.1-1build1 libmnl0=1.0.4-3build2 \

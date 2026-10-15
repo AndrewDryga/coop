@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -76,7 +77,12 @@ func TestGatewayBuildContextContainsOnlyTrustedSourceAndRecipe(t *testing.T) {
 			t.Fatalf("build context contains non-source path %s", header.Name)
 		}
 	}
-	if recipes != 1 || !strings.Contains(string(recipe), "-mod=readonly") || !strings.Contains(string(recipe), "nftables=1.0.2-1ubuntu3.1") {
+	// One dated snapshot replaces the image's apt sources: a second date, an undated URL or an append
+	// would let a pin resolve against the live archive again.
+	snapshot := regexp.MustCompile(`snapshot=https://snapshot\.ubuntu\.com/ubuntu/\d{8}T\d{6}Z \\\n`)
+	if recipes != 1 || !strings.Contains(string(recipe), "-mod=readonly") || !strings.Contains(string(recipe), "nftables=1.0.2-1ubuntu3.1") ||
+		len(snapshot.FindAllIndex(recipe, -1)) != 1 || strings.Count(string(recipe), "https://snapshot.ubuntu.com") != 1 ||
+		!strings.Contains(string(recipe), `echo "deb $snapshot jammy main" > /etc/apt/sources.list`) {
 		t.Fatal("missing pinned recipe contract")
 	}
 	for _, bad := range []string{".agent/secrets", "Dockerfile", "../go.mod", "internal/egress/../../private.go", "internal/egress/hello_test.go", "internal/egress/sub/other.go"} {

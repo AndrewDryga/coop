@@ -4,6 +4,20 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Run `coop net setup` once after upgrading.** This release changes both images that filtered runs
+  use, the gateway and the client image, so a network setup made by an earlier version no longer
+  applies. Until you run it, a worker refuses filtered sessions, and the next filtered run in a
+  terminal or an editor sets networking up on its own first, which can take several minutes. Worker
+  sessions created before the upgrade keep their old setup, so start them again. A filtered project
+  with its own `.agent/Dockerfile` also needs `coop build --egress filtered` once.
+
+- **Network setup keeps working after Ubuntu updates.** Coop builds its network gateway image with
+  nine Ubuntu packages at exact versions. Three of them (nftables and the libraries it uses) come
+  from Ubuntu's updates archive, which keeps only the newest version, so the next nftables or
+  iptables update would have broken the build, and `coop net setup` with it. The build now installs
+  the same versions from a dated snapshot of the archive on `snapshot.ubuntu.com`, which never
+  changes.
+
 - **`coop tasks watch --json` no longer reports `starting` for forks.** A background fork loop
   counts as running from the moment `coop fork <name> -d` returns, so the field, which was true
   only while a start was in progress, is gone, and so is the board's `starting` state. An
@@ -50,9 +64,7 @@
 - **Box images check asdf before installing it.** Coop's box images download asdf, the tool that
   installs the versions in a project's `.tool-versions`. A build now compares that download with the
   checksum Coop pins for its architecture and stops if they differ, so a changed or tampered
-  download never reaches a box. This changes the filtered client image: the next filtered run sets
-  up networking again (an editor session asks you to run `coop net setup` first), and a filtered
-  project with its own `.agent/Dockerfile` needs `coop build --egress filtered` once.
+  download never reaches a box.
 
 - **Coop no longer runs your `sqlite3` on Codex's log database.** Before launching Codex, Coop used
   whatever `sqlite3` was on your PATH to add a trigger that stopped Codex writing its feedback log.
