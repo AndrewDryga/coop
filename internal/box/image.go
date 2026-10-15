@@ -36,7 +36,7 @@ func baseImageDefinition(platform agents.ClientPlatform) (map[string][]byte, err
 	parts.provision = baseProvisioningScript
 	parts.loginPath = `printf 'export PATH="` + agents.LauncherDir + `:/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`
 	parts.pathEnv = agents.LauncherDir + `:/home/node/.asdf/shims:${PATH}`
-	closure.Files["Dockerfile"] = []byte(renderBaseDockerfile(parts))
+	closure.Files["Dockerfile"] = []byte(renderBaseDockerfile(platform.Architecture, parts))
 	return closure.Files, nil
 }
 
@@ -60,8 +60,30 @@ var staticcheckMod []byte
 //go:embed staticcheck.sum
 var staticcheckSum []byte
 
-func renderBaseDockerfile(parts baseImageParts) string {
-	return fmt.Sprintf(baseDockerfileTemplate, parts.files, parts.install, parts.browserDeps, parts.loginPath, configPublicationShell+parts.provision, parts.pathEnv, parts.scripts)
+func renderBaseDockerfile(arch string, parts baseImageParts) string {
+	return fmt.Sprintf(baseDockerfileTemplate, parts.files, parts.install, parts.browserDeps, asdfInstall(arch), parts.loginPath, configPublicationShell+parts.provision, parts.pathEnv, parts.scripts)
+}
+
+// asdf comes from a release URL, and both images carry it: the base provisions .tool-versions with
+// it, and a project image built on the filtered client image installs its pins with it. So, like a
+// native client (lockedClientParts), its tarball must match the digest pinned for the build's
+// architecture before it is unpacked. A bump moves the version and both digests together: hash each
+// linux tarball of the release and match GitHub's recorded asset digest (the release itself
+// publishes only .md5 files).
+const asdfVersion = "0.20.2"
+
+var asdfSHA256 = map[string]string{
+	"amd64": "6d45e6fab12f50a259b5643adf06a2e77af30a87300b4402440eda09af467a6d",
+	"arm64": "356e135a608bdfba34038c1f18c4b82434d7b6d546e30dbf372c61baaa2f442c",
+}
+
+// asdfInstall is the build step that downloads asdf for arch, checks it, and only then unpacks it.
+func asdfInstall(arch string) string {
+	url := "https://github.com/asdf-vm/asdf/releases/download/v" + asdfVersion + "/asdf-v" + asdfVersion + "-linux-" + arch + ".tar.gz"
+	return fmt.Sprintf("curl --fail --silent --show-error --location --proto '=https' --output /tmp/coop-asdf.tar.gz '%s' \\\n"+
+		" && printf '%%s  %%s\\n' '%s' /tmp/coop-asdf.tar.gz | sha256sum -c - \\\n"+
+		" && tar -C /usr/local/bin -xzf /tmp/coop-asdf.tar.gz asdf \\\n"+
+		" && rm -f /tmp/coop-asdf.tar.gz", url, asdfSHA256[arch])
 }
 
 // Base-image references for the shared box. coop build pins the FROM image to a
@@ -95,7 +117,6 @@ COPY --from=go-tools-builder /out/staticcheck /usr/local/bin/staticcheck
 COPY --from=go-tools-builder /out/govulncheck /usr/local/bin/govulncheck
 COPY --from=go-tools-builder /out/jv /usr/local/bin/jv
 
-ARG ASDF_VERSION=0.20.2
 %s
 
 # Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or
@@ -130,8 +151,7 @@ RUN apt-get update \
  && ln -s "$(command -v pip3)" /usr/local/bin/pip \
  && %s \
  && %s \
- && curl -fsSL "https://github.com/asdf-vm/asdf/releases/download/v${ASDF_VERSION}/asdf-v${ASDF_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \
-      | tar -C /usr/local/bin -xzf - asdf \
+ && %s \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
  && git config --system --add safe.directory '*' \
  && git lfs install --system --skip-repo \

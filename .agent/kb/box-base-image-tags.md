@@ -2,8 +2,8 @@
 name: box-base-image-tags
 description: Coop's shared base is tagged by its box definition so two Coop versions on one host keep their own; why there is no :latest alias, how an upgrade is repaired, and what stays shared
 subsystem: box
-sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/project_preparation.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/project_build.go, internal/cli/selfupdate.go, internal/runtime/project_build.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
-updated: 2026-10-11
+sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/project_preparation.go, internal/box/network_admission.go, internal/box/network_qualification.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/project_build.go, internal/cli/selfupdate.go, internal/runtime/project_build.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
+updated: 2026-10-15
 ---
 
 `COOP_BASE_IMAGE` defaults to the bare repository `coop-box`, which `box.ResolveBaseImage` (run
@@ -17,6 +17,16 @@ gets the same per-user separation, while filtered project tags already hash the 
 The filtered client image was already tagged that way (`coop-clients:<definition>`,
 `locked_image.go`). Any other value — `coop-box:latest`, a registry image — is the operator's and
 stands as written; `IsManagedBase` tells the two apart.
+
+What moves the tag: `baseDefHash` hashes every rendered file for amd64 and arm64, so any pin the
+shared template renders moves it — the client lock, Grok's digest, asdf's `asdfVersion` and
+per-architecture `asdfSHA256` (`image.go`; each build checks its architecture's tarball before
+unpacking it). The filtered client image renders the same template, so that edit also gives
+`coop-clients` a new definition, and `verifyNetworkCandidate` stops accepting the old network setup
+record: the next filtered launch sets the host up again, or, where a launch may not
+(`ExistingQualification`), asks for `coop net setup`. A filtered project image is keyed on the client
+image too (`filteredProjectTag`), so a project with its own box Dockerfile needs
+`coop build --egress filtered` again.
 
 Why: with one shared `coop-box:latest`, two installed Coop versions (a checkout's and a deployment's)
 each saw the other's definition in the build record and rebuilt the tag on their next launch, running
@@ -96,6 +106,9 @@ record, so the 14 days start then), and an image any container still references 
 stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-10-15 — asdf's tarball is now checked against a pinned per-architecture digest. Recorded
+  what moves the base tag and the filtered client definition, verified against `baseDefHash`,
+  `lockedImageDefinition` and `verifyNetworkCandidate`.
 - 2026-10-11 — reverified update/admission/derived-image sources. Documented effective-mode
   preparation, installed-executable handoff, early readiness and one-snapshot confirmation.
 - 2026-09-30 — rechecked eval and controller image selection after the empty-repository eval

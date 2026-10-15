@@ -86,7 +86,7 @@ func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild,
 	parts := lockedClientParts(closure)
 	parts.loginPath = `printf 'export PATH="` + lockedPath + `"\n' > /etc/profile.d/coop-path.sh`
 	parts.pathEnv = lockedPath
-	closure.Files["Dockerfile"] = []byte(renderBaseDockerfile(parts))
+	closure.Files["Dockerfile"] = []byte(renderBaseDockerfile(platform.Architecture, parts))
 	var contextBytes bytes.Buffer
 	w := tar.NewWriter(&contextBytes)
 	for _, name := range closure.FileNames() {

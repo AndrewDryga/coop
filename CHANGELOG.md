@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Box images check asdf before installing it.** Coop's box images download asdf, the tool that
+  installs the versions in a project's `.tool-versions`. A build now compares that download with the
+  checksum Coop pins for its architecture and stops if they differ, so a changed or tampered
+  download never reaches a box. This changes the filtered client image: the next filtered run sets
+  up networking again (an editor session asks you to run `coop net setup` first), and a filtered
+  project with its own `.agent/Dockerfile` needs `coop build --egress filtered` once.
+
 - **Coop no longer runs your `sqlite3` on Codex's log database.** Before launching Codex, Coop used
   whatever `sqlite3` was on your PATH to add a trigger that stopped Codex writing its feedback log.
   Since 5.0 that database lives inside each box and is removed with it, and the Codex that Coop
