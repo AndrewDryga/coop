@@ -22,9 +22,15 @@ block is part of the block, and the six-space cause indentation and aligned `Usa
 renderer drifted — fix the renderer. New approved copy comes from the human who approved it
 (record it in the owning task, then update the file and the renderer in the same commit).
 
+**Help pages are not copied here.** `tools/gendocs` renders every command's page into
+`docs/cli.md`, and `make docs-check` fails when a help string changes without regenerating it, so
+a page's wording is reviewed in the `docs/cli.md` diff. A fixture would be a second copy of the
+same string. The menus stay: their bytes depend on sign-in and services, which the manual's
+reference form leaves out.
+
 ## Naming
 
 Fixtures from the family files are named after the review item that approved them: the numeric
-prefix is that document's item number (`35`–`46` are `reviewed-output/workflows-tasks.md`'s task
-pages; `01`–`03h` are the shared menu and input-error shapes from `approved-output/`), so a fixture
-always traces back to the paragraph that approved it.
+prefix is that document's item number (`01`–`03h` are the shared menu and input-error shapes from
+`approved-output/`), so a fixture always traces back to the paragraph that approved it. A gap in
+the numbers is usually an item whose copy is a help page, which `docs/cli.md` pins instead.

@@ -2,9 +2,9 @@
 name: help-output-style
 description: "UPPERCASE help headings, aligned command rows, practical prose and numbered how-tos"
 scope: cli-output
-sources: [internal/cli/help.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go]
+sources: [internal/cli/help.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go, tools/gendocs/main.go]
 check: "none"
-updated: 2026-10-04
+updated: 2026-10-15
 ---
 
 # Help output: consistent headings, useful commands, practical guidance
@@ -45,11 +45,24 @@ future agents from inventing flags or rewriting approved copy.
 **How to apply:** update shared renderers, focused pages, completion and generated references
 together. Table-driven tests should cover headings, row gaps, and full command-path routing;
 the full manual must be assembled from the same pages, not a second command registry.
+`make docs-check` pins every page's bytes through the generated `docs/cli.md`: review a page's
+wording in that diff, and do not copy the page into a fixture under `testdata/approved`. A page
+never ends in a newline (TestManualPagesEndWithoutANewline): `coop help` adds the one it prints.
 Existing TestHelpRowsAlign, TestHelpOptionRowsAlign, TestHelpTextAligned, TestAllHelpAvoidsMiddleDots and
 TestCLIConformance cover portions of the historical rules, not this entire contract. Expand
 their relevant coverage during implementation; `check: none` remains honest until that lands.
 
 ## Changelog
+- 2026-10-15 — deleted the 73 help-page fixtures in `internal/cli/testdata/approved` (maintenance
+  audit decision 3.6d). Each was a byte-exact copy of one `docs/cli.md` section, compared with
+  the same help.go string the manual renders, and `make docs-check` already fails when that
+  string changes without regenerating the docs. Swept every `*help*` fixture against the
+  sections: 73 copies, 6 kept (the four menu states and two help-topic errors, which the manual
+  never prints). The fixture paths in the 2026-10-04 and 2026-09-11 entries are history. check
+  stays none: docs-check pins bytes, not this card's style. The deleted net test was the only
+  guard against a trailing newline, which the manual trimmed and docs-check could not see: the
+  seven eval pages had one, so `coop help eval` printed a stray blank line. Dropped it, removed
+  the manual's trim, and TestManualPagesEndWithoutANewline now pins it.
 - 2026-10-04 — option descriptions on the ACP page started one column late on two rows, and the
   approved fixture pinned the drift. Swept every help source with the new TestHelpOptionRowsAlign:
   in each blank-line group of an OPTIONS block, every description and continuation line starts in

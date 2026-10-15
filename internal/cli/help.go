@@ -283,7 +283,7 @@ func RenderManual(cfg *config.Config) string {
 	var b strings.Builder
 	b.WriteString(renderHelp(cfg, true))
 	for _, name := range manualOrder {
-		page := strings.TrimRight(manualPage(name), "\n")
+		page := manualPage(name)
 		if page == "" {
 			continue // covered by TestManualCoversEveryCommand; never a silent hole at runtime
 		}
@@ -1654,11 +1654,6 @@ OPTIONS
 You can run coop init again at any time.
 Coop keeps your existing project files and adds anything missing.`,
 
-	// The net family page and its leaf pages are APPROVED transcripts: the exact bytes are
-	// pinned in internal/cli/testdata/approved/20*.txt. The family page groups the verbs by the
-	// job a person came with — what new runs may reach, what recorded runs did, the repair coop
-	// normally does itself — and ends with the one workflow nobody guesses (edit the YAML, then
-	// approve). Every leaf page is reached as `coop net <verb> --help` and `coop help net <verb>`.
 	"eval": `coop eval: check whether a model, preset or loop change helped
 
 Run repeatable tasks, grade the work independently, then compare before and after.
@@ -1691,8 +1686,7 @@ inspect their causes before rerunning. Incomplete grading has no definitive winn
 
 For options and prerequisites see:
   coop help eval run
-Guide: https://coop.dryga.com/docs.html#evals
-`,
+Guide: https://coop.dryga.com/docs.html#evals`,
 	"eval run": `coop eval run: preview or run a repeatable evaluation
 
 Usage: coop eval run <suite> <target|preset>... --timeout <duration> [<options>]
@@ -1756,8 +1750,7 @@ verdict, even if some failed. Incomplete coverage exits 1; the run record and
 diagnostics remain available through coop eval inspect. A dry run exits 0 after
 previewing the plan without running trials.
 
-Read the result: coop eval inspect
-`,
+Read the result: coop eval inspect`,
 	"eval runs": `coop eval runs: find recorded evaluation results
 
 Usage: coop eval runs
@@ -1768,8 +1761,7 @@ An unreadable record remains visible; internal starter caches do not appear.
 
 Inspect latest: coop eval inspect
 Inspect older:  coop eval inspect <run-id>
-Compare:        coop eval compare <before-id> <after-id>
-`,
+Compare:        coop eval compare <before-id> <after-id>`,
 	"eval inspect": `coop eval inspect: understand a run and its failures
 
 Usage: coop eval inspect [<run-id>]
@@ -1795,8 +1787,7 @@ For sign-in or quota refusals, check coop credentials <agent>. For timeouts,
 check the case's suite.yaml timeout as well as the run's --timeout. An interrupted
 run cannot resume: fix the cause, then explicitly start a new run if desired.
 
-Find another run: coop eval runs
-`,
+Find another run: coop eval runs`,
 	"eval compare": `coop eval compare: compare before and after without another paid run
 
 Usage: coop eval compare <before-id> <after-id>
@@ -1810,8 +1801,7 @@ in the requested total; incomplete grading cannot establish a definitive winner.
 Change size is a review signal, not a quality score. Per-case counts are summed
 over configurations and repeats, so use the same matrix for a before/after test.
 
-Investigate a result: coop eval inspect <run-id>
-`,
+Investigate a result: coop eval inspect <run-id>`,
 	"eval ls": `coop eval ls: choose a shipped starter suite
 
 Usage: coop eval ls
@@ -1821,8 +1811,7 @@ over ten queued tasks, including its review stages. Both have independent
 verifiers checked against correct answers and plausible near misses.
 
 Preview: coop eval run core codex --timeout 35m --dry-run
-Author your own: coop eval init ./evals/my-suite
-`,
+Author your own: coop eval init ./evals/my-suite`,
 	"eval init": `coop eval init: create a custom suite you can edit
 
 Usage: coop eval init <dir>
@@ -1837,8 +1826,13 @@ verifier outside the candidate's files, fixture, tasks and Git history.
   coop eval run ./evals/my-suite/suite.yaml codex --timeout 12m --dry-run
 
 The verifier README explains grading and exit codes. A preview does not run or
-qualify your verifier; test it against good answers and near misses.
-`,
+qualify your verifier; test it against good answers and near misses.`,
+
+	// The net family page and its leaf pages are APPROVED copy; docs/cli.md pins their exact bytes
+	// (make docs-check). The family page groups the verbs by the job a person came with — what new
+	// runs may reach, what recorded runs did, the repair coop normally does itself — and ends with
+	// the one workflow nobody guesses (edit the YAML, then approve). Every leaf page is reached as
+	// `coop net <verb> --help` and `coop help net <verb>`.
 	"net": `coop net: control network access and see what happened
 
 ACCESS: control what new runs can reach

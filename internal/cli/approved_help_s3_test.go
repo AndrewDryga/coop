@@ -5,29 +5,6 @@ import (
 	"testing"
 )
 
-// The approved help pages for project setup, diagnostics, services and updates. The page is the
-// contract: `coop <cmd> --help`, `coop help <cmd>` and the generated manual all print this text,
-// so pinning the source constant pins every route that reads it.
-func TestApprovedFamilyHelpPages(t *testing.T) {
-	for fixture, command := range map[string]string{
-		"13-help-init":          "init",
-		"17-help-doctor":        "doctor",
-		"19-help-check-secrets": "check-secrets",
-		"27-help-up":            "up",
-		"27-help-down":          "down",
-		"30-help-build":         "build",
-		"32-help-update":        "update",
-	} {
-		t.Run(fixture, func(t *testing.T) {
-			page, ok := commandHelp[command]
-			if !ok {
-				t.Fatalf("no help page registered for %q", command)
-			}
-			assertApprovedPage(t, fixture, page)
-		})
-	}
-}
-
 // Pin documented spellings. Actual parser acceptance/refusal has its own owners.
 func TestFamilyHelpDocumentsSupportedSpellings(t *testing.T) {
 	cases := []struct {

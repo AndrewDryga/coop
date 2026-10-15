@@ -169,9 +169,9 @@ func TestHelpRowsAlign(t *testing.T) {
 }
 
 // Within each blank-line-separated group of an OPTIONS block, every option's description and every
-// continuation line start in one column, at least two spaces past the option. The approved
-// fixtures are byte-pinned, so a fixture once kept a one-column drift on the ACP page for as long
-// as nobody looked; this reads the help sources themselves.
+// continuation line start in one column, at least two spaces past the option. A byte-pinned copy
+// keeps whatever drift it was captured with (a help fixture once kept a one-column drift on the
+// ACP page for as long as nobody looked), so this reads the help sources themselves.
 func TestHelpOptionRowsAlign(t *testing.T) {
 	pages := map[string]string{"run": runHelp, "fork": forkHelpText("")}
 	for _, name := range agents.Names() {
@@ -381,6 +381,16 @@ func TestManualCoversEveryCommand(t *testing.T) {
 	for _, name := range agents.Names() {
 		if !slices.Contains(manualOrder, name) {
 			t.Errorf("registered agent %q has no page in the manual", name)
+		}
+	}
+}
+
+// docs/cli.md pins each page's bytes, but a trailing newline would print as an extra blank line
+// after `coop help <command>`, which adds its own.
+func TestManualPagesEndWithoutANewline(t *testing.T) {
+	for _, name := range manualOrder {
+		if strings.HasSuffix(manualPage(name), "\n") {
+			t.Errorf("the %q page ends in a newline", name)
 		}
 	}
 }

@@ -5,33 +5,10 @@ import (
 	"testing"
 )
 
-// TestApprovedRuntimeHelpPages pins the runtime and integration family's help: run, shell, ACP,
-// every sessions page, sign, completion, prompt and version. Each page is read from the SAME
-// source the manual and `coop <cmd> --help` read, so terminal, `coop help --all` and docs/cli.md
-// cannot disagree about a page's bytes.
-func TestApprovedRuntimeHelpPages(t *testing.T) {
-	cases := []struct{ fixture, command string }{
-		{"14-run-help", "run"},
-		{"15-shell-help", "shell"},
-		{"67-acp-help", "acp"},
-		{"69-sessions-help", "sessions"},
-		{"69-sessions-doctor-help", "sessions doctor"},
-		{"69-sessions-compact-help", "sessions compact"},
-		{"73-sessions-connect-help", "sessions connect"},
-		{"74-sign-help", "sign"},
-		{"75-completion-help", "completion"},
-		{"76-prompt-help", "prompt"},
-		{"77-version-help", "version"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.fixture, func(t *testing.T) {
-			assertApprovedPage(t, tc.fixture, manualPage(tc.command))
-		})
-	}
-}
-
-// Every page above is also what `coop help <path>` prints, with no all-commands footer: these
-// pages end with their own pointer or need none, so the generic footer would be a second answer.
+// The runtime and integration family's pages — run, shell, ACP, every sessions page, sign,
+// completion, prompt and version — are what `coop help <path>` prints, with no all-commands
+// footer: these pages end with their own pointer or need none, so the generic footer would be a
+// second answer. The page bytes themselves are pinned by docs/cli.md (make docs-check).
 func TestApprovedRuntimeHelpRoutes(t *testing.T) {
 	cfg := freshConfig(t)
 	for _, path := range [][]string{

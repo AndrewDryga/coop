@@ -289,19 +289,17 @@ func TestV3RetiredForms(t *testing.T) {
 	}
 }
 
-// `coop help claude` is the approved page, to the byte — the same fixture the generated page is
-// pinned against, reached through the help ROUTE, so neither the page nor its routing can drift
-// without the other being noticed.
-func TestHelpForAgentIsTheApprovedPage(t *testing.T) {
+// `coop help claude` prints the page generated from Claude's adapter, to the byte, and no generic
+// all-commands footer: the page ends with its own pointer. docs/cli.md pins the page's bytes
+// (make docs-check); this pins the help ROUTE that prints it.
+func TestHelpForAgentPrintsItsPage(t *testing.T) {
 	var code int
 	out := captureStdout(t, func() { code, _ = helpForPath([]string{"claude"}, &config.Config{}, true) })
 	if code != 0 {
 		t.Fatalf("helpForPath(claude) = %d, want 0", code)
 	}
-	assertApprovedPage(t, "agent-claude-help", out)
-	// No generic all-commands footer: the page ends with its own pointer.
-	if strings.Contains(out, "Run 'coop help' for all commands") {
-		t.Errorf("agent help should not append the all-commands footer:\n%s", out)
+	if want := agentHelp("claude") + "\n"; out != want {
+		t.Errorf("coop help claude printed:\n%s\nwant the generated page:\n%s", out, want)
 	}
 }
 

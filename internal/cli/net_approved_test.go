@@ -18,35 +18,10 @@ import (
 
 // The `coop net` family's approved transcripts. Each fixture under
 // testdata/approved is one complete state from the CLI content review's network
-// packet (items 20–26), and these tests drive the REAL renderer, parser or
-// selector that produces it. A mismatch is a renderer that drifted from an
-// approved decision — see the README beside the fixtures.
-
-// TestApprovedNetHelpPages pins the network family, its leaf pages, and the
-// related top-level approval page.
-func TestApprovedNetHelpPages(t *testing.T) {
-	for fixture, key := range map[string]string{
-		"20-net-help":          "net",
-		"20a-net-runs-help":    "net runs",
-		"20b-net-inspect-help": "net inspect",
-		"20c-net-check-help":   "net check",
-		"20d-net-blocked-help": "net blocked",
-		"20e-net-approve-help": "approve",
-		"20f-net-watch-help":   "net watch",
-		"20g-net-export-help":  "net export",
-		"20h-net-forget-help":  "net forget",
-		"20i-net-setup-help":   "net setup",
-		"20j-net-recover-help": "net recover",
-	} {
-		t.Run(fixture, func(t *testing.T) {
-			page, ok := commandHelp[key]
-			if !ok {
-				t.Fatalf("no help page registered for %q", key)
-			}
-			assertApprovedOutput(t, fixture, page+"\n")
-		})
-	}
-}
+// packet (items 21–26; docs/cli.md pins the item-20 help pages), and these tests
+// drive the REAL renderer, parser or selector that produces it. A mismatch is a
+// renderer that drifted from an approved decision — see the README beside the
+// fixtures.
 
 // Both spellings reach the same page, and a leaf page carries no all-commands
 // footer: its family page is the pointer.

@@ -9,49 +9,9 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
-// Every `coop help backlog|context|loop [<command>]` page is a byte-exact fixture. The approved
-// design is the source of truth; a page that drifts from its fixture is a regression, not a new
-// opinion.
-func TestApprovedWorkflowHelpPages(t *testing.T) {
-	for fixture, key := range map[string]string{
-		"47-backlog-family-help":  "backlog",
-		"48-backlog-ls-help":      "backlog ls",
-		"48-backlog-add-help":     "backlog add",
-		"49-backlog-promote-help": "backlog promote",
-		"49-backlog-rm-help":      "backlog rm",
-		"50-context-help":         "context",
-		"52-loop-help":            "loop",
-	} {
-		t.Run(fixture, func(t *testing.T) {
-			assertApprovedPage(t, fixture, commandHelp[key])
-		})
-	}
-}
-
-// The fork family page and every fork command's page, byte-exact. The family page is generated
-// (its launch examples name the fork the reader asked about), so the manual's form is pinned here
-// and the per-fork form below.
-func TestApprovedForkHelpPages(t *testing.T) {
-	assertApprovedPage(t, "59-fork-family-help", forkHelpText(""))
-	for fixture, key := range map[string]string{
-		"61-fork-acp-help":    "fork acp",
-		"62-fork-ls-help":     "fork ls",
-		"63-fork-review-help": "fork review",
-		"64-fork-merge-help":  "fork merge",
-		"65-fork-rm-help":     "fork rm",
-		"65-fork-stop-help":   "fork stop",
-		"66-fork-logs-help":   "fork logs",
-		"66-fork-path-help":   "fork path",
-		"66-fork-open-help":   "fork open",
-	} {
-		t.Run(fixture, func(t *testing.T) {
-			assertApprovedPage(t, fixture, commandHelp[key])
-		})
-	}
-}
-
 // Asked about ONE fork, the family page names it in the usage line and the launch examples — and
 // keeps the description column aligned when the name is longer than the approved placeholder.
+// The placeholder form is the manual's page, which docs/cli.md pins.
 func TestForkLaunchHelpNamesItsFork(t *testing.T) {
 	page := forkHelpText("release-notes")
 	for _, want := range []string{

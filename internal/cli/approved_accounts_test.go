@@ -18,28 +18,6 @@ import (
 // testdata/approved is the exact bytes of one invocation; a mismatch here means the renderer
 // drifted from a design decision, not that the test needs fixing (see that folder's README).
 
-// TestApprovedAccountPages pins every help page this family owns, including the four generated
-// provider pages — an agent's page is built from its adapter, so a new agent gets these bytes free.
-func TestApprovedAccountPages(t *testing.T) {
-	for _, tc := range []struct{ fixture, key string }{
-		{"04-login-help", "login"},
-		{"06-credentials-help", "credentials"},
-		{"06-credentials-default-help", "credentials default"},
-		{"06-credentials-rm-help", "credentials rm"},
-		{"06-credentials-account-help", "credentials account"},
-		{"12-models-help", "models"},
-		{"10-presets-init-help", "presets init"},
-		{"09-presets-help", "presets"},
-	} {
-		t.Run(tc.fixture, func(t *testing.T) { assertApprovedPage(t, tc.fixture, commandHelp[tc.key]) })
-	}
-	for _, agent := range agents.Names() {
-		t.Run("agent-"+agent+"-help", func(t *testing.T) {
-			assertApprovedPage(t, "agent-"+agent+"-help", agentHelp(agent))
-		})
-	}
-}
-
 // TestApprovedAccountInputErrors drives each rejected target, account and preset through its REAL
 // parser and pins the shared refusal block it renders. Nothing here may start a browser, a login,
 // a deletion or a model fetch: every case returns before any of that.
