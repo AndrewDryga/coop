@@ -1,7 +1,6 @@
 package scaffold
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -102,25 +101,10 @@ func WriteProject(dir string, subprojects []string, services ...string) (bool, e
 // Missing file, or a subprojects: block coop can't confidently locate → returns nothing and
 // changes nothing, so the caller's advisory stays the fallback.
 func RegisterSubprojects(repo string, detected []string) ([]string, error) {
-	return registerSubprojects(repo, detected, writeAndSync, nil)
+	return registerSubprojects(repo, detected, writeAndSync)
 }
 
-// ErrProjectChanged is a project.yaml that moved under the registration — another editor, another
-// coop. It is the one registration failure whose remedy is to wait rather than to fix something.
-var ErrProjectChanged = errors.New("project.yaml changed during subproject registration")
-
-func registerSubprojects(repo string, detected []string, write scaffoldFileWrite, beforeReplace func() error) ([]string, error) {
-	const maxAttempts = 3
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		added, err := registerSubprojectsOnce(repo, detected, write, beforeReplace)
-		if !errors.Is(err, ErrProjectChanged) {
-			return added, err
-		}
-	}
-	return nil, fmt.Errorf("%w after %d attempts; retry coop init", ErrProjectChanged, maxAttempts)
-}
-
-func registerSubprojectsOnce(repo string, detected []string, write scaffoldFileWrite, beforeReplace func() error) ([]string, error) {
+func registerSubprojects(repo string, detected []string, write scaffoldFileWrite) ([]string, error) {
 	root, err := os.OpenRoot(repo)
 	if err != nil {
 		return nil, fmt.Errorf("open scaffold root %s: %w", repo, err)
@@ -134,6 +118,7 @@ func registerSubprojectsOnce(repo string, detected []string, write scaffoldFileW
 	if !present {
 		return nil, nil // no project.yaml — WriteProject creates one with the members already in it
 	}
+	defer before.dir.Close()
 	pj, err := project.Parse(before.data)
 	if err != nil {
 		return nil, err // malformed: don't compound it by editing
@@ -172,110 +157,101 @@ func registerSubprojectsOnce(repo string, detected []string, write scaffoldFileW
 		return nil, nil // hand-restructured file — leave it alone and let the caller advise
 	}
 	next := []byte(strings.Join(lines, "\n") + "\n")
-	if err := replaceProjectFile(root, project.File, dest, before, next, write, beforeReplace); err != nil {
+	if err := replaceProjectFile(before, dest, next, write); err != nil {
 		return nil, err
 	}
 	return missing, nil
 }
 
+// projectFileSnapshot is a repository file read for an in-place edit, with the handle of the
+// directory it came from; the caller closes dir. Staging and renaming through that same handle
+// keeps the edit where the content was read, even if a box swaps a parent directory for a link in
+// between — otherwise a file hidden from the box could be read and then written where it can look.
 type projectFileSnapshot struct {
+	dir  *os.Root
+	name string
 	info os.FileInfo
 	data []byte
 }
 
-func readProjectFile(root *os.Root, rel, display string) (projectFileSnapshot, bool, error) {
-	// Nonblocking lets the regular-file check refuse a FIFO without waiting for a writer.
-	file, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		if info, statErr := root.Lstat(rel); errors.Is(statErr, os.ErrNotExist) {
-			return projectFileSnapshot{}, false, nil
-		} else if statErr == nil && !info.Mode().IsRegular() {
-			return projectFileSnapshot{}, false, fmt.Errorf("%s must be a regular file", display)
+func readProjectFile(root *os.Root, rel, display string) (snap projectFileSnapshot, present bool, err error) {
+	dir, err := root.OpenRoot(filepath.Dir(rel))
+	if errors.Is(err, os.ErrNotExist) {
+		return snap, false, nil
+	} else if err != nil {
+		return snap, false, fmt.Errorf("open %s: %w", display, err)
+	}
+	defer func() {
+		if !present {
+			_ = dir.Close()
 		}
-		return projectFileSnapshot{}, false, fmt.Errorf("open %s: %w", display, err)
+	}()
+	name := filepath.Base(rel)
+	// Nonblocking lets the regular-file check refuse a FIFO without waiting for a writer.
+	file, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if info, statErr := dir.Lstat(name); errors.Is(statErr, os.ErrNotExist) {
+			return snap, false, nil
+		} else if statErr == nil && !info.Mode().IsRegular() {
+			return snap, false, fmt.Errorf("%s must be a regular file", display)
+		}
+		return snap, false, fmt.Errorf("open %s: %w", display, err)
 	}
 	defer file.Close()
-	before, err := file.Stat()
+	info, err := file.Stat()
 	if err != nil {
-		return projectFileSnapshot{}, false, fmt.Errorf("inspect %s: %w", display, err)
+		return snap, false, fmt.Errorf("inspect %s: %w", display, err)
 	}
-	if !before.Mode().IsRegular() {
-		return projectFileSnapshot{}, false, fmt.Errorf("%s must be a regular file", display)
+	// os.Root follows a link that stays inside it, even with O_NOFOLLOW, so only comparing the
+	// opened file with the named entry refuses a link at the file itself.
+	if named, err := dir.Lstat(name); err != nil || !info.Mode().IsRegular() || !os.SameFile(info, named) {
+		return snap, false, fmt.Errorf("%s must be a regular file", display)
 	}
 	data, err := io.ReadAll(file)
 	if err != nil {
-		return projectFileSnapshot{}, false, fmt.Errorf("read %s: %w", display, err)
+		return snap, false, fmt.Errorf("read %s: %w", display, err)
 	}
-	after, err := file.Stat()
-	if err != nil {
-		return projectFileSnapshot{}, false, fmt.Errorf("reinspect %s: %w", display, err)
-	}
-	named, err := root.Lstat(rel)
-	if err != nil || !os.SameFile(before, after) || !os.SameFile(before, named) || int64(len(data)) != after.Size() {
-		return projectFileSnapshot{}, false, ErrProjectChanged
-	}
-	return projectFileSnapshot{info: before, data: data}, true, nil
+	return projectFileSnapshot{dir: dir, name: name, info: info, data: data}, true, nil
 }
 
-func replaceProjectFile(root *os.Root, rel, display string, before projectFileSnapshot, next []byte, write scaffoldFileWrite, beforeReplace func() error) error {
-	tmp, err := stageProjectFile(root, rel, display, next, before.info.Mode().Perm(), write)
+// replaceProjectFile writes next beside the file it read and renames it into place, so a failed
+// write leaves the original untouched.
+func replaceProjectFile(before projectFileSnapshot, display string, next []byte, write scaffoldFileWrite) error {
+	tmp, err := stageProjectFile(before, display, next, write)
 	if err != nil {
 		return err
 	}
-	defer root.Remove(tmp)
-	if beforeReplace != nil {
-		if err := beforeReplace(); err != nil {
-			return err
-		}
-	}
-	current, present, err := readProjectFile(root, rel, display)
-	if err != nil {
-		return err
-	}
-	if !present || !os.SameFile(before.info, current.info) || !bytes.Equal(before.data, current.data) {
-		return ErrProjectChanged
-	}
-	if err := root.Rename(tmp, rel); err != nil {
+	defer before.dir.Remove(tmp)
+	if err := before.dir.Rename(tmp, before.name); err != nil {
 		return fmt.Errorf("replace %s: %w", display, err)
 	}
 	return nil
 }
 
-func stageProjectFile(root *os.Root, rel, display string, data []byte, perm os.FileMode, write scaffoldFileWrite) (string, error) {
-	dir, base := filepath.Dir(rel), filepath.Base(rel)
+func stageProjectFile(before projectFileSnapshot, display string, data []byte, write scaffoldFileWrite) (string, error) {
+	perm := before.info.Mode().Perm()
 	for attempt := 0; attempt < 100; attempt++ {
-		name := filepath.Join(dir, fmt.Sprintf(".%s.coop-%d-%d.tmp", base, os.Getpid(), attempt))
-		file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, perm)
+		name := fmt.Sprintf(".%s.coop-%d-%d.tmp", before.name, os.Getpid(), attempt)
+		file, err := before.dir.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 		if os.IsExist(err) {
 			continue
 		}
 		if err != nil {
 			return "", fmt.Errorf("create temporary %s: %w", display, err)
 		}
-		created, statErr := file.Stat()
-		if statErr != nil {
-			_ = file.Close()
-			_ = root.Remove(name)
-			return "", fmt.Errorf("inspect temporary %s: %w", display, statErr)
-		}
-		removePartial := func() {
-			if current, currentErr := root.Lstat(name); currentErr == nil && os.SameFile(created, current) {
-				_ = root.Remove(name)
-			}
-		}
 		// Creation applies umask; replacement must retain the original file's permissions.
 		if err := file.Chmod(perm); err != nil {
 			_ = file.Close()
-			removePartial()
+			_ = before.dir.Remove(name)
 			return "", fmt.Errorf("preserve permissions for %s: %w", display, err)
 		}
 		if err := write(file, data); err != nil {
 			_ = file.Close()
-			removePartial()
+			_ = before.dir.Remove(name)
 			return "", fmt.Errorf("write temporary %s: %w", display, err)
 		}
 		if err := file.Close(); err != nil {
-			removePartial()
+			_ = before.dir.Remove(name)
 			return "", fmt.Errorf("close temporary %s: %w", display, err)
 		}
 		return name, nil

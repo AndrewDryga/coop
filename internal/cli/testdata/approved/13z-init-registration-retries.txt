@@ -1,6 +1,0 @@
-✗ Could not finish Coop setup
-
-      .agent/project.yaml kept changing while Coop registered task queues.
-
-  Run coop init again after the other edit finishes.
-  Files already created have been kept.

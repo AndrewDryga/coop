@@ -4,7 +4,7 @@ description: "`coop init` generates for the detected stack and stays neutral whe
 scope: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go, internal/scaffold/projectfile.go]
 check: "none"
-updated: 2026-09-10
+updated: 2026-10-15
 ---
 
 # coop init scaffolds what the repo uses — it never imposes a stack
@@ -56,6 +56,12 @@ blocks. Guessing wrong is worse than doing nothing.
   exception: preserve it and print chaining guidance.
 
 ## Changelog
+- 2026-10-15 — pass-through for the concurrent-edit removal (audit decision 3.5): `RegisterSubprojects`
+  no longer rechecks identity and content or retries before its rename, so the 2026-09-03 recheck
+  below is gone; the edit now reads, stages and renames through one directory handle and refuses a
+  leaf link. The exclusive no-clobber create this rule relies on is unchanged. Swept
+  internal/scaffold: 0 recheck-before-replace callers left; writeNewRepoFile still compares identity
+  before removing its partial file (a box can make that write fail by filling the disk).
 - 2026-09-10 — pass-through for the explicit-filtered project file: `projectYAML` now writes an active
   `box.egress: filtered` (a network posture every stack shares — not a stack guess, so detection is
   untouched) with a leading comment, and the file spells no-network access `offline`. Re-init stays

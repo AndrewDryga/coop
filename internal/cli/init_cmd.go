@@ -248,7 +248,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 		// a queue coop silently ignores, which is never what you wanted when you created it.
 		registered, err = scaffold.RegisterSubprojects(repo, subs)
 		if err != nil {
-			return 1, registrationFailure(err)
+			return 1, setupFailure(repo, err)
 		}
 		// Only if the edit couldn't be placed (a hand-restructured project.yaml) does the advisory
 		// remain — coop never silently drops a member on the floor.
@@ -333,20 +333,6 @@ func (a *app) reportUnfilteredRuntime(repo string) {
 	warnBlock(runtimeTitle(rt.Name)+" can't filter network access",
 		"This project filters network access, which needs Docker.",
 		"Start or install Docker. Online agents need Docker even with open networking.")
-}
-
-// registrationFailure reports a member registration that could not finish. A project.yaml that
-// kept moving under the edit has its own remedy — wait for the other editor — while anything else
-// (an unreadable file, a failed write) is the ordinary partial-setup failure, and saying "kept
-// changing" about a permissions error would send the reader nowhere.
-func registrationFailure(err error) error {
-	if !errors.Is(err, scaffold.ErrProjectChanged) {
-		return setupFailure("", err)
-	}
-	return reported("Could not finish Coop setup",
-		project.File+" kept changing while Coop registered task queues.",
-		"Run coop init again after the other edit finishes.",
-		"Files already created have been kept.")
 }
 
 // setupFailure reports a scaffold that stopped partway. The writes it already made are real files

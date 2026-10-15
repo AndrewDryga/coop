@@ -151,7 +151,7 @@ func TestAddComposeServicesPublicationFailures(t *testing.T) {
 					return err
 				}
 				return interrupted
-			}, nil)
+			})
 			if !errors.Is(err, interrupted) || out.Created || len(out.Added) != 0 {
 				t.Fatalf("failed publication = %+v, %v", out, err)
 			}
@@ -164,62 +164,6 @@ func TestAddComposeServicesPublicationFailures(t *testing.T) {
 			}
 			if entries, err := os.ReadDir(repo); err != nil || len(entries) != wantEntries {
 				t.Fatalf("partial publication left files: %v, %v", entries, err)
-			}
-		})
-	}
-	for _, kind := range []string{"edit", "replacement", "symlink", "creation", "created symlink"} {
-		t.Run(kind, func(t *testing.T) {
-			repo := t.TempDir()
-			path := filepath.Join(repo, "compose.yml")
-			absent := kind == "creation" || kind == "created symlink"
-			if !absent {
-				writeComposeFixture(t, path, composeOriginal)
-			}
-			outside := filepath.Join(t.TempDir(), "outside.yml")
-			writeComposeFixture(t, outside, composeOriginal)
-			const edited = "# concurrent edit\nservices: {}\n"
-			out, err := addComposeServices(repo, "compose.yml", []string{"postgres"}, writeAndSync, func() error {
-				switch kind {
-				case "symlink", "created symlink":
-					if !absent {
-						if err := os.Remove(path); err != nil {
-							return err
-						}
-					}
-					return os.Symlink(outside, path)
-				case "replacement":
-					tmp := filepath.Join(repo, "replacement.yml")
-					writeComposeFixture(t, tmp, composeOriginal)
-					return os.Rename(tmp, path)
-				default:
-					return os.WriteFile(path, []byte(edited), 0o644)
-				}
-			})
-			if err == nil || out.Created || len(out.Added) != 0 {
-				t.Fatalf("intervening change accepted: %+v, %v", out, err)
-			}
-			if strings.Contains(err.Error(), "project.yaml") {
-				t.Fatalf("wrong error context: %v", err)
-			}
-			if kind == "edit" || kind == "replacement" || kind == "creation" {
-				if !strings.Contains(err.Error(), "compose file compose.yml changed") || !strings.Contains(err.Error(), "retry coop init --services") {
-					t.Fatalf("missing retry context: %v", err)
-				}
-				want := edited
-				if kind == "replacement" {
-					want = composeOriginal
-				}
-				if got := readComposeFixture(t, path); got != want {
-					t.Fatal("intervening edit overwritten")
-				}
-			} else if target, err := os.Readlink(path); err != nil || target != outside {
-				t.Errorf("intervening link replaced: %q, %v", target, err)
-			}
-			if got := readComposeFixture(t, outside); got != composeOriginal {
-				t.Fatal("intervening link wrote outside repository")
-			}
-			if entries, err := os.ReadDir(repo); err != nil || len(entries) != 1 {
-				t.Fatalf("temporary files left behind: %v, %v", entries, err)
 			}
 		})
 	}

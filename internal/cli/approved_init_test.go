@@ -399,13 +399,6 @@ func TestApprovedReinitHookNotices(t *testing.T) {
 	})
 }
 
-// A project.yaml that keeps changing under the registration is the one setup failure with its own
-// remedy: wait for the other edit. Every other registration failure is an ordinary setup failure.
-func TestApprovedInitRegistrationRetriesExhausted(t *testing.T) {
-	out := captureTerminal(t, func() { _ = registrationFailure(scaffold.ErrProjectChanged) })
-	assertApprovedOutput(t, "13z-init-registration-retries", out)
-}
-
 func TestApprovedServiceChooser(t *testing.T) {
 	// The chooser on a project that has no Compose file yet: the answer creates one, and the
 	// result names the Compose service each catalog entry became.

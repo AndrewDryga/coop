@@ -321,7 +321,7 @@ func TestRegisterSubprojectsAtomicReplacement(t *testing.T) {
 				return err
 			}
 			return sentinel
-		}, nil)
+		})
 		if !errors.Is(err, sentinel) {
 			t.Fatalf("RegisterSubprojects error = %v, want interrupted replacement", err)
 		}
@@ -338,35 +338,77 @@ func TestRegisterSubprojectsAtomicReplacement(t *testing.T) {
 			}
 		}
 	})
+}
 
-	t.Run("concurrent edit is reread and preserved", func(t *testing.T) {
-		repo := t.TempDir()
-		if _, err := WriteProject(repo, []string{"portal"}); err != nil {
-			t.Fatal(err)
-		}
-		var once sync.Once
-		var hookErr error
-		hook := func() error {
-			once.Do(func() {
-				hookErr = os.WriteFile(filepath.Join(repo, project.File), []byte(projectYAML([]string{"external", "portal"})), 0o644)
+// os.Root follows a link that stays inside the repository, so an in-place edit must refuse a link at
+// the file itself: a box could point it at a file .coopignore hides from it, and the edit would copy
+// that content into a file the box can read.
+func TestInPlaceEditsRefuseLeafLinks(t *testing.T) {
+	bodies := map[string]string{"compose.yml": composeOriginal, "project.yaml": "subprojects:\n  - portal\n"}
+	for file, body := range bodies {
+		// A target in another directory, and one beside the link.
+		for _, target := range []string{"../hidden.yml", "hidden.yml"} {
+			t.Run(file+" -> "+target, func(t *testing.T) {
+				repo := t.TempDir()
+				agent := filepath.Join(repo, ".agent")
+				if err := os.Mkdir(agent, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				hidden := filepath.Join(agent, filepath.FromSlash(target))
+				writeComposeFixture(t, hidden, body)
+				link := filepath.Join(agent, file)
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatal(err)
+				}
+				var err error
+				if file == "compose.yml" {
+					_, err = AddComposeServices(repo, ".agent/compose.yml", []string{"postgres"})
+				} else {
+					_, err = RegisterSubprojects(repo, []string{"infra", "portal"})
+				}
+				if err == nil || !strings.Contains(err.Error(), "must be a regular file") {
+					t.Fatalf("edit through a leaf link = %v, want a regular-file refusal", err)
+				}
+				if got, err := os.Readlink(link); err != nil || got != target {
+					t.Fatalf("leaf link replaced: %q, %v", got, err)
+				}
+				if got := readComposeFixture(t, hidden); got != body {
+					t.Fatalf("link target changed: %q", got)
+				}
 			})
-			return hookErr
 		}
-		added, err := registerSubprojects(repo, []string{"infra", "portal"}, writeAndSync, hook)
-		if err != nil {
-			t.Fatal(err)
+	}
+}
+
+// The read, the staging and the rename share one directory handle, so a parent swapped for a link
+// mid-edit cannot carry content read in one directory into another.
+func TestRegisterSubprojectsEditStaysWhereItRead(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := WriteProject(repo, []string{"portal"}); err != nil {
+		t.Fatal(err)
+	}
+	agent, held, decoy := filepath.Join(repo, ".agent"), filepath.Join(repo, ".agent-held"), filepath.Join(repo, "decoy")
+	if err := os.Mkdir(decoy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	added, err := registerSubprojects(repo, []string{"infra", "portal"}, func(file *os.File, data []byte) error {
+		if err := os.Rename(agent, held); err != nil {
+			return err
 		}
-		if !slices.Equal(added, []string{"infra"}) {
-			t.Fatalf("added = %v, want only infra after reread", added)
+		if err := os.Symlink("decoy", agent); err != nil {
+			return err
 		}
-		pj, err := project.Load(repo)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !slices.Equal(pj.Subprojects, []string{"external", "infra", "portal"}) {
-			t.Fatalf("concurrent edit was lost: %v", pj.Subprojects)
-		}
+		return writeAndSync(file, data)
 	})
+	if err != nil || !slices.Equal(added, []string{"infra"}) {
+		t.Fatalf("registration = %v, %v", added, err)
+	}
+	if entries, err := os.ReadDir(decoy); err != nil || len(entries) != 0 {
+		t.Fatalf("edit followed the swapped link: %v, %v", entries, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(held, "project.yaml")); err != nil || !strings.Contains(string(data), "  - infra\n") {
+		t.Fatalf("edit did not land where it was read: %v\n%s", err, data)
+	}
 }
 
 func readProjectYAML(t *testing.T, repo string) string {

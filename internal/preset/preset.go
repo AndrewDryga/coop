@@ -369,7 +369,8 @@ func protectedPresetError(name, path, rel string) error {
 	}}
 }
 
-// Scaffold shares validation while reading from its pinned, unpublished bundle.
+// loadPreset is the one parser: Load reads prompts from the preset folder, Scaffold from the files
+// it has rendered but not yet written.
 func loadPreset(name, dir string, data []byte, readFile func(string) ([]byte, error)) (*Preset, error) {
 	bad := func(detail ...string) (*Preset, error) {
 		return nil, &LoadError{Name: name, Path: filepath.Join(dir, "preset.yaml"), Detail: detail}
