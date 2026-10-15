@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Signing keeps the IDs of signed and pushed commits.** Coop signs the commits agents make in a
+  box after ordinary agent runs, after each loop cycle, at the end of a loop run, and with
+  `coop sign`. Each pass used to rewrite every commit in its range, signed ones too, so a commit
+  another agent made in the same checkout, or one you had already pushed, got a new ID, and a
+  pushed branch then needed a force push. Signing now starts at the first unsigned commit, and the
+  signed commits before it keep their IDs. It never rewrites a commit the branch's upstream already
+  has: when the first unsigned commit is already pushed, Coop stops and says so, and `coop sign`
+  then signs only the commits you have not pushed. When every commit is already signed, `coop sign`
+  leaves them alone and says so.
+
 - **The daily cleanup of what killed runs leave behind now finishes.** Coop marked the day's
   cleanup done before starting it, so a quick first command such as `coop tasks ls` cut it short
   and everything waited another day. A box that went away while the cleanup checked it also

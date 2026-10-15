@@ -25,6 +25,7 @@ func TestApprovedSignFailures(t *testing.T) {
 			[2]string{"", "Check out the branch you want to sign."})},
 		{"74-sign-branch-moved", ui.CommandFailed("Could not apply the signed commits", "The branch changed while Coop was signing.",
 			[2]string{"", "Review the current branch before running coop sign again."})},
+		{"74-sign-pushed-commit", pushedCommitRefusal("1a2b3c4", "origin/main")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) { assertApprovedOutput(t, tc.fixture, usageBlock(t, tc.err)) })

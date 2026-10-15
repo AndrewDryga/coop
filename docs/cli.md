@@ -1827,8 +1827,10 @@ HOW IT WORKS
   By default, Coop signs commits after the branch's upstream reference.
   Without an upstream, use --from with the last commit you pushed.
 
-  Signing changes commit IDs. It preserves the committed files and your
-  working changes. The selected range must not contain merge commits.
+  Signing changes the IDs of the first unsigned commit and the commits
+  after it. It never rewrites a commit the upstream already has, and it
+  preserves the committed files and your working changes. The selected
+  range must not contain merge commits.
 
   Coop uses your host's Git signing settings.
 

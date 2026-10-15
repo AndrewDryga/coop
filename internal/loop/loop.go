@@ -1963,9 +1963,11 @@ reviewAgain:
 		c.closeWith(func() { printStoppedBeforeFinalVerdict(cf) })
 		return LoopInterruptedExitCode, nil
 	}
-	// End-of-run signing sweep: normally a no-op (per-cycle signing already covered each iteration),
-	// but it catches any straggler — a commit from a previously interrupted run, or a preflight
-	// commit — so the whole run's range is signed before you push. Best-effort.
+	// End-of-run signing sweep: normally a no-op, because per-cycle signing already covered each
+	// iteration and signing starts at the first unsigned commit, so the run's signed commits keep
+	// their IDs (pushed ones are never rewritten). It catches any straggler — a commit from a
+	// previously interrupted run, or a preflight commit — so the whole run's range is signed before
+	// you push. Best-effort.
 	if forkspace.WantsSigning() && len(custom) == 0 {
 		unsignedHead := gitOut(repo, "rev-parse", "HEAD")
 		pendingBeforeSigning, pendingErr := tasks.LoadPendingReviews(repo, hosts)

@@ -58,7 +58,25 @@ func TestHeadUnsigned(t *testing.T) {
 	if !headUnsigned(repo) {
 		t.Error("a plain commit has no gpgsig header — should read as unsigned")
 	}
-	// (The signed→false path shares the exact gpgsig-header check that TestSignUnpushed asserts.)
+	// (The signed→false path is commitSigned, which TestCommitSigned covers.)
+}
+
+// Only the commit's own signature header counts, in either object format.
+func TestCommitSigned(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		want      bool
+	}{
+		{"signed", "tree t\nauthor a\ncommitter c\ngpgsig -----BEGIN SSH SIGNATURE-----\n s\n -----END SSH SIGNATURE-----\n\nsubject\n", true},
+		{"signed in a SHA-256 repository", "tree t\nauthor a\ncommitter c\ngpgsig-sha256 -----BEGIN PGP SIGNATURE-----\n \n s\n\nsubject\n", true},
+		{"unsigned", "tree t\nauthor a\ncommitter c\n\nsubject\n", false},
+		{"a message line is not a signature", "tree t\nauthor a\ncommitter c\n\nsubject\n\ngpgsig -----BEGIN SSH SIGNATURE-----\n", false},
+		{"a merged tag's signature is not the commit's", "tree t\nmergetag object o\n -----BEGIN PGP SIGNATURE-----\n\nsubject\n", false},
+	} {
+		if got := commitSigned(tc.raw); got != tc.want {
+			t.Errorf("%s: commitSigned = %v, want %v", tc.name, got, tc.want)
+		}
+	}
 }
 
 func TestSignRangeBase(t *testing.T) {
@@ -234,9 +252,13 @@ func TestSignUnpushed(t *testing.T) {
 	if dirtyAfter := checkoutSnapshot(); dirtyAfter != dirtyBefore {
 		t.Errorf("signing changed the dirty checkout\nbefore:\n%q\nafter:\n%q", dirtyBefore, dirtyAfter)
 	}
-	// Idempotent: a second run re-signs cleanly and they stay signed.
-	if _, err := a.signUnpushed(repo, base); err != nil {
-		t.Fatalf("second signUnpushed: %v", err)
+	// Already signed: a second run rewrites nothing, so every commit keeps the ID it was signed with.
+	signedHead := gitOut(repo, "rev-parse", "HEAD")
+	if n, err := a.signUnpushed(repo, base); err != nil || n != 0 {
+		t.Fatalf("second signUnpushed = %d, %v; want a no-op", n, err)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD"); got != signedHead {
+		t.Errorf("signing an already-signed range rewrote HEAD %s to %s", signedHead, got)
 	}
 	if signed() != 2 {
 		t.Errorf("after a second sign, both should still be signed, got %d", signed())
@@ -276,6 +298,8 @@ func TestSignUnpushed(t *testing.T) {
 	}
 
 	// A signing failure leaves both the branch and checkout untouched and cleans up its worktree.
+	// The amended commit is signed now, so a new unsigned commit is what the pass has to sign.
+	runIn("commit", "-q", "--allow-empty", "-m", "unsigned after review")
 	goodConfig, err := os.ReadFile(globalCfg)
 	if err != nil {
 		t.Fatal(err)
@@ -336,6 +360,252 @@ func TestSignUnpushed(t *testing.T) {
 	}
 	if worktrees := strings.Count(gitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
 		t.Errorf("CAS refusal left %d registered worktrees, want 1", worktrees)
+	}
+}
+
+// signingRepo is a hermetic repository whose plain commits are unsigned, like a box's, while
+// `commit -S` and the app's own signing pass sign with a throwaway SSH key. Both config doors are
+// pinned in the PROCESS env, because signUnpushed runs git itself. origin is a local bare
+// repository: push to give the branch an upstream.
+func signingRepo(t *testing.T) (string, func(...string)) {
+	t.Helper()
+	for _, tool := range []string{"git", "ssh-keygen"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " not available")
+		}
+	}
+	key := filepath.Join(t.TempDir(), "sk")
+	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-f", key, "-N", "", "-C", "coop-test").CombinedOutput(); err != nil {
+		t.Fatalf("ssh-keygen: %v\n%s", err, out)
+	}
+	globalCfg := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(globalCfg, []byte("[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = "+key+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, origin := t.TempDir(), filepath.Join(t.TempDir(), "origin.git")
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	run("symbolic-ref", "HEAD", "refs/heads/main")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "T")
+	run("config", "commit.gpgsign", "false") // box commits are unsigned
+	run("init", "-q", "--bare", origin)
+	run("remote", "add", "origin", origin)
+	return repo, run
+}
+
+// hasSignature reads the raw commit object, independently of the code under test.
+func hasSignature(repo, rev string) bool {
+	return strings.Contains(gitOut(repo, "cat-file", "commit", rev), "\ngpgsig ")
+}
+
+// Signing starts at the first unsigned commit. The signed commits below it — another agent's in
+// the same checkout, an earlier cycle's — keep their IDs, and an already-signed range is left as it
+// is, so the loop's end-of-run sweep over the whole run is a no-op after per-cycle signing.
+func TestSignUnpushedStartsAtTheFirstUnsignedCommit(t *testing.T) {
+	repo, git := signingRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-S", "-m", "signed by an outside agent")
+	git("commit", "-q", "--allow-empty", "-S", "-m", "signed by an earlier cycle")
+	git("commit", "-q", "--allow-empty", "-m", "box commit")
+	git("commit", "-q", "--allow-empty", "-m", "another box commit")
+	before := strings.Fields(gitOut(repo, "rev-list", "--reverse", base+"..HEAD"))
+	trees := gitOut(repo, "log", "--format=%T", base+"..HEAD")
+
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	if n, err := a.signUnpushed(repo, base); err != nil || n != 2 {
+		t.Fatalf("signUnpushed = %d, %v; want only the 2 unsigned commits signed", n, err)
+	}
+	after := strings.Fields(gitOut(repo, "rev-list", "--reverse", base+"..HEAD"))
+	if len(after) != 4 || after[0] != before[0] || after[1] != before[1] {
+		t.Fatalf("signing rewrote the signed commits below the first unsigned one:\nbefore %v\nafter  %v", before, after)
+	}
+	for _, sha := range after {
+		if !hasSignature(repo, sha) {
+			t.Errorf("commit %s is not signed", sha)
+		}
+	}
+	if got := gitOut(repo, "log", "--format=%T", base+"..HEAD"); got != trees {
+		t.Errorf("signing changed committed trees:\nbefore %s\nafter  %s", trees, got)
+	}
+
+	// The whole range is signed now, so a second pass from the same base rewrites nothing.
+	signedHead := gitOut(repo, "rev-parse", "HEAD")
+	if n, err := a.signUnpushed(repo, base); err != nil || n != 0 {
+		t.Fatalf("signing an already-signed range = %d, %v; want a no-op", n, err)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD"); got != signedHead {
+		t.Errorf("signing an already-signed range moved HEAD from %s to %s", signedHead, got)
+	}
+
+	// Only the LEADING signed commits are skipped: a signed commit above an unsigned one is
+	// replayed with it, because its parent changes.
+	git("commit", "-q", "--allow-empty", "-m", "late box commit")
+	git("commit", "-q", "--allow-empty", "-S", "-m", "signed on top of it")
+	if n, err := a.signUnpushed(repo, base); err != nil || n != 2 {
+		t.Fatalf("signUnpushed = %d, %v; want the unsigned commit and the one above it", n, err)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD~2"); got != signedHead {
+		t.Errorf("signing rewrote %s, which was already signed, into %s", signedHead, got)
+	}
+	if !hasSignature(repo, "HEAD~1") || !hasSignature(repo, "HEAD") {
+		t.Error("both replayed commits should carry a signature")
+	}
+}
+
+// A signing pass never rewrites a commit the branch's upstream already has. Pushed signed commits
+// below the first unsigned one are kept; an unsigned commit below a pushed one stops the pass with
+// a refusal instead, because signing it would make the branch diverge from what was pushed.
+func TestSignUnpushedNeverRewritesPushedCommits(t *testing.T) {
+	repo, git := signingRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-S", "-m", "signed, pushed mid-run")
+	git("push", "-q", "-u", "origin", "main")
+	pushed := gitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "box commit")
+
+	// A loop-style pass from a base below the upstream signs only the unpushed commit.
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	if n, err := a.signUnpushed(repo, base); err != nil || n != 1 {
+		t.Fatalf("signUnpushed = %d, %v; want only the unpushed commit signed", n, err)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD~1"); got != pushed {
+		t.Fatalf("signing rewrote pushed commit %s into %s", pushed, got)
+	}
+	if !hasSignature(repo, "HEAD") {
+		t.Error("the unpushed box commit should carry a signature")
+	}
+
+	// An unsigned commit sits below a pushed one: nothing is rewritten, and the refusal says why.
+	git("commit", "-q", "--allow-empty", "-m", "unsigned, then pushed")
+	unsignedPushed := gitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-S", "-m", "signed and pushed")
+	git("push", "-q", "origin", "main")
+	upstream := gitOut(repo, "rev-parse", "origin/main")
+	git("commit", "-q", "--allow-empty", "-m", "unpushed box commit")
+	head := gitOut(repo, "rev-parse", "HEAD")
+	_, err := a.signUnpushed(repo, base)
+	if err == nil || !strings.Contains(err.Error(), "already pushed to origin/main") {
+		t.Fatalf("signing across an unsigned pushed commit = %v; want a refusal naming the upstream", err)
+	}
+	if !strings.Contains(err.Error(), gitOut(repo, "rev-parse", "--short", unsignedPushed)) {
+		t.Errorf("the refusal should name the unsigned pushed commit %s: %v", unsignedPushed, err)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD"); got != head {
+		t.Errorf("a refused pass moved HEAD from %s to %s", head, got)
+	}
+	if got := gitOut(repo, "rev-parse", "origin/main"); got != upstream {
+		t.Errorf("a refused pass moved the upstream from %s to %s", upstream, got)
+	}
+	if worktrees := strings.Count(gitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
+		t.Errorf("a refused pass left %d registered worktrees, want 1", worktrees)
+	}
+
+	// The refusal's advice works: coop sign's default range starts at the upstream, so it signs
+	// what is not pushed and leaves the pushed history alone.
+	from, err := signBase(repo, "")
+	if err != nil {
+		t.Fatalf("signBase: %v", err)
+	}
+	if n, err := a.signUnpushed(repo, from); err != nil || n != 1 {
+		t.Fatalf("coop sign's default range = %d, %v; want the one unpushed commit", n, err)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD~1"); got != upstream {
+		t.Errorf("coop sign rewrote pushed commit %s into %s", upstream, got)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD~2"); got != unsignedPushed {
+		t.Errorf("coop sign rewrote pushed commit %s into %s", unsignedPushed, got)
+	}
+	if !hasSignature(repo, "HEAD") {
+		t.Error("the unpushed box commit should carry a signature")
+	}
+
+	// A push made while the rebase ran is caught too: the upstream is read again under the
+	// ref-authority lock, just before the branch would move, so the pass refuses and moves nothing.
+	git("commit", "-q", "--allow-empty", "-m", "box commit pushed while signing")
+	head = gitOut(repo, "rev-parse", "HEAD")
+	racing := &app{cfg: a.cfg, beforeSignRefUpdate: func(string, string, string, string) {
+		git("push", "-q", "origin", "main")
+	}}
+	if _, err := racing.signUnpushed(repo, from); err == nil || !strings.Contains(err.Error(), "already pushed to origin/main") {
+		t.Fatalf("signing across a push made mid-pass = %v; want the pushed-history refusal", err)
+	}
+	if got := gitOut(repo, "rev-parse", "origin/main"); got != head {
+		t.Fatalf("the hook's push did not land: origin/main = %s, want %s", got, head)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD"); got != head || hasSignature(repo, "HEAD") {
+		t.Errorf("a pass refused under the lock rewrote the pushed commit %s into %s", head, got)
+	}
+	if worktrees := strings.Count(gitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
+		t.Errorf("a pass refused under the lock left %d registered worktrees, want 1", worktrees)
+	}
+}
+
+// A box-exit warning carries the signer's own cause. Only the signing rebase failing adds the advice
+// to fix the Git signing setup: a refusal, structured or plain, has nothing to do with that setup.
+func TestSignOnBoxExitWarningFitsTheCause(t *testing.T) {
+	repo, git := signingRepo(t)
+	git("config", "--global", "commit.gpgsign", "true") // you sign by default; the repo's own commits stay unsigned
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	preHead := gitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "box commit, pushed before the session ended")
+	git("push", "-q", "-u", "origin", "main")
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	if warning := captureStderr(t, func() { a.signOnBoxExit(repo, preHead, false) }); !strings.Contains(warning, "already pushed to origin/main") ||
+		strings.Contains(warning, "signing setup") {
+		t.Errorf("pushed-history warning = %q; want the refusal with only its own next step", warning)
+	}
+	unrelated := gitOut(repo, "commit-tree", gitOut(repo, "rev-parse", "HEAD^{tree}"), "-m", "unrelated history")
+	if warning := captureStderr(t, func() { a.signOnBoxExit(repo, unrelated, false) }); !strings.Contains(warning, "it has no common base with") ||
+		strings.Contains(warning, "signing setup") {
+		t.Errorf("unrelated-history warning = %q; want the refusal's own message and no setup advice", warning)
+	}
+
+	preHead = gitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "unpushed box commit")
+	git("config", "--global", "user.signingkey", filepath.Join(t.TempDir(), "missing-key"))
+	if warning := captureStderr(t, func() { a.signOnBoxExit(repo, preHead, false) }); !strings.Contains(warning, "Run coop sign after fixing your Git signing setup.") {
+		t.Errorf("key-failure warning = %q; want the signing-setup advice", warning)
+	}
+}
+
+// When nothing needs a signature, coop sign says whether the range was empty or already signed.
+func TestCmdSignTellsAnEmptyRangeFromASignedOne(t *testing.T) {
+	repo, git := signingRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	git("push", "-q", "-u", "origin", "main")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: repo}}
+	sign := func(args ...string) string {
+		return captureStderr(t, func() {
+			if code, err := a.cmdSign(args); code != 0 || err != nil {
+				t.Errorf("coop sign %v = %d, %v", args, code, err)
+			}
+		})
+	}
+	if out := sign(); !strings.Contains(out, "No unpushed commits to sign.") {
+		t.Errorf("coop sign with nothing unpushed printed %q", out)
+	}
+	git("commit", "-q", "--allow-empty", "-S", "-m", "signed, not pushed")
+	if out := sign(); !strings.Contains(out, "Every unpushed commit is already signed.") {
+		t.Errorf("coop sign over a signed unpushed commit printed %q", out)
+	}
+	if out := sign("--from", base); !strings.Contains(out, "Every commit after "+base+" is already signed.") {
+		t.Errorf("coop sign --from over a signed range printed %q", out)
+	}
+	if out := sign("--from", "HEAD"); !strings.Contains(out, "No commits after HEAD to sign.") {
+		t.Errorf("coop sign --from HEAD printed %q", out)
 	}
 }
 

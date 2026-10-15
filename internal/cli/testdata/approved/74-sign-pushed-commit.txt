@@ -1,0 +1,7 @@
+
+✗ Could not sign without rewriting pushed history
+
+      Commit 1a2b3c4 is not signed and is already pushed to origin/main.
+
+  To sign only the commits you have not pushed, run coop sign.
+  Help: coop help sign

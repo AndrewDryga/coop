@@ -44,8 +44,9 @@ type Host struct {
 	// asks rather than sweeping the same repo again.
 	SweepOrphanBoxes func(repo string) Preparation
 
-	// SignUnpushed re-signs base..HEAD with the host key, returning how many commits it signed. It
-	// needs cli's ref-update test seam, and is also `coop sign` and the interactive box-exit path.
+	// SignUnpushed signs base..HEAD with the host key from its first unsigned commit, never
+	// rewriting pushed history, and returns how many commits it rewrote. It needs cli's ref-update
+	// test seam, and is also `coop sign` and the interactive box-exit path.
 	SignUnpushed func(repo, base string) (int, error)
 
 	// BuildRotation expands a target ladder against the signed-in accounts. Ladder expansion is
