@@ -2,8 +2,8 @@
 name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
-sources: [Makefile, internal/box/image.go, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/consult/capture_ownership_test.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/preset/wrapper.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go, docs/agents.md]
-updated: 2026-10-15
+sources: [Makefile, internal/box/image.go, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/consult/capture_ownership_test.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/preset/wrapper.go, internal/preset/wrapper_test.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go, docs/agents.md]
+updated: 2026-10-16
 ---
 
 `make provider-scripted-e2e` is the blocking consult contract. A strict external Coop binary mounts
@@ -50,7 +50,10 @@ writer: 1 in 24,000 under load) and in the wrapper (3 hangs in 9,600 calls; unre
 60 s "failed to capture provider output safely" for a peer that exited 0). `await_capture` re-delivers EOF on every
 poll by opening the FIFO read-write and closing it: that open never blocks, and it cannot fake EOF
 while a real writer is open. Linux pipes have no such race. The delegate wrapper's FIFO captures
-(`internal/preset/wrapper.go`) still wait for their readers unbounded and without re-delivery.
+(`internal/preset/wrapper.go`) re-deliver EOF the same way; there the race could hang a macOS
+delegate for good. Their wait stays unbounded, so output from a writer outside the provider's process
+group still arrives (`TestDelegateWrapperRedeliversALostCaptureEOF`,
+`TestDelegateWrapperWaitsForALateCaptureWriter`).
 
 Native fresh/resume feasibility captures on 2026-09-13 qualified Claude 2.1.267 JSON,
 Gemini 0.59.0 stream-json, and Grok 1.0.25 streaming-json session flags and field shapes.
@@ -130,6 +133,9 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-10-16 — the delegate wrapper's two FIFO captures re-deliver a lost EOF too (its own
+  `await_capture`, polling the capture process, still unbounded); before, the race could hang it for
+  good.
 - 2026-10-15 — explained the intermittent capture failures (gate 2026-10-11, owner batch 2026-10-14):
   macOS can lose a FIFO reader's EOF. Reproduced in the wrapper, the race test and shell-free;
   `await_capture` re-delivers it (`TestConsultWrapperRedeliversALostCaptureEOF`).

@@ -316,6 +316,26 @@ bounded_capture() {
 	rm -f "$chunk" || return 1
 }
 
+# By now the provider pipeline has ended, so every writer the wrapper owns has closed the capture's
+# FIFO and the reader is owed its EOF. macOS can lose it: when the last writer closes just as the
+# reader goes back to read() for more, the kernel's wakeup finds nobody asleep yet, and the reader
+# then sleeps on a FIFO with no writer left, so a provider that answered and exited 0 could hang the
+# delegate. Opening the FIFO read-write never blocks, and closing it is a fresh last close that hands
+# the reader its EOF. It cannot fake one: while a real writer is still open, ours is not last, so
+# output from a writer outside the provider's process group is still waited for, without a bound.
+# The loop follows the capture process, as the plain wait did, so a capture that dies without a
+# status cannot keep it spinning. true rather than the colon builtin: a redirect that fails on a
+# special builtin ends a dash script.
+await_capture() {
+	capture_pid=$1
+	capture_pipe=$2
+	while kill -0 "$capture_pid" 2>/dev/null; do
+		[ -p "$capture_pipe" ] && true <>"$capture_pipe"
+		sleep 0.1
+	done
+	wait "$capture_pid" 2>/dev/null || :
+}
+
 run_delegate_with_usage() {
 	provider=$1
 	shift
@@ -357,8 +377,8 @@ run_delegate_with_usage() {
 			printf '%s\n' "$?" >"$decode_status"
 		fi
 	} | tee "$decoded"
-	wait "$raw_capture_pid" 2>/dev/null || :
-	wait "$diagnostics_capture_pid" 2>/dev/null || :
+	await_capture "$raw_capture_pid" "$raw_pipe"
+	await_capture "$diagnostics_capture_pid" "$diagnostics_pipe"
 	rm -f "$raw_pipe" "$diagnostics_pipe"
 	st=$(cat "$provider_status" 2>/dev/null || printf 1)
 	decoded_ok=$(cat "$decode_status" 2>/dev/null || printf 1)

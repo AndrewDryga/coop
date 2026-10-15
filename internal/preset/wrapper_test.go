@@ -927,6 +927,58 @@ func TestDelegateWrapperKeepsRawTailAfterDecodeError(t *testing.T) {
 	}
 }
 
+// macOS can lose the EOF a capture's reader is owed: when the last write end closes just as the
+// reader goes back to read() for more, the kernel's wakeup finds nobody asleep, and the reader then
+// sleeps on a FIFO that has no writer left. The delegate waits for its captures without a bound, so
+// a provider that answered and exited 0 could hang the delegate for good. That race cannot be scheduled
+// from a test, so the drain here stands in for the reader it leaves behind: after the real EOF it
+// finishes only once its FIFO is opened for writing again and closed. The wrapper must hand every
+// capture that EOF.
+func TestDelegateWrapperRedeliversALostCaptureEOF(t *testing.T) {
+	const reply = "REPLY_PAST_A_LOST_EOF"
+	h := newDelegateHarness(t)
+	h.stub("gemini", "echo "+reply+"; echo provider-diagnostics >&2")
+	// A capture reads one dd block at a time and stops on an empty one. The drain finds its own
+	// FIFO by inode: macOS reports an open FIFO on a different device than its path.
+	dd := `#!/bin/sh
+/bin/dd "$@" || exit
+chunk=
+for arg do case $arg in of=*) chunk=${arg#of=} ;; esac; done
+[ -n "$chunk" ] && [ ! -s "$chunk" ] || exit 0
+inode() { stat -L -c %i "$1" 2>/dev/null || stat -L -f %i "$1"; }
+mine=$(inode /dev/stdin)
+for pipe in "$TMPDIR"/coop-delegate-*/provider-*-pipe-*; do
+	[ -p "$pipe" ] && [ "$(inode "$pipe")" = "$mine" ] && exec /bin/cat <"$pipe" >/dev/null
+done
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(h.dir, "dd"), []byte(dd), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, code, exceeded := h.runGroupDeadline(wrapperTestDeadlockTimeout, "fast", "task")
+	if exceeded || code != 0 || !strings.Contains(out, reply) ||
+		!strings.Contains(out, "[coop-delegate fast: finished on gemini:gemini-3.5-flash]") {
+		t.Fatalf("a reply whose capture lost its EOF was not delivered (exit %d, deadline hit: %t):\n%s", code, exceeded, out)
+	}
+}
+
+// Handing a capture its EOF must not fake one while a real writer is still open. A process the
+// provider left outside its group holds the diagnostics FIFO after the provider exits: the delegate
+// keeps re-delivering EOF to that FIFO meanwhile, yet still waits for the process and keeps its output.
+func TestDelegateWrapperWaitsForALateCaptureWriter(t *testing.T) {
+	const late = "LATE_DIAGNOSTICS"
+	h := newDelegateHarness(t)
+	// The provider waits until the writer has its own session; otherwise it is reaped as a leftover.
+	ready := filepath.Join(h.dir, "late-writer-ready")
+	h.stub("gemini", fmt.Sprintf(`setsid sh -c 'touch "$1"; sleep 1; echo %s >&2' sh %q >/dev/null &
+while [ ! -e %q ]; do sleep 0.01; done
+echo did-the-work`, late, ready, ready))
+	out, code, exceeded := h.runGroupDeadline(wrapperTestDeadlockTimeout, "fast", "task")
+	if exceeded || code != 0 || !strings.Contains(out, late) || !strings.Contains(out, "did-the-work") {
+		t.Fatalf("output from a writer still open after the provider exited was cut off (exit %d, deadline hit: %t):\n%s", code, exceeded, out)
+	}
+}
+
 func TestDelegateWrapperRecordsProviderUsageOnce(t *testing.T) {
 	h := newDelegateHarness(t)
 	for index, entry := range h.env {
