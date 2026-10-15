@@ -2,8 +2,8 @@
 name: fork-lifecycle-test-barriers
 description: lifecycle race tests must observe lock entry after unlocked preflight, not infer it from a delay
 subsystem: tests
-sources: [internal/cli/fork_cmd_test.go, internal/cli/fork_cmd.go, internal/forkctl/testhelpers_test.go, internal/forkspace/state.go]
-updated: 2026-09-05
+sources: [internal/cli/fork_cmd_test.go, internal/cli/fork_cmd.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkspace/state.go, internal/forkspace/state_test.go]
+updated: 2026-10-15
 ---
 
 `forkCreate --fresh` performs pinning, Git/lifecycle checks, confirmation, image resolution and
@@ -18,11 +18,17 @@ Keep callers nonparallel: the stack identifies this helper's command, not a uniq
 The virtual-time `TestForkLifecycleMutationWaitsForCommandPreflight` models slow preflight and an
 unrelated waiter without adding wall-clock sleeps or production-only synchronization hooks.
 The forkctl test helper already observes lock entry instead of sleeping; its stack match is broader.
+`TestDetachForkLoopChecksUnderTheLifecycleLock` uses it to record a worker while a detached start
+waits. `TestConfirmWorkerWaitsForTheParentsRecord` (forkspace) matches the `ConfirmWorker` and
+`LockStateContext` frames in one stack before writing the parent's record.
 
 This only proves the test's mutation ordering. A timeout after unlock or during runtime reaping
 still needs its own diagnosis; a passing repetition does not establish why an earlier run stalled.
 
 ## Changelog
+- 2026-10-15 — re-verified both helpers after the fork lifecycle lost its start states; the
+  claim-blocking test became a detached-start recheck, and the child's lock wait got its own
+  stack-observed forkspace test. Deadlines unchanged.
 - 2026-09-05 — reproduced the CLI's 80 ms preflight assumption with virtual time and replaced it
   with the command-stack barrier. Kept production and test deadlines unchanged and separated
   this confirmed harness flaw from the release gate's unproven runtime-timeout cause.

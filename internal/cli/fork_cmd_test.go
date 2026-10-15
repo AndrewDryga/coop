@@ -2,7 +2,7 @@ package cli
 
 import (
 	"bytes"
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -512,7 +511,7 @@ func TestForkFreshConfirmsBeforeForcedStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WritePid(repo, "perf", os.Getpid()); err != nil {
+	if err := forkspace.WritePid(repo, "perf", os.Getpid(), ""); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
@@ -530,7 +529,8 @@ func TestForkFreshRefusesStateOnlyCleanup(t *testing.T) {
 	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pending: true}); err != nil {
+	// A crashed worker's record with no workspace: only `coop fork stop` may finish its cleanup.
+	if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
@@ -558,7 +558,7 @@ func TestForkFreshRechecksLifecycleUnderLock(t *testing.T) {
 	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
 		return a.forkCreate([]string{"race", "claude", "--fresh", "--yes"})
 	}, func() {
-		if err := forkspace.WriteWorkerState(repo, "race", forkspace.WorkerState{Pending: true}); err != nil {
+		if err := forkspace.WriteWorkerState(repo, "race", forkspace.WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -1515,7 +1515,6 @@ func TestUniquelyNewSessionID(t *testing.T) {
 }
 
 func TestParseForkCreateLoopFlags(t *testing.T) {
-	workerArg := testDetachedReservationArg(t)
 	tests := []struct {
 		args                 []string
 		loop, detach, worker bool
@@ -1526,7 +1525,7 @@ func TestParseForkCreateLoopFlags(t *testing.T) {
 		{[]string{"perf", "--loop", "--detach", "--tasks", "q.md"}, true, true, false, "", "q.md"},      // long form of -d
 		{[]string{"perf", "gemini", "--loop", "-d", "-t", "q.md"}, true, true, false, "gemini", "q.md"}, // short -t
 		{[]string{"perf", "--loop", "--tasks=q.md"}, true, false, false, "", "q.md"},                    // --tasks=VALUE form
-		{[]string{"perf", "codex", "--loop", workerArg, "--tasks", "q.md"}, true, false, true, "codex", "q.md"},
+		{[]string{"perf", "codex", "--loop", "--_detached", "--tasks", "q.md"}, true, false, true, "codex", "q.md"},
 	}
 	for _, tc := range tests {
 		fa, err := parseForkCreate(tc.args)
@@ -1567,33 +1566,21 @@ func TestForkLoopContinueCommandUsesSelectedTargetOrPreset(t *testing.T) {
 	}
 }
 
-func testDetachedReservationArg(t *testing.T) string {
-	t.Helper()
-	data, err := (forkspace.WorkerState{Claim: true, Launched: true, Pid: 42, Token: "linux-proc-v1:boot:123"}).Marshal()
-	if err != nil {
-		t.Fatal(err)
+func TestParseForkCreateDetachedWorker(t *testing.T) {
+	if fa, err := parseForkCreate([]string{"perf", "codex", "--loop", "--_detached"}); err != nil || !fa.worker || !fa.loop {
+		t.Fatalf("parseForkCreate(--_detached) = (%+v, %v), want the internal worker", fa, err)
 	}
-	return "--_detached=" + base64.RawURLEncoding.EncodeToString(data)
-}
-
-func TestParseForkCreateDetachedReservation(t *testing.T) {
-	valid := testDetachedReservationArg(t)
-	noncanonicalState := base64.RawURLEncoding.EncodeToString([]byte(forkspace.OwnerStateV1 + forkspace.StartLaunched + "42\nlinux-proc-v1:boot:123\n\n"))
 	tests := []struct {
 		name string
 		args []string
 	}{
-		{name: "missing", args: []string{"perf", "codex", "--loop", "--_detached"}},
-		{name: "missing target", args: []string{"perf", "--loop", valid}},
-		{name: "duplicate", args: []string{"perf", "codex", "--loop", valid, valid}},
-		{name: "malformed encoding", args: []string{"perf", "codex", "--loop", "--_detached=%%%"}},
-		{name: "noncanonical state", args: []string{"perf", "codex", "--loop", "--_detached=" + noncanonicalState}},
-		{name: "fresh", args: []string{"perf", "codex", "--loop", valid, "--fresh"}},
-		{name: "force", args: []string{"perf", "codex", "--loop", valid, "--force"}},
-		{name: "yes", args: []string{"perf", "codex", "--loop", valid, "--fresh", "--yes"}},
-		{name: "detach", args: []string{"perf", "codex", "--loop", valid, "--detach"}},
-		{name: "continue", args: []string{"perf", "codex", "--loop", valid, "--continue"}},
-		{name: "new", args: []string{"perf", "codex", "--loop", valid, "--new"}},
+		{name: "missing target", args: []string{"perf", "--loop", "--_detached"}},
+		{name: "fresh", args: []string{"perf", "codex", "--loop", "--_detached", "--fresh"}},
+		{name: "force", args: []string{"perf", "codex", "--loop", "--_detached", "--force"}},
+		{name: "yes", args: []string{"perf", "codex", "--loop", "--_detached", "--fresh", "--yes"}},
+		{name: "detach", args: []string{"perf", "codex", "--loop", "--_detached", "--detach"}},
+		{name: "continue", args: []string{"perf", "codex", "--loop", "--_detached", "--continue"}},
+		{name: "new", args: []string{"perf", "codex", "--loop", "--_detached", "--new"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1604,266 +1591,108 @@ func TestParseForkCreateDetachedReservation(t *testing.T) {
 	}
 }
 
-func TestDetachedWorkerHandoffRaceOrderings(t *testing.T) {
-	if !forkspace.StableProcToken(forkspace.ProcStartToken(os.Getpid())) {
-		t.Skip("kernel process identity unavailable")
+// The detached worker's first act is to confirm that the record its parent writes under the
+// lifecycle lock names it. A child whose parent died before writing it, or whose record stop already
+// removed, finds none and exits before it touches metadata, the queue, the workspace, the runtime
+// or the global housekeeping its parent already ran.
+func TestDetachedWorkerWithoutItsRecordExitsUntouched(t *testing.T) {
+	root := t.TempDir()
+	repo, name := filepath.Join(root, "repo"), "perf"
+	ws := forkspace.Workspace(repo, name)
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	newFixture := func(t *testing.T) (repo, name string, reservation []byte, workerArg, runtimeCLI, runtimeTrace string) {
-		t.Helper()
-		root := t.TempDir()
-		repo, name = filepath.Join(root, "repo"), "perf"
-		ws := forkspace.Workspace(repo, name)
-		if err := os.MkdirAll(ws, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(filepath.Join(repo, ".agent", "tasks", "00_todo"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		state := forkspace.WorkerState{Claim: true, Launched: true, Pid: os.Getpid(), Token: forkspace.ProcStartToken(os.Getpid())}
-		var err error
-		reservation, err = state.Marshal()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := forkspace.WriteWorkerState(repo, name, state); err != nil {
-			t.Fatal(err)
-		}
-		workerArg = "--_detached=" + base64.RawURLEncoding.EncodeToString(reservation)
-		runtimeTrace = filepath.Join(root, "runtime.trace")
-		if err := os.WriteFile(runtimeTrace, nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		runtimeCLI = filepath.Join(root, "runtime")
-		if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_RUNTIME_TRACE\"\nexit 0\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		return repo, name, reservation, workerArg, runtimeCLI, runtimeTrace
+	if err := os.MkdirAll(filepath.Join(repo, ".agent", "tasks", "00_todo"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-
-	t.Run("stop wins before publication", func(t *testing.T) {
-		repo, name, _, workerArg, runtimeCLI, runtimeTrace := newFixture(t)
-		ws := forkspace.Workspace(repo, name)
-		marker := filepath.Join(ws, "marker")
-		if err := os.WriteFile(marker, []byte("unchanged\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		ready, release := filepath.Join(t.TempDir(), "ready"), filepath.Join(t.TempDir(), "release")
-		cmd := exec.Command(os.Args[0], "fork", name, "claude", "--loop", workerArg)
-		var childErr strings.Builder
-		cmd.Stderr = &childErr
-		// An old, unmounted coop entry the daily temp sweep would remove: the superseded child
-		// must not run that housekeeping before it publishes.
-		childTmp := t.TempDir()
-		orphan := filepath.Join(childTmp, "coop-mcp-orphan")
-		if err := os.WriteFile(orphan, nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		old := time.Now().Add(-3 * time.Hour)
-		if err := os.Chtimes(orphan, old, old); err != nil {
-			t.Fatal(err)
-		}
-		cmd.Env = append(os.Environ(),
-			detachedHandoffModeEnv+"=cli",
-			detachedHandoffReadyEnv+"="+ready,
-			detachedHandoffReleaseEnv+"="+release,
-			"COOP_REPO="+repo,
-			"COOP_CONFIG_DIR="+filepath.Join(t.TempDir(), "config"),
-			"XDG_CONFIG_HOME="+filepath.Join(t.TempDir(), "xdg-config"),
-			"TMPDIR="+childTmp,
-			"COOP_RUNTIME="+runtimeCLI,
-			"COOP_TEST_RUNTIME_TRACE="+runtimeTrace,
-		)
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if cmd.ProcessState == nil {
-				_ = cmd.Process.Kill()
-				_ = cmd.Wait()
-			}
-		})
-		awaitTestPath(t, ready, true)
-		t.Setenv("COOP_TEST_RUNTIME_TRACE", runtimeTrace)
-		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: runtimeCLI}, rtSet: true}
-		if code, err := a.forkctl().ForkStop([]string{name}); code != 0 || err != nil {
-			t.Fatalf("stop launched reservation = (%d, %v)", code, err)
-		}
-		traceBefore, err := os.ReadFile(runtimeTrace)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(release, []byte("go\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := cmd.Wait(); err == nil {
-			t.Fatal("superseded detached child exited successfully")
-		}
-		if !strings.Contains(childErr.String(), "detached fork start was superseded") {
-			t.Fatalf("child error = %q, want superseded refusal", childErr.String())
-		}
-		if pathExists(forkspace.PidPath(repo, name)) {
-			t.Fatal("superseded child recreated lifecycle state")
-		}
-		if !pathExists(orphan) {
-			t.Fatal("superseded child ran global temp housekeeping before publication")
-		}
-		if got := forkctl.ReadForkAgent(ws); got != "" {
-			t.Fatalf("superseded child saved agent metadata %q", got)
-		}
-		if pathExists(filepath.Join(ws, ".agent", "tasks")) {
-			t.Fatal("superseded child seeded a queue")
-		}
-		if got, err := os.ReadFile(marker); err != nil || string(got) != "unchanged\n" {
-			t.Fatalf("workspace marker changed = (%q, %v)", got, err)
-		}
-		if traceAfter, err := os.ReadFile(runtimeTrace); err != nil || !bytes.Equal(traceAfter, traceBefore) {
-			t.Fatalf("superseded child reached runtime = (%q, %v), before %q", traceAfter, err, traceBefore)
-		}
-	})
-
-	t.Run("child wins publication", func(t *testing.T) {
-		repo, name, reservation, _, runtimeCLI, runtimeTrace := newFixture(t)
-		ready := filepath.Join(t.TempDir(), "ready")
-		cmd := exec.Command(os.Args[0])
-		cmd.Env = append(os.Environ(),
-			detachedHandoffModeEnv+"=publisher",
-			detachedHandoffReadyEnv+"="+ready,
-			detachedHandoffRepoEnv+"="+repo,
-			detachedHandoffNameEnv+"="+name,
-			detachedHandoffReservationEnv+"="+base64.RawURLEncoding.EncodeToString(reservation),
-		)
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		waitDone := make(chan error, 1)
-		go func() { waitDone <- cmd.Wait() }()
-		reaped := false
-		t.Cleanup(func() {
-			if !reaped {
-				_ = cmd.Process.Kill()
-				select {
-				case <-waitDone:
-				case <-time.After(5 * time.Second):
-				}
-			}
-		})
-		awaitTestPath(t, ready, true)
-		state, err := forkspace.ReadWorkerState(repo, name)
-		if err != nil || state.Claim || state.Pending || state.Pid != cmd.Process.Pid || state.Token != forkspace.ProcStartToken(cmd.Process.Pid) {
-			t.Fatalf("published child state = (%+v, %v), want exact pid %d", state, err, cmd.Process.Pid)
-		}
-		t.Setenv("COOP_TEST_RUNTIME_TRACE", runtimeTrace)
-		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: runtimeCLI}, rtSet: true}
-		if code, err := a.forkctl().ForkStop([]string{name}); code != 0 || err != nil {
-			t.Fatalf("stop published child = (%d, %v)", code, err)
-		}
-		select {
-		case <-waitDone:
-			reaped = true
-		case <-time.After(5 * time.Second):
-			t.Fatal("published child was not reaped")
-		}
-		if err := cmd.Process.Signal(syscall.Signal(0)); err == nil {
-			t.Fatal("stop left the published child alive")
-		}
-		if pathExists(forkspace.PidPath(repo, name)) {
-			t.Fatal("stop left published child state")
-		}
-	})
-}
-
-func awaitTestPath(t *testing.T, path string, exists bool) {
-	t.Helper()
-	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
-	for {
-		_, err := os.Stat(path)
-		if (err == nil) == exists || (errors.Is(err, os.ErrNotExist) && !exists) {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("path %s existence did not become %v: %v", path, exists, err)
-		}
-		time.Sleep(10 * time.Millisecond)
+	marker := filepath.Join(ws, "marker")
+	if err := os.WriteFile(marker, []byte("unchanged\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtimeTrace, runtimeCLI := filepath.Join(root, "runtime.trace"), filepath.Join(root, "runtime")
+	if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_RUNTIME_TRACE\"\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	xdgConfig := filepath.Join(t.TempDir(), "xdg-config")
+	// An old, unmounted coop entry the daily temp sweep would remove: a child that refuses to
+	// start must not run that housekeeping either.
+	childTmp := t.TempDir()
+	orphan := filepath.Join(childTmp, "coop-mcp-orphan")
+	if err := os.WriteFile(orphan, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-3 * time.Hour)
+	if err := os.Chtimes(orphan, old, old); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline) // a fixture guard, not the behavior under test
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "fork", name, "claude", "--loop", "--_detached")
+	var childErr strings.Builder
+	cmd.Stderr = &childErr
+	cmd.Env = append(os.Environ(),
+		detachedChildEnv+"=1",
+		"COOP_REPO="+repo,
+		"COOP_CONFIG_DIR="+filepath.Join(t.TempDir(), "config"),
+		"XDG_CONFIG_HOME="+xdgConfig,
+		"TMPDIR="+childTmp,
+		"COOP_RUNTIME="+runtimeCLI,
+		"COOP_TEST_RUNTIME_TRACE="+runtimeTrace,
+	)
+	if err := cmd.Run(); err == nil {
+		t.Fatal("a detached child without its record exited successfully")
+	}
+	if got := childErr.String(); !strings.Contains(got, "will not start") || !strings.Contains(got, "no lifecycle record names this process") {
+		t.Fatalf("child error = %q, want a refusal naming the missing record", got)
+	}
+	if pathExists(forkspace.PidPath(repo, name)) {
+		t.Fatal("the child created a lifecycle record")
+	}
+	if !pathExists(orphan) {
+		t.Fatal("the child ran global temp housekeeping")
+	}
+	if got := forkctl.ReadForkAgent(ws); got != "" {
+		t.Fatalf("the child saved agent metadata %q", got)
+	}
+	if pathExists(filepath.Join(ws, ".agent", "tasks")) {
+		t.Fatal("the child seeded a queue")
+	}
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "unchanged\n" {
+		t.Fatalf("workspace marker changed = (%q, %v)", got, err)
+	}
+	if trace, err := os.ReadFile(runtimeTrace); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the child reached the container runtime: (%q, %v)", trace, err)
 	}
 }
 
-func TestDetachedWorkerEarlyValidationFailureCleansOnlyItsIdentity(t *testing.T) {
+// A worker that confirmed its record and then fails a later check removes that record on the way
+// out, so a refused start leaves nothing for `coop fork stop` to clean up.
+func TestDetachedWorkerEarlyValidationFailureClearsItsRecord(t *testing.T) {
 	if !forkspace.StableProcToken(forkspace.ProcStartToken(os.Getpid())) {
 		t.Skip("kernel process identity unavailable")
 	}
-	tests := []struct {
-		name        string
-		replacement forkspace.WorkerState
-		wantState   bool
-	}{
-		{name: "own identity removed"},
-		{name: "pending replacement preserved", replacement: forkspace.WorkerState{Pending: true}, wantState: true},
-		{name: "worker replacement preserved", replacement: forkspace.WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}, wantState: true},
-		{name: "same pid different token preserved", replacement: forkspace.WorkerState{Pid: os.Getpid(), Token: "linux-proc-v1:replacement:1"}, wantState: true},
+	repo, name := t.TempDir(), "perf"
+	if err := os.MkdirAll(forkspace.Workspace(repo, name), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			repo, name := t.TempDir(), "perf"
-			ws := forkspace.Workspace(repo, name)
-			if err := os.MkdirAll(ws, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			presetDir := filepath.Join(repo, ".agent", "presets", "vanish")
-			if err := os.MkdirAll(presetDir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			presetFile := filepath.Join(presetDir, "preset.yaml")
-			if err := os.WriteFile(presetFile, []byte("lead: {agent: claude}\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			probe := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
-			if _, err := probe.loadRunPreset("vanish"); err != nil {
-				t.Fatalf("parent preset validation: %v", err)
-			}
-			if err := os.WriteFile(presetFile, []byte("broken: true\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			reservation := forkspace.WorkerState{Claim: true, Launched: true, Pid: os.Getpid(), Token: forkspace.ProcStartToken(os.Getpid())}
-			data, err := reservation.Marshal()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := forkspace.WriteWorkerState(repo, name, reservation); err != nil {
-				t.Fatal(err)
-			}
-			a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
-			if tc.wantState {
-				a.afterDetachedPublish = func() {
-					if err := forkspace.WriteWorkerState(repo, name, tc.replacement); err != nil {
-						t.Errorf("replace published worker: %v", err)
-					}
-				}
-			}
-			arg := "--_detached=" + base64.RawURLEncoding.EncodeToString(data)
-			if code, err := a.forkCreate([]string{name, "vanish", "--loop", arg}); code != 2 || err == nil {
-				t.Fatalf("child repeated validation = (%d, %v), want preset failure", code, err)
-			}
-			got, readErr := os.ReadFile(forkspace.PidPath(repo, name))
-			if !tc.wantState {
-				if !errors.Is(readErr, os.ErrNotExist) {
-					t.Fatalf("failed child identity was retained: %q, %v", got, readErr)
-				}
-				return
-			}
-			want, err := tc.replacement.Marshal()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if readErr != nil || !bytes.Equal(got, want) {
-				t.Fatalf("replacement changed by child cleanup = (%q, %v), want %q", got, readErr, want)
-			}
-		})
+	presetDir := filepath.Join(repo, ".agent", "presets", "vanish")
+	if err := os.MkdirAll(presetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The preset broke after the parent validated it, so the worker's own reload fails.
+	if err := os.WriteFile(filepath.Join(presetDir, "preset.yaml"), []byte("broken: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// This test process stands in for the child its parent recorded.
+	if err := forkspace.WritePid(repo, name, os.Getpid(), ""); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	if code, err := a.forkCreate([]string{name, "vanish", "--loop", "--_detached"}); code != 2 || err == nil {
+		t.Fatalf("worker with a broken preset = (%d, %v), want the preset failure", code, err)
+	}
+	if pathExists(forkspace.PidPath(repo, name)) {
+		t.Fatal("the failed worker left its own record behind")
 	}
 }
 

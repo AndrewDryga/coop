@@ -76,14 +76,12 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 			return merged[i].Dir < merged[j].Dir
 		})
 		running := snapshot.ActiveExecutions()
-		starting := false
 		for _, fork := range snapshot.Forks {
 			if fork.DetachedRunning {
 				running++
 			}
-			starting = starting || fork.Starting
 		}
-		return boardRead{snapshot: snapshot, sources: sources, merged: merged, running: running, starting: starting}
+		return boardRead{snapshot: snapshot, sources: sources, merged: merged, running: running}
 	}
 
 	// An unreadable queue is unknown work, never a drained one: every view still shows what it
@@ -122,12 +120,11 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 
 	width := func() int { return ui.TermWidth(os.Stdout) }
 	screen := ui.NewAltScreen(os.Stdout, width)
-	sawActive, sawFork := false, false // concurrent-fork startup guard — see tasksWatchSettling
-	var queueErr error                 // a queue that turned unreadable mid-watch ends the board with exit 1
+	var queueErr error // a queue that turned unreadable mid-watch ends the board with exit 1
 	cache := &boardCache{roots: roots, read: read}
 	tick := func(spin int) ([]string, bool) {
 		board := cache.get(time.Now())
-		snapshot, sources, merged, running, starting := board.snapshot, board.sources, board.merged, board.running, board.starting
+		snapshot, sources, merged, running := board.snapshot, board.sources, board.merged, board.running
 		c := mergedCounts(merged)
 		// The Ctrl-C footer belongs to the LIVE view only: a pipe or --json has no keyboard, and a
 		// captured snapshot must not carry an instruction nobody can follow.
@@ -136,15 +133,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		if queueErr = snapshot.QueueError(); queueErr != nil {
 			return frame, true // settle on the failure so the loop's debounce still bounds the exit
 		}
-		if running > 0 || c.Doing > 0 {
-			sawActive = true // a fork/loop is on it — work has started
-		}
-		if starting {
-			sawFork = true // a detached launch reservation is the one real startup window
-		}
-		// tasksWatchSettling holds the auto-exit a few ticks against a torn read and adds the startup
-		// guard so just-launched forks don't conclude "drained" before one claims.
-		return frame, tasksWatchSettling(c, running, sawActive, sawFork)
+		return frame, tasksWatchSettling(c, running)
 	}
 	code, err := host.runWatchLoop(screen, tick, func() {
 		if queueErr == nil {
@@ -163,7 +152,6 @@ type boardRead struct {
 	sources  []watchSource
 	merged   []mergedTask
 	running  int
-	starting bool
 }
 
 // watchRefresh bounds how stale a live board may get about what changes without a file changing:
@@ -246,7 +234,7 @@ func snapshotHasVisibleActivity(snapshot ProjectSnapshot) bool {
 func forkHasVisibleActivity(fork ProjectForkSnapshot) bool {
 	// A reservation protects a persistent remote workspace; by itself it says nothing about
 	// current task work and stays available in the JSON snapshot instead of filling the board.
-	return fork.Starting || fork.DetachedRunning || fork.CleanupPending || fork.Assignments > 0 ||
+	return fork.DetachedRunning || fork.CleanupPending || fork.Assignments > 0 ||
 		fork.Candidate || fork.PendingLand || fork.CandidatePhase == forkCandidateSuperseding ||
 		fork.CandidatePhase == forkCandidateReviewing || fork.CandidatePhase == forkCandidatePublishing
 }
@@ -273,8 +261,6 @@ func tasksWatchFrameWithSnapshot(sources []watchSource, merged []mergedTask, sna
 	for _, fork := range visibleForks {
 		state := "idle"
 		switch {
-		case fork.Starting:
-			state = "starting"
 		case fork.DetachedRunning:
 			state = "detached loop running"
 		case fork.CleanupPending:
@@ -320,13 +306,11 @@ func tasksDrained(c TaskCounts) bool {
 	return c.Todo == 0 && c.Doing == 0 && c.Blocked == 0
 }
 
-// tasksWatchSettling reports whether this tick counts toward auto-exit: the queue is drained AND no
-// fork is running, AND either work has already been
-// seen (sawActive) or no fork ever appeared (a plain local watch, nothing to wait for). The guard
-// stops just-launched forks, whose boxes are still spawning and whose queues read idle for a tick,
-// from concluding "drained" and exiting in its startup window (watchIdleExit is only ~1s of ticks).
-func tasksWatchSettling(c TaskCounts, running int, sawActive, sawFork bool) bool {
-	return tasksDrained(c) && running == 0 && (sawActive || !sawFork)
+// tasksWatchSettling reports whether this tick counts toward auto-exit: the queue is drained AND
+// nothing is running. A detached fork counts as running from the moment `coop fork -d` returns,
+// because its lifecycle record already names the live worker.
+func tasksWatchSettling(c TaskCounts, running int) bool {
+	return tasksDrained(c) && running == 0
 }
 
 // tasksWatchFrame renders the unified board. A single source leads with just the progress bar (no

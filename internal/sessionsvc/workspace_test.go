@@ -811,7 +811,7 @@ func TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(forkspace.PidPath(repo, created.Name), []byte(forkspace.ReapPending), 0o644); err != nil {
+	if err := forkspace.WritePid(repo, created.Name, os.Getpid(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := discardSessionWorkspace(plan); err == nil {

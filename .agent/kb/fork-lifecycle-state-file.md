@@ -1,139 +1,127 @@
 ---
 name: fork-lifecycle-state-file
-description: one generation-bound owner-v2 file holds four fork lifecycle states; unsupported formats stay held and only pid+start-token — never file age — may decide a current owner is gone
+description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
 sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
-updated: 2026-10-10
+updated: 2026-10-15
 ---
-Every fork's whole process lifecycle lives in ONE small file, `<repo>-forks/.coop/<name>.pid`, read
-and written through `forkspace.WorkerState` (`internal/forkspace/state.go`) — never by hand. Four
-current shapes. Every one has an `owner-v2` header followed by the immutable generation record:
+A fork's detached loop is recorded in ONE small file, `<repo>-forks/.coop/<name>.pid`, read and
+written only through `forkspace.WorkerState` (`internal/forkspace/state.go`). It has one shape:
+`owner-v2\ngeneration=<id>\n<pid>\n<token>\n` — the worker's pid, its kernel start token (a pid
+reused after a crash or a reboot belongs to another process) and the fork generation it serves.
+`owner-v1` (no generation) is still parsed so an old worker can be stopped. The file exists only
+while a worker runs or after one died; there is no start or cleanup state, because the per-fork
+flock already covers both windows.
 
-| state | wire form | means |
-| --- | --- | --- |
-| worker | `owner-v2\ngeneration=<id>\n<pid>\n<token>` | a detached loop is running (or crashed); signalable |
-| reap-pending | `owner-v2\ngeneration=<id>\nreap-pending\n` (optionally followed by identity) | `fork stop` is mid-cleanup; its exact-owner box reap still must run |
-| reservation | `owner-v2\ngeneration=<id>\nstart-claim\n<pid>\n<token>` | a coop process claimed the fork and has NOT forked a worker yet |
-| launched reservation | `owner-v2\ngeneration=<id>\nstart-launched\n<pid>\n<token>` | that coop forked a worker but has not yet recorded its identity |
+## Start: the parent writes, the child confirms
 
-`owner-v1` remains parseable only for stop/migration compatibility. It has no generation, cannot
-start or claim current work beside a generation record, and must never be upgraded by editing its
-bytes. The host-owned `<name>.generation.json` binds name+generation to a private two-link anchor:
-`.coop-fork-generation` inside the workspace and a generation-specific file in the owner-only fork
-state directory ([[identity-fences-compare-the-inode]]);
-workers, runtime labels, executions, assignments, candidates, and cleanup all carry that exact
-identity, so `--fresh` cannot rebind a stale namesake.
+`DetachForkLoop` (`internal/forkctl/supervise.go`) holds the flock from its check until the child's
+record exists. `requireNoWorkerLocked` refuses while any record is present: a live worker "already
+has a loop running"; any other record (a dead worker's, or one Coop cannot verify) goes through
+`coop fork stop` first. Then it
+starts `coop fork <name> <who> --loop --_detached`, writes the child's pid, token and generation
+(`forkspace.WritePid`) and only then unlocks; a failed write kills and reaps the child. The child's
+first act (`forkspace.ConfirmWorker`, called from `forkCreate`) is to take the same flock and go on
+only if the record names its own pid and start token. A parent that died before writing, or a stop
+that removed the record first, leaves nothing to confirm, so the child exits before it touches
+metadata, the queue, the workspace or the runtime; `cli.Main` also skips update and temp
+housekeeping for this re-exec. A confirmed child defers `ClearPidIfMine`, which removes only its
+byte-exact record and gives up, rather than wait, while stop holds the flock.
 
-The identity in a *reservation* is the **claiming coop process**, not a worker. Nothing may ever
-signal it: `forkStop` zeroes it and falls into the tombstone path, and `forkspace.RunningPid` returns
-0 for it, or status/watch views would report the starting CLI as a running loop.
+## Stop
 
-`<repo>-forks` remains an ordinary workspace directory, but its host-owned `.coop` child is a real
-`0700` directory. Newly written lifecycle, generation, execution, reservation, assignment,
-candidate, proposal, land, discard, lock, and log records are `0600`; opening an existing lock or
-log also tightens its mode. The private parent protects older leaf records until they are rewritten.
-
-Creating the workspace is all-or-nothing before generation authority exists. `SetupContext` keeps
-the clone only after hardened checkout leaves `HEAD` on the exact requested branch, required Git
-identity/signing settings have propagated, and `.coop/` plus the root identity marker are excluded.
-A failed step removes that
-incomplete clone. Fork discovery treats a missing workspace/state root as empty, but returns any
-other directory error to lifecycle callers; only prompt decoration and shell completion suppress
-that diagnostic deliberately.
-
-Generation publication is crash-replayable. The private hardlink name is durable before its public
-marker, and a record rename that becomes visible before directory sync reports failure keeps both
-anchor and workspace. A session create retry adopts that exact visible generation instead of
-deleting the directory it names. Reservation rollback retires the generation first and deletes the
-workspace only after retirement succeeds. Legacy migration uses the hardened Git-exclude target
-proof, so a checkout-controlled `commondir` cannot redirect the host append into a sibling clone.
-
-Fork log absence is an ordinary not-yet-produced state, not a read success with mysteriously blank
-output. A named read says that explicitly. Multi-fork reads preserve every readable stream and
-return failure for any unreadable one; follow-mode failures print immediately from the failed
-follower while the other followers continue independently.
-
-## Who owns which half
-
-The FILE is `internal/forkspace`'s: paths (`StateDir`/`PidPath`/`LockPath`/`LogPath`), the flock
-(`LockState`/`TryLockState`), the wire format (`WorkerState`, `ParseWorkerState`, `Marshal`,
-`Read/WriteWorkerState`, `WritePid`, `ClaimStateFor`, `PublishReservedWorker`, `ClearPidIfMine`), and
-the identity doctrine
-(`ProcessIdentityOf`, `OwnerProvablyDead`, `StateOwner`, `RunningPid`, `NeedsStop`). It is a leaf —
-no runtime, no `ui` — so direct fork commands and the sessions service read one contract.
-
-SUPERVISION is `internal/forkctl`'s: `claimForkPid`/`claimForkPidUnlocked` and
-`clearForkClaimUnlocked` (the start protocol, which WARNS on a reclaim), `DetachForkLoop`,
-`recordStartedFork`, `ForkStop`'s signalling/`waitForExit`/box reap, and `ForkContainerOwner`. Rule
-of thumb: if it decides what to do to a PROCESS or a CONTAINER, or prints, it is supervision.
+`ForkStop` holds the flock throughout. It signals only a verified live worker (TERM, then KILL, to
+its session group, re-checking the token before each signal) and refuses an unverifiable identity
+with the manual `ps`/`kill` recovery. Then it reaps the boxes labelled with the fork's exact owner,
+generation and worker flag, retires provably dead `fork-loop` sandbox records of that generation
+after their own exact runtime reap, and removes the file last. Any failure leaves the record as it
+was: a dead worker's record is the retry handle, so a new start refuses it and the next stop
+finishes. Live, unknown, foreign-generation and foreground/editor records stay held. With no file,
+stop still reaps provably dead execution records of the exact generation. Nothing else clears a
+dead worker's record: it may still own an orphaned box.
 
 ## Unsupported state never becomes an identity
 
-`ParseWorkerState` accepts only `owner-v1` and `owner-v2`. A headerless or otherwise malformed
-record fails for a missing supported owner header; an unknown `owner-*` header retains a distinct
-unsupported-version error. Neither becomes a `WorkerState`. `forkctl.CheckWorkerStateFormat`
-applies the user-facing refusal before start/recreate, merge, removal, or stop can probe the runtime
-or change workspace metadata, and locked start/stop parse again against races. Merge holds that same
-lifecycle flock across its final check, fetch, rebase, gate, land, and reconciliation, then
-reacquires it for post-land removal. Successful land transfers an open workspace pin, generation
-presence/value and exact landed HEAD to the caller; a landed-but-unfinalized result transfers no
-deletion authority. Removal checks that approval, error-aware worktree status including untracked
-files, and parent ancestry under the lock, both before and after stopping writable sidecars.
-Cleanliness is checked independently in every populated indexed submodule, even an inactive one:
-parent status can hide nested changes through a child's ignore configuration. Assume-unchanged
-and skip-worktree index flags prevent automatic cleanup, without changing the user's index;
-nonempty uninspectable children are kept, while absent/empty uninitialized modules remain safe.
-Keep the pin across any user prompt, but never the lifecycle lock. Bulk land-and-remove uses the
-same default-No `DestroyGate` as single-fork removal; `--yes` does not override changed work.
-The exact file remains authoritative: `RunningPid` returns 0,
-while `NeedsStop` and `StateOwner` stay held. Coop never infers or signals a PID from invalid bytes.
-
-## The two crash windows, and the child handoff
-
-`DetachForkLoop` holds the per-fork flock across claim → fork → record, so a surviving reservation
-means its owner DIED holding it. The reservation is written in two phases, and only the pre-fork one
-is reclaimable. Before `cmd.Start`, the parent passes the canonical `start-launched` bytes to the
-re-exec child. If the parent survives, it publishes that child's exact PID/token while still holding
-the lock; the child later accepts that identity idempotently. If the parent dies first, child and
-`fork stop` contend on the same flock: `PublishReservedWorker` may replace only the byte-exact
-inherited reservation. A winning stop removes or replaces it and the child exits before metadata,
-queue, workspace, or runtime mutation; a winning child publishes a signalable identity that stop
-then observes. A launched reservation itself is never reclaimed by a new start and still routes to
-`coop fork stop`. The child skips ordinary update/temp housekeeping until publication and installs
-`ClearPidIfMine` immediately afterward; that cleanup removes only its byte-exact PID/token identity,
-never a pending, malformed, future-version, or same-PID/different-token replacement.
+`ParseWorkerState` accepts only `owner-v1`/`owner-v2` records naming a pid above 1. Headerless or
+malformed bytes fail for a missing supported owner header or a bad pid; an unknown `owner-*` header
+keeps a distinct unsupported-version error. Neither becomes a `WorkerState`.
+`forkctl.CheckWorkerStateFormat` refuses before start, recreate, merge, removal or stop probes the
+runtime or changes workspace metadata, and the locked start and stop parse again. `RunningPid`
+returns 0 for such bytes while `NeedsStop` and `StateOwner` stay held; Coop never infers or signals
+a pid from invalid bytes. The start reservations and cleanup markers earlier builds wrote
+(`start-claim`, `start-launched`, `reap-pending`; last released in 11.3.0) now read as malformed,
+and there is no reader for them. A `reap-pending` record can name a worker that still runs, so the
+refusal (`workerStateFormatError`) prints the guarded recovery in order: list the fork's loops
+with `pgrep -fl -- '[f]ork <name> .*--_detached'` (the bracket keeps pgrep's own shell out), stop
+only one whose working directory is this repository (the command line names no repository),
+escalating TERM to KILL, `rm --` the file, then `coop fork stop <name>`, whose no-file path
+reaps the box through the dead worker's activity record. Skipping the check stays guarded: that path refuses while the activity record is live, and
+`BeginExecution` refuses a second loop controller for the fork.
 
 ## The one liveness rule
 
-`forkspace.OwnerProvablyDead` is the single definition, and it takes only a
-`forkspace.ProcessIdentity`: **Gone** (kernel says the pid is dead) or **Mismatch** (the pid now
-belongs to a different process). A live Match and an unreadable identity (Unknown — no stable token,
-or `/proc`+sysctl unreadable) are BOTH unproven and fail closed. There is no mtime, no age, no "it's
-been a while" anywhere in this subsystem, and adding one is a rule violation, not an optimization:
-file age cannot distinguish a wedged host from a busy one. `forkspace.StateOwner` wraps it for
-callers that only ask "may I touch this fork?" — an unreadable or malformed file, an ownerless
-tombstone, and a launched-but-unrecorded worker all answer "held".
+`forkspace.OwnerProvablyDead` is the single definition, over a `forkspace.ProcessIdentity`:
+**Gone** (the kernel says the pid is dead) or **Mismatch** (the pid now belongs to another process).
+A live Match and an unreadable identity (Unknown: no stable token, or `/proc` and sysctl unreadable)
+are both unproven and fail closed. There is no mtime, age or "it's been a while" anywhere in this
+subsystem, and adding one is a rule violation, not an optimization: file age cannot tell a wedged
+host from a busy one. `forkspace.StateOwner` wraps it for "may I touch this fork?": only a missing
+record or a provably dead worker answers "not held". `recoverInterruptedRebase`
+(`internal/forkctl/merge.go`) aborts a crashed land's leftover rebase only then, because the abort
+resets that worktree; `mergeOne` already refuses any fork with a record, so this guard is defense
+in depth — keep it.
 
-## Where recovery is allowed to act
+## Who owns which half
 
-- `claimForkPidUnlocked` (`internal/forkctl/supervise.go`) — a provably dead pre-fork reservation is
-  reclaimed loudly (`ui.Warn`), and a new reservation is written in its place. Everything else
-  refuses. It lives OUTSIDE forkspace precisely BECAUSE it warns: forkspace prints nothing.
-- `recoverInterruptedRebase` (`internal/forkctl/merge.go`) — leftover `rebase-merge`/`rebase-apply`
-  in the fork's clone (a coop killed mid-land; `rebaseForkOntoParent` only aborts a rebase that
-  FAILED) is `git rebase --abort`ed, but only when `forkspace.StateOwner` says nobody holds the fork,
-  because the abort resets that worktree. In practice `mergeOne` already refuses a fork with ANY
-  lifecycle state, so this guard is the defense-in-depth one — keep it anyway.
+The FILE is `internal/forkspace`'s: paths, the flock (`LockState`, `LockStateContext`,
+`TryLockState`), the wire format (`WorkerState`, `ParseWorkerState`, `Marshal`,
+`Read/WriteWorkerState`, `WritePid`, `ConfirmWorker`, `ClearPidIfMine`) and the identity doctrine
+(`ProcessIdentityOf`, `OwnerProvablyDead`, `StateOwner`, `RunningPid`, `NeedsStop`). It is a leaf —
+no runtime, no `ui` — so fork commands and the sessions service (which checks `NeedsStop` and takes
+the lock through `LockState` and `LockStateContext`) read one contract. SUPERVISION is
+`internal/forkctl`'s: `requireNoWorkerLocked`, `DetachForkLoop`, `recordStartedFork`, `ForkStop`
+and `ForkContainerOwner`. If it decides what to do
+to a process or a container, or prints, it is supervision.
 
-A dead-WORKER state (not a reservation) is never auto-cleared: it may still own an orphaned box, and
-only `coop fork stop` reaps that by owner label.
+## Around the file
 
-Successful worker stop also retires provably dead `fork-loop` sandbox records for that exact
-generation, after a separate owner/generation/execution-ID runtime reap confirms absence. A dead
-child supervisor's registry record is cleanup authority, not a paused task. Reap or registry errors
-keep the retryable worker state; live/unknown owners and unrelated foreground/editor records stay held.
+- `<repo>-forks` is an ordinary workspace directory, but its host-owned `.coop` child is a real
+  `0700` directory. New lifecycle, generation, execution, reservation, assignment, candidate,
+  proposal, land, discard, lock and log records are `0600`; opening an existing lock or log also
+  tightens its mode.
+- The host-owned `<name>.generation.json` binds name and generation to a private two-link anchor
+  ([[identity-fences-compare-the-inode]]). Workers, runtime labels, executions, assignments,
+  candidates and cleanup all carry that exact identity, so `--fresh` cannot rebind a stale
+  namesake. Generation publication is crash-replayable: a record rename that becomes visible before
+  its directory sync reports failure keeps anchor and workspace, and a session-create retry adopts
+  it. Reservation rollback retires the generation before deleting the workspace.
+- Workspace creation is all-or-nothing before generation authority exists: `SetupContext` keeps the
+  clone only once `HEAD` is on the requested branch, Git identity and signing settings have
+  propagated, and `.coop/` plus the root identity marker are excluded. Discovery treats a missing
+  workspace or state root as empty and returns any other directory error; only prompt decoration
+  and shell completion hide it.
+- Merge holds the flock across its final check, fetch, rebase, gate, land and reconciliation, then
+  takes it again for post-land removal. Removal re-checks the land's approval, worktree status
+  (untracked files and every populated submodule included, since a child's ignore settings can hide
+  nested changes) and parent ancestry under the lock, before and after stopping writable sidecars;
+  index flags that hide changes prevent automatic cleanup. Bulk land-and-remove uses the same
+  default-No `DestroyGate`, and `--yes` does not override changed work.
+- A missing fork log is an ordinary not-yet-produced state. Multi-fork reads keep every readable
+  stream and fail for any unreadable one; a follower's failure prints at once while the others run.
 
 ## Changelog
+- 2026-10-15 — replaced the four lifecycle states (worker, reap-pending, start reservation,
+  launched reservation) with the worker record alone (audit EDGE-11, owner decision 3.5). The flock
+  already spanned claim, start and record, so the reservations only guarded a parent dying in that
+  window; now the child confirms its own record under the same flock and exits when it is missing.
+  Stop writes no marker: a dead worker's record is the retry handle. Kept start tokens, the
+  malformed/unsupported refusals and token re-checks before each signal. Retired forms read as
+  malformed, and the refusal prints the guarded recovery. Fork logs open with `O_APPEND`, so a
+  refused child of a start that died before its record cannot overwrite a newer start's output.
+  Removed `PublishReservedWorker`, `ClaimStateFor`, the claim/clear helpers, the
+  `--_detached=<reservation>` payload and the task snapshot's `starting` flag. Re-verified against
+  state.go, supervise.go, fork_cmd.go, cli.go and sessionsvc's `NeedsStop`, `LockState` and
+  `LockStateContext` uses.
 - 2026-10-10 — actual detached-loop stop left a dead sandbox record after its box was gone. Reverified stop/registry ownership and added exact child cleanup before success; live, unknown, foreign-generation and foreground/editor retention regressed.
 - 2026-09-23 — generation v3 replaced allocator metadata with a private hardlink anchor. Stopped
   v1/v2 records migrate only after branch/origin verification and absence of executions,

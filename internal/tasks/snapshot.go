@@ -58,7 +58,6 @@ type ProjectForkSnapshot struct {
 	Name             string                           `json:"name"`
 	Identity         *forkspace.Identity              `json:"identity,omitempty"`
 	WorkspaceValid   bool                             `json:"workspace_valid"`
-	Starting         bool                             `json:"starting"`
 	DetachedRunning  bool                             `json:"detached_running"`
 	CleanupPending   bool                             `json:"cleanup_pending"`
 	Assignments      int                              `json:"assignments"`
@@ -298,9 +297,8 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 				if state.Generation != "" && state.Generation != identity.Generation {
 					appendSnapshotProblem(&snapshot, "fork "+identity.Name+" worker", errors.New("worker belongs to another generation"))
 				} else {
-					fork.Starting = state.Claim
 					fork.DetachedRunning = forkspace.RunningPid(repo, identity.Name) != 0
-					fork.CleanupPending = forkspace.NeedsStop(repo, identity.Name) && !fork.DetachedRunning && !fork.Starting
+					fork.CleanupPending = forkspace.NeedsStop(repo, identity.Name) && !fork.DetachedRunning
 				}
 			} else if !errors.Is(stateErr, os.ErrNotExist) {
 				appendSnapshotProblem(&snapshot, "fork "+identity.Name+" worker", stateErr)

@@ -1,10 +1,8 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -218,25 +216,24 @@ func forkVerbNearMiss(args []string, forkExists bool) (string, bool) {
 
 // forkArgs is the parsed form of `coop fork <name> [<target|preset>] [flags]`.
 type forkArgs struct {
-	name        string
-	agent       string
-	agentSet    bool // an agent was given explicitly (vs defaulted / remembered from the fork)
-	fresh       bool
-	isolated    bool // persisted host-owned boundary; never inferred from workspace configuration
-	force       bool // -f/--force: with --fresh, discard unmerged/dirty work when recreating
-	yes         bool // -y/--yes: with --fresh, skip the destructive confirmation
-	cont        bool // -c/--continue: force-resume the prior session (now the default on re-entry)
-	newSession  bool // --new: start a fresh agent session even when re-entering a fork
-	loop        bool
-	detach      bool
-	tasks       string   // --tasks <path>: one canonical queue to schedule (defaults to every project queue with --loop)
-	credential  string   // the fork's account, from the positional target's @account (else the ladder default)
-	model       string   // the fork's model, from the positional target's :model (else the CLI/preset default)
-	effort      string   // the fork's reasoning effort, from the positional target's /effort (else the agent default)
-	peers       []string // --peer <target> (repeatable): the peers a loop iteration may ask read-only
-	preset      string   // the orchestration preset this fork runs under (named in the who-runs positional)
-	worker      bool     // internal: this process IS the detached loop worker (--_detached=<reservation>)
-	reservation []byte   // exact launched reservation inherited from the detaching parent
+	name       string
+	agent      string
+	agentSet   bool // an agent was given explicitly (vs defaulted / remembered from the fork)
+	fresh      bool
+	isolated   bool // persisted host-owned boundary; never inferred from workspace configuration
+	force      bool // -f/--force: with --fresh, discard unmerged/dirty work when recreating
+	yes        bool // -y/--yes: with --fresh, skip the destructive confirmation
+	cont       bool // -c/--continue: force-resume the prior session (now the default on re-entry)
+	newSession bool // --new: start a fresh agent session even when re-entering a fork
+	loop       bool
+	detach     bool
+	tasks      string   // --tasks <path>: one canonical queue to schedule (defaults to every project queue with --loop)
+	credential string   // the fork's account, from the positional target's @account (else the ladder default)
+	model      string   // the fork's model, from the positional target's :model (else the CLI/preset default)
+	effort     string   // the fork's reasoning effort, from the positional target's /effort (else the agent default)
+	peers      []string // --peer <target> (repeatable): the peers a loop iteration may ask read-only
+	preset     string   // the orchestration preset this fork runs under (named in the who-runs positional)
+	worker     bool     // internal: this process IS the detached loop worker (--_detached)
 	// network is this fork run's --egress/--allow-domain/--egress-rules. A loop
 	// admits once at its start; an interactive fork admits before its one box.
 	network networkFlags
@@ -318,25 +315,9 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			} else {
 				fa.peers = append(fa.peers, v)
 			}
-		case x == "--_detached":
-			return fa, errors.New("coop fork: internal --_detached needs its launch reservation")
-		case strings.HasPrefix(x, "--_detached="): // hidden: re-exec target for a detached loop
-			if fa.worker {
-				return fa, errors.New("coop fork: duplicate internal --_detached reservation")
-			}
-			encoded := strings.TrimPrefix(x, "--_detached=")
-			reservation, decodeErr := base64.RawURLEncoding.DecodeString(encoded)
-			if decodeErr != nil || encoded == "" || base64.RawURLEncoding.EncodeToString(reservation) != encoded {
-				return fa, errors.New("coop fork: invalid internal --_detached reservation")
-			}
-			state, stateErr := forkspace.ParseWorkerState(string(reservation))
-			canonical, marshalErr := state.Marshal()
-			if stateErr != nil || marshalErr != nil || !state.Claim || !state.Launched || state.Pending || !bytes.Equal(canonical, reservation) {
-				return fa, errors.New("coop fork: invalid internal --_detached reservation")
-			}
+		case x == "--_detached": // hidden: the re-exec target of a detached loop (forkctl.DetachForkLoop)
 			fa.worker = true
 			fa.loop = true
-			fa.reservation = reservation
 		default:
 			return fa, fmt.Errorf("coop fork: unexpected argument %q", x)
 		}
@@ -381,29 +362,22 @@ func (a *app) forkCreate(args []string) (int, error) {
 		if err != nil {
 			return -1, err
 		}
-		if err := forkctl.CheckWorkerStateFormat(repo, fa.name); err != nil {
-			return 1, err
+		// The first act: the record the parent wrote under the lifecycle lock must name this process.
+		// A child whose parent died before writing it, or whose start was stopped, exits here.
+		worker, confirmErr := forkspace.ConfirmWorker(repo, fa.name)
+		if confirmErr != nil {
+			return 1, fmt.Errorf("fork %s detached worker will not start: %w", fa.name, confirmErr)
 		}
-		reservationState, parseErr := forkspace.ParseWorkerState(string(fa.reservation))
-		if parseErr != nil {
-			return 1, fmt.Errorf("fork %s detached worker has an invalid launch reservation: %w", fa.name, parseErr)
-		}
-		if reservationState.Generation != "" {
+		defer forkspace.ClearPidIfMine(repo, fa.name, worker.Generation)
+		if worker.Generation != "" {
 			current, ok, readErr := forkspace.ReadGeneration(repo, fa.name)
-			if readErr != nil || !ok || current.Name != fa.name || current.Generation != reservationState.Generation {
+			if readErr != nil || !ok || current.Name != fa.name || current.Generation != worker.Generation {
 				return 1, fmt.Errorf("fork %s detached worker generation no longer matches host authority", fa.name)
 			}
 			if err := forkspace.ValidateGenerationWorkspace(repo, current); err != nil {
 				return 1, fmt.Errorf("fork %s detached worker generation is stale: %w", fa.name, err)
 			}
 			forkIdentity = current
-		}
-		if err := forkspace.PublishReservedWorker(repo, fa.name, fa.reservation, os.Getpid()); err != nil {
-			return 1, fmt.Errorf("fork %s detached worker will not start: %w", fa.name, err)
-		}
-		defer forkspace.ClearPidIfMineGeneration(repo, fa.name, reservationState.Generation)
-		if a.afterDetachedPublish != nil {
-			a.afterDetachedPublish()
 		}
 	}
 	// The fork's preset (named in the positional who slot): load + fail fast (pure local reads),
@@ -687,8 +661,8 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return 1, fmt.Errorf("bind fork %s for an ordinary launch: %w", fa.name, err)
 		}
 	} else if forkIdentity.Generation == "" {
-		// Legacy detached reservations remain stoppable, but new task authority is unavailable until
-		// the old worker is stopped and the workspace is adopted into a generation.
+		// A legacy worker record without a generation stays stoppable, but new task authority is
+		// unavailable until the old worker is stopped and the workspace is adopted into a generation.
 		return 1, fmt.Errorf("fork %s detached worker has legacy state without a generation — stop it and restart", fa.name)
 	}
 	if err := forkctl.SaveForkAgent(ws, fa.agent); err != nil {

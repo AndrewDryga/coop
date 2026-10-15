@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks watch --json` no longer reports `starting` for forks.** A background fork loop
+  counts as running from the moment `coop fork <name> -d` returns, so the field, which was true
+  only while a start was in progress, is gone, and so is the board's `starting` state. An
+  interrupted start no longer leaves a record behind for `coop fork stop` to clean up. If an
+  interrupted start or a failed stop from Coop 11.3.0 or earlier left one, `coop fork` refuses it
+  and prints how to clear it: stop any loop of that fork still running in this repository, remove
+  the file, then run `coop fork stop <name>`.
+
 - **`coop usage` removes cached records of deleted transcripts.** The usage cache kept a record for
   every transcript it ever read, so it grew as Claude deleted month-old transcripts and as accounts
   and history folders were removed. Now `coop usage` without a provider, once it has read all

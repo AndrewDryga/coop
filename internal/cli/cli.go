@@ -45,30 +45,29 @@ func resolveVersion() string {
 }
 
 type app struct {
-	cfg                  *config.Config
-	rt                   runtime.Runtime
-	rtSet                bool                                         // whether rt has been detected yet (ensureRuntime is lazy — see below)
-	argv                 []string                                     // the invocation, so a remedy can name the command to repeat
-	loginProvider        string                                       // presentation context for the shared sign-in flow, including provider-first aliases
-	sweptRepos           map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
-	sweptNetworks        bool                                         // orphaned coop networks already swept this process (they are not per repo)
-	settledNetworkRuns   bool                                         // interrupted filtered runs already settled this process (see settleInterruptedFilteredRuns)
-	tempReapPending      bool                                         // Main's process may start the daily temp sweep once, from a box launch (see startTempReap)
-	preset               *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
-	network              networkFlags                                 // this launch's --egress/--allow-domain/--egress-rules, resolved by box.AdmitNetwork
-	mode                 agents.ExecutionMode                         // this launch's --readonly/--bare; "" (normal) is every launch that takes neither
-	acpCapture           *box.CapturedEgress                          // an ACP supervisor's startup policy; children get a reference to it or a refresh's (currentACPCapture)
-	acpAdmission         acpAdmit                                     // a filtered `coop acp` supervisor's startup admission, run again by its refresh
-	acpRefresh           *acpNetworkRefresh                           // a filtered `coop acp` session's move onto newly approved policies; set before serving
-	acpPeers             []agents.Target                              // exact ad-hoc peers whose accounts a filtered ACP supervisor freezes for its children
-	acpNetworkTargets    []agents.Target                              // exact provider/accounts admitted at startup, including optional warm/probe choices; never re-derived
-	acpAccountBindings   map[string]acpAccountBinding                 // filtered child-only account/default handoff, checked against its reloaded preset before mounts
-	acpResume            *acpctl.ResumeState                          // consumed once before admission; restored by the supervisor afterward
-	beforeSignRefUpdate  func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
-	afterDetachedPublish func()                                       // test seam for state replacement before repeated child validation
-	acpModels            func(agent string) ([]agents.Model, error)   // test seam for account-scoped model refresh; nil → a real ACP box
-	acpSupervise         func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor
-	admitNetwork         admitNetworkFunc                             // test seam for an ACP supervisor's admission; nil → box.AdmitNetwork
+	cfg                 *config.Config
+	rt                  runtime.Runtime
+	rtSet               bool                                         // whether rt has been detected yet (ensureRuntime is lazy — see below)
+	argv                []string                                     // the invocation, so a remedy can name the command to repeat
+	loginProvider       string                                       // presentation context for the shared sign-in flow, including provider-first aliases
+	sweptRepos          map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
+	sweptNetworks       bool                                         // orphaned coop networks already swept this process (they are not per repo)
+	settledNetworkRuns  bool                                         // interrupted filtered runs already settled this process (see settleInterruptedFilteredRuns)
+	tempReapPending     bool                                         // Main's process may start the daily temp sweep once, from a box launch (see startTempReap)
+	preset              *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
+	network             networkFlags                                 // this launch's --egress/--allow-domain/--egress-rules, resolved by box.AdmitNetwork
+	mode                agents.ExecutionMode                         // this launch's --readonly/--bare; "" (normal) is every launch that takes neither
+	acpCapture          *box.CapturedEgress                          // an ACP supervisor's startup policy; children get a reference to it or a refresh's (currentACPCapture)
+	acpAdmission        acpAdmit                                     // a filtered `coop acp` supervisor's startup admission, run again by its refresh
+	acpRefresh          *acpNetworkRefresh                           // a filtered `coop acp` session's move onto newly approved policies; set before serving
+	acpPeers            []agents.Target                              // exact ad-hoc peers whose accounts a filtered ACP supervisor freezes for its children
+	acpNetworkTargets   []agents.Target                              // exact provider/accounts admitted at startup, including optional warm/probe choices; never re-derived
+	acpAccountBindings  map[string]acpAccountBinding                 // filtered child-only account/default handoff, checked against its reloaded preset before mounts
+	acpResume           *acpctl.ResumeState                          // consumed once before admission; restored by the supervisor afterward
+	beforeSignRefUpdate func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
+	acpModels           func(agent string) ([]agents.Model, error)   // test seam for account-scoped model refresh; nil → a real ACP box
+	acpSupervise        func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor
+	admitNetwork        admitNetworkFunc                             // test seam for an ACP supervisor's admission; nil → box.AdmitNetwork
 }
 
 // ensureRuntime lazily detects and caches the container runtime the first time a box-running command
@@ -251,15 +250,10 @@ func helpPath(argv []string) []string {
 }
 
 // detachedWorkerReexec identifies the private child form before ordinary process housekeeping.
-// Its parent already ran that housekeeping, while the child must not mutate anything before it
-// proves that its exact launch reservation still owns the fork lifecycle.
+// Its parent already ran that housekeeping, while the child must not change anything before it
+// confirms that the fork's lifecycle record names it (forkspace.ConfirmWorker).
 func detachedWorkerReexec(argv []string) bool {
-	if len(argv) < 2 || argv[0] != "fork" {
-		return false
-	}
-	return slices.ContainsFunc(argv[1:], func(arg string) bool {
-		return arg == "--_detached" || strings.HasPrefix(arg, "--_detached=")
-	})
+	return len(argv) >= 2 && argv[0] == "fork" && slices.Contains(argv[1:], "--_detached")
 }
 
 func (a *app) dispatch(argv []string) (int, error) {

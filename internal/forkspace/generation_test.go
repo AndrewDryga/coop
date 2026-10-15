@@ -235,7 +235,7 @@ func TestForkGenerationMigratesOnlyStoppedSemanticallyVerifiedLegacyRecords(t *t
 				t.Fatal(err)
 			}
 			legacy := writeLegacyGenerationRecord(t, repo, "legacy", version)
-			if err := WriteWorkerState(repo, "legacy", WorkerState{Pending: true}); err != nil {
+			if err := WriteWorkerState(repo, "legacy", WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}); err != nil {
 				t.Fatal(err)
 			}
 			unlock, err := LockState(repo, "legacy")
@@ -572,7 +572,7 @@ func TestForkGenerationAdoptsOnlyStoppedLegacyWorkspace(t *testing.T) {
 	if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteWorkerState(repo, "legacy", WorkerState{Pending: true}); err != nil {
+	if err := WriteWorkerState(repo, "legacy", WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}); err != nil {
 		t.Fatal(err)
 	}
 	unlock, err := LockState(repo, "legacy")

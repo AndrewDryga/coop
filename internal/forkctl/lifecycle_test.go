@@ -221,7 +221,7 @@ func TestForkRmRefusesRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Mark it running by claiming the pidfile for THIS (live) process.
-	if err := forkspace.WritePid(repo, "busy", os.Getpid()); err != nil {
+	if err := forkspace.WritePid(repo, "busy", os.Getpid(), ""); err != nil {
 		t.Fatal(err)
 	}
 	code, err := a.ForkRm([]string{"busy"})
@@ -249,8 +249,8 @@ func TestForkRmPreflightsMalformedStateBeforeConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, err := a.ForkRm([]string{"old", "--force"}) // no --yes: format refusal must win
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "malformed") || strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("ForkRm malformed state = (%d, %v), want pre-confirmation format refusal", code, err)
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "malformed") || !strings.Contains(err.Error(), "then run: coop fork stop old") || strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("ForkRm malformed state = (%d, %v), want pre-confirmation format refusal with its recovery", code, err)
 	}
 	if !pathExists(ws) {
 		t.Fatal("unsupported state allowed fork removal")
@@ -319,7 +319,7 @@ func TestForkRmConfirmsBeforeForcedStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WritePid(repo, "perf", os.Getpid()); err != nil {
+	if err := forkspace.WritePid(repo, "perf", os.Getpid(), ""); err != nil {
 		t.Fatal(err)
 	}
 	a := &Control{cfg: &config.Config{RepoOverride: repo}}
@@ -342,7 +342,7 @@ func TestForkRmRechecksLifecycleAfterConfirmation(t *testing.T) {
 	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
 		return a.ForkRm([]string{"race", "--yes"})
 	}, func() {
-		if err := os.WriteFile(forkspace.PidPath(repo, "race"), []byte(forkspace.ReapPending), 0o644); err != nil {
+		if err := forkspace.WritePid(repo, "race", os.Getpid(), ""); err != nil {
 			t.Fatal(err)
 		}
 	})

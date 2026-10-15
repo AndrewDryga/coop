@@ -111,7 +111,7 @@ func TestForkMergeRunningRefusalKeepsLifecycleExitClass(t *testing.T) {
 	if _, err := forkspace.Setup(repo, "busy"); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WritePid(repo, "busy", os.Getpid()); err != nil {
+	if err := forkspace.WritePid(repo, "busy", os.Getpid(), ""); err != nil {
 		t.Fatal(err)
 	}
 	c := &Control{cfg: &config.Config{RepoOverride: repo}}
@@ -698,7 +698,7 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 		repo, ws := forkWithInterruptedRebase(t)
 		// mergeOne refuses any fork with lifecycle state well before this, so drive the rebase
 		// directly: the recovery must guard its own destructive abort, not lean on that check.
-		if err := forkspace.WritePid(repo, "perf", os.Getpid()); err != nil {
+		if err := forkspace.WritePid(repo, "perf", os.Getpid(), ""); err != nil {
 			t.Fatal(err)
 		}
 		c := &Control{cfg: &config.Config{}}
@@ -713,7 +713,7 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 
 	t.Run("unverifiable owner refuses", func(t *testing.T) {
 		repo, ws := forkWithInterruptedRebase(t)
-		if err := forkspace.WritePid(repo, "perf", os.Getpid()); err != nil {
+		if err := forkspace.WritePid(repo, "perf", os.Getpid(), ""); err != nil {
 			t.Fatal(err)
 		}
 		oldRead := forkspace.ReadProcStartToken

@@ -15,25 +15,18 @@ import (
 	"github.com/AndrewDryga/coop/internal/processidentity"
 )
 
-// The current wire header and tagged state prefixes stay line-oriented, so the file remains
-// readable with `sed -n 1,4p` when an operator has to recover one by hand. A plain worker body has
-// no state prefix after the header.
+// The wire header stays line-oriented, so the file remains readable with `sed -n 1,4p` when an
+// operator has to recover one by hand.
 const (
-	ReapPending   = "reap-pending\n"
 	OwnerStateV1  = "owner-v1\n"
 	OwnerStateV2  = "owner-v2\n"
 	GenerationTag = "generation="
-	StartClaim    = "start-claim\n"    // a start reservation: its owner has launched no worker yet
-	StartLaunched = "start-launched\n" // that reservation forked a worker whose identity isn't recorded
 )
 
 var (
 	// ErrUnsupportedWorkerStateVersion keeps a future writer's state fail-closed until that version
 	// can interpret its own lifecycle contract.
 	ErrUnsupportedWorkerStateVersion = errors.New("unsupported detached-worker state version")
-	// ErrDetachedStartSuperseded means stop or another lifecycle owner changed the exact launch
-	// reservation before its re-exec child could publish itself. The child must exit without work.
-	ErrDetachedStartSuperseded = errors.New("detached fork start was superseded")
 	// Injectable only inside this package to qualify first-create parent-directory barriers.
 	syncForkDirectoryEntry = func(dir *os.File) error { return dir.Sync() }
 )
@@ -102,8 +95,9 @@ func confirmForkDirectoryEntry(path string) error {
 	return errors.Join(syncForkDirectoryEntry(parent), parent.Close())
 }
 
-// LockState serializes start, worker cleanup, and stop for one fork. The lock file persists,
-// but flock ownership does not: the kernel releases it if a coop process crashes.
+// LockState serializes a detached start through its child's record, the child's confirmation and
+// cleanup, and stop for one fork. The lock file persists, but flock ownership does not: the kernel
+// releases it if a coop process crashes.
 func LockState(repo, name string) (func(), error) {
 	return LockStateContext(context.Background(), repo, name)
 }
@@ -216,21 +210,19 @@ func processAlive(pid int, token string) bool {
 	return ProcessIdentityOf(pid, token) == ProcessIdentityMatch
 }
 
-// OwnerProvablyDead is the ONE test the fork lifecycle shares for "the process this state names is
+// OwnerProvablyDead is the ONE test the fork lifecycle shares for "the process this record names is
 // not running any more": the kernel says its pid is gone, or that pid now belongs to a different
 // process than the one recorded. A live match and — deliberately — an identity coop could not read
-// are both unproven, so every caller (stop, the start reclaim, the merge's rebase recovery) fails
-// closed on them. Identity is pid + start token or nothing: no file age, no elapsed time.
+// are both unproven, so every caller (stop, the merge's rebase recovery) fails closed on them.
+// Identity is pid + start token or nothing: no file age, no elapsed time.
 func OwnerProvablyDead(identity ProcessIdentity) bool {
 	return identity == ProcessGone || identity == ProcessIdentityMismatch
 }
 
-// StateOwner reports the process a fork's lifecycle state still names as possibly running, so a
+// StateOwner reports the worker a fork's lifecycle record still names as possibly running, so a
 // recovery that would disturb the fork can keep its hands off one somebody else owns. held is false
-// ONLY when there is no state at all, or its recorded owner is provably dead; everything coop cannot
-// read or disprove — an unreadable or malformed file, an ownerless cleanup tombstone, an
-// unverifiable identity, a worker launched but never recorded — holds the fork. pid is the recorded
-// owner when the state names one (0 when it names none).
+// ONLY when there is no record at all, or its worker is provably dead; a record coop cannot read and
+// an identity it cannot verify both hold the fork. pid is the recorded worker (0 when unreadable).
 func StateOwner(repo, name string) (pid int, held bool) {
 	state, err := ReadWorkerState(repo, name)
 	if errors.Is(err, os.ErrNotExist) {
@@ -239,43 +231,28 @@ func StateOwner(repo, name string) (pid int, held bool) {
 	if err != nil {
 		return 0, true
 	}
-	if state.Pid <= 1 {
-		return 0, true // a cleanup tombstone names no identity, so there is none to disprove
-	}
-	if state.Launched {
-		return state.Pid, true // its worker exists but was never recorded: nothing here can rule it out
-	}
 	return state.Pid, !OwnerProvablyDead(ProcessIdentityOf(state.Pid, state.Token))
 }
 
-// RunningPid returns the live pid of a detached loop for name, or 0. It deliberately preserves
-// dead/reused state: a crashed worker may have orphaned its box, and only a successful forkStop may
-// discard the exact-label reap handle.
+// RunningPid returns the live pid of a detached loop for name, or 0. It deliberately preserves a
+// dead or reused worker's record: that worker may have orphaned its box, and only a successful
+// forkStop may discard the exact-label reap handle.
 func RunningPid(repo, name string) int {
 	state, err := ReadWorkerState(repo, name)
-	if err != nil || state.Pid <= 0 {
-		return 0
-	}
-	if state.Claim {
-		return 0 // a reservation names the coop process starting the fork, never a running loop
-	}
-	if !processAlive(state.Pid, state.Token) {
+	if err != nil || !processAlive(state.Pid, state.Token) {
 		return 0
 	}
 	return state.Pid
 }
 
-// NeedsStop is the destructive-operation guard: besides a live worker, any remaining state file
-// is dead/reused, reap-pending, or malformed and must be resolved by `fork stop` before the worktree
-// can be merged, replaced, pruned, or removed.
+// NeedsStop is the destructive-operation guard: any lifecycle record — a live worker, a dead or
+// reused one, or bytes Coop cannot read — must be resolved by `fork stop` before the worktree can be
+// merged, replaced, pruned, or removed.
 func NeedsStop(repo, name string) bool {
-	if RunningPid(repo, name) != 0 {
-		return true
-	}
 	return pathExists(PidPath(repo, name))
 }
 
-// parsePidfile reads the current state's "<pid>\n<start-token>" body. pid 0 means unparseable.
+// parsePidfile reads a record's "<pid>\n<start-token>" body. pid 0 means unparseable.
 func parsePidfile(s string) (int, string) {
 	lines := strings.SplitN(strings.TrimSpace(s), "\n", 2)
 	pid, err := strconv.Atoi(strings.TrimSpace(lines[0]))
@@ -288,17 +265,12 @@ func parsePidfile(s string) (int, string) {
 	return pid, ""
 }
 
-// WorkerState is the one parse/validate/marshal boundary for durable loop lifecycle state.
-// Pending with Pid=0 is the bare dead-worker cleanup tombstone; every retained identity has Pid>1.
-// A claim is the start reservation, and its identity is the coop process that MADE it, not a worker:
-// nothing may ever signal it, and only its owner's death makes it reclaimable.
+// WorkerState is the one parse/validate/marshal boundary for a fork's lifecycle record: the
+// detached worker's pid and start token, scoped to the fork generation it serves.
 type WorkerState struct {
 	Pid        int
 	Token      string
 	Generation Generation
-	Pending    bool
-	Claim      bool // a start reservation held by the coop process at Pid
-	Launched   bool // that reservation already forked a worker whose identity it never recorded
 }
 
 func ParseWorkerState(raw string) (WorkerState, error) {
@@ -329,20 +301,6 @@ func ParseWorkerState(raw string) (WorkerState, error) {
 		}
 		body = rest
 	}
-	switch {
-	case strings.HasPrefix(body, StartClaim):
-		state.Claim = true
-		body = strings.TrimPrefix(body, StartClaim)
-	case strings.HasPrefix(body, StartLaunched):
-		state.Claim, state.Launched = true, true
-		body = strings.TrimPrefix(body, StartLaunched)
-	case strings.HasPrefix(body, ReapPending):
-		state.Pending = true
-		body = strings.TrimPrefix(body, ReapPending)
-		if strings.TrimSpace(body) == "" {
-			return state, nil
-		}
-	}
 	state.Pid, state.Token = parsePidfile(body)
 	if state.Pid <= 1 {
 		return WorkerState{}, fmt.Errorf("invalid detached worker pid %d", state.Pid)
@@ -358,22 +316,8 @@ func (state WorkerState) Marshal() ([]byte, error) {
 		}
 		prefix = OwnerStateV2 + GenerationTag + string(state.Generation) + "\n"
 	}
-	if state.Claim && state.Pending {
-		return nil, errors.New("invalid fork state: a start reservation is never cleanup-pending")
-	}
-	if state.Pending && state.Pid == 0 {
-		return []byte(prefix + ReapPending), nil
-	}
 	if state.Pid <= 1 {
 		return nil, fmt.Errorf("invalid detached worker pid %d", state.Pid)
-	}
-	switch {
-	case state.Launched:
-		prefix += StartLaunched
-	case state.Claim:
-		prefix += StartClaim
-	case state.Pending:
-		prefix += ReapPending
 	}
 	return []byte(fmt.Sprintf("%s%d\n%s\n", prefix, state.Pid, state.Token)), nil
 }
@@ -386,24 +330,13 @@ func ReadWorkerState(repo, name string) (WorkerState, error) {
 	return ParseWorkerState(string(data))
 }
 
-// ReplaceState atomically replaces a pid/cleanup record, so an interrupted stop sees either the
-// old complete worker identity or the new complete marker — never a truncated state that loses the
-// process it still needs to signal. It is a var so a test can make the write fail.
-var ReplaceState = writeStateAtomic
-
-func writeState(repo, name string, data []byte) error {
-	return ReplaceState(repo, name, data)
-}
-
+// WriteWorkerState atomically replaces the record, so a reader sees either the previous complete
+// record or the new one, never a truncated identity.
 func WriteWorkerState(repo, name string, state WorkerState) error {
 	data, err := state.Marshal()
 	if err != nil {
 		return err
 	}
-	return writeState(repo, name, data)
-}
-
-func writeStateAtomic(repo, name string, data []byte) error {
 	if err := EnsureStateDir(repo); err != nil {
 		return err
 	}
@@ -431,26 +364,10 @@ func writeStateAtomic(repo, name string, data []byte) error {
 	return os.Rename(tmp, PidPath(repo, name))
 }
 
-// WritePid records the worker's pid plus a start-time token, so RunningPid can later tell a
-// live worker from an unrelated process that reused the pid after a crash.
-func WritePid(repo, name string, pid int) error {
-	unlock, err := LockState(repo, name)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	return WritePidUnlocked(repo, name, pid)
-}
-
-func WritePidUnlocked(repo, name string, pid int) error {
-	state, err := workerStateForPID(pid, "")
-	if err != nil {
-		return err
-	}
-	return WriteWorkerState(repo, name, state)
-}
-
-func WritePidUnlockedGeneration(repo, name string, pid int, generation Generation) error {
+// WritePid records a detached worker: its pid, its kernel start token, so a pid reused after a crash
+// or a reboot is never mistaken for it, and the fork generation it serves. The caller holds the
+// lifecycle lock. A process without a stable token is refused: stop could never prove it is the same.
+func WritePid(repo, name string, pid int, generation Generation) error {
 	state, err := workerStateForPID(pid, generation)
 	if err != nil {
 		return err
@@ -459,12 +376,6 @@ func WritePidUnlockedGeneration(repo, name string, pid int, generation Generatio
 }
 
 func workerStateForPID(pid int, generation Generation) (WorkerState, error) {
-	if pid <= 1 {
-		return WorkerState{}, fmt.Errorf("refuse invalid detached worker pid %d", pid)
-	}
-	if generation != "" && !ValidGeneration(generation) {
-		return WorkerState{}, errors.New("refuse invalid detached worker generation")
-	}
 	token := ProcStartToken(pid)
 	if !StableProcToken(token) {
 		return WorkerState{}, fmt.Errorf("detached worker pid %d has no stable process identity", pid)
@@ -472,69 +383,43 @@ func workerStateForPID(pid int, generation Generation) (WorkerState, error) {
 	return WorkerState{Pid: pid, Token: token, Generation: generation}, nil
 }
 
-// PublishReservedWorker atomically hands one launched reservation to its exact re-exec child. A
-// parent that already published this pid/token is idempotent; every missing, pending, malformed, or
-// replaced state is terminal so a stopped child can never recreate lifecycle authority.
-func PublishReservedWorker(repo, name string, expected []byte, pid int) error {
-	reservation, err := ParseWorkerState(string(expected))
-	if err != nil || !reservation.Claim || !reservation.Launched || reservation.Pending {
-		return fmt.Errorf("invalid detached launch reservation")
-	}
-	canonical, err := reservation.Marshal()
-	if err != nil || !bytes.Equal(canonical, expected) {
-		return fmt.Errorf("invalid noncanonical detached launch reservation")
-	}
-	worker, err := workerStateForPID(pid, reservation.Generation)
-	if err != nil {
-		return err
-	}
-	workerBytes, err := worker.Marshal()
-	if err != nil {
-		return err
-	}
+// ConfirmWorker is a detached worker's first act. Its parent holds the lifecycle lock from before the
+// child starts until the child's record is written, so once this process holds the lock the record
+// is final. It must name this exact process, pid and start token. A parent that died before writing
+// it, or a stop that removed it first, leaves nothing to confirm: the child exits untouched.
+func ConfirmWorker(repo, name string) (WorkerState, error) {
 	unlock, err := LockState(repo, name)
 	if err != nil {
-		return err
+		return WorkerState{}, err
 	}
 	defer unlock()
-	current, err := os.ReadFile(PidPath(repo, name))
+	recorded, err := ReadWorkerState(repo, name)
+	if errors.Is(err, os.ErrNotExist) {
+		return WorkerState{}, errors.New("no lifecycle record names this process")
+	}
 	if err != nil {
-		return fmt.Errorf("%w: reservation is unavailable: %v", ErrDetachedStartSuperseded, err)
+		return WorkerState{}, err
 	}
-	switch {
-	case bytes.Equal(current, workerBytes):
-		return nil
-	case !bytes.Equal(current, expected):
-		return fmt.Errorf("%w: reservation changed", ErrDetachedStartSuperseded)
-	default:
-		return writeState(repo, name, workerBytes)
+	mine, err := workerStateForPID(os.Getpid(), recorded.Generation)
+	if err != nil {
+		return WorkerState{}, err
 	}
+	if recorded != mine {
+		return WorkerState{}, errors.New("the lifecycle record names another process")
+	}
+	return recorded, nil
 }
 
-// ClaimStateFor records the detaching process's identity and the immutable fork generation.
-// Launched marks the instant a worker exists but has not yet published its own identity — the one
-// window where a dead owner does not prove that nothing is running.
-func ClaimStateFor(generation Generation, launched bool) WorkerState {
-	pid := os.Getpid()
-	return WorkerState{Claim: true, Launched: launched, Pid: pid, Token: ProcStartToken(pid), Generation: generation}
-}
-
-// ClearPidIfMine removes the fork's pidfile only if it still contains THIS process's exact current
-// PID/token bytes, so an exiting worker never deletes a replacement that reused its numeric PID.
-func ClearPidIfMine(repo, name string) {
-	ClearPidIfMineGeneration(repo, name, "")
-}
-
-func ClearPidIfMineGeneration(repo, name string, generation Generation) {
+// ClearPidIfMine removes the fork's record only while it still names THIS process for generation,
+// so an exiting worker never deletes a replacement that reused its numeric pid. It gives up rather
+// than wait when stop holds the lock: stop is waiting for this process to exit and removes the
+// record itself once the box is gone.
+func ClearPidIfMine(repo, name string, generation Generation) {
 	unlock, ok := TryLockState(repo, name)
 	if !ok {
 		return
 	}
 	defer unlock()
-	clearPidIfMineUnlocked(repo, name, generation)
-}
-
-func clearPidIfMineUnlocked(repo, name string, generation Generation) {
 	data, err := os.ReadFile(PidPath(repo, name))
 	if err != nil {
 		return
@@ -543,8 +428,7 @@ func clearPidIfMineUnlocked(repo, name string, generation Generation) {
 	if err != nil {
 		return
 	}
-	expected, err := mine.Marshal()
-	if err == nil && bytes.Equal(data, expected) {
+	if expected, err := mine.Marshal(); err == nil && bytes.Equal(data, expected) {
 		_ = os.Remove(PidPath(repo, name))
 	}
 }

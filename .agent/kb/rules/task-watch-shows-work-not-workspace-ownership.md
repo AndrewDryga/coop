@@ -4,7 +4,7 @@ description: tasks watch renders task-affecting activity, never an idle workspac
 scope: cli-output
 sources: [internal/tasks/watch.go, internal/tasks/watch_test.go, internal/tasks/snapshot.go, internal/tasks/owner.go]
 check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels'
-updated: 2026-09-12
+updated: 2026-10-15
 ---
 
 # Show work in tasks watch, not idle workspace ownership
@@ -12,8 +12,8 @@ updated: 2026-09-12
 `coop tasks watch` answers what task work is happening. A remote-session reservation alone is
 durable ownership of a reusable workspace, not activity: it does not render a `forks` row and does
 not make an otherwise empty board visible. Keep the reservation in the project JSON snapshot and
-all lifecycle checks. If that same fork has an assignment, worker startup, detached loop, cleanup,
-candidate, land, or execution, show the task-affecting state without exposing the session owner id.
+all lifecycle checks. If that same fork has an assignment, detached loop, cleanup, candidate, land,
+or execution, show the task-affecting state without exposing the session owner id.
 
 A running box is not a second inventory either. The board carries no per-execution block: a box or
 session that belongs to a task shows on that task's own row (`← fork`), and one that does not has
@@ -44,6 +44,9 @@ and keep standalone fork rows only for lifecycle states that affect task progres
 
 ## Changelog
 
+- 2026-10-15 — dropped "worker startup" from the board states: the fork lifecycle lost its start
+  reservation, so the snapshot's `starting` flag, the board's `starting` row and the watch's startup
+  guard are gone. A detached loop shows as running once its start returns. Re-ran the card's check.
 - 2026-09-12 — swept watch row rendering, source summaries, snapshot labels and loop task scopes
   (watch.go, snapshot.go, loop/report.go). Only task rows repeated `queue` and the standard path
   suffix; fixed here. Source summaries still identify their queues, diagnostic paths stay exact,

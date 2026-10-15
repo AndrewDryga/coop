@@ -269,31 +269,28 @@ func TestTasksWatchSettling(t *testing.T) {
 	drained := TaskCounts{Done: 3}       // nothing todo/in-progress/blocked
 	live := TaskCounts{Todo: 1, Done: 2} // work remains
 	cases := []struct {
-		name               string
-		c                  TaskCounts
-		running            int
-		sawActive, sawFork bool
-		want               bool
+		name    string
+		c       TaskCounts
+		running int
+		want    bool
 	}{
-		{"local queue all done, no forks → settle (exit)", drained, 0, false, false, true},
-		{"work remains → keep watching", live, 0, true, true, false},
-		{"a fork is running → keep watching", drained, 1, true, true, false},
-		{"fork launched but not working yet (startup window) → keep watching", drained, 0, false, true, false},
-		{"fork worked, then finished → settle (exit)", drained, 0, true, true, true},
+		{"queue all done, nothing running → settle (exit)", drained, 0, true},
+		{"work remains → keep watching", live, 0, false},
+		{"a fork or box is running → keep watching", drained, 1, false},
 	}
 	for _, tc := range cases {
-		if got := tasksWatchSettling(tc.c, tc.running, tc.sawActive, tc.sawFork); got != tc.want {
+		if got := tasksWatchSettling(tc.c, tc.running); got != tc.want {
 			t.Errorf("%s: tasksWatchSettling = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }
 
-func TestIdlePersistentForkIsNotAWatcherStartupReservation(t *testing.T) {
+func TestIdlePersistentForkDoesNotHoldTheWatcherOpen(t *testing.T) {
 	snapshot := ProjectSnapshot{Forks: []ProjectForkSnapshot{{Name: "idle", WorkspaceValid: true}}}
 	if snapshotHasVisibleActivity(snapshot) {
 		t.Fatal("an idle persistent fork was presented as current work")
 	}
-	if !tasksWatchSettling(TaskCounts{Done: 1}, 0, false, false) {
+	if !tasksWatchSettling(TaskCounts{Done: 1}, 0) {
 		t.Fatal("an idle persistent fork would keep a drained watcher open forever")
 	}
 }
@@ -343,7 +340,6 @@ func TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution(t *testing.T) {
 		fork ProjectForkSnapshot
 		want string
 	}{
-		{name: "starting", fork: ProjectForkSnapshot{Name: "worker", Starting: true}, want: "starting"},
 		{name: "detached loop", fork: ProjectForkSnapshot{Name: "worker", DetachedRunning: true}, want: "detached loop running"},
 		{name: "cleanup", fork: ProjectForkSnapshot{Name: "worker", CleanupPending: true}, want: "cleanup-pending"},
 		{name: "assignment", fork: ProjectForkSnapshot{Name: "worker", Assignments: 2}, want: "2 assignment(s)"},
