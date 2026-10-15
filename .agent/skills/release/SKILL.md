@@ -33,7 +33,8 @@ each time — this is the contract; follow it.
 - The `## Unreleased` entries ARE the release. Empty ⇒ nothing to cut; say so and stop.
 - Write the GitHub release body as a short summary of the most important changes in plain
   English, not every changelog item. Explain user benefits, keep essential upgrade warnings,
-  and link the complete changelog. Preserve all detailed entries in CHANGELOG.md.
+  and link the complete changelog. Preserve every detailed entry since 10.1.2 in CHANGELOG.md;
+  older releases are kept at the v11.3.0 tag, which its last line links.
 - Public notes describe product changes, compatibility and user actions. Operator approvals,
   waivers, test/review diaries, spend details and CI troubleshooting belong in gitignored task
   records, never the public changelog or release body. Keep real functional limits accurate;

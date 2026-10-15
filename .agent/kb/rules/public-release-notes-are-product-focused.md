@@ -4,7 +4,7 @@ description: public release notes describe actual published releases and product
 scope: docs
 sources: [CHANGELOG.md, MIGRATING.md, README.md, .agent/skills/release/SKILL.md]
 check: none
-updated: 2026-10-01
+updated: 2026-10-15
 ---
 
 # Keep public release notes focused on the product
@@ -21,7 +21,8 @@ Contributor instructions may explain how a check works without narrating a parti
 GitHub release notes are a short, plain-English summary of the most important user-facing
 changes, not a copy of every changelog entry. Explain what people can do and why it matters;
 avoid implementation jargon. Keep essential upgrade warnings and link the detailed changelog
-for everything else. The complete changelog still preserves all changes and their attribution.
+for everything else. CHANGELOG.md keeps every change and its attribution since 10.1.2; older
+releases stay in the copy at the v11.3.0 tag, which the file's last line links.
 
 Prioritize by product impact, not by how recently a fix landed. Major capabilities such as
 isolated networking deserve their own understandable highlight, not a generic security-fixes label.
@@ -44,6 +45,9 @@ to make the history look tidier. Upgrade instructions describe the actual public
 fictional intermediate releases.
 
 ## Changelog
+- 2026-10-15 — CHANGELOG.md now holds releases since 10.1.2; older sections (several of which the
+  v10.1.2 copy still listed as releases that never shipped) stay in the v11.3.0 copy its last line
+  links. The release skill says the same.
 - 2026-10-01 — the user identified isolated networking as a missing major highlight. Checked the
   networking support documentation and latest summary; promoted network controls to the first
   highlight, explaining modes and sandbox-wide enforcement rather than burying it in security fixes.
