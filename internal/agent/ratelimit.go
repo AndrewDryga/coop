@@ -48,6 +48,11 @@ var (
 	wrapperStatus429Re     = regexp.MustCompile(`(?i)` + wrapperStatus429Pattern)
 )
 
+// SubscriptionLimitHit reports whether text says the account hit a subscription limit — "You've hit
+// your weekly limit", "You've reached your Fable 5 limit". The ladder reads the same sentence for its
+// reset time, so it uses this rather than a copy of the pattern.
+func SubscriptionLimitHit(text string) bool { return cliSubscriptionLimitRe.MatchString(text) }
+
 // CLIRateLimited reports whether provider CLI output carries a broad rate-limit
 // marker. Callers must also require a non-zero exit status; successful task output
 // is untrusted prose and must never trigger rotation by itself.

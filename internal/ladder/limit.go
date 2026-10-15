@@ -20,13 +20,9 @@ var (
 	// Claude prints this in headless mode when a subscription limit is hit:
 	// "Claude AI usage limit reached|<unix_epoch>" — the epoch is the reset time.
 	usageLimitRe = regexp.MustCompile(`(?i)usage limit reached\s*\|\s*(\d{9,})`)
-	// Newer human-readable subscription notice (also seen in headless output and ACP errors):
-	// "You've hit your weekly limit · resets Jun 18, 8pm (UTC)" and "You've reached your Fable 5
-	// limit. Run /usage-credits …". The verb (hit/reached) and the descriptor between "your" and
-	// "limit" — a window ("weekly") or a model name ("Fable 5", "Opus 4.8") — both vary, and the
-	// "resets …" clause may be absent; allow up to a few descriptor words.
-	hitLimitRe = regexp.MustCompile(`(?i)(?:hit|reached) your (?:[\w.-]+ ){0,3}limit`)
-	// The "resets <when>" or "try again at <when>" clause that follows it, when present.
+	// The newer human-readable subscription notice ("You've hit your weekly limit · resets Jun 18,
+	// 8pm (UTC)", also seen in headless output and ACP errors) is matched by
+	// agents.SubscriptionLimitHit; this reads its "resets <when>" or "try again at <when>" clause.
 	resetsRe = regexp.MustCompile(`(?i)(?:resets?|try again at)\s+([^\n·]+)`)
 	// A trailing timezone in parens at the end of that clause, e.g. "(UTC)" or
 	// "(America/Merida)". Every path component starts alphanumeric so provider
@@ -64,7 +60,7 @@ func DetectLimit(output string, now time.Time) LimitHint {
 	}
 	// "You've hit your weekly limit · resets Jun 18, 8pm (UTC)" — parse the stated
 	// reset so the loop sleeps until then rather than backing off into the wall.
-	if hitLimitRe.MatchString(output) {
+	if agents.SubscriptionLimitHit(output) {
 		return LimitHint{Limited: true, ResetAt: ParseResetTime(output, now)}
 	}
 	lower := strings.ToLower(output)
@@ -113,7 +109,7 @@ func DetectIterationLimit(output string, now time.Time) LimitHint {
 		}
 		lower := strings.ToLower(line)
 		proved := usageLimitRe.MatchString(line) ||
-			(hitLimitRe.MatchString(line) && (strings.HasPrefix(lower, "you've hit ") || strings.HasPrefix(lower, "you've reached "))) ||
+			(agents.SubscriptionLimitHit(line) && (strings.HasPrefix(lower, "you've hit ") || strings.HasPrefix(lower, "you've reached "))) ||
 			(agents.WrapperRateLimited(line) && iterationDiagnosticPrefix(lower))
 		if proved {
 			hint := DetectLimit(output, now)
@@ -144,7 +140,7 @@ func iterationDiagnosticPrefix(line string) bool {
 // narrower question a stream decoder asks to avoid printing the same notice twice once it has
 // already rendered the limit badge. DetectLimit answers the broader "was this limited".
 func LimitNotice(s string) bool {
-	return hitLimitRe.MatchString(s) || strings.Contains(strings.ToLower(s), "usage limit reached")
+	return agents.SubscriptionLimitHit(s) || strings.Contains(strings.ToLower(s), "usage limit reached")
 }
 
 // ParseResetTime reads the "resets <when>" clause of a subscription-limit notice
