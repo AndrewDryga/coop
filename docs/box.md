@@ -599,7 +599,3 @@ updater switched off. They move only when co:op does.
 
 For other versions, build your own image (`COOP_IMAGE`, or a `.agent/Dockerfile` on another base).
 co:op runs it, but it is not a qualified client set.
-
-co:op also applies a best-effort SQLite trigger to the active Codex credential before launch, so
-inserts into the `logs_2.sqlite` feedback-log table are ignored. Session history, auth, MCP config
-and memories are not touched.

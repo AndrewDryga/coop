@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -1480,7 +1479,6 @@ func (a codexAgent) EnsureDefaults(cfg *config.Config, workdir string) error {
 	if err := validateCodexDefaults(data); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
-	hardenCodexSQLiteFeedbackLog(dir)
 	out, changed := ensureCodexTrust(string(data), workdir)
 	if !changed {
 		return nil
@@ -1514,22 +1512,6 @@ func ensureCodexTrust(configTOML, workdir string) (string, bool) {
 	}
 	out += fmt.Sprintf("[projects.%q]\ntrust_level = \"trusted\"\n", workdir)
 	return out, true
-}
-
-// hardenCodexSQLiteFeedbackLog applies the upstream issue's local workaround to
-// the mounted Codex profile. It blocks inserts into the feedback-log table only;
-// sessions, auth, MCP config, and memories continue to work. Best-effort by
-// design: a fresh profile has no DB yet, and custom hosts may not ship sqlite3.
-func hardenCodexSQLiteFeedbackLog(dir string) {
-	db := filepath.Join(dir, "logs_2.sqlite")
-	if info, err := os.Stat(db); err != nil || info.IsDir() {
-		return
-	}
-	sqlite, err := exec.LookPath("sqlite3")
-	if err != nil {
-		return
-	}
-	_ = exec.Command(sqlite, db, `CREATE TRIGGER IF NOT EXISTS block_log_inserts BEFORE INSERT ON logs BEGIN SELECT RAISE(IGNORE); END;`).Run()
 }
 
 // findCodexSession returns the exact requested native session for cwd. Codex stores JSONL by date
@@ -1621,13 +1603,14 @@ func (codexAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
 // BoxEnv points codex's single-writer sqlite state (state_*.sqlite, logs_*, memories_*,
 // goals_* — the "state runtime") at a CONTAINER-LOCAL path off the shared ~/.codex bind
 // mount, via CODEX_SQLITE_HOME (honored by codex and codex-acp). codex ≥0.144 keeps that
-// state in $CODEX_HOME, and two boxes sharing one account's home make the second crash
-// ("failed to initialize sqlite state runtime") — sqlite's single-writer lock can't span the
-// mount. Redirecting only the sqlite keeps the WHOLE home shared as before (auth + its
-// in-place refresh, sessions, config), so any number of codex boxes run in parallel on one
-// account, each with its own state on its own writable layer. Ephemeral by design: the
-// session INDEX is rebuilt from the shared sessions/ rollouts (codex backfills), so resume
-// still works; per-box goals/memories don't persist, which is inherent to parallel sessions.
+// state in $CODEX_HOME, and two boxes sharing one home (the same repository and account) make
+// the second crash ("failed to initialize sqlite state runtime") — sqlite's single-writer lock
+// can't span the mount. Redirecting only the sqlite keeps the rest of the home shared
+// (sessions, config), so any number of codex boxes run in parallel on one account, each with
+// its own state on its own writable layer, and no database ever lands in a host folder.
+// Ephemeral by design: the session INDEX is rebuilt from the shared sessions/ rollouts (codex
+// backfills), so resume still works; per-box goals/memories don't persist, which is inherent to
+// parallel sessions.
 func (codexAgent) BoxEnv(homeInBox string) []string {
 	return []string{"CODEX_SQLITE_HOME=" + homeInBox + "/.codex-state"}
 }

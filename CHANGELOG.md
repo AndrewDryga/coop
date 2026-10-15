@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Coop no longer runs your `sqlite3` on Codex's log database.** Before launching Codex, Coop used
+  whatever `sqlite3` was on your PATH to add a trigger that stopped Codex writing its feedback log.
+  Since 5.0 that database lives inside each box and is removed with it, and the Codex that Coop
+  ships trims the log itself, so the trigger only touched an old copy in your credential home.
+
 - **Preset roles move on when a provider reports a rate limit with single quotes.** Inside the box,
   `coop-consult` and `coop-delegate` missed a limit written as `{'status': 429}` or `{'code': 429}`,
   so a role could retry or stop on the limited target instead of moving to its next one. The in-box

@@ -4,7 +4,7 @@ description: "when shared state breaks concurrency, isolate the state; never loc
 scope: box
 sources: [internal/box/profiles.go, internal/box/run.go, internal/box/repo.go, internal/box/services.go, internal/forkspace/execution.go, internal/agent/codex.go]
 check: "none"
-updated: 2026-10-09
+updated: 2026-10-15
 ---
 
 # Isolate the state, don't serialize the users of it
@@ -29,9 +29,11 @@ left to lock.
   answer: isolate the per-consumer state, keep sharing the genuinely-common pieces.
 - **Check whether the tool already has a knob before building a mount dance.** The codex
   collision's real fix was one env var — codex exposes `CODEX_SQLITE_HOME` to relocate exactly
-  the single-writer sqlite off the native home, so Coop keeps that state container-local.
-  Repository privacy now requires complete repository/provider/account homes, with a separate
-  account-independent ACP home. Never split native indexes/history into file-bind overlays.
+  the single-writer sqlite off the native home, so Coop keeps that state container-local
+  (`$HOME/.codex-state`, removed with the box). No native or ACP home holds a Codex `.sqlite`,
+  so a host-side edit to that state has nothing to reach. Repository privacy now requires
+  complete repository/provider/account homes, with a separate account-independent ACP home.
+  Never split native indexes/history into file-bind overlays.
 - Share one canonical host-only credential authority, not refresh-token copies per home. Short
   renewal/publication locks protect that authority; shared home-use leases permit concurrent native
   sessions. Exclusive migration leases only defer unsafe import, never serialize normal users.
@@ -44,6 +46,10 @@ left to lock.
   the short host-daemon mount boundary; it must not become ownership of the running stack.
 
 ## Changelog
+- 2026-10-15 — reverified the redirect: all 13 Codex native and ACP homes (active to 2026-10-14)
+  hold no `.sqlite`; the pinned Codex 0.159.2 reads `CODEX_SQLITE_HOME` and prunes its own `logs`
+  table. Deleted the host `sqlite3` feedback-log trigger in `EnsureDefaults`, which since 5.0
+  reached only a stale profile copy (198,113 rows ever inserted, 0 left).
 - 2026-10-09 — reverified native homes, account renewal and shared-use/exclusive-import leases.
   Superseded whole shared-home guidance with the approved repository-privacy boundary; native
   SQLite stays container-local and normal sessions remain concurrent.
