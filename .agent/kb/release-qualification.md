@@ -11,11 +11,10 @@ doctor and Docker review-write jobs must succeed before the privileged publisher
 Every checkout explicitly uses github.sha. CI remains contents-read only. It makes no live model
 calls and does not require a fresh saved provider report or a version-specific waiver.
 
-Reusable release calls always take broad checks, never the direct-main CHANGELOG shortcut.
-The status-only `check` job runs even after a dependency fails and admits only a complete
-successful broad or metadata outcome, with both runtime jobs successful. Read-only jobs may
-cache modules and compiled objects; tests rerun. The publisher remains fresh, uncached and
-without imported CI artifacts. See [[ci-free-checks]].
+The status-only `check` job runs even after a dependency fails and passes only when every free
+owner and both runtime jobs succeeded. Read-only jobs may cache modules and compiled objects;
+tests rerun. The publisher remains fresh, uncached and without imported CI artifacts. See
+[[ci-free-checks]].
 
 The preflight helper compares the event tag's peeled commit to HEAD and extracts the first real
 ATX H2 section of CHANGELOG.md. Its heading must exactly match the SemVer tag without `v`;
@@ -36,6 +35,8 @@ tag or protection during build/publication. Local fixture tests cannot prove hos
 or publication succeeded. Test refs/remotes are confined to temporary filesystem repositories.
 
 ## Changelog
+- 2026-10-15 — CI lost its CHANGELOG-only path, so a release call and a main push run the same
+  jobs; the required status passes only when all of them succeed.
 - 2026-10-15 — the reusable CI call runs every Make owner in CI_OWNERS, not four; owner caches
   are restored from main only, and the publisher stays uncached.
 - 2026-10-14 — verified Make partition coverage, strict metadata routing and aggregate refusal

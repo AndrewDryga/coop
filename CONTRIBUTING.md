@@ -64,19 +64,14 @@ cache of its own. It leaves out `check-unit`: the race owners run the same packa
 under the race detector. CI runs every owner in the Makefile's `CI_OWNERS` on its own runner,
 `check-unit` included: the race suite's slowest package, `internal/sessionsvc`, and the scripted
 provider suite each run as two shards whose `-run` and `-skip` share one pattern, so no test
-falls outside both. The required `check` status waits for the selected checks, doctor and
-review-writes; a failed, cancelled or missing check cannot pass it. The two runtime jobs stay
-out of `make check` because they need Docker.
-
-A proven single-commit push to main that changes only the regular `CHANGELOG.md` file uses
-`make check-metadata` instead. The runtime jobs still run, and the status says that broad free
-checks were not run. PRs, tags, reusable-workflow calls, merges, multi-commit pushes, file-mode
-changes and uncertain inputs take the broad path.
+falls outside both. Each main push, pull request and release tag runs all of them. The required
+`check` status waits for every owner, doctor and review-writes; a failed, cancelled, skipped or
+missing job cannot pass it. The two runtime jobs stay out of `make check` because they need Docker.
 
 Read-only CI jobs cache downloaded modules and compiled Go objects, each free owner its own,
 saved only by pushes to main, but behavioral tests always rerun: Go's test-result cache cannot
 see every input that a child process builds or reads. The release publisher starts fresh without
-that cache or imported artifacts. Metadata checks are not proof for a release tag.
+that cache or imported artifacts.
 
 The gate needs `staticcheck`, `govulncheck`, `shellcheck`, `python3`, `node` and `git-lfs`.
 Node runs the shipped site's picker and copy handlers in a small DOM fixture; it needs no

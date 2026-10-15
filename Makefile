@@ -115,7 +115,6 @@ docs-tools-test: require-python3 require-node ## Test only docs/site/alignment/r
 	@python3 -m unittest discover -s tools -p 'test_site_content.py'
 	@python3 -m unittest discover -s tools -p 'test_align_comments.py'
 	@python3 -m unittest discover -s tools -p 'test_check_rules.py'
-	@python3 -m unittest discover -s tools -p 'test_make_checks.py'
 
 # Deliberately OUT of `check`: it launches real boxes, so it needs a container runtime and takes
 # minutes, and its numbers are a measurement to compare against — not a threshold to fail on. A
@@ -141,8 +140,7 @@ race: check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2 ## Full un
 # it started 3.5 minutes into the job and finished last. It runs as two shards beside the rest.
 # -run and -skip take the same pattern, so every test, example and fuzz seed is in exactly one
 # shard, and a new or renamed test can only move between them, never out. The pattern halves the
-# measured race time (2026-10-15: 475 s and 469 s); tools/test_make_checks.py keeps both sides
-# non-empty.
+# measured race time (2026-10-15: 475 s and 469 s); release_test.go keeps both sides non-empty.
 SESSIONSVC := github.com/AndrewDryga/coop/internal/sessionsvc
 SESSIONSVC_SHARD := ^Test(Session|Large|Replacement)
 
@@ -172,8 +170,8 @@ check-race-sessionsvc-2: require-git-lfs ## Race-detector tests of internal/sess
 # gate able to see it. Ordered so the cheap and most common failures surface first. Required tools
 # hard-fail with their install line — a soft skip is how a check silently stops running.
 # Locally the race owners stand in for check-unit: they run the same packages and tests under the
-# race detector, since no Go file has a race build constraint (tools/test_make_checks.py holds
-# that), and the plain pass took a quarter of the 52-minute local gate. CI runs both.
+# race detector, since no Go file has a race build constraint (release_test.go holds that), and
+# the plain pass took a quarter of the 52-minute local gate. CI runs both.
 # CI-only by necessity: the doctor runtime matrix and the review-writes job need a real container
 # runtime, so they stay separate CI jobs and this target stays runtime-independent. Run them by
 # hand with 'make doctor', 'make box-runtime-e2e', and 'make review-writes-e2e'.
@@ -208,9 +206,6 @@ check-process: check-process-loop check-process-rest ## Free scripted-provider a
 check-process-loop: provider-scripted-loop-e2e ## The scripted provider suite's loop tests
 check-process-rest: provider-scripted-other-e2e live-process-control ## The rest of the scripted provider suite and process-control tests
 check-race: race ## Free race-detector tests
-
-check-metadata: docs-check align rules-check docs-tools-test ## Only for proven single-commit CHANGELOG edits on main
-	@go test -count=1 . -run '^Test(DocsArtifactDetector|NoDocArtifactsInTrackedMarkdown)$$'
 
 # Explicit reviewed owners, not an automatic changed-file router. The import-closure test
 # includes tagged/test/root/tool consumers; shared foundations/build inputs still need check.
@@ -376,7 +371,7 @@ help: ## List targets
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: provider-status provider-verify
 .PHONY: check-local docs-tools-test
-.PHONY: check-static check-unit check-process check-race check-metadata
+.PHONY: check-static check-unit check-process check-race
 .PHONY: check-process-loop check-process-rest check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2
 .PHONY: provider-scripted-loop-e2e provider-scripted-other-e2e FORCE
 .PHONY: require-git-lfs

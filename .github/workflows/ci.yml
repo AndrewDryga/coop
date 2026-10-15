@@ -12,32 +12,10 @@ permissions:
   contents: read
 
 jobs:
-  scope:
-    runs-on: ubuntu-latest
-    outputs:
-      mode: ${{ steps.scope.outputs.mode }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Select only proven metadata changes
-        id: scope
-        run: python3 tools/ci_scope.py
-        env:
-          CI_EVENT_NAME: ${{ github.event_name }}
-          CI_REF: ${{ github.ref }}
-          CI_WORKFLOW_REF: ${{ github.workflow_ref }}
-          CI_REPOSITORY: ${{ github.repository }}
-          CI_SHA: ${{ github.sha }}
-
   # One runner per Make owner in the Makefile's CI_OWNERS. The race suite's long pole,
   # internal/sessionsvc, and the scripted provider suite each run as two shards, so no owner
   # holds the others up for long (the race job took 13 minutes while the rest took 5 to 7).
   checks:
-    needs: scope
-    if: needs.scope.outputs.mode != 'metadata'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -86,59 +64,25 @@ jobs:
             ~/.cache/go-build
           key: go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'internal/box/staticcheck.mod', 'internal/box/staticcheck.sum') }}-${{ github.sha }}
 
-  metadata:
-    needs: scope
-    if: needs.scope.outputs.mode == 'metadata'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.mod
-            go.sum
-            internal/box/staticcheck.mod
-            internal/box/staticcheck.sum
-      - name: Make-owned metadata checks
-        run: make check-metadata
-
-  # Keep the existing required status. Skipped dependencies are not proof of a pass.
-  # This job reads only status data: no checkout, cache, action or repository code.
+  # The required status. It runs after a failure too and passes only when every job it needs
+  # succeeded: a failed, cancelled or skipped job is not a pass. It reads only their results,
+  # with no checkout, cache, action or repository code.
   check:
     name: check
     if: always()
-    needs: [scope, checks, metadata, doctor, review-writes]
+    needs: [checks, doctor, review-writes]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Require every selected check and runtime boundary
+      - name: Require every check and runtime boundary
         env:
-          CI_MODE: ${{ needs.scope.outputs.mode }}
-          CI_RESULTS: ${{ toJSON(needs) }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          python3 - <<'PY'
-          import json
-          import os
-          needed = json.loads(os.environ["CI_RESULTS"])
-          outcomes = tuple(needed.get(name, {}).get("result", "") for name in
-                           ("scope", "checks", "metadata", "doctor", "review-writes"))
-          state = (os.environ["CI_MODE"], *outcomes)
-          accepted = {
-              ("broad", "success", "success", "skipped", "success", "success"),
-              ("metadata", "success", "skipped", "success", "success", "success"),
-          }
-          if state not in accepted:
-              raise SystemExit("Selected CI checks did not all succeed.")
-          if state[0] == "metadata":
-              print("Metadata checks passed; broad free checks were not run.")
-          else:
-              print("All free checks and runtime jobs passed.")
-          PY
+          if [ "$RESULTS" != 'success success success' ]; then
+            echo "Every needed job must succeed; their results: $RESULTS"
+            exit 1
+          fi
+          echo 'All free checks and runtime jobs passed.'
 
   # Exercise the real container boundary per runtime, so a change that breaks isolation,
   # process reaping, signal forwarding, or a runtime's run-args fails CI. (The fork-merge

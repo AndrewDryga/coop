@@ -2,8 +2,8 @@
 name: gate-is-one-recipe
 description: "Make owns the broad check union and its CI partitions, never a second workflow check list"
 scope: agent-workflow
-sources: [Makefile, .github/workflows/ci.yml, release_test.go, tools/test_make_checks.py, tools/ci_scope.py, tools/test_ci_scope.py]
-check: "go test ./. -run 'TestReleaseModuleHygiene|TestReleaseWorkflowQualification|TestReleaseCIAggregateRejectsFalseGreenDependencyStates'"
+sources: [Makefile, .github/workflows/ci.yml, release_test.go]
+check: "go test ./. -run 'TestReleaseModuleHygiene|TestReleaseLocalGateRunsEveryCIOwner|TestReleaseShardPatternsSplitTheirSuites|TestReleaseWorkflowQualification|TestReleaseCIAggregateRejectsFalseGreenDependencyStates'"
 updated: 2026-10-15
 ---
 
@@ -14,7 +14,7 @@ Add a check to a broad owner of `check` in the `Makefile` — never as a separat
 runner; the workflow's matrix is that list, which the release test holds. Local `make check` runs
 the same owners but `check-unit`, the static one first and the test owners side by side: the race
 owners run every test `check-unit` runs, under the race detector. The literal required `check`
-status runs after failures too and refuses incomplete selected checks or runtime jobs.
+status runs after failures too and refuses a failed, cancelled or skipped check or runtime job.
 A tool the gate needs is REQUIRED: missing, it fails with the one-line command that
 installs it, and a version-pinned tool fails when the local build isn't the pin. Never soft-skip.
 
@@ -36,9 +36,9 @@ on the machine where the code was written, and main rotted red with no local gat
 - New check → a Makefile target, added to one of `check`'s owners. Cheap and common failures belong
   to the static owner, which runs first; a new test owner joins `CI_OWNERS` and `GATE_TEST_OWNERS`.
 - A slow package or suite becomes two shards with one pattern, `-run` in one and `-skip` in the
-  other, so no test can fall outside both; the Make tests keep each side non-empty.
+  other, so no test can fall outside both; a release test keeps each side non-empty.
 - `make check` may leave out `check-unit` only while no Go file has a race build constraint
-  (tools/test_make_checks.py holds that). Never drop a check from CI to speed up the local gate.
+  (a release test holds that). Never drop a check from CI to speed up the local gate.
 - Needs a container runtime? That's the one exception: its own CI job, plus a Makefile comment on
   `check` saying it's CI-only and why — `make check` stays runtime-independent.
 - Pin a tool's version ONCE, in the Makefile or its dedicated dependency graph, and have CI use
@@ -47,12 +47,16 @@ on the machine where the code was written, and main rotted red with no local gat
 - A check that only ever ran locally has never been proven against a clean checkout: before wiring
   it into CI, run it on `git archive HEAD` output, where gitignored working state doesn't exist.
 
-Only a proven single regular CHANGELOG edit in an ordinary single-parent main push may use
-the explicit metadata owner. PRs, tags, reusable calls, merges, multi-commit pushes and unknown
-inputs remain broad. Report the narrower coverage honestly. Never reuse low-privilege caches
-or artifacts in the signing publisher. Related: [[ci-free-checks]], [[static-bounded-supervision]].
+CI runs every owner on each main push, pull request and release; no path filter or changed-file
+route narrows it. Never reuse low-privilege caches or artifacts in the signing publisher.
+Related: [[ci-free-checks]], [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-10-15 — deleted the CHANGELOG-only metadata path (it never fired; CI is free) and the
+  Make recipe tests, by the owner's decision. The required status is now shell over
+  needs.*.result, and release_test.go holds the owner union, race-constraint and shard facts the
+  Python tests held. Swept Make, ci.yml, release tests, CONTRIBUTING, AGENTS, README, the release
+  skill and the CI, local and release KB cards; AGENTS, README and the skill named neither.
 - 2026-10-15 — the race and process owners became shards (CI_OWNERS, seven runners) and each
   owner got its own CI cache: CI's race job took 13 minutes beside 5-7 for the rest. Local
   `make check` (52 minutes) runs the test owners four at a time and skips the plain unit pass

@@ -2,12 +2,13 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
-	"fmt"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -20,12 +21,11 @@ type releaseWorkflow struct {
 	On          map[string]any    `yaml:"on"`
 	Permissions map[string]string `yaml:"permissions"`
 	Jobs        map[string]struct {
-		Uses     string            `yaml:"uses"`
-		Needs    any               `yaml:"needs"`
-		Name     string            `yaml:"name"`
-		If       string            `yaml:"if"`
-		Outputs  map[string]string `yaml:"outputs"`
-		Timeout  int               `yaml:"timeout-minutes"`
+		Uses     string `yaml:"uses"`
+		Needs    any    `yaml:"needs"`
+		Name     string `yaml:"name"`
+		If       string `yaml:"if"`
+		Timeout  int    `yaml:"timeout-minutes"`
 		Strategy struct {
 			FailFast    *bool               `yaml:"fail-fast"`
 			MaxParallel int                 `yaml:"max-parallel"`
@@ -39,7 +39,6 @@ type releaseWorkflow struct {
 }
 
 type releaseStep struct {
-	ID              string            `yaml:"id"`
 	Name            string            `yaml:"name"`
 	Uses            string            `yaml:"uses"`
 	Run             string            `yaml:"run"`
@@ -303,20 +302,102 @@ const (
 	ciCachePinned = "@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
 )
 
-// makeCIOwners reads the Makefile's CI_OWNERS, the owners CI runs one per runner.
-func makeCIOwners(t *testing.T) []string {
+// makeVariable reads one `NAME := value` line of the Makefile, such as CI_OWNERS, the owners CI
+// runs one per runner.
+func makeVariable(t *testing.T, name string) string {
 	t.Helper()
 	data, err := os.ReadFile("Makefile")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if owners, ok := strings.CutPrefix(line, "CI_OWNERS := "); ok {
-			return strings.Fields(owners)
+		if value, ok := strings.CutPrefix(line, name+" := "); ok {
+			return value
 		}
 	}
-	t.Fatal("the Makefile must name the owners CI runs in CI_OWNERS")
-	return nil
+	t.Fatalf("the Makefile must set %s", name)
+	return ""
+}
+
+// TestReleaseLocalGateRunsEveryCIOwner holds what lets `make check` leave check-unit to CI: the
+// gate runs every other CI owner, and the race owners run check-unit's tests only while no Go file
+// builds differently under the race detector.
+func TestReleaseLocalGateRunsEveryCIOwner(t *testing.T) {
+	raceConstraint := regexp.MustCompile(`(?m)^(//go:build|// \+build) .*\brace\b`)
+	ci := strings.Fields(makeVariable(t, "CI_OWNERS"))
+	local := append([]string{"check-static", "check-unit"}, strings.Fields(makeVariable(t, "GATE_TEST_OWNERS"))...)
+	slices.Sort(ci)
+	slices.Sort(local)
+	if !slices.Equal(ci, local) {
+		t.Errorf("CI_OWNERS %v must be check-static, check-unit and GATE_TEST_OWNERS %v", ci, local)
+	}
+	// The variables only matter if the check recipe runs them, rather than a list kept by hand.
+	makefile, err := os.ReadFile("Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []string{"\ncheck: check-static ", "$(addprefix gate-,$(GATE_TEST_OWNERS))"} {
+		if !strings.Contains(string(makefile), step) {
+			t.Errorf("make check must run check-static, then every GATE_TEST_OWNERS owner: %q is gone", step)
+		}
+	}
+	out, err := exec.Command("git", "ls-files", "-z", "*.go").Output()
+	if err != nil {
+		t.Fatalf("git ls-files: %v", err)
+	}
+	files := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	if !slices.Contains(files, "release_test.go") {
+		t.Fatalf("git ls-files must list the tracked Go files, got %d entries", len(files))
+	}
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // deleted and not yet staged: it builds nothing
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if raceConstraint.Match(data) {
+			t.Errorf("%s has a race build constraint, so make check would skip tests only check-unit runs", file)
+		}
+	}
+}
+
+// TestReleaseShardPatternsSplitTheirSuites keeps each shard pair worth its runner. One pattern,
+// -run in one shard and -skip in the other, keeps every test in exactly one; a pattern that matched
+// all of its suite or none of it would leave one shard empty and the other the whole suite.
+func TestReleaseShardPatternsSplitTheirSuites(t *testing.T) {
+	testFunc := regexp.MustCompile(`(?m)^func (Test\w*)\(\w+ \*testing\.T\)`)
+	for _, shard := range []struct{ variable, dir, suite string }{
+		{"SESSIONSVC_SHARD", "internal/sessionsvc", "Test"},
+		{"PROVIDER_SHARD", "internal/cli", "TestProviderScripted"},
+	} {
+		pattern, err := regexp.Compile(makeVariable(t, shard.variable))
+		if err != nil {
+			t.Fatalf("%s: %v", shard.variable, err)
+		}
+		files, err := filepath.Glob(filepath.Join(shard.dir, "*_test.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tests, matched := 0, 0
+		for _, file := range files {
+			data, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range testFunc.FindAllSubmatch(data, -1) {
+				if name := string(m[1]); strings.HasPrefix(name, shard.suite) {
+					tests++
+					if pattern.MatchString(name) {
+						matched++
+					}
+				}
+			}
+		}
+		if matched == 0 || matched == tests {
+			t.Errorf("%s matches %d of the %d %s tests in %s: each shard must run some", shard.variable, matched, tests, shard.suite, shard.dir)
+		}
+	}
 }
 
 // checkCIOwnerCaches holds each free owner to one cache of its own: restored in every run,
@@ -364,8 +445,8 @@ func readReleaseWorkflow(t *testing.T, path string) releaseWorkflow {
 func TestReleaseWorkflowQualification(t *testing.T) {
 	ci := readReleaseWorkflow(t, ".github/workflows/ci.yml")
 	release := readReleaseWorkflow(t, ".github/workflows/release.yml")
-	if len(ci.Jobs) != 6 {
-		t.Fatal("CI must contain exactly its selector, two free paths, aggregate and two runtime boundaries")
+	if len(ci.Jobs) != 4 {
+		t.Fatal("CI must contain exactly its free checks, aggregate and two runtime boundaries")
 	}
 	if len(release.Jobs) != 2 {
 		t.Error("release must have only qualification and its dependent publisher")
@@ -380,12 +461,8 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 		}
 		for id, job := range workflow.Jobs {
 			expectedIf := ""
-			if name == "ci" {
-				expectedIf = map[string]string{
-					"checks":   "needs.scope.outputs.mode != 'metadata'",
-					"metadata": "needs.scope.outputs.mode == 'metadata'",
-					"check":    "always()",
-				}[id]
+			if name == "ci" && id == "check" {
+				expectedIf = "always()"
 			}
 			if job.If != expectedIf || job.ContinueOnError != nil || job.Secrets != nil {
 				t.Errorf("%s.%s must not skip qualification, ignore failure, or inherit secrets", name, id)
@@ -430,45 +507,27 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 			}
 		}
 	}
-	for _, job := range []string{"scope", "checks", "metadata", "check", "doctor", "review-writes"} {
+	for _, job := range []string{"checks", "check", "doctor", "review-writes"} {
 		if _, ok := ci.Jobs[job]; !ok {
 			t.Errorf("release qualification lost CI job %s", job)
 		}
 	}
 	aggregate := ci.Jobs["check"]
-	if !reflect.DeepEqual(aggregate.Needs, []any{"scope", "checks", "metadata", "doctor", "review-writes"}) || len(aggregate.Steps) != 1 {
-		t.Fatal("required status must account for all selected free and runtime jobs")
+	if !reflect.DeepEqual(aggregate.Needs, []any{"checks", "doctor", "review-writes"}) || len(aggregate.Steps) != 1 {
+		t.Fatal("required status must account for every free and runtime job")
 	}
-	if !reflect.DeepEqual(aggregate.Steps[0].Env, map[string]string{"CI_MODE": "${{ needs.scope.outputs.mode }}", "CI_RESULTS": "${{ toJSON(needs) }}"}) {
-		t.Error("aggregate must receive only its scope and direct dependency results as data")
+	if !reflect.DeepEqual(aggregate.Steps[0].Env, map[string]string{"RESULTS": "${{ join(needs.*.result, ' ') }}"}) {
+		t.Error("aggregate must receive only its direct dependency results as data")
 	}
 	checks := ci.Jobs["checks"]
-	owners := makeCIOwners(t)
-	if checks.Needs != "scope" || checks.Strategy.FailFast == nil || *checks.Strategy.FailFast || checks.Strategy.MaxParallel != len(owners) ||
+	owners := strings.Fields(makeVariable(t, "CI_OWNERS"))
+	if checks.Needs != nil || checks.Strategy.FailFast == nil || *checks.Strategy.FailFast || checks.Strategy.MaxParallel != len(owners) ||
 		!slices.Equal(checks.Strategy.Matrix["target"], owners) ||
 		checks.Steps[len(checks.Steps)-2].Run != `make "${{ matrix.target }}"` {
 		t.Error("free CI matrix must run exactly the Makefile's CI_OWNERS, each on an isolated runner of its own")
 	}
 	checkCIOwnerCaches(t, checks.Steps)
-	metadata := ci.Jobs["metadata"]
-	if metadata.Needs != "scope" || metadata.Steps[len(metadata.Steps)-1].Run != "make check-metadata" {
-		t.Error("metadata path must use only its Make-owned checks")
-	}
-	selector := ci.Jobs["scope"]
-	if !reflect.DeepEqual(selector.Outputs, map[string]string{"mode": "${{ steps.scope.outputs.mode }}"}) ||
-		len(selector.Steps) != 2 || selector.Steps[0].With["fetch-depth"] != "0" ||
-		selector.Steps[1].ID != "scope" || selector.Steps[1].Run != "python3 tools/ci_scope.py" {
-		t.Error("scope selector must read exact-commit/full history and expose only its fixed mode")
-	}
-	for key, expression := range map[string]string{
-		"CI_EVENT_NAME": "${{ github.event_name }}", "CI_REF": "${{ github.ref }}",
-		"CI_WORKFLOW_REF": "${{ github.workflow_ref }}", "CI_REPOSITORY": "${{ github.repository }}", "CI_SHA": "${{ github.sha }}",
-	} {
-		if selector.Steps[1].Env[key] != expression {
-			t.Errorf("selector lost trusted caller context %s", key)
-		}
-	}
-	for _, id := range []string{"checks", "metadata", "doctor", "review-writes"} {
+	for _, id := range []string{"checks", "doctor", "review-writes"} {
 		setups := 0
 		for _, step := range ci.Jobs[id].Steps {
 			if strings.HasPrefix(step.Uses, "actions/setup-go@") {
@@ -558,55 +617,31 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 }
 
 func TestReleaseCIAggregateRejectsFalseGreenDependencyStates(t *testing.T) {
-	workflow := readReleaseWorkflow(t, ".github/workflows/ci.yml")
-	aggregate := workflow.Jobs["check"]
-	if aggregate.If != "always()" || len(aggregate.Steps) != 1 {
-		t.Fatal("aggregate must always execute its one status-only check")
+	aggregate := readReleaseWorkflow(t, ".github/workflows/ci.yml").Jobs["check"]
+	needs, _ := aggregate.Needs.([]any)
+	if aggregate.If != "always()" || len(aggregate.Steps) != 1 || len(needs) == 0 {
+		t.Fatal("aggregate must always execute its one status-only check over the jobs it needs")
 	}
-	script := aggregate.Steps[0].Run
-	names := []string{"scope", "checks", "metadata", "doctor", "review-writes"}
-	run := func(mode string, statuses []string, missing string, want bool) {
-		t.Helper()
-		results := map[string]map[string]string{}
-		for i, name := range names {
-			if name != missing {
-				results[name] = map[string]string{"result": statuses[i]}
+	// Actions joins one result per needed job, space-separated; run the step's shell on that.
+	passes := func(results ...string) bool {
+		cmd := exec.Command("sh", "-c", aggregate.Steps[0].Run)
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "RESULTS=" + strings.Join(results, " ")}
+		return cmd.Run() == nil
+	}
+	succeeded := slices.Repeat([]string{"success"}, len(needs))
+	if !passes(succeeded...) {
+		t.Fatal("aggregate must pass when every needed job succeeded")
+	}
+	if passes() || passes(succeeded[1:]...) || passes(append(slices.Clone(succeeded), "success")...) {
+		t.Error("aggregate must require exactly one success per needed job")
+	}
+	for i := range succeeded {
+		for _, result := range []string{"failure", "cancelled", "skipped", "", "unknown"} {
+			results := slices.Clone(succeeded)
+			results[i] = result
+			if passes(results...) {
+				t.Errorf("aggregate passed on results %q", strings.Join(results, " "))
 			}
 		}
-		data, err := json.Marshal(results)
-		if err != nil {
-			t.Fatal(err)
-		}
-		cmd := exec.Command("sh", "-c", script)
-		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "CI_MODE=" + mode, "CI_RESULTS=" + string(data)}
-		output, err := cmd.CombinedOutput()
-		if (err == nil) != want {
-			t.Fatalf("aggregate %q/%v missing=%q = %v, want success=%v\n%s", mode, statuses, missing, err, want, output)
-		}
-		if want && strings.Contains(string(output), "broad free checks were not run") != (mode == "metadata") {
-			t.Fatalf("aggregate misrepresented coverage: %s", output)
-		}
 	}
-	for _, mode := range []string{"broad", "metadata"} {
-		accepted := []string{"success", "success", "skipped", "success", "success"}
-		if mode == "metadata" {
-			accepted[1], accepted[2] = "skipped", "success"
-		}
-		run(mode, accepted, "", true)
-		for i, name := range names {
-			run(mode, accepted, name, false)
-			for _, value := range []string{"failure", "cancelled", "skipped", "success", "unknown", ""} {
-				if value == accepted[i] {
-					continue
-				}
-				wrong := slices.Clone(accepted)
-				wrong[i] = value
-				t.Run(fmt.Sprintf("%s/%s/%s", mode, name, value), func(t *testing.T) { run(mode, wrong, "", false) })
-			}
-		}
-		for _, unknown := range []string{"", "unknown", "metadata\nmode=broad"} {
-			run(unknown, accepted, "", false)
-		}
-	}
-	run("broad", []string{"skipped", "skipped", "skipped", "skipped", "skipped"}, "", false)
 }
