@@ -3,9 +3,11 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import unquote
 
 
 SITE = Path(__file__).resolve().parents[1] / "site"
@@ -98,6 +100,27 @@ class CommandDOM(HTMLParser):
         if self.code is not None:
             part = "text" if self.mutable is not None else "suffix" if self.after_mutable else "prefix"
             self.field[part] += data
+
+
+def broken_local_links(path):
+    """The href and src values on a page that do not name a file in the page's folder. Anchors and
+    queries are dropped; other schemes, links off the site (//host) and in-page anchors are skipped,
+    and a folder link means its index.html. srcset is not read: no page uses it."""
+    root = path.parent.resolve()
+    broken = []
+    for _, attrs in Page(path).elements:
+        for link in (attrs.get("href"), attrs.get("src")):
+            if not link or re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:|//|#", link):
+                continue
+            local = unquote(link.split("#", 1)[0].split("?", 1)[0])
+            if not local:
+                continue  # a query alone links the page itself
+            target = (root / local.lstrip("/")).resolve()
+            if local.endswith("/"):
+                target = target / "index.html"
+            if root not in target.parents or not target.is_file():
+                broken.append(link)
+    return broken
 
 
 class SiteContentTest(unittest.TestCase):
@@ -274,6 +297,26 @@ class SiteContentTest(unittest.TestCase):
                 segment = ast.get_source_segment(source, node.value) or ""
                 with self.subTest(line=node.lineno):
                     self.assertNotIn("\\", segment)
+
+    def test_local_links_point_at_files_that_exist(self):
+        for path in sorted(SITE.glob("*.html")):
+            with self.subTest(page=path.name):
+                self.assertEqual(broken_local_links(path), [], "a link to a deleted page or asset 404s")
+
+    def test_a_link_to_a_missing_page_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            site = Path(tmp) / "site"
+            site.mkdir()
+            page = site / "index.html"
+            for name in ("docs.html", "my page.html"):
+                (site / name).write_text("")
+            (Path(tmp) / "README.md").write_text("")  # outside the site: the live site has no such file
+            page.write_text('<a href="docs.html#start">kept</a><a href="./#top">home</a><a href="/docs.html">root</a>'
+                            '<a href="docs.html?v=1">busted</a><a href="my%20page.html">spaced</a>'
+                            '<script src="//cdn.example/x.js"></script><a href="https://example.com/x">off</a>'
+                            '<a href="mailto:a@example.com">mail</a>'
+                            '<a href="gone.html">gone</a><img src="assets/missing.png?v=1"><a href="../README.md">up</a>')
+            self.assertEqual(broken_local_links(page), ["gone.html", "assets/missing.png?v=1", "../README.md"])
 
     def test_sitemap_lists_every_canonical_page(self):
         listed = set(re.findall(r"<loc>https://coop\.dryga\.com/([^<]*)</loc>", (SITE / "sitemap.xml").read_text()))
