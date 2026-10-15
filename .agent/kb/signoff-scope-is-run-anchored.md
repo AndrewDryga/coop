@@ -3,7 +3,7 @@ name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
 sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/loop/pending_review.go, internal/tasks/pending_review.go, internal/tasks/completion.go, internal/cli/sign.go, internal/loop/changes.go, internal/tasks/cmd.go]
-updated: 2026-09-14
+updated: 2026-10-15
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -68,7 +68,8 @@ prior reasoning belongs in the task log.
 Completed between audits add a second, separate run-scoped handoff: `auditEvidenceStore` keeps only
 receipt-consistent per-task summaries, caps their prompt size, and drops them when signoff reopens a
 task. The receipt verdict is host-bound; gate and finding text is reviewer-reported context only, so
-signoff still independently inspects the task and runs the gate.
+signoff still independently inspects the task and the worker-reported gate results; it runs no
+checks itself and reopens a task to request one.
 
 Work windows use a related but deliberately distinct rule. They journal the exact assigned task id.
 When another baseline archive leaves `99_done/`, it is tolerated only if its host-only departure
@@ -110,6 +111,8 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-10-15 — signoff never runs the gate itself: it inspects worker-reported results and reopens a
+  task to request a check (corrected while making loop.yaml request `make check` once per run).
 - 2026-09-14 — documented cohort-wide pending and audit-authority rebinding across an older task
   repair and the following host signing rewrite, plus mandatory reload after review phase changes;
   added the audit-authorized crash boundary after live Emisar rework exposed it. Verified against

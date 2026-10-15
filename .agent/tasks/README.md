@@ -99,8 +99,8 @@ A fresh agent must be able to work the task from this file alone: the problem, t
     **Context:** A typo like `COOP_EGRESS=None` currently grants full network instead of
     going offline (internal/box/egress.go) — a silent fail-open.
 
-    **Acceptance criteria:** `make check` green; a new test asserts an unrecognised value
-    maps to offline, and the README documents the allowed values.
+    **Acceptance criteria:** `make check-local SCOPE=runtime` green; a new test asserts an
+    unrecognised value maps to offline, and the README documents the allowed values.
 
     **Approach:** Parse into an enum; default the unknown case to offline; table-test it.
 

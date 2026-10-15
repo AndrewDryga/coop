@@ -7,7 +7,8 @@
   in your handback note, never in the diff.
 - Match the surrounding code: style, naming, comment density, test-table shape. Add
   no dependency, flag, or option the task didn't ask for.
-- Ship the smallest diff that does the job, formatted and warning-free: in this repo
-  `make check` must pass and `make align` must leave no drift before you hand back.
+- Ship the smallest diff that does the job, formatted and warning-free: in this repo the
+  owning `make check-local SCOPE=<owner>` (or the focused tests for a known boundary) must pass
+  and `make align` must leave no drift before you hand back.
 - You never commit. Hand back a clean worktree plus a three-line note: what changed,
   what you verified, what you flagged.

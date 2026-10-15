@@ -56,7 +56,11 @@ between:
     - Every acceptance criterion is demonstrably met — point at the commit, diff, or test that
       proves it, not at a claim in log.md.
     - The failure path is tested, not just the happy path.
-    - The gate is green on the committed tree (`make check`), and `make align` leaves no diff.
+    - The task's owning checks pass on the committed tree — `make check-local SCOPE=<owner>`
+      (AGENTS.md lists the owners) or focused tests for a known boundary; a cross-cutting input
+      (modules, toolchains, build tags, shared foundations, harnesses or workflows) needs the full
+      `make check` — and `make align` leaves no diff. Otherwise signoff requests `make check`
+      once, at the end of the run.
     - The commit says WHY. A lifecycle-only state.md mismatch is a finding for Coop to normalize
       and does not reopen implementation work; any substantive reopen names the concrete gap.
     Report only: do not edit the queue or move task folders. Coop validates your evidence and
@@ -82,7 +86,11 @@ signoff:
   # runs — it checks goal, standards, failure-path tests, polish, and the gate). The reviewer
   # applies these on top and reopens a task that fails one. Default: nothing appended.
   prompt: |
-    - `make check` is the gate (gofmt + go vet + tests + docs-check); it must pass across the whole repo.
+    - When this run committed executable source or a cross-cutting input, the full free gate
+      passed once on the finished candidate: a worker reported `make check` (the static checks,
+      then the race and scripted-process test suites) passing on this run's final commit. If no
+      such report exists, or later commits made it stale, reopen ONLY the most recently completed
+      task that has a commit and name `make check` as the check its worker must run.
     - `make align` passes (trailing-comment alignment) — reopen the task if it doesn't.
     - If internal/cli/help.go changed, the generated docs were regenerated (`make docs`) and committed.
     - A user-visible CLI change updated the docs and any website terminal scene that shows that
