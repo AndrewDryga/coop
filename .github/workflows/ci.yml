@@ -49,8 +49,6 @@ jobs:
         run: |
           make install-staticcheck
           go install golang.org/x/vuln/cmd/govulncheck@"$(make -s govulncheck-version)"
-      - name: install Git LFS for source and workspace integration tests
-        run: sudo apt-get update && sudo apt-get install -y git-lfs
       - name: Make-owned free checks
         run: make "${{ matrix.target }}"
       # Read-only CI only: pull requests and tags restore main's objects and save none, and the
