@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Agent starts no longer reread history from before v11.** Each start read and checksummed the
+  transcripts left in the old account and editor folders to find any not yet imported, and
+  `coop acp` did so for every provider. Coop now remembers when an import finished and skips that
+  work while the old folders are unchanged, which it checks from file names, sizes and change times
+  alone. New history in an old folder is still imported. On one install the check before a Codex
+  start fell from about 0.46 s to 0.11 s, and before a Claude start from 0.34 s to 0.02 s.
+
 - **Coop keeps finished network runs for 90 days.** Every filtered run left a record in Coop's state
   folder forever, and every filtered launch and loop start re-read all of them, so launches slowed
   down over time and, past 10,000 files, interrupted runs would have stopped being cleaned up. Coop

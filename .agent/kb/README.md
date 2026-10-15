@@ -96,7 +96,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [provider-scripted-e2e](provider-scripted-e2e.md) — drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 - [provider-live-e2e](provider-live-e2e.md) — probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 - [provider-client-qualification](provider-client-qualification.md) — locked clients, strict schema2 coverage, conformance rows and Linux/amd64 live evidence
-- [provider-session-history](provider-session-history.md) — native session layouts, lookup bounds, and the large-history regression contract
+- [provider-session-history](provider-session-history.md) — native session layouts, lookup bounds, pre-v11 import completion stamps, and the large-history regression contract
 - [usage-recorded-token-value](usage-recorded-token-value.md) — independent native quota and recorded token value, historical account ambiguity, and original-home Gemini refresh coordination
 - [usage-history-cache](usage-history-cache.md) — per-transcript token cache for coop usage: keys, invalidation, and per-folder pruning after a complete full check
 - [provider-consult-e2e](provider-consult-e2e.md) — verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring

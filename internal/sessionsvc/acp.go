@@ -2284,9 +2284,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 			return nil, configErr
 		}
 		privateCfg.ConfigDir = privateRoot
-		nativeHome, err = box.PreparePrivateACPHome(ctx, privateCfg, r.rt, target.Provider, target.Account(), bound.Repository, func(cwd string) bool {
-			return cwd == bound.Workspace || cwd == workdir
-		})
+		nativeHome, err = box.PreparePrivateACPHome(ctx, privateCfg, r.rt, target.Provider, target.Account(), bound.Repository, bound.Workspace, workdir)
 		if err != nil {
 			return nil, acpFailure(sessionACPProcessError, "session native home identity is invalid")
 		}

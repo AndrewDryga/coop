@@ -142,6 +142,43 @@ func ImportACPThreadBindings(ctx context.Context, cfg *config.Config, repo strin
 	return destination, importNativeHistory(ctx, destination, source, plan)
 }
 
+// MigrateACPThreadBindings runs migrate unless this repository already finished it against the
+// retained stores as they are now. Whether a retained binding belongs here depends on the retained
+// ACP session stores and on what was imported from them into the repository's ACP homes. The homes
+// themselves change on every turn, but only with sessions newer than any retained binding, so their
+// import receipts stand in for them.
+func MigrateACPThreadBindings(ctx context.Context, cfg *config.Config, repo string, migrate func() error) error {
+	key, project, err := HistoryKey(repo)
+	if err != nil {
+		return err
+	}
+	source := filepath.Join(cfg.ConfigDir, "acp-threads")
+	stores := []historyStore{{path: source, flat: true}, forkRecordsStore(project)}
+	// A home's own completion stamps change nothing a binding belongs to; counting them would
+	// rescan the bindings each time a home is stamped.
+	receipts := func(name string) bool { return !strings.HasPrefix(name, "complete-") }
+	for _, provider := range agents.Names() {
+		home, err := NativeHomePath(cfg, provider, "", repo, true)
+		if err != nil {
+			return err
+		}
+		stores = append(stores, historyStore{path: acpSharedDir(cfg, provider)},
+			historyStore{path: filepath.Join(filepath.Dir(home), "imports"), flat: true, keep: receipts})
+	}
+	destination := filepath.Join(source, key, "bindings")
+	fingerprint, fingerprintErr := nativeHistoryFingerprint(stores...)
+	if fingerprintErr == nil && nativeHistoryStamped(destination, source, "", fingerprint) {
+		return nil
+	}
+	if err := migrate(); err != nil {
+		return err
+	}
+	if fingerprintErr == nil {
+		stampNativeHistory(ctx, destination, source, "", fingerprint)
+	}
+	return nil
+}
+
 func importNativeHistory(ctx context.Context, home, source string, plan agents.NativeHistoryPlan) error {
 	root, err := openPrivateAccountTree(filepath.Dir(home), "imports")
 	if err != nil {

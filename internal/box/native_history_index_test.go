@@ -90,7 +90,7 @@ func TestPrivateACPImportsInactiveAccountHistoryWithoutForeignRows(t *testing.T)
 	if err := os.WriteFile(shim, []byte("#!/bin/sh\ncase \"$1\" in ps) exit 0;; *) exit 19;; esac\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	home, err := PreparePrivateACPHome(t.Context(), cfg, runtime.Runtime{Name: shim}, "codex", "work", repo, func(cwd string) bool { return cwd == "/workspace" })
+	home, err := PreparePrivateACPHome(t.Context(), cfg, runtime.Runtime{Name: shim}, "codex", "work", repo, "/workspace")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,9 +101,17 @@ func TestPrivateACPImportsInactiveAccountHistoryWithoutForeignRows(t *testing.T)
 	if _, err := os.Stat(filepath.Join(home, "sessions", "rollout-foreign.jsonl")); !os.IsNotExist(err) {
 		t.Fatal("foreign history imported")
 	}
-	again, err := PreparePrivateACPHome(t.Context(), cfg, runtime.Runtime{Name: "must-not-run"}, "codex", "personal", repo, func(cwd string) bool { return cwd == "/workspace" })
+	again, err := PreparePrivateACPHome(t.Context(), cfg, runtime.Runtime{Name: "must-not-run"}, "codex", "personal", repo, "/workspace")
 	if err != nil || again != home {
 		t.Fatal("account switch changed ACP home or re-fenced complete import", err)
+	}
+	// Each retained account keeps its own stamp, so a late file in one is still imported.
+	late := writeRetainedRollout(t, cfg.AgentProfileDir("codex", "personal"), "03", "33333333-2222-4333-8444-555555555555", "/workspace")
+	if _, err := PreparePrivateACPHome(t.Context(), cfg, runtime.Runtime{Name: shim}, "codex", "personal", repo, "/workspace"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, late)); err != nil {
+		t.Fatal("late retained history was not imported", err)
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -39,19 +41,28 @@ func PrepareNativeHome(ctx context.Context, cfg *config.Config, rt runtime.Runti
 	if err != nil {
 		return "", err
 	}
-	return prepareNativeHomeFromSource(ctx, cfg, rt, provider, account, repo, acp, source, func(cwd string) bool {
+	// The home itself is bound to this project, so its stamps need no further scope; which forks
+	// belong to the project does, so their records join the fingerprint.
+	return prepareNativeHomeFromSource(ctx, cfg, rt, provider, account, repo, acp, source, "", func(cwd string) bool {
 		_, candidate, err := HistoryKey(cwd)
 		return err == nil && candidate == project
-	})
+	}, forkRecordsStore(project))
 }
 
 // PreparePrivateACPHome upgrades daemon-owned ACP profiles across all credential
-// accounts. The caller supplies ownership only after validating the private
-// session root, fork generation/reservation, and persisted native workdir marker.
-func PreparePrivateACPHome(ctx context.Context, cfg *config.Config, rt runtime.Runtime, provider, account, repo string, ownsCWD func(string) bool) (string, error) {
-	if _, ok := agents.Get(provider); !ok || ownsCWD == nil {
+// accounts. The caller names the owned working folders only after validating the
+// private session root, fork generation/reservation, and persisted native workdir marker.
+func PreparePrivateACPHome(ctx context.Context, cfg *config.Config, rt runtime.Runtime, provider, account, repo string, cwds ...string) (string, error) {
+	if _, ok := agents.Get(provider); !ok || len(cwds) == 0 {
 		return "", errors.New("invalid private ACP history selection")
 	}
+	owned := slices.Clone(cwds)
+	slices.Sort(owned)
+	owned = slices.Compact(owned)
+	ownsCWD := func(cwd string) bool { return slices.Contains(owned, cwd) }
+	// The session's child prepares this same home under repository ownership; the scope keeps
+	// the two rules' stamps apart.
+	scope := strings.Join(owned, "\x00")
 	sources := []string{acpSharedDir(cfg, provider)}
 	profiles := filepath.Join(cfg.ConfigDir, provider, "profiles")
 	root, err := safefile.OpenRoot(profiles)
@@ -82,7 +93,7 @@ func PreparePrivateACPHome(ctx context.Context, cfg *config.Config, rt runtime.R
 	}
 	var home string
 	for _, source := range sources {
-		home, err = prepareNativeHomeFromSource(ctx, cfg, rt, provider, account, repo, true, source, ownsCWD)
+		home, err = prepareNativeHomeFromSource(ctx, cfg, rt, provider, account, repo, true, source, scope, ownsCWD)
 		if err != nil {
 			return "", err
 		}
@@ -90,10 +101,36 @@ func PreparePrivateACPHome(ctx context.Context, cfg *config.Config, rt runtime.R
 	return home, nil
 }
 
-func prepareNativeHomeFromSource(ctx context.Context, cfg *config.Config, rt runtime.Runtime, provider, account, repo string, acp bool, source string, ownsCWD func(string) bool) (string, error) {
+func prepareNativeHomeFromSource(ctx context.Context, cfg *config.Config, rt runtime.Runtime, provider, account, repo string, acp bool, source, scope string, ownsCWD func(string) bool, ownership ...historyStore) (string, error) {
 	ag, ok := agents.Get(provider)
 	if !ok {
 		return "", errors.New("unknown native home provider")
+	}
+	seed := func(home string) error {
+		if defaults := ag.NativeCredentials().Defaults; defaults != nil {
+			files, err := defaults(cfg.NativeAuthorityConfig().AgentProfileDir(provider, account))
+			if err != nil {
+				return err
+			}
+			for name, data := range files {
+				if !accountNameValid(name) {
+					return errors.New("invalid native defaults filename")
+				}
+				if err := config.WriteFileAtomicMode(filepath.Join(home, name), data, 0600); err != nil {
+					return err
+				}
+			}
+		}
+		return ag.EnsureDefaults(cfg.WithNativeHomes(map[string]string{provider: home}), Workdir(cfg, repo))
+	}
+	selected, err := NativeHomePath(cfg, provider, account, repo, acp)
+	if err != nil {
+		return "", err
+	}
+	// Fingerprint before planning, so a change the plan misses also misses the stamp.
+	fingerprint, fingerprintErr := nativeHistoryFingerprint(append([]historyStore{{path: source}}, ownership...)...)
+	if fingerprintErr == nil && nativeHistoryStamped(selected, source, scope, fingerprint) {
+		return prepareNativeHome(ctx, cfg, provider, account, repo, acp, seed)
 	}
 	inspect := func() (agents.NativeHistoryPlan, error) {
 		return ag.NativeHistory(source, ownsCWD)
@@ -101,10 +138,6 @@ func prepareNativeHomeFromSource(ctx context.Context, cfg *config.Config, rt run
 	plan, err := inspect()
 	if err != nil {
 		return "", fmt.Errorf("inspect retained %s history: %w", provider, err)
-	}
-	selected, err := NativeHomePath(cfg, provider, account, repo, acp)
-	if err != nil {
-		return "", err
 	}
 	complete, err := nativeHistoryImported(selected, source, plan)
 	if err != nil {
@@ -126,28 +159,9 @@ func prepareNativeHomeFromSource(ctx context.Context, cfg *config.Config, rt run
 			return "", err
 		}
 	}
-	home, err := prepareNativeHome(ctx, cfg, provider, account, repo, acp, func(home string) error {
-		if defaults := ag.NativeCredentials().Defaults; defaults != nil {
-			files, err := defaults(cfg.NativeAuthorityConfig().AgentProfileDir(provider, account))
-			if err != nil {
-				return err
-			}
-			for name, data := range files {
-				if !accountNameValid(name) {
-					return errors.New("invalid native defaults filename")
-				}
-				if err := config.WriteFileAtomicMode(filepath.Join(home, name), data, 0600); err != nil {
-					return err
-				}
-			}
-		}
-		return ag.EnsureDefaults(cfg.WithNativeHomes(map[string]string{provider: home}), Workdir(cfg, repo))
-	})
+	home, err := prepareNativeHome(ctx, cfg, provider, account, repo, acp, seed)
 	if err != nil {
 		return "", err
-	}
-	if complete {
-		return home, nil
 	}
 	if !complete {
 		homeLease, err := credentialUseLease(ctx, cfg, home, true)
@@ -158,9 +172,12 @@ func prepareNativeHomeFromSource(ctx context.Context, cfg *config.Config, rt run
 		if err := checkLegacyMountPaths(ctx, rt, true, home); err != nil {
 			return "", err
 		}
+		if err := importNativeHistory(ctx, home, source, plan); err != nil {
+			return "", err
+		}
 	}
-	if err := importNativeHistory(ctx, home, source, plan); err != nil {
-		return "", err
+	if fingerprintErr == nil {
+		stampNativeHistory(ctx, home, source, scope, fingerprint)
 	}
 	return home, nil
 }
