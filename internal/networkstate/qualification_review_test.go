@@ -85,7 +85,14 @@ func TestExecutionInspectionRetainsGoodRecordsAndDoesNotInventPartialCursor(t *t
 	if err != nil || !page.Incomplete || page.Unreadable != 2 || len(page.Executions) != 1 || page.Executions[0].ID != r.ID {
 		t.Fatal("one bad record hid good custody", page, err)
 	}
-	// Cheap filler entries exercise the inventory bound, not 10,000 executions.
+	// Cheap filler entries: the listing used to stop after 10,000 directory entries and hide what
+	// came after, marking the page incomplete. Retention keeps the directory small now, so the
+	// listing reads all of it — with the broken records gone, a cap would be the only cause.
+	for _, name := range []string{"execution-invalid.json", "execution-" + strings.Repeat("f", 32) + ".json"} {
+		if err := s.root.Remove(name); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for i := range 10001 {
 		file, err := s.root.OpenFile(fmt.Sprintf("inventory-fixture-%05d", i), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
@@ -96,7 +103,7 @@ func TestExecutionInspectionRetainsGoodRecordsAndDoesNotInventPartialCursor(t *t
 		}
 	}
 	page, err = evidence.Executions("")
-	if err != nil || !page.Incomplete || page.Next != "" {
-		t.Fatal("partial directory inventory invented a lexical cursor", page, err)
+	if err != nil || page.Incomplete || page.Unreadable != 0 || page.Next != "" || len(page.Executions) != 1 || page.Executions[0].ID != r.ID {
+		t.Fatal("a large directory hid a run or invented a lexical cursor", page, err)
 	}
 }

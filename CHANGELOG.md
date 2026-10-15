@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Coop keeps finished network runs for 90 days.** Every filtered run left a record in Coop's state
+  folder forever, and every filtered launch and loop start re-read all of them, so launches slowed
+  down over time and, past 10,000 files, interrupted runs would have stopped being cleaned up. Coop
+  now removes a finished run's record 90 days after the run ended, and keeps a run still waiting for
+  cleanup until that cleanup is done. `coop net runs --all` shows the runs from the last 90 days.
+
 - **Run `coop net setup` once after upgrading.** This release changes both images that filtered runs
   use, the gateway and the client image, so a network setup made by an earlier version no longer
   applies. Until you run it, a worker refuses filtered sessions, and the next filtered run in a

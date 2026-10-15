@@ -159,6 +159,11 @@ func sessionExecutions(evidence *networkstate.Evidence, sessionID string) ([]net
 				continue
 			}
 			record, err := evidence.Execution(summary.ID)
+			if errors.Is(err, networkstate.ErrEvidenceUnavailable) {
+				// Retention removed this finished run since the page was read. A record
+				// that no longer exists hides nothing, so it is not an unreadable one.
+				continue
+			}
 			if err != nil {
 				complete = false
 				continue

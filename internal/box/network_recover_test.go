@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
@@ -280,3 +281,77 @@ func TestRecoverNetworkRunsRetriesAPendingOrphanOnALaterPass(t *testing.T) {
 
 // The launch fixture's daemon is exactly the bounded surface recovery needs.
 var _ recoverDocker = (*filteredDaemonFixture)(nil)
+
+// The unscoped pass also lets finished runs go once retention allows: a run it settled is kept
+// while recent, removed after networkstate.ExecutionRetention, and a scoped pass or a run still
+// owned by a live supervisor is never part of that.
+func TestRecoverNetworkRunsRemovesFinishedRunsPastRetention(t *testing.T) {
+	f, d, evidence, connect := recoveryFixture(t)
+	smoke, err := f.store.BeginQualification(d.smoke.Candidate(),
+		[]networkstate.QualifiedClient{{Provider: "claude", Client: egress.ClientCLI, Version: "2.1.260"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := smoke.CreateExecution(context.Background(), networkstate.ExecutionSpec{
+		Project: f.record.Project, PolicyFingerprint: f.policy.Fingerprint, Runtime: "docker",
+		DaemonID: f.record.DaemonID, Endpoint: f.record.Endpoint,
+		GatewayImage: f.record.GatewayImage, ClientImage: f.record.ClientImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	departSupervisor(t, f.store, f.record.ID)
+	exists := func(id string) bool {
+		_, err := os.Lstat(filepath.Join(f.store.Path(), "execution-"+id+".json"))
+		return err == nil
+	}
+	now := time.Now()
+	if _, err := recoverNetworkRunsAt(context.Background(), evidence, "", connect, now); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(f.record.ID) || !exists(live.ID) {
+		t.Fatal("a run inside the retention window was removed")
+	}
+
+	later := now.Add(networkstate.ExecutionRetention + time.Hour)
+	if _, err := recoverNetworkRunsAt(context.Background(), evidence, live.ID, connect, later); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(f.record.ID) {
+		t.Fatal("a scoped pass removed a run it was not given")
+	}
+	if _, err := recoverNetworkRunsAt(context.Background(), evidence, "", connect, later); err != nil {
+		t.Fatal(err)
+	}
+	if exists(f.record.ID) {
+		t.Fatal("the settled run outlived retention")
+	}
+	if !exists(live.ID) {
+		t.Fatal("a run its live supervisor still owns was removed")
+	}
+}
+
+// A record that cannot be read keeps recovery from claiming nothing is pending, but it does not stop
+// retention: removing a finished run is safe whatever else the listing held.
+func TestRecoverNetworkRunsStillRemovesExpiredRunsBesideAnUnreadableRecord(t *testing.T) {
+	f, _, evidence, connect := recoveryFixture(t)
+	departSupervisor(t, f.store, f.record.ID)
+	now := time.Now()
+	if _, err := recoverNetworkRunsAt(context.Background(), evidence, "", connect, now); err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(f.store.Path(), "execution-"+strings.Repeat("f", 32)+".json")
+	if err := os.WriteFile(broken, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	later := now.Add(networkstate.ExecutionRetention + time.Hour)
+	_, err := recoverNetworkRunsAt(context.Background(), evidence, "", connect, later)
+	if err == nil || !strings.Contains(err.Error(), "could not be read whole") {
+		t.Fatalf("a partial listing = %v, want the could-not-be-read-whole refusal", err)
+	}
+	if _, err := os.Lstat(filepath.Join(f.store.Path(), "execution-"+f.record.ID+".json")); !os.IsNotExist(err) {
+		t.Fatal("retention stopped at an unreadable record", err)
+	}
+	if _, err := os.Lstat(broken); err != nil {
+		t.Fatal("the unreadable record was removed", err)
+	}
+}

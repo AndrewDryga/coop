@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/processidentity"
@@ -60,7 +61,8 @@ type recoverConnect func(ctx context.Context, endpoint string) (recoverDocker, s
 // then seals an honest `supervisor_lost` receipt. It is the only path that
 // finishes an interrupted run's custody, and it never touches a live one.
 //
-// runID selects one run; empty means every cleanup-pending run this host kept.
+// runID selects one run; empty means every cleanup-pending run this host kept,
+// and that pass also removes the records networkstate.ExecutionRetention lets go.
 func RecoverNetworkRuns(ctx context.Context, rt runtime.Runtime, runID string) ([]NetworkRecovery, error) {
 	root, err := NetworkStatePath()
 	if err != nil {
@@ -82,7 +84,22 @@ func RecoverNetworkRuns(ctx context.Context, rt runtime.Runtime, runID string) (
 }
 
 func recoverNetworkRuns(ctx context.Context, evidence *networkstate.Evidence, runID string, connect recoverConnect) ([]NetworkRecovery, error) {
-	records, err := pendingNetworkRuns(evidence, runID)
+	return recoverNetworkRunsAt(ctx, evidence, runID, connect, time.Now())
+}
+
+// recoverNetworkRunsAt is recoverNetworkRuns at a given time, so a test can age a record past
+// retention without waiting 90 days.
+func recoverNetworkRunsAt(ctx context.Context, evidence *networkstate.Evidence, runID string, connect recoverConnect, now time.Time) ([]NetworkRecovery, error) {
+	records, expired, err := pendingNetworkRuns(evidence, runID, now)
+	// Retention rides this pass because it already read every record, and a record it could not
+	// read does not make removing a finished one unsafe: RemoveExpired re-reads each under its lock.
+	// It goes last so owed cleanup gets the time budget first; a record it could not remove stays
+	// for the next pass, so a failure here is not worth reporting.
+	defer func() {
+		for _, id := range expired {
+			_, _ = evidence.RemoveExpired(ctx, id, now)
+		}
+	}()
 	if err != nil {
 		return nil, err
 	}
@@ -96,37 +113,49 @@ func recoverNetworkRuns(ctx context.Context, evidence *networkstate.Evidence, ru
 // pendingNetworkRuns lists the runs recovery may settle: an explicit id, or
 // every retained run whose cleanup is still pending. A page it could not read
 // whole is an error — recovery must not report "nothing pending" from a partial
-// inventory.
-func pendingNetworkRuns(evidence *networkstate.Evidence, runID string) ([]networkstate.Execution, error) {
+// inventory. The unscoped pass also names the finished runs retention may remove,
+// from every page, including after such an error.
+func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.Time) ([]networkstate.Execution, []string, error) {
 	if runID != "" {
 		record, err := evidence.Execution(runID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return []networkstate.Execution{record}, nil
+		return []networkstate.Execution{record}, nil, nil
 	}
 	var out []networkstate.Execution
+	var expired []string
+	var partial error
 	cursor := ""
 	for {
 		page, err := evidence.Executions(cursor)
 		if err != nil {
-			return nil, err
+			return nil, expired, err
 		}
 		if page.Incomplete {
-			return nil, errors.New("the list of recorded runs could not be read whole — recover one run by id instead")
+			partial = errors.New("the list of recorded runs could not be read whole — recover one run by id instead")
 		}
 		for _, summary := range page.Executions {
-			if !summary.CleanupPending {
+			if summary.Expired(now) {
+				expired = append(expired, summary.ID)
+			}
+			if !summary.CleanupPending || partial != nil {
 				continue
 			}
 			record, err := evidence.Execution(summary.ID)
+			if errors.Is(err, networkstate.ErrEvidenceUnavailable) {
+				continue // gone since the page was read; only retention removes a record
+			}
 			if err != nil {
-				return nil, err
+				return nil, expired, err
 			}
 			out = append(out, record)
 		}
 		if page.Next == "" {
-			return out, nil
+			if partial != nil {
+				return nil, expired, partial
+			}
+			return out, expired, nil
 		}
 		cursor = page.Next
 	}

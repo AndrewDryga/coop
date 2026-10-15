@@ -458,7 +458,9 @@ and the configured MCP servers before `✓ Everything else blocked`, then `Start
 You name a run by any unique prefix of its id. The eight characters `coop net runs` shows are enough
 for every run command. An ambiguous prefix is refused, with the prefixes that would settle it.
 `coop net runs` shows this project's 25 newest runs, with a count and `--all` only when there are
-more. `--all-projects` shows every project's runs, labeled by name and path.
+more. `--all-projects` shows every project's runs, labeled by name and path. Coop keeps a finished
+run's record for 90 days after it ends. A run still waiting for cleanup keeps its record until the
+cleanup is done.
 
 `coop net check <url-or-host>` says whether a normal new run in this project can reach a
 destination, with one verdict and one cause. It answers from the approved project rules and the

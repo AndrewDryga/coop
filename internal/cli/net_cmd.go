@@ -772,7 +772,9 @@ func netExecutions() (networkstate.ExecutionPage, error) {
 func netExecutionsOf(evidence *networkstate.Evidence) (networkstate.ExecutionPage, error) {
 	var all networkstate.ExecutionPage
 	after := ""
-	for range 128 {
+	// No page bound: the cursor only moves forward, and a bound would cut the
+	// history short without marking it incomplete.
+	for {
 		page, err := evidence.Executions(after)
 		if err != nil {
 			return networkstate.ExecutionPage{}, err
@@ -780,7 +782,7 @@ func netExecutionsOf(evidence *networkstate.Evidence) (networkstate.ExecutionPag
 		all.Executions = append(all.Executions, page.Executions...)
 		all.Incomplete = all.Incomplete || page.Incomplete
 		all.Unreadable += page.Unreadable
-		if page.Next == "" || page.Next == after {
+		if page.Next == "" || page.Next <= after {
 			break
 		}
 		after = page.Next

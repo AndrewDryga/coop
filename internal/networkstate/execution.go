@@ -501,11 +501,26 @@ type ExecutionPage struct {
 type ExecutionSummary struct {
 	ID, Epoch, Project, SessionID, AttemptID string
 	StartedAt                                time.Time
-	Final, CleanupPending                    bool
+	// EndedAt is when the receipt was sealed; zero until Final.
+	EndedAt               time.Time
+	Final, CleanupPending bool
 }
 
-// Bounded owner inspection is deliberately explicit about incompleteness. A
-// caller must not infer that no live execution exists from a truncated page.
+// summarize is the listing's view of one record. Retention judges a run by the
+// same summary, so the listing and the removal can never disagree about it.
+func summarize(record Execution) ExecutionSummary {
+	summary := ExecutionSummary{ID: record.ID, Epoch: record.Epoch, Project: record.Project, SessionID: record.SessionID, AttemptID: record.AttemptID,
+		StartedAt: record.StartedAt, Final: record.Receipt != nil, CleanupPending: inspectedCleanup(record) != "complete"}
+	if record.Receipt != nil {
+		summary.EndedAt = *record.Receipt.EndedAt
+	}
+	return summary
+}
+
+// Owner inspection is deliberately explicit about incompleteness. A caller must
+// not infer that no live execution exists from a page with unreadable records.
+// It reads the whole directory: retention keeps it small, and a scan cut short
+// would hide runs, cleanup-pending ones included.
 func (e *Evidence) Executions(after string) (ExecutionPage, error) {
 	if after != "" && !lowerHex(after, 32) {
 		return ExecutionPage{}, errors.New("invalid network execution cursor")
@@ -517,13 +532,11 @@ func (e *Evidence) Executions(after string) (ExecutionPage, error) {
 	defer dir.Close()
 	var page ExecutionPage
 	var ids []string
-	scanComplete := false
-	for inspected := 0; inspected < 10000; {
+	for {
 		names, err := dir.Readdirnames(100)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return page, err
 		}
-		inspected += len(names)
 		for _, name := range names {
 			if !strings.HasPrefix(name, "execution-") || !strings.HasSuffix(name, ".json") {
 				continue
@@ -538,32 +551,25 @@ func (e *Evidence) Executions(after string) (ExecutionPage, error) {
 			}
 		}
 		if errors.Is(err, io.EOF) {
-			scanComplete = true
 			break
-		}
-		if inspected >= 10000 {
-			page.Incomplete = true
 		}
 	}
 	slices.Sort(ids)
 	if len(ids) > ExecutionPageSize {
 		ids, page.Next = ids[:ExecutionPageSize], ids[ExecutionPageSize-1]
 	}
-	if !scanComplete {
-		// A lexical cursor over a partial directory inventory would silently
-		// skip unscanned lower IDs. Offer partial evidence, never a false cursor.
-		page.Next = ""
-	}
 	for _, id := range ids {
 		record, err := e.Execution(id)
+		if errors.Is(err, ErrEvidenceUnavailable) {
+			// Only retention removes a record, and only a finished one. Gone
+			// since the directory was read is gone, not unreadable.
+			continue
+		}
 		if err != nil {
 			page.Incomplete, page.Unreadable = true, page.Unreadable+1
 			continue
 		}
-		summary := ExecutionSummary{ID: record.ID, Epoch: record.Epoch, Project: record.Project, SessionID: record.SessionID, AttemptID: record.AttemptID,
-			StartedAt: record.StartedAt, Final: record.Receipt != nil}
-		summary.CleanupPending = inspectedCleanup(record) != "complete"
-		page.Executions = append(page.Executions, summary)
+		page.Executions = append(page.Executions, summarize(record))
 	}
 	return page, nil
 }
