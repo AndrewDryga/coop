@@ -146,6 +146,38 @@ printf '{"type":"result","status":"success"}\n'
 	}
 }
 
+// macOS can lose the EOF a capture's reader is owed: when the last write end closes just as the
+// reader goes back to read() for more, the kernel's wakeup finds nobody asleep, and the reader then
+// sleeps on a FIFO that has no writer left. A peer that answered and exited 0 sat out the whole drain
+// budget and was reported as "failed to capture provider output safely" — the flake behind the
+// decision-matrix and unusable-resume gate failures. That race cannot be scheduled from a test, so
+// the drain here stands in for the reader it leaves behind: after the real EOF it finishes only once
+// its FIFO is opened for writing again and closed. The wrapper must hand every capture that EOF.
+func TestConsultWrapperRedeliversALostCaptureEOF(t *testing.T) {
+	const reply = "REPLY_PAST_A_LOST_EOF"
+	dir := consultStubDir(t)
+	writeStub(t, dir, "gemini", `printf '{"type":"message","role":"assistant","content":"`+reply+`"}\n'
+printf '{"type":"result","status":"success"}\n'`)
+	// The capture's drain is the wrapper's only bare cat; every other cat names a file. It finds
+	// its own FIFO by inode: macOS reports an open FIFO on a different device than its path.
+	writeStub(t, dir, "cat", `[ "$#" -eq 0 ] || exec /bin/cat "$@"
+/bin/cat || exit
+inode() { stat -L -c %i "$1" 2>/dev/null || stat -L -f %i "$1"; }
+mine=$(inode /dev/stdin)
+for pipe in "$TMPDIR"/coop-consult-*/*pipe*; do
+	[ "$(inode "$pipe")" != "$mine" ] || exec /bin/cat <"$pipe" >/dev/null
+done
+echo "cat stub: stdin is not a capture FIFO" >&2
+exit 1`)
+
+	start := time.Now()
+	out, err := consultWrapperCommand(t, dir, "").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), reply) {
+		t.Fatalf("a reply whose capture lost its EOF was not delivered (%s): %v\n%s",
+			time.Since(start).Round(time.Second), err, out)
+	}
+}
+
 // A peer is its own client, so it runs on the box's PATH, not the lead's. A Codex lead prepends its
 // vendored rg to every command it runs, and the pinned Gemini refuses an rg outside a trusted system
 // directory without looking further down PATH: a consult from a Codex lead lost ripgrep.

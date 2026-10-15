@@ -81,7 +81,7 @@ __PROVIDER___run() {
 	provider_capture_pid=$capture_pid
 	run "$@" >"$__PROVIDER___pipe"
 	__PROVIDER___status=$?
-	await_capture "$provider_capture_pid" "$__PROVIDER___capture_status_file"
+	await_capture "$provider_capture_pid" "$__PROVIDER___capture_status_file" "$__PROVIDER___pipe"
 	__PROVIDER___capture_status=$capture_status
 	provider_capture_pid=
 	rm -f "$__PROVIDER___pipe"

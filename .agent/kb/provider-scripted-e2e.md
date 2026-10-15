@@ -3,7 +3,7 @@ name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
 sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/loop/review.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_loop_handoff_telemetry_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_loop_review_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/main_test.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-10-07
+updated: 2026-10-15
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -23,16 +23,13 @@ see [[provider-consult-e2e]] for the state and live-ring contracts.
 A failed process test carries its own evidence (`describeGroup`): a leader that exits with group
 members left lists them as `survivors (pid ppid pgid stat elapsed command)`, and a deadline lists
 what was `still running at the deadline`, captured before the kill erases the stall (rows are cut
-short: a provider's argv can carry its whole prompt). Known intermittent, unexplained: a fallback
-pair has twice stalled after its final grok resume exited 0 (codex_to_grok, gemini_to_grok): no
-resumed reply, stderr ending `Terminated: 15` (a foreground child killed at the deadline). 180 pair
-runs under CPU load and a full suite under compile load did not reproduce it; read the deadline rows
-of the next one. On 2026-10-07 `TestProviderScriptedConsultFailureMatrix/gemini` stalled the same
-way once (normally 2.5-4 s; stuck 19 s in one capture of its stderr-only call, stderr ending
-`Terminated: 15`); 80 runs at load 66-89 passed. Consult and delegate peers here run under the
-fixture's `setsid`/`timeout` aliases (the suite sets `COOP_CONSULT_TIMEOUT=2`), in their own session,
-so the group listing never showed them; since then a deadline also lists the run's descendants that
-left its group (`processTable.departed`), so the next such stall names any peer still alive.
+short: a provider's argv can carry its whole prompt). The consult stalls once filed as unexplained
+(a fallback pair after its final grok resume exited 0; `TestProviderScriptedConsultFailureMatrix/gemini`
+stuck 19 s in one capture; the 2026-10-10 recovery row whose deadline rows showed the wrapper in its
+capture wait with one capture shell and its `cat` left) have the shape of a capture reader that
+macOS left without its EOF; see [[provider-consult-e2e]]. Consult and delegate peers here run under
+the fixture's `setsid`/`timeout` aliases (the suite sets `COOP_CONSULT_TIMEOUT=2`), in their own
+session, so a deadline also lists the run's descendants that left its group (`processTable.departed`).
 Separately, under heavy compile load the overflow cases of
 `TestProviderScriptedConsultTimeoutAndOverflowMatrix` outrun their 20 s budget; the run examined was
 a slow drain, not a hang — `bounded_capture` spawns about five processes per 64 KiB block. A loop-review
@@ -155,6 +152,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-10-15 — the consult capture stalls are explained: macOS can lose a FIFO reader's EOF
+  (reproduced shell-free; see [[provider-consult-e2e]]); `await_capture` now re-delivers it.
 - 2026-10-07 — every loop-review hang guard comes from loopReviewBudget (attempts x 10 s, at least
   wait.Deadline).
 - 2026-10-07 — a deadline also lists descendants that left the run's group; recorded the consult

@@ -587,6 +587,7 @@ capture_drain_limit=600 # tenths of a second: 60s
 await_capture() {
 	pid=$1
 	status_file=$2
+	pipe=$3
 	waits=0
 	while [ ! -f "$status_file" ]; do
 		waits=$((waits + 1))
@@ -595,6 +596,13 @@ await_capture() {
 			capture_status=1
 			return 0
 		fi
+		# macOS can lose that EOF: when the last writer closes just as the reader goes back to read()
+		# for more, the kernel's wakeup finds nobody asleep yet and the reader then sleeps on a FIFO
+		# with no writer left, so a peer that answered and exited 0 sat out the whole budget above.
+		# Opening the FIFO read-write never blocks, and closing it is a fresh last close that hands
+		# the reader its EOF. It cannot fake one: while a real writer is still open, ours is not last.
+		# true rather than the colon builtin: a redirect that fails on a special builtin ends a dash script.
+		[ -p "$pipe" ] && true <>"$pipe"
 		sleep 0.1
 	done
 	wait "$pid" 2>/dev/null || :
@@ -646,10 +654,10 @@ run_attempt() {
 		dispatch_fresh >"$output_pipe" 2>"$diagnostics_pipe"
 	fi
 	attempt_status=$?
-	await_capture "$output_pid" "$output_capture_status_file"
+	await_capture "$output_pid" "$output_capture_status_file" "$output_pipe"
 	output_capture_status=$capture_status
 	output_pid=
-	await_capture "$diagnostics_pid" "$diagnostics_capture_status_file"
+	await_capture "$diagnostics_pid" "$diagnostics_capture_status_file" "$diagnostics_pipe"
 	diagnostics_capture_status=$capture_status
 	diagnostics_pid=
 	rm -f "$output_pipe" "$diagnostics_pipe"
