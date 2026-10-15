@@ -6,7 +6,7 @@ To build co:op from source, clone the repo and run `make install`:
 git clone https://github.com/AndrewDryga/coop && cd coop && make install
 ```
 
-`make install` puts the binary at `~/.local/bin/coop`. `make check` is the gate; CI runs its four
+`make install` puts the binary at `~/.local/bin/coop`. `make check` is the gate; CI runs its
 Make-owned parts on separate runners.
 
 ## Layout
@@ -58,20 +58,25 @@ The tasks scope is `internal/tasks`, not every task-related package: shared prim
 Run `make check` once on the completed executable candidate. Review can proceed while it runs;
 do not repeat unchanged broad proof after every small edit. A pending check is not a pass.
 
-CI runs `check-static`, `check-unit`, `check-process` and `check-race` in at most four isolated
-jobs. Their union is `make check`. The required `check` status waits for the selected checks,
-doctor and review-writes; a failed, cancelled or missing check cannot pass it. The two runtime
-jobs stay out of `make check` because they need Docker.
+`make check` runs the static owner first, then the test owners side by side, each into its own
+log under `.agent/gate/` (a pass is one line, a failure shows the log's tail), with a Go build
+cache of its own. It leaves out `check-unit`: the race owners run the same packages and tests
+under the race detector. CI runs every owner in the Makefile's `CI_OWNERS` on its own runner,
+`check-unit` included: the race suite's slowest package, `internal/sessionsvc`, and the scripted
+provider suite each run as two shards whose `-run` and `-skip` share one pattern, so no test
+falls outside both. The required `check` status waits for the selected checks, doctor and
+review-writes; a failed, cancelled or missing check cannot pass it. The two runtime jobs stay
+out of `make check` because they need Docker.
 
 A proven single-commit push to main that changes only the regular `CHANGELOG.md` file uses
 `make check-metadata` instead. The runtime jobs still run, and the status says that broad free
 checks were not run. PRs, tags, reusable-workflow calls, merges, multi-commit pushes, file-mode
 changes and uncertain inputs take the broad path.
 
-Read-only CI jobs cache downloaded modules and compiled Go objects, but behavioral tests always
-rerun: Go's test-result cache cannot see every input that a child process builds or reads. The
-release publisher starts fresh without that cache or imported artifacts. Metadata checks are
-not proof for a release tag.
+Read-only CI jobs cache downloaded modules and compiled Go objects, each free owner its own,
+saved only by pushes to main, but behavioral tests always rerun: Go's test-result cache cannot
+see every input that a child process builds or reads. The release publisher starts fresh without
+that cache or imported artifacts. Metadata checks are not proof for a release tag.
 
 The gate needs `staticcheck`, `govulncheck`, `shellcheck`, `python3`, `node` and `git-lfs`.
 Node runs the shipped site's picker and copy handlers in a small DOM fixture; it needs no
@@ -96,7 +101,7 @@ These test layers apply to a source checkout.
 | Layer | Targets | What they prove |
 |---|---|---|
 | Local iteration | `make check-local SCOPE=<owner>` | actual docs/rules or owner and reverse-consumer checks; unknown scope takes the broad path |
-| Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, govulncheck, unit tests plain and under `-race`, deterministic provider process E2E, tagged process-control races, generated docs, rules cards, maintenance tools, and comment alignment; no runtime or credentials |
+| Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, govulncheck, unit tests under `-race` (CI also runs them plain), deterministic provider process E2E, tagged process-control races, generated docs, rules cards, maintenance tools, and comment alignment; no runtime or credentials |
 | Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork policy, ACP switching/recovery, and live-harness ownership denials with fixtures |
 | Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` | real box isolation, process reaping/signal forwarding, and report-only review mounts; requires Docker (or Apple `container` for doctor) |
 | Upstream compatibility | provider live targets [below](#live-provider-suites) · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |

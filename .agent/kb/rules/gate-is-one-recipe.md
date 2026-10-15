@@ -4,15 +4,17 @@ description: "Make owns the broad check union and its CI partitions, never a sec
 scope: agent-workflow
 sources: [Makefile, .github/workflows/ci.yml, release_test.go, tools/test_make_checks.py, tools/ci_scope.py, tools/test_ci_scope.py]
 check: "go test ./. -run 'TestReleaseModuleHygiene|TestReleaseWorkflowQualification|TestReleaseCIAggregateRejectsFalseGreenDependencyStates'"
-updated: 2026-10-14
+updated: 2026-10-15
 ---
 
 # There is ONE gate recipe: `make check`
 
-Add a check to a broad partition of `check` in the `Makefile` — never as a separate step in
-`.github/workflows/ci.yml`. CI runs `check-static`, `check-unit`, `check-process` and `check-race`
-on isolated runners; local `make check` is their union. The literal required `check` status runs
-after failures too and refuses incomplete selected checks or runtime jobs.
+Add a check to a broad owner of `check` in the `Makefile` — never as a separate step in
+`.github/workflows/ci.yml`. CI runs each owner in the Makefile's `CI_OWNERS` on an isolated
+runner; the workflow's matrix is that list, which the release test holds. Local `make check` runs
+the same owners but `check-unit`, the static one first and the test owners side by side: the race
+owners run every test `check-unit` runs, under the race detector. The literal required `check`
+status runs after failures too and refuses incomplete selected checks or runtime jobs.
 A tool the gate needs is REQUIRED: missing, it fails with the one-line command that
 installs it, and a version-pinned tool fails when the local build isn't the pin. Never soft-skip.
 
@@ -31,8 +33,12 @@ local Staticcheck also skipped itself when it wasn't installed — the check sil
 on the machine where the code was written, and main rotted red with no local gate able to see it.
 
 **How to apply:**
-- New check → a Makefile target, added to one of `check`'s partitions. Order it so cheap and common
-  failures come first and the slowest step (`-race`) runs last.
+- New check → a Makefile target, added to one of `check`'s owners. Cheap and common failures belong
+  to the static owner, which runs first; a new test owner joins `CI_OWNERS` and `GATE_TEST_OWNERS`.
+- A slow package or suite becomes two shards with one pattern, `-run` in one and `-skip` in the
+  other, so no test can fall outside both; the Make tests keep each side non-empty.
+- `make check` may leave out `check-unit` only while no Go file has a race build constraint
+  (tools/test_make_checks.py holds that). Never drop a check from CI to speed up the local gate.
 - Needs a container runtime? That's the one exception: its own CI job, plus a Makefile comment on
   `check` saying it's CI-only and why — `make check` stays runtime-independent.
 - Pin a tool's version ONCE, in the Makefile or its dedicated dependency graph, and have CI use
@@ -47,6 +53,11 @@ inputs remain broad. Report the narrower coverage honestly. Never reuse low-priv
 or artifacts in the signing publisher. Related: [[ci-free-checks]], [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-10-15 — the race and process owners became shards (CI_OWNERS, seven runners) and each
+  owner got its own CI cache: CI's race job took 13 minutes beside 5-7 for the rest. Local
+  `make check` (52 minutes) runs the test owners four at a time and skips the plain unit pass
+  the race owners repeat, in a build cache of its own. Swept Make, both workflows' tests,
+  CONTRIBUTING and the CI, local and release KB cards.
 - 2026-10-14 — swept Make, both workflows, contributor guide and development/release KB. Real
   Make execution proves partition union, required tool calls and failure propagation; actual
   workflow aggregate execution rejects failed/skipped/missing states. Git fixtures cover

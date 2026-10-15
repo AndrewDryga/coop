@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -9,6 +10,25 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# The owners CI runs one per runner. `make check` runs them all but check-unit.
+CI_OWNERS = ("check-static", "check-unit", "check-process-loop", "check-process-rest",
+             "check-race-rest", "check-race-sessionsvc-1", "check-race-sessionsvc-2")
+SESSIONSVC = "github.com/AndrewDryga/coop/internal/sessionsvc"
+PACKAGES = f"github.com/AndrewDryga/coop\n{SESSIONSVC}\ngithub.com/AndrewDryga/coop/internal/tasks"
+
+
+def make_variable(name):
+    match = re.search(rf"^{name} :?= (.+)$", (ROOT / "Makefile").read_text(), re.M)
+    if not match:
+        raise AssertionError(f"the Makefile does not set {name}")
+    return match.group(1)
+
+
+def test_names(package, prefix="Test"):
+    """Every top-level test function in a package's test files, whatever their build tags."""
+    return sorted(name for path in (ROOT / package).glob("*_test.go")
+                  for name in re.findall(r"^func (Test\w*)\(\w+ \*testing\.T\)", path.read_text(), re.M)
+                  if name.startswith(prefix))
 
 
 class MakeChecksTest(unittest.TestCase):
@@ -49,11 +69,16 @@ class MakeChecksTest(unittest.TestCase):
             "if Path(sys.argv[0]).name == 'staticcheck' and sys.argv[1:] == ['-version']: print('staticcheck (' + os.environ['STATICCHECK_PIN'] + ')')\n"
             "if Path(sys.argv[0]).name == 'staticcheck' and sys.argv[1:] == ['-debug.version']: print('golang.org/x/tools@' + os.environ['XTOOLS_PIN'])\n"
             "if Path(sys.argv[0]).name == 'govulncheck' and sys.argv[1:] == ['-version']: print('Scanner: govulncheck@v1.8.0')\n"
+            "if Path(sys.argv[0]).name == 'go':\n"
+            "    with open(os.environ['COMMAND_LOG'] + '.gocache', 'a') as log:\n"
+            "        log.write(os.environ.get('GOCACHE', '') + '\\n')\n"
+            "    if sys.argv[1:] == ['list', './...']: print(os.environ['STUB_GO_LIST'])\n"
             "if Path(sys.argv[0]).name == 'mktemp':\n"
             "    if sys.argv[1:]: sys.exit('unexpected mktemp arguments')\n"
             "    Path(os.environ['STUB_TMP_PATH']).touch()\n"
             "    print(os.environ['STUB_TMP_PATH'])\n"
-            "fail = os.environ.get('STUB_FAIL_COMMAND')\n"
+            "fail, arg = os.environ.get('STUB_FAIL_COMMAND'), os.environ.get('STUB_FAIL_ARG')\n"
+            "if arg: sys.exit(int(os.environ.get('STUB_EXIT', '0')) if arg in sys.argv[1:] else 0)\n"
             "sys.exit(int(os.environ.get('STUB_EXIT', '0')) if not fail or fail == Path(sys.argv[0]).name else 0)\n"
         )
         for name in ("go", "gofmt", "python3", "node", "git", "git-lfs", "docker", "staticcheck", "govulncheck", "shellcheck", "mktemp"):
@@ -61,9 +86,11 @@ class MakeChecksTest(unittest.TestCase):
             path.write_text(stub)
             path.chmod(0o700)
 
-    def make(self, *args, dry=False, exit_code=0, fail_command="", unformatted=False):
+    def make(self, *args, dry=False, exit_code=0, fail_command="", fail_arg="", unformatted=False,
+             packages=PACKAGES):
         env = dict(self.env, STUB_EXIT=str(exit_code), STUB_FAIL_COMMAND=fail_command,
-                   STUB_FMT_OUTPUT="1" if unformatted else "")
+                   STUB_FAIL_ARG=fail_arg, STUB_FMT_OUTPUT="1" if unformatted else "",
+                   STUB_GO_LIST=packages)
         return subprocess.run(
             [shutil.which("make"), *(["-n"] if dry else []), *args],
             cwd=self.root, env=env, text=True, capture_output=True, timeout=10,
@@ -128,16 +155,20 @@ class MakeChecksTest(unittest.TestCase):
                 self.assertEqual(len(vets), 4)  # both platforms, ordinary and all-tag compilation
 
     def test_missing_unknown_wildcard_or_multiword_scope_takes_the_full_gate(self):
+        # The gate's test owners run side by side, so the dry run lists them in any order.
         broad = self.make("check", dry=True)
         self.assertEqual(broad.returncode, 0, broad.stderr)
         for scope in ("", "unknown", "%", "ag%", "agent runtime", "docs cli"):
             with self.subTest(scope=scope):
                 run = self.make("check-local", "SCOPE=" + scope, dry=True)
                 self.assertEqual(run.returncode, 0, run.stderr)
-                self.assertTrue(run.stdout.startswith(broad.stdout), run.stdout)
-                self.assertIn("full free gate", run.stdout[len(broad.stdout):])
+                lines = run.stdout.splitlines()
+                self.assertEqual(sorted(line for line in lines if "full free gate" not in line),
+                                 sorted(broad.stdout.splitlines()), run.stdout)
+                self.assertIn("full free gate", lines[-1])
         missing = self.make("check-local", dry=True)
-        self.assertTrue(missing.stdout.startswith(broad.stdout), missing.stdout)
+        self.assertEqual(sorted(missing.stdout.splitlines()[:-1]), sorted(broad.stdout.splitlines()),
+                         missing.stdout)
 
     def test_failed_owner_check_is_not_a_successful_local_check(self):
         run = self.make("check-local", "SCOPE=docs", exit_code=17)
@@ -147,20 +178,30 @@ class MakeChecksTest(unittest.TestCase):
                          [["go", "run", "./tools/gendocs", "-check"]])
 
     def test_free_partition_union_executes_all_owners_and_every_failure_propagates(self):
-        partitions = ("check-static", "check-unit", "check-process", "check-race")
-        union = []
-        for target in partitions:
+        sessions, scripted = make_variable("SESSIONSVC_SHARD"), make_variable("PROVIDER_SHARD")
+        owned = {}
+        for target in CI_OWNERS:
             self.log.unlink(missing_ok=True)
             (self.root / target).touch()  # A same-named file must not skip the owner.
             run = self.make(target)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             commands = [cmd for cmd in self.commands() if cmd[0] != "git"]
-            union.extend(commands)
+            owned[target] = commands
             tests = [cmd for cmd in commands if cmd[:2] == ["go", "test"]]
             if target == "check-unit":
                 self.assertEqual(tests, [["go", "test", "-count=1", "-p", "4", "-timeout", "20m", "./..."]])
-            elif target == "check-race":
-                self.assertEqual(tests, [["go", "test", "-count=1", "-race", "-p", "4", "-timeout", "30m", "./..."]])
+            elif target == "check-race-rest":
+                self.assertEqual(commands, [
+                    ["go", "list", "./..."],
+                    ["go", "test", "-count=1", "-race", "-p", "4", "-timeout", "30m",
+                     "github.com/AndrewDryga/coop", "github.com/AndrewDryga/coop/internal/tasks"],
+                ])
+            elif target == "check-race-sessionsvc-1":
+                self.assertEqual(commands, [["go", "test", "-count=1", "-race", "-timeout", "30m",
+                                             "-run", sessions, "./internal/sessionsvc"]])
+            elif target == "check-race-sessionsvc-2":
+                self.assertEqual(commands, [["go", "test", "-count=1", "-race", "-timeout", "30m",
+                                             "-skip", sessions, "./internal/sessionsvc"]])
             elif target == "check-static":
                 self.assertEqual(commands[:2], [
                     ["go", "mod", "tidy", "-diff"],
@@ -182,11 +223,15 @@ class MakeChecksTest(unittest.TestCase):
                     "acpe2e,boxruntimee2e,cooplivetest,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e", "./..."]), 2)
                 self.assertEqual(commands.count(["staticcheck", "./..."]), 2)
                 self.assertEqual(len(tests), 2)  # gateway freshness plus provider/rules guard
+            elif target == "check-process-loop":
+                self.assertEqual(commands, [["go", "test", "-tags", "providere2e", "-run", scripted,
+                                             "-count=1", "-timeout", "20m", "-v", "./internal/cli/"]])
             else:
-                self.assertEqual(len(tests), 4)  # fixtures, scripted consumers, ownership race, tagged compile
+                self.assertEqual(len(tests), 4)  # fixtures, other scripted consumers, ownership race, tagged compile
                 self.assertIn(["go", "test", "-count=1", "./internal/testutil/procharness",
                                "./internal/cli/testdata/providerfixture"], tests)
-                self.assertTrue(any("-tags" in cmd and "providere2e" in cmd and "-count=1" in cmd for cmd in tests))
+                self.assertIn(["go", "test", "-tags", "providere2e", "-run", "^TestProviderScripted", "-skip", scripted,
+                               "-count=1", "-timeout", "20m", "-v", "./internal/cli/"], tests)
                 self.assertTrue(any("-race" in cmd and "providerlivee2e,cooplivetest" in cmd and "-count=1" in cmd for cmd in tests))
                 self.assertTrue(any("-c" in cmd and "acpe2e" in cmd for cmd in tests))
             self.assertFalse(any(cmd[0] == "docker" for cmd in commands))
@@ -196,10 +241,70 @@ class MakeChecksTest(unittest.TestCase):
             if target == "check-static":
                 self.assertEqual([cmd for cmd in self.commands() if cmd[0] != "git"],
                                  [["go", "mod", "tidy", "-diff"]])
+        # Locally the static owner goes first, then every other owner but check-unit, whose tests
+        # the race owners run; they run side by side, so in any order.
         self.log.unlink(missing_ok=True)
         run = self.make("check")
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual([cmd for cmd in self.commands() if cmd[0] != "git"], union)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        local = [cmd for cmd in self.commands() if cmd[0] != "git"]
+        self.assertEqual(local[:len(owned["check-static"])], owned["check-static"])
+        self.assertEqual(sorted(map(json.dumps, local)),
+                         sorted(json.dumps(cmd) for target in CI_OWNERS if target != "check-unit"
+                                for cmd in owned[target]))
+        for target in CI_OWNERS[2:]:
+            self.assertIn("ok   " + target, run.stdout.splitlines())
+            self.assertIn("elapsed", (self.root / ".agent/gate" / (target + ".log")).read_text())
+        # A failing owner fails the gate and shows its log.
+        self.log.unlink(missing_ok=True)
+        failed = self.make("check", exit_code=17, fail_arg="-race")
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("FAIL check-race-sessionsvc-1 (full log: .agent/gate/check-race-sessionsvc-1.log)", failed.stdout)
+
+    def test_local_gate_builds_with_its_own_cache(self):
+        # One gate died when another session cleared the shared Go build cache under it.
+        run = self.make("check")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        caches = set((self.root / "commands.jsonl.gocache").read_text().splitlines())
+        self.assertEqual(caches, {str(self.root / ".cache/coop-gate/go-build")})
+        (self.root / "commands.jsonl.gocache").unlink()
+        run = self.make("check-race-sessionsvc-1")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertEqual((self.root / "commands.jsonl.gocache").read_text().splitlines(), [""])
+
+    def test_race_rest_refuses_a_package_list_without_sessionsvc(self):
+        for packages in ("github.com/AndrewDryga/coop\ngithub.com/AndrewDryga/coop/internal/tasks", SESSIONSVC):
+            with self.subTest(packages=packages):
+                self.log.unlink(missing_ok=True)
+                run = self.make("check-race-rest", packages=packages)
+                self.assertNotEqual(run.returncode, 0)
+                self.assertIn("go list must name", run.stdout)
+                self.assertEqual([cmd for cmd in self.commands() if cmd[0] != "git"], [["go", "list", "./..."]])
+
+    def test_ci_owners_are_the_local_gate_and_check_unit(self):
+        self.assertEqual(tuple(make_variable("CI_OWNERS").split()), CI_OWNERS)
+        self.assertEqual(sorted(["check-static", "check-unit", *make_variable("GATE_TEST_OWNERS").split()]),
+                         sorted(CI_OWNERS))
+
+    def test_race_owners_run_every_test_the_unit_owner_runs(self):
+        # `make check` leaves check-unit to CI because the race owners run the same packages and
+        # tests. A file built only with or only without -race would break that.
+        files = subprocess.run(["git", "ls-files", "*.go"], cwd=ROOT, text=True, capture_output=True,
+                               check=True).stdout.split()
+        self.assertTrue(files)
+        constrained = [name for name in files
+                       if re.search(r"^(//go:build|// \+build) .*\brace\b", (ROOT / name).read_text(), re.M)]
+        self.assertEqual(constrained, [])
+
+    def test_each_shard_pattern_splits_its_tests_between_both_shards(self):
+        # -run and -skip take one pattern, so no test can fall outside both shards; a pattern that
+        # matched every test or none would leave one shard empty and the other the whole suite.
+        for variable, package, prefix in (("SESSIONSVC_SHARD", "internal/sessionsvc", "Test"),
+                                          ("PROVIDER_SHARD", "internal/cli", "TestProviderScripted")):
+            with self.subTest(variable=variable):
+                pattern, names = make_variable(variable), test_names(package, prefix)
+                matched = [name for name in names if re.search(pattern, name)]
+                self.assertTrue(names)
+                self.assertTrue(0 < len(matched) < len(names), (pattern, len(matched), len(names)))
 
     def test_metadata_owner_executes_docs_and_artifact_checks_without_process_or_race(self):
         run = self.make("check-metadata")

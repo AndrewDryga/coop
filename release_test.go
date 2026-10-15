@@ -34,17 +34,19 @@ type releaseWorkflow struct {
 		ContinueOnError any               `yaml:"continue-on-error"`
 		Secrets         any               `yaml:"secrets"`
 		Permissions     map[string]string `yaml:"permissions"`
-		Steps           []struct {
-			ID              string            `yaml:"id"`
-			Name            string            `yaml:"name"`
-			Uses            string            `yaml:"uses"`
-			Run             string            `yaml:"run"`
-			If              string            `yaml:"if"`
-			ContinueOnError any               `yaml:"continue-on-error"`
-			With            map[string]string `yaml:"with"`
-			Env             map[string]string `yaml:"env"`
-		} `yaml:"steps"`
+		Steps           []releaseStep     `yaml:"steps"`
 	} `yaml:"jobs"`
+}
+
+type releaseStep struct {
+	ID              string            `yaml:"id"`
+	Name            string            `yaml:"name"`
+	Uses            string            `yaml:"uses"`
+	Run             string            `yaml:"run"`
+	If              string            `yaml:"if"`
+	ContinueOnError any               `yaml:"continue-on-error"`
+	With            map[string]string `yaml:"with"`
+	Env             map[string]string `yaml:"env"`
 }
 
 func runReleasePreflight(t *testing.T, repo, command, tag string, env ...string) (string, string, error) {
@@ -275,7 +277,7 @@ func TestReleaseModuleHygiene(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "\ncheck: check-static check-unit check-process check-race ") ||
+	if !strings.Contains(text, "\nCI_OWNERS := check-static ") || !strings.Contains(text, "\ncheck: check-static ") ||
 		!strings.Contains(text, "\ncheck-static: mod-check gateway-sources-check ") {
 		t.Error("canonical union must begin with static module/freshness checks before behavioral owners")
 	}
@@ -288,6 +290,61 @@ func TestReleaseModuleHygiene(t *testing.T) {
 	if !strings.Contains(text, "\t@go test ./internal/gatewayimage -run '^TestEmbeddedGatewaySourcesExactlyMatchCheckout$$' -count=1\n") ||
 		!strings.Contains(text, "\n.PHONY: gateway-sources-check\n") {
 		t.Error("canonical gate must verify embedded source freshness without regenerating during qualification")
+	}
+}
+
+const (
+	ciCacheRestore = "restore this owner's Go modules and compiled objects"
+	ciCacheSave    = "save this owner's Go modules and compiled objects"
+	// Only reviewed Go inputs and the owner name the cache; the commit makes each main push's
+	// objects the newest, and the prefix lets every later run start from them.
+	ciCacheKey    = "go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'internal/box/staticcheck.mod', 'internal/box/staticcheck.sum') }}-"
+	ciCachePaths  = "~/go/pkg/mod\n~/.cache/go-build\n"
+	ciCachePinned = "@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+)
+
+// makeCIOwners reads the Makefile's CI_OWNERS, the owners CI runs one per runner.
+func makeCIOwners(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile("Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if owners, ok := strings.CutPrefix(line, "CI_OWNERS := "); ok {
+			return strings.Fields(owners)
+		}
+	}
+	t.Fatal("the Makefile must name the owners CI runs in CI_OWNERS")
+	return nil
+}
+
+// checkCIOwnerCaches holds each free owner to one cache of its own: restored in every run,
+// saved only by a main push after its checks pass, never shared with another owner.
+func checkCIOwnerCaches(t *testing.T, steps []releaseStep) {
+	t.Helper()
+	restore, save, run := -1, -1, -1
+	for i, step := range steps {
+		switch {
+		case strings.HasPrefix(step.Uses, "actions/cache/restore"+ciCachePinned):
+			restore = i
+			if step.Name != ciCacheRestore || step.With["path"] != ciCachePaths ||
+				step.With["key"] != ciCacheKey+"${{ github.sha }}" || step.With["restore-keys"] != ciCacheKey+"\n" {
+				t.Error("each owner must restore only its own cache of reviewed Go inputs")
+			}
+		case strings.HasPrefix(step.Uses, "actions/cache/save"+ciCachePinned):
+			save = i
+			if step.Name != ciCacheSave || step.With["path"] != ciCachePaths || step.With["key"] != ciCacheKey+"${{ github.sha }}" {
+				t.Error("each owner must save only its own cache of reviewed Go inputs")
+			}
+		case strings.HasPrefix(step.Uses, "actions/cache"):
+			t.Errorf("free owners use only the pinned cache restore and save, not %s", step.Uses)
+		case step.Run == `make "${{ matrix.target }}"`:
+			run = i
+		}
+	}
+	if restore < 0 || save < 0 || !(restore < run && run < save) {
+		t.Error("each owner must restore its cache before its checks and save it only after they pass")
 	}
 }
 
@@ -345,6 +402,9 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 				if name == "ci" && id == "checks" && step.Name == "install Go analyzers at the repo's pins" {
 					stepIf = "matrix.target == 'check-static'"
 				}
+				if name == "ci" && id == "checks" && step.Name == ciCacheSave {
+					stepIf = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+				}
 				if step.If != stepIf {
 					t.Errorf("%s.%s unexpectedly skips a step: %s", name, id, step.If)
 				}
@@ -383,11 +443,13 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 		t.Error("aggregate must receive only its scope and direct dependency results as data")
 	}
 	checks := ci.Jobs["checks"]
-	if checks.Needs != "scope" || checks.Strategy.FailFast == nil || *checks.Strategy.FailFast || checks.Strategy.MaxParallel != 4 ||
-		!slices.Equal(checks.Strategy.Matrix["target"], []string{"check-static", "check-unit", "check-process", "check-race"}) ||
-		checks.Steps[len(checks.Steps)-1].Run != `make "${{ matrix.target }}"` {
-		t.Error("free CI matrix must run exactly the four Make owners, capped at four isolated jobs")
+	owners := makeCIOwners(t)
+	if checks.Needs != "scope" || checks.Strategy.FailFast == nil || *checks.Strategy.FailFast || checks.Strategy.MaxParallel != len(owners) ||
+		!slices.Equal(checks.Strategy.Matrix["target"], owners) ||
+		checks.Steps[len(checks.Steps)-2].Run != `make "${{ matrix.target }}"` {
+		t.Error("free CI matrix must run exactly the Makefile's CI_OWNERS, each on an isolated runner of its own")
 	}
+	checkCIOwnerCaches(t, checks.Steps)
 	metadata := ci.Jobs["metadata"]
 	if metadata.Needs != "scope" || metadata.Steps[len(metadata.Steps)-1].Run != "make check-metadata" {
 		t.Error("metadata path must use only its Make-owned checks")
@@ -411,7 +473,11 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 		for _, step := range ci.Jobs[id].Steps {
 			if strings.HasPrefix(step.Uses, "actions/setup-go@") {
 				setups++
-				if step.With["cache"] != "true" || step.With["go-version-file"] != "go.mod" ||
+				if id == "checks" {
+					if step.With["cache"] != "false" || step.With["go-version-file"] != "go.mod" {
+						t.Error("the free owners must use the repo toolchain and leave caching to their own keys")
+					}
+				} else if step.With["cache"] != "true" || step.With["go-version-file"] != "go.mod" ||
 					step.With["cache-dependency-path"] != "go.mod\ngo.sum\ninternal/box/staticcheck.mod\ninternal/box/staticcheck.sum\n" {
 					t.Errorf("low-privilege %s must use the repo toolchain and cache only reviewed Go inputs", id)
 				}
@@ -442,7 +508,7 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 				t.Error("privileged publisher must use the repo toolchain without the unprivileged CI cache")
 			}
 		}
-		if strings.HasPrefix(step.Uses, "actions/cache@") || strings.HasPrefix(step.Uses, "actions/download-artifact@") {
+		if strings.HasPrefix(step.Uses, "actions/cache") || strings.HasPrefix(step.Uses, "actions/download-artifact@") {
 			t.Error("publisher must never consume cached or downloaded executable build artifacts")
 		}
 		if strings.HasPrefix(step.Uses, "actions/checkout@") && step.With["fetch-depth"] != "0" {

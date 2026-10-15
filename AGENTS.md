@@ -52,9 +52,10 @@ Cross-cutting inputs (modules, toolchains, build tags, shared foundations, harne
 need broad proof, not a guessed narrow owner.
 
 `make check` is the broad free gate: lint, ShellCheck, builds, vulnerability scan, generated
-docs, tool tests, rules, unit/scripted-process tests and race checks. Run it once on the completed
-executable candidate, not after each small edit. CI uses the same Make-owned checks. Live provider
-calls are explicit and never a release prerequisite. Prose-only changes use their actual owner.
+docs, tool tests, rules, scripted-process tests and the unit tests under the race detector. Run it
+once on the completed executable candidate, not after each small edit. CI uses the same Make-owned
+checks and also runs the unit tests plain. Live provider calls are explicit and never a release
+prerequisite. Prose-only changes use their actual owner.
 
 Review alongside checks. One independent reviewer is enough for substantive routine changes;
 use two for consequential architecture/security decisions. Spelling and fully specified

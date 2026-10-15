@@ -32,6 +32,9 @@ jobs:
           CI_REPOSITORY: ${{ github.repository }}
           CI_SHA: ${{ github.sha }}
 
+  # One runner per Make owner in the Makefile's CI_OWNERS. The race suite's long pole,
+  # internal/sessionsvc, and the scripted provider suite each run as two shards, so no owner
+  # holds the others up for long (the race job took 13 minutes while the rest took 5 to 7).
   checks:
     needs: scope
     if: needs.scope.outputs.mode != 'metadata'
@@ -39,23 +42,30 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 7
       matrix:
-        target: [check-static, check-unit, check-process, check-race]
+        target: [check-static, check-unit, check-process-loop, check-process-rest, check-race-rest, check-race-sessionsvc-1, check-race-sessionsvc-2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      # setup-go keys its cache on the dependency files alone, so every owner restored whatever
+      # the first to finish had saved, and the race owners rebuilt everything with -race. Each
+      # owner keeps its own modules and compiled objects instead, newest main push first.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true # read-only CI only; the publisher never consumes this cache
-          cache-dependency-path: |
-            go.mod
-            go.sum
-            internal/box/staticcheck.mod
-            internal/box/staticcheck.sum
+          cache: false
+      - name: restore this owner's Go modules and compiled objects
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'internal/box/staticcheck.mod', 'internal/box/staticcheck.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'internal/box/staticcheck.mod', 'internal/box/staticcheck.sum') }}-
       - name: install Go analyzers at the repo's pins
         if: matrix.target == 'check-static'
         run: |
@@ -65,6 +75,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y git-lfs
       - name: Make-owned free checks
         run: make "${{ matrix.target }}"
+      # Read-only CI only: pull requests and tags restore main's objects and save none, and the
+      # publisher never consumes them. Behavioral tests still rerun (-count=1).
+      - name: save this owner's Go modules and compiled objects
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'internal/box/staticcheck.mod', 'internal/box/staticcheck.sum') }}-${{ github.sha }}
 
   metadata:
     needs: scope

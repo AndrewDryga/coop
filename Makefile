@@ -133,8 +133,20 @@ build-all: ## Compile every package (a package no test imports can still break t
 
 # internal/acpproxy is concurrent (the editor-reader goroutine and the main loop share
 # p.mu-guarded state) — a data race there does not fail the plain `make test` run. Its own
-# target so a race failure is legible; -race is ~2-3× slower, which is why it runs last.
-race: require-git-lfs ## Full unit suite under the race detector (the slowest gate step)
+# target so a race failure is legible; -race is ~2-3× slower, which is why its slowest package
+# runs as two shards.
+race: check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2 ## Full unit suite under the race detector (the slowest gate step)
+
+# The race suite's long pole is internal/sessionsvc: 945 s of race time on a Mac, 557 s on CI, where
+# it started 3.5 minutes into the job and finished last. It runs as two shards beside the rest.
+# -run and -skip take the same pattern, so every test, example and fuzz seed is in exactly one
+# shard, and a new or renamed test can only move between them, never out. The pattern halves the
+# measured race time (2026-10-15: 475 s and 469 s); tools/test_make_checks.py keeps both sides
+# non-empty.
+SESSIONSVC := github.com/AndrewDryga/coop/internal/sessionsvc
+SESSIONSVC_SHARD := ^Test(Session|Large|Replacement)
+
+check-race-rest: require-git-lfs ## Race-detector tests of every package except internal/sessionsvc
 	@# -p 4: the race detector multiplies each test binary's CPU, and running every package at
 	@# once oversubscribes the host badly enough that production grace periods (a 3 s TERM wait
 	@# before a fork's box is reaped) expire in tests that pass alone. Bounded parallelism, not a
@@ -142,23 +154,59 @@ race: require-git-lfs ## Full unit suite under the race detector (the slowest ga
 	@# Serial session Git/LFS fixtures take over 20 m with race instrumentation. The 30 m bound
 	@# gives this whole-package hang guard contention headroom, not a longer per-operation deadline.
 	@# Keep behavioral timing assertions tight.
-	@go test -count=1 -race -p 4 -timeout 30m ./...
+	@pkgs="$$(go list ./...)" || exit 1; rest="$$(printf '%s\n' "$$pkgs" | grep -vx '$(SESSIONSVC)')"; \
+	{ [ -n "$$rest" ] && [ "$$rest" != "$$pkgs" ]; } || { echo 'check-race-rest: go list must name $(SESSIONSVC) and other packages'; exit 1; }; \
+	go test -count=1 -race -p 4 -timeout 30m $$rest
 
-# THE GATE. One Make-owned union: local runs it in order; CI runs its four owners separately.
-# CI installs the pinned tools. A new check belongs HERE, never in the
+check-race-sessionsvc-1: require-git-lfs ## Race-detector tests of internal/sessionsvc that match the shard pattern
+	@go test -count=1 -race -timeout 30m -run '$(SESSIONSVC_SHARD)' ./internal/sessionsvc
+
+check-race-sessionsvc-2: require-git-lfs ## Race-detector tests of internal/sessionsvc outside the shard pattern
+	@go test -count=1 -race -timeout 30m -skip '$(SESSIONSVC_SHARD)' ./internal/sessionsvc
+
+# THE GATE. One Make-owned union of owners: CI runs each owner in CI_OWNERS on a runner of its
+# own; `make check` runs the static owner first, then the test owners side by side. CI installs the
+# pinned tools. A new check belongs HERE, never in the
 # workflow's step list: the two were maintained separately, drifted in both directions (race and
 # build were CI-only; cast/rules/tools checks were local-only), and main rotted red with no local
-# gate able to see it. Ordered so the cheap and most common failures surface first and the race
-# suite runs last. Required tools hard-fail with their install line — a soft skip is how a check
-# silently stops running.
+# gate able to see it. Ordered so the cheap and most common failures surface first. Required tools
+# hard-fail with their install line — a soft skip is how a check silently stops running.
+# Locally the race owners stand in for check-unit: they run the same packages and tests under the
+# race detector, since no Go file has a race build constraint (tools/test_make_checks.py holds
+# that), and the plain pass took a quarter of the 52-minute local gate. CI runs both.
 # CI-only by necessity: the doctor runtime matrix and the review-writes job need a real container
 # runtime, so they stay separate CI jobs and this target stays runtime-independent. Run them by
 # hand with 'make doctor', 'make box-runtime-e2e', and 'make review-writes-e2e'.
-check: check-static check-unit check-process check-race ## Full free gate, the same union CI runs in isolated jobs
+CI_OWNERS := check-static check-unit check-process-loop check-process-rest check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2
+# The local test owners, longest first. Four run at once and the last starts when one ends, so at
+# most check-race-rest's four packages and three single-package owners share the host (see
+# check-race-rest for why the gate bounds its parallelism).
+GATE_TEST_OWNERS := check-race-sessionsvc-1 check-race-sessionsvc-2 check-process-loop check-race-rest check-process-rest
+# The gate builds with a cache of its own, which no other checkout or `go clean -cache` shares:
+# one gate died when another session cleared the shared cache under it.
+GATE_GOCACHE ?= $(HOME)/.cache/coop-gate/go-build
+
+check: export GOCACHE := $(GATE_GOCACHE)
+check: check-static ## Full free gate: the static owner, then the test owners side by side (CI also runs check-unit)
+	@rm -rf .agent/gate && mkdir -p .agent/gate && echo '== $(GATE_TEST_OWNERS) side by side; logs in .agent/gate'
+	@$(MAKE) --no-print-directory -j4 $(addprefix gate-,$(GATE_TEST_OWNERS))
+
+# One test owner of the local gate, its output in a log of its own, so owners running side by side
+# never interleave: a pass is one line, a failure is the log's tail.
+gate-%: FORCE
+	@mkdir -p .agent/gate; start=$$(date +%s); if $(MAKE) --no-print-directory $* > .agent/gate/$*.log 2>&1; then \
+	  echo "elapsed $$(( $$(date +%s) - start )) s" >> .agent/gate/$*.log; echo 'ok   $*'; \
+	else \
+	  tail -n 60 .agent/gate/$*.log; echo 'FAIL $* (full log: .agent/gate/$*.log)'; exit 1; \
+	fi
+
+FORCE:
 
 check-static: mod-check gateway-sources-check lint shellcheck build-all vuln align docs-check tools-test rules-check ## Free source, analyzer, build, docs and tool checks
 check-unit: test ## Free ordinary unit tests
-check-process: provider-scripted-e2e live-process-control ## Free scripted-provider and process-control tests
+check-process: check-process-loop check-process-rest ## Free scripted-provider and process-control tests
+check-process-loop: provider-scripted-loop-e2e ## The scripted provider suite's loop tests
+check-process-rest: provider-scripted-other-e2e live-process-control ## The rest of the scripted provider suite and process-control tests
 check-race: race ## Free race-detector tests
 
 check-metadata: docs-check align rules-check docs-tools-test ## Only for proven single-commit CHANGELOG edits on main
@@ -193,11 +241,20 @@ check-local: check
 	@echo 'Local checks: missing/unknown scope used the full free gate'
 endif
 
-provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
+provider-scripted-e2e: provider-scripted-loop-e2e provider-scripted-other-e2e ## Deterministic all-provider process e2e (no runtime or credentials needed)
+
+# The suite runs ~11 minutes on a Mac and 4.5 on CI, so it runs as two shards, the loop tests (60%
+# of its time) and the rest: -run and -skip take the same pattern, so each test is in exactly one.
+# Go's 10-minute default failed the whole suite under ordinary load with every test passing. The
+# 20-minute bound is a hang guard; the behavior deadlines live inside the tests.
+PROVIDER_SHARD := ^TestProviderScriptedLoop
+
+provider-scripted-loop-e2e: ## The scripted provider suite's loop tests
+	@go test -tags providere2e -run '$(PROVIDER_SHARD)' -count=1 -timeout 20m -v ./internal/cli/
+
+provider-scripted-other-e2e: ## The scripted provider suite's other tests and its fixtures
 	@go test -count=1 ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
-# The suite runs ~9 minutes on a quiet host, so Go's 10-minute default failed it under ordinary
-# load with every test passing. This is a hang guard; the behavior deadlines live inside the tests.
-	@go test -tags providere2e -run '^TestProviderScripted' -count=1 -timeout 20m -v ./internal/cli/
+	@go test -tags providere2e -run '^TestProviderScripted' -skip '$(PROVIDER_SHARD)' -count=1 -timeout 20m -v ./internal/cli/
 
 live-process-control: ## Deterministic denial tests for tagged live-test process ownership
 	@go test -race -tags providerlivee2e,cooplivetest -run '^Test(LiveACPProcess|LiveInterruptible|LiveRunInterruptible|ProviderConsultLiveContract|ProviderLoopLiveContract|ProviderResumeLiveContract|ProviderNetworkLiveContract|ProviderLiveStreamContract|ProviderAccountsLiveContract)' -count=1 ./internal/cli/ ./internal/acpctl/ ./internal/runtime/ ./internal/loop/
@@ -316,6 +373,8 @@ help: ## List targets
 .PHONY: provider-status provider-verify
 .PHONY: check-local docs-tools-test
 .PHONY: check-static check-unit check-process check-race check-metadata
+.PHONY: check-process-loop check-process-rest check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2
+.PHONY: provider-scripted-loop-e2e provider-scripted-other-e2e FORCE
 .PHONY: require-git-lfs
 .PHONY: require-node
 .PHONY: mod-check

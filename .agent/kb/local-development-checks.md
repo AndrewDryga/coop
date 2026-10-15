@@ -3,7 +3,7 @@ name: local-development-checks
 description: explicit local check scopes, reverse-consumer guard and conservative broad fallback
 subsystem: development
 sources: [Makefile, internal/local_checks_test.go, tools/test_make_checks.py, AGENTS.md, CONTRIBUTING.md, .agent/project.yaml, internal/testutil/procharness/binaries.go, internal/testutil/procharness/stdio.go, internal/testutil/procharness/capture.go, internal/testutil/gitrepo/committed.go]
-updated: 2026-10-14
+updated: 2026-10-15
 ---
 
 `make check-local SCOPE=<owner>` has explicit rules/docs and six Go scopes: agent, runtime,
@@ -25,8 +25,11 @@ ownership facts current when a subprocess caller changes.
 Docs/rules run actual docs, alignment, site and KB checks; they do not run Docker, race,
 process benchmarks or live models. A local scope pass is not the completed broad candidate gate.
 
-CI runs the four Make-owned broad partitions on isolated runners; `make check` remains their
-union. Module/build caches reuse compilation, not behavioral test results: child-built or read
+CI runs the Make-owned broad owners (`CI_OWNERS`) on isolated runners. `make check` runs the
+static owner, then the others but `check-unit` four at a time, each into its own log under
+`.agent/gate/`, with a Go build cache of its own (another session once cleared the shared one under
+a running gate). The race owners stand in for `check-unit` there: no Go file has a race build
+constraint, which the Make tests hold. Module/build caches reuse compilation, not behavioral test results: child-built or read
 inputs can be invisible to Go's result cache, so unit, race and scoped tests use `-count=1`.
 The narrow CI metadata path is separate from local scopes; see [[ci-free-checks]].
 
@@ -47,6 +50,9 @@ owners still build their real inputs. Pure log cap/rune tests avoid full review 
 large-output pager, HTTP, session custody and failed-review owners remain.
 
 ## Changelog
+- 2026-10-15 — `make check` runs its test owners side by side without the plain unit pass, in its
+  own build cache: the 52-minute local gate spent a quarter of its time repeating the race
+  owners' tests without -race. Real Make fixtures cover the order-free union and failure.
 - 2026-10-14 — verified the broad Make union, CI partitions and uncached behavioral test results;
   real Make fixtures cover every partition, independent tool calls and failure propagation.
 - 2026-10-14 — added explicit scopes and import/fixture ownership guard. Real Make fixtures cover
