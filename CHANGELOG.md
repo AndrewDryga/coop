@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Coop cleans up its git views of deleted repositories.** Coop keeps a small trusted view of each
+  repository it runs git in, and never removed one, so every evaluation, session and temporary
+  repository left its view behind (about 14,000 on one Mac, almost all for repositories long gone).
+  The daily cleanup now removes the views of repositories that no longer exist, and keeps one that
+  holds an unfinished rebase or merge; a view that is needed again is rebuilt.
+
 - **Check a worker's session data before you upgrade it.** A new build can convert a worker's
   session data when it first opens it, and the build before it can't open converted data. Stop
   the worker and run `coop sessions check` with the new build: it says whether that build uses

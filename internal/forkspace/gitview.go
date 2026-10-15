@@ -171,7 +171,13 @@ func openGitView(ctx context.Context, workTree string) (*gitView, error) {
 				return nil, err
 			}
 		}
-		if err := view.refresh(ctx); err != nil {
+		// Another coop's daily sweep may have removed the folder, or be removing it, while its
+		// repository was away (an unplugged disk, a re-clone); laying it out again is safe to repeat,
+		// so a process never fails until a restart.
+		if err := os.MkdirAll(view.dir, 0o700); err != nil {
+			return nil, err
+		}
+		if err := view.populate(ctx); err != nil {
 			return nil, err
 		}
 		return view, nil
@@ -364,9 +370,15 @@ func (v *gitView) reconcileHead() error {
 
 // operationInFlight reports whether git left the state of an unfinished rebase, merge, cherry-pick
 // or revert in the view; that operation owns HEAD until it finishes or is aborted.
-func (v *gitView) operationInFlight() bool {
-	for _, name := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"} {
-		if fileExists(filepath.Join(v.dir, name)) {
+func (v *gitView) operationInFlight() bool { return viewHoldsOperation(v.dir) }
+
+// viewOperationState is what git leaves in a view while a rebase, merge, cherry-pick or revert is
+// unfinished. Only the view holds it, so a view holding any of it is never swept.
+var viewOperationState = []string{"rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"}
+
+func viewHoldsOperation(dir string) bool {
+	for _, name := range viewOperationState {
+		if fileExists(filepath.Join(dir, name)) {
 			return true
 		}
 	}

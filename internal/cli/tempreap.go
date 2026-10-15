@@ -9,6 +9,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -85,6 +86,9 @@ func reapTemp(rt runtime.Runtime, roots []string, stamp string) {
 			return
 		}
 	}
+	// Views of repositories that are gone; the sweep keeps one it cannot judge or that holds an
+	// unfinished rebase or merge.
+	_, _ = forkspace.SweepGitViews()
 	if err := os.MkdirAll(filepath.Dir(stamp), 0o755); err == nil {
 		_ = os.WriteFile(stamp, nil, 0o644)
 	}

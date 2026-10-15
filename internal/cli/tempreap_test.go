@@ -11,6 +11,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	containerruntime "github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
@@ -189,12 +190,25 @@ func TestTempReapRetriesAPassThatCouldNotListMounts(t *testing.T) {
 		t.Fatal("a pass removed an entry without knowing what is mounted")
 	}
 
+	// The pass also drops git views whose repository is gone.
+	views := t.TempDir()
+	t.Setenv(forkspace.GitViewRootEnv, views)
+	view := filepath.Join(views, "0123456789abcdef")
+	if err := os.Mkdir(view, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "gone-repo", "objects"), filepath.Join(view, "objects")); err != nil {
+		t.Fatal(err)
+	}
 	reapTemp(fake("working", "#!/bin/sh\nexit 0\n"), []string{filepath.Join(tmp, "missing"), tmp}, stamp)
 	if !pathExists(stamp) {
 		t.Fatal("a pass that listed mounts did not count for the day")
 	}
 	if pathExists(orphan) {
 		t.Error("the retried pass left the old, unmounted entry behind")
+	}
+	if pathExists(view) {
+		t.Error("the pass left the view of a repository that is gone")
 	}
 }
 
