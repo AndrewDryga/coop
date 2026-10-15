@@ -110,7 +110,7 @@ func runLiveACPTests(m *testing.M) int {
 		return 1
 	}
 	coopE2EBinary = filepath.Join(coopE2ELayout.Root, "coop")
-	build := exec.Command("go", "build", "-trimpath", "-tags", "cooplivetest", "-o", coopE2EBinary, ".")
+	build := exec.Command("go", "build", "-trimpath", "-o", coopE2EBinary, ".")
 	build.Dir = root
 	buildOutput := liveprovider.NewBoundedBuffer(liveACPStderrLimit)
 	build.Stdout, build.Stderr = buildOutput, buildOutput
@@ -150,7 +150,6 @@ type liveACP struct {
 	supervisor  string
 	cleanupRoot string
 	cidDir      string
-	processDir  string
 	credentials *liveprovider.Prepared
 	// filtered means this supervisor runs behind the gateway for a brokered API key, so its
 	// scope is frozen to that one provider's admitted accounts. A preset whose ladder needs
@@ -195,33 +194,26 @@ func startLiveACP(t *testing.T, provider string, requiredProviders ...string) *l
 		t.Fatalf("%s source credentials changed before ACP start", provider)
 	}
 	supervisor := "acp-live-" + strings.ReplaceAll(newForeignSessionID(t), "-", "")
-	control, processDir, err := liveprovider.NewProcessControl(processLayout, true)
-	if err != nil {
-		failLiveACPSetup(t, "process_control")
-	}
 	// A provider whose credential is a brokered API key runs only behind the filtered gateway,
 	// so its supervisor is started filtered; it qualifies the disposable state tree itself on
 	// first launch. A signed-in provider keeps the open path this suite was written for.
 	brokered, err := liveprovider.AnyBrokersKey(coopE2ERealConfig, selections)
 	if err != nil {
-		control.Close()
 		failLiveACPSetup(t, "credential_kind")
 	}
 	if brokered {
 		// The supervisor qualifies its disposable state tree itself (a `net setup`), and that
 		// builds with the Docker Buildx plugin its isolated home would otherwise not find.
 		if err := liveprovider.LinkDockerPlugins(processLayout); err != nil {
-			control.Close()
 			failLiveACPSetup(t, "docker_plugins")
 		}
 	}
 	environment, err := liveprovider.ProcessEnvironment(
 		processLayout, os.Getenv("PATH"), coopE2ERuntimeSettings, liveprovider.ProcessSpec{
-			Supervisor: supervisor, ProcessDir: processDir, ControlFD: 3, Filtered: brokered,
+			Supervisor: supervisor, Filtered: brokered,
 		},
 	)
 	if err != nil {
-		control.Close()
 		failLiveACPSetup(t, "environment")
 	}
 	t.Setenv("COOP_CONFIG_DIR", processLayout.Config)
@@ -232,16 +224,13 @@ func startLiveACP(t *testing.T, provider string, requiredProviders ...string) *l
 	cmd := exec.Command(coopE2EBinary, args...)
 	cmd.Dir = coopE2ERepo
 	cmd.Env = append([]string(nil), environment...)
-	cmd.ExtraFiles = []*os.File{control}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stderr := liveprovider.NewBoundedBuffer(liveACPStderrLimit)
 	cmd.Stderr = stderr
 	stdin, stdout, err := procharness.StartStdio(cmd)
 	if err != nil {
-		control.Close()
 		failLiveACPSetup(t, "stdio_start")
 	}
-	control.Close()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	c := newACPClientWithLimits(stdin, acpClientLimits{
@@ -259,7 +248,7 @@ func startLiveACP(t *testing.T, provider string, requiredProviders ...string) *l
 		stdout: stdout, readDone: readDone,
 		runtime: coopE2ERuntime, supervisor: supervisor,
 		cleanupRoot: processLayout.Root, cidDir: processLayout.State,
-		processDir: processDir, credentials: credentials, filtered: brokered,
+		credentials: credentials, filtered: brokered,
 	}
 	t.Cleanup(func() { live.stop(t) })
 	return live
@@ -334,7 +323,8 @@ func (a *liveACP) stop(t *testing.T) {
 	}()
 	var shutdownPhase string
 	var shutdownErr error
-	revokeErr := a.credentials.Revoke()
+	// Closing stdin is the editor going away: the supervisor stops its generations and sweeps its own
+	// boxes. Only a supervisor that ignores that gets its process group signalled.
 	_ = a.stdin.Close()
 	select {
 	case err := <-a.done:
@@ -361,7 +351,7 @@ func (a *liveACP) stop(t *testing.T) {
 
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	cleanupErr := liveprovider.CleanupSupervisor(cleanupCtx, liveprovider.SupervisorCleanupSpec{
-		Root: a.cleanupRoot, CIDDir: a.cidDir, ProcessDir: a.processDir, Supervisor: a.supervisor,
+		Root: a.cleanupRoot, CIDDir: a.cidDir, Supervisor: a.supervisor,
 		LabelKey: liveprovider.SupervisorLabelKey, OperationTimeout: 2 * time.Second,
 		QuietPeriod: time.Second, PollInterval: 100 * time.Millisecond,
 	}, liveprovider.SupervisorCleanupOps{
@@ -372,15 +362,9 @@ func (a *liveACP) stop(t *testing.T) {
 	if cleanupErr != nil {
 		t.Errorf("live ACP cleanup failure: %s", a.diagnostic("cleanup", cleanupErr))
 	}
-	if revokeErr != nil {
-		// The published path was revoked before shutdown, but an existing box can
-		// still write through its bind mount while the private tombstone is removed.
-		// Retry physical deletion only after all producers and mounts are gone.
-		t.Logf("retrying live credential revocation after cleanup: %s", a.diagnostic("credential_revoke", revokeErr))
-		revokeErr = a.credentials.Revoke()
-	}
-	if revokeErr != nil {
-		t.Errorf("live ACP credential revocation failure: %s", a.diagnostic("credential_revoke", revokeErr))
+	// After the sweep, which removes the boxes that could still write into the projected credentials.
+	if err := a.credentials.Revoke(); err != nil {
+		t.Errorf("live ACP credential removal failure: %s", a.diagnostic("credential_revoke", err))
 	}
 	if shutdownErr != nil {
 		t.Errorf("live ACP shutdown failure: %s", a.diagnostic(shutdownPhase, shutdownErr))

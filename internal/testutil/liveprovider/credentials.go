@@ -17,7 +17,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -39,22 +38,17 @@ type Selection struct {
 
 // Prepared is an isolated credential config plus the opaque source-integrity baseline that made it.
 type Prepared struct {
-	ConfigDir    string
-	accounts     map[string]string
-	configured   map[string]bool
-	envBacked    map[string]bool
-	hostBacked   map[string]bool
-	profileDirs  map[string]string
-	native       map[string]box.NativeAccessSnapshot
-	key          [32]byte
-	inputs       []sourceInput
-	baseline     [][32]byte
-	revokeMu     sync.Mutex
-	revokePath   string
-	revokeActive bool
+	ConfigDir   string
+	accounts    map[string]string
+	configured  map[string]bool
+	envBacked   map[string]bool
+	hostBacked  map[string]bool
+	profileDirs map[string]string
+	native      map[string]box.NativeAccessSnapshot
+	key         [32]byte
+	inputs      []sourceInput
+	baseline    [][32]byte
 }
-
-var removeRevokedCredentialTree = os.RemoveAll
 
 type sourceInput struct {
 	provider string
@@ -186,9 +180,6 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 	}
 	if _, err := rand.Read(p.key[:]); err != nil {
 		return nil, errors.New("create source-integrity key")
-	}
-	if err := p.ensureRevocationPathLocked(); err != nil {
-		return nil, err
 	}
 	p.inputs, err = sourceInputs(sourceDir, ordered)
 	if err != nil {
@@ -349,75 +340,16 @@ func importNativeSnapshot(stage string, selection Selection, snapshot box.Native
 	return box.ImportNativeSignIn(context.Background(), &config.Config{ConfigDir: stage}, selection.Provider, selection.Account, home)
 }
 
-// RevocationPath is the private, parent-known tombstone shared with the tagged timeout path.
-func (p *Prepared) RevocationPath() (string, error) {
-	if p == nil || p.ConfigDir == "" {
-		return "", errors.New("missing isolated credential directory")
-	}
-	p.revokeMu.Lock()
-	defer p.revokeMu.Unlock()
-	if err := p.ensureRevocationPathLocked(); err != nil {
-		return "", err
-	}
-	return p.revokePath, nil
-}
-
-func (p *Prepared) ensureRevocationPathLocked() error {
-	if p.revokePath == "" {
-		var nonce [16]byte
-		if _, err := rand.Read(nonce[:]); err != nil {
-			return errors.New("create credential revocation name")
-		}
-		p.revokePath = filepath.Join(
-			filepath.Dir(p.ConfigDir),
-			".coop-live-revoked-"+fmt.Sprintf("%x", nonce[:]),
-		)
-		if _, err := os.Lstat(p.revokePath); err == nil || !errors.Is(err, os.ErrNotExist) {
-			p.revokePath = ""
-			return errors.New("reserve credential revocation name")
-		}
-	}
-	return nil
-}
-
-// Revoke atomically removes the published credential path, then deletes the renamed private tree.
+// Revoke deletes the projected credential directory. Harnesses call it after the processes and
+// boxes that used it are gone, so nothing can write into it again; repeating it is harmless.
 // Source fingerprints remain usable because they describe the original vault, never ConfigDir.
-// A failed tree removal is retryable by this process even when the tagged child performed the move.
 func (p *Prepared) Revoke() error {
 	if p == nil || p.ConfigDir == "" {
 		return errors.New("missing isolated credential directory")
 	}
-	p.revokeMu.Lock()
-	defer p.revokeMu.Unlock()
-	if err := p.ensureRevocationPathLocked(); err != nil {
-		return err
+	if err := os.RemoveAll(p.ConfigDir); err != nil {
+		return errors.New("remove isolated credential directory")
 	}
-	if !p.revokeActive {
-		if err := os.Rename(p.ConfigDir, p.revokePath); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				info, statErr := os.Lstat(p.revokePath)
-				if errors.Is(statErr, os.ErrNotExist) {
-					return nil
-				}
-				if statErr != nil {
-					return errors.New("inspect revoked credential directory")
-				}
-				stat, ok := info.Sys().(*syscall.Stat_t)
-				if !info.IsDir() || info.Mode().Perm()&0o077 != 0 || !ok || int(stat.Uid) != os.Getuid() {
-					return errors.New("invalid revoked credential directory")
-				}
-				p.revokeActive = true
-			} else {
-				return errors.New("revoke isolated credential directory")
-			}
-		} else {
-			p.revokeActive = true
-		}
-	}
-	if err := removeRevokedCredentialTree(p.revokePath); err != nil {
-		return errors.New("remove revoked credential directory")
-	}
-	p.revokeActive = false
 	return nil
 }
 

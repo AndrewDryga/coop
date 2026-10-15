@@ -36,7 +36,7 @@ can be invisible to Go's result cache, so unit, race and scoped tests use `-coun
 Scripted CLI/ACP fixture builds reuse immutable bytes only within one package test process.
 The TestMain owns a private cache root and freezes the Go executable/environment before cases
 change PATH/HOME. Canonical source root, package and normalized build tags distinguish entries;
-ordinary and cooplivetest builds never alias. Every case gets a new writable executable inode.
+builds with different tags never alias. Every case gets a new writable executable inode.
 Do not change source/build inputs during m.Run or treat this as persistent cross-version caching.
 
 ACP/task helpers own their stdout reader independently of Cmd.Wait; final buffered frames cannot
@@ -50,6 +50,7 @@ owners still build their real inputs. Pure log cap/rune tests avoid full review 
 large-output pager, HTTP, session custody and failed-review owners remain.
 
 ## Changelog
+- 2026-10-15 — the fixture-build cache note no longer names the retired cooplivetest tag.
 - 2026-10-15 — deleted the Make recipe tests (tools/test_make_checks.py), which ran real Make with
   stub binaries; release_test.go now holds the owner lists, the race-constraint fact and shard
   sides, and the CI metadata path is gone.

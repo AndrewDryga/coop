@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-10-09
+updated: 2026-10-15
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -40,12 +40,16 @@ this one has it.
   data instead. Granting the edge costs two edits on purpose (the table AND
   `uiPresentationOwners`), and a grant that outlives its import fails too.
 - The scan is stdlib-only (`go/parser`, ImportsOnly) and build-tag agnostic, so the frozen graph is
-  the same under every GOOS and tag — `internal/runtime → internal/liveprocess` exists only behind
-  `cooplivetest` and still counts. `_test.go` files are excluded (a test may import anything it
+  the same under every GOOS and tag: an edge that exists only behind a build tag still counts.
+  `_test.go` files are excluded (a test may import anything it
   needs — `internal/scaffold`'s tests drive `internal/box` on purpose), and so is `testdata`, whose
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-15 — internal/liveprocess and the cooplivetest process-control files in acpctl and
+  runtime are deleted (task 2026-10-15-simplify-process-control-in-the-live-test-harnes): dropped
+  the liveprocess node and its edges from acpctl, cli, runtime and testutil/liveprovider, and the
+  processidentity edges acpctl and liveprovider no longer have.
 - 2026-10-09 — acpctl imports safefile for confined, no-follow legacy binding migration reads;
   verified the edge against bindings.go and the import allowlist.
 - 2026-10-09 — added test-only `nativeauth` (leaf) and `nativedocker` (gatewayimage, runtime,

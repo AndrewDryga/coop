@@ -2,19 +2,14 @@ package liveprovider
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/liveprocess"
-	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -254,141 +249,4 @@ func TestCleanupSupervisorReportsLabelAndCancellationFailures(t *testing.T) {
 			t.Fatalf("sleep cancellation = %v", err)
 		}
 	})
-}
-
-func TestCleanupSupervisorTerminatesAuthenticatedGroupsBeforeLabelSweep(t *testing.T) {
-	layout, err := procharness.NewLayout(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	processDir := filepath.Join(layout.XDGState, "live-process-groups")
-	if err := os.Mkdir(processDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("/bin/sh", "-c", "trap '' TERM; while :; do /bin/sleep 1; done")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	defer func() {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-		}
-	}()
-	writeProcessRecord(t, processDir, liveprocess.Record{
-		Schema: liveprocess.RecordSchema, PID: cmd.Process.Pid, PGID: cmd.Process.Pid,
-		UID: os.Getuid(), StartToken: processidentity.StartToken(cmd.Process.Pid), Supervisor: "supervisor",
-	})
-	labelCalls := 0
-	err = CleanupSupervisor(context.Background(), SupervisorCleanupSpec{
-		Root: layout.Root, CIDDir: layout.State, ProcessDir: processDir,
-		Supervisor: "supervisor", LabelKey: "label", ProcessGrace: 50 * time.Millisecond,
-		OperationTimeout: time.Second, QuietPeriod: time.Millisecond, PollInterval: time.Millisecond,
-	}, SupervisorCleanupOps{
-		RemoveContainer: func(context.Context, string) error { return nil },
-		RemoveByLabel: func(context.Context, string, string) (int, error) {
-			labelCalls++
-			if processGroupAlive(cmd.Process.Pid) {
-				t.Fatal("label sweep began before authenticated process group disappeared")
-			}
-			return 0, nil
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if labelCalls < 2 {
-		t.Fatalf("label sweep calls = %d, want quiet-period proof", labelCalls)
-	}
-}
-
-func TestCleanupSupervisorNeverSignalsMismatchedProcessIdentity(t *testing.T) {
-	layout, err := procharness.NewLayout(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	processDir := filepath.Join(layout.XDGState, "live-process-groups")
-	if err := os.Mkdir(processDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("/bin/sh", "-c", "while :; do /bin/sleep 1; done")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	defer func() {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		<-done
-	}()
-	writeProcessRecord(t, processDir, liveprocess.Record{
-		Schema: liveprocess.RecordSchema, PID: cmd.Process.Pid, PGID: cmd.Process.Pid,
-		UID: os.Getuid(), StartToken: processidentity.StartToken(cmd.Process.Pid) + "-stale", Supervisor: "supervisor",
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
-	defer cancel()
-	err = CleanupSupervisor(ctx, SupervisorCleanupSpec{
-		Root: layout.Root, CIDDir: layout.State, ProcessDir: processDir,
-		Supervisor: "supervisor", LabelKey: "label", ProcessGrace: time.Millisecond,
-		OperationTimeout: time.Millisecond, QuietPeriod: time.Millisecond, PollInterval: time.Millisecond,
-	}, SupervisorCleanupOps{
-		RemoveContainer: func(context.Context, string) error { return nil },
-		RemoveByLabel:   func(context.Context, string, string) (int, error) { return 0, nil },
-	})
-	if !errors.Is(err, context.DeadlineExceeded) || !processGroupAlive(cmd.Process.Pid) {
-		t.Fatalf("mismatched identity cleanup = %v, group alive=%t", err, processGroupAlive(cmd.Process.Pid))
-	}
-}
-
-func TestCleanupSupervisorRejectsMalformedRecordButStillSweeps(t *testing.T) {
-	layout, err := procharness.NewLayout(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	processDir := filepath.Join(layout.XDGState, "live-process-groups")
-	if err := os.Mkdir(processDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeRawResult(t, filepath.Join(processDir, "malformed.json"), []byte("{}\n"))
-	// A malformed record means the producers never provably quiesced, so the label sweep must keep
-	// polling until the caller gives up. Assert that on a fake clock with an explicit cancel after
-	// the third sweep — never on how many 1ms timers a loaded scheduler fires inside 25ms, which is
-	// what made this test flake under the race suite.
-	clock := &cleanupClock{now: time.Unix(1, 0)}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	labelCalls := 0
-	err = CleanupSupervisor(ctx, SupervisorCleanupSpec{
-		Root: layout.Root, CIDDir: layout.State, ProcessDir: processDir,
-		Supervisor: "supervisor", LabelKey: "label", QuietPeriod: time.Millisecond, PollInterval: time.Millisecond,
-	}, SupervisorCleanupOps{
-		RemoveContainer: func(context.Context, string) error { return nil },
-		RemoveByLabel: func(context.Context, string, string) (int, error) {
-			labelCalls++
-			if labelCalls == 3 {
-				cancel()
-			}
-			return 0, nil
-		},
-		Now: clock.Now, Sleep: clock.Sleep,
-	})
-	if !errors.Is(err, context.Canceled) || labelCalls != 3 || !strings.Contains(err.Error(), "invalid live process record") {
-		t.Fatalf("malformed cleanup = %v, label calls=%d", err, labelCalls)
-	}
-}
-
-func writeProcessRecord(t *testing.T, dir string, record liveprocess.Record) {
-	t.Helper()
-	data, err := json.Marshal(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "record.json"), append(data, '\n'), 0o600); err != nil {
-		t.Fatal(err)
-	}
 }

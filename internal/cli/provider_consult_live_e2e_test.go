@@ -22,7 +22,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/egress"
-	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
@@ -149,21 +148,10 @@ func testProviderPeerLiveCompatibility(t *testing.T, delegate bool) {
 			return
 		}
 	}
-	control, _, err := liveprovider.NewProcessControl(layout, false)
-	if err != nil {
-		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "process_control"))
-		return
-	}
-	defer control.Close()
-	revokePath, err := prepared.RevocationPath()
-	if err != nil {
-		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "credential_revocation"))
-		return
-	}
 	childSpec := liveprovider.ConsultChildSpec{
 		Path: os.Getenv("PATH"), Marker: marker, Targets: targets, Strict: strict, Delegate: delegate,
 		ResultFile: resultFile, AttemptDir: attemptDir, Supervisor: supervisor, CIDDir: cidDir,
-		PreflightReasons: preflight, ControlFD: 3, RevokePath: revokePath, Runtime: runtimeSettings,
+		PreflightReasons: preflight, Runtime: runtimeSettings,
 	}
 	// One brokered API key anywhere in the ring puts the WHOLE ring behind this host's filtered
 	// gateway — the gateway's broker is the only way Coop serves such a key, and the lead consults
@@ -186,12 +174,10 @@ func testProviderPeerLiveCompatibility(t *testing.T, delegate bool) {
 	processResult := procharness.Run(ctx, procharness.Command{
 		Path: os.Args[0], Args: []string{"-test.run=^TestProviderConsultLiveChild$", "-test.v=false"},
 		Dir: layout.Repo, Env: env, MaxOutput: liveOutputLimit, KillGrace: 3 * time.Second,
-		ExtraFiles: []*os.File{control}, BeforeCancel: prepared.Revoke,
 	})
 	timedOut := liveprovider.ProcessDeadlineExceeded(processResult)
 	cancel()
 	results := classifyConsultLiveChild(targets, strict, layout.Root, resultFile, attemptDir, processResult, timedOut)
-	revokeErr := prepared.Revoke()
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), liveCleanupDeadline)
 	cleanupErr := liveprovider.CleanupSupervisor(cleanupCtx, liveprovider.SupervisorCleanupSpec{
 		Root: layout.Root, CIDDir: cidDir, Supervisor: supervisor, LabelKey: box.LabelSupervisor,
@@ -202,6 +188,7 @@ func testProviderPeerLiveCompatibility(t *testing.T, delegate bool) {
 		RemoveByLabel:   rt.RemoveByLabel,
 	})
 	cancelCleanup()
+	revokeErr := prepared.Revoke() // after the sweep, which removes the boxes that could write into it
 	after, snapshotErr := liveprovider.VerifyRepository(layout, before)
 	sourceErr := prepared.VerifySources()
 	attempted := observedConsultAttempts(layout.Root, attemptDir, targets)
@@ -775,7 +762,7 @@ func parseConsultLiveStrict(raw string) (bool, bool) {
 }
 
 func validateConsultLiveChildControls(marker, resultFile, attemptDir, supervisor, cidDir string) error {
-	if !liveprocess.ValidCleanupID(marker) || !liveprocess.ValidCleanupID(supervisor) {
+	if !liveprovider.ValidIdentifier(marker) || !liveprovider.ValidIdentifier(supervisor) {
 		return errors.New("invalid identifier")
 	}
 	repo := filepath.Clean(os.Getenv("COOP_REPO"))

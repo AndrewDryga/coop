@@ -195,7 +195,7 @@ func volumeMountpointExposure(path string) (string, error) {
 }
 
 func (r Runtime) volumeOutput(ctx context.Context, limit int, args ...string) ([]byte, error) {
-	data, err := dockerOutput(ctx, r.Name, interruptibleProcessEnvironment(), limit, args...)
+	data, err := dockerOutput(ctx, r.Name, nil, limit, args...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

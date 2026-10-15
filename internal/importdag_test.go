@@ -37,15 +37,14 @@ const (
 // (agent/preset/consult/loopcfg), and the rest are leaves. Changing a line here is changing the
 // architecture: do it deliberately, with the card.
 //
-// runtime→liveprocess is the one edge a default build won't show: it lives in
-// process_group_live.go, behind the `cooplivetest` tag. The scan is tag-agnostic on purpose, so the
-// frozen graph never depends on which tags or GOOS the gate happens to run under.
+// The scan is tag-agnostic on purpose, so the frozen graph never depends on which tags or GOOS the
+// gate happens to run under.
 var allowedEdges = map[string][]string{
-	"acpctl":                {"acpproxy", "agent", "config", "ladder", "liveprocess", "preset", "processidentity", "safefile"},
+	"acpctl":                {"acpproxy", "agent", "config", "ladder", "preset", "safefile"},
 	"acpproxy":              nil,
 	"agent":                 {"config", "egress", "mcp", "safefile"},
 	"box":                   {"agent", "config", "consult", "egress", "forkspace", "fsidentity", "gatewayimage", "mcp", "networkgateway", "networkreport", "networkstate", "networkview", "preset", "processidentity", "project", "runtime", "safefile", "secretscan", "shadowpath", "taskchannel", "ui"},
-	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "egress", "eval", "forkctl", "forkspace", "hostsurface", "ladder", "liveprocess", "loop", "loopcfg", "networkreport", "networkstate", "networkview", "preset", "project", "runtime", "scaffold", "secretscan", "session", "sessionsvc", "taskmcp", "tasks", "ui", "workerconnector", "workerproto"},
+	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "egress", "eval", "forkctl", "forkspace", "hostsurface", "ladder", "loop", "loopcfg", "networkreport", "networkstate", "networkview", "preset", "project", "runtime", "scaffold", "secretscan", "session", "sessionsvc", "taskmcp", "tasks", "ui", "workerconnector", "workerproto"},
 	"config":                nil,
 	"contextc":              {"project"},
 	"egress":                nil,
@@ -57,7 +56,6 @@ var allowedEdges = map[string][]string{
 	"forkspace":             {"fsidentity", "processidentity", "safefile"},
 	"consult":               {"agent"},
 	"ladder":                {"agent"},
-	"liveprocess":           nil,
 	"loop":                  {"agent", "box", "config", "contextc", "forkspace", "ladder", "loopcfg", "preset", "project", "runtime", "taskmcp", "tasks", "ui"},
 	"loopcfg":               {"agent", "safefile"},
 	"mcp":                   nil,
@@ -68,7 +66,7 @@ var allowedEdges = map[string][]string{
 	"preset":                {"agent", "safefile", "shadowpath"},
 	"processidentity":       nil,
 	"project":               {"egress"},
-	"runtime":               {"config", "liveprocess"},
+	"runtime":               {"config"},
 	"safefile":              nil,
 	"scaffold":              {"agent", "project", "taskstate"},
 	"session":               nil,
@@ -80,7 +78,7 @@ var allowedEdges = map[string][]string{
 	"tasks":                 {"box", "config", "forkspace", "processidentity", "project", "taskstate", "ui"},
 	"taskstate":             nil,
 	"testutil/gitrepo":      nil,
-	"testutil/liveprovider": {"agent", "box", "config", "liveprocess", "processidentity", "testutil/procharness"},
+	"testutil/liveprovider": {"agent", "box", "config", "testutil/procharness"},
 	"testutil/dockersock":   nil,
 	"testutil/nativeauth":   nil,
 	"testutil/nativedocker": {"gatewayimage", "runtime", "testutil/dockersock"},
@@ -267,8 +265,8 @@ func scan(t *testing.T) map[string]map[string]bool {
 // non-test source file, the set of internal packages it imports.
 //
 // Deliberately stdlib-only and build-tag agnostic (go/parser, ImportsOnly): the frozen graph must
-// be the same on every GOOS and under every tag combination, so an edge that exists only behind
-// `cooplivetest` still counts. `_test.go` files are excluded — a test may import anything it needs
+// be the same on every GOOS and under every tag combination, so an edge that exists only behind a
+// build tag still counts. `_test.go` files are excluded — a test may import anything it needs
 // (internal/scaffold's tests drive internal/box on purpose) — and so is `testdata`, which holds
 // standalone fixture programs that import internal packages to act as independent oracles.
 func scanImports(root string) (map[string]map[string]bool, error) {

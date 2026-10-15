@@ -45,8 +45,8 @@ lint: ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and
 # which the tree never uses, so the other platform never needs a C toolchain.
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet ./... || exit 1; done
 # The e2e/live files sit behind build tags, so the pass above never compiles them — a lost cancel
-# lived there unseen. Every tag in the tree in one pass; the untagged pass still covers !cooplivetest.
-	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,cooplivetest,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e ./... || exit 1; done
+# lived there unseen. Every tag in the tree in one pass.
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e ./... || exit 1; done
 	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck is not installed — run: make install-staticcheck"; exit 1; }
 	@staticcheck -version | grep -qF "($(patsubst v%,%,$(STATICCHECK_VERSION)))" || { echo "$$(staticcheck -version) is not the pinned $(STATICCHECK_VERSION) — run: make install-staticcheck"; exit 1; }
 	@staticcheck -debug.version | awk '$$1 == "golang.org/x/tools@$(STATICCHECK_XTOOLS_VERSION)" {found=1} END {exit !found}' || { echo "staticcheck needs the pinned Go importer $(STATICCHECK_XTOOLS_VERSION) — run: make install-staticcheck"; exit 1; }
@@ -232,7 +232,7 @@ check-local: require-git-lfs ## Scoped local checks; SCOPE=docs|rules|agent|runt
 	@echo 'Local checks: $(ITERATION_SCOPE) owner and reverse consumers; no race or live providers'
 	@files="$$(gofmt -l .)" || exit 1; [ -z "$$files" ] || { printf '%s\n' "$$files"; echo 'gofmt: files need formatting'; exit 1; }
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
-	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,cooplivetest,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
 	@go test -count=1 -p 4 -timeout 20m $(LOCAL_$(ITERATION_SCOPE))
 else ifeq ($(SCOPE),docs)
 check-local: docs-check align rules-check tools-test
@@ -260,60 +260,60 @@ provider-scripted-other-e2e: ## The scripted provider suite's other tests and it
 	@go test -count=1 ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
 	@go test -tags providere2e -run '^TestProviderScripted' -skip '$(PROVIDER_SHARD)' -count=1 -timeout 20m -v ./internal/cli/
 
-# Selects every deterministic test in the cooplivetest/providerlivee2e files; a test that needs a
+# Selects every deterministic test in the providerlivee2e files; a test that needs a
 # real provider is named …LiveCompatibility (its subprocess …LiveChild) and runs only on demand.
 # internal/live_selection_test.go fails when a tagged test is neither, or its package is not listed
 # here, so a rename or a new package cannot drop one silently.
-live-process-control: ## Deterministic denial tests for tagged live-test process ownership
-	@go test -race -tags providerlivee2e,cooplivetest -run '^Test(LiveACPProcess|LiveInterruptible|LiveRunInterruptible|ProviderConsultLiveContract|ProviderLoopLiveContract|ProviderResumeLiveContract|ProviderNetworkLiveContract|ProviderLiveStreamContract|ProviderAccountsLiveContract)' -count=1 ./internal/cli/ ./internal/acpctl/ ./internal/runtime/ ./internal/loop/
+live-process-control: ## Deterministic tests of the tagged live-provider harness and contracts
+	@go test -race -tags providerlivee2e -run '^Test(ProviderConsultLiveContract|ProviderLoopLiveContract|ProviderResumeLiveContract|ProviderNetworkLiveContract|ProviderLiveStreamContract|ProviderAccountsLiveContract)' -count=1 ./internal/cli/ ./internal/loop/
 	@tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' 0; go test -c -tags acpe2e -o "$$tmp" ./internal/acpproxy/
 
 provider-live-e2e: ## Opt-in read-only upstream CLI probe (set COOP_LIVE_TARGETS=provider,...)
 	@test -n "$$COOP_LIVE_TARGETS" || { echo 'COOP_LIVE_TARGETS is required (for example: codex,gemini@work)'; exit 2; }
-	@go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderLiveCompatibility$$' -count=1 -v ./internal/cli/
+	@go test -timeout 30m -tags providerlivee2e -run '^TestProviderLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-live-e2e-all: ## Strict read-only upstream CLI probe for every registered provider
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
-		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderLiveCompatibility$$' -count=1 -v ./internal/cli/
+		go test -timeout 30m -tags providerlivee2e -run '^TestProviderLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-resume-live-e2e: ## Opt-in two-process native session resume (set COOP_LIVE_TARGETS=provider,...)
 	@test -n "$$COOP_LIVE_TARGETS" || { echo 'COOP_LIVE_TARGETS is required (for example: codex,gemini@work)'; exit 2; }
-	@go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderResumeLiveCompatibility$$' -count=1 -v ./internal/cli/
+	@go test -timeout 30m -tags providerlivee2e -run '^TestProviderResumeLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-resume-live-e2e-all: ## Strict two-process native session resume for every provider
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
-		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderResumeLiveCompatibility$$' -count=1 -v ./internal/cli/
+		go test -timeout 30m -tags providerlivee2e -run '^TestProviderResumeLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-network-live-e2e: ## Opt-in credentialed provider probe THROUGH the restricted gateway (set COOP_LIVE_TARGETS=provider,...)
 	@test -n "$$COOP_LIVE_TARGETS" || { echo 'COOP_LIVE_TARGETS is required (for example: claude,codex@work)'; exit 2; }
-	@go test -timeout 55m -tags providerlivee2e,cooplivetest -run '^TestProviderNetworkLiveCompatibility$$' -count=1 -v ./internal/cli/
+	@go test -timeout 55m -tags providerlivee2e -run '^TestProviderNetworkLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-network-live-e2e-all: ## Strict filtered-egress provider probe for every registered provider
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
-		go test -timeout 55m -tags providerlivee2e,cooplivetest -run '^TestProviderNetworkLiveCompatibility$$' -count=1 -v ./internal/cli/
+		go test -timeout 55m -tags providerlivee2e -run '^TestProviderNetworkLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-loop-live-e2e: ## Opt-in one-attempt live provider task completion (set COOP_LIVE_TARGETS=provider,...)
 	@test -n "$$COOP_LIVE_TARGETS" || { echo 'COOP_LIVE_TARGETS is required (for example: codex,gemini@work)'; exit 2; }
-	@go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderLoopLiveCompatibility$$' -count=1 -v ./internal/cli/
+	@go test -timeout 30m -tags providerlivee2e -run '^TestProviderLoopLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-loop-live-e2e-all: ## Strict one-attempt task completion for every registered provider
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
-		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderLoopLiveCompatibility$$' -count=1 -v ./internal/cli/
+		go test -timeout 30m -tags providerlivee2e -run '^TestProviderLoopLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-consult-live-e2e: ## Opt-in four-provider real coop-consult probe (four peer CLI sessions)
 	@test -n "$$COOP_LIVE_TARGETS" || { echo 'COOP_LIVE_TARGETS is required (claude,codex,gemini,grok in that order)'; exit 2; }
-	@go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderConsultLiveCompatibility$$' -count=1 -v ./internal/cli/
+	@go test -timeout 30m -tags providerlivee2e -run '^TestProviderConsultLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-consult-live-e2e-all: ## Strict real coop-consult probe for every provider
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
-		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderConsultLiveCompatibility$$' -count=1 -v ./internal/cli/
+		go test -timeout 30m -tags providerlivee2e -run '^TestProviderConsultLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-accounts-live-e2e-all: ## Live model calls: real loop recovery for each provider with two configured accounts
-	@COOP_LIVE_TARGETS=all go test -timeout 55m -tags providerlivee2e,cooplivetest -run '^TestProviderAccountsLiveCompatibility$$' -count=1 -v ./internal/loop/
+	@COOP_LIVE_TARGETS=all go test -timeout 55m -tags providerlivee2e -run '^TestProviderAccountsLiveCompatibility$$' -count=1 -v ./internal/loop/
 
 provider-delegate-live-e2e-all: ## Strict write-capable coop-delegate probe for every provider
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
-		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderDelegateLiveCompatibility$$' -count=1 -v ./internal/cli/
+		go test -timeout 30m -tags providerlivee2e -run '^TestProviderDelegateLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 # Qualifies the locked clients before a pin moves (package.json/package-lock.json, an adapter's
 # LockedClients): it rebuilds this host's box and filtered setup from the working tree, runs every

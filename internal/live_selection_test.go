@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-// A test that exists only under the cooplivetest/providerlivee2e tags runs under no ordinary
+// A test that exists only under the providerlivee2e tag runs under no ordinary
 // `go test`. The deterministic ones must be selected by `make live-process-control`; the ones that
 // need a real provider (named …LiveCompatibility, with …LiveChild subprocesses) run only on demand.
 // A rename, or a tagged file in a package the target does not list, would drop a deterministic test
@@ -44,7 +44,7 @@ func TestLiveSelectionProblemsFindWhatTheTargetMisses(t *testing.T) {
 		}
 	}
 	write("Makefile", "live-process-control: ## x\n"+
-		"\t@go test -race -tags providerlivee2e,cooplivetest -run '^Test(LiveA|LiveB)' -count=1 ./internal/a/ ./internal/b/\n"+
+		"\t@go test -race -tags providerlivee2e -run '^Test(LiveA|LiveB)' -count=1 ./internal/a/ ./internal/b/\n"+
 		"provider-live-e2e: ## y\n\t@go test -run \"^TestLiveC\" ./internal/c/\n")
 	write("internal/a/a_live_test.go", "// A header comment above the build line.\n\n//go:build providerlivee2e && !windows\n\npackage a\n\n"+
 		"func TestLiveAWorks(t *testing.T)                  {}\n"+
@@ -52,11 +52,11 @@ func TestLiveSelectionProblemsFindWhatTheTargetMisses(t *testing.T) {
 		"func TestProviderLiveChild(t *testing.T)           {}\n"+
 		"func TestMain(m *testing.M)                        {}\n"+
 		"func TestRenamedDeterministic(t *testing.T)        {}\n")
-	write("internal/a/a_default_test.go", "//go:build !cooplivetest\n\npackage a\n\nfunc TestUntagged(t *testing.T) {}\n")
+	write("internal/a/a_default_test.go", "//go:build !providerlivee2e\n\npackage a\n\nfunc TestUntagged(t *testing.T) {}\n")
 	write("internal/b/b_test.go", "package b\n\nfunc TestLiveBPlain(t *testing.T) {}\n")
-	write("internal/c/c_live_test.go", "//go:build cooplivetest\n\npackage c\n\nfunc TestLiveAUnlisted(t *testing.T) {}\n")
-	write("internal/a/testdata/x_live_test.go", "//go:build cooplivetest\n\npackage x\n\nfunc TestIgnored(t *testing.T) {}\n")
-	write(".hidden/x_live_test.go", "//go:build cooplivetest\n\npackage x\n\nfunc TestIgnored(t *testing.T) {}\n")
+	write("internal/c/c_live_test.go", "//go:build providerlivee2e\n\npackage c\n\nfunc TestLiveAUnlisted(t *testing.T) {}\n")
+	write("internal/a/testdata/x_live_test.go", "//go:build providerlivee2e\n\npackage x\n\nfunc TestIgnored(t *testing.T) {}\n")
+	write(".hidden/x_live_test.go", "//go:build providerlivee2e\n\npackage x\n\nfunc TestIgnored(t *testing.T) {}\n")
 
 	problems, err := liveSelectionProblems(root)
 	if err != nil {
@@ -73,13 +73,13 @@ func TestLiveSelectionProblemsFindWhatTheTargetMisses(t *testing.T) {
 }
 
 func TestLiveProcessControlSelectionRejectsAnUnreadableTarget(t *testing.T) {
-	const liveTags = "-tags providerlivee2e,cooplivetest"
+	const liveTags = "-tags providerlivee2e"
 	for name, makefile := range map[string]string{
 		"no target":        "check:\n\t@go test " + liveTags + " -run '^TestX' ./internal/x/\n",
 		"double quotes":    "live-process-control:\n\t@go test " + liveTags + " -run \"^TestX\" ./internal/x/\n",
 		"after the recipe": "live-process-control:\n\t@echo ok\n\nother:\n\t@go test " + liveTags + " -run '^TestX' ./internal/x/\n",
 		"no packages":      "live-process-control:\n\t@go test " + liveTags + " -run '^TestX' ./...\n",
-		"one live tag":     "live-process-control:\n\t@go test -tags providerlivee2e -run '^TestX' ./internal/x/\n",
+		"no live tag":      "live-process-control:\n\t@go test -tags acpe2e -run '^TestX' ./internal/x/\n",
 		"a skip":           "live-process-control:\n\t@go test " + liveTags + " -run '^TestX' -skip '^TestXY' ./internal/x/\n",
 	} {
 		if _, _, err := liveProcessControlSelection(makefile); err == nil {
@@ -133,7 +133,7 @@ func liveSelectionProblems(root string) ([]string, error) {
 }
 
 // liveProcessControlSelection reads the -run pattern and the packages of the target's go test line.
-// It refuses a line it cannot model: one without both live tags compiles fewer tagged files than the
+// It refuses a line it cannot model: one without the live tag compiles fewer tagged files than the
 // scan assumes, and a -skip drops tests the -run pattern still matches.
 func liveProcessControlSelection(makefile string) (*regexp.Regexp, []string, error) {
 	_, recipe, ok := strings.Cut("\n"+makefile, "\nlive-process-control:")
@@ -169,8 +169,8 @@ func liveProcessControlSelection(makefile string) (*regexp.Regexp, []string, err
 				pkgs = append(pkgs, path.Clean(field))
 			}
 		}
-		if !tagged["cooplivetest"] || !tagged["providerlivee2e"] {
-			return nil, nil, errors.New("live-process-control's go test line lacks -tags providerlivee2e,cooplivetest: " + line)
+		if !tagged["providerlivee2e"] {
+			return nil, nil, errors.New("live-process-control's go test line lacks -tags providerlivee2e: " + line)
 		}
 		if len(pkgs) == 0 {
 			return nil, nil, errors.New("live-process-control's go test line names no packages: " + line)
@@ -184,7 +184,7 @@ func liveProcessControlSelection(makefile string) (*regexp.Regexp, []string, err
 // live tags, decided the way `go test` decides it on this platform.
 func liveTaggedTests(root string) (map[string][]string, error) {
 	live := build.Default
-	live.BuildTags = []string{"cooplivetest", "providerlivee2e"}
+	live.BuildTags = []string{"providerlivee2e"}
 	testFunc := regexp.MustCompile(`^func (Test\w*)\(\w+ \*testing\.T\)`)
 	tests := map[string][]string{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

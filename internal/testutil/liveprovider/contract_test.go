@@ -13,7 +13,6 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/liveprocess"
 	coopruntime "github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -214,10 +213,9 @@ func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	revokePath := filepath.Join(filepath.Dir(layout.Config), ".coop-live-revoked-00000000000000000000000000000000")
 	env, err := ChildEnvironment(layout, ChildSpec{
 		Path: "/safe/bin", Target: "codex@work", Marker: "MARKER", ResultFile: filepath.Join(layout.State, "result.json"),
-		AttemptFile: filepath.Join(layout.State, "attempted"), Supervisor: "supervisor", ControlFD: 3, RevokePath: revokePath,
+		AttemptFile: filepath.Join(layout.State, "attempted"), Supervisor: "supervisor",
 		Runtime: RuntimeSettings{
 			Name: "docker", Image: "image", BaseImage: "base", HomeInBox: "/home/node",
 			ConnectionEnv: map[string]string{"DOCKER_HOST": "unix:///safe/runtime.sock", "CONTAINER_HOST": "FORBIDDEN_RUNTIME_CANARY"},
@@ -235,7 +233,6 @@ func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 		"COOP_MCP_FILE=" + filepath.Join(layout.Config, "missing-mcp.json"),
 		"COOP_RUNTIME=docker", "COOP_IMAGE=image", "COOP_TEST_LIVE_TARGET=codex@work",
 		"COOP_TEST_LIVE_WORKFLOW=prompt",
-		liveprocess.ControlFDEnv + "=3", liveprocess.RevokePathEnv + "=" + revokePath,
 		"GIT_CONFIG_GLOBAL=" + layout.GitConfig, "HOME=" + layout.Home,
 		"XDG_CONFIG_HOME=" + layout.XDGConfig, "DOCKER_HOST=unix:///safe/runtime.sock",
 	} {
@@ -285,14 +282,6 @@ func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 		if _, err := ChildEnvironment(layout, invalid); err == nil {
 			t.Errorf("invalid resume child contract accepted: %+v", invalid)
 		}
-	}
-	if _, err := ChildEnvironment(layout, ChildSpec{ControlFD: 3}); err == nil {
-		t.Fatal("process control without a retryable revocation path was accepted")
-	}
-	if _, err := ChildEnvironment(layout, ChildSpec{
-		RevokePath: filepath.Join(filepath.Dir(layout.Config), ".coop-live-revoked-00000000000000000000000000000000"),
-	}); err == nil {
-		t.Fatal("credential revocation path without process control was accepted")
 	}
 	if _, err := ChildEnvironment(layout, ChildSpec{Runtime: RuntimeSettings{
 		Name: "docker", ConnectionEnv: map[string]string{"DOCKER_HOST": "bad\x00socket"},
@@ -348,12 +337,10 @@ func TestConsultChildRunsBehindTheHostGatewayWhenAsked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	revokePath := filepath.Join(filepath.Dir(layout.Config), ".coop-live-revoked-00000000000000000000000000000000")
 	child := ConsultChildSpec{
 		Path: "/safe/bin", Marker: "CONSULT_MARKER_123", Targets: targets,
 		ResultFile: filepath.Join(layout.State, "consult-result.json"), AttemptDir: attemptDir,
-		Supervisor: "consult-live-123", CIDDir: cidDir, ControlFD: 3, RevokePath: revokePath,
-		Runtime: RuntimeSettings{Name: "docker"},
+		Supervisor: "consult-live-123", CIDDir: cidDir, Runtime: RuntimeSettings{Name: "docker"},
 	}
 
 	host := filepath.Join(t.TempDir(), "state")
@@ -403,11 +390,10 @@ func TestConsultChildEnvironmentIsFixedAndAllowlistOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	revokePath := filepath.Join(filepath.Dir(layout.Config), ".coop-live-revoked-00000000000000000000000000000000")
 	spec := ConsultChildSpec{
 		Path: "/safe/bin", Marker: "CONSULT_MARKER_123", Targets: targets,
 		ResultFile: filepath.Join(layout.State, "consult-result.json"), AttemptDir: attemptDir,
-		Supervisor: "consult-live-123", CIDDir: cidDir, ControlFD: 3, RevokePath: revokePath,
+		Supervisor: "consult-live-123", CIDDir: cidDir,
 		PreflightReasons: map[string]string{"claude": ReasonCredentialRefresh},
 		Runtime: RuntimeSettings{
 			Name: "docker", ConnectionEnv: map[string]string{"DOCKER_HOST": "unix:///safe/runtime.sock"},
@@ -425,7 +411,6 @@ func TestConsultChildEnvironmentIsFixedAndAllowlistOnly(t *testing.T) {
 		"COOP_TEST_CONSULT_LIVE_CHILD=1",
 		"COOP_TEST_CONSULT_LIVE_TARGETS=claude,codex,gemini,grok",
 		"COOP_TEST_CONSULT_LIVE_PREFLIGHT_CLAUDE=" + ReasonCredentialRefresh,
-		liveprocess.ControlFDEnv + "=3", liveprocess.RevokePathEnv + "=" + revokePath,
 		"DOCKER_HOST=unix:///safe/runtime.sock",
 	} {
 		if !strings.Contains(joined, required) {
@@ -447,7 +432,6 @@ func TestConsultChildEnvironmentIsFixedAndAllowlistOnly(t *testing.T) {
 			value.ResultFile = filepath.Join(layout.State, "other.json")
 			return value
 		}(),
-		func() ConsultChildSpec { value := spec; value.ControlFD = 0; return value }(),
 		func() ConsultChildSpec {
 			value := spec
 			value.PreflightReasons = map[string]string{"codex": ReasonPromptExit}
@@ -471,14 +455,7 @@ func TestProcessEnvironmentAddsOnlyAValidatedSupervisorLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, processDir, err := NewProcessControl(layout, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer control.Close()
-	env, err := ProcessEnvironment(layout, "/safe/bin", RuntimeSettings{Name: "docker"}, ProcessSpec{
-		Supervisor: "acp-live-123", ProcessDir: processDir, ControlFD: 3,
-	})
+	env, err := ProcessEnvironment(layout, "/safe/bin", RuntimeSettings{Name: "docker"}, ProcessSpec{Supervisor: "acp-live-123"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,19 +463,8 @@ func TestProcessEnvironmentAddsOnlyAValidatedSupervisorLabel(t *testing.T) {
 	if !strings.Contains(joined, "COOP_RUN_ARGS=--label "+SupervisorLabelKey+"=acp-live-123") {
 		t.Fatalf("process environment missing supervisor label: %s", joined)
 	}
-	for _, required := range []string{
-		liveprocess.ControlFDEnv + "=3", liveprocess.ProcessDirEnv + "=" + processDir,
-		liveprocess.CleanupIDEnv + "=acp-live-123",
-	} {
-		if !strings.Contains(joined, required) {
-			t.Fatalf("process environment missing %q: %s", required, joined)
-		}
-	}
 	if _, err := ProcessEnvironment(layout, "/safe/bin", RuntimeSettings{Name: "docker"}, ProcessSpec{Supervisor: "bad label"}); err == nil {
 		t.Fatal("unsafe supervisor label was accepted")
-	}
-	if _, err := ProcessEnvironment(layout, "/safe/bin", RuntimeSettings{Name: "docker"}, ProcessSpec{ProcessDir: processDir}); err == nil {
-		t.Fatal("process registry without authenticated descriptor was accepted")
 	}
 }
 
@@ -510,11 +476,10 @@ func TestHostNetworkStateTravelsWithFilteredIntoEveryProcessKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	revokePath := filepath.Join(filepath.Dir(layout.Config), ".coop-live-revoked-00000000000000000000000000000000")
 	host := filepath.Join(t.TempDir(), "state")
 	child := ChildSpec{
 		Path: "/safe/bin", Target: "gemini", Marker: "MARKER", ResultFile: filepath.Join(layout.State, "result.json"),
-		AttemptFile: filepath.Join(layout.State, "attempted"), Supervisor: "supervisor", ControlFD: 3, RevokePath: revokePath,
+		AttemptFile: filepath.Join(layout.State, "attempted"), Supervisor: "supervisor",
 		Runtime: RuntimeSettings{Name: "docker"},
 	}
 	for _, workflow := range []string{"prompt", "loop", "resume", "network"} {
@@ -558,8 +523,8 @@ func TestHostNetworkStateTravelsWithFilteredIntoEveryProcessKind(t *testing.T) {
 	if !slices.Contains(env, "COOP_EGRESS=filtered") || !slices.Contains(env, "COOP_RUN_ARGS=--label "+SupervisorLabelKey+"=acp-live-123") {
 		t.Fatalf("filtered ACP process lost its posture or its reaping label: %s", joined)
 	}
-	// The live process registry owns the state root, so an ACP supervisor keeps the disposable
-	// one and qualifies it itself; the host store is never handed to it.
+	// An ACP supervisor keeps its disposable state home and qualifies it itself; the host store is
+	// never handed to it.
 	if strings.Contains(joined, "XDG_STATE_HOME="+host) {
 		t.Fatal("an ACP process was handed the host's state home")
 	}

@@ -97,7 +97,7 @@ These test layers apply to a source checkout.
 |---|---|---|
 | Local iteration | `make check-local SCOPE=<owner>` | actual docs/rules or owner and reverse-consumer checks; unknown scope takes the broad path |
 | Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, govulncheck, unit tests under `-race` (CI also runs them plain), deterministic provider process E2E, tagged process-control races, generated docs, rules cards, maintenance tools, and comment alignment; no runtime or credentials |
-| Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork policy, ACP switching/recovery, and live-harness ownership denials with fixtures |
+| Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork policy, ACP switching/recovery, and live-harness contracts with fixtures |
 | Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` | real box isolation, process reaping/signal forwarding, and report-only review mounts; requires Docker (or Apple `container` for doctor) |
 | Upstream compatibility | provider live targets [below](#live-provider-suites) · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
 | Full client qualification | `make provider-qualify` | operator-only image build, offline client probes and paid live suites; writes a version-pinned record only after all required checks pass |

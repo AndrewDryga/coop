@@ -254,9 +254,8 @@ func runForegroundCommand(ctx context.Context, cmd *exec.Cmd) (int, error) {
 	go func() { done <- cmd.Wait() }()
 	select {
 	case <-ctx.Done():
-		beforeErr := beforeInterruptibleCancel()
 		cleanupErr := killProcess(cmd.Process, done)
-		return -1, errors.Join(ctx.Err(), beforeErr, cleanupErr)
+		return -1, errors.Join(ctx.Err(), cleanupErr)
 	case err := <-done:
 		return exitCode(cmd.Path, err)
 	}
@@ -318,7 +317,6 @@ func commandOutputError(err error, output []byte) error {
 func (r Runtime) RunInterruptible(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
 	cmd := exec.Command(r.Name, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	cmd.Env = interruptibleProcessEnvironment()
 	return runInterruptibleCommand(ctx, cmd)
 }
 
@@ -339,12 +337,7 @@ type Helper struct {
 func (r Runtime) StartHelper(stderr io.Writer, args ...string) (*Helper, error) {
 	cmd := exec.Command(r.Name, args...)
 	cmd.Stderr = stderr
-	cmd.Env = interruptibleProcessEnvironment()
-	processGroup, err := interruptibleProcessGroup()
-	if err != nil {
-		return nil, err
-	}
-	cmd.SysProcAttr = processGroup
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Wait must not own this reader: it can reap before the caller drains final output.
 	stdout, output, err := os.Pipe()
 	if err != nil {
@@ -393,11 +386,7 @@ func (h *Helper) Close() error {
 // runInterruptibleCommand is RunInterruptible's process-group supervision for an
 // already assembled command, shared with the exact-owned Docker adapter.
 func runInterruptibleCommand(ctx context.Context, cmd *exec.Cmd) (int, error) {
-	processGroup, err := interruptibleProcessGroup()
-	if err != nil {
-		return -1, err
-	}
-	cmd.SysProcAttr = processGroup
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return -1, fmt.Errorf("%s: %w", cmd.Path, err)
 	}
@@ -405,9 +394,8 @@ func runInterruptibleCommand(ctx context.Context, cmd *exec.Cmd) (int, error) {
 	go func() { done <- cmd.Wait() }()
 	select {
 	case <-ctx.Done():
-		beforeErr := beforeInterruptibleCancel()
 		cleanupErr := killGroup(cmd.Process.Pid, done)
-		return -1, errors.Join(ctx.Err(), beforeErr, cleanupErr)
+		return -1, errors.Join(ctx.Err(), cleanupErr)
 	case err := <-done:
 		return exitCode(cmd.Path, err)
 	}

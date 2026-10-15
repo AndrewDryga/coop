@@ -125,15 +125,6 @@ func runAccountLivePair(t *testing.T, source *config.Config, pair []liveprovider
 	if faultErr != nil || witnessErr != nil || revokeWitnessErr != nil || prepared.VerifySources() != nil {
 		return fail("credential_fault")
 	}
-	control, _, err := liveprovider.NewProcessControl(layout, false)
-	if err != nil {
-		return fail("process_control")
-	}
-	defer control.Close()
-	revokePath, err := prepared.RevocationPath()
-	if err != nil {
-		return fail("credential_revocation")
-	}
 	resultFile, attemptFile := filepath.Join(layout.State, "account-result.json"), filepath.Join(layout.State, "account-attempted")
 	cidDir := filepath.Join(layout.State, "container-ids")
 	if err := os.Mkdir(cidDir, 0o700); err != nil {
@@ -144,7 +135,6 @@ func runAccountLivePair(t *testing.T, source *config.Config, pair []liveprovider
 	spec := liveprovider.ChildSpec{
 		Path: os.Getenv("PATH"), Target: target.String(), Workflow: "loop", Marker: marker,
 		ResultFile: resultFile, AttemptFile: attemptFile, Supervisor: supervisor, CIDDir: cidDir,
-		ControlFD: 3, RevokePath: revokePath,
 		Runtime: liveprovider.RuntimeSettings{Name: rt.Name, Image: source.ImageOverride, BaseImage: source.BaseImage,
 			HomeInBox: source.HomeInBox, ConnectionEnv: connection},
 	}
@@ -166,20 +156,19 @@ func runAccountLivePair(t *testing.T, source *config.Config, pair []liveprovider
 	process := procharness.Run(ctx, procharness.Command{
 		Path: os.Args[0], Args: []string{"-test.run=^TestProviderAccountsLiveChild$", "-test.v=false"},
 		Dir: layout.Repo, Env: env, MaxOutput: 1 << 20, KillGrace: 3 * time.Second,
-		ExtraFiles: []*os.File{control}, BeforeCancel: prepared.Revoke,
 	})
 	cancel()
 	attempted := liveprovider.ControlFilePresent(layout.Root, attemptFile)
 	result := liveprovider.ClassifyChildProcess(provider, layout.Root, resultFile, liveprovider.ChildProcessObservation{
 		Result: process, DeadlineExceeded: liveprovider.ProcessDeadlineExceeded(process), Attempted: attempted,
 	})
-	revokeErr := prepared.Revoke()
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
 	cleanupErr := liveprovider.CleanupSupervisor(cleanupCtx, liveprovider.SupervisorCleanupSpec{
 		Root: layout.Root, CIDDir: cidDir, Supervisor: supervisor, LabelKey: box.LabelSupervisor,
 		OperationTimeout: 2 * time.Second, QuietPeriod: time.Second, PollInterval: 100 * time.Millisecond,
 	}, liveprovider.SupervisorCleanupOps{RemoveContainer: rt.RemoveContainerContext, RemoveByLabel: rt.RemoveByLabel})
 	cancelCleanup()
+	revokeErr := prepared.Revoke() // after the sweep, which removes the boxes that could write into it
 	var repositoryErr error
 	if result.Passed {
 		repositoryErr = verifyAccountLiveRepository(layout, baseline, marker)
@@ -220,7 +209,7 @@ func TestProviderAccountsLiveChild(t *testing.T) {
 	c.boxRun = func(spec box.RunSpec) (int, error) {
 		if err := guard.admit(spec, cfg.ActiveProfile(target.Provider)); err != nil {
 			// An ordinary launch error asks the controller to retry. Fatal ends this clean helper
-			// before a third paid launch; the parent still revokes credentials and reaps ownership.
+			// before a third paid launch; the parent still sweeps its boxes and deletes credentials.
 			t.Fatal("account qualification launch bound or scope violated")
 		}
 		cid := func(phase string) []string {

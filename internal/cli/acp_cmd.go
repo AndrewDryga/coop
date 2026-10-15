@@ -27,7 +27,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
-	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
@@ -730,13 +729,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		if werr != nil {
 			return 1, fmt.Errorf("acp reload: %w", werr)
 		}
-		restoreControl, perr := acpctl.PrepareACPReload()
-		if perr != nil {
-			os.Remove(path)
-			return 1, fmt.Errorf("acp reload: %w", perr)
-		}
 		if xerr := syscall.Exec(self, os.Args, append(os.Environ(), "COOP_ACP_RESUME_STATE="+path)); xerr != nil {
-			restoreControl()
 			os.Remove(path)
 			return 1, fmt.Errorf("acp reload: exec %s: %w", self, xerr)
 		}
@@ -987,8 +980,7 @@ func cleanACPChildEnv(env []string) []string {
 		// The network capture is minted per child by this supervisor. An inherited
 		// one names a snapshot this session never admitted, so it never rides in.
 		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", "COOP_ACP_MCP_ID", box.SessionMCPHandoffEnv, acpAccountBindingsEnv,
-			box.SessionNetworkCaptureEnv,
-			liveprocess.ControlFDEnv, liveprocess.ProcessDirEnv, liveprocess.CleanupIDEnv, liveprocess.RevokePathEnv:
+			box.SessionNetworkCaptureEnv:
 			continue
 		}
 		out = append(out, item)
@@ -1187,7 +1179,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	// Own process group: a plain Process.Kill() reaps only the inner `coop` and orphans its
 	// `docker run` grandchild; killing the whole group (-pgid) reaches the run client too.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := acpctl.StartACPProcess(cmd, superID); err != nil {
+	if err := cmd.Start(); err != nil {
 		inR.Close()
 		inW.Close()
 		outR.Close()
@@ -1217,8 +1209,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	var stopOnce sync.Once
 	stop := func() {
 		stopOnce.Do(func() {
-			// End and await the generation group before its cid cleanup. In tagged live binaries the
-			// group leader is a resident gate wrapper, so a runtime cannot outlive this identity.
+			// End and await the generation group before its cid cleanup.
 			grace := time.Duration(0)
 			if a.acpCapture != nil {
 				grace = acpFilteredStopGrace

@@ -2,8 +2,8 @@
 name: acp-scripted-e2e
 description: ACP state machines are exhaustive in the scripted runtime; real adapters get an isolated conformance layer
 subsystem: acp
-sources: [Makefile, internal/acpproxy/scripted_matrix_e2e_test.go, internal/acpproxy/scripted_startup_e2e_test.go, internal/acpproxy/scripted_cancel_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, internal/acpproxy/testdata/acpfixture/main.go, internal/acpctl/process_live.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/cleanup.go]
-updated: 2026-09-12
+sources: [Makefile, internal/acpproxy/scripted_matrix_e2e_test.go, internal/acpproxy/scripted_startup_e2e_test.go, internal/acpproxy/scripted_cancel_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, internal/acpproxy/testdata/acpfixture/main.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/cleanup.go]
+updated: 2026-10-15
 ---
 
 `COOP_RUNTIME` lets process tests drive the built outer supervisor, inner re-exec, controller,
@@ -40,26 +40,23 @@ scripted fixtures keep their exact transcript assertions because they contain no
 fail rather than allowing all scenarios to skip successfully. A direct tagged `go test` remains a
 permissive diagnostic. Every started process gets a unique `coop.live-test` label; teardown always
 polls that label across running and stopped containers after normal exit, SIGTERM, or SIGKILL.
-The isolated ACP binary also carries the `cooplivetest` tag. Each generation waits behind a pipe
-gate until its resident PGID leader has published a private record with a stable kernel start token.
-The record binds to the harness's `coop.live-test` cleanup nonce, not Coop's separate internal
-`coop.sup` nonce; deterministic tests keep those values different. That leader remains after the
-inner Coop exits, closing the leader-first orphan case. Teardown
-atomically revokes projected credentials, awaits the outer supervisor so no new generation can be
-admitted, revalidates and terminates every recorded group, and begins CID/label cleanup only after
-all groups are gone. A surviving bind can still write into the revoked private tombstone during
-that teardown; failed physical deletion is retried only after producers and mounts are removed.
-A SIGHUP self-reload revalidates and preserves the outer control descriptor for
-that exec only; child execs still lose it. Record admission is serialized and reserves the pending
-hardlink slot. An unreadable or over-limit registry can never satisfy producer quiescence, so label
-sweeps continue to the bounded cleanup deadline and fail. Default Coop builds retain normal
-per-generation process behavior and ignore the live-test environment. `make check` runs the
-no-credential gate, identity, descriptor-leak, reload, admission-limit, and process-before-label
-denial tests; the installed-adapter prompts remain opt-in.
+Teardown closes the editor's stdin, so the supervisor stops its own generations; only one that does
+not exit gets its whole process group signalled (TERM, then KILL). The harness then sweeps the
+`coop.live-test` label until it stays quiet, and only after that deletes the projected
+credentials (`acpproxy/e2e_test.go`). The sweep limits writes after deletion but does not prove
+there are none: production gives each `docker run` client and each generation its own process group,
+so a client still starting a container after the quiet window is outside the group kill. A same-user host
+process is outside Coop's threat model (audit decision 3.5, 2026-10-15), so the live build no
+longer carries a tag of its own: the `cooplivetest` process registry, authenticated control
+descriptor and credential revocation before each signal were removed. `make check` runs the
+deterministic harness and contract tests through `make live-process-control`; the
+installed-adapter prompts remain opt-in.
 
 Related: [[acp-replay-publication]], [[acp-target-commit]], [[acp-carry-echo]].
 
 ## Changelog
+- 2026-10-15 — the live ACP harness lost its cooplivetest process registry, control descriptor and
+  pre-signal credential revocation; teardown is a group kill, config deletion and label sweep.
 - 2026-09-12 - literal automatic startup, cancellation/continue coverage, twelve directed live switches, and post-teardown credential deletion retry; verified new scripted tests and repeated Codex live cleanup
 - 2026-08-10 - source path only: `internal/cli/acp_process_live.go` → `internal/acpctl/process_live.go`
   (the ACP control plane's move to `internal/acpctl`, mechanical rename, no behavior change)

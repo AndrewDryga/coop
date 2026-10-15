@@ -57,7 +57,7 @@ func (r Runtime) ObserveServiceContainer(ctx context.Context, labels map[string]
 	for _, key := range keys {
 		args = append(args, "--filter", "label="+key+"="+labels[key])
 	}
-	out, err := dockerOutput(ctx, r.Name, interruptibleProcessEnvironment(), 64<<10, args...)
+	out, err := dockerOutput(ctx, r.Name, nil, 64<<10, args...)
 	if err != nil {
 		return ServiceContainerObservation{}, false, errors.New("runtime service listing failed; availability is unknown")
 	}
@@ -68,7 +68,7 @@ func (r Runtime) ObserveServiceContainer(ctx context.Context, labels map[string]
 	if len(ids) != 1 || !dockerHexID(ids[0]) {
 		return ServiceContainerObservation{}, false, errors.New("runtime service ownership is ambiguous or malformed")
 	}
-	out, err = dockerOutput(ctx, r.Name, interruptibleProcessEnvironment(), 256<<10,
+	out, err = dockerOutput(ctx, r.Name, nil, 256<<10,
 		"inspect", "--format", serviceContainerFormat, ids[0])
 	if err != nil {
 		return ServiceContainerObservation{}, false, errors.New("runtime service inspection failed; availability is unknown")

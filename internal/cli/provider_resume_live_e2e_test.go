@@ -87,15 +87,6 @@ func runProviderResumeLiveCompatibility(
 			liveprovider.VerificationFailures{SourceChanged: true},
 		)
 	}
-	control, _, err := liveprovider.NewProcessControl(layout, false)
-	if err != nil {
-		return fail(false, "process_control")
-	}
-	defer control.Close()
-	revokePath, err := prepared.RevocationPath()
-	if err != nil {
-		return fail(false, "credential_revocation")
-	}
 	ag, ok := agents.Get(target.Provider)
 	if !ok {
 		return fail(false, "provider_lookup")
@@ -110,7 +101,7 @@ func runProviderResumeLiveCompatibility(
 	sessionFile := filepath.Join(layout.State, "provider-session-id")
 
 	fresh, freshFailures := runProviderResumeLiveStage(
-		layout, rt, runtimeSettings, prepared, control, revokePath, target,
+		layout, rt, runtimeSettings, target,
 		networkStateHome, liveResumeFresh, sessionID, sessionFile, marker, preflightReason,
 	)
 	freshFailures = verifyProviderResumeLiveStage(layout, before, prepared, freshFailures)
@@ -125,7 +116,7 @@ func runProviderResumeLiveCompatibility(
 	}
 
 	continued, continuedFailures := runProviderResumeLiveStage(
-		layout, rt, runtimeSettings, prepared, control, revokePath, target,
+		layout, rt, runtimeSettings, target,
 		networkStateHome, liveResumeContinue, resolvedID, sessionFile, marker, "",
 	)
 	continued, continuedFailures = carryProviderResumeStage(fresh, freshFailures, continued, continuedFailures)
@@ -171,9 +162,6 @@ func runProviderResumeLiveStage(
 	layout procharness.Layout,
 	rt runtime.Runtime,
 	runtimeSettings liveprovider.RuntimeSettings,
-	prepared *liveprovider.Prepared,
-	control *os.File,
-	revokePath string,
 	target agents.Target,
 	networkStateHome, stage, sessionID, sessionFile, marker, preflightReason string,
 ) (liveprovider.ProviderResult, liveprovider.VerificationFailures) {
@@ -191,8 +179,7 @@ func runProviderResumeLiveStage(
 		Path: os.Getenv("PATH"), Target: target.String(), Workflow: liveWorkflowResume,
 		Stage: stage, SessionID: sessionID, SessionFile: sessionFile, Marker: marker,
 		ResultFile: resultFile, AttemptFile: attemptFile, Supervisor: supervisor,
-		PreflightReason: preflightReason, CIDDir: cidDir, ControlFD: 3,
-		RevokePath: revokePath, Runtime: runtimeSettings,
+		PreflightReason: preflightReason, CIDDir: cidDir, Runtime: runtimeSettings,
 	})
 	if err != nil {
 		return providerResumeHarnessFailure(target.Provider, false, "child_environment"), liveprovider.VerificationFailures{}
@@ -201,7 +188,6 @@ func runProviderResumeLiveStage(
 	processResult := procharness.Run(ctx, procharness.Command{
 		Path: os.Args[0], Args: []string{"-test.run=^TestProviderLiveChild$", "-test.v=false"},
 		Dir: layout.Repo, Env: env, MaxOutput: liveOutputLimit, KillGrace: 3 * time.Second,
-		ExtraFiles: []*os.File{control}, BeforeCancel: prepared.Revoke,
 	})
 	timedOut := liveprovider.ProcessDeadlineExceeded(processResult)
 	cancel()

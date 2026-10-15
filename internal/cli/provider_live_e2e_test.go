@@ -248,20 +248,10 @@ func runProviderLiveCompatibility(
 	if err := os.MkdirAll(cidDir, 0o700); err != nil {
 		return fail(false, liveprovider.ReasonHarnessFailed, "control_directory")
 	}
-	control, _, err := liveprovider.NewProcessControl(layout, false)
-	if err != nil {
-		return fail(false, liveprovider.ReasonHarnessFailed, "process_control")
-	}
-	defer control.Close()
-	revokePath, err := prepared.RevocationPath()
-	if err != nil {
-		return fail(false, liveprovider.ReasonHarnessFailed, "credential_revocation")
-	}
 	childSpec := liveprovider.ChildSpec{
 		Path: os.Getenv("PATH"), Target: target.String(), Workflow: workflow, Marker: marker,
 		ResultFile: resultFile, AttemptFile: attemptFile, Supervisor: supervisor,
-		PreflightReason: preflightReason, CIDDir: cidDir,
-		ControlFD: 3, RevokePath: revokePath, Runtime: runtimeSettings,
+		PreflightReason: preflightReason, CIDDir: cidDir, Runtime: runtimeSettings,
 	}
 	// The network workflow is filtered by definition. Any other workflow is filtered for a
 	// target whose credential is a brokered API key — the gateway's broker is the only way
@@ -293,7 +283,6 @@ func runProviderLiveCompatibility(
 	processResult := procharness.Run(ctx, procharness.Command{
 		Path: os.Args[0], Args: []string{"-test.run=^TestProviderLiveChild$", "-test.v=false"},
 		Dir: layout.Repo, Env: env, MaxOutput: liveOutputLimit, KillGrace: 3 * time.Second,
-		ExtraFiles: []*os.File{control}, BeforeCancel: prepared.Revoke,
 	})
 	timedOut := liveprovider.ProcessDeadlineExceeded(processResult)
 	cancel()
@@ -313,7 +302,6 @@ func runProviderLiveCompatibility(
 			result = fail(true, liveprovider.ReasonHarnessFailed, "task_observation")
 		}
 	}
-	revokeErr := prepared.Revoke()
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), liveCleanupDeadline)
 	cleanupErr := liveprovider.CleanupSupervisor(cleanupCtx, liveprovider.SupervisorCleanupSpec{
 		Root: layout.Root, CIDDir: cidDir, Supervisor: supervisor, LabelKey: box.LabelSupervisor,
@@ -323,6 +311,7 @@ func runProviderLiveCompatibility(
 		RemoveByLabel:   rt.RemoveByLabel,
 	})
 	cancelCleanup()
+	revokeErr := prepared.Revoke() // after the sweep, which removes the boxes that could write into it
 	repositoryErr := verifyProviderLiveRepository(layout, before, loopBefore, target, marker, workflow, result.Passed)
 	if repositoryErr != nil {
 		t.Logf("%s %s repository verification: %v", target.Provider, workflow, repositoryErr)

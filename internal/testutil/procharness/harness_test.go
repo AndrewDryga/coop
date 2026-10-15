@@ -236,45 +236,6 @@ func TestDescribeGroupNamesDescendantsThatLeftTheGroup(t *testing.T) {
 	}
 }
 
-func TestRunDeadlineCallsBeforeCancelBeforeFirstSignal(t *testing.T) {
-	layout, err := NewLayout(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ready := filepath.Join(layout.State, "ready")
-	revoked := filepath.Join(layout.State, "revoked")
-	observed := filepath.Join(layout.State, "observed")
-	script := fmt.Sprintf(
-		"trap 'test -e %s && printf revoked > %s; exit 0' TERM; : > %s; while :; do sleep 0.01; done",
-		shellQuote(revoked), shellQuote(observed), shellQuote(ready),
-	)
-	process, err := Start(Command{
-		Path: "/bin/sh", Args: []string{"-c", script}, Dir: layout.Root,
-		Env: []string{"PATH=/usr/bin:/bin"}, KillGrace: time.Second, MaxOutput: 1024,
-		BeforeCancel: func() error { return os.WriteFile(revoked, nil, 0o600) },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer process.Cleanup()
-	// Wait for the TERM trap to actually be installed before cancelling: under host contention
-	// a not-yet-trapped process dies to the *default* SIGTERM disposition instead, skipping the
-	// handler this test inspects entirely (observed ends up missing, not "wrong order") — the
-	// flake this hardens. The ready marker is written right after the trap statement, so
-	// observing it guarantees the trap is already live.
-	awaitFileExists(t, ready)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	result := process.Wait(ctx)
-	if result.Err == nil {
-		t.Fatal("deadline unexpectedly succeeded")
-	}
-	data, err := os.ReadFile(observed)
-	if err != nil || string(data) != "revoked" {
-		t.Fatalf("signal observed before revocation: data=%q err=%v", data, err)
-	}
-}
-
 func TestStartSignalGroupAndWait(t *testing.T) {
 	layout, err := NewLayout(t.TempDir())
 	if err != nil {
@@ -336,9 +297,8 @@ func TestRunDeadlineKillsDescendantAfterLeaderExits(t *testing.T) {
 	// Wait for the leader's trap and its descendant to actually be set up before cancelling:
 	// a fixed wall-clock budget for shell startup itself can slip under host contention (the
 	// pids file silently never gets written) — the same flake TestRunDeadlineReapsTheProcessGroup
-	// and TestRunDeadlineCallsBeforeCancelBeforeFirstSignal hardened, just with a larger 200ms
-	// budget that makes it rarer, not immune. Key off the file the script writes once it's
-	// ready instead of a duration.
+	// hardened, just with a larger 200ms budget that makes it rarer, not immune. Key off the file
+	// the script writes once it's ready instead of a duration.
 	data := awaitFileContent(t, pids)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -376,13 +336,11 @@ func TestRunRejectsSuccessfulLeaderThatLeavesAChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	pidFile := filepath.Join(layout.State, "orphan-pid")
-	revoked := filepath.Join(layout.State, "orphan-revoked")
 	childScript := fmt.Sprintf("trap '' HUP TERM; echo $$ > %s; while :; do sleep 1; done", shellQuote(pidFile))
 	parentScript := fmt.Sprintf("/bin/sh -c %s & while [ ! -s %s ]; do sleep 0.01; done", shellQuote(childScript), shellQuote(pidFile))
 	result := Run(context.Background(), Command{
 		Path: "/bin/sh", Args: []string{"-c", parentScript}, Dir: layout.Root,
 		Env: []string{"PATH=/usr/bin:/bin"}, MaxOutput: 1024,
-		BeforeCancel: func() error { return os.WriteFile(revoked, nil, 0o600) },
 	})
 	if result.Err == nil || !strings.Contains(result.Err.Error(), "survived leader exit") {
 		t.Fatalf("Run orphan result = exit %d, err %v", result.ExitCode, result.Err)
@@ -398,9 +356,6 @@ func TestRunRejectsSuccessfulLeaderThatLeavesAChild(t *testing.T) {
 		if !strings.Contains(result.Err.Error(), want) {
 			t.Errorf("survivor diagnostic %q does not report %q", result.Err, want)
 		}
-	}
-	if _, err := os.Stat(revoked); err != nil {
-		t.Fatalf("leader-exit cleanup did not run revocation callback: %v", err)
 	}
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
@@ -486,19 +441,12 @@ func awaitGone(t *testing.T, pid int) {
 	}
 }
 
-// awaitFileExists polls for an empty marker a fixture touches once some earlier setup (e.g.
-// installing a trap) has actually happened, so a deadline test can key off that event instead of
-// guessing how long setup takes — a fixed wall-clock budget for it is exactly what host
-// contention can blow through, racing the fixture against the deadline it's supposed to trigger.
-func awaitFileExists(t *testing.T, path string) {
-	t.Helper()
-	wait.ForFile(t, path)
-}
-
-// awaitFileContent is awaitFileExists for a fixture that carries data (e.g. recorded pids)
-// rather than a bare marker: existing-but-still-empty (its writer's open/truncate having
-// outrun its write under the same contention) isn't ready either, so this polls for non-empty
-// content and returns it.
+// awaitFileContent polls for a file a fixture writes once some earlier setup (e.g. installing a
+// trap) has actually happened, so a deadline test can key off that event instead of guessing how
+// long setup takes — a fixed wall-clock budget for it is exactly what host contention can blow
+// through, racing the fixture against the deadline it's supposed to trigger. Existing-but-still-
+// empty (its writer's open/truncate having outrun its write) isn't ready either, so this polls
+// for non-empty content and returns it.
 func awaitFileContent(t *testing.T, path string) string {
 	t.Helper()
 	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test

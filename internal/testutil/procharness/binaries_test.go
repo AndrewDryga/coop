@@ -21,8 +21,8 @@ func binarySource(t *testing.T, marker string) string {
 	files := map[string]string{
 		"go.mod":      "module fixture\n\ngo 1.27\n",
 		"main.go":     "package main\nimport \"fmt\"\nfunc main(){fmt.Println(marker)}\n",
-		"ordinary.go": "//go:build !cooplivetest\n\npackage main\nconst marker = " + strconv.Quote(marker) + "\n",
-		"live.go":     "//go:build cooplivetest\n\npackage main\nconst marker = \"tagged\"\n",
+		"ordinary.go": "//go:build !fixturetag\n\npackage main\nconst marker = " + strconv.Quote(marker) + "\n",
+		"live.go":     "//go:build fixturetag\n\npackage main\nconst marker = \"tagged\"\n",
 	}
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(data), 0o600); err != nil {
@@ -63,7 +63,7 @@ func TestBinaryCacheReusesBytesWithoutSharingCaseFiles(t *testing.T) {
 	t.Setenv("CACHE_BUILD_MARKER", "changed")
 	root := binarySource(t, "ordinary")
 	var first os.FileInfo
-	for i, tags := range [][]string{nil, nil, {"cooplivetest"}, {"cooplivetest", "cooplivetest"}} {
+	for i, tags := range [][]string{nil, nil, {"fixturetag"}, {"fixturetag", "fixturetag"}} {
 		dest := filepath.Join(t.TempDir(), "fixture")
 		if err := cache.Copy(t.Context(), root, dest, ".", tags...); err != nil {
 			t.Fatal(err)

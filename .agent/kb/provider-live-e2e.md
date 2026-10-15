@@ -2,7 +2,7 @@
 name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
-sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/image.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/loop/live_stream_probe.go, internal/loop/provider_accounts_live_e2e_test.go, internal/loop/provider_accounts_live_credentials_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, internal/live_selection_test.go]
+sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/image.go, internal/box/run.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/loop/live_stream_probe.go, internal/loop/provider_accounts_live_e2e_test.go, internal/loop/provider_accounts_live_credentials_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, internal/live_selection_test.go]
 updated: 2026-10-15
 ---
 
@@ -135,41 +135,25 @@ isolated homes, no ambient MCP/instructions/services/cache, and the generated re
 read-only except for the loop task fixture and its run-private task MCP channel. A
 version probe makes no model request. The marker prompt makes exactly one. The parent accepts one
 bounded, no-follow child result, compares Git status, HEAD, refs, reflogs, and a content/mode tree,
-checks the source fingerprint, then follows an ordered process/container cleanup contract. A tagged
-direct probe inherits its helper's harness-owned process group only after validating an inherited
-private control descriptor; the descriptor and its environment key are close-on-exec/scrubbed. On a
-deadline, the harness atomically revokes the projected credential path before its first signal and
-waits for the whole group to disappear. The credential helper allocates one random parent-known
-tombstone before launch. If child-side deletion fails after the atomic rename, parent teardown adopts
-that same private path and retries; a persistent failure becomes `cleanup_failed`. The tombstone
-pathname and control variables are scrubbed before the runtime CLI exec. Normal completion performs
-the same revoke before container cleanup. Only then does the parent reap fixed cidfiles and poll the unique supervisor label across
-running/stopped state through a full quiet period. Cleanup failure, source mutation, and repository
-mutation override the child result in that order. The single
+checks the source fingerprint, then follows an ordered process/container cleanup contract. The
+probe runs in a process group of its own; on a deadline the harness signals the whole group (TERM,
+then KILL) and waits for it to disappear. The parent then reaps fixed cidfiles and polls the unique
+supervisor label across running/stopped state through a full quiet period, and only after that
+deletes the projected credentials. That order limits writes into them but does not prove none
+follow: each production `docker run` client has its own process group, so one still starting a
+container after the quiet window is outside the group kill. Cleanup failure, source
+mutation, and repository mutation override the child result in that order. The single
 prefixed JSON summary is safe to retain: the CLI version is a provider-labelled semver token and
 diagnostics are bounded structural codes, never account names, paths, tokens, raw output, or digests.
 
-Live ACP adds per-generation ownership without weakening normal provider/model switching. Its
-isolated binary is built with `cooplivetest`; default Coop binaries contain the unchanged production
-process-group path. Each inner generation blocks behind a pipe gate while a resident wrapper becomes
-its PGID leader. The wrapper publishes a private, versioned record containing the current UID,
-harness cleanup nonce, PGID, and Linux/Darwin kernel start token before releasing the inner command.
-Because POSIX non-interactive shells otherwise attach `/dev/null` to an asynchronous command's stdin,
-the wrapper saves the editor pipe on a private descriptor before backgrounding and restores it only
-for the inner Coop process. A tagged process test reads a real request through that boundary.
-That nonce is deliberately distinct from Coop's internal `coop.sup` generation label and is scrubbed
-before the inner exec. The wrapper
-stays resident after the inner leader exits, so a delayed runtime cannot outlive the recorded
-identity. Teardown revokes credentials, stops and awaits the outer supervisor (closing admission),
-revalidates every token plus `Getpgid` immediately before TERM and KILL, waits for all groups to
-disappear, and only then performs CID and label sweeps. SIGHUP revalidates the outer descriptor and
-preserves it only across the supervisor's immediate self-exec; the new image marks it close-on-exec
-again before any child starts. Publication is serialized and reserves one of the 128 bounded
-directory entries for the pending hardlink, so a full registry fails before a generation runs.
-Malformed, linked, oversized, wrong-owner, stale, or unverifiable records fail closed without
-signalling an unrelated process. They also prevent the label quiet window from declaring success:
-best-effort sweeps continue until the caller's cleanup deadline and report the unresolved producer.
-`make check` runs the deterministic denial cases through `make live-process-control`; real prompts
+Live ACP uses the same shape without weakening normal provider/model switching: the editor going
+away (stdin closed) stops the supervisor's generations, a supervisor that does not exit gets its
+whole process group signalled, then the label sweep, then credential deletion. Until 2026-10-15
+the live build carried its own `cooplivetest` machinery (an authenticated control descriptor, a
+private registry of per-generation PGID records with kernel start tokens, credential revocation
+before every signal); a same-user host process is outside Coop's threat model (audit decision
+3.5), so it was removed and the tag with it.
+`make check` runs the deterministic harness and contract tests through `make live-process-control`; real prompts
 remain opt-in. A tagged test is one or the other by name: `make live-process-control` selects the
 deterministic ones by prefix, and only a test that needs a real provider ends in …LiveCompatibility
 (its subprocess …LiveChild). `internal/live_selection_test.go` fails on a tagged test that is neither,
@@ -200,6 +184,9 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-10-15 — removed the cooplivetest process-control machinery (control descriptor, PGID
+  registry, pre-signal credential revocation) and the tag; probes and live ACP now rely on a
+  process group, a group kill, the label sweep and deleting the projected credentials.
 - 2026-10-15 — five deterministic tests no target selected were renamed into live-process-control's
   prefixes, and internal/live_selection_test.go now pins the naming rule against the Makefile.
 - 2026-10-09 — canonical accounts use read-only, nonrenewable snapshots with authority/renewal

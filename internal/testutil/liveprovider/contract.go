@@ -20,7 +20,6 @@ import (
 	"unicode/utf8"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -556,8 +555,6 @@ type ChildSpec struct {
 	Supervisor      string
 	PreflightReason string
 	CIDDir          string
-	ControlFD       int
-	RevokePath      string
 	Runtime         RuntimeSettings
 	// NetworkStateHome is the HOST's state home. Naming it puts every box the child
 	// launches behind this host's filtered gateway: a filtered launch needs the host's
@@ -578,8 +575,6 @@ type ConsultChildSpec struct {
 	PreflightReasons                                         map[string]string
 	Strict                                                   bool
 	Delegate                                                 bool
-	ControlFD                                                int
-	RevokePath                                               string
 	Runtime                                                  RuntimeSettings
 	// NetworkStateHome is the HOST's state home, and means here exactly what it means for a
 	// ChildSpec: every box this child launches runs behind this host's filtered gateway. The ring
@@ -595,15 +590,6 @@ func ChildEnvironment(layout procharness.Layout, spec ChildSpec) ([]string, erro
 		return nil, errors.New("invalid live child preflight reason")
 	}
 	values := processEnvironmentValues(layout, spec.Path, spec.Runtime)
-	if spec.ControlFD != 0 {
-		if spec.ControlFD != 3 || !liveprocess.ValidRevocationPath(layout.Config, spec.RevokePath) {
-			return nil, errors.New("invalid live process control descriptor")
-		}
-		values[liveprocess.ControlFDEnv] = "3"
-		values[liveprocess.RevokePathEnv] = spec.RevokePath
-	} else if spec.RevokePath != "" {
-		return nil, errors.New("live credential revocation path requires process control")
-	}
 	workflow := spec.Workflow
 	if workflow == "" {
 		workflow = "prompt"
@@ -657,7 +643,7 @@ func ConsultChildEnvironment(layout procharness.Layout, spec ConsultChildSpec) (
 	if err := ValidateConsultTargets(spec.Targets); err != nil {
 		return nil, err
 	}
-	if !liveprocess.ValidCleanupID(spec.Marker) || !liveprocess.ValidCleanupID(spec.Supervisor) {
+	if !ValidIdentifier(spec.Marker) || !ValidIdentifier(spec.Supervisor) {
 		return nil, errors.New("invalid consult live identifier")
 	}
 	if filepath.Clean(spec.ResultFile) != filepath.Join(layout.State, "consult-result.json") ||
@@ -671,12 +657,7 @@ func ConsultChildEnvironment(layout procharness.Layout, spec ConsultChildSpec) (
 	if err := validatePrivateControlDir(layout.Root, spec.CIDDir); err != nil {
 		return nil, errors.New("invalid consult live cid directory")
 	}
-	if spec.ControlFD != 3 || !liveprocess.ValidRevocationPath(layout.Config, spec.RevokePath) {
-		return nil, errors.New("invalid consult live process control")
-	}
 	values := processEnvironmentValues(layout, spec.Path, spec.Runtime)
-	values[liveprocess.ControlFDEnv] = "3"
-	values[liveprocess.RevokePathEnv] = spec.RevokePath
 	values["COOP_TEST_CONSULT_LIVE_CHILD"] = "1"
 	values["COOP_TEST_CONSULT_LIVE_MARKER"] = spec.Marker
 	values["COOP_TEST_CONSULT_LIVE_RESULT"] = spec.ResultFile
@@ -730,16 +711,28 @@ func containsProvider(targets []agents.Target, provider string) bool {
 	return false
 }
 
-// ProcessSpec is the authority granted to a live ACP supervisor. ProcessDir is a private,
-// append-only registry activated only when the tagged binary also receives ControlFD.
-// Filtered puts the supervisor's boxes behind a filtered gateway — for a provider whose
-// credential is a brokered API key. The state home stays the disposable one the live
-// process registry requires, so the supervisor qualifies that tree itself on first launch
-// (a `coop net setup` into it) rather than borrowing the host's record.
+// ValidIdentifier reports whether a harness-made marker or supervisor id is safe to pass on: the
+// supervisor id rides inside COOP_RUN_ARGS as a label value, so it must stay one plain word.
+func ValidIdentifier(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '.' || char == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// ProcessSpec is the authority granted to a live ACP supervisor. Filtered puts the supervisor's
+// boxes behind a filtered gateway — for a provider whose credential is a brokered API key. The
+// supervisor keeps its disposable state home and qualifies that tree itself on first launch (a
+// `coop net setup` into it) rather than borrowing the host's record.
 type ProcessSpec struct {
 	Supervisor string
-	ProcessDir string
-	ControlFD  int
 	Filtered   bool
 }
 
@@ -751,23 +744,12 @@ func ProcessEnvironment(layout procharness.Layout, path string, runtime RuntimeS
 		values["COOP_EGRESS"] = "filtered"
 	}
 	if spec.Supervisor != "" {
-		if !liveprocess.ValidCleanupID(spec.Supervisor) {
+		if !ValidIdentifier(spec.Supervisor) {
 			return nil, errors.New("invalid live process supervisor")
 		}
 		// A label is one of the three runtime arguments a filtered launch admits, so the
 		// reaping key rides the same way on either path.
 		values["COOP_RUN_ARGS"] = "--label " + SupervisorLabelKey + "=" + spec.Supervisor
-	}
-	if spec.ProcessDir != "" || spec.ControlFD != 0 {
-		if spec.ControlFD != 3 || spec.ProcessDir == "" {
-			return nil, errors.New("incomplete live ACP process control")
-		}
-		if err := validatePrivateControlDir(layout.Root, spec.ProcessDir); err != nil {
-			return nil, err
-		}
-		values[liveprocess.ControlFDEnv] = "3"
-		values[liveprocess.ProcessDirEnv] = spec.ProcessDir
-		values[liveprocess.CleanupIDEnv] = spec.Supervisor
 	}
 	return encodeEnvironment(values)
 }
@@ -794,56 +776,18 @@ func LinkDockerPlugins(layout procharness.Layout) error {
 	return os.Symlink(plugins, filepath.Join(dir, "cli-plugins"))
 }
 
-// NewProcessControl creates the authenticated descriptor shared by tagged live helpers. ACP also
-// requests a private generation registry; direct probes need only the descriptor.
-func NewProcessControl(layout procharness.Layout, registry bool) (*os.File, string, error) {
-	controlPath := filepath.Join(layout.State, "live-process-control")
-	control, err := os.OpenFile(controlPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return nil, "", errors.New("create live process control")
-	}
-	if _, err := io.WriteString(control, liveprocess.ControlMarker); err != nil {
-		control.Close()
-		return nil, "", errors.New("write live process control")
-	}
-	if err := control.Sync(); err != nil {
-		control.Close()
-		return nil, "", errors.New("sync live process control")
-	}
-	if err := control.Close(); err != nil {
-		return nil, "", errors.New("close live process control")
-	}
-	control, err = procharness.OpenRegularFile(layout.Root, controlPath, os.O_RDONLY)
-	if err != nil {
-		return nil, "", errors.New("open live process control")
-	}
-	processDir := ""
-	if registry {
-		processDir = filepath.Join(layout.XDGState, "live-process-groups")
-		if err := os.Mkdir(processDir, 0o700); err != nil {
-			control.Close()
-			return nil, "", errors.New("create live process registry")
-		}
-		if err := validatePrivateControlDir(layout.Root, processDir); err != nil {
-			control.Close()
-			return nil, "", err
-		}
-	}
-	return control, processDir, nil
-}
-
 func validatePrivateControlDir(root, path string) error {
 	clean, err := procharness.CanonicalUnderRoot(root, path)
 	if err != nil {
-		return errors.New("invalid live process registry")
+		return errors.New("invalid live control directory")
 	}
 	info, err := os.Lstat(clean)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
-		return errors.New("invalid live process registry")
+		return errors.New("invalid live control directory")
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || int(stat.Uid) != os.Getuid() {
-		return errors.New("invalid live process registry")
+		return errors.New("invalid live control directory")
 	}
 	return nil
 }

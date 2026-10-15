@@ -601,38 +601,6 @@ func TestPreparedRevokeIsIdempotentAndDoesNotFollowReplacementSymlink(t *testing
 	}
 }
 
-func TestPreparedRevokeRetriesChildTombstoneDeletion(t *testing.T) {
-	parent := t.TempDir()
-	vault := filepath.Join(parent, "config")
-	mustMkdir(t, vault)
-	writeSource(t, filepath.Join(vault, "credential"), "projected", 0o600)
-	prepared := &Prepared{ConfigDir: vault}
-	tombstone, err := prepared.RevocationPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(vault, tombstone); err != nil {
-		t.Fatal(err)
-	}
-
-	originalRemove := removeRevokedCredentialTree
-	removeRevokedCredentialTree = func(string) error { return errors.New("injected removal failure") }
-	t.Cleanup(func() { removeRevokedCredentialTree = originalRemove })
-	if err := prepared.Revoke(); err == nil {
-		t.Fatal("child-side tombstone deletion failure was accepted")
-	}
-	if _, err := os.Stat(tombstone); err != nil {
-		t.Fatalf("retryable credential tombstone missing: %v", err)
-	}
-	removeRevokedCredentialTree = originalRemove
-	if err := prepared.Revoke(); err != nil {
-		t.Fatalf("retry credential tombstone deletion: %v", err)
-	}
-	if _, err := os.Lstat(tombstone); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("credential tombstone survived retry: %v", err)
-	}
-}
-
 func writeSource(t *testing.T, path, content string, mode os.FileMode) {
 	t.Helper()
 	mustMkdir(t, filepath.Dir(path))

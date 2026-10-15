@@ -73,10 +73,7 @@ func bindDocker(ctx context.Context, rt Runtime, endpoint, expectedID string, la
 	if err != nil {
 		return nil, err
 	}
-	env := interruptibleProcessEnvironment()
-	if env == nil {
-		env = os.Environ()
-	}
+	env := os.Environ()
 	if endpoint == "" {
 		endpoint, err = discoverDockerEndpoint(ctx, binary, env)
 		if err != nil {

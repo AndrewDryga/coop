@@ -37,7 +37,7 @@ var hermeticGitExceptions = map[string]string{
 // It reads source, not behavior: every test-serving .go file under internal/ and tools/ is parsed,
 // and any function that builds a repo (a "git" command with an "init" subcommand) must also name
 // gitrepo.New, GIT_CONFIG_GLOBAL + GIT_CONFIG_SYSTEM, or GIT_CONFIG_NOSYSTEM. That makes it
-// tag-agnostic — the acpe2e and cooplivetest fixtures are covered like any other file — and
+// tag-agnostic — the acpe2e and providerlivee2e fixtures are covered like any other file — and
 // comment-blind, since comments are dropped before the scan: prose about gitrepo.New is not a pin.
 //
 // What it cannot see, and does not pretend to: a pin (or a git binary) that lives in a different
