@@ -3,7 +3,7 @@ name: provider-client-qualification
 description: locked clients, strict schema2 qualification requirements and Linux/amd64 live evidence
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-10-14
+updated: 2026-10-15
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -200,6 +200,7 @@ read-only and the client unprivileged. A Mac pass at umask 022 does not prove Li
 --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org` in `locked-clients/`);
 move the adapter's `LockedClients` (versions, platform paths; Grok's URL and both digests) and any
 `NetworkBundle` source URLs; re-read what the pins encode (`TestGeminiThinkingIsQualifiedOnTheLockedClient`,
+`TestUsageGeminiQuotaModuleIsQualifiedOnTheLockedClient` for the quota helper's hashed bundle module,
 the captured `login-failures` and `grok-*-tools.jsonl` fixtures), and run the affected deterministic
 closure/request/adaptor tests. Offer the smallest affected live check with its scope and billing
 clear; a missing live run is reported, not waived. A full dated report can be refreshed explicitly
@@ -243,6 +244,8 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-10-15 — the bump checklist now names the Gemini quota module tripwire, which pins the exact
+  locked gemini-cli tarball its content-hashed import was checked in.
 - 2026-10-14 — stronger direct-matrix runtime/cwd/exit/cleanup keeper replaces redundant smoke
   coverage; qualification rows still distinguish deterministic, offline-client and live proof.
 - 2026-10-14 — removed saved-record release admission and version-specific exceptions. Added

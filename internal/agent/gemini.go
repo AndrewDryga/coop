@@ -642,9 +642,14 @@ func geminiCanonicalQuota(ctx context.Context, access string) (UsageQuota, error
 	return raw.quota(), nil
 }
 
+// The package has no library entry point, so the helper imports the core export hub that the
+// launcher bundle/gemini.js itself loads. Its name is content-hashed and holds only for the tarball
+// it was checked in: TestUsageGeminiQuotaModuleIsQualifiedOnTheLockedClient fails on any other one.
+const geminiQuotaModule = lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/dist-6S53KFXU.js"
+
 // Import only the native auth/server exports: CLI/model initialization can load hooks, MCP
 // servers or perform onboarding. Let the process drain asynchronous native token persistence.
-const geminiQuotaHelper = `import {getOauthClient,CodeAssistServer} from "/opt/coop/clients/node_modules/@google/gemini-cli/bundle/core-BXNHRQQE.js";
+const geminiQuotaHelper = `import {getOauthClient,CodeAssistServer} from "` + geminiQuotaModule + `";
 process.on("unhandledRejection",()=>{process.exitCode=1});
 try {
   const config={getProxy:()=>undefined,isBrowserLaunchSuppressed:()=>true,isInteractive:()=>false};

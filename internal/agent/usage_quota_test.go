@@ -204,6 +204,30 @@ func TestUsageGeminiUnavailableReason(t *testing.T) {
 	}
 }
 
+// The 0.59.0 -> 0.62.0 bump already renamed the content-hashed module once. Pin the exact tarball
+// it was checked in, so a client bump fails here instead of shipping a helper that cannot load
+// and reports every pre-cutover OAuth quota as unavailable.
+func TestUsageGeminiQuotaModuleIsQualifiedOnTheLockedClient(t *testing.T) {
+	type tarball struct{ Version, Integrity string }
+	verified := tarball{"0.62.0", "sha512-A1rw0Tf2sHLpGncfYdaq5WaJIufKAP8il4BmHD5Yw4ewmB/Wo0vRQb2bEvx7OqyaPFPZCh0hVhcMKsICZyIBww=="}
+	data, err := lockedClientFiles.ReadFile("locked-clients/package-lock.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lock struct{ Packages map[string]tarball }
+	if err := json.Unmarshal(data, &lock); err != nil {
+		t.Fatal(err)
+	}
+	if locked := lock.Packages["node_modules/@google/gemini-cli"]; locked != verified {
+		t.Fatalf("locked gemini-cli is %+v but geminiQuotaModule was checked in %+v: point it at the module "+
+			"bundle/gemini.js imports that exports getOauthClient and CodeAssistServer, check the import offline "+
+			"(.agent/kb/usage-recorded-token-value.md), then move this pin", locked, verified)
+	}
+	if first, _, _ := strings.Cut(geminiQuotaHelper, "\n"); first != `import {getOauthClient,CodeAssistServer} from "`+geminiQuotaModule+`";` {
+		t.Fatalf("quota helper does not import the pinned module: %s", first)
+	}
+}
+
 func TestUsageGeminiHelperDrainsCredentialPersistence(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

@@ -2,6 +2,7 @@ package box
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -99,6 +100,51 @@ esac
 	}
 	if err := checkCredentialContainers(ctx, rt, ag.Name(), lease.key, true); err == nil {
 		t.Fatal("new writer allowed surviving runtime")
+	}
+}
+
+// The helper mounts the original profile on purpose: it serves only an account not yet cut over,
+// whose profile still holds the one serving grant. A cut-over account reads quota through the host's
+// canonical authority instead; its per-repository native homes hold no grant to mount.
+func TestUsageGeminiHelperServesOnlyPreCutoverProfiles(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	gemini, _ := agents.Get("gemini")
+	profile := cfg.AgentProfileDir("gemini", "work")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := json.Marshal(map[string]any{"access_token": "inert-original-access", "refresh_token": "inert-refresh-grant",
+		"expiry_date": time.Now().Add(time.Hour).UnixMilli(), "token_type": "Bearer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string][]byte{
+		"settings.json":        []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`),
+		"google_accounts.json": []byte(`{"active":"inert@example.invalid","old":[]}`),
+		"oauth_creds.json":     grant,
+	} {
+		if err := os.WriteFile(filepath.Join(profile, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	input, err := UsageQuotaAuthority(cfg, "gemini", "work")
+	if err != nil || input.Current != nil || input.APIKey || input.ProfileDir != profile {
+		t.Fatalf("pre-cutover quota must use the helper over its original profile: %+v %v", input, err)
+	}
+	if _, _, err := migrateNativeAccount(ctx, cfg, gemini, "work", func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(profile, "oauth_creds.json")); !os.IsNotExist(err) {
+		t.Fatal("cutover left a serving grant where the helper mounts", err)
+	}
+	input, err = UsageQuotaAuthority(cfg, "gemini", "work")
+	if err != nil || input.Current == nil || input.APIKey || input.ProfileDir != "" {
+		t.Fatalf("cut-over account fell back to the legacy helper: %+v %v", input, err)
+	}
+	state, _, err := input.Current(ctx, time.Now().Add(time.Minute))
+	if err != nil || state.Selection != "oauth-personal" || state.AccessToken != "inert-original-access" {
+		t.Fatal("quota escaped the canonical authority", err)
 	}
 }
 
