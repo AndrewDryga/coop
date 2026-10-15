@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Check a worker's session data before you upgrade it.** A new build can convert a worker's
+  session data when it first opens it, and the build before it can't open converted data. Stop
+  the worker and run `coop sessions check` with the new build: it says whether that build uses
+  the data as it is (exit 0), will convert it (exit 3), or can't use it (exit 4), and it changes
+  nothing. A build that can't open session data now names the data's schema and the schemas it
+  supports. Old data stays convertible for one upgrade step; when a later release stops
+  converting some, its notes say which build converts it first.
+
 - **Agent starts no longer reread history from before v11.** Each start read and checksummed the
   transcripts left in the old account and editor folders to find any not yet imported, and
   `coop acp` did so for every provider. Coop now remembers when an import finished and skips that

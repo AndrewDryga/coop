@@ -11,7 +11,10 @@ import (
 )
 
 const (
-	WorkspaceCheckpointVersion         = 2
+	WorkspaceCheckpointVersion = 2
+	// WorkspaceCheckpointLegacyVersion is the oldest bundle version still read; Ryker's controller
+	// keeps the bundles, so a worker's own check cannot see them.
+	WorkspaceCheckpointLegacyVersion   = 1
 	WorkspaceCheckpointBundleMediaType = "application/vnd.coop.workspace-checkpoint.v2+tar"
 	LegacyWorkspaceCheckpointMediaType = "application/vnd.coop.workspace-checkpoint.v1+tar"
 	// Historical v1 artifacts used an in-memory patch. New artifacts are streamed.

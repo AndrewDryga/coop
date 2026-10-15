@@ -251,7 +251,7 @@ var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
 	"doctor", "approve", "net", "net runs", "net inspect", "net check", "net blocked",
 	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "version",
-	"acp", "sessions", "sessions doctor", "sessions compact", "sessions connect",
+	"acp", "sessions", "sessions doctor", "sessions check", "sessions compact", "sessions connect",
 	"prompt", "completion")
 
 // manualPage is one command's page for the manual, in plain text: run and fork have their own
@@ -438,6 +438,7 @@ Usage: coop sessions <command>
 COMMANDS
   connect  connect this machine to a controller
   doctor   check whether the local service is ready
+  check    see whether this build can use the session data as it is
   compact  back up session data and reduce its disk usage
 
 CONNECT THIS MACHINE
@@ -449,6 +450,7 @@ CONNECT THIS MACHINE
 COMMAND HELP
   coop help sessions connect
   coop help sessions doctor
+  coop help sessions check
   coop help sessions compact`,
 
 	"sessions connect": `coop sessions connect: run a worker for a remote controller
@@ -488,6 +490,33 @@ EXAMPLES
   coop sessions doctor --socket /path/to/control.sock
 
   The command succeeds when the service responds and is ready for sessions.`,
+
+	"sessions check": `coop sessions check: see whether this build can use the session data as it is
+
+Usage:
+  coop sessions check [--state <path>]
+
+EXAMPLES
+  coop sessions check
+  coop sessions check --state /var/lib/coop/sessions
+
+OPTIONS
+  --state <path>  check this session-data directory
+
+BEFORE UPGRADING A WORKER
+  Stop the session service, then run this command with the new coop build.
+  It reads the session data and changes nothing.
+
+EXIT STATUS
+  0  this build uses the data as it is, or the service started but holds none yet
+  1  the check could not finish: the service is still running, there is no
+     session data at the path, or some data can't be read
+  2  invalid arguments
+  3  this build would convert the data; older builds can't open it afterwards
+  4  this build can't use the data: it is too old or too new
+
+DEFAULT SESSION DATA
+  ~/.local/state/coop/sessions`,
 
 	"sessions compact": `coop sessions compact: back up session data and reduce its disk usage
 

@@ -221,7 +221,9 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(root); err == nil || !strings.Contains(err.Error(), "unsupported schema version") {
-		t.Fatalf("newer schema version error = %v", err)
+	want := fmt.Sprintf("session schema %d is newer than this coop build supports (%d to %d)",
+		SchemaVersion+1, OldestSchemaVersion, SchemaVersion)
+	if _, err := Open(root); err == nil || err.Error() != want {
+		t.Fatalf("newer schema version error = %v, want %q", err, want)
 	}
 }

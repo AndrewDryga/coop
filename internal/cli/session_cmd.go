@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/ui"
 	"github.com/AndrewDryga/coop/internal/workerconnector"
@@ -114,15 +116,37 @@ func parseSessionCompactFlags(args []string) (state, backup string, err error) {
 	return state, backup, nil
 }
 
+func parseSessionCheckFlags(args []string) (state string, err error) {
+	const command, usage = "sessions check", "coop sessions check --state /var/lib/coop/sessions"
+	for i := 0; i < len(args); i++ {
+		if args[i] != "--state" {
+			if strings.HasPrefix(args[i], "-") {
+				return "", ui.UnknownOption(args[i], command, "")
+			}
+			return "", ui.UnexpectedArgument(args[i], command, usage)
+		}
+		if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+			return "", ui.MissingOptionValue(args[i], command, usage)
+		}
+		i++
+		if state != "" {
+			return "", fmt.Errorf("%s: --state may be specified once", command)
+		}
+		state = args[i]
+	}
+	return state, nil
+}
+
 // sessionCommands are the `coop sessions` subcommands — the one list the dispatch below, the
 // unknown-subcommand correction, the help router and shell completion all read.
-var sessionCommands = []string{"connect", "doctor", "compact"}
+var sessionCommands = []string{"connect", "doctor", "check", "compact"}
 
 // sessionFlags are each subcommand's flags as its parser accepts them; shell completion reads them,
 // and TestSessionsCompletionMatchesTheParsers holds the two together.
 var sessionFlags = map[string][]string{
 	"connect": {"--controller", "--token-file", "--state", "--ca-file"},
 	"doctor":  {"--socket", "--json"},
+	"check":   {"--state"},
 	"compact": {"--state", "--backup"},
 }
 
@@ -143,6 +167,12 @@ func (a *app) cmdSessions(args []string) (int, error) {
 			return 2, err
 		}
 		return runSessionDoctor(socket, jsonOutput)
+	case "check":
+		state, err := parseSessionCheckFlags(args[1:])
+		if err != nil {
+			return 2, err
+		}
+		return runSessionCheck(state)
 	case "compact":
 		state, backup, err := parseSessionCompactFlags(args[1:])
 		if err != nil {
@@ -238,6 +268,119 @@ func sessionCompactFailure(result sessionsvc.CompactionResult, err error) error 
 			"The session database could not be prepared for compaction.\n"+detail,
 			[2]string{"Backup:", result.BackupPath})
 	}
+}
+
+// The statuses `coop sessions check` adds to 0 (usable as it is), 1 (could not check) and 2
+// (invalid arguments), so an upgrade script can tell a one-way conversion from a refusal.
+const (
+	sessionCheckConverts = 3
+	sessionCheckRefused  = 4
+)
+
+// connectorJournalDir is where a worker connection keeps its command journal under the state root.
+func connectorJournalDir(state string) string { return filepath.Join(state, "connector") }
+
+// runSessionCheck says what this build would do with a stopped worker's session data before an
+// upgrade lets it open them, and changes nothing there.
+func runSessionCheck(state string) (int, error) {
+	state, err := sessionStatePath(state)
+	if err != nil {
+		return 2, err
+	}
+	// Holding the root keeps a service from starting and converting the store during the read.
+	release, err := session.HoldStateRoot(state)
+	if errors.Is(err, session.ErrStoreInUse) {
+		return 1, ui.CommandFailed("Could not check session data",
+			"The session service is using this data directory.",
+			[2]string{"", "Stop the service, then run the command again."})
+	}
+	if err != nil {
+		return 1, ui.CommandFailed("Could not check session data", upperFirstSentence(sessionsvc.BoundedDetail(err.Error())))
+	}
+	defer release()
+	store, err := session.CheckStore(state)
+	if errors.Is(err, session.ErrNoStateRoot) || errors.Is(err, session.ErrNoSessionData) {
+		return 1, ui.CommandFailed("Could not check session data", "There is no session data at "+state+".",
+			[2]string{"", "Check the --state path. A worker that has never run has nothing to check."})
+	}
+	var records []workerconnector.RecordCheck
+	if err == nil {
+		records, err = workerconnector.CheckJournal(connectorJournalDir(state))
+	}
+	if err != nil {
+		return 1, ui.CommandFailed("Could not check session data", upperFirstSentence(sessionsvc.BoundedDetail(err.Error())))
+	}
+	return reportSessionCheck(state, store, records)
+}
+
+func reportSessionCheck(state string, store session.StoreCheck, records []workerconnector.RecordCheck) (int, error) {
+	var refusals, damaged []string
+	newer, current := store.Status == session.StoreTooNew, 0
+	if store.Refusal != nil {
+		refusals = append(refusals, upperFirstSentence(store.Refusal.Error()))
+	}
+	for _, kind := range records {
+		current += kind.Current
+		if kind.Newer > 0 {
+			newer = true
+			refusals = append(refusals, fmt.Sprintf("Found %s from a newer coop build (this build reads version %d).",
+				ui.Count(kind.Newer, kind.Noun), kind.Version))
+		}
+		if kind.Older > 0 {
+			refusals = append(refusals, fmt.Sprintf("Found %s older than this build reads (version %d).",
+				ui.Count(kind.Older, kind.Noun), kind.Version))
+		}
+		damaged = append(damaged, kind.Damaged...)
+	}
+	if len(refusals) > 0 {
+		var rows [][2]string
+		if newer {
+			rows = append(rows, [2]string{"", "Use a newer coop build, such as the one that wrote this data."})
+		}
+		return sessionCheckRefused, ui.CommandFailed("This build can't use the session data", strings.Join(refusals, "\n"), rows...)
+	}
+	if len(damaged) > 0 {
+		cause := "This build can't read " + ui.Count(len(damaged), "worker record") + ":"
+		for i, record := range damaged {
+			if i == 3 {
+				cause += fmt.Sprintf("\n%d more", len(damaged)-i)
+				break
+			}
+			cause += "\n" + sessionsvc.BoundedDetail(record)
+		}
+		return 1, ui.CommandFailed("Could not check session data", cause)
+	}
+	if store.Status == session.StoreEmpty && current == 0 {
+		ui.OK("No session data yet")
+		ui.Note("  This build will create it in %s.", state)
+		return 0, nil
+	}
+	schema := strconv.Itoa(store.Version)
+	switch store.Status {
+	case session.StoreEmpty:
+		schema = "none yet"
+	case session.StoreConverts:
+		schema = fmt.Sprintf("%d → %d", store.Version, session.SchemaVersion)
+	}
+	rows := [][2]string{{"Data", state}, {"Session schema", schema}}
+	if current > 0 {
+		rows = append(rows, [2]string{"Worker records", strconv.Itoa(current)})
+	}
+	if store.Status == session.StoreConverts {
+		ui.Warn("This build will convert the session data")
+	} else {
+		ui.OK("This build can use the session data as it is")
+	}
+	for _, row := range rows {
+		ui.Note("  %s  %s", padRight(row[0], sessionLabelWidth(rows)), row[1])
+	}
+	if store.Status != session.StoreConverts {
+		return 0, nil
+	}
+	ui.Note("")
+	ui.Note("  Coop builds with an older session schema can't open it afterwards.")
+	ui.Note("  To keep a way back, back up the data directory while the service is stopped.")
+	return sessionCheckConverts, nil
 }
 
 // serveLocalSession is the private API owned by the controller connection.

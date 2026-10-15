@@ -367,8 +367,9 @@ func schemaVersion(db *sql.DB) (int, error) {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return 0, fmt.Errorf("read session database schema version: %w", err)
 	}
-	if version > SchemaVersion {
-		return 0, fmt.Errorf("unsupported schema version %d", version)
+	// Refuse before the backup is made, with the same answer Open would give.
+	if err := supportedSchemas.refusal(version); err != nil {
+		return 0, err
 	}
 	return version, nil
 }

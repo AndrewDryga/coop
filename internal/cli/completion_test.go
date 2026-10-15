@@ -581,6 +581,7 @@ func TestSessionsCompletionMatchesTheParsers(t *testing.T) {
 	parse := map[string]func([]string) error{
 		"connect": func(args []string) error { _, err := parseSessionConnectFlags(args); return err },
 		"doctor":  func(args []string) error { _, _, err := parseSessionDoctorFlags(args); return err },
+		"check":   func(args []string) error { _, err := parseSessionCheckFlags(args); return err },
 		"compact": func(args []string) error { _, _, err := parseSessionCompactFlags(args); return err },
 	}
 	unknown := func(err error) bool { return err != nil && strings.Contains(strings.ToLower(err.Error()), "unknown") }

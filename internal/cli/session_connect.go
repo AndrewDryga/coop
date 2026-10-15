@@ -123,7 +123,7 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 	}
 	executor, err := workerconnector.NewExecutor(workerconnector.ExecutorConfig{
 		API: privateAPI, BodyTransport: transport, JobSourceStager: jobSources,
-		JournalDir: filepath.Join(state, "connector"), Now: time.Now, WorkerID: identity.ID,
+		JournalDir: connectorJournalDir(state), Now: time.Now, WorkerID: identity.ID,
 	})
 	if err != nil {
 		return 1, err

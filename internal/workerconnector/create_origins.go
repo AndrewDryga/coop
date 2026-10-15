@@ -15,6 +15,8 @@ import (
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
+const createOriginVersion = 1
+
 // Origins outlive both command receipts and discarded streams. A bound/failed origin is also
 // the generation watermark: replay must never resurrect an older placement or discarded stream.
 type createOrigin struct {
@@ -79,7 +81,7 @@ func (j *journal) preserveCreateOriginLocked(entry journalEntry) error {
 		return errors.New("worker create receipt has no accepted operation identity")
 	}
 	origin := createOrigin{
-		Version: 1, WorkerID: command.WorkerID, SessionRef: command.SessionRef, PlacementGeneration: command.PlacementGeneration,
+		Version: createOriginVersion, WorkerID: command.WorkerID, SessionRef: command.SessionRef, PlacementGeneration: command.PlacementGeneration,
 		CommandID: command.CommandID, CommandDigest: computed, OperationKey: command.IdempotencyKey,
 		OperationID: op.ID, State: "pending", CoopSessionID: resource.Session.ID,
 	}
@@ -150,7 +152,7 @@ func (j *journal) readCreateOrigin(path string) (createOrigin, error) {
 		return createOrigin{}, err
 	}
 	var origin createOrigin
-	if len(data) > 16<<10 || json.Unmarshal(data, &origin) != nil || origin.Version != 1 ||
+	if len(data) > 16<<10 || json.Unmarshal(data, &origin) != nil || origin.Version != createOriginVersion ||
 		!reference(origin.WorkerID, 256) || !reference(origin.SessionRef, 256) || origin.PlacementGeneration <= 0 ||
 		!reference(origin.CommandID, 256) || !digest(origin.CommandDigest) || !reference(origin.OperationKey, 512) ||
 		(origin.State != "pending" && origin.State != "bound" && origin.State != "failed") ||

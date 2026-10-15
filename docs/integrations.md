@@ -402,7 +402,9 @@ Companion repositories are exact pinned read-only snapshots. The trusted host ca
 reviewed candidate and create a draft PR with a fresh repository-scoped grant. Models never receive
 the GitHub credential.
 
-`coop sessions doctor --json` checks the service that `connect` started.
+`coop sessions doctor --json` checks the service that `connect` started. Before you upgrade a
+worker, stop it and run `coop sessions check` with the new build; see
+[Upgrading a worker](session-api.md#upgrading-a-worker).
 
 If an old database has duplicate prompts in retry receipts, stop the worker and run:
 

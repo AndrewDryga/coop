@@ -113,7 +113,7 @@ func ValidateWorkspaceCheckpointPair(
 }
 
 func (m *WorkspaceCheckpointBundleManifest) validate() error {
-	if m.Version != 1 && m.Version != WorkspaceCheckpointVersion {
+	if m.Version != WorkspaceCheckpointLegacyVersion && m.Version != WorkspaceCheckpointVersion {
 		return fmt.Errorf("unsupported workspace checkpoint bundle version %d", m.Version)
 	}
 	for field, value := range map[string]string{
@@ -133,7 +133,7 @@ func (m *WorkspaceCheckpointBundleManifest) validate() error {
 		return errors.New("checkpoint bundle workspace identity is invalid")
 	}
 	content := m.TrackedPatch
-	if m.Version == 1 {
+	if m.Version == WorkspaceCheckpointLegacyVersion {
 		if m.Repository != nil || m.TrackedTree != "" {
 			return errors.New("historical checkpoint cannot carry repository objects")
 		}
@@ -174,7 +174,7 @@ func (m *WorkspaceCheckpointBundleManifest) validate() error {
 		}
 		total += m.GateReceipt.ByteSize
 	}
-	if m.Version == 1 && total > MaxWorkspaceCheckpointBundleBytes {
+	if m.Version == WorkspaceCheckpointLegacyVersion && total > MaxWorkspaceCheckpointBundleBytes {
 		return errors.New("checkpoint bundle content exceeds its bound")
 	}
 	return nil

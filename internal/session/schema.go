@@ -374,13 +374,69 @@ func derivePullRequestSourceBinding(
 	return binding, true
 }
 
+// StoreStatus is what this build does with a session store, decided by its schema version alone.
+// Open acts on it and CheckStore only reports it, so the two cannot disagree about a store.
+type StoreStatus int
+
+const (
+	// StoreEmpty: there is no session database yet, or it has no schema; Open creates one.
+	StoreEmpty StoreStatus = iota
+	// StoreCurrent: Open uses the store as it is.
+	StoreCurrent
+	// StoreConverts: Open converts the store to SchemaVersion, and builds with an older schema
+	// cannot open it afterwards.
+	StoreConverts
+	// StoreTooOld: the store predates OldestSchemaVersion, so Open refuses it.
+	StoreTooOld
+	// StoreTooNew: a newer build wrote the store, so Open refuses it.
+	StoreTooNew
+)
+
+// schemaWindow is the range of store schemas a build opens: it converts oldest up to current.
+type schemaWindow struct{ oldest, current int }
+
+var supportedSchemas = schemaWindow{oldest: OldestSchemaVersion, current: SchemaVersion}
+
+func (w schemaWindow) status(version int) StoreStatus {
+	switch {
+	case version > w.current:
+		return StoreTooNew
+	case version == w.current:
+		return StoreCurrent
+	case version == 0:
+		return StoreEmpty
+	case version < w.oldest:
+		return StoreTooOld
+	default:
+		return StoreConverts
+	}
+}
+
+// refusal is why Open refuses a store's schema, or nil when Open can use it. A too-old store is
+// told which schema converts it, keyed to the state version rather than a release because
+// untagged builds are deployed.
+func (w schemaWindow) refusal(version int) error {
+	switch status := w.status(version); {
+	case version < 0:
+		return fmt.Errorf("the session database has an invalid schema version %d", version)
+	case status == StoreTooNew:
+		return fmt.Errorf("session schema %d is newer than this coop build supports (%d to %d)",
+			version, w.oldest, w.current)
+	case status == StoreTooOld:
+		return fmt.Errorf("session schema %d is older than this coop build supports (%d to %d); "+
+			"open it once with a coop build that uses session schema %d, then upgrade",
+			version, w.oldest, w.current, w.oldest)
+	}
+	return nil
+}
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > SchemaVersion {
-		return fmt.Errorf("unsupported schema version %d", version)
+	if err := supportedSchemas.refusal(version); err != nil {
+		return err
 	}
 	if version == SchemaVersion {
 		return nil

@@ -159,6 +159,38 @@ silently re-enroll, even if an enrollment token is present. Check file ownership
 trust, the clock and the controller's renewal status. Then follow the controller operator's
 identity-recovery procedure. Don't delete the identity or the journal as a routine reconnect fix.
 
+### Upgrading a worker
+
+A new co:op build can convert the worker's session data when its service first opens it, and the
+build before it can't open converted data. Older data is converted for one upgrade step only: a
+later build refuses data it no longer converts and names the session schema whose builds convert
+it. So an upgrade, scripted or by hand, checks the data with the new build before it swaps:
+
+1. Wait for the commands the worker is carrying out, then stop the worker.
+2. Run the check with the new build or image, against the worker's state directory:
+
+   ```bash
+   coop sessions check --state /var/lib/coop/sessions
+   ```
+
+   In a container, run it from the new image with the worker's volumes mounted, as the worker's
+   own user.
+3. Act on its exit status:
+
+| Exit | Meaning | Next step |
+| --- | --- | --- |
+| `0` | The new build uses the data as it is, or the service has started but holds none yet | Start the new build |
+| `3` | The new build will convert the data, and older builds can't open it afterwards | To keep a way back, copy the stopped state directory aside, then start the new build |
+| `4` | The new build can't use the data: it is older than the build converts, or a newer build wrote it | Start the old build again. For old data, first run a build that uses the schema the message names |
+| `1` | The check couldn't finish: the service is still running, there is no session data at the path, or some data can't be read | Fix what the message names, then check again. A directory no service has used (a mistyped `--state`, a new empty volume) is never treated as empty, so it can't pass; a worker that has never run has nothing to check |
+| `2` | The arguments are invalid | Fix the command |
+
+The check covers the session database and the connection's command journal. It writes nothing to
+the state directory: it opens the database without creating SQLite's `-wal` and `-shm` files, and
+holds the state lock shared, so a service can't start and convert the data while it reads. It
+refuses to read while a service owns the state directory, because only a stopped service's data
+holds still.
+
 ### Session inspection evidence
 
 Your controller may ask a worker for one bounded, versioned account of a session the worker hosts.
@@ -1335,6 +1367,7 @@ captured intent stays `operation_uncertain`.
 | Active turn must stop | Use the idempotent cancel endpoint, then reconcile the terminal turn |
 | Session should stop costing runtime | Wait for park; without warm execution, no agent or Compose service container remains between turns, and a warm session keeps them until its idle timeout expires or you close it |
 | Incident is over | Close; retain the fork for review or an explicit later discard |
+| New co:op build for the worker | Stop the worker and run `coop sessions check` with the new build before you swap it in; see [Upgrading a worker](#upgrading-a-worker) |
 | Review patch preview is truncated | Use paged inspection; publish the retained reviewed candidate, never reconstruct it from the preview |
 
 Back up the entire state root while the daemon is stopped. Restoring a database without its

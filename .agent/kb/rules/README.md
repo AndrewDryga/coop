@@ -163,6 +163,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [structured-output-is-runtime-enforced](structured-output-is-runtime-enforced.md) — a structured-output schema is durable execution control, validated before completion, never prompt-only advice
 - [design-for-shared-checkout-not-forks](design-for-shared-checkout-not-forks.md) — outside agents and `coop loop` share one checkout; forks are optional, never the assumed context of a design
 - [hermetic-git-tests](hermetic-git-tests.md) — a test that runs git pins `GIT_CONFIG_GLOBAL` *and* `GIT_CONFIG_SYSTEM`; identity envs alone still let the host's config in
+- [one-upgrade-for-old-state](one-upgrade-for-old-state.md) — an old on-disk format is read for one upgrade step, then refused with the state version that converts it; check a worker with the new build before swapping it
 
 **Agent workflow** — how an agent works here, not what it ships
 - [live-provider-evidence-is-optional](live-provider-evidence-is-optional.md) — saved reports are optional dated evidence, never release permission or implicit provider spending

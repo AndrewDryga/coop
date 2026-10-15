@@ -72,6 +72,13 @@ func serviceStateRoot(name string) (string, error) {
 
 func serviceApprovalRoot() (string, error) { return serviceStateRoot("service-approvals") }
 
+// serviceApprovalVersion is the approval format coop writes; serviceApprovalLegacyVersion is the
+// oldest it still reads (.agent/kb/rules/one-upgrade-for-old-state.md).
+const (
+	serviceApprovalVersion       = 5
+	serviceApprovalLegacyVersion = 4
+)
+
 func composeDigest(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
@@ -300,7 +307,7 @@ func lastApprovalFor(workspace, file string) ([]string, bool) {
 			continue
 		}
 		var approval ServiceApproval
-		if json.Unmarshal(raw, &approval) != nil || (approval.Version != 4 && approval.Version != 5) || approval.Anchor != anchor || approval.File != file {
+		if json.Unmarshal(raw, &approval) != nil || (approval.Version != serviceApprovalLegacyVersion && approval.Version != serviceApprovalVersion) || approval.Anchor != anchor || approval.File != file {
 			continue
 		}
 		if !found || approval.ApprovedAt.After(newest.ApprovedAt) {
@@ -338,7 +345,7 @@ func (r *ServiceSecretReview) Approve() error {
 	if err != nil {
 		return err
 	}
-	approval := ServiceApproval{Version: 5, Anchor: anchor, Digest: composeDigest(r.data), File: r.File, Workspace: r.workspace, Paths: paths, ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
+	approval := ServiceApproval{Version: serviceApprovalVersion, Anchor: anchor, Digest: composeDigest(r.data), File: r.File, Workspace: r.workspace, Paths: paths, ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
 	if prior, ok := ApprovedServiceSecrets(r.workspace, file, r.data); ok && approvedServiceImagesMatch(prior.Images, r.images) {
 		approval.Volumes = prior.Volumes
 		approval.VolumeBinding = prior.VolumeBinding
@@ -529,7 +536,7 @@ func (r *ServiceStartReview) ApproveVolumes() error {
 	if err != nil {
 		return err
 	}
-	approval := ServiceApproval{Version: 5, Anchor: anchor, Digest: composeDigest(r.data), File: rel,
+	approval := ServiceApproval{Version: serviceApprovalVersion, Anchor: anchor, Digest: composeDigest(r.data), File: rel,
 		Workspace: canonical, Volumes: r.Volumes, VolumeBinding: r.binding, ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
 	if prior, ok := ApprovedServiceSecrets(r.workspace, r.file, r.data); ok && approvedServiceImagesMatch(prior.Images, r.images) {
 		approval.Paths = prior.Paths
@@ -564,7 +571,7 @@ func (r *ServiceStartReview) ApproveRenewal() error {
 	if err != nil {
 		return err
 	}
-	approval := ServiceApproval{Version: 5, Anchor: anchor, Digest: composeDigest(r.data), File: rel,
+	approval := ServiceApproval{Version: serviceApprovalVersion, Anchor: anchor, Digest: composeDigest(r.data), File: rel,
 		Workspace: canonical, Paths: r.Secrets.Paths(), Volumes: r.Volumes, VolumeBinding: r.binding,
 		ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
 	approval.Images, err = pinsForServiceGrant(r.workspace, r.file, r.data, approval, r.images)
