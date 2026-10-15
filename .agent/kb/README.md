@@ -62,7 +62,6 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [restricted-networking](restricted-networking.md) — the layers between an `--egress filtered` flag and `docker run`, where authority lives (never a repo, never a box), the precedence ladder, and what a filtered run refuses
 - [network-gateway](network-gateway.md) — the controller/guard pair that enforces a capture: nftables capture and grants, SNI and DNS admission, what observation measures versus counts, exact-owned cleanup
 - [network-consumers](network-consumers.md) — how the loop, direct runs and remote sessions consume ONE frozen capture per box (a filtered `coop acp` session replaces boxes after an approval), and which `coop net` verb reads which evidence
-- [box-egress-poc](box-egress-poc.md) — transparent HTTPS experiment guards hidden Docker DNS ports and shared control sockets; not a production mode
 - [in-box-task-channel](in-box-task-channel.md) — the loop box changes task state through the coop-owned `coop-tasks` MCP server over a helper-container unix socket (never a host-created one, never HTTP), refusing only a task another live process holds
 - [release-qualification](release-qualification.md) — tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity
 - [box-time-is-utc](box-time-is-utc.md) — boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local

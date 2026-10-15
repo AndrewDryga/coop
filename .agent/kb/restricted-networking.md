@@ -289,9 +289,11 @@ Traps:
   one orphans them and its replacement starts empty.
 
 [[network-gateway]] is the runtime that enforces the capture; [[network-consumers]] is how the loop,
-direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
+direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-10-15 — dropped the pointer to the retired transparent-HTTPS experiment: its tools/ files and
+  card are deleted (task 2026-10-15-delete-the-retired-egress-proof-of-concept).
 - 2026-10-15 — added the approval generation and the filtered `coop acp` refresh that replaces boxes
   between turns, with refusal revert and no way back after a switch (task
   2026-10-14-acp-sessions-adopt-new-network-approval-at-idle); verified against the new store, box,

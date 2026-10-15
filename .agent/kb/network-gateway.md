@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
-updated: 2026-10-13
+updated: 2026-10-15
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -131,9 +131,11 @@ Facts the code cannot say twice, all still true:
 
 - The pinned Envoy 1.39.1 `tls_inspector` caps ClientHello at 16 KiB, so both inspection layers use
   the same bound (`hello.go:18`, `envoy.go:37`).
-- Envoy runs with `--disable-hot-restart` (`service.go:248`); its access log format is a YAML block
-  scalar because a single-quoted `\n` is literal text and silently stops line intake
-  (`envoy.go:59`).
+- Envoy runs with `--disable-hot-restart` (`GuardRuntime.Run` in `service.go`): the box shares the
+  guard's network namespace, and Envoy's hot-restart socket is an abstract Unix socket, which
+  belongs to the namespace and ignores mounts, so the private tmpfs cannot hide it from the agent.
+  Its access log format is a YAML block scalar because a single-quoted `\n` is literal text and
+  silently stops line intake (`envoy.go:59`).
 - An admitted AAAA question gets a local NOERROR/NODATA answer, never REFUSED: refusing makes a
   dual-stack musl client (the Codex image) discard its valid A answer (`resolver.go:398`).
 - Expiry authority is `BootInstant`, absolute nanoseconds on CLOCK_BOOTTIME (`clock.go:11`). Never
@@ -239,6 +241,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-15 — the `--disable-hot-restart` trap now cites `GuardRuntime.Run` and says why (abstract
+  sockets belong to the shared network namespace); this card holds it since the retired egress
+  experiment and its card are deleted. The rest of the card was not re-verified.
 - 2026-10-13 — native broker denial now latches under its comparison mutex before teardown;
   first-stop metadata cannot be replaced by lifecycle cleanup. Deterministic admission test
   fails on the old source and passes after repair; real stream and blocked-log cleanup tests
