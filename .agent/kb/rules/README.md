@@ -176,6 +176,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [fix-the-bug-not-the-feature](fix-the-bug-not-the-feature.md) — root-cause the misbehavior; deleting the feature is never the fix without the human
 - [gate-is-one-recipe](gate-is-one-recipe.md) — Make owns the broad check union and its CI partitions, never a second workflow check list
 - [small-work-to-the-queue](small-work-to-the-queue.md) — ready work goes to `00_todo/`; only the genuinely large or unscoped goes to the backlog
+- [task-folders-keep-evidence-not-bulk](task-folders-keep-evidence-not-bulk.md) — a task folder keeps evidence, never rebuildable bulk (record commit, sha256 and build command); scratch goes in `tmp/`; only the layout sits at the queue root
 - [static-bounded-supervision](static-bounded-supervision.md) — supervised long commands keep output static and only a bounded excerpt in context
 - [read-a-mutation-result-whole](read-a-mutation-result-whole.md) — a state-changing command's result is read whole, or its effect checked, before it is ever re-run
 - [agent-instructions-use-in-box-capabilities](agent-instructions-use-in-box-capabilities.md) — agent-facing instructions name in-box capabilities, never host-side lifecycle commands

@@ -229,13 +229,17 @@ to a one-line pointer. Write it with `/spec`. Small tasks don't need one.
 ## screenshots/ · artifacts/ · tmp/ (optional, git-ignored)
 
 `screenshots/` is the common visual deliverable (a UI change, a before/after). `artifacts/` holds
-other durable evidence a reviewer or future maintainer needs: repros, captured data, generated
-files. Both remain with the task in `99_done/` until a human prunes the archive.
+other durable evidence a reviewer or future maintainer needs: repros, captured data, the logs that
+prove a check ran. Both remain with the task in `99_done/` until a human prunes the archive, so
+keep evidence there, not what a build can recreate: for a binary, a release tarball, a toolchain
+or an environment, record the commit, sha256 and build command in `log.md` instead.
+`coop tasks done` warns when the task folder holds a compiled program or more than 25 MB.
 
-`tmp/` is the task-local workspace for disposable scratch worktrees, patches, and generated files.
-It follows the task through todo, in-progress, and blocked transitions so interrupted work can
-resume. Moving the task to done removes `tmp/` automatically before review; promote anything worth
-retaining to `artifacts/` first. All three directories are git-ignored, so they never bloat a commit.
+`tmp/` is the task-local workspace for disposable scratch worktrees, patches, builds and generated
+files. It follows the task through todo, in-progress, and blocked transitions so interrupted work
+can resume. Moving the task to done removes `tmp/` automatically before review; promote anything
+worth retaining to `artifacts/` first. All three directories are git-ignored, so they never bloat
+a commit.
 
 ---
 
@@ -249,6 +253,9 @@ retaining to `artifacts/` first. All three directories are git-ignored, so they 
   failure fails completion loudly and an already-done retry finishes the work.
 - Pruning the archive is a manual, human step: `coop tasks rm --all-done` (or
   `coop tasks rm <id>` for one). The loop and `/sweep` never do this.
+- Only this README, the state folders and `xx_backlog/` live at the queue root. `coop tasks`
+  warns about any other file or folder there (hidden ones are left to tools); keep a task's
+  evidence in its folder and everything else outside `.agent/tasks`.
 - A todo task must NOT carry a `decision.md` (that means it's blocked); a blocked one MUST.
 - Never add a `status:` field — the directory IS the status. `coop tasks lint` checks this.
 - Counts / subtask progress / the blocked list are DERIVED — `coop tasks`,

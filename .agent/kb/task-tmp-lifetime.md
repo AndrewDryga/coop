@@ -2,8 +2,8 @@
 name: task-tmp-lifetime
 description: task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist
 subsystem: tasks
-sources: [internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/audit.go, internal/loop/loop.go, internal/taskmcp/tools.go, internal/taskmcp/evidence_handoff_test.go, internal/scaffold/templates/agent/tasks/README.md]
-updated: 2026-09-13
+sources: [internal/tasks/cmd.go, internal/tasks/clutter.go, internal/tasks/lease.go, internal/tasks/audit.go, internal/loop/loop.go, internal/taskmcp/tools.go, internal/taskmcp/evidence_handoff_test.go, internal/scaffold/templates/agent/tasks/README.md]
+updated: 2026-10-15
 ---
 A task's `tmp/` is disposable but resumable: because it sits inside the task folder, ordinary
 todo/in-progress/blocked/reopen moves carry it along. `tasksFolderMove` removes only `tmp/` when a
@@ -15,6 +15,11 @@ folder symlink is refused, a `tmp` symlink is unlinked rather than followed, and
 removed without touching their targets. Cleanup errors fail completion/review loudly and can be
 retried with `coop tasks done <id>`. Anything a reviewer or future maintainer needs belongs in
 `artifacts/`, which survives done.
+
+Nothing else in the folder is ever removed. A host `coop tasks done` (including an already-done
+retry) only warns when the archived folder holds an executable ELF/Mach-O file or more than 25 MB
+(`warnTaskBulk`, `internal/tasks/clutter.go`); the loop and the in-box task channel complete tasks
+without that check. See [[task-folders-keep-evidence-not-bulk]].
 
 Assigned MCP completion moves and normalizes the folder before the host finalizes it;
 its return does not mean scratch has already vanished. The tool description asks for
@@ -29,6 +34,8 @@ Task authority does not live in `tmp/`. The host-only registry under
 scratch is never lease evidence and task-folder moves do not relocate authority.
 
 ## Changelog
+- 2026-10-15 — added the done-time bulk warning; re-verified against `tasksFolderMoveWith` and
+  `finalizeCompletedTask` that done still removes only `tmp/`.
 - 2026-09-13 — rechecked assigned versus host completion timing, added evidence-handoff feedback
   and lifecycle tests for retained copies, disappearing scratch/dangling links and refusals.
 - 2026-08-25 — removed the task-local lease mirror; `tmp/` is scratch only, while the host registry

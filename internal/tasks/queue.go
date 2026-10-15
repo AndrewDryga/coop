@@ -464,6 +464,7 @@ func tasksListAll(repo string, rels []string, args []string) (int, error) {
 		}
 		if len(items) == 0 {
 			fmt.Println(p.Gray("  (no tasks)"))
+			warnQueueRootStrays(root)
 			continue
 		}
 		if _, err := tasksFolderList(root, all, only...); err != nil {

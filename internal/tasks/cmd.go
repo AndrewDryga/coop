@@ -683,6 +683,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 				return -1, trustedCompletionError(err, t.ID)
 			}
 			ui.Note("%s is already done.", t.Title)
+			warnTaskBulk(t.Dir)
 		case StateInProgress:
 			// Re-claiming a task already in progress (yours, or one the loop currently holds) is a
 			// legitimate take-over, not a no-op: it (re)asserts durable ownership regardless of who
@@ -747,8 +748,10 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 	case StateInProgress:
 		printClaimResult(t, opts.actor, "")
 	case StateDone:
+		dir := filepath.Join(root, StateDone, t.ID)
 		ui.OK("Completed task: %s", t.Title)
-		ui.Note("\n  %s", displayPath(filepath.Join(root, StateDone, t.ID)))
+		ui.Note("\n  %s", displayPath(dir))
+		warnTaskBulk(dir)
 	default:
 		ui.OK("%s %s", pastVerb, t.ID)
 	}
@@ -2183,12 +2186,22 @@ const doneListCap = 5
 // then the archive. (TaskStates is the LIFECYCLE order, which the counters and the loop use.)
 var listStateOrder = []string{StateInProgress, StateTodo, StateBlocked, StateDone}
 
-// tasksFolderList prints the queue grouped by state. only narrows it to the given states (a
+// tasksFolderList prints the queue, then warns about anything left at the queue root that is not
+// part of it (see warnQueueRootStrays).
+func tasksFolderList(root string, all bool, only ...string) (int, error) {
+	code, err := printTaskTree(root, all, only...)
+	if err == nil {
+		warnQueueRootStrays(root)
+	}
+	return code, err
+}
+
+// printTaskTree prints the queue grouped by state. only narrows it to the given states (a
 // --blocked/--todo/… filter); empty shows every state. Each task is three lines at most — its
 // title, the facts that are exceptional about it, and its id as an OSC 8 hyperlink to its folder,
 // so it opens on click in a supporting terminal and stays plain text in a pipe. There is no count
 // footer: the section headings already carry the counts.
-func tasksFolderList(root string, all bool, only ...string) (int, error) {
+func printTaskTree(root string, all bool, only ...string) (int, error) {
 	items, err := ReadTaskTree(root)
 	if err != nil {
 		return -1, err
