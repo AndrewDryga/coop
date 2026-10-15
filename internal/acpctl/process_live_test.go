@@ -469,7 +469,7 @@ func waitCommand(cmd *exec.Cmd, timeout time.Duration) error {
 // The resident leader pins the generation's process group, but a stop's TERM is a request it honours
 // once its child — which tears a filtered gateway down on TERM — has exited; a child that exits on its
 // own still leaves the group pinned until the supervisor ends it.
-func TestLiveACPStartGateReleasesTheGroupOnlyWhenAskedToStop(t *testing.T) {
+func TestLiveACPProcessStartGateReleasesTheGroupOnlyWhenAskedToStop(t *testing.T) {
 	start := func(t *testing.T, child string) (*exec.Cmd, chan struct{}) {
 		t.Helper()
 		gate, released, err := os.Pipe()

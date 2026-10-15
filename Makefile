@@ -256,6 +256,10 @@ provider-scripted-other-e2e: ## The scripted provider suite's other tests and it
 	@go test -count=1 ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
 	@go test -tags providere2e -run '^TestProviderScripted' -skip '$(PROVIDER_SHARD)' -count=1 -timeout 20m -v ./internal/cli/
 
+# Selects every deterministic test in the cooplivetest/providerlivee2e files; a test that needs a
+# real provider is named …LiveCompatibility (its subprocess …LiveChild) and runs only on demand.
+# internal/live_selection_test.go fails when a tagged test is neither, or its package is not listed
+# here, so a rename or a new package cannot drop one silently.
 live-process-control: ## Deterministic denial tests for tagged live-test process ownership
 	@go test -race -tags providerlivee2e,cooplivetest -run '^Test(LiveACPProcess|LiveInterruptible|LiveRunInterruptible|ProviderConsultLiveContract|ProviderLoopLiveContract|ProviderResumeLiveContract|ProviderNetworkLiveContract|ProviderLiveStreamContract|ProviderAccountsLiveContract)' -count=1 ./internal/cli/ ./internal/acpctl/ ./internal/runtime/ ./internal/loop/
 	@tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' 0; go test -c -tags acpe2e -o "$$tmp" ./internal/acpproxy/

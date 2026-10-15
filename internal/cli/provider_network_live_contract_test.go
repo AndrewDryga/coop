@@ -22,7 +22,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
-func TestProviderNetworkLiveRenewsBeforeAccessOnlyProjection(t *testing.T) {
+func TestProviderNetworkLiveContractRenewsBeforeAccessOnlyProjection(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -78,7 +78,7 @@ func TestProviderNetworkLiveRenewsBeforeAccessOnlyProjection(t *testing.T) {
 	}
 }
 
-func TestProviderNetworkLiveDoesNotRenewAbsentOrUnselectedLogin(t *testing.T) {
+func TestProviderNetworkLiveContractDoesNotRenewAbsentOrUnselectedLogin(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
 	defer server.Close()
@@ -102,7 +102,7 @@ func TestProviderNetworkLiveDoesNotRenewAbsentOrUnselectedLogin(t *testing.T) {
 	}
 }
 
-func TestProviderNetworkLiveRenewalFailureBeforeProjection(t *testing.T) {
+func TestProviderNetworkLiveContractRenewalFailureBeforeProjection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
@@ -129,7 +129,7 @@ func TestProviderNetworkLiveRenewalFailureBeforeProjection(t *testing.T) {
 	}
 }
 
-func TestProviderNetworkLiveUnrenewableLoginKeepsPrerequisiteSkip(t *testing.T) {
+func TestProviderNetworkLiveContractUnrenewableLoginKeepsPrerequisiteSkip(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	selection := liveprovider.Selection{Provider: "grok", Account: "default", SourceDefault: true}
 	profile := cfg.AgentProfileDir("grok", "default")

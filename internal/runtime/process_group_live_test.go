@@ -55,7 +55,7 @@ func TestLiveRunInterruptibleLeavesRetryableTombstoneOnDeletionFailure(t *testin
 	}
 }
 
-func TestLiveProcessGroupHelper(t *testing.T) {
+func TestLiveInterruptibleProcessGroupHelper(t *testing.T) {
 	if os.Getenv("COOP_TEST_LIVE_RUNTIME_HELPER") != "1" {
 		t.Skip("subprocess helper")
 	}
@@ -143,7 +143,7 @@ func runLiveProcessGroupHelper(t *testing.T, valid, cancelRuntime, removeFailure
 		t.Fatal(err)
 	}
 	defer file.Close()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestLiveProcessGroupHelper$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLiveInterruptibleProcessGroupHelper$")
 	configDir := filepath.Join(filepath.Dir(path), "config")
 	revokePath := filepath.Join(filepath.Dir(configDir), ".coop-live-revoked-00000000000000000000000000000000")
 	if err := os.Mkdir(configDir, 0o700); err != nil {
