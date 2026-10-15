@@ -3,7 +3,7 @@ name: lifecycle-latency-measurement
 description: how to measure a box/editor start or stop change without fooling yourself — pair the two builds and alternate them, never bisect a noisy metric single-shot, build the comparison binary where its version stamp is honest, and know why an old binary cannot run in an approved project
 subsystem: testing
 sources: [tools/lifecycle_bench.py, tools/test_lifecycle_bench.py, tools/services_bench.py, tools/test_services_bench.py, Makefile, internal/cli/acp_cmd.go, internal/cli/cli.go, internal/runtime/docker_lifecycle.go]
-updated: 2026-10-07
+updated: 2026-10-15
 ---
 
 `make lifecycle-bench` (`tools/lifecycle_bench.py`) is the instrument for every start/stop claim in
@@ -38,7 +38,7 @@ case with a stand-in coop and another run's resources appearing mid-sample.
 
 ## A start with services: tools/services_bench.py
 
-`tools/services_bench.py` times a warm start in a project with Compose services, the overnight
+`tools/services_bench.py` times a warm start in a project with Compose services, the Orchestrator
 page's Project services figure. Same boundary as the start cases (launch to the box's command
 running, seen as a marker file on the host), two cases taken in turns after one warm-up each:
 `stopped` (`coop down` first, so the launch starts the services) and `running` (`coop up` first).
@@ -134,6 +134,9 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 until 2026-09-20's paired A/B put a number against it. Both now state the number.
 
 ## Changelog
+- 2026-10-15 — the services figure's page is called by its current name, the Orchestrator page
+  (checked in site/orchestrator.html); nothing else in the card was rechecked (task
+  2026-10-15-delete-the-unused-release-notes-config-and-the-o).
 - 2026-10-07 — services_bench's stop waits for the launch's whole session, not just the launch (task
   2026-10-07-stops-reach-a-launch-s-whole-group-and-two-proce).
 - 2026-10-07 — services_bench pins its project and auto-up, spools launch output and always cleans

@@ -277,12 +277,8 @@ class SiteContentTest(unittest.TestCase):
 
     def test_sitemap_lists_every_canonical_page(self):
         listed = set(re.findall(r"<loc>https://coop\.dryga\.com/([^<]*)</loc>", (SITE / "sitemap.xml").read_text()))
-        self.assertNotIn("overnight.html", listed, "the redirect must not compete with the canonical landing page")
-        for path in sorted(SITE.glob("*.html")):
-            if path.name == "overnight.html":
-                continue  # only this retired URL is a redirect, checked separately below
-            with self.subTest(page=path.name):
-                self.assertIn("" if path.name == "index.html" else path.name, listed)
+        pages = {"" if path.name == "index.html" else path.name for path in SITE.glob("*.html")}
+        self.assertEqual(listed, pages, "the sitemap lists every page and no page that is gone")
 
     def test_task_queue_leads_to_the_orchestrator_page(self):
         page = (SITE / "index.html").read_text()
@@ -304,23 +300,6 @@ class SiteContentTest(unittest.TestCase):
         for name, _, image in gen_seo_assets.CARDS:
             self.assertTrue((SITE / name).is_file(), name)
             self.assertTrue((SITE / "assets" / "img" / image).is_file(), image)
-        for path in (SITE / "index.html", SITE / "orchestrator.html", SITE / "docs.html"):
-            with self.subTest(page=path.name):
-                self.assertNotIn("overnight.html", path.read_text(), "active pages must link straight to the canonical URL")
-        for old in ("tools/site/overnight.tpl.html", "site/assets/css/overnight.css", "site/assets/js/overnight.js", "site/assets/img/og-overnight.png"):
-            self.assertFalse((SITE.parent / old).exists(), old)
-
-    def test_old_overnight_url_is_only_a_redirect(self):
-        page = Page(SITE / "overnight.html")
-        self.assertIn(("link", {"rel": "canonical", "href": "https://coop.dryga.com/orchestrator.html"}), page.elements)
-        self.assertIn(("meta", {"name": "robots", "content": "noindex"}), page.elements)
-        self.assertIn(("meta", {"http-equiv": "refresh", "content": "0; url=orchestrator.html"}), page.elements)
-        links = [attrs["href"] for tag, attrs in page.elements if tag == "a"]
-        self.assertEqual(links, ["orchestrator.html"], "a link remains when scripts or refresh are disabled")
-        script = re.findall(r"<script>(.*?)</script>", (SITE / "overnight.html").read_text())
-        self.assertEqual(script, ['location.replace("orchestrator.html" + location.search + location.hash);'])
-        self.assertFalse(page.main_nav, "the retired URL must not keep a second landing page")
-        self.assertFalse(any(attrs.get("class") == "board" for _, attrs in page.elements))
 
     def test_the_services_figure_links_the_tool_that_measured_it(self):
         # our own number: the reader can rerun the measurement, so the tool it links must exist

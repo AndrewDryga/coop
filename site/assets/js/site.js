@@ -52,7 +52,7 @@ for (const button of document.querySelectorAll("[data-copy]")) {
   });
 }
 
-// The agent switcher rewrites the sign-in and start commands (the overnight page starts a loop);
+// The agent switcher rewrites the sign-in and start commands (the Orchestrator page starts a loop);
 // without JavaScript they stay on Claude.
 const agentButtons = [...document.querySelectorAll("[data-agent]")];
 const pick = (button) => {

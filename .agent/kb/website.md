@@ -2,8 +2,8 @@
 name: website
 description: site/ is static and partly generated; tools/gen_site.py owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
 subsystem: website
-sources: [tools/gen_site.py, tools/services_bench.py, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/overnight.html, site/docs.html, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/site_picker_fixture.cjs, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
-updated: 2026-10-14
+sources: [tools/gen_site.py, tools/services_bench.py, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/docs.html, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/site_picker_fixture.cjs, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
+updated: 2026-10-15
 ---
 
 The homepage and docs are static files in `site/`, published by `.github/workflows/pages.yml` on
@@ -52,11 +52,6 @@ The agent picker rewrites `data-cmd` login, run and loop. Its free test executes
 shipped site.js in Node against command nodes parsed from both landing pages. Literal command,
 clipboard, radio, keyboard and timer/error controls catch behavior changes, not just source tokens.
 Node is required by the tools gate; this small DOM fixture does not claim browser layout proof.
-
-The old public `site/overnight.html` is only a noindex redirect to `orchestrator.html`, with a
-meta refresh and link fallback; JavaScript preserves the query/fragment using `location.replace`.
-Navigation, canonical/OG metadata and the sitemap use the new URL directly, and the old template
-and assets are gone. The redirect is hand-written, not generated or listed in the sitemap.
 
 **The scenes copy real CLI output**, and `TERMINAL_SOURCES` in `gen_site.py` says where each
 terminal's lines come from. A transcript block (doctor is `18a-doctor-all-passed.txt`) must use
@@ -182,6 +177,10 @@ with `--disable-javascript`, and `--blink-settings=scriptEnabled=false` makes `-
 nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 
 ## Changelog
+- 2026-10-15 — deleted the `overnight.html` redirect: the URL was public for one day, and a retired
+  URL is not redirected, so it now 404s. The sitemap test now requires exactly the site's pages.
+  Checked that no page, generator or sitemap links it (task
+  2026-10-15-delete-the-unused-release-notes-config-and-the-o).
 - 2026-10-14 — command-picker tests execute shipped JavaScript and parsed page ownership; missing
   handlers and loop/run substitution fail, restored source passes. No page or script bytes changed.
 - 2026-10-13 — Orchestrator mobile steps now use the sandbox's measured-height sticky sheets.
