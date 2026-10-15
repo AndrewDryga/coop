@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The daily cleanup of what killed runs leave behind now finishes.** Coop marked the day's
+  cleanup done before starting it, so a quick first command such as `coop tasks ls` cut it short
+  and everything waited another day. A box that went away while the cleanup checked it also
+  cancelled the whole pass. The cleanup now starts alongside commands that run boxes, such as
+  `coop claude`, `coop acp` and `coop loop`, counts only once it has finished, and skips a box
+  that is already gone. A pass that could not ask Docker which files boxes use does not count, so
+  the next box tries again. It also removes the Docker and Compose client folders killed runs
+  leave behind, the Docker ones only from a temp folder no other user can write to. It still
+  removes only Coop's own entries that are over an hour old and that no box uses.
+
 - **`coop tasks` points out bulk left in the task queue.** Agents sometimes kept compiled
   programs, release tarballs and toolchains in task folders, and left release files next to the
   state folders, where they stayed until someone deleted them. `coop tasks done` now warns when

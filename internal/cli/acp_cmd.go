@@ -436,6 +436,7 @@ func (a *app) acpBare(tool, model, profile, effort string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	a.startTempReap()
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Cmd: acpCommand(a.cfg, tool), ForceNoTTY: true, Agent: tool, Homes: a.cfg.Homes,
 		Mode: agents.ModeBare, NetworkClient: egress.ClientACP, Quiet: true, ControllerJob: controllerJob,

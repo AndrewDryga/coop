@@ -55,6 +55,9 @@ func (a *app) collectOrphanBoxes(repo string) loop.Preparation {
 	if err := a.ensureRuntime(); err != nil {
 		return result
 	}
+	// A loop launches its boxes inside its engine, past runBox, so its start carries the daily
+	// temp sweep; fork starts and a build's recycle start it here too.
+	a.startTempReap()
 	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
 	defer cancel()
 	result.RemovedBoxes, _ = box.ReapOrphanBoxes(ctx, a.rt, repo)
@@ -72,7 +75,10 @@ func (a *app) collectOrphanBoxes(repo string) loop.Preparation {
 // runBox is box.Run for a host launch that may be filtered. A filtered one first settles what earlier
 // killed runs left behind — before its own gateway exists, so it can never touch it — and notes what
 // it settled unless the launch runs quiet. The loop settles once at its start, through the sweep.
+// A launch through here also starts the daily temp sweep when it is due: the box keeps the process
+// alive long enough for it to finish.
 func (a *app) runBox(spec box.RunSpec) (int, error) {
+	a.startTempReap()
 	if spec.CapturedEgress != nil {
 		if settled := a.settleInterruptedFilteredRuns(); !spec.Quiet {
 			noteSettledFilteredRuns(settled)

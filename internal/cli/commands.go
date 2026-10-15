@@ -332,6 +332,7 @@ func (a *app) runRestrictedInBox(cmd []string, agent string) (int, error) {
 			return 1, err
 		}
 	}
+	a.startTempReap()
 	return box.Run(a.cfg, a.rt, spec)
 }
 

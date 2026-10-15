@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -21,7 +23,8 @@ import (
 // A query or inspect failure is an error, never an empty result. An empty
 // result means "nothing is mounted", and a caller that deletes what is not
 // mounted would take a transient docker failure as permission to delete
-// everything.
+// everything. The one failure that is no error is a container removed between
+// the listing and its inspect: it mounts nothing any more.
 func (r Runtime) MountSourcesByLabel(
 	ctx context.Context,
 	key, value string,
@@ -40,6 +43,16 @@ func (r Runtime) MountSourcesByLabel(
 		if err != nil {
 			if ctx.Err() != nil {
 				err = ctx.Err()
+			} else {
+				// Boxes come and go while this runs. The inspect's wording proves nothing (Docker
+				// 29 changed it), so only the same listing, run again and no longer showing this
+				// id, proves the box gone. Another box that shares the short id stays listed and
+				// keeps the error.
+				remaining, listErr := r.containerIDsContext(ctx, true, "label="+key+"="+value)
+				if listErr == nil && !slices.Contains(remaining, id) {
+					continue
+				}
+				err = errors.Join(err, listErr)
 			}
 			return nil, fmt.Errorf(
 				"run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, out),

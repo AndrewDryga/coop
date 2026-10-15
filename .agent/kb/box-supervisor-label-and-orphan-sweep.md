@@ -2,8 +2,8 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/box/sweep.go, internal/box/run.go, internal/box/open_broker.go, internal/cli/boxsweep.go, internal/cli/doctor.go, internal/runtime/runtime.go]
-updated: 2026-09-19
+sources: [internal/box/sweep.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go]
+updated: 2026-10-15
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
 CLIENT's promise, no Go `defer` runs, and no PID 1 inside the box can help (that limit, and why a
@@ -54,6 +54,19 @@ command's own box work reports a broken runtime loudly, and Apple's `container` 
 inspection at all, so it would otherwise print on every start. `coop doctor` is the reporting
 surface: count, ids, and the label evidence, outside its pass/fail tally, reaping nothing.
 
+Files get a separate daily sweep (`cli.startTempReap` → `box.ReapOrphanTempEntries`): coop-prefixed
+entries in TMPDIR and the private runfiles root that are over an hour old AND mounted by no box. It
+starts once per process from `runBox` (direct, editor and fork launches), the readonly/bare launches,
+and `collectOrphanBoxes` (loop and fork starts, and a build's recycle near its end); doctor probes,
+eval trials and fork merge gates launch boxes without it. It stamps `BoxHome/temp-reap` only after a
+pass whose mount listing succeeded (`box.ErrMountsUnknown` marks one that did not): a goroutine dies
+with its process, stamping first let a short command use up the day, and a pass that could not list
+removed nothing, so the next launch retries it. `MountSourcesByLabel` skips a box removed between
+`ps` and its inspect only when the same listing, run again, no longer shows its id. Trap: a
+`coop-docker-client-*` directory is in use for a whole run yet never mounted, so it is reaped only
+from a directory no other user can write (on a shared /tmp another user could recreate a live run's
+Docker config), and `Docker.Close` accepts one already removed.
+
 Post-build recycling is a separate authority boundary. It uses a bounded, error-reporting running
 container query to preserve the old-image notice, then `RemoveByLabel` to restart supervised boxes.
 A true no-match is success; query or partial-removal failure makes `build`/`update` fail with the
@@ -62,7 +75,8 @@ already-built image called out explicitly. Do not reintroduce best-effort count/
 Traps:
 - The sweep adds ONE runtime `ps` to loop/fork/build. The scripted process E2Es pin exact
   runtime call counts, so those suites pass `sweepsOrphanBoxes` (see `assertDirectRunContract`); a
-  command that grows any OTHER runtime call still fails the count.
+  command that grows any OTHER runtime call still fails the count. The daily temp sweep would add
+  more when due; `procharness.NewLayout` stamps `temp-reap` fresh so it never is there.
 - The scripted fixture must answer `inspect --format {{json .Config.Labels}}` (it does, as the
   `labels` command) or the sweep silently degrades to "unattributable" in every E2E.
 - A fork's boxes are scoped to the FORK's workspace, not the parent repo, so `coop fork <name>` from
@@ -70,6 +84,10 @@ Traps:
   exact-owner reap.
 
 ## Changelog
+- 2026-10-15 — added the daily temp sweep: it rides the listed launch paths, stamps only after a
+  successful mount listing, skips a provably vanished box, and reaps Compose and (only from a
+  private temp dir) Docker client dirs; verified against `internal/cli/tempreap_test.go`,
+  `internal/box/reap_test.go` and `mounts_test.go`.
 - 2026-09-19 — the reap also covers an open run's `coop=broker` helper, by the same supervisor label.
 - 2026-09-03 — replaced post-build's silent count/kill path with bounded diagnostic queries and
   exact-label removal; verified the pull-only orphan sweep remains intentionally best-effort.

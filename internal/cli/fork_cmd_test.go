@@ -1654,14 +1654,25 @@ func TestDetachedWorkerHandoffRaceOrderings(t *testing.T) {
 		cmd := exec.Command(os.Args[0], "fork", name, "claude", "--loop", workerArg)
 		var childErr strings.Builder
 		cmd.Stderr = &childErr
-		xdgConfig := filepath.Join(t.TempDir(), "xdg-config")
+		// An old, unmounted coop entry the daily temp sweep would remove: the superseded child
+		// must not run that housekeeping before it publishes.
+		childTmp := t.TempDir()
+		orphan := filepath.Join(childTmp, "coop-mcp-orphan")
+		if err := os.WriteFile(orphan, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-3 * time.Hour)
+		if err := os.Chtimes(orphan, old, old); err != nil {
+			t.Fatal(err)
+		}
 		cmd.Env = append(os.Environ(),
 			detachedHandoffModeEnv+"=cli",
 			detachedHandoffReadyEnv+"="+ready,
 			detachedHandoffReleaseEnv+"="+release,
 			"COOP_REPO="+repo,
 			"COOP_CONFIG_DIR="+filepath.Join(t.TempDir(), "config"),
-			"XDG_CONFIG_HOME="+xdgConfig,
+			"XDG_CONFIG_HOME="+filepath.Join(t.TempDir(), "xdg-config"),
+			"TMPDIR="+childTmp,
 			"COOP_RUNTIME="+runtimeCLI,
 			"COOP_TEST_RUNTIME_TRACE="+runtimeTrace,
 		)
@@ -1696,7 +1707,7 @@ func TestDetachedWorkerHandoffRaceOrderings(t *testing.T) {
 		if pathExists(forkspace.PidPath(repo, name)) {
 			t.Fatal("superseded child recreated lifecycle state")
 		}
-		if pathExists(filepath.Join(xdgConfig, "coop", "temp-reap")) {
+		if !pathExists(orphan) {
 			t.Fatal("superseded child ran global temp housekeeping before publication")
 		}
 		if got := forkctl.ReadForkAgent(ws); got != "" {

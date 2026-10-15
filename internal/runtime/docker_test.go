@@ -607,6 +607,40 @@ func TestDockerRebindUsesCapturedBinaryAndEndpoint(t *testing.T) {
 	}
 }
 
+// A run that outlives the temp sweep's hour of grace loses its empty client directory to it, and
+// Docker reads a missing one as empty. Its close must not then report a failure: a filtered run
+// would call its teardown incomplete, and an open run would retain its private state. A file nobody
+// expected in the directory is still preserved and reported.
+func TestDockerCloseAcceptsAClientDirectoryTheSweepRemoved(t *testing.T) {
+	rt, _ := fixtureDocker(t, dockerFixture{Container: dockerFixtureContainer()})
+	swept, err := BindDocker(context.Background(), rt, fixtureSock(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(swept.clientConfig); err != nil {
+		t.Fatal(err)
+	}
+	if err := swept.Close(); err != nil {
+		t.Fatalf("close after the sweep = %v, want nil", err)
+	}
+
+	tampered, err := BindDocker(context.Background(), rt, fixtureSock(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tampered.clientConfig) })
+	unexpected := filepath.Join(tampered.clientConfig, "config.json")
+	if err := os.WriteFile(unexpected, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := tampered.Close(); err == nil {
+		t.Fatal("close erased or ignored a file nobody expected in the client directory")
+	}
+	if _, err := os.Stat(unexpected); err != nil {
+		t.Fatalf("the unexpected file was not preserved: %v", err)
+	}
+}
+
 func TestDockerCopyBoundCannotUsePromotedReadFrom(t *testing.T) {
 	output := dockerBoundedOutput{limit: 1024}
 	reader := struct{ io.Reader }{strings.NewReader(strings.Repeat("x", 2<<20))}

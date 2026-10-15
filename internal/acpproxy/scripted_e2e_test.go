@@ -844,6 +844,16 @@ func startScriptedACPArgs(t *testing.T, coopBin, fixtureBin, repo, tmp, plan str
 	for key, value := range env {
 		values[key] = value
 	}
+	// Stamp the daily temp sweep done, as procharness.NewLayout does. The child would otherwise
+	// sweep this host's real TMPDIR beside its box, with a fixture runtime that reports nothing
+	// mounted.
+	reapMarker := filepath.Join(values["XDG_CONFIG_HOME"], "coop", "temp-reap")
+	if err := os.MkdirAll(filepath.Dir(reapMarker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reapMarker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cmd.Env = testEnv(os.Environ(), values)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stderr := &lockedBuffer{}

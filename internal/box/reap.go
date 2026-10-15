@@ -3,9 +3,11 @@ package box
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -32,13 +34,27 @@ var tempPrefixes = []string{
 	// helper is not a box — the hour of grace, and the container holding the bind-mounted file
 	// open until it exits with its coop, are what keep a live run's directory safe.
 	"coop-broker-",
+	// A Compose command's private copy of registry auth, under the protected runfiles root. It
+	// lives for that one command, well inside the hour of grace.
+	"coop-compose-client-",
 }
+
+// dockerClientPrefix names the empty directory a coop hands Docker as its client config for a
+// whole run, never mounting it, so old and unmounted does not mean unused here. Docker reads a
+// missing one as empty, but in a temp directory other users can write — a shared /tmp — removing a
+// live run's would let any of them recreate it with a Docker config of their own. It is reaped
+// only where no one else can add an entry.
+const dockerClientPrefix = "coop-docker-client-"
 
 // mountLister is the part of the runtime reaping needs, named here so this can
 // be tested without a container runtime.
 type mountLister interface {
 	MountSourcesByLabel(ctx context.Context, key, value string) (map[string]bool, error)
 }
+
+// ErrMountsUnknown marks a reap that removed nothing because the runtime could
+// not say what boxes mount. Unlike a failed removal, it is worth trying again soon.
+var ErrMountsUnknown = errors.New("cannot tell what boxes mount")
 
 // ReapOrphanTempEntries removes coop temp files and directories that no box is
 // using.
@@ -59,19 +75,21 @@ func ReapOrphanTempEntries(
 ) (int, error) {
 	mounted, err := lister.MountSourcesByLabel(ctx, LabelKey, LabelBox)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%w: %w", ErrMountsUnknown, err)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, err
 	}
+	private := writableOnlyByMe(dir)
 	var removed int
 	var failures []error
 	for _, entry := range entries {
-		if !hasTempPrefix(entry.Name()) {
+		name := entry.Name()
+		if !hasTempPrefix(name) && !(private && strings.HasPrefix(name, dockerClientPrefix)) {
 			continue
 		}
-		path := filepath.Join(dir, entry.Name())
+		path := filepath.Join(dir, name)
 		if tempEntryMounted(path, mounted) {
 			continue
 		}
@@ -98,6 +116,17 @@ func tempEntryMounted(path string, mounted map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// writableOnlyByMe reports whether no other user can add an entry to dir: it is this user's own
+// and grants no group or world write.
+func writableOnlyByMe(dir string) bool {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == uint32(os.Geteuid()) && info.Mode().Perm()&0o022 == 0
 }
 
 func hasTempPrefix(name string) bool {

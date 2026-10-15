@@ -32,6 +32,52 @@ func mountInventoryFixture(t *testing.T, ids []string, inspect string) (Runtime,
 	return Runtime{Name: path}, recorder
 }
 
+// A box removed between the listing and its inspect mounts nothing, so it must not abort the sweep
+// that asked: one vanished box used to cancel the whole day's temp cleanup. The inspect's wording is
+// no proof (Docker 29 prints "error: no such object"), so only the same listing, run again and no
+// longer showing the box, counts. A re-listing that fails, or still shows the id — the box itself,
+// or another box sharing its short id — keeps the inspect's error.
+func TestMountSourcesSkipsABoxThatVanishedBeforeItsInspect(t *testing.T) {
+	for _, tc := range []struct {
+		name, relist, detail string
+		skipped              bool
+	}{
+		{name: "provably gone", relist: "echo live", skipped: true},
+		{name: "re-listing failed", relist: "echo 'daemon query broke' >&2; exit 42", detail: "daemon query broke"},
+		{name: "still listed", relist: "printf 'live\\ngone\\n'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cli := filepath.Join(dir, "docker")
+			script := `#!/bin/sh
+case "$*" in
+"ps -q -a --filter label=coop=box")
+	if [ -e "$COOP_TEST_LISTED" ]; then eval "$COOP_TEST_RELIST"; else : > "$COOP_TEST_LISTED"; printf 'live\ngone\n'; fi ;;
+"inspect --format {{json .Mounts}} live") printf '%s\n' '[{"Source":"/live"}]' ;;
+"inspect --format {{json .Mounts}} gone") printf '\nerror: no such object: gone\n' >&2; exit 1 ;;
+*) exit 99 ;;
+esac
+`
+			if err := os.WriteFile(cli, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("COOP_TEST_LISTED", filepath.Join(dir, "listed"))
+			t.Setenv("COOP_TEST_RELIST", tc.relist)
+
+			sources, err := (Runtime{Name: cli}).MountSourcesByLabel(context.Background(), "coop", "box")
+			if tc.skipped {
+				if err != nil || !reflect.DeepEqual(sources, map[string]bool{"/live": true}) {
+					t.Fatalf("mount sources = %v, %v; want the live box's mount and the vanished box skipped", sources, err)
+				}
+				return
+			}
+			if err == nil || sources != nil || !strings.Contains(err.Error(), "no such object") || !strings.Contains(err.Error(), tc.detail) {
+				t.Fatalf("an unproven disappearance = %v, %v; want the inspect failure and no sources", sources, err)
+			}
+		})
+	}
+}
+
 func mountRecord(id, mounts string) string {
 	return `{"ID":"` + id + `","Status":"exited","Mounts":` + mounts + `}`
 }

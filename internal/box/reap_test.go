@@ -111,14 +111,76 @@ func TestReapRefusesToGuessWhenTheRuntimeIsUnavailable(t *testing.T) {
 		fakeMounts{err: errors.New("cannot connect to the docker daemon")},
 		dir, time.Now(),
 	)
-	if err == nil {
-		t.Fatal("an unavailable runtime was treated as an empty mount list")
+	if !errors.Is(err, ErrMountsUnknown) {
+		t.Fatalf("an unavailable runtime = %v, want ErrMountsUnknown, never an empty mount list", err)
 	}
 	if removed != 0 {
 		t.Fatalf("removed %d entries while unable to check what is in use", removed)
 	}
 	if _, err := os.Stat(orphan); err != nil {
 		t.Error("deleted a file without being able to confirm it was unused")
+	}
+}
+
+func writeDirEntry(t *testing.T, dir, name string, age time.Duration) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "config.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().Add(-age)
+	if err := os.Chtimes(path, when, when); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// Coop's Docker and Compose client directories are coop entries too. A killed run leaves one
+// behind every time (3,731 Docker client directories on one Mac), so the sweep must know both
+// names, under the same old-and-unmounted rule as everything else.
+//
+// A live run keeps handing Docker its client directory without mounting it, so in a temp
+// directory other users can write, removing one would let any of them recreate it with a Docker
+// config of their own. There the Docker client directories stay; everything else is swept as before.
+func TestReapCoversCoopClientConfigs(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		mode         os.FileMode
+		dockerReaped bool
+	}{
+		{name: "private temp directory", mode: 0o700, dockerReaped: true},
+		{name: "shared temp directory", mode: 0o1777},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Chmod(dir, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			docker := writeDirEntry(t, dir, "coop-docker-client-123", 3*time.Hour)
+			compose := writeDirEntry(t, dir, "coop-compose-client-456", 3*time.Hour)
+			starting := writeDirEntry(t, dir, "coop-docker-client-789", time.Minute)
+
+			removed, err := ReapOrphanTempEntries(context.Background(), fakeMounts{sources: map[string]bool{}}, dir, time.Now())
+			want := 1
+			if tc.dockerReaped {
+				want = 2
+			}
+			if err != nil || removed != want {
+				t.Fatalf("reap = %d, %v; want %d", removed, err, want)
+			}
+			if _, err := os.Stat(compose); !os.IsNotExist(err) {
+				t.Errorf("the old Compose client directory survived: %v", err)
+			}
+			if _, err := os.Stat(docker); os.IsNotExist(err) != tc.dockerReaped {
+				t.Errorf("old Docker client directory reaped = %v, want %v", os.IsNotExist(err), tc.dockerReaped)
+			}
+			if _, err := os.Stat(starting); err != nil {
+				t.Errorf("a client directory younger than an hour was removed: %v", err)
+			}
+		})
 	}
 }
 

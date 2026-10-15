@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -31,41 +32,60 @@ func tempReapDue(path string, now time.Time) bool {
 	return err != nil || now.Sub(fi.ModTime()) >= tempReapInterval
 }
 
-// startTempReap sweeps orphaned box temp entries once a day, in the background.
+// startTempReap sweeps orphaned box temp entries once a day, in the background
+// of a box launch.
 //
 // Coop's per-run cleanup is a deferred call, which does not run when the
 // process is killed — the normal way a box ends under supervision, a restart,
 // or a machine sleeping. Everything those runs leave behind accumulates in the
 // temp directory until it fills the volume.
 //
-// Nothing waits on this and nothing is reported. It is best effort by design:
-// a sweep that fails is a sweep that happens tomorrow, and a user running a
-// command should never see housekeeping in their output or their latency.
-func startTempReap(cfg *config.Config) {
-	path := tempReapPath(cfg)
-	if !tempReapDue(path, time.Now()) {
+// The sweep dies with its process, so it starts, once per process, only where a
+// box keeps the process alive: runBox (direct, editor and fork launches), the
+// readonly and bare launches, and the orphan-box sweep that loop and fork starts
+// run first. A build's recycle runs that sweep too, near its end; if the process
+// exits first, the next launch tries again. Doctor probes, eval trials and fork
+// merge gates launch boxes without it.
+//
+// Nothing waits on this and nothing is reported: a user running a command should
+// never see housekeeping in their output or their latency. Every runtime call and
+// removal happens in the goroutine; the launch pays for a few filesystem calls.
+func (a *app) startTempReap() {
+	if !a.tempReapPending {
 		return
 	}
-	// Mark the attempt before doing it, so parallel coops do not all sweep.
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
-		_ = os.WriteFile(path, nil, 0o644)
+	a.tempReapPending = false // once per process
+	stamp := tempReapPath(a.cfg)
+	if !tempReapDue(stamp, time.Now()) {
+		return
 	}
-	go func() {
-		rt, err := runtime.Detect(cfg.RuntimeName)
-		if err != nil {
-			// No container runtime means nothing can be asked what is mounted,
-			// and the reaper refuses to guess. Tomorrow is fine.
+	roots := []string{os.TempDir()}
+	// Ordinary run credentials and policy snapshots now live outside the shared system temp
+	// directory so a prior box with a broad /tmp bind cannot observe a later run. Sweep that
+	// stable private root too; locating it is intentionally read-only so housekeeping never
+	// creates run state.
+	if root, exists, err := box.ExistingRunArtifactRoot(a.cfg); err == nil && exists {
+		roots = append(roots, root)
+	}
+	go reapTemp(a.rt, roots, stamp)
+}
+
+// reapTemp is one pass over roots. It stamps the day only after a pass in which
+// the runtime said what is mounted. A process that exits mid-pass — a launch that
+// fails at once, a coop stopped — stamps nothing, and a pass that could not ask
+// removed nothing, so either way the next launch tries again. A pass that failed
+// any other way, such as a removal the filesystem refused, would fail again, so
+// it waits a day. Coops launched while one sweeps may sweep too, which only
+// repeats work: every pass asks what is mounted before it removes anything.
+func reapTemp(rt runtime.Runtime, roots []string, stamp string) {
+	ctx, cancel := context.WithTimeout(context.Background(), tempReapTimeout)
+	defer cancel()
+	for _, root := range roots {
+		if _, err := box.ReapOrphanTempEntries(ctx, rt, root, time.Now()); errors.Is(err, box.ErrMountsUnknown) {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), tempReapTimeout)
-		defer cancel()
-		_, _ = box.ReapOrphanTempEntries(ctx, rt, os.TempDir(), time.Now())
-		// Ordinary run credentials and policy snapshots now live outside the shared system temp
-		// directory so a prior box with a broad /tmp bind cannot observe a later run. Sweep that
-		// stable private root too; locating it is intentionally read-only so housekeeping never
-		// creates run state.
-		if root, exists, rootErr := box.ExistingRunArtifactRoot(cfg); rootErr == nil && exists {
-			_, _ = box.ReapOrphanTempEntries(ctx, rt, root, time.Now())
-		}
-	}()
+	}
+	if err := os.MkdirAll(filepath.Dir(stamp), 0o755); err == nil {
+		_ = os.WriteFile(stamp, nil, 0o644)
+	}
 }

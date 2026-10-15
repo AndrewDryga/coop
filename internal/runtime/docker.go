@@ -139,11 +139,16 @@ func bindDocker(ctx context.Context, rt Runtime, endpoint, expectedID string, la
 
 // Close removes only the exact empty client directory, never any runtime
 // resource. An unexpected file is preserved and reported, not recursively erased.
+// A directory already gone is no failure: the daily temp sweep removes a long
+// run's once it is an hour old, and Docker reads a missing one as empty.
 func (d *Docker) Close() error {
 	if d.closed.Swap(true) {
 		return nil
 	}
-	return os.Remove(d.clientConfig)
+	if err := os.Remove(d.clientConfig); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func (d *Docker) Endpoint() string { return d.endpoint }

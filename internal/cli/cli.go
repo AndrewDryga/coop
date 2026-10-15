@@ -53,6 +53,7 @@ type app struct {
 	sweptRepos           map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
 	sweptNetworks        bool                                         // orphaned coop networks already swept this process (they are not per repo)
 	settledNetworkRuns   bool                                         // interrupted filtered runs already settled this process (see settleInterruptedFilteredRuns)
+	tempReapPending      bool                                         // Main's process may start the daily temp sweep once, from a box launch (see startTempReap)
 	preset               *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
 	network              networkFlags                                 // this launch's --egress/--allow-domain/--egress-rules, resolved by box.AdmitNetwork
 	mode                 agents.ExecutionMode                         // this launch's --readonly/--bare; "" (normal) is every launch that takes neither
@@ -118,10 +119,6 @@ func Main(argv []string) int {
 		// parting line (deferred, so it runs on every return path). See startUpdateCheck.
 		defer startUpdateCheck(cfg, argv)()
 		defer forkspace.CloseGitViews() // the trusted git views of every repository this process touched
-		// Sweep temp entries no box is using. Per-run cleanup is a deferred call
-		// and a killed process skips it, so what supervision and restarts leave
-		// behind accumulates until it fills the volume.
-		startTempReap(cfg)
 	}
 
 	// Bare `coop`, help, and version all work without a container runtime. Bare
@@ -164,8 +161,10 @@ func Main(argv []string) int {
 	}
 
 	// The runtime is detected lazily (a.ensureRuntime), only by box-running commands — so pure-local
-	// families work with no container runtime installed. See dispatch and resolveLaunchImage.
-	a := &app{cfg: cfg, argv: argv}
+	// families work with no container runtime installed. See dispatch and resolveLaunchImage. The
+	// daily temp sweep waits for a box launch too, which keeps the process alive to finish it (see
+	// startTempReap); a detached worker reaches one only after it has proved its reservation.
+	a := &app{cfg: cfg, argv: argv, tempReapPending: true}
 	return reportExit(a.dispatch(argv))
 }
 
