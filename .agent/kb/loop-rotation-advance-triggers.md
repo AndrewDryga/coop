@@ -3,7 +3,7 @@ name: loop-rotation-advance-triggers
 description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); known-invalid credentials never become rungs
 subsystem: loop
 sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/ladder/acp.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/loop/streamjson_providers.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/agent/ratelimit.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/box/auth.go, internal/box/profiles.go, docs/agents.md, docs/loop.md]
-updated: 2026-10-05
+updated: 2026-10-15
 ---
 A loop's rotation starts from credential presence and then applies
 `box.ProfileCredentialReady`. A native marker that its adapter classifies as
@@ -56,7 +56,10 @@ on any key/value leaf, numbers included. A failed loop attempt rotates only on t
 `DetectIterationLimit` accepts, and a stream decoder passes errors through as escaped JSON — so a
 decoder that sees a structured limit says so as one `rate limit exceeded` diagnostic line (Claude's
 terminal limit, Grok's 402). Role wrappers grep `wrapperLimitMarkers` through
-`ShellRateLimitDetector`. The pinned Grok 1.0.25, captured by replaying each status at it: a 402
+`ShellRateLimitDetector`, whose `LC_ALL=C grep -E` is rendered from the same pattern strings
+`WrapperRateLimited` compiles (POSIX ERE that Go also accepts, quote-escaped for the shell); a
+hand-kept shell copy once dropped the `'`, so a role read `{'status': 429}` as an ordinary failure.
+The pinned Grok 1.0.25, captured by replaying each status at it: a 402
 ("run out of credits") is a structured `http_status: 402` on every surface, the one marker Grok
 declares; a 429 is ACP error -32003 whose message `Rate limited` the shared prose check reads, but
 headless it is only the server's own text — it rotates while that text says "too many requests", and
@@ -67,6 +70,8 @@ the loop decoder says `authentication required`, the ACP auth check reads a stru
 `grok_errors`.
 
 ## Changelog
+- 2026-10-15 — the wrappers' `grep -E` now renders from the Go pattern strings; its hand-kept copy
+  lacked the single quote. The parity test holds shell and Go to one expected verdict per case.
 - 2026-10-01 — a real closed-native-login recovery test retried Codex's rejected first account.
   Captured its workspace-routing terminal refusal and reproduced process_failure offline.
   Added the exact adapter signal and literal-regexp wrapper rendering; no decoder/rotation

@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Preset roles move on when a provider reports a rate limit with single quotes.** Inside the box,
+  `coop-consult` and `coop-delegate` missed a limit written as `{'status': 429}` or `{'code': 429}`,
+  so a role could retry or stop on the limited target instead of moving to its next one. The in-box
+  check now uses the same patterns as Coop's own rate-limit detection.
+
 - **`coop approve` no longer labels each rule.** The rule diff no longer repeats "already approved",
   "new request" or "no longer requested" after every rule. The `+` and `-` markers say it, and the
   `NETWORK RULES` heading explains the ones it uses, so the meaning survives without color.

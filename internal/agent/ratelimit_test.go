@@ -74,23 +74,32 @@ func TestShellRateLimitDetectorMatchesGo(t *testing.T) {
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for i, output := range []string{
-		"You've reached your Opus 4.8 limit.",
-		"request failed: rate-limit exceeded",
-		`{"status":"RESOURCE_EXHAUSTED"}`,
-		"HTTP 429 Too Many Requests",
-		"build failed after 1429 files",
-		"ordinary provider failure",
-		grokCreditsExhausted, grokAuthRejected,
+	// Each side is held to the expected verdict, not just to the other, so neither can be
+	// weakened into agreement.
+	for i, tc := range []struct {
+		output string
+		want   bool
+	}{
+		{"You've reached your Opus 4.8 limit.", true},
+		{"request failed: rate-limit exceeded", true},
+		{`{"status":"RESOURCE_EXHAUSTED"}`, true},
+		{"HTTP 429 Too Many Requests", true},
+		{`"status": 429`, true},
+		{"code=429", true},
+		{`{'status': 429}`, true},
+		{`{'code': 429}`, true},
+		{"build failed after 1429 files", false},
+		{"ordinary provider failure", false},
+		{grokCreditsExhausted, true},
+		{grokAuthRejected, false},
 	} {
 		file := filepath.Join(dir, string(rune('a'+i)))
-		if err := os.WriteFile(file, []byte(output), 0o644); err != nil {
+		if err := os.WriteFile(file, []byte(tc.output), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		err := exec.Command(sh, script, file).Run()
-		got := err == nil
-		if got != WrapperRateLimited(output) {
-			t.Errorf("shell detector(%q) = %v, Go = %v", output, got, WrapperRateLimited(output))
+		shell := exec.Command(sh, script, file).Run() == nil
+		if goGot := WrapperRateLimited(tc.output); shell != tc.want || goGot != tc.want {
+			t.Errorf("rate limit in %q: shell = %v, Go = %v, want %v", tc.output, shell, goGot, tc.want)
 		}
 	}
 }

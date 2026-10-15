@@ -1,14 +1,15 @@
 package agent
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
 
 // cliLimitMarkers are provider CLI phrases that prove a failed command hit a
-// rate, usage, quota, or capacity limit. They are shared by the host loop and the
-// generated in-box role wrappers; keep prose that could appear in normal task output
-// out of this list because a false positive rotates to a different provider.
+// rate, usage, quota, or capacity limit. Only the host's CLIRateLimited reads them;
+// keep prose that could appear in normal task output out of this list because a
+// false positive rotates to a different provider.
 var cliLimitMarkers = []string{
 	"usage limit", "rate limit", "rate-limit", "rate limited",
 	"ratelimited", "overloaded", "at capacity", "resource exhausted",
@@ -32,10 +33,19 @@ var wrapperLimitMarkers = []string{
 	`"http_status": 402`,
 }
 
+// These patterns are written once, in the POSIX extended syntax both Go and grep -E accept (no
+// \w, \b or (?:...)), so the generated role wrappers grep the same text WrapperRateLimited matches.
+// The wrappers run grep under LC_ALL=C: the box's UTF-8 locale would widen [[:alnum:]],
+// [[:space:]] and -i to Unicode, which Go's ASCII classes do not match.
+const (
+	subscriptionLimitPattern = `(hit|reached) your ([[:alnum:]_.-]+ ){0,3}limit`
+	wrapperStatus429Pattern  = `http( status)?[[:space:]:=]*429|status["'[:space:]:=]+429|code["'[:space:]:=]+429|too many requests`
+)
+
 var (
-	cliSubscriptionLimitRe = regexp.MustCompile(`(?i)(?:hit|reached) your (?:[\w.-]+ ){0,3}limit`)
+	cliSubscriptionLimitRe = regexp.MustCompile(`(?i)` + subscriptionLimitPattern)
 	cliStatus429Re         = regexp.MustCompile(`\b429\b`)
-	wrapperStatus429Re     = regexp.MustCompile(`(?i)(?:http(?: status)?[[:space:]:=]*429|status["'[:space:]:=]+429|code["'[:space:]:=]+429|too many requests)`)
+	wrapperStatus429Re     = regexp.MustCompile(`(?i)` + wrapperStatus429Pattern)
 )
 
 // CLIRateLimited reports whether provider CLI output carries a broad rate-limit
@@ -69,8 +79,8 @@ func WrapperRateLimited(output string) bool {
 }
 
 // ShellRateLimitDetector renders the POSIX-shell function used by generated role
-// wrappers. The literal marker rows come from cliLimitMarkers, so adding a provider
-// phrase updates host and in-box classification together.
+// wrappers. Its marker rows come from wrapperLimitMarkers and its grep -E from the
+// patterns WrapperRateLimited compiles, so the in-box check matches the Go one.
 func ShellRateLimitDetector() string {
 	var b strings.Builder
 	b.WriteString(`coop_rate_limited() {
@@ -82,9 +92,8 @@ func ShellRateLimitDetector() string {
 	for _, marker := range wrapperLimitMarkers {
 		b.WriteString(marker + "\n")
 	}
-	b.WriteString(`COOP_LIMIT_MARKERS
-	grep -Eiq '(hit|reached) your ([[:alnum:]_.-]+ ){0,3}limit|HTTP( status)?[[:space:]:=]*429|status["[:space:]:=]+429|code["[:space:]:=]+429|too many requests' "$limit_file"
-}
-`)
+	// A single-quoted shell word cannot hold a quote: close it, add an escaped one, reopen it.
+	pattern := strings.ReplaceAll(subscriptionLimitPattern+"|"+wrapperStatus429Pattern, "'", `'\''`)
+	fmt.Fprintf(&b, "COOP_LIMIT_MARKERS\n\tLC_ALL=C grep -Eiq '%s' \"$limit_file\"\n}\n", pattern)
 	return b.String()
 }
