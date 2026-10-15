@@ -49,8 +49,9 @@ func TestApprovalReviewIsOneStableDiff(t *testing.T) {
 	if review.committed != 1 {
 		t.Errorf("committed %d times, want 1", review.committed)
 	}
-	if !strings.HasSuffix(netApprovePrompt, "for new runs?") || netApproveApproved != "Approved for new runs" {
-		t.Errorf("the question and the answer no longer say what an approval applies to: %q / %q", netApprovePrompt, netApproveApproved)
+	if netApprovePrompt != "Approve this access for new runs and running editor sessions?" ||
+		netApproveApproved != "Approved for new runs and running editor sessions" {
+		t.Errorf("the question and the answer no longer name everything an approval applies to: %q / %q", netApprovePrompt, netApproveApproved)
 	}
 	for _, unwanted := range []string{"Remember", "remembered", "(unchanged)", "websites", "Egress", "/private/tmp/project"} {
 		if strings.Contains(out.String(), unwanted) {

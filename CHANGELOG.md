@@ -16,7 +16,8 @@
   and the editor shows one line saying so. A running box's own rules never change. If the approval
   can't be applied, for example because the project file changed again, or the new box stops before
   the switch, the session keeps the rules it had and says why. After `coop net forget`, a running
-  session keeps its rules until you reconnect the editor.
+  session keeps its rules until you reconnect the editor. `coop approve` now asks to approve access
+  "for new runs and running editor sessions".
 
 ## 11.3.0
 

@@ -83,12 +83,13 @@ func confirmTerminalPrompt(ctx context.Context, prompt string) bool {
 	}
 }
 
-// The question and the answer carry the one limit that matters — an approval
-// applies to NEW runs — so the review above them can be the change and nothing else.
+// The question and the answer name everything a yes changes — new runs, and
+// running editor sessions (coop acp), which move to new boxes under it — so the
+// review above them can be the change and nothing else.
 const (
 	netApproveIntro     = "Review the requested project access."
-	netApprovePrompt    = "Approve this access for new runs?"
-	netApproveApproved  = "Approved for new runs"
+	netApprovePrompt    = "Approve this access for new runs and running editor sessions?"
+	netApproveApproved  = "Approved for new runs and running editor sessions"
 	netApproveUnchanged = "No approval needed: this project's requested access has not changed."
 	netSessionsNotTold  = "Running editor sessions keep their current network rules until you reconnect them."
 )
