@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/Dockerfile, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
-updated: 2026-10-15
+updated: 2026-10-16
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -211,7 +211,9 @@ qualification, so a stale tar is a red gate, and a filtered launch only ever run
 [[restricted-networking]] qualification names.
 
 The Dockerfile is embedded on its own, not in the tar: editing it leaves `source.tar` byte-identical
-but still moves `Fingerprint()` (recipe plus tar), so every host sets up networking again. Its nine
+but still moves `Fingerprint()` (recipe plus tar), so every host sets up networking again. Its first
+`FROM` is the one Go pin a network setup records: `GoBase()` reads that digest-pinned `golang` image
+from the recipe for the setup's `go_base`, since Coop's box images no longer build with Go. Its nine
 Ubuntu packages are pinned to exact versions and install from a dated
 `snapshot.ubuntu.com/ubuntu/<YYYYMMDDTHHMMSSZ>` archive written into `sources.list`. Six of the nine
 versions are jammy's release versions, which never leave the archive; nftables, libnftables1 and
@@ -253,6 +255,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-16 — the network setup's Go base now comes from this recipe (`GoBase()` reads its
+  build stage) instead of the box image's removed Go tools stage; verified against
+  `gatewayimage/Dockerfile`, `image.go` and `verifyNetworkCandidate`.
 - 2026-10-15 — the image's Ubuntu packages install from a dated snapshot. Recorded the snapshot facts
   (every architecture under `ubuntu`, no `Valid-Until`, intended two-year retention, which three pins
   come from jammy-updates) and that a Dockerfile edit moves the fingerprint while `source.tar` stays

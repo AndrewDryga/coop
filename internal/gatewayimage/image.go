@@ -36,6 +36,19 @@ func Fingerprint() string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
+// GoBase is the digest-pinned Go image the recipe's first stage compiles coop-net with, read from
+// the recipe so the Dockerfile stays its one pin. A network setup records it beside the client
+// image's Node base; the Fingerprint covers it too.
+func GoBase() string {
+	for line := range strings.Lines(string(recipe)) {
+		if rest, ok := strings.CutPrefix(line, "FROM "); ok {
+			image, _, _ := strings.Cut(strings.TrimSpace(rest), " ")
+			return image
+		}
+	}
+	return ""
+}
+
 // Repository holds the network helper images, one tag per source fingerprint.
 const Repository = "coop-network"
 

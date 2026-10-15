@@ -63,7 +63,7 @@ func BuildNetworkCandidate(ctx context.Context, docker *runtime.Docker, stdout, 
 	}
 	return networkstate.CandidateSpec{Runtime: binding, ClientImage: client.ID, GatewayImage: helper,
 		ClientDefinition: spec.Labels["coop.clients.definition"], ClientClosure: closure.Digest, GatewaySource: gatewayimage.Fingerprint(),
-		Libc: platform.Libc, NodeBase: pinnedNodeImage, GoBase: pinnedGoImage}, nil
+		Libc: platform.Libc, NodeBase: pinnedNodeImage, GoBase: gatewayimage.GoBase()}, nil
 }
 
 func networkRuntimeBinding(info runtime.DockerInfo, endpoint string) networkstate.RuntimeBinding {
@@ -103,8 +103,7 @@ func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild,
 	}
 	id := boxAgentIdentity()
 	spec := runtime.DockerBuild{Platform: platform.OS + "/" + platform.Architecture, Args: map[string]string{
-		"NODE_IMAGE": pinnedNodeImage, "GO_IMAGE": pinnedGoImage,
-		"COOP_BOX_UID": fmt.Sprint(id.uid), "COOP_BOX_GID": fmt.Sprint(id.gid),
+		"NODE_IMAGE": pinnedNodeImage, "COOP_BOX_UID": fmt.Sprint(id.uid), "COOP_BOX_GID": fmt.Sprint(id.gid),
 	}}
 	identity, err := json.Marshal(struct {
 		Platform string
@@ -126,8 +125,6 @@ func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild,
 // before it is unpacked or run, the launchers in agents.LauncherDir, and every adapter's update
 // controls. The images differ only in PATH and the base's startup provisioning.
 func lockedClientParts(closure agents.ClientClosure) baseImageParts {
-	closure.Files["staticcheck/go.mod"] = staticcheckMod
-	closure.Files["staticcheck/go.sum"] = staticcheckSum
 	install := "/usr/local/bin/npm ci --prefix /opt/coop/clients --ignore-scripts --include=optional --omit=dev --no-audit --no-fund --registry=https://registry.npmjs.org --userconfig=/dev/null --globalconfig=/opt/coop/clients/global.npmrc --cache=/tmp/coop-client-npm-cache \\\n && rm -rf /tmp/coop-client-npm-cache"
 	native := map[string]bool{}
 	for _, client := range closure.Clients {

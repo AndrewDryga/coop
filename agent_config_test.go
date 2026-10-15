@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/moby/patternmatcher"
+	"github.com/moby/patternmatcher/ignorefile"
 )
 
 // Coop's own committed .agent/ configs (loop.yaml, project.yaml, the frontier preset) are
@@ -54,6 +59,77 @@ func TestOwnProjectYAMLLoads(t *testing.T) {
 	}
 	if p.Gate == "" {
 		t.Error("gate: should be set — fork merges in this repo revalidate with make check")
+	}
+}
+
+// This repository's gate runs in its own box, and Coop's box images carry no Go analyzers, so
+// .agent/Dockerfile installs them at the Makefile's pins: Staticcheck from its module file, which
+// pins the importer too, and govulncheck at its version. A bump on one side alone would otherwise
+// surface only when the gate next ran in a box.
+func TestOwnDockerfileInstallsTheGatePins(t *testing.T) {
+	data, err := os.ReadFile(".agent/Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modfile := makeVariable(t, "STATICCHECK_MODFILE")
+	for _, want := range []string{
+		"COPY --chown=node:node " + modfile + " /tmp/staticcheck/go.mod\n",
+		"COPY --chown=node:node " + strings.TrimSuffix(modfile, ".mod") + ".sum /tmp/staticcheck/go.sum\n",
+		"go -C /tmp/staticcheck install -mod=readonly honnef.co/go/tools/cmd/staticcheck",
+		"go install golang.org/x/vuln/cmd/govulncheck@" + makeVariable(t, "GOVULNCHECK_VERSION") + "\n",
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf(".agent/Dockerfile must install the gate's pinned analyzers: missing %q", want)
+		}
+	}
+}
+
+// The toolchain image's build context is its ignore file's allowlist, so a COPY input the list
+// leaves out fails only when someone builds the image.
+func TestOwnDockerfileContextKeepsEveryCopyInput(t *testing.T) {
+	dockerfile, err := os.ReadFile(".agent/Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ignore, err := os.ReadFile(".agent/Dockerfile.dockerignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	patterns, err := ignorefile.ReadAll(bytes.NewReader(ignore))
+	if err != nil {
+		t.Fatal(err)
+	}
+	matcher, err := patternmatcher.New(patterns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sources []string
+	for line := range strings.Lines(string(dockerfile)) {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "COPY" && fields[0] != "ADD" {
+			continue
+		}
+		var paths []string
+		for _, field := range fields[1:] {
+			if strings.HasPrefix(field, "--from=") {
+				paths = nil
+				break
+			}
+			if !strings.HasPrefix(field, "--") {
+				paths = append(paths, field)
+			}
+		}
+		if len(paths) > 1 {
+			sources = append(sources, paths[:len(paths)-1]...)
+		}
+	}
+	if len(sources) == 0 {
+		t.Fatal(".agent/Dockerfile copies nothing from its context; this test reads COPY lines")
+	}
+	for _, source := range sources {
+		if excluded, err := matcher.MatchesOrParentMatches(source); err != nil || excluded {
+			t.Errorf(".agent/Dockerfile.dockerignore must keep the COPY input %s (excluded: %t, %v)", source, excluded, err)
+		}
 	}
 }
 

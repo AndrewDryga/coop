@@ -586,7 +586,7 @@ instead, so it never triggers this.
 | Command | Base image | Result |
 | --- | --- | --- |
 | `coop build` (stable) | pinned to a specific digest | a rebuild gets the same OS and runtime every time |
-| `coop update` (fresh) | floated back to the `node:24-slim` tag (`golang:1.27.2-bookworm` for the Go image) and rebuilt with `--pull --no-cache` | the OS packages and the runtime move to their newest |
+| `coop update` (fresh) | floated back to the `node:24-slim` tag and rebuilt with `--pull --no-cache` | the OS packages and the runtime move to their newest |
 
 To move the pinned base permanently, bump `pinnedNodeImage` in `internal/box/image.go`.
 

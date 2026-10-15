@@ -3333,7 +3333,6 @@ func TestBuildArgs(t *testing.T) {
 	if a := baseBuildArgs(cfg, false, platform, "/ctx"); !slices.Equal(a, []string{
 		"build", "--platform", "linux/arm64",
 		"--build-arg", "NODE_IMAGE=" + pinnedNodeImage,
-		"--build-arg", "GO_IMAGE=" + pinnedGoImage,
 		"--build-arg", "COOP_BOX_UID=" + fmt.Sprint(id.uid),
 		"--build-arg", "COOP_BOX_GID=" + fmt.Sprint(id.gid),
 		"-t", "coop-box", "-f", filepath.Join("/ctx", "Dockerfile"), "/ctx",
@@ -3343,7 +3342,6 @@ func TestBuildArgs(t *testing.T) {
 	if a := baseBuildArgs(cfg, true, nil, "/ctx"); !slices.Equal(a, []string{
 		"build", "--pull", "--no-cache",
 		"--build-arg", "NODE_IMAGE=" + floatingNodeImage,
-		"--build-arg", "GO_IMAGE=" + floatingGoImage,
 		"--build-arg", "COOP_BOX_UID=" + fmt.Sprint(id.uid),
 		"--build-arg", "COOP_BOX_GID=" + fmt.Sprint(id.gid),
 		"-t", "coop-box", "-f", filepath.Join("/ctx", "Dockerfile"), "/ctx",

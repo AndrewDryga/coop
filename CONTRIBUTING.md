@@ -77,9 +77,10 @@ The gate needs `staticcheck`, `govulncheck`, `shellcheck`, `python3`, `node` and
 Node runs the shipped site's picker and copy handlers in a small DOM fixture; it needs no
 npm install or browser. Missing Node fails that owner instead of skipping the script checks.
 The Makefile pins `govulncheck` and installs Staticcheck with `make install-staticcheck` from
-`internal/box/staticcheck.mod`. That separate dependency graph pins both the analyzer and its
-Go importer without changing Coop's runtime dependencies. CI and the shipped images use the same
-graph. A missing or wrong-version tool fails the gate and prints the command that installs it.
+`tools/staticcheck.mod`. That separate dependency graph pins both the analyzer and its
+Go importer without changing Coop's runtime dependencies. CI and this repository's own box
+(`.agent/Dockerfile`) install the same pins; Coop's box images ship neither tool. A missing or
+wrong-version tool fails the gate and prints the command that installs it.
 The gate never skips a check silently.
 
 `.tool-versions` pins the exact Go toolchain, so an asdf user and co:op's own box get the

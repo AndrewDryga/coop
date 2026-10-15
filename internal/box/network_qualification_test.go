@@ -24,7 +24,7 @@ func TestNetworkQualificationBindsCurrentDefinitionAndEntireRuntime(t *testing.T
 	candidate := networkstate.CandidateSpec{
 		Runtime: binding, ClientImage: "sha256:" + strings.Repeat("b", 64), GatewayImage: "sha256:" + strings.Repeat("c", 64),
 		ClientDefinition: definition.Labels["coop.clients.definition"], ClientClosure: closure.Digest, GatewaySource: gatewayimage.Fingerprint(),
-		Libc: "glibc", NodeBase: pinnedNodeImage, GoBase: pinnedGoImage}
+		Libc: "glibc", NodeBase: pinnedNodeImage, GoBase: gatewayimage.GoBase()}
 	for _, override := range []string{"", candidate.ClientImage} {
 		if err := verifyNetworkCandidate(candidate, binding, override); err != nil {
 			t.Fatal("current exact binding rejected", err)

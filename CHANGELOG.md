@@ -45,6 +45,11 @@
   sessions created before the upgrade keep their old setup, so start them again. A filtered project
   with its own `.agent/Dockerfile` also needs `coop build --egress filtered` once.
 
+- **Box images are about 41 MB smaller.** They no longer include Staticcheck and govulncheck, which
+  Coop built in for its own checks, or the `jv` JSON Schema validator, so a build also no longer
+  pulls a Go image to compile them. If your project or its agents use one of these in the box,
+  install it in your project's `.agent/Dockerfile`.
+
 - **Network setup keeps working after Ubuntu updates.** Coop builds its network gateway image with
   nine Ubuntu packages at exact versions. Three of them (nftables and the libraries it uses) come
   from Ubuntu's updates archive, which keeps only the newest version, so the next nftables or

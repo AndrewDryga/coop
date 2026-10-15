@@ -297,7 +297,7 @@ const (
 	ciCacheSave    = "save this owner's Go modules and compiled objects"
 	// Only reviewed Go inputs and the owner name the cache; the commit makes each main push's
 	// objects the newest, and the prefix lets every later run start from them.
-	ciCacheKey    = "go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'internal/box/staticcheck.mod', 'internal/box/staticcheck.sum') }}-"
+	ciCacheKey    = "go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'tools/staticcheck.mod', 'tools/staticcheck.sum') }}-"
 	ciCachePaths  = "~/go/pkg/mod\n~/.cache/go-build\n"
 	ciCachePinned = "@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
 )
@@ -537,7 +537,7 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 						t.Error("the free owners must use the repo toolchain and leave caching to their own keys")
 					}
 				} else if step.With["cache"] != "true" || step.With["go-version-file"] != "go.mod" ||
-					step.With["cache-dependency-path"] != "go.mod\ngo.sum\ninternal/box/staticcheck.mod\ninternal/box/staticcheck.sum\n" {
+					step.With["cache-dependency-path"] != "go.mod\ngo.sum\ntools/staticcheck.mod\ntools/staticcheck.sum\n" {
 					t.Errorf("low-privilege %s must use the repo toolchain and cache only reviewed Go inputs", id)
 				}
 			}

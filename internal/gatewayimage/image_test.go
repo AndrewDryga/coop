@@ -91,3 +91,13 @@ func TestGatewayBuildContextContainsOnlyTrustedSourceAndRecipe(t *testing.T) {
 		}
 	}
 }
+
+// A network setup records the Go image coop-net is compiled with, so it must be the build stage's
+// digest-pinned golang image: never a floating tag, and never the Envoy runtime stage.
+func TestGoBaseIsTheRecipesPinnedBuildImage(t *testing.T) {
+	base := GoBase()
+	if !regexp.MustCompile(`^golang:[0-9a-z.-]+@sha256:[0-9a-f]{64}$`).MatchString(base) ||
+		!strings.Contains(string(recipe), "FROM "+base+" AS build\n") {
+		t.Fatalf("GoBase() = %q, want the digest-pinned golang image of the recipe's build stage", base)
+	}
+}

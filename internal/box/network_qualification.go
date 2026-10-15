@@ -53,7 +53,7 @@ func verifyNetworkCandidate(candidate networkstate.CandidateSpec, binding networ
 		return err
 	}
 	if candidate.ClientDefinition != definition.Labels["coop.clients.definition"] || candidate.ClientClosure != closure.Digest ||
-		candidate.GatewaySource != gatewayimage.Fingerprint() || candidate.NodeBase != pinnedNodeImage || candidate.GoBase != pinnedGoImage {
+		candidate.GatewaySource != gatewayimage.Fingerprint() || candidate.NodeBase != pinnedNodeImage || candidate.GoBase != gatewayimage.GoBase() {
 		return errors.New("network setup belongs to another client or gateway definition; explicit setup is required")
 	}
 	return nil

@@ -41,9 +41,9 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'internal/box/staticcheck.mod', 'internal/box/staticcheck.sum') }}-${{ github.sha }}
+          key: go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'tools/staticcheck.mod', 'tools/staticcheck.sum') }}-${{ github.sha }}
           restore-keys: |
-            go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'internal/box/staticcheck.mod', 'internal/box/staticcheck.sum') }}-
+            go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'tools/staticcheck.mod', 'tools/staticcheck.sum') }}-
       - name: install Go analyzers at the repo's pins
         if: matrix.target == 'check-static'
         run: |
@@ -60,7 +60,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'internal/box/staticcheck.mod', 'internal/box/staticcheck.sum') }}-${{ github.sha }}
+          key: go-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('go.mod', 'go.sum', 'tools/staticcheck.mod', 'tools/staticcheck.sum') }}-${{ github.sha }}
 
   # The required status. It runs after a failure too and passes only when every job it needs
   # succeeded: a failed, cancelled or skipped job is not a pass. It reads only their results,
@@ -105,8 +105,8 @@ jobs:
           cache-dependency-path: |
             go.mod
             go.sum
-            internal/box/staticcheck.mod
-            internal/box/staticcheck.sum
+            tools/staticcheck.mod
+            tools/staticcheck.sum
       - name: doctor
         run: make doctor
         env:
@@ -134,7 +134,7 @@ jobs:
           cache-dependency-path: |
             go.mod
             go.sum
-            internal/box/staticcheck.mod
-            internal/box/staticcheck.sum
+            tools/staticcheck.mod
+            tools/staticcheck.sum
       - name: prove report-only review mounts at the Docker boundary
         run: make review-writes-e2e

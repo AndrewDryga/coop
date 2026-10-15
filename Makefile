@@ -6,9 +6,10 @@ LDFLAGS := -s -w -X github.com/AndrewDryga/coop/internal/cli.Version=$(VERSION)
 
 # The gate tool pins. CI installs exactly these versions (it reads them from here), and the
 # corresponding targets refuse any other build, so a laptop, a box, and CI cannot silently use
-# different analyzers. Staticcheck's isolated module also pins its Go export-data importer;
-# the box embeds that same module. The scanner pin is mirrored in internal/box/image.go.
-STATICCHECK_MODFILE := internal/box/staticcheck.mod
+# different analyzers. Staticcheck's isolated module also pins its Go export-data importer.
+# This repository's .agent/Dockerfile installs both for the gate in its box: Staticcheck from
+# that module, the scanner at a pin mirrored there (agent_config_test.go holds them equal).
+STATICCHECK_MODFILE := tools/staticcheck.mod
 STATICCHECK_VERSION := $(shell awk '$$1 == "honnef.co/go/tools" {print $$2}' $(STATICCHECK_MODFILE))
 STATICCHECK_XTOOLS_VERSION := $(shell awk '$$1 == "golang.org/x/tools" {print $$2}' $(STATICCHECK_MODFILE))
 GOVULNCHECK_VERSION := v1.8.0

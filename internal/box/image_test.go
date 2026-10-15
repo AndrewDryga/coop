@@ -210,18 +210,9 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 	if strings.Contains(df, "%!") {
 		t.Errorf("BaseDockerfile template not resolved:\n%s", df)
 	}
-	// The FROM images are driven by build args so an update can float them.
+	// The FROM image is driven by a build arg so an update can float it.
 	for _, want := range []string{
 		"ARG NODE_IMAGE=node:24-slim", "FROM ${NODE_IMAGE}",
-		"ARG GO_IMAGE=golang:1.27.2-bookworm", "FROM ${GO_IMAGE} AS go-tools-builder",
-		"COPY staticcheck/go.mod staticcheck/go.sum /staticcheck/",
-		"go -C /staticcheck install -mod=readonly honnef.co/go/tools/cmd/staticcheck",
-		"go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}",
-		"ARG JV_VERSION=v0.7.0",
-		"go install github.com/santhosh-tekuri/jsonschema/cmd/jv@${JV_VERSION}",
-		"COPY --from=go-tools-builder /out/staticcheck /usr/local/bin/staticcheck",
-		"COPY --from=go-tools-builder /out/govulncheck /usr/local/bin/govulncheck",
-		"COPY --from=go-tools-builder /out/jv /usr/local/bin/jv",
 		"COPY package.json package-lock.json global.npmrc /opt/coop/clients/",
 		"/usr/local/bin/npm ci --prefix /opt/coop/clients --ignore-scripts",
 		"| sha256sum -c -", "COPY launchers/ /opt/coop/bin/", "RUN chmod -R a-w /opt/coop/clients",
@@ -264,54 +255,45 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 	}
 }
 
-// The box ships Staticcheck because a repo's gate runs inside it — coop's own `make check` does,
-// and that gate refuses any build but the pinned analyzer and importer. Both install from
-// the same module: a version-only check misses incompatible transitive dependencies.
-func TestBaseDockerfileStaticcheckMatchesGatePin(t *testing.T) {
-	files, err := baseImageDefinition(agents.ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"})
+// Coop's own gate analyzers, and the jv validator built beside them, stay out of every user's box. A
+// Go build stage once compiled Staticcheck, govulncheck and jv into both images: a golang pull and
+// three compiles per build, 41 MB per image, and a Go image pin of the box's own in every host's
+// network setup. A project that needs them installs them in its own .agent/Dockerfile, as this
+// repository's does for its gate.
+func TestBoxImagesCarryNoGateAnalyzers(t *testing.T) {
+	platform := agents.ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"}
+	base, err := baseImageDefinition(platform)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, ext := range []string{"mod", "sum"} {
-		data, err := os.ReadFile("staticcheck." + ext)
-		if err != nil || string(files["staticcheck/go."+ext]) != string(data) {
-			t.Fatalf("box analyzer dependency graph differs from host: %s, %v", ext, err)
-		}
-	}
-	makefile, err := os.ReadFile("../../Makefile")
+	spec, _, locked, err := lockedImageDefinition(platform)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"STATICCHECK_MODFILE := internal/box/staticcheck.mod",
-		"go install -modfile=$(STATICCHECK_MODFILE) -mod=readonly honnef.co/go/tools/cmd/staticcheck",
-		"staticcheck -debug.version",
-	} {
-		if !strings.Contains(string(makefile), want) {
-			t.Fatalf("gate does not use the embedded analyzer graph: missing %q", want)
+	if _, ok := spec.Args["GO_IMAGE"]; ok {
+		t.Error("the filtered client image still takes a Go image")
+	}
+	for name, files := range map[string]map[string][]byte{"base": base, "filtered client": locked.Files} {
+		df := string(files["Dockerfile"])
+		stages := 0
+		for line := range strings.Lines(df) {
+			if strings.HasPrefix(line, "FROM ") {
+				stages++
+			}
 		}
-	}
-}
-
-// The vulnerability scan is part of that same in-box gate, so its binary and pin follow the
-// identical contract. A stale image scanner must fail here instead of giving the box a different
-// vulnerability baseline from the host and CI.
-func TestBaseDockerfileGovulncheckMatchesGatePin(t *testing.T) {
-	b, err := os.ReadFile("../../Makefile")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pin := ""
-	for _, line := range strings.Split(string(b), "\n") {
-		if rest, ok := strings.CutPrefix(line, "GOVULNCHECK_VERSION := "); ok {
-			pin = strings.TrimSpace(rest)
+		if stages != 1 {
+			t.Errorf("the %s image builds in %d stages, want one", name, stages)
 		}
-	}
-	if pin == "" {
-		t.Fatal("Makefile no longer pins GOVULNCHECK_VERSION — the gate's single govulncheck pin")
-	}
-	if want := "ARG GOVULNCHECK_VERSION=" + pin; !strings.Contains(baseDockerfile(t), want) {
-		t.Errorf("box ships a different govulncheck than the gate pins — image.go needs %q", want)
+		for _, tool := range []string{"golang", "go install", "staticcheck", "govulncheck", "/bin/jv"} {
+			if strings.Contains(strings.ToLower(df), tool) {
+				t.Errorf("the %s image still mentions %q", name, tool)
+			}
+		}
+		for file := range files {
+			if strings.HasPrefix(file, "staticcheck/") {
+				t.Errorf("the %s image still stages %s", name, file)
+			}
+		}
 	}
 }
 

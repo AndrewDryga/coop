@@ -4,7 +4,7 @@ description: "Make owns the broad check union and its CI partitions, never a sec
 scope: agent-workflow
 sources: [Makefile, .github/workflows/ci.yml, release_test.go]
 check: "go test ./. -run 'TestReleaseModuleHygiene|TestReleaseLocalGateRunsEveryCIOwner|TestReleaseShardPatternsSplitTheirSuites|TestReleaseWorkflowQualification|TestReleaseCIAggregateRejectsFalseGreenDependencyStates'"
-updated: 2026-10-15
+updated: 2026-10-16
 ---
 
 # There is ONE gate recipe: `make check`
@@ -52,6 +52,11 @@ route narrows it. Never reuse low-privilege caches or artifacts in the signing p
 Related: [[ci-free-checks]], [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-10-16 — Coop's box images dropped their Go tools stage, so the analyzer module moved to
+  `tools/staticcheck.mod`. Swept the pins: the Makefile owns both and CI still installs through
+  `make install-staticcheck` and `make -s govulncheck-version`. One mirror remains:
+  `.agent/Dockerfile` repeats the govulncheck version (a Dockerfile cannot read Make), and
+  `TestOwnDockerfileInstallsTheGatePins` holds it and the module path equal to the Makefile's.
 - 2026-10-15 — deleted the CHANGELOG-only metadata path (it never fired; CI is free) and the
   Make recipe tests, by the owner's decision. The required status is now shell over
   needs.*.result, and release_test.go holds the owner union, race-constraint and shard facts the

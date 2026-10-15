@@ -3,7 +3,6 @@ package box
 import (
 	"context"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -52,14 +51,6 @@ func BaseDockerfile(arch string) (string, error) {
 
 type baseImageParts struct{ files, install, browserDeps, loginPath, provision, pathEnv, scripts string }
 
-// Both shipped images and the host gate build the identical analyzer dependency graph.
-//
-//go:embed staticcheck.mod
-var staticcheckMod []byte
-
-//go:embed staticcheck.sum
-var staticcheckSum []byte
-
 func renderBaseDockerfile(arch string, parts baseImageParts) string {
 	return fmt.Sprintf(baseDockerfileTemplate, parts.files, parts.install, parts.browserDeps, asdfInstall(arch), parts.loginPath, configPublicationShell+parts.provision, parts.pathEnv, parts.scripts)
 }
@@ -93,39 +84,23 @@ func asdfInstall(arch string) string {
 const (
 	pinnedNodeImage   = "node:24-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6" // node 24 (slim)
 	floatingNodeImage = "node:24-slim"
-	pinnedGoImage     = "golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61"
-	floatingGoImage   = "golang:1.27.2-bookworm"
 )
 
 // baseDockerfileTemplate is shared by the base and the filtered client image: OS tools, the
 // qualified clients and process supervision. Its slots carry the client installation, each image's
 // PATH and the base's optional startup provisioning.
 const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
-ARG GO_IMAGE=golang:1.27.2-bookworm
-
-FROM ${GO_IMAGE} AS go-tools-builder
-COPY staticcheck/go.mod staticcheck/go.sum /staticcheck/
-RUN GOBIN=/out CGO_ENABLED=0 go -C /staticcheck install -mod=readonly honnef.co/go/tools/cmd/staticcheck
-ARG GOVULNCHECK_VERSION=v1.8.0
-RUN GOBIN=/out CGO_ENABLED=0 go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
-ARG JV_VERSION=v0.7.0
-RUN GOBIN=/out CGO_ENABLED=0 go install github.com/santhosh-tekuri/jsonschema/cmd/jv@${JV_VERSION}
-
 FROM ${NODE_IMAGE}
-
-COPY --from=go-tools-builder /out/staticcheck /usr/local/bin/staticcheck
-COPY --from=go-tools-builder /out/govulncheck /usr/local/bin/govulncheck
-COPY --from=go-tools-builder /out/jv /usr/local/bin/jv
 
 %s
 
 # Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or
 # compile toolchains a repo pins in .tool-versions at runtime. A Postgres client,
 # procps, and inotify-tools come along so the runtime path matches a baked image.
-# ripgrep/fd/jq/jv/tree are the search + inspect tools agents reach for constantly
-# (Debian ships fd as "fdfind", so it's symlinked to "fd"). ShellCheck rides along for the
-# same reason Staticcheck is copied in above: a repo's gate runs IN the box, and a non-root
-# agent can't apt-get a missing linter at gate time. python3 + pip with a bare
+# ripgrep/fd/jq/tree are the search + inspect tools agents reach for constantly
+# (Debian ships fd as "fdfind", so it's symlinked to "fd"). ShellCheck rides along because a
+# repo's gate runs IN the box, and a non-root agent can't apt-get a missing linter at gate time
+# (a project's own .agent/Dockerfile adds its language's analyzers). python3 + pip with a bare
 # "python"/"pip" (python-is-python3 plus a pip symlink) so an agent that reaches for
 # python or pip just runs, instead of burning a turn self-debugging, when a repo hasn't
 # pinned python in .tool-versions (an asdf-pinned python still shims ahead of these on
@@ -761,24 +736,19 @@ func stageBaseImageFiles(dir string, files map[string][]byte) error {
 }
 
 // baseBuildArgs assembles the runtime args for building the shared base image from its staged
-// context dir. fresh adds --pull --no-cache and floats the Node and Go bases to their tags, so an
-// update refreshes the OS and runtime underneath; the clients are the qualified set either way.
-// Otherwise the bases are pinned so `coop build` is reproducible.
+// context dir. fresh adds --pull --no-cache and floats the Node base to its tag, so an update
+// refreshes the OS and runtime underneath; the clients are the qualified set either way.
+// Otherwise the base is pinned so `coop build` is reproducible.
 func baseBuildArgs(cfg *config.Config, fresh bool, platformFlags []string, dir string) []string {
 	args := []string{"build"}
+	node := pinnedNodeImage
 	if fresh {
 		args = append(args, "--pull", "--no-cache")
-	}
-	node := pinnedNodeImage
-	goImage := pinnedGoImage
-	if fresh {
 		node = floatingNodeImage
-		goImage = floatingGoImage
 	}
 	args = append(args, platformFlags...)
 	args = append(args,
 		"--build-arg", "NODE_IMAGE="+node,
-		"--build-arg", "GO_IMAGE="+goImage,
 		"--build-arg", "COOP_BOX_UID="+fmt.Sprint(boxAgentIdentity().uid),
 		"--build-arg", "COOP_BOX_GID="+fmt.Sprint(boxAgentIdentity().gid),
 	)

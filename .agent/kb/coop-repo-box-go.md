@@ -2,8 +2,8 @@
 name: coop-repo-box-go
 description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and three approved Go domains; big modules redirect to a blocked host, so the shared cache is filled from the host
 subsystem: box
-sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, internal/box/staticcheck.mod, Makefile, .tool-versions]
-updated: 2026-10-15
+sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, tools/staticcheck.mod, Makefile, .tool-versions, agent_config_test.go]
+updated: 2026-10-16
 ---
 
 A filtered box runs the locked client image, which carries the asdf binary but installs nothing on
@@ -13,13 +13,16 @@ blocked with `go: not found` before it could run `make check`.
 
 `.agent/Dockerfile` (from `coop init --stack asdf`) installs `.tool-versions` (Go) at build time and
 adds the gate's tools at the Makefile's pins (staticcheck, govulncheck), plus shellcheck, git-lfs and
-make. Changing it, or anything it copies, makes launches refuse until `coop build` runs.
+make. Changing it, or anything it copies, makes launches refuse until `coop build` runs. It is the
+only source of the Go analyzers in coop's box: since 2026-10-16 Coop's own box images carry none, so
+an analyzer bump moves no user's box tag or network setup, only this project's image.
 
-Staticcheck's alternate module (`internal/box/staticcheck.mod` and `.sum`) pins its importer as
+Staticcheck's alternate module (`tools/staticcheck.mod` and `.sum`) pins its importer as
 well as the analyzer: Go1.27.2 emits V5 export data that the published Staticcheck0.8.1 dependency
-cannot read. `make install-staticcheck` uses that graph; both embedded images and this project's
-Dockerfile install the same files as `go.mod`/`go.sum`. Never install with `@version` here: that
-would bypass the importer pin. The gate checks both versions.
+cannot read. `make install-staticcheck` uses that graph, and this project's Dockerfile installs the
+same files as `go.mod`/`go.sum`. Never install with `@version` here: that would bypass the importer
+pin. The gate checks both versions, and `TestOwnDockerfileInstallsTheGatePins` holds the
+Dockerfile's module path and govulncheck version to the Makefile's.
 
 The build needs the network, so `.agent/project.yaml` asks for `proxy.golang.org`, `sum.golang.org`
 and `vuln.go.dev` (TLS 443), approved by the owner with `coop approve`. `proxy.golang.org` hands a
@@ -32,6 +35,10 @@ again when a new large dependency fails to download in a box.
 doesn't use them, so they were removed after running it.
 
 ## Changelog
+- 2026-10-16 — the analyzer module moved to `tools/staticcheck.mod` when Coop's box images dropped
+  their Go tools stage; a root test now holds this Dockerfile's pins to the Makefile's. The
+  storage.googleapis.com paragraph is left to the queued stale-cards task: `.agent/project.yaml`
+  allows that host since 21e0fb08.
 - 2026-10-15 — the locked client image does carry the asdf binary (only its shims are off `PATH`);
   the code reference names `boxEnvNote` instead of a line range.
 - 2026-10-09 — documented the shared analyzer graph and V5 importer compatibility; Go1.27.2 keeps

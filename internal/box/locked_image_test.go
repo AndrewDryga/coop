@@ -62,9 +62,9 @@ func TestLockedImageBuildContextIsPinnedDeterministicAndEmbeddedOnly(t *testing.
 		t.Fatal("nondeterministic definition", err)
 	}
 	id := boxAgentIdentity()
-	if spec.Args["NODE_IMAGE"] != pinnedNodeImage || spec.Args["GO_IMAGE"] != pinnedGoImage ||
+	if spec.Args["NODE_IMAGE"] != pinnedNodeImage ||
 		spec.Args["COOP_BOX_UID"] != fmt.Sprint(id.uid) || spec.Args["COOP_BOX_GID"] != fmt.Sprint(id.gid) ||
-		len(spec.Args) != 4 || spec.Labels["coop.clients.closure"] != closure.Digest {
+		len(spec.Args) != 3 || spec.Labels["coop.clients.closure"] != closure.Digest {
 		t.Fatal("mutable base or lost identity", spec)
 	}
 	files := make(map[string][]byte)
@@ -87,9 +87,6 @@ func TestLockedImageBuildContextIsPinnedDeterministicAndEmbeddedOnly(t *testing.
 	}
 	if len(files) != len(closure.Files) || len(files["global.npmrc"]) != 0 || !bytes.Equal(files["package-lock.json"], closure.Files["package-lock.json"]) {
 		t.Fatal("context omitted or added inputs")
-	}
-	if !bytes.Equal(files["staticcheck/go.mod"], staticcheckMod) || !bytes.Equal(files["staticcheck/go.sum"], staticcheckSum) {
-		t.Fatal("locked image omitted the pinned analyzer graph")
 	}
 	df := string(files["Dockerfile"])
 	for _, want := range []string{"npm ci --prefix /opt/coop/clients --ignore-scripts --include=optional --omit=dev", "--userconfig=/dev/null --globalconfig=/opt/coop/clients/global.npmrc", "/node_modules/playwright/cli.js install-deps chromium", "curl --fail --silent --show-error --proto '=https'", "sha256sum -c -", "grok-1.0.44-linux-aarch64.gz", "chmod -R a-w /opt/coop/clients", "USER node", "COOP_SUPERVISE_DESCENDANTS", "terminate_jobs",
