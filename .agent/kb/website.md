@@ -2,8 +2,8 @@
 name: website
 description: site/ is static and partly generated; tools/gen_site.py owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
 subsystem: website
-sources: [tools/gen_site.py, tools/services_bench.py, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/docs.html, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/site_picker_fixture.cjs, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
-updated: 2026-10-15
+sources: [tools/gen_site.py, tools/services_bench.py, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/docs.html, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/site_picker_fixture.cjs, tools/aligncomments/main.go, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
+updated: 2026-10-16
 ---
 
 The homepage and docs are static files in `site/`, published by `.github/workflows/pages.yml` on
@@ -104,7 +104,7 @@ note must stay within 57 characters (else it wraps at 1024px); `tools/test_site_
 that, that every command parses with `sh -n`, and that no `<pre class="code">` holds a shell command.
 A file snippet is `<div class="code-file">` with a `<p class="code-file-name">` header over a
 `<pre class="code" data-copy-source>`, copied whole. Inside those `pre` blocks, content starts on the
-line after the tag (HTML drops that newline; `tools/align-comments.py` measures from column 0), a
+line after the tag (HTML drops that newline; `tools/aligncomments` measures from column 0), a
 trailing comment is `<span class="t">` (the align tool finds it by that exact string) and a
 whole-line comment `<span class="t whole">`.
 
@@ -177,6 +177,8 @@ with `--disable-javascript`, and `--blink-settings=scriptEnabled=false` makes `-
 nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 
 ## Changelog
+- 2026-10-16 — the comment-alignment tool is Go now (`tools/aligncomments`); it still finds a
+  trailing comment by the exact `<span class="t">` string and measures `<pre>` lines from column 0.
 - 2026-10-15 — deleted the `overnight.html` redirect: the URL was public for one day, and a retired
   URL is not redirected, so it now 404s. The sitemap test now requires exactly the site's pages.
   Checked that no page, generator or sitemap links it (task

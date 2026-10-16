@@ -106,8 +106,8 @@ docs: ## Regenerate CLI, manpage, and site docs from internal/cli/help.go
 docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make docs' to fix)
 	@go run ./tools/gendocs -check
 
-align: require-python3 ## Check trailing-# comment alignment in README + site + CLI docs (--write to fix)
-	@python3 tools/align-comments.py --check
+align: ## Check trailing-# comment alignment in README + site + CLI docs (run 'go run ./tools/aligncomments -write' to fix)
+	@go run ./tools/aligncomments -check
 
 # The benches' own tests run with the benches (bench-tools-test), not in the gate: the gate never
 # runs a bench, and their tests were most of this suite's time. Every other tools/test_*.py runs here.
@@ -133,8 +133,8 @@ services-bench: require-services-workspace require-python3 build bench-tools-tes
 require-services-workspace:
 	@test -n "$(WORKSPACE)" || { echo 'WORKSPACE is required: a project whose Compose services are approved'; exit 2; }
 
-rules-check: require-python3 ## Fail if a .agent/kb card or rule is malformed, unindexed, or names a source/check that doesn't exist
-	@python3 tools/check_rules.py
+rules-check: ## Fail if a .agent/kb card or rule is malformed, unindexed, or names a source/check that doesn't exist
+	@go run ./tools/checkrules
 	@go test -count=1 ./internal/agent -run 'TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard'
 
 build-all: ## Compile every package (a package no test imports can still break the build)

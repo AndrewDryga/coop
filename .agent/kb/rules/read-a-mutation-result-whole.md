@@ -4,7 +4,7 @@ description: a state-changing command's result is read whole, or its effect chec
 scope: agent-workflow
 sources: [AGENTS.md, .agent/skills, .agent/kb, tools, Makefile, internal/tasks/cmd.go, internal/tasks/channel.go, internal/taskmcp/tools.go]
 check: "make rules-check"
-updated: 2026-09-19
+updated: 2026-10-16
 ---
 
 # Read a mutation's result whole before you ever run it again
@@ -22,7 +22,7 @@ fresh question, and `coop tasks` asked the human something they had already deci
 and keeps the earlier answer — or question — in log.md when a new one replaces it
 (`go test ./internal/tasks ./internal/taskmcp`). The habit is the other half: the next mutating
 command may have no such guard, so the `check:` here guards this repo's OWN instructions
-(`tools/check_rules.py`, run by `make rules-check`): a truncated mutation in AGENTS.md, a skill, the
+(`tools/checkrules`, run by `make rules-check`): a truncated mutation in AGENTS.md, a skill, the
 docs or the Makefile fails the gate, because that is where an agent learns the habit.
 
 **How to apply:**
@@ -36,3 +36,6 @@ docs or the Makefile fails the gate, because that is where an agent learns the h
 ## Changelog
 - 2026-09-19 — created, and mechanized in `tools/check_rules.py`. Swept AGENTS.md, README.md, the
   Makefile, docs/, tools/, .agent/skills and .agent/kb for a truncated mutating command: none found.
+- 2026-10-16 — the check moved to Go (`tools/checkrules`) with the same pattern and scan list. It
+  exempts the files that quote the mistake by their repository path rather than by file name, so
+  the checker's own `main.go` does not exempt every other `main.go`. Swept the tree: none found.

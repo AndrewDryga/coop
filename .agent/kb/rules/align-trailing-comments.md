@@ -2,9 +2,9 @@
 name: align-trailing-comments
 description: "trailing `#` comments in an example line up in one column"
 scope: docs
-sources: [internal/cli/help.go, tools/align-comments.py, README.md, docs, CONTRIBUTING.md, MIGRATING.md]
+sources: [internal/cli/help.go, tools/aligncomments/main.go, README.md, docs, CONTRIBUTING.md, MIGRATING.md]
 check: "make align"
-updated: 2026-10-05
+updated: 2026-10-16
 ---
 
 # Trailing `#` comments in an example line up in one column
@@ -36,7 +36,7 @@ Same failure as a help row pushing past the description gap — see
 - `help.go` is the source of truth for the manual: edit it, run `make docs` (docs-check
   enforces the sync), and the alignment flows into cli.md/coop.1/llms.txt.
 
-**Mechanically:** `make align` (or `tools/align-comments.py --check` / `--write`) over README,
+**Mechanically:** `make align` (or `go run ./tools/aligncomments -check` / `-write`) over README,
 the site pages, and cli.md. It aligns jagged blocks, skips aligned ones and lone outliers, and
 counts width visually (HTML tags/entities and the `<pre>` `>` don't count). The stanza-vs-block
 and outlier calls are heuristic, so it's an aid, not a gate — confirm the result in review.
@@ -51,3 +51,4 @@ See also [[help-output-style]], [[no-color-in-width-fields]], [[tag-exceptions-n
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-10-05 — the README became a short landing page and its detail moved to docs (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.
 - 2026-10-05 — `make align` measures a markdown fence as written, so a placeholder like `<id>` counts (it used to be stripped as an HTML tag and hid a 4-column misalignment in docs/configuration.md, fixed here); HTML still drops markup. Pinned by tools/test_align_comments.py.
+- 2026-10-16 — the tool moved to Go (`tools/aligncomments`, same rules and default files); its tests, now in tools/aligncomments/main_test.go, also pin the outlier, stanza, quoted-`#` and `-write` cases. `make align` passes on the tree.
