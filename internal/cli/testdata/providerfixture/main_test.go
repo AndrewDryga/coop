@@ -237,6 +237,8 @@ func TestParseRuntimeSupportsOnlyExplicitLifecycleProbes(t *testing.T) {
 		{[]string{"info"}, "info"},
 		{[]string{"image", "inspect", "fixture-image"}, "inspect"},
 		{[]string{"ps", "-q", "-a", "--filter", "label=coop=box"}, "ps"},
+		// The box survey's one listing: every container carrying the coop label, whatever its kind.
+		{[]string{"ps", "-a", "--no-trunc", "--filter", "label=coop", "--format", `[{{json .ID}},{{json (.Label "coop")}}]`}, "ps"},
 		{[]string{"rm", "-f", "fixture-id"}, "remove"},
 		{[]string{"kill", "fixture-id"}, "kill"},
 	}
@@ -251,6 +253,12 @@ func TestParseRuntimeSupportsOnlyExplicitLifecycleProbes(t *testing.T) {
 		{"info", "extra"},
 		{"image", "inspect", "other-image"},
 		{"ps", "--all"},
+		{"ps", "-q", "--filter", "label="},
+		// A bare label key only lists labels (the survey's --format call); a listing whose ids
+		// are then removed must name each label's value.
+		{"ps", "-q", "-a", "--filter", "label=coop"},
+		{"ps", "-q", "--filter", "label=coop="},
+		{"ps", "-q", "--filter", "label==box"},
 		{"rm", "-f"},
 		{"kill", "--all"},
 	} {
@@ -296,6 +304,9 @@ func TestRuntimeContainerRecordsMatchExactlyAndFailClosed(t *testing.T) {
 		{map[string]string{"coop.fork-owner": "v1-owner"}, true},
 		{map[string]string{"coop.fork": "per"}, false},
 		{map[string]string{"coop.fork-owner": "v1-other"}, false},
+		// A bare key matches the label's presence, never its absence.
+		{map[string]string{"coop.fork": ""}, true},
+		{map[string]string{"coop": ""}, false},
 	} {
 		got, err := matchingRuntimeContainers(root, tc.filters)
 		if err != nil {

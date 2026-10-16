@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -229,7 +230,7 @@ func TestReclaimKeepsGoingWhenOneImageCannotGo(t *testing.T) {
 	// A build says nothing about what it could not do: only what it reclaimed reaches the human.
 	var out strings.Builder
 	rt, _ = reclaimRuntime(t, []string{current, stuck}, nil, stuck)
-	reclaimAfterBuild(context.Background(), rt, cfg, current, &out, nil)
+	reclaimAfterBuild(context.Background(), rt, cfg, current, "", &out, nil)
 	if out.String() != "" {
 		t.Errorf("the build reported housekeeping: %q", out.String())
 	}
@@ -444,5 +445,132 @@ func TestDerivedImagesCarryTheLabelTheReclaimAsksFor(t *testing.T) {
 	// An ordinary project build takes no label, so `coop build` is byte-identical to before.
 	if plain := strings.Join(projectBuildArgs("/ctx", ".agent/Dockerfile", "coop-app", "coop-box:x", true, false), " "); strings.Contains(plain, "--label") {
 		t.Errorf("an ordinary project build gained a label: %q", plain)
+	}
+}
+
+// imageAnswersRuntime is a Docker that answers each exact command line in answers with its text
+// ("!fail" fails that command instead), answers anything else with nothing, and records every call.
+func imageAnswersRuntime(t *testing.T, answers map[string]string) (runtime.Runtime, string) {
+	t.Helper()
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	shim := filepath.Join(dir, "docker")
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\necho \"$@\" >> " + strconv.Quote(calls) + "\ncase \"$*\" in\n")
+	for command, answer := range answers {
+		reply := "echo " + strconv.Quote(answer)
+		if answer == "!fail" {
+			reply = "echo 'fake runtime: failed' >&2; exit 1"
+		}
+		script.WriteString("  " + strconv.Quote(command) + ") " + reply + " ;;\n")
+	}
+	script.WriteString("esac\nexit 0\n")
+	writeRepoFile(t, shim, script.String())
+	if err := os.Chmod(shim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return runtime.Runtime{Name: shim}, calls
+}
+
+// tagCount is the question removeReplacedImages asks before anything else.
+func tagCount(id string) string { return "image inspect --format {{len .RepoTags}} " + id }
+
+// A same-tag rebuild leaves the image it replaced untagged, where no tag-based reclaim will ever
+// see it. That image goes once nothing references it, and only then: one a container was created
+// from (a stopped box, a leftover proof) stays, one with a tag again is somebody's, and a runtime
+// that cannot answer keeps everything.
+func TestReplacedImageGoesOnlyWhenUntaggedAndUnused(t *testing.T) {
+	free := "sha256:" + strings.Repeat("1", 64)
+	used := "sha256:" + strings.Repeat("2", 64)
+	tagged := "sha256:" + strings.Repeat("3", 64)
+	unreadable := "sha256:" + strings.Repeat("4", 64)
+	rt, calls := imageAnswersRuntime(t, map[string]string{
+		tagCount(free): "0", tagCount(used): "0", tagCount(tagged): "1", tagCount(unreadable): "!fail",
+		"ps -q -a --filter ancestor=" + used: "leftover-proof",
+	})
+	removeReplacedImages(context.Background(), rt, "", free, used, tagged, unreadable)
+	want := strings.Join([]string{
+		tagCount(free), "ps -q -a --filter ancestor=" + free, "image rm " + free,
+		tagCount(used), "ps -q -a --filter ancestor=" + used,
+		tagCount(tagged),
+		tagCount(unreadable),
+	}, "\n") + "\n"
+	if recorded := string(mustReadFile(t, calls)); recorded != want {
+		t.Fatalf("runtime calls:\n%s\nwant:\n%s", recorded, want)
+	}
+}
+
+// `coop update` rebuilds the managed base under the same tag, which untags the image it replaced:
+// that image goes when nothing uses it right after the build. A cache hit leaves the tag on it, and an operator's
+// own base is never weighed at all.
+func TestBaseRebuildRemovesTheImageItReplaced(t *testing.T) {
+	managed := ManagedBaseRepository + ":" + strings.Repeat("a", 32)
+	old := "sha256:" + strings.Repeat("5", 64)
+	for name, test := range map[string]struct {
+		base, tagsLeft  string
+		weighed, remove bool
+	}{
+		"rebuilt":              {base: managed, tagsLeft: "0", weighed: true, remove: true},
+		"cache hit":            {base: managed, tagsLeft: "1", weighed: true},
+		"an operator's base":   {base: "my-company/box:latest", tagsLeft: "0"},
+		"an operator's latest": {base: ManagedBaseRepository + ":latest", tagsLeft: "0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rt, calls := imageAnswersRuntime(t, map[string]string{
+				"info --format {{.OSType}}/{{.Architecture}}": "linux/aarch64",
+				"image inspect --format {{.Id}} " + test.base: old,
+				tagCount(old): test.tagsLeft,
+			})
+			cfg := &config.Config{BaseImage: test.base, ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
+			if err := buildBaseImage(rt, cfg, true, "vTest", io.Discard, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			recorded := string(mustReadFile(t, calls))
+			if got := strings.Contains(recorded, "image inspect --format {{.Id}} "+test.base+"\n"); got != test.weighed {
+				t.Errorf("read what the tag named before the build: %v, want %v\n%s", got, test.weighed, recorded)
+			}
+			if got := strings.Contains(recorded, "image rm "+old+"\n"); got != test.remove {
+				t.Errorf("removed the replaced image: %v, want %v\n%s", got, test.remove, recorded)
+			}
+		})
+	}
+}
+
+// A Dockerfile edit rebuilds the project's SAME derived tag. The image that tag named goes after
+// the build only when Coop's own mark says Coop built it for this project: the tag is the project's
+// name, and an image someone built into it by hand stays theirs, never even weighed.
+func TestDerivedRebuildRemovesOnlyCoopsReplacedImage(t *testing.T) {
+	for name, coops := range map[string]bool{"coop's own": true, "someone else's": false} {
+		t.Run(name, func(t *testing.T) {
+			f, d, repo, _ := projectPreparationFixture(t)
+			tag := filteredProjectTag(repo, fixtureCandidate().ClientImage)
+			old := "sha256:" + strings.Repeat("6", 64)
+			labels := map[string]string{}
+			if coops {
+				labels[derivedImageLabel] = derivedImageProject(tag)
+			}
+			d.mu.Lock()
+			d.images[tag] = fixtureImage{id: old, labels: labels}
+			d.mu.Unlock()
+			dir := t.TempDir()
+			calls := filepath.Join(dir, "calls")
+			script := filepath.Join(dir, "docker")
+			writeRepoFile(t, script, "#!/bin/sh\necho \"$@\" >> "+strconv.Quote(calls)+"\n"+
+				"case \"$*\" in "+strconv.Quote(tagCount(old))+") echo 0; exit 0 ;; esac\n"+
+				"while [ $# -gt 0 ]; do\n  if [ \"$1\" = --iidfile ]; then echo "+fixtureBuiltImage+" > \"$2\"; fi\n  shift\ndone\n")
+			if err := os.Chmod(script, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := buildFilteredProject(t.Context(), frozenProjectRuntime(t, script), &config.Config{BoxHome: t.TempDir()}, d, f.store, repo, fixtureCandidate(), io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			recorded := string(mustReadFile(t, calls))
+			if got := strings.Contains(recorded, "image rm "+old+"\n"); got != coops {
+				t.Errorf("removed the replaced image: %v, want %v\n%s", got, coops, recorded)
+			}
+			if !coops && strings.Contains(recorded, old) {
+				t.Errorf("an image someone else built into the tag was weighed:\n%s", recorded)
+			}
+		})
 	}
 }

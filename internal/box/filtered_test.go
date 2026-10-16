@@ -59,6 +59,9 @@ type filteredDaemonFixture struct {
 	beforeCall                             func(op string) // runs before the daemon lock, so a test can hold calls in flight together
 	images                                 map[string]fixtureImage
 	layerReads, fileReads, treeReads       map[string]int
+	created                                map[string]time.Time // by container name; one without an entry is never stale
+	prunes                                 []string             // every PruneContainers call, "<label> older than <age>"
+	pruneErr                               error
 }
 
 func (d *filteredDaemonFixture) ConnectNetwork(_ context.Context, network string, ref runtime.DockerRef, aliases ...string) error {
@@ -366,7 +369,29 @@ func (d *filteredDaemonFixture) CreateContainer(_ context.Context, spec runtime.
 		}
 	}
 	d.containers[spec.Ref.Name] = v
+	if d.created == nil {
+		d.created = map[string]time.Time{}
+	}
+	d.created[spec.Ref.Name] = time.Now()
 	return id, nil
+}
+
+// PruneContainers is Docker's `container prune` with a label and an `until` filter: every container
+// carrying key that was created more than age ago goes, unless it is running.
+func (d *filteredDaemonFixture) PruneContainers(_ context.Context, key string, age time.Duration) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.prunes = append(d.prunes, key+" older than "+age.String())
+	if d.pruneErr != nil {
+		return d.pruneErr
+	}
+	for name, container := range d.containers {
+		created, known := d.created[name]
+		if _, labeled := container.Labels[key]; labeled && known && !container.State.Running && time.Since(created) > age {
+			delete(d.containers, name)
+		}
+	}
+	return nil
 }
 func (d *filteredDaemonFixture) InspectContainer(_ context.Context, ref runtime.DockerRef) (runtime.DockerContainer, bool, error) {
 	d.mu.Lock()

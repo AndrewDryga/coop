@@ -558,6 +558,26 @@ func (d *Docker) RemoveByLabels(ctx context.Context, labels map[string]string) (
 	return removed, nil
 }
 
+// PruneContainers removes this daemon's stopped containers that carry label key, whatever its value,
+// were created more than age ago, and belong to no Compose project. It is the daemon's own
+// `container prune`, so a running container is never touched and the age is the daemon's record of
+// the creation, not a listing read back. A project's Compose file can plant any label on its
+// services, so a Compose container is never taken; and since it selects by label rather than by an
+// exact id, it needs a binding allowed to launch, where exact cleanup works on a recovery binding.
+// An image built with the label puts it on every container made from that image, so a stopped
+// container of such an image is pruned too: the label key is Coop's convention, not a proof.
+func (d *Docker) PruneContainers(ctx context.Context, key string, age time.Duration) error {
+	if !dockerToken(key, 128) || strings.Contains(key, "=") || age <= 0 {
+		return errors.New("invalid Docker container prune")
+	}
+	if err := d.VerifyLaunch(ctx); err != nil {
+		return err
+	}
+	_, err := d.output(ctx, 64<<10, "container", "prune", "--force", "--filter", "label="+key,
+		"--filter", "label!=com.docker.compose.project", "--filter", "until="+age.String())
+	return err
+}
+
 func (d *Docker) verifyLaunchIdentity(ctx context.Context) error {
 	info, err := d.readInfo(ctx)
 	if err != nil {

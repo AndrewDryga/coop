@@ -216,8 +216,10 @@ func setupImages(ctx context.Context, cfg *config.Config, rt runtime.Runtime, st
 	}
 	// Setup builds two images Coop tags by their definition, so it reclaims the ones it superseded
 	// — the same rule as the base build, and the same protection for a Coop still using one.
+	// It never removes the pair it rebuilt over: a filtered loop or editor session admitted earlier
+	// runs that pair by ID for as long as it lives, so only `docker image prune` takes it later.
 	for _, image := range []string{definition.Tag, gatewayimage.Tag()} {
-		reclaimAfterBuild(ctx, rt, cfg, image, nil, func(line string) {
+		reclaimAfterBuild(ctx, rt, cfg, image, "", nil, func(line string) {
 			fmt.Fprintf(out, "  %s\n", p.Dim(line))
 		})
 	}

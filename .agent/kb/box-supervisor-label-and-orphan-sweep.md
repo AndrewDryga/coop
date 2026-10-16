@@ -2,7 +2,7 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/cli/acp_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go]
+sources: [internal/cli/acp_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go]
 updated: 2026-10-16
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
@@ -41,14 +41,22 @@ sweep has no such input, and adding one would resurrect the bug the label exists
 plumbing `coop fork stop` uses, so the removal can only reach containers carrying that identity AND
 that scope.
 
-A dead supervisor's `coop=broker` MCP credential broker helper (`box/open_broker.go`, same
-`ownerLabels`, holding that run's MCP secrets) is removed with its box — but only once a box of that
-supervisor is already proven orphaned, so a sweep that finds nothing still costs exactly ONE
-listing: the scripted process E2Es pin that count. Ordinarily the helper never gets that far: it
-runs with an open stdin pipe, so it exits and `--rm` removes it the moment its coop does. Its
-private directory (`coop-broker-*`, holding the run's real credentials) is a `tempPrefixes` entry,
-so `ReapOrphanTempEntries` clears one a kill left behind. `SurveyOrphanBoxes`, and so `coop doctor`,
-reports boxes only. It runs from `app.sweepOrphanBoxes` (memoized once per repo per process) at the entry
+A `coop=broker` credential broker helper carries its box's `ownerLabels`, and is judged by the same
+proof on its OWN label, with or without its box. The open run's MCP broker (`box/open_broker.go`)
+runs with `--rm` and an open stdin pipe, so it exits and goes the moment its coop does; the native
+broker (`box/native_open.go`, `coop-native-*`) is created without `--rm`, so a coop killed after
+creating it leaves it behind, holding its `coop-network` image, while its box leaves. The four found
+on one Mac on 2026-10-15 were never started and came from session runs (`coop.run=session-*`) whose
+remote-fork workspaces were already gone: no workspace-scoped sweep reaches those.
+`SurveyOrphanBoxes` lists every container carrying the `coop` label in ONE `ps --format` call
+(`runtime.ContainerLabels` with an empty value matches any value), reading each one's kind,
+supervisor and Compose labels, so a survey that finds nothing still costs exactly one runtime call:
+the scripted process E2Es pin that count. A broker is removed by `{coop=broker, coop.host=<dead>}`
+but not counted in the launch's "Removed N boxes" line, and a broker with a Compose label is never
+removed. The open broker's private directory (`coop-broker-*`, holding the run's real credentials)
+is a `tempPrefixes` entry, so `ReapOrphanTempEntries` clears one a kill left behind.
+`SurveyOrphanBoxes` returns the dead supervisors' brokers beside the boxes; `coop doctor` reports
+the boxes only. It runs from `app.sweepOrphanBoxes` (memoized once per repo per process) at the entry
 points that already reap: loop start, fork start, and `coop build`/`update`'s recycle. Failure there
 is deliberately silent — the
 command's own box work reports a broken runtime loudly, and Apple's `container` CLI has no label
@@ -118,12 +126,13 @@ A true no-match is success; query or partial-removal failure makes `build`/`upda
 already-built image called out explicitly. Do not reintroduce best-effort count/kill helpers there.
 
 Traps:
-- The sweep adds TWO runtime `ps` listings to loop/fork/build (boxes, then project services). The
+- The sweep adds TWO runtime `ps` listings to loop/fork/build (every coop container for boxes and
+  brokers, then project services). The
   scripted process E2Es pin exact runtime call counts, so those suites pass `sweepsOrphanBoxes` (see
   `assertDirectRunContract`); a command that grows any OTHER runtime call still fails the count. The daily temp sweep would add
   more when due; `procharness.NewLayout` stamps `temp-reap` fresh so it never is there.
-- The scripted fixture must answer `inspect --format {{json .Config.Labels}}` (it does, as the
-  `labels` command) or the sweep silently degrades to "unattributable" in every E2E.
+- The scripted fixture must accept the survey's bare `label=coop` filter (`parsePS`: a key with no
+  value matches the label's presence) or the sweep silently fails in every E2E.
 - A fork's boxes are scoped to the FORK's workspace, not the parent repo, so `coop fork <name>` from
   the parent never sweeps them; the fork's own loop start does, and `coop fork stop` still owns the
   exact-owner reap.
@@ -136,6 +145,9 @@ Traps:
 - 2026-10-16 — model probes start no services in open mode; a filtered probe removes its own project.
 - 2026-10-16 — an editor session removes its own per-run services at exit and on reload, never while one
   of its inner children runs (task 2026-10-16-editor-sessions-remove-their-own-services-when-t).
+- 2026-10-16 — brokers are judged on their own supervisor label, so a native broker whose box is
+  gone is removed too; the survey reads every coop container in one `ps --format` listing, with no
+  per-container inspect (task 2026-10-15-sweep-orphan-helper-containers-and-superseded-im).
 - 2026-10-16 — Docker client folders moved from TMPDIR to the private runfiles root; the private-TMPDIR
   special case is gone and only ReapOrphanRunfiles reaps them; the root's one helper is
   internal/config/runfiles.go (a linked Coop home is fine, a linked or foreign runfiles is refused);

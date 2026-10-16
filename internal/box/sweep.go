@@ -21,8 +21,9 @@ import (
 // reads as unattributable — reported, never reaped.
 const supervisorLabelVersion = "v1"
 
-// OrphanBox is one coop box whose supervising host process is provably gone: the pid it recorded is
-// dead, or that pid now belongs to a different process than the one that launched the box.
+// OrphanBox is one coop box, or a box's broker helper, whose supervising host process is provably
+// gone: the pid it recorded is dead, or that pid now belongs to a different process than the one
+// that launched it.
 type OrphanBox struct {
 	ID       string // container id
 	PID      int    // the supervisor it recorded
@@ -32,11 +33,13 @@ type OrphanBox struct {
 // OrphanSurvey is one scan of the coop boxes a runtime can see, classified for a single workspace.
 type OrphanSurvey struct {
 	Checked      int         // every coop box seen, running or stopped
-	Orphans      []OrphanBox // in THIS workspace's scope AND provably dead: the only reapable set
-	Unattributed []string    // ids coop cannot attribute (no supervisor label, or one it can't read)
+	Orphans      []OrphanBox // in THIS workspace's scope AND provably dead: the only reapable boxes
+	Brokers      []OrphanBox // credential broker helpers orphaned the same way, with or without their box
+	Unattributed []string    // box ids coop cannot attribute (no supervisor label, or one it can't read)
 }
 
-// SurveyOrphanBoxes classifies every coop box for workspace without touching any of them.
+// SurveyOrphanBoxes classifies every coop box, and every broker helper, for workspace without
+// touching any of them.
 //
 // The judgment is the fork lifecycle's (internal/forkspace.OwnerProvablyDead), applied to an identity
 // carried by the container instead of a pidfile: a box is an orphan only when its recorded
@@ -44,61 +47,83 @@ type OrphanSurvey struct {
 // left alone — a live supervisor, an identity the kernel won't confirm, a box from another
 // workspace, and a box launched before this label existed. Never age, never image, never name.
 //
+// A broker is judged the same way, on its own label, because it can outlive its box: when its coop
+// is killed the box goes with --rm, while the native broker has no --rm and stays, stopped and
+// holding its image. One listing of every container carrying LabelKey answers for both, so a
+// survey that finds nothing still costs exactly one runtime call.
+//
 // A query failure is an error, never an empty survey: a runtime that cannot be asked what is
 // running must not read as "nothing is running" to a caller that removes what it doesn't see.
 func SurveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace string) (OrphanSurvey, error) {
-	containers, err := rt.ContainersByLabel(ctx, LabelKey, LabelBox)
+	containers, err := rt.ContainerLabels(ctx, LabelKey, "", LabelKey, LabelHost, composeProjectLabel)
 	if err != nil {
 		return OrphanSurvey{}, err
 	}
 	scope := workspaceScope(workspace)
-	survey := OrphanSurvey{Checked: len(containers)}
+	var survey OrphanSurvey
 	for _, container := range containers {
-		// Coop never puts a Compose label on a box. One that carries it is a development service
-		// whose file planted coop=box with a dead supervisor of this workspace, or a box whose image
-		// carries the label; either way it is reported and never removed.
-		if container.Labels[composeProjectLabel] != "" {
-			survey.Unattributed = append(survey.Unattributed, container.ID)
-			continue
+		kind := container.Labels[LabelKey]
+		if kind != LabelBox && kind != LabelBroker {
+			continue // a project service or a task channel: other sweeps judge those
 		}
 		host := container.Labels[LabelHost]
 		ref, ok := parseSupervisorLabel(host)
-		if !ok {
-			// No label (launched by a coop that predates it) or one this version can't read. Either
-			// way coop does not know who owns the box, so it says so and keeps its hands off.
-			survey.Unattributed = append(survey.Unattributed, container.ID)
+		// Coop never puts a Compose label on a box or a broker. One that carries it is a development
+		// service whose file planted coop's labels with a dead supervisor of this workspace, or a box
+		// whose image carries the label; either way it is never removed.
+		ok = ok && container.Labels[composeProjectLabel] == ""
+		if kind == LabelBox {
+			survey.Checked++
+			if !ok {
+				// No label (launched by a coop that predates it), one this version can't read, or a
+				// Compose container. Coop does not know who owns the box, so it says so and keeps its
+				// hands off.
+				survey.Unattributed = append(survey.Unattributed, container.ID)
+				continue
+			}
+		}
+		if !ok || ref.scope != scope || !supervisorProvablyDead(ref.pid, ref.token) {
 			continue
 		}
-		if ref.scope != scope || !supervisorProvablyDead(ref.pid, ref.token) {
-			continue
+		orphan := OrphanBox{ID: container.ID, PID: ref.pid, Evidence: host}
+		if kind == LabelBox {
+			survey.Orphans = append(survey.Orphans, orphan)
+		} else {
+			survey.Brokers = append(survey.Brokers, orphan)
 		}
-		survey.Orphans = append(survey.Orphans, OrphanBox{ID: container.ID, PID: ref.pid, Evidence: host})
 	}
 	return survey, nil
 }
 
-// ReapOrphanBoxes removes exactly the boxes SurveyOrphanBoxes finds orphaned for workspace, and
-// reports how many the runtime removed.
+// ReapOrphanBoxes removes exactly the boxes and broker helpers SurveyOrphanBoxes finds orphaned for
+// workspace, and reports how many boxes the runtime removed: a broker is a helper of a box, not one
+// the user started, so the line a launch prints counts boxes only.
 //
 // It removes by the orphan's own LabelHost value — the same exact-label reap `coop fork stop` uses
 // — so the removal can only ever reach containers that carry the dead supervisor's identity AND
-// this workspace's scope, even if the runtime's view changed since the survey. A dead supervisor's
-// MCP credential broker helper (`coop=broker`, same labels, holding that run's MCP secrets) goes
-// with its box: it is looked for only once a box of that supervisor is already proven orphaned, so
-// a sweep that finds nothing still costs exactly one listing.
+// this workspace's scope, even if the runtime's view changed since the survey.
 func ReapOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
 	survey, err := SurveyOrphanBoxes(ctx, rt, workspace)
 	if err != nil {
 		return 0, err
 	}
+	removed, err := removeBySupervisor(ctx, rt, LabelBox, survey.Orphans)
+	if err != nil {
+		return removed, err
+	}
+	_, err = removeBySupervisor(ctx, rt, LabelBroker, survey.Brokers)
+	return removed, err
+}
+
+// removeBySupervisor removes the containers of kind that each orphan's dead supervisor labeled, one
+// exact-label call per supervisor, and reports how many went.
+func removeBySupervisor(ctx context.Context, rt runtime.Runtime, kind string, orphans []OrphanBox) (int, error) {
 	removed := 0
-	for _, host := range supervisorLabelValues(survey.Orphans) {
-		for _, kind := range []string{LabelBox, LabelBroker} {
-			n, err := rt.RemoveByLabels(ctx, map[string]string{LabelKey: kind, LabelHost: host})
-			removed += n
-			if err != nil {
-				return removed, err
-			}
+	for _, host := range supervisorLabelValues(orphans) {
+		n, err := rt.RemoveByLabels(ctx, map[string]string{LabelKey: kind, LabelHost: host})
+		removed += n
+		if err != nil {
+			return removed, err
 		}
 	}
 	return removed, nil

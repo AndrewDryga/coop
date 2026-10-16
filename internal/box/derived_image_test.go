@@ -2,6 +2,7 @@ package box
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/networkstate"
@@ -193,6 +195,70 @@ func TestPinnedClientProofReadsEachImageOnce(t *testing.T) {
 	defer d.mu.Unlock()
 	if d.fileReads[rebuilt] != files || d.fileReads[fixtureLockedImage] != files || d.treeReads[rebuilt] != 1 {
 		t.Fatal("a rebuilt image reused another image's identity", d.fileReads)
+	}
+}
+
+// An interrupted proof leaves its never-started container behind, and that container keeps its
+// image alive past any rebuild of the image's tag. So a proof first prunes proof containers more
+// than an hour old, and nothing else: a younger one may belong to a proof still reading, a running
+// container was never a proof's, and another kind of container is not a proof at all.
+func TestImageProofPrunesStaleProofContainersFirst(t *testing.T) {
+	_, d := filteredFixture(t)
+	closure := derivedImageFixture(t, d)
+	old := time.Now().Add(-2 * time.Hour)
+	seed := func(name string, labels map[string]string, created time.Time, running bool) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.containers[name] = runtime.DockerContainer{Name: name, Labels: labels, State: runtime.DockerContainerState{Status: "created", Running: running}}
+		if d.created == nil {
+			d.created = map[string]time.Time{}
+		}
+		d.created[name] = created
+	}
+	seed("coop-image-proof-interrupted", map[string]string{imageProofLabel: fixtureLockedImage}, old, false)
+	seed("coop-image-proof-in-flight", map[string]string{imageProofLabel: fixtureBuiltImage}, time.Now().Add(-5*time.Minute), false)
+	seed("coop-image-proof-started", map[string]string{imageProofLabel: fixtureBuiltImage}, old, true)
+	seed("coop-network-guard", map[string]string{"coop.network.role": "guard"}, old, false)
+	staleAtCreate := map[bool]int{}
+	d.beforeCall = func(op string) {
+		if op == "create:" {
+			d.mu.Lock()
+			_, stale := d.containers["coop-image-proof-interrupted"]
+			d.mu.Unlock()
+			staleAtCreate[stale]++
+		}
+	}
+	if err := proveDerivedImage(context.Background(), d, nil, fixtureLockedImage, fixtureBuiltImage, closure, ".agent/Dockerfile"); err != nil {
+		t.Fatal(err)
+	}
+	if staleAtCreate[true] != 0 || staleAtCreate[false] == 0 {
+		t.Fatalf("a proof created its container while the interrupted one was still there: %v", staleAtCreate)
+	}
+	d.mu.Lock()
+	var left []string
+	for name := range d.containers {
+		left = append(left, name)
+	}
+	prunes := slices.Clone(d.prunes)
+	d.mu.Unlock()
+	slices.Sort(left)
+	if want := []string{"coop-image-proof-in-flight", "coop-image-proof-started", "coop-network-guard"}; !slices.Equal(left, want) {
+		t.Fatalf("containers after the proof = %v, want %v", left, want)
+	}
+	if len(prunes) != staleAtCreate[false] {
+		t.Errorf("%d prunes for %d proof containers, want one before each", len(prunes), staleAtCreate[false])
+	}
+	for _, prune := range prunes {
+		if prune != imageProofLabel+" older than 1h0m0s" {
+			t.Errorf("pruned %q, want only proof containers over an hour old", prune)
+		}
+	}
+	// A daemon that will not prune leaves the leftovers for the next proof; this proof goes on.
+	_, d = filteredFixture(t)
+	closure = derivedImageFixture(t, d)
+	d.pruneErr = errors.New("a prune operation is already running")
+	if err := proveDerivedImage(context.Background(), d, nil, fixtureLockedImage, fixtureBuiltImage, closure, ".agent/Dockerfile"); err != nil {
+		t.Fatalf("a failed prune stopped the proof: %v", err)
 	}
 }
 

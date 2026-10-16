@@ -2,7 +2,7 @@
 name: destructive-confirm-gate
 description: "every unrecoverable delete routes through the one shared `ui.DestroyGate`"
 scope: security
-sources: [internal/ui/confirm.go, internal/box/reclaim.go, internal/box/derived_image.go, internal/box/sweep.go, internal/box/network_recover.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go]
+sources: [internal/ui/confirm.go, internal/box/reclaim.go, internal/box/derived_image.go, internal/box/sweep.go, internal/box/network_recover.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go, internal/box/image.go, internal/box/network_setup.go]
 check: "none"
 updated: 2026-10-16
 ---
@@ -51,7 +51,12 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
   applies), only after 14 days with no recorded use, never on first sight, never one a container
   still references, and never `-f`. An image of the user's own — whatever it is tagged — stays. This
   one runs unattended, in a `coop loop` iteration with no human present, which is exactly why every
-  clause above is a precondition rather than a prompt.
+  clause above is a precondition rather than a prompt. A same-tag rebuild's predecessor
+  (`removeReplacedImages`) is the same exception on a shorter clock, and narrower for it: only the ID
+  the tag named just before the rebuild of a managed base or a derived image, read only where
+  Coop's ownership is proven (the managed base tag, the derived label), only once the rebuild left it
+  with no tag at all (an image anyone tagged since stays), never one a container still references,
+  never `-f`. Network setup never removes its predecessor pair: earlier captures run it by ID.
 - Narrow exception: a loop's or editor session's private Compose project is that run's scratch copy
   of the project's services, not user state. The loop removes it with its volumes at a clean exit,
   and the loop/fork/build start sweep (`ReapOrphanServices`, `internal/box/sweep.go`) and `coop fork
@@ -88,6 +93,12 @@ See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-
   covered by the same one; a run's `artifacts-<id>` directory goes with that run's own exact-owned
   cleanup; `coop net forget` keeps its own exception and `coop approve` clears a withdrawal;
   bundles, qualifications and job snapshots are never removed.
+- 2026-10-16 — named a same-tag rebuild's untagged predecessor under the image exception when the
+  base and derived builds began removing it (network setup does not: captures pin its pair by ID).
+  Swept the other new unattended removals: a dead supervisor's broker helper, and a stopped
+  container carrying the image-proof label, over an hour old and in no Compose project, removed by
+  the daemon's own prune through a launch-allowed binding, are Coop's own containers, not user
+  state; neither prune nor sweep ever forces an image.
 - 2026-10-16 — named a killed run's private Compose project as a narrow exception when the
   loop/fork/build start sweep and `coop fork rm` began removing it with its volumes. Swept the other
   unprompted volume deletes: the loop's clean-exit teardown (`StopServicesForOwner`) is the same

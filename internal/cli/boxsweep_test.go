@@ -16,7 +16,8 @@ import (
 
 // sweepRuntime is a container runtime holding one unlabeled coop box, recording every call. The
 // orphan sweep's judgment is proven in internal/box (SurveyOrphanBoxes' decision table); what these
-// tests pin is the WIRING: how often it runs, and that doctor only ever looks.
+// tests pin is the WIRING: how often it runs, and that doctor only ever looks. Only the box survey's
+// one listing of every coop container finds the box; the services listing finds nothing.
 func sweepRuntime(t *testing.T) (containerruntime.Runtime, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -24,9 +25,8 @@ func sweepRuntime(t *testing.T) (containerruntime.Runtime, string) {
 	events := filepath.Join(dir, "events")
 	if err := os.WriteFile(cli, []byte(`#!/bin/sh
 printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
-case "$1" in
-	ps) printf '%s\n' legacy-box ;;
-	inspect) printf '%s\n' '{"coop":"box"}' ;;
+case "$*" in
+	"`+boxSurveyListing+`"*) printf '%s\n' '["legacy-box","box","",""]' ;;
 esac
 exit 0
 `), 0o755); err != nil {
@@ -36,6 +36,10 @@ exit 0
 	t.Setenv("XDG_STATE_HOME", t.TempDir()) // the sweep settles filtered runs: never the host's records
 	return containerruntime.Runtime{Name: cli}, events
 }
+
+// boxSurveyListing starts the one runtime call box.SurveyOrphanBoxes makes: every container carrying
+// the coop label, whatever its kind.
+const boxSurveyListing = "ps -a --no-trunc --filter label=coop --format "
 
 func sweepEvents(t *testing.T, path string) string {
 	t.Helper()
@@ -55,7 +59,7 @@ func TestSweepOrphanBoxesRunsOncePerRepo(t *testing.T) {
 	a.sweepOrphanBoxes(repo)
 	a.sweepOrphanBoxes(repo)
 	a.sweepOrphanBoxes(other)
-	if got := strings.Count(sweepEvents(t, events), "ps -q -a --filter label=coop=box\n"); got != 2 {
+	if got := strings.Count(sweepEvents(t, events), boxSurveyListing); got != 2 {
 		t.Fatalf("orphan listings = %d, want one per repo:\n%s", got, sweepEvents(t, events))
 	}
 	// Networks are not per repo: one listing per process, however many repos start.

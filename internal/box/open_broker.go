@@ -27,8 +27,9 @@ import (
 )
 
 const (
-	// LabelBroker marks an open run's MCP credential broker helper (coop=broker). The helper carries
-	// its box's supervisor, run and execution labels too, so whatever reaps an orphaned box reaps it.
+	// LabelBroker marks a run's credential broker helper (coop=broker). The helper carries its box's
+	// supervisor, run and execution labels too, so the orphan sweep removes it once that supervisor is
+	// provably gone, whether or not its box is still there.
 	LabelBroker = "broker"
 	// labelBrokerID names one helper exactly, so its removal needs nothing the runtime printed.
 	labelBrokerID = "coop.broker"

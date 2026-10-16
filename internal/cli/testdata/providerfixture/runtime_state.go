@@ -123,9 +123,10 @@ func matchingRuntimeContainers(root string, filters map[string]string) ([]string
 		if err != nil {
 			return nil, err
 		}
+		// An empty filter value asks only for the label: a recorded label is never empty.
 		match := true
 		for key, value := range filters {
-			if record.Labels[key] != value {
+			if got, ok := record.Labels[key]; !ok || value != "" && got != value {
 				match = false
 				break
 			}

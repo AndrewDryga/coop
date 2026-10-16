@@ -19,7 +19,8 @@ import (
 // fakeRuntimeScript is a container runtime backed by one file per container: $COOP_TEST_BOXES/<id>
 // holds that container's labels JSON, exactly as `inspect --format {{json .Config.Labels}}` prints
 // it. Every call is appended to $COOP_TEST_EVENTS, so a test can prove what the sweep touched — and
-// what it never asked about. No container daemon is involved at any point.
+// what it never asked about. COOP_TEST_FAILURE=<command> fails that command, and =garbled makes a
+// listing print a line no runtime would. No container daemon is involved at any point.
 const fakeRuntimeScript = `#!/bin/sh
 printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
 if [ -n "$COOP_TEST_FAILURE" ] && [ "$COOP_TEST_FAILURE" = "$1" ]; then
@@ -28,6 +29,10 @@ if [ -n "$COOP_TEST_FAILURE" ] && [ "$COOP_TEST_FAILURE" = "$1" ]; then
 fi
 case "$1" in
 ps)
+	if [ "$COOP_TEST_FAILURE" = garbled ]; then
+		echo 'not a listing'
+		exit 0
+	fi
 	shift
 	format=
 	previous=
@@ -40,11 +45,12 @@ ps)
 		match=1
 		for filter in "$@"; do
 			case "$filter" in
-			label=*)
+			label=*=*)
 				pair=${filter#label=}
-				key=${pair%%=*}
-				value=${pair#*=}
-				grep -qF "\"$key\":\"$value\"" "$f" || match=0
+				grep -qF "\"${pair%%=*}\":\"${pair#*=}\"" "$f" || match=0
+				;;
+			label=*)
+				grep -qF "\"${filter#label=}\":" "$f" || match=0
 				;;
 			network=*)
 				grep -qF "\"network\":\"${filter#network=}\"" "$f" || match=0
@@ -197,7 +203,13 @@ func remainingFakeNetworks(t *testing.T) []string {
 
 func addFakeBox(t *testing.T, boxes, id string, labels map[string]string) {
 	t.Helper()
-	labels[LabelKey] = LabelBox
+	addFakeContainer(t, boxes, id, LabelBox, labels)
+}
+
+// addFakeContainer registers a coop container of kind: a box, a broker helper, a project service.
+func addFakeContainer(t *testing.T, boxes, id, kind string, labels map[string]string) {
+	t.Helper()
+	labels[LabelKey] = kind
 	data, err := json.Marshal(labels)
 	if err != nil {
 		t.Fatal(err)
@@ -270,6 +282,16 @@ func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
 	addFakeBox(t, boxes, "malformed-token", map[string]string{LabelHost: supervisorLabelVersion + ":" + workspaceScope(workspace) + ":2:homemade-v9:1"})
 	// A development service whose Compose file planted a box's labels is no box at all.
 	addFakeBox(t, boxes, "planted-dev-service", map[string]string{LabelHost: gone, composeProjectLabel: ComposeProject(workspace)})
+	// Broker helpers are judged by the same proof, on their own label, and are never reported: they
+	// are not boxes anyone started.
+	addFakeContainer(t, boxes, "broker-dead-in-scope", LabelBroker, map[string]string{LabelHost: gone})
+	addFakeContainer(t, boxes, "broker-live-in-scope", LabelBroker, map[string]string{LabelHost: liveSupervisorLabel(t, workspace)})
+	addFakeContainer(t, boxes, "broker-dead-other-repo", LabelBroker, map[string]string{LabelHost: deadSupervisorLabel(foreign)})
+	addFakeContainer(t, boxes, "broker-unlabeled", LabelBroker, map[string]string{})
+	addFakeContainer(t, boxes, "broker-planted", LabelBroker, map[string]string{LabelHost: gone, composeProjectLabel: ComposeProject(workspace)})
+	// Every other coop container is another sweep's, however dead its supervisor.
+	addFakeContainer(t, boxes, "dead-service", LabelService, map[string]string{LabelHost: gone})
+	addFakeContainer(t, boxes, "dead-task-channel", LabelTaskChannel, map[string]string{LabelHost: gone})
 
 	survey, err := SurveyOrphanBoxes(context.Background(), rt, workspace)
 	if err != nil {
@@ -277,6 +299,16 @@ func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
 	}
 	if survey.Checked != 10 {
 		t.Errorf("checked %d boxes, want 10", survey.Checked)
+	}
+	var brokers []string
+	for _, broker := range survey.Brokers {
+		brokers = append(brokers, broker.ID)
+		if broker.Evidence != gone || broker.PID <= 1 {
+			t.Errorf("orphaned broker %#v must carry the label evidence and the pid it rests on", broker)
+		}
+	}
+	if want := []string{"broker-dead-in-scope"}; !slices.Equal(brokers, want) {
+		t.Errorf("orphaned brokers = %v, want %v", brokers, want)
 	}
 	var orphans []string
 	for _, orphan := range survey.Orphans {
@@ -313,10 +345,15 @@ func TestReapOrphanBoxesRemovesOnlyProvablyDeadOwnScope(t *testing.T) {
 	addFakeBox(t, boxes, "legacy", map[string]string{})
 	gone := goneSupervisorLabel(t, workspace)
 	addFakeBox(t, boxes, "planted-dev-service", map[string]string{LabelHost: gone, composeProjectLabel: ComposeProject(workspace)})
+	// A killed coop's box left with --rm, but its broker stayed behind; a live run's broker stays put.
+	lone := goneSupervisorLabel(t, workspace)
+	addFakeContainer(t, boxes, "lone-broker", LabelBroker, map[string]string{LabelHost: lone})
+	addFakeContainer(t, boxes, "orphan-broker", LabelBroker, map[string]string{LabelHost: dead})
+	addFakeContainer(t, boxes, "live-broker", LabelBroker, map[string]string{LabelHost: liveSupervisorLabel(t, workspace)})
 
 	n, err := ReapOrphanBoxes(context.Background(), rt, workspace)
 	if err != nil || n != 2 {
-		t.Fatalf("ReapOrphanBoxes = (%d, %v), want (2, nil)", n, err)
+		t.Fatalf("ReapOrphanBoxes = (%d, %v), want (2, nil): the brokers are removed but not counted as boxes", n, err)
 	}
 	left, err := os.ReadDir(boxes)
 	if err != nil {
@@ -327,25 +364,53 @@ func TestReapOrphanBoxesRemovesOnlyProvablyDeadOwnScope(t *testing.T) {
 		remaining = append(remaining, entry.Name())
 	}
 	slices.Sort(remaining)
-	if want := []string{"foreign", "legacy", "live", "planted-dev-service"}; !slices.Equal(remaining, want) {
-		t.Fatalf("remaining boxes = %v, want %v", remaining, want)
+	if want := []string{"foreign", "legacy", "live", "live-broker", "planted-dev-service"}; !slices.Equal(remaining, want) {
+		t.Fatalf("remaining containers = %v, want %v", remaining, want)
 	}
 	events := fakeRuntimeEvents(t)
-	// One removal pass, filtered by the dead supervisor's exact label — never by id list, age, or name.
-	if !strings.Contains(events, "ps -q -a --filter label=coop=box --filter label="+LabelHost+"="+dead+"\n") {
-		t.Errorf("reap did not use the exact-label filter:\n%s", events)
+	// One removal pass per dead supervisor and kind, filtered by its exact label — never by id list,
+	// age, or name.
+	for _, filter := range []string{
+		"label=coop=box --filter label=" + LabelHost + "=" + dead,
+		"label=coop=broker --filter label=" + LabelHost + "=" + dead,
+		"label=coop=broker --filter label=" + LabelHost + "=" + lone,
+	} {
+		if !strings.Contains(events, "ps -q -a --filter "+filter+"\n") {
+			t.Errorf("reap did not use the exact-label filter %s:\n%s", filter, events)
+		}
 	}
-	for _, id := range []string{"live", "foreign", "legacy"} {
+	for _, id := range []string{"live", "foreign", "legacy", "live-broker"} {
 		if strings.Contains(events, "rm -f "+id) {
 			t.Errorf("reap removed %s, which it must never touch:\n%s", id, events)
 		}
 	}
 }
 
-// A runtime that cannot answer is not evidence that nothing is running: the sweep reports the
-// failure and removes nothing.
+// A sweep that finds nothing to remove asks the runtime exactly once, however many live boxes,
+// brokers and other coop containers there are: every start of a loop, fork or build pays for it,
+// and the scripted process E2Es pin that count.
+func TestReapOrphanBoxesWithNothingToRemoveIsOneListing(t *testing.T) {
+	rt, boxes := fakeRuntime(t)
+	workspace := t.TempDir()
+	live := liveSupervisorLabel(t, workspace)
+	addFakeBox(t, boxes, "live", map[string]string{LabelHost: live})
+	addFakeContainer(t, boxes, "live-broker", LabelBroker, map[string]string{LabelHost: live})
+	addFakeContainer(t, boxes, "task-channel", LabelTaskChannel, map[string]string{})
+
+	if n, err := ReapOrphanBoxes(context.Background(), rt, workspace); err != nil || n != 0 {
+		t.Fatalf("ReapOrphanBoxes = (%d, %v), want (0, nil)", n, err)
+	}
+	events := strings.Split(strings.TrimSpace(fakeRuntimeEvents(t)), "\n")
+	want := `ps -a --no-trunc --filter label=coop --format [{{json .ID}},{{json (.Label "coop")}},{{json (.Label "coop.host")}},{{json (.Label "com.docker.compose.project")}}]`
+	if len(events) != 1 || events[0] != want {
+		t.Fatalf("runtime calls = %q, want the one listing %q", events, want)
+	}
+}
+
+// A runtime that cannot answer, or answers with a listing it cannot read, is not evidence that
+// nothing is running: the sweep reports the failure and removes nothing.
 func TestReapOrphanBoxesFailsClosed(t *testing.T) {
-	for _, failure := range []string{"ps", "inspect"} {
+	for _, failure := range []string{"ps", "garbled"} {
 		t.Run(failure, func(t *testing.T) {
 			rt, boxes := fakeRuntime(t)
 			workspace := t.TempDir()

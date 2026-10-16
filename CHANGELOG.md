@@ -54,6 +54,17 @@
   `coop acp`, `coop fork` and `coop eval` also refuse an account that does not exist with the same
   message as other commands.
 
+- **Coop cleans up the helper containers and old images it left behind.** When a run was killed,
+  its credential broker container stayed on the host, stopped, and Coop removed it only together
+  with a box from the same run, which was usually gone already. An interrupted check of a filtered
+  box image left its container behind too. Both kept old images in use, so Docker could not reclaim
+  them (3.9 GB on one Mac). Now the next `coop loop`, `coop fork` or `coop build` in that repository
+  removes a broker once the Coop process that started it is gone, and each image check first removes
+  checks left over for more than an hour. When `coop update` rebuilds Coop's base image, or `coop
+  build` rebuilds a project's filtered image, under the same name, Coop removes the image it replaced
+  if no container, running or stopped, still uses it. Images left behind this way before this
+  release stay until you run `docker image prune`.
+
 - **An interrupted credential renewal no longer locks the account.** When a renewal of an agent's
   sign-in was cut short by Ctrl-C, a lost connection or a provider error, Coop refused that account
   until `coop login`. Now it finishes the renewal from the provider's answer when it got one, and

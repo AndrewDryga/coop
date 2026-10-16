@@ -571,7 +571,24 @@ func (r Runtime) ImageInUse(ctx context.Context, image string) (bool, error) {
 	return len(ids) != 0, nil
 }
 
-// RemoveImage removes one image by tag. It never forces: an image a container still references
+// ImageUntagged reports whether an image, named by its ID, has no tag left. A rebuild leaves the
+// image it replaced so, while one that anybody has tagged since is theirs to keep. Removing an ID
+// that still has a tag would remove that tag with it, so an unknown answer reads as tagged.
+func (r Runtime) ImageUntagged(ctx context.Context, image string) (bool, error) {
+	if r.kind() == runtimeAppleContainer || image == "" || strings.HasPrefix(image, "-") {
+		return false, nil
+	}
+	out, err := contextCommand(ctx, r.Name, "image", "inspect", "--format", "{{len .RepoTags}}", image).Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return false, fmt.Errorf("run: %s image inspect %s: %w", r.Name, image, commandOutputError(err, nil))
+	}
+	return strings.TrimSpace(string(out)) == "0", nil
+}
+
+// RemoveImage removes one image by tag or ID. It never forces: an image a container still references
 // stays, and the caller has already proven none does.
 func (r Runtime) RemoveImage(ctx context.Context, image string) error {
 	if image == "" || strings.HasPrefix(image, "-") {
@@ -742,10 +759,11 @@ type Container struct {
 	Labels map[string]string
 }
 
-// ContainerLabels lists every running or stopped container labeled key=value with the values of the
-// named labels, in one runtime call: a sweep that inspected each container in turn could run out of
-// time once enough had piled up. Each line is a JSON array, so no label value can forge another
-// container; a line it cannot read fails the whole listing.
+// ContainerLabels lists every running or stopped container labeled key=value — or carrying key with
+// any value, when value is empty — with the values of the named labels, in one runtime call: a sweep
+// that inspected each container in turn could run out of time once enough had piled up. Each line is
+// a JSON array, so no label value can forge another container; a line it cannot read fails the
+// whole listing.
 func (r Runtime) ContainerLabels(ctx context.Context, key, value string, names ...string) ([]Container, error) {
 	if r.kind() == runtimeAppleContainer {
 		return nil, errors.New("label inspection is unsupported by Apple container")
@@ -754,7 +772,11 @@ func (r Runtime) ContainerLabels(ctx context.Context, key, value string, names .
 	for _, name := range names {
 		fields = append(fields, `{{json (.Label "`+name+`")}}`)
 	}
-	args := []string{"ps", "-a", "--no-trunc", "--filter", "label=" + key + "=" + value, "--format", "[" + strings.Join(fields, ",") + "]"}
+	filter := "label=" + key
+	if value != "" {
+		filter += "=" + value
+	}
+	args := []string{"ps", "-a", "--no-trunc", "--filter", filter, "--format", "[" + strings.Join(fields, ",") + "]"}
 	out, err := contextCommand(ctx, r.Name, args...).Output()
 	if err != nil {
 		if ctx.Err() != nil {

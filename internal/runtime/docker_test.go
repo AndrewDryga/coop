@@ -344,6 +344,16 @@ func TestDockerFixtureProcess(t *testing.T) {
 			fixture.Container = nil
 			fixture.Mutations++
 			store()
+		case "prune":
+			// Only ever all three filters: one coop label, never a Compose service's, and the age the
+			// daemon judges by.
+			if !bound || !slices.Equal(args[2:], []string{"--force", "--filter", "label=coop.image.proof",
+				"--filter", "label!=com.docker.compose.project", "--filter", "until=1h0m0s"}) {
+				os.Exit(110)
+			}
+			fixture.Mutations++
+			store()
+			fmt.Println("Total reclaimed space: 0B")
 		default:
 			os.Exit(99)
 		}
@@ -426,6 +436,57 @@ func TestDockerStopUsesPortableTimeoutAndConfirmsTerminalState(t *testing.T) {
 				t.Fatal("stop returned without a confirmed terminal state", value, present, err)
 			}
 		})
+	}
+}
+
+// A prune of stale containers is the bound daemon's own `container prune`, always with its three
+// filters (never a Compose service), and a malformed request never reaches a daemon at all — nor
+// does any request from a recovery binding or once the daemon behind the endpoint has been replaced.
+func TestDockerPruneContainersSendsBothFiltersToTheBoundDaemon(t *testing.T) {
+	rt, file := fixtureDocker(t, dockerFixture{})
+	d, err := BindDocker(t.Context(), rt, fixtureSock(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	mutations := func() int {
+		t.Helper()
+		data, err := os.ReadFile(file)
+		var fixture dockerFixture
+		if err != nil || json.Unmarshal(data, &fixture) != nil {
+			t.Fatal("unreadable fixture", err)
+		}
+		return fixture.Mutations
+	}
+	for _, bad := range []struct {
+		key string
+		age time.Duration
+	}{{"", time.Hour}, {"coop.image.proof=sha256:x", time.Hour}, {"coop.image.proof", 0}} {
+		if err := d.PruneContainers(t.Context(), bad.key, bad.age); err == nil {
+			t.Errorf("PruneContainers(%q, %s) was accepted", bad.key, bad.age)
+		}
+	}
+	if got := mutations(); got != 0 {
+		t.Fatalf("an invalid prune reached the daemon: %d mutations", got)
+	}
+	if err := d.PruneContainers(t.Context(), "coop.image.proof", time.Hour); err != nil {
+		t.Fatal("prune with both filters failed", err)
+	}
+	if got := mutations(); got != 1 {
+		t.Fatalf("prune made %d daemon mutations, want 1", got)
+	}
+	// A recovery binding, bound to a recorded daemon, may inspect but never remove what it finds.
+	recovery, err := BindDocker(t.Context(), rt, d.Endpoint(), d.Info().ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovery.Close()
+	if err := recovery.PruneContainers(t.Context(), "coop.image.proof", time.Hour); err == nil || mutations() != 1 {
+		t.Fatal("a recovery binding pruned", err)
+	}
+	writeDockerFixture(t, file, dockerFixture{ID: "replacement-daemon", Mutations: 1})
+	if err := d.PruneContainers(t.Context(), "coop.image.proof", time.Hour); err == nil || mutations() != 1 {
+		t.Fatal("a prune followed a replaced daemon", err)
 	}
 }
 

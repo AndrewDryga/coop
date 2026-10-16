@@ -10,6 +10,7 @@ import (
 	"io"
 	"path/filepath"
 	"sync"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -214,6 +215,15 @@ func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *
 		return "", "", errors.New("the locked client image changed — run 'coop net setup', then 'coop build --egress filtered' again")
 	}
 	tag := filteredProjectTag(prepared.repo, candidate.ClientImage)
+	// What the tag names now, which this build untags when the project's Dockerfile changed. The tag
+	// is the project's own name, which anyone may build into, so only an image carrying Coop's mark
+	// for this project counts as Coop's.
+	previous := ""
+	if project := derivedImageProject(tag); project != "" {
+		if id, labels, err := docker.Image(ctx, tag); err == nil && labels[derivedImageLabel] == project {
+			previous = id
+		}
+	}
 	built, err := buildStagedProjectOnBase(ctx, rt, prepared.dir, prepared.entries, dfRel, tag, definition.Tag, prepared.lease, errOut)
 	if err != nil {
 		return "", "", fmt.Errorf("this project's %s did not build on coop's client image: %w", dfRel, err)
@@ -236,7 +246,7 @@ func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *
 	}
 	// This project's own images are tagged by the client image they were built on, so a Coop
 	// upgrade leaves the last one tagged behind. Only an explicit build reclaims predecessors.
-	reclaimAfterBuild(ctx, rt, cfg, tag, nil, func(line string) {
+	reclaimAfterBuild(ctx, rt, cfg, tag, previous, nil, func(line string) {
 		fmt.Fprintln(errOut, line)
 	})
 	return built, tag, nil
@@ -433,8 +443,8 @@ func imageFileDigests(ctx context.Context, docker filteredDocker, store *network
 	if ref.ID != "" {
 		// Removed on every path, including a create that failed after submitting.
 		// A removal that itself fails leaves one never-started container behind and
-		// is not worth failing an otherwise complete proof over: it holds no
-		// resource, and its exact name says where it came from.
+		// is not worth failing an otherwise complete proof over: the next proof's
+		// prune takes it within the hour, though until then it keeps its image alive.
 		defer func() { _ = docker.RemoveContainer(ctx, ref) }()
 	}
 	if err != nil {
@@ -453,13 +463,25 @@ func imageFileDigests(ctx context.Context, docker filteredDocker, store *network
 	return digests, nil
 }
 
+// imageProofLabel marks the never-started container a proof reads an image's files from; its value
+// is that image.
+const imageProofLabel = "coop.image.proof"
+
+// staleImageProofAge is when a proof container is a leftover. A proof removes its container as it
+// ends, but the removal shares the proof's context, so an interrupted proof leaves the container
+// behind, and the container keeps its image alive past any rebuild that took the image's tag. A
+// proof reads its files within minutes; none is still reading an hour on.
+const staleImageProofAge = time.Hour
+
 func createImageProofContainer(ctx context.Context, docker filteredDocker, image string) (runtime.DockerRef, error) {
+	// Housekeeping on the way in: a daemon that cannot prune leaves the leftovers for the next proof.
+	_ = docker.PruneContainers(ctx, imageProofLabel, staleImageProofAge)
 	nonce := make([]byte, 8)
 	if _, err := rand.Read(nonce); err != nil {
 		return runtime.DockerRef{}, err
 	}
 	ref := runtime.DockerRef{Name: "coop-image-proof-" + hex.EncodeToString(nonce),
-		Labels: map[string]string{"coop.image.proof": image}}
+		Labels: map[string]string{imageProofLabel: image}}
 	id, err := docker.CreateContainer(ctx, runtime.DockerCreate{Ref: ref, Image: image, Command: []string{"true"}})
 	ref.ID = id
 	return ref, err

@@ -425,8 +425,8 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 	if len(args) == 3 && args[0] == "image" && args[1] == "inspect" && args[2] == image {
 		return runtimeCommand{Kind: "inspect"}, nil
 	}
-	// The orphan-box sweep reads one container's labels back (box.SurveyOrphanBoxes), so the fixture
-	// answers the same `inspect --format` docker does rather than rejecting the call.
+	// A credential-container check reads one container's labels back (runtime.ContainersByLabel), so
+	// the fixture answers the same `inspect --format` docker does rather than rejecting the call.
 	if len(args) == 4 && args[0] == "inspect" && args[1] == "--format" && args[2] == containerLabelsFormat {
 		return runtimeCommand{Kind: "labels", IDs: []string{args[3]}}, nil
 	}
@@ -445,14 +445,14 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 		// The services sweep lists labels in one call (runtime.ContainerLabels); the fixture answers
 		// that exact format and rejects any other.
 		if len(args) == 7 && args[1] == "-a" && args[2] == "--no-trunc" && args[3] == "--filter" && args[5] == "--format" {
-			filters, err := parsePS([]string{"-q", "--filter", args[4]})
+			filters, err := parsePS([]string{"-q", "--filter", args[4]}, true)
 			columns, ok := containerLabelColumns(args[6])
 			if err != nil || !ok {
 				return runtimeCommand{}, fmt.Errorf("unsupported ps arguments %q", args[1:])
 			}
 			return runtimeCommand{Kind: "ps", Filters: filters, Columns: columns}, nil
 		}
-		filters, err := parsePS(args[1:])
+		filters, err := parsePS(args[1:], false)
 		if err != nil {
 			return runtimeCommand{}, err
 		}
@@ -997,7 +997,10 @@ func providerToken(command string) (string, error) {
 	return command, nil
 }
 
-func parsePS(args []string) (map[string]string, error) {
+// parsePS reads `ps -q`'s label filters. bare allows a key without a value, which only the label
+// listing asks for (the box survey reads every coop container's labels in one call); a listing whose
+// ids coop goes on to remove must always name each label's value.
+func parsePS(args []string, bare bool) (map[string]string, error) {
 	if len(args) == 0 || args[0] != "-q" {
 		return nil, fmt.Errorf("unsupported ps arguments %q", args)
 	}
@@ -1010,8 +1013,8 @@ func parsePS(args []string) (map[string]string, error) {
 		if i+1 >= len(args) || args[i] != "--filter" || !strings.HasPrefix(args[i+1], "label=") {
 			return nil, fmt.Errorf("unsupported ps arguments %q", args)
 		}
-		key, value, ok := strings.Cut(strings.TrimPrefix(args[i+1], "label="), "=")
-		if !ok || key == "" || value == "" || strings.ContainsAny(key+value, "\x00\r\n") {
+		key, value, hasValue := strings.Cut(strings.TrimPrefix(args[i+1], "label="), "=")
+		if key == "" || !hasValue && !bare || hasValue && value == "" || strings.ContainsAny(key+value, "\x00\r\n") {
 			return nil, fmt.Errorf("unsupported ps arguments %q", args)
 		}
 		filters[key] = value

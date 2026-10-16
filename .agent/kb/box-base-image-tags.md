@@ -2,7 +2,7 @@
 name: box-base-image-tags
 description: Coop's shared base is tagged by its box definition so two Coop versions on one host keep their own; why there is no :latest alias, how an upgrade is repaired, and what stays shared
 subsystem: box
-sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/project_preparation.go, internal/box/network_admission.go, internal/box/network_qualification.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/project_build.go, internal/cli/selfupdate.go, internal/runtime/project_build.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
+sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/network_setup.go, internal/runtime/docker.go, internal/runtime/runtime.go, internal/box/project_preparation.go, internal/box/network_admission.go, internal/box/network_qualification.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/project_build.go, internal/cli/selfupdate.go, internal/runtime/project_build.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
 updated: 2026-10-16
 ---
 
@@ -93,9 +93,29 @@ the PROJECT's name, so only images carrying the `coop.derived=<project>` label t
 candidates — an image an operator built into the same name is never one, and neither is one Coop
 built before it started marking them (remove those by hand). Note WHAT supersedes one:
 `filteredProjectTag` hashes the LOCKED CLIENT IMAGE, not the Dockerfile, so editing
-`.agent/Dockerfile` rewrites the same tag (the old image goes dangling, which `docker image prune`
-already took); a tagged predecessor appears when the client image changes — a Coop upgrade, or
-`coop net setup` again.
+`.agent/Dockerfile` rewrites the same tag (the old image goes untagged; see the next paragraph);
+a tagged predecessor appears when the client image changes — a Coop upgrade, or `coop net setup`
+again.
+
+**Same-tag rebuilds** leave the image they replaced untagged, out of the 14-day rule's sight:
+`coop update`'s fresh base, an edited project Dockerfile under its derived tag, a `coop net setup`
+after Docker pruned its build cache (a 3.46 GB untagged `coop-clients` image sat on one Mac for a
+week). So the base and derived builds first read the ID their tag names, only where Coop's
+ownership is proven: a managed base tag (`IsManagedBase`), a derived image carrying
+`coop.derived=<project>`. After the build, `removeReplacedImages` removes that ID once the rebuild
+really untagged it (`ImageUntagged`: a cache hit keeps the tag, and an image someone tagged since
+is theirs) and no container, running or stopped, was created from it. Network setup never removes
+its predecessor pair: a capture made before the setup (a running loop, an ACP or remote session)
+runs that pair BY ID for as long as it lives, so an untagged network image stays until
+`docker image prune`. An image still in use at build time is kept for good too: nothing records its
+ID afterwards.
+
+**Leftover image proofs** hold images too. A proof reads pinned files out of a created, never
+started `coop-image-proof-*` container (label `coop.image.proof=<image>`) and removes it in a defer
+that shares the proof's context, so an interrupted proof leaves it behind. `createImageProofContainer`
+first prunes proof containers older than an hour (`runtime.Docker.PruneContainers`, the daemon's own
+`container prune` with label and `until` filters, which never touches a running container); a prune
+that fails is ignored, and the next proof asks again.
 
 A use record is per *user* (`~/.config/coop/image-use/`, `Config.BoxHome`), while the images are
 per *daemon*. On the
@@ -107,6 +127,10 @@ record, so the 14 days start then), and an image any container still references 
 stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-10-16 — a same-tag rebuild of the managed base or a derived image removes the image it
+  untagged when no container uses it right after the build (network setup never does: earlier
+  captures run its pair by ID), and a new image proof first prunes proof containers over an hour
+  old; verified against `reclaim.go`, `image.go`, `derived_image.go` and `network_setup.go`.
 - 2026-10-16 — the Go tools stage (Staticcheck, govulncheck, jv) left both images, and with it the
   `GO_IMAGE` build argument; re-verified what moves the tag against `image.go`, `locked_image.go`
   and `verifyNetworkCandidate`.

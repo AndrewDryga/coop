@@ -25,7 +25,9 @@ import (
 //
 // So the rule is one boring sentence: after a successful build, remove the images of that same
 // family which nothing has used for reclaimAfter and no container references. A Coop still in use
-// touches its own image's record on every launch (markImageUsed), which is what keeps it.
+// touches its own image's record on every launch (markImageUsed), which is what keeps it. A rebuild
+// of the SAME tag is the other case: it leaves the image it replaced untagged, out of that rule's
+// sight, so removeReplacedImages takes that one when nothing uses it right after the build.
 const (
 	reclaimAfter    = 14 * 24 * time.Hour
 	reclaimTimeout  = 2 * time.Minute
@@ -204,13 +206,36 @@ func familyTag(family, definition string) string {
 	return family + ":" + definition[:32]
 }
 
-// reclaimAfterBuild is the reclaim a successful build runs, with its own bounded deadline. It
-// speaks only when it actually reclaimed something: the image just built is good either way, a
-// runtime that could not answer has simply left the disk as it was, and the next build asks again.
-// A build is not the place to report Coop's own housekeeping.
-func reclaimAfterBuild(ctx context.Context, rt runtime.Runtime, cfg *config.Config, keep string, out io.Writer, say func(string)) {
+// removeReplacedImages removes the images rebuilds took their tags from. Each id is one that a tag
+// Coop builds named just before its rebuild, read only where Coop's ownership of that tag is proven.
+// The rebuild leaves it untagged, so no tag-based reclaim will ever weigh it again. It goes once it
+// really has no tag left (a cache hit keeps the tag on it, and anyone who tagged it since wants it)
+// and no container, running or stopped, was created from it. It is best-effort and silent: the image
+// had no name the user could see, and one that stays is no worse off than before.
+func removeReplacedImages(ctx context.Context, rt runtime.Runtime, ids ...string) {
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if untagged, err := rt.ImageUntagged(ctx, id); err != nil || !untagged {
+			continue
+		}
+		if used, err := rt.ImageInUse(ctx, id); err != nil || used {
+			continue
+		}
+		_ = rt.RemoveImage(ctx, id)
+	}
+}
+
+// reclaimAfterBuild is the reclaim a successful build runs, with its own bounded deadline. previous
+// is the image keep named before the build, when Coop built that one under it ("" otherwise), and
+// goes as removeReplacedImages says. It speaks only when it actually reclaimed a tagged image: the
+// image just built is good either way, a runtime that could not answer has simply left the disk as
+// it was, and the next build asks again. A build is not the place to report Coop's own housekeeping.
+func reclaimAfterBuild(ctx context.Context, rt runtime.Runtime, cfg *config.Config, keep, previous string, out io.Writer, say func(string)) {
 	ctx, cancel := context.WithTimeout(ctx, reclaimTimeout)
 	defer cancel()
+	removeReplacedImages(ctx, rt, previous)
 	removed, _ := reclaimSupersededImages(ctx, rt, cfg, keep)
 	if len(removed) == 0 {
 		return

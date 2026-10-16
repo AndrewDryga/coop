@@ -537,6 +537,48 @@ if [ "$1" = ps ]; then echo owned-sidecar; fi
 	}
 }
 
+// One listing answers for every kind of container a label marks: a bare key matches any value of
+// it, each value comes back on its own container's line, and a line no runtime would print fails
+// the whole listing rather than reading as fewer containers.
+func TestContainerLabelsListsEveryValueOfABareKey(t *testing.T) {
+	dir := t.TempDir()
+	runtimeCLI := filepath.Join(dir, "runtime")
+	events := filepath.Join(dir, "events")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
+if [ -n "$COOP_TEST_GARBLED" ]; then echo 'not a listing'; exit 0; fi
+case "$*" in *"label=coop --format"*) printf '%s\n' '["box-id","box","v1:scope:2:token"]' '["broker-id","broker",""]' ;; esac
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_EVENTS", events)
+	rt := Runtime{Name: runtimeCLI}
+	got, err := rt.ContainerLabels(context.Background(), "coop", "", "coop", "coop.host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "box-id" || got[0].Labels["coop"] != "box" || got[0].Labels["coop.host"] != "v1:scope:2:token" ||
+		got[1].ID != "broker-id" || got[1].Labels["coop"] != "broker" || len(got[1].Labels) != 1 {
+		t.Fatalf("ContainerLabels = %#v, want the box with both labels and the broker with its kind only", got)
+	}
+	if _, err := rt.ContainerLabels(context.Background(), "coop", "service", "coop.host"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `ps -a --no-trunc --filter label=coop --format [{{json .ID}},{{json (.Label "coop")}},{{json (.Label "coop.host")}}]` + "\n" +
+		`ps -a --no-trunc --filter label=coop=service --format [{{json .ID}},{{json (.Label "coop.host")}}]` + "\n"
+	if string(data) != want {
+		t.Errorf("runtime calls = %q, want %q", data, want)
+	}
+	t.Setenv("COOP_TEST_GARBLED", "1")
+	if got, err := rt.ContainerLabels(context.Background(), "coop", "", "coop"); err == nil || got != nil {
+		t.Fatalf("an unreadable listing read as %#v, %v", got, err)
+	}
+}
+
 func TestObserveServiceContainerRequiresOneExactOwnedObservation(t *testing.T) {
 	dir := t.TempDir()
 	runtimeCLI := filepath.Join(dir, "runtime")

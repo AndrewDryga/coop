@@ -702,13 +702,19 @@ func buildBaseImage(rt runtime.Runtime, cfg *config.Config, fresh bool, version 
 	if err := stageBaseImageFiles(dir, files); err != nil {
 		return err
 	}
+	// What the tag names now, which a rebuild of the same definition (`coop update`) untags. Only a
+	// base Coop tags by its definition is Coop's to remove; an operator's COOP_BASE_IMAGE never is.
+	previous := ""
+	if IsManagedBase(cfg.BaseImage) {
+		previous = rt.ImageID(cfg.BaseImage)
+	}
 	if err := runBuild(rt, nil, stdout, stderr, baseBuildArgs(cfg, fresh, flags, dir)...); err != nil {
 		return err
 	}
 	StampImageMeta(cfg, cfg.BaseImage, version) // record builder + definition so a later run can flag skew/age
-	// The image this build replaces is still tagged by ITS definition, so nothing else would ever
-	// remove it. Another Coop still using one keeps it, because its launches record that use.
-	reclaimAfterBuild(context.Background(), rt, cfg, cfg.BaseImage, stdout, nil)
+	// The image an older definition's build left is still tagged by ITS definition, so nothing else
+	// would ever remove it. Another Coop still using one keeps it, because its launches record that use.
+	reclaimAfterBuild(context.Background(), rt, cfg, cfg.BaseImage, previous, stdout, nil)
 	return nil
 }
 

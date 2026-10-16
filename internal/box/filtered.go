@@ -127,6 +127,7 @@ type filteredDocker interface {
 	StartAttached(context.Context, runtime.DockerRef, io.Reader, io.Writer, io.Writer, func() error) (int, error)
 	StopContainer(context.Context, runtime.DockerRef, int) error
 	RemoveContainer(context.Context, runtime.DockerRef) error
+	PruneContainers(context.Context, string, time.Duration) error
 	ExecRead(context.Context, runtime.DockerRef, int, ...string) ([]byte, error)
 	ExecApply(context.Context, runtime.DockerRef, ...string) error
 	CopyArchive(context.Context, runtime.DockerRef, string, int) ([]byte, error)
