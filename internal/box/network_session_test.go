@@ -195,11 +195,12 @@ func TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore(t *testi
 			c.Project = other
 			return c
 		}(), reject: "network rules are not on this host"},
+		// Never admitted, or removed by retention after 90 days unused: starting again admits it.
 		"unadmitted policy": {capture: func() SessionNetworkCapture {
 			c := base
 			c.Fingerprint = strings.Repeat("d", 64)
 			return c
-		}(), reject: "network rules are not on this host"},
+		}(), reject: "network rules are not on this host — start the session again"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			encoded, err := test.capture.Encode()

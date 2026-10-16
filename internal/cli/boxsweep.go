@@ -108,7 +108,9 @@ var recoverNetworkRuns = box.RecoverNetworkRuns
 // SettleFilteredRuns, and only when filtered: finding the pending runs reads every retained run
 // record (0.1s at five hundred), which a filtered launch's gateway dwarfs and an open or offline
 // launch must not pay. The same pass removes finished records past networkstate.ExecutionRetention,
-// which keeps that read bounded. Once per process; it returns how many runs it settled.
+// which keeps that read bounded, and the policy snapshots nothing uses any more. A launch admits
+// before it settles, and admitting marks its snapshot in use, so the pass never removes the one the
+// launch is about to load. Once per process; it returns how many runs it settled.
 func (a *app) settleInterruptedFilteredRuns() int {
 	if a.settledNetworkRuns {
 		return 0

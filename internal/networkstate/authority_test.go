@@ -185,7 +185,7 @@ func TestCaptureChecksRequestsAndBindsProjectWithoutExportingKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.saveSnapshot(foreignSnapshot); err == nil {
+	if err := s.saveSnapshot(foreignSnapshot, true); err == nil {
 		t.Fatal("accepted capture signed by another owner key")
 	}
 }
@@ -264,10 +264,10 @@ func TestBundleMaintenanceAndFrozenSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.saveSnapshot(snapshot); err != nil {
+	if err := s.saveSnapshot(snapshot, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.saveSnapshot(snapshot); err != nil {
+	if err := s.saveSnapshot(snapshot, true); err != nil {
 		t.Fatal("idempotent capture:", err)
 	}
 	bundle.Core = append(bundle.Core, rule("new.example.com"))

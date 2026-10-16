@@ -468,7 +468,11 @@ for every run command. An ambiguous prefix is refused, with the prefixes that wo
 `coop net runs` shows this project's 25 newest runs, with a count and `--all` only when there are
 more. `--all-projects` shows every project's runs, labeled by name and path. Coop keeps a finished
 run's record for 90 days after it ends. A run still waiting for cleanup keeps its record until the
-cleanup is done.
+cleanup is done. Coop also keeps a copy of the rules each run started with, which `--run` below
+reads. It removes a copy made for a launch once no kept run record names it and no launch has used
+it for 90 days, and keeps the copy a worker session was created with for as long as the session.
+Copies made before this version are kept, since Coop cannot tell which sessions still use them. An
+editor session that starts no box for 90 days may have to be started again.
 
 `coop net check <url-or-host>` says whether a normal new run in this project can reach a
 destination, with one verdict and one cause. It answers from the approved project rules and the

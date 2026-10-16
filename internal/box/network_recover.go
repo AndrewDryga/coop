@@ -62,7 +62,8 @@ type recoverConnect func(ctx context.Context, endpoint string) (recoverDocker, s
 // finishes an interrupted run's custody, and it never touches a live one.
 //
 // runID selects one run; empty means every cleanup-pending run this host kept,
-// and that pass also removes the records networkstate.ExecutionRetention lets go.
+// and that pass also removes the records networkstate.ExecutionRetention lets go
+// and the policy snapshots nothing uses any more.
 func RecoverNetworkRuns(ctx context.Context, rt runtime.Runtime, runID string) ([]NetworkRecovery, error) {
 	root, err := NetworkStatePath()
 	if err != nil {
@@ -90,54 +91,73 @@ func recoverNetworkRuns(ctx context.Context, evidence *networkstate.Evidence, ru
 // recoverNetworkRunsAt is recoverNetworkRuns at a given time, so a test can age a record past
 // retention without waiting 90 days.
 func recoverNetworkRunsAt(ctx context.Context, evidence *networkstate.Evidence, runID string, connect recoverConnect, now time.Time) ([]NetworkRecovery, error) {
-	records, expired, err := pendingNetworkRuns(evidence, runID, now)
+	runs, err := pendingNetworkRuns(evidence, runID, now)
 	// Retention rides this pass because it already read every record, and a record it could not
 	// read does not make removing a finished one unsafe: RemoveExpired re-reads each under its lock.
 	// It goes last so owed cleanup gets the time budget first; a record it could not remove stays
 	// for the next pass, so a failure here is not worth reporting.
 	defer func() {
-		for _, id := range expired {
+		for _, id := range runs.expired {
 			_, _ = evidence.RemoveExpired(ctx, id, now)
+		}
+		// Snapshots go after the records, and only when every record was read: an unread one may
+		// be the run that still names a snapshot. The records just removed still count, so a
+		// snapshot outlives its last run by one pass.
+		if runs.policies != nil {
+			_, _ = evidence.RemoveUnusedSnapshots(ctx, runs.policies, now)
 		}
 	}()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]NetworkRecovery, 0, len(records))
-	for _, record := range records {
+	out := make([]NetworkRecovery, 0, len(runs.pending))
+	for _, record := range runs.pending {
 		out = append(out, recoverNetworkRun(ctx, evidence, record, connect))
 	}
 	return out, nil
+}
+
+// networkRunInventory is what one listing of the retained runs found.
+type networkRunInventory struct {
+	pending []networkstate.Execution
+	// expired names the finished runs retention may remove.
+	expired []string
+	// policies is the snapshot fingerprint of every listed run, or nil when the
+	// listing was scoped to one run or could not be read whole.
+	policies map[string]bool
 }
 
 // pendingNetworkRuns lists the runs recovery may settle: an explicit id, or
 // every retained run whose cleanup is still pending. A page it could not read
 // whole is an error — recovery must not report "nothing pending" from a partial
 // inventory. The unscoped pass also names the finished runs retention may remove,
-// from every page, including after such an error.
-func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.Time) ([]networkstate.Execution, []string, error) {
+// from every page, including after such an error, and every policy a listed run
+// names, but only from a listing read whole.
+func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.Time) (networkRunInventory, error) {
+	var out networkRunInventory
 	if runID != "" {
 		record, err := evidence.Execution(runID)
 		if err != nil {
-			return nil, nil, err
+			return out, err
 		}
-		return []networkstate.Execution{record}, nil, nil
+		out.pending = []networkstate.Execution{record}
+		return out, nil
 	}
-	var out []networkstate.Execution
-	var expired []string
+	policies := map[string]bool{}
 	var partial error
 	cursor := ""
 	for {
 		page, err := evidence.Executions(cursor)
 		if err != nil {
-			return nil, expired, err
+			return networkRunInventory{expired: out.expired}, err
 		}
 		if page.Incomplete {
 			partial = errors.New("the list of recorded runs could not be read whole — recover one run by id instead")
 		}
 		for _, summary := range page.Executions {
+			policies[summary.PolicyFingerprint] = true
 			if summary.Expired(now) {
-				expired = append(expired, summary.ID)
+				out.expired = append(out.expired, summary.ID)
 			}
 			if !summary.CleanupPending || partial != nil {
 				continue
@@ -147,15 +167,16 @@ func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.
 				continue // gone since the page was read; only retention removes a record
 			}
 			if err != nil {
-				return nil, expired, err
+				return networkRunInventory{expired: out.expired}, err
 			}
-			out = append(out, record)
+			out.pending = append(out.pending, record)
 		}
 		if page.Next == "" {
 			if partial != nil {
-				return nil, expired, partial
+				return networkRunInventory{expired: out.expired}, partial
 			}
-			return out, expired, nil
+			out.policies = policies
+			return out, nil
 		}
 		cursor = page.Next
 	}

@@ -194,7 +194,7 @@ func (e *Evidence) Why(runID string, query PolicyQuery, exportDestinations bool)
 // a key, authenticate authority, recapture policy, or hand a launcher a permit.
 func (e *Evidence) recordedPolicy(record Execution) (egress.Snapshot, error) {
 	bad := errors.New("captured policy evidence is unavailable or invalid; no current policy was substituted")
-	data, err := e.files.read("snapshot-"+record.Snapshot.PolicyFingerprint+".json", maxPrivateRecordBytes)
+	data, err := e.files.read(snapshotRecord(record.Snapshot.PolicyFingerprint), maxPrivateRecordBytes)
 	if err != nil {
 		return egress.Snapshot{}, bad
 	}

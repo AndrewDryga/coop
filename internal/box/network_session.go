@@ -233,6 +233,12 @@ func CapturedEgressFromReference(cfg *config.Config, spec RunSpec, reference Ses
 	} else {
 		policy, err = store.LoadSnapshot(reference.Project, reference.Fingerprint)
 	}
+	if errors.Is(err, os.ErrNotExist) && reference.JobDigest == "" {
+		// Retention removes rules nothing used for 90 days; starting again admits them anew. A job's
+		// rules are never removed, so their absence is not that.
+		_ = store.Close()
+		return nil, errors.Join(errors.New("this session's network rules are not on this host — start the session again"), err)
+	}
 	if err != nil {
 		_ = store.Close()
 		return nil, errors.Join(errors.New("this session's network rules are not on this host"), err)

@@ -51,7 +51,9 @@ func (s *Store) CaptureJob(ref JobSnapshotRef, rules []egress.Rule, bundles []eg
 	if err != nil {
 		return egress.Snapshot{}, err
 	}
-	if err := s.saveSnapshot(snapshot); err != nil {
+	// Never removable: the session row about to name this snapshot is kept forever,
+	// in a session store snapshot retention cannot see.
+	if err := s.saveSnapshot(snapshot, false); err != nil {
 		return egress.Snapshot{}, err
 	}
 	return snapshot, nil

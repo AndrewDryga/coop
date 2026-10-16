@@ -331,9 +331,11 @@ func TestRecoverNetworkRunsRemovesFinishedRunsPastRetention(t *testing.T) {
 }
 
 // A record that cannot be read keeps recovery from claiming nothing is pending, but it does not stop
-// retention: removing a finished run is safe whatever else the listing held.
+// retention: removing a finished run is safe whatever else the listing held. Removing a snapshot is
+// not: the record it could not read may be the run that names it.
 func TestRecoverNetworkRunsStillRemovesExpiredRunsBesideAnUnreadableRecord(t *testing.T) {
 	f, _, evidence, connect := recoveryFixture(t)
+	unused := unusedSnapshot(t, f.store)
 	departSupervisor(t, f.store, f.record.ID)
 	now := time.Now()
 	if _, err := recoverNetworkRunsAt(context.Background(), evidence, "", connect, now); err != nil {
@@ -353,5 +355,72 @@ func TestRecoverNetworkRunsStillRemovesExpiredRunsBesideAnUnreadableRecord(t *te
 	}
 	if _, err := os.Lstat(broken); err != nil {
 		t.Fatal("the unreadable record was removed", err)
+	}
+	if !snapshotKept(t, f.store, unused) {
+		t.Fatal("a listing that could not be read whole removed a snapshot")
+	}
+
+	// Read whole again, the listing lets both go: the unused snapshot, and the run's own one
+	// now that its record is gone.
+	if err := os.Remove(broken); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recoverNetworkRunsAt(context.Background(), evidence, "", connect, later); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotKept(t, f.store, unused) || snapshotKept(t, f.store, f.policy.Fingerprint) {
+		t.Fatal("a snapshot nothing uses outlived a listing read whole")
+	}
+}
+
+// unusedSnapshot admits a filtered policy no run will use and returns its fingerprint.
+func unusedSnapshot(t *testing.T, store *networkstate.Store) string {
+	t.Helper()
+	mode := egress.Filtered
+	policy, err := store.Admit(t.TempDir(), networkstate.Admission{InvocationMode: &mode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policy.Fingerprint
+}
+
+func snapshotKept(t *testing.T, store *networkstate.Store, fingerprint string) bool {
+	t.Helper()
+	_, err := os.Lstat(filepath.Join(store.Path(), "snapshot-"+fingerprint+".json"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return err == nil
+}
+
+// The unscoped pass also removes the policy snapshots nothing uses: one no retained run names and
+// nothing admitted or loaded inside the retention window. A run's own snapshot stays while its
+// record does, a session's stays however old, and a pass scoped to one run removes none.
+func TestRecoverNetworkRunsRemovesSnapshotsNoRetainedRunUses(t *testing.T) {
+	f, _, evidence, connect := recoveryFixture(t)
+	unused := unusedSnapshot(t, f.store)
+	session, err := f.store.CaptureJob(networkstate.JobSnapshotRef{JobDigest: strings.Repeat("a", 64), SessionID: "remote_one"},
+		nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(networkstate.ExecutionRetention + time.Hour)
+	if _, err := recoverNetworkRunsAt(context.Background(), evidence, f.record.ID, connect, later); err != nil {
+		t.Fatal(err)
+	}
+	if !snapshotKept(t, f.store, unused) {
+		t.Fatal("a pass scoped to one run removed a snapshot")
+	}
+	if _, err := recoverNetworkRunsAt(context.Background(), evidence, "", connect, later); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotKept(t, f.store, unused) {
+		t.Fatal("a snapshot nothing uses outlived retention")
+	}
+	if !snapshotKept(t, f.store, f.policy.Fingerprint) {
+		t.Fatal("the snapshot a retained run names was removed")
+	}
+	if !snapshotKept(t, f.store, session.Fingerprint) {
+		t.Fatal("the snapshot a session was created with was removed")
 	}
 }

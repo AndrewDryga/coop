@@ -2,8 +2,8 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture per box, and which surface reads which evidence
 subsystem: networking
-sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/networkstate/execution_retention.go, internal/session/schema.go, internal/workerproto/protocol.go, internal/cli/acp_refresh.go]
-updated: 2026-10-15
+sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go, internal/session/schema.go, internal/workerproto/protocol.go, internal/cli/acp_refresh.go]
+updated: 2026-10-16
 ---
 
 Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; a
@@ -92,6 +92,25 @@ controls whether destination names are exported, and the daemon applies that pro
 | `setup` | mutating: builds the image pair and records the host qualification — the same work a filtered launch performs itself when this host has no current proof, so it is a prepare-ahead/recheck verb, not a prerequisite |
 | `recover [<run>]` | settles a run whose supervisor died — exact-owned removal, then a final `supervisor_lost` receipt (`RecoverNetworkRuns` in `box/network_recover.go`). The same pass runs from the orphan sweep at loop/fork start AND from `coop net inspect` before it reports a cleanup as incomplete (`cli/net_cmd.go`, `netSettleCleanup`). The unscoped pass also removes finished records past `networkstate.ExecutionRetention` (90 days) whose cleanup is complete, re-read under the run's lock; a record still owed cleanup, unreadable or a link is never removed, so the listing stays small without a scan cap |
 
+**Policy snapshots** (`snapshot-<fingerprint>.json`, one per distinct capture) go last in the same
+unscoped pass, and only from a listing of every run record read whole: an unread record may be the
+run that names one (`networkstate/snapshot_retention.go`, `RemoveUnusedSnapshots`). Only a snapshot a
+project admission CREATED is removable: `saveSnapshot` writes `admitted-<fingerprint>.json` beside it
+on that exclusive create, and never for `CaptureJob`. A session row names its job snapshot forever,
+rows are never deleted, and they live in session stores under any `--state` the pass cannot find, so
+job snapshots and every snapshot from before markers (possibly a pre-job session's) stay; whoever
+adds session deletion must remove the job snapshot in that change. A marked snapshot stays while a
+listed run names it (it goes one pass after its last record) or while its marker's mtime is inside
+the 90 days. The mtime is the last use: re-admitting an unchanged policy (`saveSnapshot`'s EEXIST
+branch) and loading a marked snapshot (`loadSnapshotScope`) refresh it under `snapshot-lock`, where
+the removal also looks again; a load of an unmarked snapshot takes no lock and writes nothing. The
+removal unlinks the snapshot before its marker, so a load that finds no marker can trust it was
+never marked, and a removal cut short leaves a marker the next pass clears. Trap: a launch settles
+AFTER it admits (`runBox`), so without the re-admission refresh a project reopened after 90 days
+lost the snapshot it had just admitted. Accepted limit: a process holding a capture that starts no
+box for 90 days after its last run ended (an idle `coop acp` supervisor) can find its snapshot gone;
+its next child is refused with "start the session again" (`CapturedEgressFromReference`).
+
 `export` is redacted by default because it is the shareable artifact (`--include-addresses` puts the remote
 hostnames and IP addresses back); `inspect`/`check`/`blocked`/
 `watch` show names, as the local operator view. An event that has aged out of a run's bounded
@@ -144,6 +163,10 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-10-16 — policy snapshots nothing uses are removed by the same pass (paragraph under the
+  `coop net` table): only admission-created snapshots carry the `admitted-` marker that makes them
+  removable, the census needs every record read, and re-admission or a load of a marked snapshot
+  refreshes the marker under `snapshot-lock`.
 - 2026-10-15 — finished run records are kept 90 days (audit decision 7): the settle pass removes
   them, the listing reads the whole directory (no 10,000-entry cap), and a record removed between
   the listing and the read counts as gone, not unreadable. Replaced a line reference with the name.

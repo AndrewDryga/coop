@@ -4,6 +4,7 @@ package networkstate
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -700,7 +701,7 @@ func (s *Store) capture(project, id string, mode egress.Mode, requests []egress.
 	if err != nil {
 		return egress.Snapshot{}, err
 	}
-	if err := s.saveSnapshot(snapshot); err != nil {
+	if err := s.saveSnapshot(snapshot, true); err != nil {
 		return egress.Snapshot{}, err
 	}
 	return snapshot, nil
@@ -724,7 +725,9 @@ func (s *Store) compile(project, id string, mode egress.Mode, requests []egress.
 	return egress.Compile(id, mode, inputs, bundles, exportDestinations, s.key)
 }
 
-func (s *Store) saveSnapshot(snapshot egress.Snapshot) error {
+// saveSnapshot publishes a capture once. removable marks one it creates for
+// snapshot retention; a snapshot already there keeps whatever marking it has.
+func (s *Store) saveSnapshot(snapshot egress.Snapshot, removable bool) error {
 	if err := snapshot.Verify(s.key); err != nil {
 		return err
 	}
@@ -732,8 +735,12 @@ func (s *Store) saveSnapshot(snapshot egress.Snapshot) error {
 	if err != nil {
 		return err
 	}
-	name := "snapshot-" + snapshot.Fingerprint + ".json"
-	if err := s.publish(name, data, false); err != nil {
+	name := snapshotRecord(snapshot.Fingerprint)
+	return s.lockSnapshots(context.Background(), func() error {
+		err := s.publish(name, data, false)
+		if err == nil && removable {
+			return s.markAdmitted(snapshot.Fingerprint)
+		}
 		if !errors.Is(err, os.ErrExist) {
 			return err
 		}
@@ -741,9 +748,14 @@ func (s *Store) saveSnapshot(snapshot egress.Snapshot) error {
 		if readErr != nil || !bytes.Equal(existing, data) {
 			return errors.New("network snapshot identity collision")
 		}
+		// An unchanged policy admitted again is in use again. Left at its first
+		// admission, a project reopened after the retention window would have the
+		// snapshot it just admitted removed before its run could load it.
+		if err := s.touchAdmitted(snapshot.Fingerprint); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 		return s.confirmPublication()
-	}
-	return nil
+	})
 }
 
 // LoadSnapshot is for a host-owned execution/session reference, never a field
@@ -764,7 +776,16 @@ func (s *Store) loadSnapshotScope(id, fingerprint string) (egress.Snapshot, erro
 	if _, err := hex.DecodeString(fingerprint); err != nil {
 		return egress.Snapshot{}, errors.New("invalid network snapshot reference")
 	}
-	data, err := s.read("snapshot-"+fingerprint+".json", maxPrivateRecordBytes)
+	// Loading is using: a run about to start under a removable snapshot, from a
+	// process that admitted it long ago, restarts its retention window first, or
+	// finds it removed. One without a marker is never removed, so its load takes
+	// no lock and writes nothing.
+	if _, err := s.root.Lstat(admittedRecord(fingerprint)); err == nil {
+		if err := s.lockSnapshots(context.Background(), func() error { return s.touchAdmitted(fingerprint) }); err != nil {
+			return egress.Snapshot{}, err
+		}
+	}
+	data, err := s.read(snapshotRecord(fingerprint), maxPrivateRecordBytes)
 	if err != nil {
 		return egress.Snapshot{}, err
 	}

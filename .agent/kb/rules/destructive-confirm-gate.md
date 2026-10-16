@@ -2,7 +2,7 @@
 name: destructive-confirm-gate
 description: "every unrecoverable delete routes through the one shared `ui.DestroyGate`"
 scope: security
-sources: [internal/ui/confirm.go, internal/box/reclaim.go, internal/box/derived_image.go, internal/box/sweep.go]
+sources: [internal/ui/confirm.go, internal/box/reclaim.go, internal/box/derived_image.go, internal/box/sweep.go, internal/box/network_recover.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go]
 check: "none"
 updated: 2026-10-16
 ---
@@ -60,6 +60,19 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
   once the kernel proves that supervisor gone, volumes only by that project's label, and Docker still
   refuses a volume a container uses. The development project `coop up` runs is never this exception:
   its volumes go only through `coop down --delete-volumes` and its gate.
+- Narrow exception: Coop's network records are its own bookkeeping, kept for a window. The settle
+  pass every filtered launch, loop or fork start and `coop net recover` runs
+  (`internal/box/network_recover.go`) removes, unattended, a finished run's record 90 days after the
+  run ended, and an unused policy snapshot with its `admitted-` marker (compiled from the inputs that
+  admitted it, which the next admission with those inputs writes again). It earns that
+  by being narrow: only `execution-<id>.json`, and `snapshot-<fingerprint>.json` with its
+  `admitted-<fingerprint>.json`, in the network state directory; never a run still owed cleanup,
+  never a snapshot a project admission did not create (a controller job's, which its session row
+  names forever, or one from before the marker), and never an approval, withdrawal, bundle or
+  qualification record; a record that does not read and validate, or is a link, stays; a snapshot
+  goes only after a listing of every run record read whole, when no run names it and nothing
+  admitted or loaded it for 90 days; and the last look happens under the run's or the snapshot
+  lock, so nothing put to use since is removed.
 - Narrow exception: `<task>/tmp/` is lifecycle-declared disposable scratch, not retained user state.
   Reaching done may remove exactly that containment-checked child without a second prompt (the loop
   cannot prompt), but it must preserve `artifacts/` and every other task file, refuse path escape or
@@ -69,6 +82,12 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
 
 ## Changelog
+- 2026-10-16 — named the settle pass's network retention as a narrow exception when it began
+  removing unused policy snapshots. Swept every delete under `~/.local/state/coop/network`: the
+  90-day run-record retention (`RemoveExpired`, 2026-10-15) had landed without a bullet and is
+  covered by the same one; a run's `artifacts-<id>` directory goes with that run's own exact-owned
+  cleanup; `coop net forget` keeps its own exception and `coop approve` clears a withdrawal;
+  bundles, qualifications and job snapshots are never removed.
 - 2026-10-16 — named a killed run's private Compose project as a narrow exception when the
   loop/fork/build start sweep and `coop fork rm` began removing it with its volumes. Swept the other
   unprompted volume deletes: the loop's clean-exit teardown (`StopServicesForOwner`) is the same

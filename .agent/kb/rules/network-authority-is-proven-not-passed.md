@@ -4,7 +4,7 @@ description: a filtered child proves its network authority against the owner-pri
 scope: security
 sources: [internal/box/run.go, internal/box/network_session.go, internal/box/authority_mounts.go, internal/networkstate/authority.go, internal/networkstate/job.go, internal/networkstate/approval_review.go, internal/sessionsvc/network.go, internal/sessionsvc/review.go, internal/forkctl/merge.go, internal/cli/net_approve.go, internal/networkstate/approval_generation.go]
 check: "go test ./internal/box -run 'TestFilteredPublicLaunchRequiresCaptureAndRejectsExtraArgs|TestProjectFilteredLaunchRequiresCaptureBeforeRuntime|TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore|TestControllerJobChildReprovesItsOwnSnapshot'"
-updated: 2026-10-14
+updated: 2026-10-16
 ---
 
 # Network authority is proven against the owner store, never accepted from its carrier
@@ -28,7 +28,9 @@ proves it.
   capture (`internal/box/run.go:305`); it never launches open instead.
 - A child re-authenticates: `OpenExisting` + `LoadSnapshot` for a legacy project capture, or
   `LoadJobSnapshot` for the exact job digest and session ID. `OpenExisting`, never `Open` — a child
-  must not create an owner key as a side effect of starting.
+  must not create an owner key as a side effect of starting. A project snapshot nothing used for
+  90 days may have been removed by retention: the child is refused and told to start the session
+  again, which admits anew. A job snapshot is never removed.
 - Keep the carrier unforgeable by keeping it host-only. `COOP_NETWORK_CAPTURE` is set by the daemon
   parent (`internal/sessionsvc/network.go:148`) and read in exactly ONE function; the daemon scrubs
   every `COOP_*` from the environment it builds, so no box can set it.
@@ -52,6 +54,9 @@ Background: [[restricted-networking]] (where authority lives), [[network-consume
 reference).
 
 ## Changelog
+- 2026-10-16 — snapshot retention can remove a project snapshot an idle session's child later
+  names; the child is refused, never launched open. Swept the child load paths
+  (`CapturedEgressFromReference`, `prepareFilteredExecution`, `createExecution`): each fails closed.
 - 2026-10-14 — recorded the approval generation as a cue, not authority. Swept its readers: only the
   `coop acp` refresh polls it, and every capture it adopts comes from `box.AdmitNetwork`.
 - 2026-09-29 — swept the controller turn and review launch paths. Review had discarded the saved

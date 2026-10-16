@@ -104,6 +104,8 @@ type ExecutionSpec struct {
 // Evidence cannot create resources, grant authority, or replace live snapshots.
 // Its root is opened without creating/regenerating an owner key. Inspection and
 // exact-owned cleanup do not depend on the source project still existing.
+// Besides a run's own artifacts it deletes only what retention lets go: finished
+// runs' records and unused admitted policy snapshots.
 type Evidence struct{ files *Store }
 
 func OpenEvidence(path string, exposed []string) (*Evidence, error) {
@@ -500,7 +502,10 @@ type ExecutionPage struct {
 
 type ExecutionSummary struct {
 	ID, Epoch, Project, SessionID, AttemptID string
-	StartedAt                                time.Time
+	// PolicyFingerprint names the snapshot this run enforced; snapshot retention
+	// keeps every snapshot a listed run names.
+	PolicyFingerprint string
+	StartedAt         time.Time
 	// EndedAt is when the receipt was sealed; zero until Final.
 	EndedAt               time.Time
 	Final, CleanupPending bool
@@ -510,7 +515,8 @@ type ExecutionSummary struct {
 // same summary, so the listing and the removal can never disagree about it.
 func summarize(record Execution) ExecutionSummary {
 	summary := ExecutionSummary{ID: record.ID, Epoch: record.Epoch, Project: record.Project, SessionID: record.SessionID, AttemptID: record.AttemptID,
-		StartedAt: record.StartedAt, Final: record.Receipt != nil, CleanupPending: inspectedCleanup(record) != "complete"}
+		PolicyFingerprint: record.Snapshot.PolicyFingerprint,
+		StartedAt:         record.StartedAt, Final: record.Receipt != nil, CleanupPending: inspectedCleanup(record) != "complete"}
 	if record.Receipt != nil {
 		summary.EndedAt = *record.Receipt.EndedAt
 	}

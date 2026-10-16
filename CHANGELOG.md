@@ -79,6 +79,9 @@
   down over time and, past 10,000 files, interrupted runs would have stopped being cleaned up. Coop
   now removes a finished run's record 90 days after the run ended, and keeps a run still waiting for
   cleanup until that cleanup is done. `coop net runs --all` shows the runs from the last 90 days.
+  The copy of a launch's network rules goes too, once no kept run uses it and no launch has used it
+  for 90 days, so an editor session that starts no box for that long may have to be started again.
+  Copies made by earlier versions are kept.
 
 - **Run `coop net setup` once after upgrading.** This release changes both images that filtered runs
   use, the gateway and the client image, so a network setup made by an earlier version no longer
