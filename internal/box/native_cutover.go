@@ -319,9 +319,16 @@ func ensureNativeAccount(ctx context.Context, cfg *config.Config, rt runtime.Run
 			return nil, false, nil
 		}
 	}
+	record, migrated, err := cutOverLegacyAccount(ctx, cfg, rt, ag, account)
+	return record, migrated || exists, err
+}
+
+// cutOverLegacyAccount moves an account's older login into canonical authority behind the writer
+// fence, retiring the older grant on the way.
+func cutOverLegacyAccount(ctx context.Context, cfg *config.Config, rt runtime.Runtime, ag agents.Agent, account string) (*accountAuthority, bool, error) {
 	fence, err := fenceLegacyAccount(ctx, cfg, rt, ag, account)
 	if err != nil {
-		return nil, exists, err
+		return nil, false, err
 	}
 	defer fence.close()
 	return migrateNativeAccount(ctx, cfg, ag, account, func() error {

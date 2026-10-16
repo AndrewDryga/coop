@@ -74,7 +74,7 @@ func (claudeAgent) NativeCredentials() NativeCredentialSpec {
 	}, LegacyGrants: []string{".credentials.json"}, LegacyLocks: []string{".credentials.json.refresh.lock"}, Artifacts: []NativeCredentialArtifact{
 		{Name: ".credentials.json", Limit: claudeCredentialLimit, Required: true, Import: importClaudeNative, AccessOnly: projectClaudeCredential},
 		{Name: ".claude.json", Limit: 1 << 20, Required: true, Import: importClaudeIdentity, AccessOnly: importClaudeIdentity},
-	}, Inspect: inspectClaudeNative, Renew: renewClaudeNative, Broker: NativeBrokerSpec{MergeJSON: []string{"settings.json", ".claude.json"}, Seed: seedClaudeBroker, Routes: claudeBrokerRoutes, Check: checkClaudeBroker}}
+	}, Inspect: inspectClaudeNative, Renew: renewClaudeNative, Complete: completeClaudeNative, Broker: NativeBrokerSpec{MergeJSON: []string{"settings.json", ".claude.json"}, Seed: seedClaudeBroker, Routes: claudeBrokerRoutes, Check: checkClaudeBroker}}
 }
 
 func seedClaudeBroker(selection string) (NativeBrokerSeed, error) {
@@ -188,6 +188,26 @@ func renewClaudeNative(ctx context.Context, files map[string][]byte, deadline ti
 	if err != nil {
 		return nil, err
 	}
+	next, err := completeClaudeNative(files, raw, time.Now())
+	if next == nil || err != nil {
+		return next, err
+	}
+	if after, err := inspectClaudeNative(next, time.Now()); err != nil || !after.ExpiresAt.After(deadline) {
+		return next, errors.New("native Claude renewed; access does not cover requested deadline")
+	}
+	return next, nil
+}
+
+// completeClaudeNative applies Claude's renewal answer, received at the given time, to the files.
+func completeClaudeNative(files map[string][]byte, raw []byte, at time.Time) (map[string][]byte, error) {
+	before, err := inspectClaudeNative(files, at)
+	if err != nil {
+		return nil, err
+	}
+	grant, err := parseClaudeSourceCredential(files[".credentials.json"])
+	if err != nil {
+		return nil, err
+	}
 	var response claudeRefreshResponse
 	if json.Unmarshal(raw, &response) != nil || !validNativeIssuedStrings(raw, "refresh_token", "scope") {
 		return nil, errors.New("invalid Claude issued document")
@@ -199,21 +219,18 @@ func renewClaudeNative(ctx context.Context, files map[string][]byte, deadline ti
 		response.RefreshTokenExpiresIn > int64(time.Duration(1<<63-1)/time.Second) {
 		return nil, errors.New("invalid Claude issued expiry; retained for recovery")
 	}
-	out, issued, err := mergeClaudeCredentialRefresh(files[".credentials.json"], grant, response)
+	out, issued, err := mergeClaudeCredentialRefresh(files[".credentials.json"], grant, response, at)
 	if err != nil {
 		return nil, err
 	}
 	next := cloneNativeFiles(files)
 	next[".credentials.json"] = out
-	after, err := inspectClaudeNative(next, time.Now())
+	after, err := inspectClaudeNative(next, at)
 	if err != nil || before.Principal != after.Principal {
 		return nil, errors.New("native Claude issued identity invalid; retained for recovery")
 	}
 	if !slices.Contains(issued.Scopes, "user:inference") {
 		return next, errors.New("native Claude renewed without inference scope")
-	}
-	if !time.UnixMilli(issued.ExpiresAt).After(deadline) {
-		return next, errors.New("native Claude renewed; access does not cover requested deadline")
 	}
 	return next, nil
 }
@@ -1073,7 +1090,7 @@ func renewClaudeCredentialLocked(path string, deadline time.Time) error {
 	if err != nil {
 		return err
 	}
-	renewed, granted, err := mergeClaudeCredentialRefresh(data, source, response)
+	renewed, granted, err := mergeClaudeCredentialRefresh(data, source, response, time.Now())
 	if err != nil {
 		// Nothing usable came back, so there is nothing to keep and the stored credential
 		// is still the best one we have.
@@ -1110,13 +1127,13 @@ func renewClaudeCredentialLocked(path string, deadline time.Time) error {
 // Validation here is structural only — whether there is a credential worth keeping at all.
 // Whether it is good enough for this turn is the caller's decision, made after the write.
 func mergeClaudeCredentialRefresh(
-	data []byte, source claudeSourceCredential, response claudeRefreshResponse,
+	data []byte, source claudeSourceCredential, response claudeRefreshResponse, issuedAt time.Time,
 ) ([]byte, claudeAccessCredential, error) {
 	var granted claudeAccessCredential
 	if response.AccessToken == "" || response.ExpiresIn <= 0 {
 		return nil, granted, fmt.Errorf("claude credential refresh returned an unusable access token")
 	}
-	expiresAt := time.Now().Add(time.Duration(response.ExpiresIn) * time.Second)
+	expiresAt := issuedAt.Add(time.Duration(response.ExpiresIn) * time.Second)
 	scopes := source.Scopes
 	if issued := strings.Fields(response.Scope); len(issued) > 0 {
 		scopes = issued
@@ -1157,7 +1174,7 @@ func mergeClaudeCredentialRefresh(
 		return nil, granted, err
 	}
 	if response.RefreshTokenExpiresIn > 0 {
-		refreshExpiry := time.Now().Add(time.Duration(response.RefreshTokenExpiresIn) * time.Second)
+		refreshExpiry := issuedAt.Add(time.Duration(response.RefreshTokenExpiresIn) * time.Second)
 		if err := setJSON("refreshTokenExpiresAt", refreshExpiry.UnixMilli()); err != nil {
 			return nil, granted, err
 		}

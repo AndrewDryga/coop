@@ -182,9 +182,26 @@ func prepareNativeHomeFromSource(ctx context.Context, cfg *config.Config, rt run
 	return home, nil
 }
 
+// setAsideUnpublishedHome moves a home whose setup never published to a unique name beside it. A
+// home that anything used (its auth custody or history imports exist) is refused instead.
+func setAsideUnpublishedHome(root *accountAuthorityRoot, lock *os.File) error {
+	for _, used := range []string{"auth", "imports"} {
+		if _, err := safefile.LstatMode(root.dir(), used); !errors.Is(err, os.ErrNotExist) {
+			return errors.Join(errors.New("the home was used before its setup finished; preserve it for recovery"), err)
+		}
+	}
+	if err := root.checkLock(lock); err != nil {
+		return err
+	}
+	if err := unix.Renameat(int(root.dir().Fd()), "home", int(root.dir().Fd()), ".home-abandoned-"+randomHex(8)); err != nil {
+		return err
+	}
+	return root.dir().Sync()
+}
+
 // prepareNativeHome creates one complete native rename domain. The seed callback
 // runs only for a new home, before publication; existing native settings are never
-// re-seeded. An interrupted seed is retained and refused, not silently overwritten.
+// re-seeded. A home whose setup never published is set aside and seeded again.
 func prepareNativeHome(ctx context.Context, cfg *config.Config, provider, account, repo string, acp bool,
 	seed func(string) error) (string, error) {
 	if cfg == nil || !accountNameValid(provider) {
@@ -247,11 +264,16 @@ func prepareNativeHome(ctx context.Context, cfg *config.Config, provider, accoun
 	if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	if err := unix.Mkdirat(int(root.dir().Fd()), "home", 0o700); err != nil {
-		if errors.Is(err, unix.EEXIST) {
-			return "", fmt.Errorf("native home initialization is incomplete at %s — preserve it for recovery", home)
+	err = unix.Mkdirat(int(root.dir().Fd()), "home", 0o700)
+	if errors.Is(err, unix.EEXIST) {
+		// A first setup that never published left this home behind, and no box has seen it: set it
+		// aside, never delete it, and set up afresh.
+		if err = setAsideUnpublishedHome(root, lock); err == nil {
+			err = unix.Mkdirat(int(root.dir().Fd()), "home", 0o700)
 		}
-		return "", err
+	}
+	if err != nil {
+		return "", fmt.Errorf("native home initialization is incomplete at %s: %w", home, err)
 	}
 	child, err := safefile.OpenDir(root.dir(), "home")
 	if err != nil {
@@ -282,16 +304,8 @@ func prepareNativeHome(ctx context.Context, cfg *config.Config, provider, accoun
 	if err != nil {
 		return "", err
 	}
-	fd, err := unix.Openat(int(root.dir().Fd()), "owner.json", unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
-	if err != nil {
-		return "", err
-	}
-	record := os.NewFile(uintptr(fd), "owner.json")
-	_, writeErr := record.Write(append(data, '\n'))
-	if writeErr == nil {
-		writeErr = record.Sync()
-	}
-	if err := errors.Join(writeErr, record.Close(), root.dir().Sync()); err != nil {
+	// All or nothing: a half-written owner record would refuse this home forever.
+	if err := writeAccountPrivate(root, lock, "owner.json", append(data, '\n')); err != nil {
 		return "", fmt.Errorf("native home publication needs recovery: %w", err)
 	}
 	if err := root.checkLock(lock); err != nil {

@@ -2,15 +2,16 @@
 name: renew-before-access-only-projection
 description: refreshable credentials renew in one canonical host authority before and during brokered runs
 scope: security
-sources: [internal/agent/agent.go, internal/agent/codex.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/account_renewal.go, internal/box/native_broker.go, internal/sessionsvc/acp.go]
-check: "go test ./internal/box -run 'TestAccountRenewalPersistsIntentResponseAndShortGrant|TestAccountRenewalUncertainResponseCannotRetryOrMutate|TestNativeRunPublishesGuardOnlyExpiringAccess|TestNativeHostSignInRecoversUncertainRenewal'"
-updated: 2026-10-09
+sources: [internal/agent/agent.go, internal/agent/native_credentials.go, internal/agent/codex.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/account_renewal.go, internal/box/native_broker.go, internal/sessionsvc/acp.go]
+check: "go test ./internal/box -run 'TestAccountRenewalPersistsIntentResponseAndShortGrant|TestAccountRenewalCompletesAKeptAnswerWithoutTheProvider|TestAccountRenewalRetriesAfterAnExchangeThatKeptNothing|TestAccountRenewalUnusableKeptAnswerRefuses|TestNativeRunPublishesGuardOnlyExpiringAccess|TestNativeHostSignInRecoversUncertainRenewal'"
+updated: 2026-10-16
 ---
 
 # Renew credentials in one canonical host authority
 
-Renew expiring grants before and throughout brokered runs. Serialize renewal and retain issued
-rotations durably before validation/publication, including uncertain responses. Never copy refresh
+Renew expiring grants before and throughout brokered runs. Serialize renewal and keep the
+provider's 200 answer durably before parsing or publishing it, so an interrupted renewal completes
+from that answer without contacting the provider again. Never copy refresh
 authority into repository homes or workloads, and never replace continuous renewal with a turn-sized
 expiry check or forced restart. Private broker snapshots expire closed if host publication stops.
 
@@ -20,14 +21,20 @@ different halves of the credential lifecycle.
 
 **How to apply:** Keep credential parsing and renewal adapter-owned through `NativeCredentialSpec`.
 All coding/remote paths use the canonical host authority and public native selectors. Revocation
-invalidates the prior epoch; neither a stale profile nor an env token may revive it. A revoked or
-uncertain renewal is an authentication/recovery result, never a blind process-crash retry.
+invalidates the prior epoch; neither a stale profile nor an env token may revive it. A kept answer
+is completed, never replaced by a retry with the grant it spent. An exchange that kept nothing may be
+retried: its grant is either unspent or lost either way. Only a refused grant (a 400/401
+invalid_grant family answer) or a kept answer that cannot be used asks for a host sign-in.
 
 Pre-cutover quota inspection may still renew the original legacy store under the same writer
 fences as cutover. It must never fork that authority, overlap canonical service, or fall back from
 a revoked canonical account. This narrow maintenance path is not a coding-home projection.
 
 ## Changelog
+- 2026-10-16 — interrupted renewals settle instead of wedging (account_renewal.go settleRenewal): only
+  200 answers are kept, with their arrival time; a kept answer completes through the adapter's
+  `Complete` at the next locked read; nothing kept clears for a retry; the exchange outlives its
+  caller's cancellation. Swept all four adapters and the native broker; check names the new tests.
 - 2026-10-09 — swept all four adapters, native account renewal, run publication and remote startup.
   Updated the mechanism to canonical host renewal and expiring broker snapshots; legacy renewal
   checks remain applicable only to fenced pre-cutover quota maintenance.

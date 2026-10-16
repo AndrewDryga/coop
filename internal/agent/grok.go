@@ -56,7 +56,7 @@ func (grokAgent) NativeCredentials() NativeCredentialSpec {
 	return NativeCredentialSpec{Defaults: func(source string) (map[string][]byte, error) {
 		return nativeDefaultSettings(source, "config.toml", "GROK.md", map[string]string{"model": "string"})
 	}, LegacyGrants: []string{"auth.json"}, LegacyLocks: []string{"auth.json.lock"}, Artifacts: []NativeCredentialArtifact{{Name: "auth.json", Limit: grokCredentialLimit, Required: true, Import: importGrokNative, AccessOnly: projectGrokCredential}},
-		Inspect: inspectGrokNative, Renew: renewGrokNative, Broker: NativeBrokerSpec{Seed: seedGrokBroker, Routes: grokBrokerRoutes, Check: checkGrokBroker}}
+		Inspect: inspectGrokNative, Renew: renewGrokNative, Complete: completeGrokNative, Broker: NativeBrokerSpec{Seed: seedGrokBroker, Routes: grokBrokerRoutes, Check: checkGrokBroker}}
 }
 
 func seedGrokBroker(selection string) (NativeBrokerSeed, error) {
@@ -148,13 +148,33 @@ func renewGrokNative(ctx context.Context, files map[string][]byte, deadline time
 	if err != nil {
 		return nil, err
 	}
+	next, err := completeGrokNative(files, raw, time.Now())
+	if next == nil || err != nil {
+		return next, err
+	}
+	if after, err := inspectGrokNative(next, time.Now()); err != nil || !after.ExpiresAt.After(deadline) {
+		return next, errors.New("native Grok renewed; access does not cover requested deadline")
+	}
+	return next, nil
+}
+
+// completeGrokNative applies Grok's renewal answer, received at the given time, to the files.
+func completeGrokNative(files map[string][]byte, raw []byte, at time.Time) (map[string][]byte, error) {
+	before, err := inspectGrokNative(files, at)
+	if err != nil {
+		return nil, err
+	}
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(files["auth.json"], &doc) != nil || doc == nil {
+		return nil, errors.New("native Grok authority needs host sign-in")
+	}
 	var response grokRefreshResponse
 	if json.Unmarshal(raw, &response) != nil || !validNativeIssuedStrings(raw, "refresh_token") || !validNativeGrant(response.AccessToken) ||
 		response.RefreshToken != "" && !validNativeGrant(response.RefreshToken) || response.ExpiresIn <= 0 ||
 		response.ExpiresIn > int64(time.Duration(1<<63-1)/time.Second) {
 		return nil, errors.New("invalid Grok issued credential; retained for recovery")
 	}
-	entry, expiry, err := mergeGrokCredentialRefresh(doc[grokNativeScope], response)
+	entry, _, err := mergeGrokCredentialRefresh(doc[grokNativeScope], response, at)
 	if err != nil {
 		return nil, err
 	}
@@ -165,12 +185,9 @@ func renewGrokNative(ctx context.Context, files map[string][]byte, deadline time
 	}
 	next := cloneNativeFiles(files)
 	next["auth.json"] = out
-	after, err := inspectGrokNative(next, time.Now())
+	after, err := inspectGrokNative(next, at)
 	if err != nil || before.Principal != after.Principal || before.Selection != after.Selection {
 		return nil, errors.New("native Grok issued authority changed identity; retained for recovery")
-	}
-	if !expiry.After(deadline) {
-		return next, errors.New("native Grok renewed; access does not cover requested deadline")
 	}
 	return next, nil
 }
@@ -1082,7 +1099,7 @@ func renewGrokCredentialLocked(path string, deadline time.Time, scope string) er
 		if err == nil {
 			var entry json.RawMessage
 			var expiresAt time.Time
-			if entry, expiresAt, err = mergeGrokCredentialRefresh(document[key], response); err == nil {
+			if entry, expiresAt, err = mergeGrokCredentialRefresh(document[key], response, time.Now()); err == nil {
 				document[key] = entry
 				expiries = append(expiries, expiresAt)
 				continue
@@ -1124,7 +1141,7 @@ func renewGrokCredentialLocked(path string, deadline time.Time, scope string) er
 
 // mergeGrokCredentialRefresh edits the renewed fields into one stored entry, as the client writes
 // them — key, refresh_token, create_time and expires_at — and keeps every field coop does not model.
-func mergeGrokCredentialRefresh(stored json.RawMessage, response grokRefreshResponse) (json.RawMessage, time.Time, error) {
+func mergeGrokCredentialRefresh(stored json.RawMessage, response grokRefreshResponse, issuedAt time.Time) (json.RawMessage, time.Time, error) {
 	if response.AccessToken == "" || response.ExpiresIn <= 0 {
 		return nil, time.Time{}, errors.New("grok credential refresh returned an unusable access token")
 	}
@@ -1132,7 +1149,7 @@ func mergeGrokCredentialRefresh(stored json.RawMessage, response grokRefreshResp
 	if err := json.Unmarshal(stored, &entry); err != nil {
 		return nil, time.Time{}, fmt.Errorf("decode Grok credential entry: %w", err)
 	}
-	issued := time.Now().UTC()
+	issued := issuedAt.UTC()
 	expiresAt := issued.Add(time.Duration(response.ExpiresIn) * time.Second)
 	fields := map[string]string{
 		"key": response.AccessToken, "create_time": issued.Format(time.RFC3339Nano), "expires_at": expiresAt.Format(time.RFC3339Nano),

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/safefile"
@@ -19,18 +20,19 @@ import (
 
 const accountRenewalName = "renewal.json"
 
-var errAccountRenewalUncertain = errors.New("account renewal needs recovery or a fresh host sign-in; automatic retry refused")
+var errAccountRenewalUncertain = errors.New("an interrupted credential renewal could not be finished; run coop login")
 
-// The intent precedes provider I/O. A crash with no response is still uncertain: the
-// provider might have consumed the old refresh grant before the connection broke.
+// The intent precedes provider I/O. Received is the provider's 200 answer, kept before anything
+// parses it, and ReceivedAt (Unix milliseconds) when it arrived; settleRenewal finishes from them.
 type accountRenewal struct {
-	Version  int    `json:"version"`
-	ID       string `json:"id"`
-	Provider string `json:"provider"`
-	Account  string `json:"account"`
-	Epoch    uint64 `json:"epoch"`
-	Revision uint64 `json:"revision"`
-	Received []byte `json:"received,omitempty"`
+	Version    int    `json:"version"`
+	ID         string `json:"id"`
+	Provider   string `json:"provider"`
+	Account    string `json:"account"`
+	Epoch      uint64 `json:"epoch"`
+	Revision   uint64 `json:"revision"`
+	Received   []byte `json:"received,omitempty"`
+	ReceivedAt int64  `json:"received_at,omitempty"`
 }
 
 func renewAccountAuthority(ctx context.Context, cfg *config.Config, spec accountAuthoritySpec, account string,
@@ -68,7 +70,7 @@ func renewAccountAuthority(ctx context.Context, cfg *config.Config, spec account
 			return errors.New("renewal response exceeds recovery bounds")
 		}
 		next := pending
-		next.Received = bytes.Clone(received)
+		next.Received, next.ReceivedAt = bytes.Clone(received), time.Now().UnixMilli()
 		if err := root.writeRenewal(lock, &pending, next); err != nil {
 			return err
 		}
@@ -80,13 +82,16 @@ func renewAccountAuthority(ctx context.Context, cfg *config.Config, spec account
 	}
 	next, readinessErr := renew(cloneAccountAuthority(current), retain)
 	if next == nil {
-		return current, false, errors.Join(errAccountRenewalUncertain, readinessErr)
+		// Nothing to publish: settle whatever the attempt left, as a later read would, so a
+		// failed exchange never leaves the account waiting for a sign-in it does not need.
+		settled, err := root.settleRenewal(lock, spec, account, current)
+		return settled, settled != current, errors.Join(err, readinessErr)
 	}
-	// A received response is required even when the adapter cannot use its grant. Never
-	// acknowledge canonical publication based only on an in-memory rotation.
-	if len(pending.Received) == 0 || next.Epoch != current.Epoch || next.Revoked {
-		return current, false, errors.Join(errAccountRenewalUncertain, errors.New("renewal returned without response custody"), readinessErr)
+	if next.Epoch != current.Epoch || next.Revoked {
+		return current, false, errors.Join(errAccountRenewalUncertain, errors.New("renewal changed the account's generation"), readinessErr)
 	}
+	// Publish even when the answer could not be kept: the issued grant exists only in memory
+	// then, and publishing is what keeps it.
 	next.Renewal = pending.ID
 	published, effect, err := root.publish(lock, spec, account, current, next, nil)
 	if err != nil {
@@ -124,19 +129,68 @@ func (root *accountAuthorityRoot) readRenewal() (*accountRenewal, error) {
 	return &pending, nil
 }
 
-func (root *accountAuthorityRoot) recoverRenewal(lock *os.File, current *accountAuthority) error {
+// settleRenewal finishes what an earlier renewal of this account left in its journal and returns the
+// record callers must use from then on; handing back the record read before it would replay a grant
+// the provider already spent. A kept answer completes without contacting the provider. A journal
+// with no answer is cleared so a later renewal can try again: the grant it sent may be spent, but
+// then it is lost either way, and a retry only asks. A kept answer that cannot be used refuses until
+// a fresh host sign-in, which archives it.
+func (root *accountAuthorityRoot) settleRenewal(lock *os.File, spec accountAuthoritySpec, account string, current *accountAuthority) (*accountAuthority, error) {
 	pending, err := root.readRenewal()
 	if err != nil || pending == nil {
-		return err
+		return current, err
 	}
-	// Publication may have succeeded before process death or the final directory sync
-	// response. The exact canonical receipt proves which rotation won; age never does.
-	if current != nil && !current.Revoked && current.Renewal == pending.ID && current.Provider == pending.Provider &&
-		current.Account == pending.Account && current.Epoch == pending.Epoch && current.Revision > pending.Revision &&
-		current.Revision-pending.Revision == 1 {
-		return root.clearRenewal(lock, *pending)
+	if current == nil || current.Provider != pending.Provider || current.Account != pending.Account || pending.Epoch > current.Epoch {
+		return current, errAccountRenewalUncertain
 	}
-	return errAccountRenewalUncertain
+	switch {
+	case pending.Epoch < current.Epoch:
+		// A host sign-in or removal superseded it and could not archive it at the time.
+		return current, root.archiveRenewal(lock)
+	case current.Renewal == pending.ID && current.Revision == pending.Revision+1:
+		// Publication landed before the journal was cleared; the exact receipt proves which won.
+		return current, root.clearRenewal(lock, *pending)
+	case current.Revoked || current.Revision != pending.Revision:
+		return current, errAccountRenewalUncertain
+	case len(pending.Received) == 0 || pending.ReceivedAt == 0 && keptErrorAnswer(pending.Received):
+		// Nothing kept, or an error answer an earlier version kept (it kept every answer): no grant
+		// was issued, so the old one may be sent again.
+		return current, root.clearRenewal(lock, *pending)
+	case spec.Complete == nil:
+		return current, errAccountRenewalUncertain
+	}
+	// An answer kept before arrival times were recorded dates its grant as long expired, so the next
+	// renewal spends the grant it carries instead of trusting its access token.
+	at := time.Unix(0, 0)
+	if pending.ReceivedAt > 0 {
+		at = time.UnixMilli(pending.ReceivedAt)
+	}
+	next := cloneAccountAuthority(current)
+	files, err := spec.Complete(next.Artifacts, pending.Received, at)
+	if files == nil {
+		return current, errors.Join(errAccountRenewalUncertain, err)
+	}
+	next.Artifacts, next.Renewal = files, pending.ID
+	published, effect, err := root.publish(lock, spec, account, current, next, nil)
+	if err != nil && !effect {
+		// The kept answer is still the only copy of the grant; a host sign-in may supersede it.
+		return current, errors.Join(errAccountRenewalUncertain, err)
+	}
+	if err != nil {
+		return published, err
+	}
+	return published, root.clearRenewal(lock, *pending)
+}
+
+// keptErrorAnswer reports a kept answer that is an error document rather than issued credentials.
+func keptErrorAnswer(received []byte) bool {
+	var answer map[string]json.RawMessage
+	if json.Unmarshal(received, &answer) != nil {
+		return false
+	}
+	_, refused := answer["error"]
+	_, issued := answer["access_token"]
+	return refused && !issued
 }
 
 func sameAccountRenewal(a, b *accountRenewal) bool {

@@ -107,22 +107,58 @@ func TestNativeHomeSeedCannotPublishNonprivateDirectory(t *testing.T) {
 	}
 }
 
-func TestNativeHomeRefusesAmbiguousInterruptedAndRedirectedHomes(t *testing.T) {
-	for _, kind := range []string{"interrupted", "wrong-owner", "linked-owner", "linked-home"} {
-		t.Run(kind, func(t *testing.T) {
+// A first setup that never published left a home no box has seen: the next setup sets it aside,
+// never deleting it, and seeds afresh. One that anything used still refuses.
+func TestNativeHomeSetsAsideAnInterruptedSetup(t *testing.T) {
+	for _, used := range []string{"", "auth", "imports"} {
+		t.Run("used="+used, func(t *testing.T) {
 			cfg, repo := &config.Config{ConfigDir: t.TempDir()}, t.TempDir()
-			seed := func(home string) error {
-				if kind == "interrupted" {
-					return errors.New("inert seed failure")
-				}
-				return nil
-			}
-			home, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, seed)
-			if kind != "interrupted" && err != nil {
+			home, err := NativeHomePath(cfg, "codex", "work", repo, false)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if kind == "interrupted" && err == nil {
+			if _, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(home string) error {
+				if err := os.WriteFile(filepath.Join(home, "partial"), []byte("inert partial seed"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return errors.New("inert seed failure")
+			}); err == nil {
 				t.Fatal("interrupted initialization succeeded")
+			}
+			if used != "" {
+				if err := os.Mkdir(filepath.Join(filepath.Dir(home), used), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			seeded := false
+			again, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { seeded = true; return nil })
+			if used != "" {
+				if err == nil || seeded {
+					t.Fatal("a home something used was set aside")
+				}
+				return
+			}
+			if err != nil || !seeded || again != home {
+				t.Fatalf("setup after an interruption = %q, %v (seeded %v)", again, err, seeded)
+			}
+			if _, err := os.Stat(filepath.Join(home, "partial")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("the new home kept the interrupted seed's files")
+			}
+			aside, _ := filepath.Glob(filepath.Join(filepath.Dir(home), ".home-abandoned-*", "partial"))
+			if len(aside) != 1 {
+				t.Fatalf("the interrupted home was not kept aside: %v", aside)
+			}
+		})
+	}
+}
+
+func TestNativeHomeRefusesAmbiguousAndRedirectedHomes(t *testing.T) {
+	for _, kind := range []string{"wrong-owner", "linked-owner", "linked-home"} {
+		t.Run(kind, func(t *testing.T) {
+			cfg, repo := &config.Config{ConfigDir: t.TempDir()}, t.TempDir()
+			home, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { return nil })
+			if err != nil {
+				t.Fatal(err)
 			}
 			owner := filepath.Join(filepath.Dir(home), "owner.json")
 			switch kind {

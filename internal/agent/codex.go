@@ -34,7 +34,7 @@ func (codexAgent) NativeCredentials() NativeCredentialSpec {
 		},
 		LegacyGrants: []string{"auth.json"}, LegacyLocks: []string{"auth.json.refresh.lock"},
 		Artifacts: []NativeCredentialArtifact{{Name: "auth.json", Limit: codexCredentialLimit, Required: true, Import: importCodexNative, AccessOnly: projectCodexCredential}},
-		Inspect:   inspectCodexNative, Renew: renewCodexNative,
+		Inspect:   inspectCodexNative, Renew: renewCodexNative, Complete: completeCodexNative,
 		Broker: NativeBrokerSpec{Seed: seedCodexBroker, Routes: codexBrokerRoutes, Check: checkCodexBroker},
 	}
 }
@@ -257,6 +257,26 @@ func renewCodexNative(ctx context.Context, files map[string][]byte, deadline tim
 	if err != nil {
 		return nil, err
 	}
+	next, err := completeCodexNative(files, raw, time.Now())
+	if next == nil || err != nil {
+		return next, err
+	}
+	if after, err := inspectCodexNative(next, time.Now()); err != nil || !after.ExpiresAt.After(deadline) {
+		return next, errors.New("native Codex renewed; access does not cover the requested deadline")
+	}
+	return next, nil
+}
+
+// completeCodexNative applies Codex's renewal answer, received at the given time, to the files.
+func completeCodexNative(files map[string][]byte, raw []byte, at time.Time) (map[string][]byte, error) {
+	before, err := inspectCodexNative(files, at)
+	if err != nil {
+		return nil, err
+	}
+	var source codexSourceCredential
+	if json.Unmarshal(files["auth.json"], &source) != nil || before.Selection != "chatgpt" || source.Tokens == nil {
+		return nil, errors.New("native Codex authority needs host sign-in")
+	}
 	var response codexRefreshResponse
 	if json.Unmarshal(raw, &response) != nil || !validNativeGrant(response.AccessToken) || !validNativeIssuedStrings(raw, "refresh_token", "id_token") {
 		return nil, errors.New("invalid Codex issued credential")
@@ -271,19 +291,16 @@ func renewCodexNative(ctx context.Context, files map[string][]byte, deadline tim
 		}
 		source.Tokens.RefreshToken = response.RefreshToken
 	}
-	source.LastRefresh = time.Now().UTC().Format(time.RFC3339Nano)
+	source.LastRefresh = at.UTC().Format(time.RFC3339Nano)
 	out, err := nativeJSON(source)
 	if err != nil {
 		return nil, err
 	}
 	next := cloneNativeFiles(files)
 	next["auth.json"] = out
-	after, err := inspectCodexNative(next, time.Now())
+	after, err := inspectCodexNative(next, at)
 	if err != nil || before.Principal != after.Principal || before.Selection != after.Selection {
 		return nil, errors.New("native Codex issued authority changed identity; retained for recovery")
-	}
-	if !after.ExpiresAt.After(deadline) {
-		return next, errors.New("native Codex renewed; access does not cover the requested deadline")
 	}
 	return next, nil
 }

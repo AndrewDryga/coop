@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -45,7 +46,11 @@ type NativeCredentialSpec struct {
 	Select       func(map[string][]byte) (map[string][]byte, error)
 	Inspect      func(map[string][]byte, time.Time) (NativeCredentialState, error)
 	Renew        func(context.Context, map[string][]byte, time.Time, func([]byte) error) (map[string][]byte, error)
-	Broker       NativeBrokerSpec
+	// Complete is Renew's second half: it turns the provider's 200 answer, received at the given
+	// time, into the next credential files without contacting the provider. Coop runs it again on
+	// the answer it kept when a renewal was interrupted before the grant was published.
+	Complete func(files map[string][]byte, received []byte, at time.Time) (map[string][]byte, error)
+	Broker   NativeBrokerSpec
 }
 
 func nativeAPIEnvironment(family, envKey string) func(string, string, string) (NativeCredentialState, error) {
@@ -209,9 +214,47 @@ func nativeJWT(token string) (nativeJWTClaims, error) {
 var nativeRefreshClient = &http.Client{Timeout: 20 * time.Second,
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
-// The caller writes renewal intent before invoking this helper. Even incomplete
-// received bytes are retained before parsing or checking status: retrying an old
-// grant after an uncertain response can destroy the remaining recovery path.
+// ErrRenewalRefused is the provider refusing the saved grant itself (OAuth invalid_grant, or Codex's
+// refresh_token_expired, _reused or _invalidated): only a fresh sign-in helps.
+var ErrRenewalRefused = errors.New("the provider no longer accepts this account's saved sign-in; run coop login")
+
+// renewalRefusal is ErrRenewalRefused for a 400 or 401 answer that names a refused grant: in the
+// OAuth "error" string, a nested "error.code" (OpenAI) or "error.type" (Claude), or a top-level
+// "code". Any other answer is nil: it refused this request, not the grant.
+func renewalRefusal(status int, raw []byte) error {
+	var answer struct {
+		Error json.RawMessage `json:"error"`
+		Code  string          `json:"code"`
+	}
+	if status != http.StatusBadRequest && status != http.StatusUnauthorized || json.Unmarshal(raw, &answer) != nil {
+		return nil
+	}
+	codes := []string{answer.Code}
+	var code string
+	if json.Unmarshal(answer.Error, &code) == nil {
+		codes = append(codes, code)
+	}
+	var nested struct {
+		Code string `json:"code"`
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(answer.Error, &nested) == nil {
+		codes = append(codes, nested.Code, nested.Type)
+	}
+	for _, code := range codes {
+		switch code {
+		case "invalid_grant", "refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated":
+			return ErrRenewalRefused
+		}
+	}
+	return nil
+}
+
+// requestNativeRefresh sends one refresh grant; the caller wrote its renewal intent first. A 200
+// answer may hold the account's only new grant, so retain keeps it before anything parses it, and a
+// failed retain still returns it: publishing the grant keeps it too. Any other answer issued nothing
+// and is never kept. The exchange outlives the caller's cancellation, bounded by its own timeout:
+// abandoning a request the provider may already be answering would strand the grant it issues.
 func requestNativeRefresh(ctx context.Context, endpoint, contentType string, body []byte, retain func([]byte) error) ([]byte, error) {
 	if retain == nil {
 		return nil, errors.New("native renewal requires durable response custody")
@@ -219,7 +262,7 @@ func requestNativeRefresh(ctx context.Context, endpoint, contentType string, bod
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -228,20 +271,21 @@ func requestNativeRefresh(ctx context.Context, endpoint, contentType string, bod
 	request.Header.Set("Content-Type", contentType)
 	response, err := nativeRefreshClient.Do(request)
 	if err != nil {
-		return nil, errors.New("native renewal request failed; authority is uncertain")
+		return nil, errors.New("native renewal request failed")
 	}
 	defer response.Body.Close()
 	raw, readErr := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
-	if len(raw) != 0 {
-		if err := retain(bytes.Clone(raw[:min(len(raw), 1<<20)])); err != nil {
-			return nil, errors.New("native renewal response custody could not be confirmed")
+	if response.StatusCode != http.StatusOK {
+		if refusal := renewalRefusal(response.StatusCode, raw); refusal != nil {
+			return nil, refusal
 		}
+		return nil, fmt.Errorf("native renewal refused (HTTP %d)", response.StatusCode)
+	}
+	if len(raw) != 0 {
+		_ = retain(bytes.Clone(raw[:min(len(raw), 1<<20)]))
 	}
 	if readErr != nil || len(raw) == 0 || len(raw) > 1<<20 {
-		return nil, errors.New("native renewal response incomplete; authority is uncertain")
-	}
-	if response.StatusCode != http.StatusOK {
-		return nil, errors.New("native renewal refused")
+		return nil, errors.New("native renewal response incomplete")
 	}
 	return raw, nil
 }

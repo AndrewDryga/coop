@@ -77,7 +77,7 @@ func (geminiAgent) NativeCredentials() NativeCredentialSpec {
 		{Name: "oauth_creds.json", Limit: 1 << 20, Import: importGeminiOAuth, AccessOnly: projectGeminiOAuth},
 		{Name: "google_accounts.json", Limit: 1 << 20, Import: importGeminiIdentity, AccessOnly: importGeminiIdentity},
 		{Name: "api-key", Limit: 4 << 10, Import: importGeminiKey, AccessOnly: importGeminiKey},
-	}, LegacyCheck: checkGeminiLegacyCutover, Select: selectGeminiNative, Inspect: inspectGeminiNative, Renew: renewGeminiNative, Broker: NativeBrokerSpec{BindStorageIdentity: true, MergeJSON: []string{"settings.json"}, Seed: seedGeminiBroker, Env: geminiBrokerEnv, Routes: geminiBrokerRoutes, Check: checkGeminiBroker, CheckFiles: []NativeCredentialArtifact{{Name: "gemini-credentials.json", Limit: 1 << 20}}}}
+	}, LegacyCheck: checkGeminiLegacyCutover, Select: selectGeminiNative, Inspect: inspectGeminiNative, Renew: renewGeminiNative, Complete: completeGeminiNative, Broker: NativeBrokerSpec{BindStorageIdentity: true, MergeJSON: []string{"settings.json"}, Seed: seedGeminiBroker, Env: geminiBrokerEnv, Routes: geminiBrokerRoutes, Check: checkGeminiBroker, CheckFiles: []NativeCredentialArtifact{{Name: "gemini-credentials.json", Limit: 1 << 20}}}}
 }
 
 func checkGeminiLegacyCutover(home string) error {
@@ -368,17 +368,39 @@ func renewGeminiNative(ctx context.Context, files map[string][]byte, deadline ti
 	if before.Selection != "oauth-personal" || !before.Refreshable {
 		return nil, fmt.Errorf("native Gemini authority needs host sign-in")
 	}
-	result, renewErr := renewGeminiAuthority(ctx, files["oauth_creds.json"], deadline, retain)
-	if len(result.Credential) == 0 {
+	credential, renewErr := renewGeminiAuthority(ctx, files["oauth_creds.json"], deadline, retain)
+	if len(credential) == 0 {
 		return nil, renewErr
 	}
+	next, err := geminiNativeWith(files, credential, before, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	return next, renewErr
+}
+
+// completeGeminiNative applies a kept Gemini renewal answer, received at the given time.
+func completeGeminiNative(files map[string][]byte, raw []byte, at time.Time) (map[string][]byte, error) {
+	before, err := inspectGeminiNative(files, at)
+	if err != nil {
+		return nil, err
+	}
+	credential, _, err := completeGeminiAuthority(files["oauth_creds.json"], raw, at)
+	if err != nil {
+		return nil, err
+	}
+	return geminiNativeWith(files, credential, before, at)
+}
+
+// geminiNativeWith is files with a renewed OAuth credential, which must name the same account.
+func geminiNativeWith(files map[string][]byte, credential []byte, before NativeCredentialState, at time.Time) (map[string][]byte, error) {
 	next := cloneNativeFiles(files)
-	next["oauth_creds.json"] = result.Credential
-	after, err := inspectGeminiNative(next, time.Now())
+	next["oauth_creds.json"] = credential
+	after, err := inspectGeminiNative(next, at)
 	if err != nil || before.Principal != after.Principal || before.Selection != after.Selection {
 		return nil, fmt.Errorf("native Gemini issued identity invalid; retained for recovery")
 	}
-	return next, renewErr
+	return next, nil
 }
 
 func (geminiAgent) NativeHistory(source string, ownsCWD func(string) bool) (NativeHistoryPlan, error) {
@@ -1464,83 +1486,65 @@ const geminiOAuthClientID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.
 const geminiOAuthClientSecret = "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"
 const geminiOAuthTokenURL = "https://oauth2.googleapis.com/token"
 
-var geminiRenewClient = &http.Client{Timeout: 20 * time.Second,
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-
-type geminiRenewal struct {
-	Credential []byte
-	// Received retains bounded native response bytes even when validation or later
-	// readiness fails. It is host-only recovery material, never serving authority.
-	Received []byte
-}
-
-// renewGeminiAuthority renews only plain native OAuth; it never initializes a global
-// keychain or encrypted fallback, and does not let native asynchronous writes replace
-// the caller's canonical transaction.
-func renewGeminiAuthority(ctx context.Context, original []byte, deadline time.Time,
-	retainReceived func([]byte) error) (geminiRenewal, error) {
+// renewGeminiAuthority renews only plain native OAuth; it never initializes a global keychain or
+// encrypted fallback, and does not let native asynchronous writes replace the caller's canonical
+// transaction. It returns the credential to publish, if any, even beside a readiness error.
+func renewGeminiAuthority(ctx context.Context, original []byte, deadline time.Time, retain func([]byte) error) ([]byte, error) {
 	var document map[string]json.RawMessage
 	if len(original) == 0 || len(original) > 1<<20 || json.Unmarshal(original, &document) != nil || document == nil {
-		return geminiRenewal{}, errors.New("invalid Gemini OAuth authority")
+		return nil, errors.New("invalid Gemini OAuth authority")
 	}
 	var access, refresh string
 	var expiry int64
 	if json.Unmarshal(document["access_token"], &access) != nil || json.Unmarshal(document["expiry_date"], &expiry) != nil {
-		return geminiRenewal{}, errors.New("invalid Gemini OAuth access state")
+		return nil, errors.New("invalid Gemini OAuth access state")
 	}
 	if validGeminiGrant(access) && expiry > deadline.UnixMilli() {
-		return geminiRenewal{Credential: bytes.Clone(original)}, nil
+		return bytes.Clone(original), nil
 	}
 	if json.Unmarshal(document["refresh_token"], &refresh) != nil || !validGeminiGrant(refresh) {
-		return geminiRenewal{}, errors.New("native Gemini OAuth authority needs host sign-in")
-	}
-	if retainReceived == nil {
-		return geminiRenewal{}, errors.New("native Gemini renewal needs durable response custody")
+		return nil, errors.New("native Gemini OAuth authority needs host sign-in")
 	}
 	if !deadline.After(time.Now()) {
-		return geminiRenewal{}, errors.New("native Gemini renewal deadline expired")
+		return nil, errors.New("native Gemini renewal deadline expired")
 	}
 	values := url.Values{"client_id": {geminiOAuthClientID}, "client_secret": {geminiOAuthClientSecret},
 		"grant_type": {"refresh_token"}, "refresh_token": {refresh}}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, geminiOAuthTokenURL, strings.NewReader(values.Encode()))
+	raw, err := requestNativeRefresh(ctx, geminiOAuthTokenURL, "application/x-www-form-urlencoded", []byte(values.Encode()), retain)
 	if err != nil {
-		return geminiRenewal{}, err
+		return nil, err
 	}
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response, err := geminiRenewClient.Do(request)
+	credential, expires, err := completeGeminiAuthority(original, raw, time.Now())
 	if err != nil {
-		return geminiRenewal{}, errors.New("native Gemini OAuth renewal request failed")
+		return nil, err
 	}
-	defer response.Body.Close()
-	raw, readErr := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
-	result := geminiRenewal{Received: bytes.Clone(raw[:min(len(raw), 1<<20)])}
-	// This happens before identity/readiness validation and ignores cancellation after
-	// issuance. Failure is not safe to retry: an old refresh grant may be consumed.
-	if len(result.Received) != 0 {
-		if err := retainReceived(result.Received); err != nil {
-			return result, fmt.Errorf("native Gemini renewal response received but custody unconfirmed: %w", err)
-		}
+	if expires <= deadline.UnixMilli() {
+		return credential, errors.New("native Gemini OAuth renewed; access does not cover the requested deadline")
 	}
-	if readErr != nil || len(raw) == 0 || len(raw) > 1<<20 {
-		return result, errors.New("native Gemini OAuth renewal response incomplete; authority is uncertain, do not retry automatically")
-	}
-	if response.StatusCode != http.StatusOK {
-		return result, errors.New("native Gemini OAuth renewal refused")
+	return credential, nil
+}
+
+// completeGeminiAuthority applies a Gemini OAuth renewal answer, received at the given time, to the
+// original credential, and returns it with its new expiry in Unix milliseconds.
+func completeGeminiAuthority(original, raw []byte, at time.Time) ([]byte, int64, error) {
+	var document map[string]json.RawMessage
+	if len(original) == 0 || len(original) > 1<<20 || json.Unmarshal(original, &document) != nil || document == nil {
+		return nil, 0, errors.New("invalid Gemini OAuth authority")
 	}
 	var returned map[string]json.RawMessage
 	if json.Unmarshal(raw, &returned) != nil || returned == nil {
-		return result, errors.New("invalid Gemini OAuth renewal document")
+		return nil, 0, errors.New("invalid Gemini OAuth renewal document")
 	}
 	var nextAccess string
 	var expires json.Number
 	if json.Unmarshal(returned["access_token"], &nextAccess) != nil || !validGeminiGrant(nextAccess) ||
 		json.Unmarshal(returned["expires_in"], &expires) != nil {
-		return result, errors.New("native Gemini OAuth renewal returned unusable access")
+		return nil, 0, errors.New("native Gemini OAuth renewal returned unusable access")
 	}
 	seconds, err := strconv.ParseInt(string(expires), 10, 64)
-	now := time.Now().UnixMilli()
+	now := at.UnixMilli()
 	if err != nil || seconds <= 0 || seconds > (math.MaxInt64-now)/1000 {
-		return result, errors.New("native Gemini OAuth renewal returned invalid expiry")
+		return nil, 0, errors.New("native Gemini OAuth renewal returned invalid expiry")
 	}
 	for _, field := range []string{"refresh_token", "scope", "token_type", "id_token"} {
 		value, present := returned[field]
@@ -1549,25 +1553,21 @@ func renewGeminiAuthority(ctx context.Context, original []byte, deadline time.Ti
 		}
 		var text string
 		if json.Unmarshal(value, &text) != nil || text == "" || strings.ContainsAny(text, "\x00\r\n") {
-			return result, errors.New("native Gemini OAuth renewal returned invalid native metadata")
+			return nil, 0, errors.New("native Gemini OAuth renewal returned invalid native metadata")
 		}
 		if field == "refresh_token" && !validGeminiGrant(text) ||
 			field == "token_type" && !strings.EqualFold(text, "Bearer") {
-			return result, errors.New("native Gemini OAuth renewal returned unsupported native metadata")
+			return nil, 0, errors.New("native Gemini OAuth renewal returned unsupported native metadata")
 		}
 		document[field] = bytes.Clone(value)
 	}
 	document["access_token"], _ = json.Marshal(nextAccess)
 	document["expiry_date"], _ = json.Marshal(now + seconds*1000)
-	result.Credential, err = json.Marshal(document)
-	if err != nil || len(result.Credential) > 1<<20 {
-		return result, errors.New("native Gemini OAuth renewal serialization failed")
+	credential, err := json.Marshal(document)
+	if err != nil || len(credential) > 1<<20 {
+		return nil, 0, errors.New("native Gemini OAuth renewal serialization failed")
 	}
-	result.Credential = append(result.Credential, '\n')
-	if now+seconds*1000 <= deadline.UnixMilli() {
-		return result, errors.New("native Gemini OAuth renewed; access does not cover the requested deadline")
-	}
-	return result, nil
+	return append(credential, '\n'), now + seconds*1000, nil
 }
 
 func validGeminiGrant(value string) bool {

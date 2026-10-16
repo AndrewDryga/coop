@@ -37,12 +37,14 @@ type accountAuthority struct {
 	Artifacts map[string][]byte `json:"artifacts,omitempty"`
 }
 
-// Adapters provide the complete credential-only inventory and identity validation.
+// Adapters provide the complete credential-only inventory and identity validation, and Complete
+// finishes an interrupted renewal from the provider's kept answer (settleRenewal).
 // An access-only projector is deliberately not an importer of canonical authority.
 type accountAuthoritySpec struct {
 	Provider string
 	Files    map[string]int64
 	Inspect  func(map[string][]byte) (selection, principal string, err error)
+	Complete func(files map[string][]byte, received []byte, at time.Time) (map[string][]byte, error)
 }
 
 type accountDirectoryPin struct {
@@ -337,7 +339,8 @@ func lockAccountAuthority(ctx context.Context, cfg *config.Config, spec accountA
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if err := root.recoverRenewal(lock, current); err != nil {
+	current, err = root.settleRenewal(lock, spec, account, current)
+	if err != nil {
 		_ = lock.Close()
 		root.close()
 		return nil, nil, nil, err
@@ -346,7 +349,7 @@ func lockAccountAuthority(ctx context.Context, cfg *config.Config, spec accountA
 }
 
 // Explicit sign-in/removal may supersede an uncertain rotation. Ordinary readers and
-// renewers must use lockAccountAuthority instead, which refuses pending uncertainty.
+// renewers must use lockAccountAuthority instead, which settles an earlier renewal first.
 func lockAccountAuthorityState(ctx context.Context, cfg *config.Config, spec accountAuthoritySpec, account string) (*accountAuthorityRoot, *os.File, *accountAuthority, error) {
 	root, err := openAccountAuthorityRoot(cfg, spec, account)
 	if err != nil {

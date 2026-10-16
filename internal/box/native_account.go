@@ -29,8 +29,14 @@ func nativeAccountSpec(ag agents.Agent) accountAuthoritySpec {
 			}
 			state, err := native.Inspect(files, time.Now())
 			return state.Selection, state.Principal, err
-		}}
+		},
+		Complete: native.Complete}
 }
+
+// errAccountInterrupted is an account whose first setup or removal stopped before anything was
+// published, while its older logins are still in place: a sign-in (which cuts those logins over and
+// retires them first) or a repeated removal settles it.
+var errAccountInterrupted = errors.New("this account's sign-in or removal was interrupted")
 
 // NativeSignInStage has no existing credentials, repository or user history.
 // The caller retains failed native output for explicit recovery and removes a
@@ -68,9 +74,46 @@ func readNativeAccount(ctx context.Context, cfg *config.Config, ag agents.Agent,
 	defer root.close()
 	defer lock.Close()
 	if record == nil {
-		return nil, true, fmt.Errorf("canonical account initialization is incomplete; preserve %s and restore a verified account backup before retrying", path)
+		// An interrupted first setup leaves only its lock and the temporary files of a publication
+		// that never landed: no account yet, so the next sign-in starts it afresh. Older logins still
+		// in place are the exception, since an interrupted removal leaves the same folder, and
+		// taking them would bring back an account its owner removed.
+		unpublished, err := root.holdsOnlyUnpublished()
+		if err != nil || !unpublished {
+			return nil, true, errors.Join(fmt.Errorf("canonical account initialization is incomplete; preserve %s and restore a verified account backup before retrying", path), err)
+		}
+		sources, err := legacyAccountSources(cfg, ag, account)
+		if err != nil {
+			return nil, true, err
+		}
+		for _, source := range sources {
+			if source.Retire {
+				return nil, true, fmt.Errorf("%w: run coop login, or remove %s account %q again", errAccountInterrupted, ag.Name(), account)
+			}
+		}
+		return nil, false, nil
 	}
 	return record, true, nil
+}
+
+// holdsOnlyUnpublished reports whether the account folder holds nothing but its lock and the
+// temporary files of a publication that never landed.
+func (root *accountAuthorityRoot) holdsOnlyUnpublished() (bool, error) {
+	dir, err := safefile.CloneDir(root.dir())
+	if err != nil {
+		return false, err
+	}
+	defer dir.Close()
+	names, err := dir.Readdirnames(-1)
+	if err != nil {
+		return false, err
+	}
+	for _, name := range names {
+		if name != ".authority.lock" && !strings.HasPrefix(name, ".authority-") {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func nativeAccountReady(cfg *config.Config, ag agents.Agent, account string, now time.Time) (bool, bool) {
@@ -125,12 +168,18 @@ func ImportNativeSignIn(ctx context.Context, cfg *config.Config, provider, accou
 	// A fresh login must not leave an older serving refresh authority behind.
 	// Fence and retain it through the same recoverable cutover before replacing
 	// the canonical epoch. Unsafe legacy inputs leave this sign-in stage intact.
-	if _, _, err := ensureNativeAccount(ctx, cfg, rt, ag, account); err != nil && !errors.Is(err, errAccountRenewalUncertain) {
+	_, _, err = ensureNativeAccount(ctx, cfg, rt, ag, account)
+	if errors.Is(err, errAccountInterrupted) {
+		// A sign-in settles an interrupted setup or removal: the older login is cut over as a first
+		// sign-in's would be, so its grant is retired before the new login replaces it.
+		_, _, err = cutOverLegacyAccount(ctx, cfg.NativeAuthorityConfig(), rt, ag, account)
+	}
+	if err != nil && !errors.Is(err, errAccountRenewalUncertain) {
 		return fmt.Errorf("retire previous account authority before sign-in: %w", err)
 	}
-	// Explicit fresh sign-in may supersede uncertain renewal. The replacement
-	// path revalidates canonical custody and archives the received response;
-	// ordinary readers and automatic renewal still refuse that uncertainty.
+	// Explicit fresh sign-in may supersede a renewal whose kept answer cannot be used. The
+	// replacement path revalidates canonical custody and archives that answer; ordinary readers and
+	// automatic renewal still refuse it.
 	_, _, err = replaceAccountAuthority(ctx, cfg, nativeAccountSpec(ag), account, record)
 	return err
 }

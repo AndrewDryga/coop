@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An interrupted credential renewal no longer locks the account.** When a renewal of an agent's
+  sign-in was cut short by Ctrl-C, a lost connection or a provider error, Coop refused that account
+  until `coop login`. Now it finishes the renewal from the provider's answer when it got one, and
+  otherwise renews again on the next run; a box running at the time still loses access until it
+  restarts. Only an answer that refuses the saved sign-in, or one Coop kept but cannot use, asks for
+  `coop login`. An account or agent home whose first setup was interrupted is set up again instead of
+  asking you to restore a backup.
+
 - **`coop init` no longer edits a `.gitignore` link.** An agent in a box can change files in your
   repository, so it could replace `.gitignore` with a link to a file such as `~/.zshrc`, and the
   next `coop init` added Coop's ignore lines to that file. Now `coop init` stops and says so when

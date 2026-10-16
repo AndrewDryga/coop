@@ -6,11 +6,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 )
 
 func TestNativeAccountSignInRenewalReadinessAndRemoval(t *testing.T) {
@@ -178,4 +181,122 @@ func TestNativeRenewalRecoversMissingAccessDespiteFutureExpiry(t *testing.T) {
 	if err != nil || state.AccessToken != "inert-recovered-access" {
 		t.Fatal("missing recovered access", err)
 	}
+}
+
+// An interrupted first setup leaves only the account folder's lock and the temporary file of a
+// publication that never landed. With no older login in place that is no account yet: a launch
+// reads it as missing and a sign-in starts it afresh. With an older login still in place it may be
+// an interrupted removal, so it refuses rather than bring that login back, and a sign-in still
+// settles it. Anything else in the folder keeps refusing.
+func TestNativeAccountInterruptedFirstSetup(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		legacy bool
+		extra  string
+	}{{name: "empty"}, {name: "older login", legacy: true}, {name: "unknown file", extra: "renewal.json"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir()}
+			ag, _ := agents.Get("codex")
+			root := filepath.Join(cfg.ConfigDir, ag.Name(), "credentials", "work")
+			if err := os.MkdirAll(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{".authority.lock", ".authority-" + strings.Repeat("a", 32), tc.extra} {
+				if name != "" {
+					if err := os.WriteFile(filepath.Join(root, name), []byte("{}"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if tc.legacy {
+				legacy := cfg.AgentProfileDir(ag.Name(), "work")
+				if err := os.MkdirAll(legacy, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(legacy, "auth.json"), []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"inert-old-key"}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			record, exists, err := readNativeAccount(t.Context(), cfg, ag, "work")
+			switch {
+			case tc.extra != "":
+				if err == nil || !exists || errors.Is(err, errAccountInterrupted) {
+					t.Fatalf("a folder holding %s read as %v, exists %v", tc.extra, err, exists)
+				}
+				return
+			case tc.legacy:
+				if !errors.Is(err, errAccountInterrupted) || !exists || record != nil {
+					t.Fatalf("interrupted setup beside an older login = %v, exists %v", err, exists)
+				}
+			default:
+				if err != nil || exists || record != nil {
+					t.Fatalf("interrupted first setup = %+v, exists %v, %v; want no account yet", record, exists, err)
+				}
+			}
+			stage := t.TempDir()
+			if err := os.Chmod(stage, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(stage, "auth.json"), []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"inert-fresh-key"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			// The sign-in fences the older login against containers; this runtime has none.
+			if err := ImportNativeSignIn(t.Context(), cfg, ag.Name(), "work", stage, emptyContainerRuntime(t)); err != nil {
+				t.Fatalf("sign-in after an interrupted setup: %v", err)
+			}
+			record, exists, err = readNativeAccount(t.Context(), cfg, ag, "work")
+			if err != nil || !exists || record == nil || !strings.Contains(string(record.Artifacts["auth.json"]), "inert-fresh-key") {
+				t.Fatalf("account after sign-in = %+v, exists %v, %v", record, exists, err)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".authority-"+strings.Repeat("a", 32))); err != nil {
+				t.Fatal("the unpublished temporary file was deleted")
+			}
+			if _, err := os.Stat(filepath.Join(cfg.AgentProfileDir(ag.Name(), "work"), "auth.json")); tc.legacy && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("sign-in left the older login's grant in place")
+			}
+		})
+	}
+}
+
+// A real adapter completes an answer a renewal kept before it died: the next ordinary read publishes
+// it through the provider's own Complete, without contacting the provider.
+func TestNativeAccountCompletesAKeptAnswerThroughTheAdapter(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	ag, _ := agents.Get("gemini")
+	files := map[string][]byte{
+		"settings.json":        []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`),
+		"google_accounts.json": []byte(`{"active":"inert@example.invalid","old":[]}`),
+		"oauth_creds.json":     []byte(`{"access_token":"inert-old-access","refresh_token":"inert-refresh-grant","expiry_date":1,"token_type":"Bearer"}`),
+	}
+	record, err := normalizeNativeAccount(ag, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := replaceAccountAuthority(t.Context(), cfg, nativeAccountSpec(ag), "work", record); err != nil {
+		t.Fatal(err)
+	}
+	arrived := time.Now().Add(-time.Minute).Truncate(time.Millisecond)
+	pending := writeKeptAnswer(t, cfg.NativeAuthorityConfig(), nativeAccountSpec(ag), `{"access_token":"inert-kept-access","expires_in":3600}`, arrived)
+	current, exists, err := readNativeAccount(t.Context(), cfg, ag, "work")
+	if err != nil || !exists || current.Renewal != pending.ID {
+		t.Fatalf("read after a kept answer = %+v, %v", current, err)
+	}
+	state, err := ag.NativeCredentials().Inspect(current.Artifacts, time.Now())
+	if err != nil || state.AccessToken != "inert-kept-access" || !state.ExpiresAt.Equal(arrived.Add(time.Hour)) {
+		t.Fatalf("completed grant = %+v, %v", state, err)
+	}
+}
+
+// emptyContainerRuntime is a container runtime that lists no containers at all.
+func emptyContainerRuntime(t *testing.T) runtime.Runtime {
+	t.Helper()
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
+		return dockersock.Info{ID: "empty-fixture", OSType: "linux", Architecture: "amd64", ServerVersion: "29", KernelVersion: "fixture", SecurityOptions: []string{}}, nil
+	}))
+	path := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return runtime.Runtime{Name: path}
 }

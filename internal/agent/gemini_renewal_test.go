@@ -23,11 +23,11 @@ func geminiTestAuthority() []byte {
 
 func geminiTestClient(t *testing.T, respond geminiRenewRoundTrip) {
 	t.Helper()
-	original := geminiRenewClient
+	original := nativeRefreshClient
 	clone := *original
 	clone.Transport = respond
-	geminiRenewClient = &clone
-	t.Cleanup(func() { geminiRenewClient = original })
+	nativeRefreshClient = &clone
+	t.Cleanup(func() { nativeRefreshClient = original })
 }
 
 func geminiTestResponse(status int, body string) *http.Response {
@@ -57,15 +57,15 @@ func TestGeminiAuthorityRenewalPreservesRotationBeforeDeadlineError(t *testing.T
 				return geminiTestResponse(200, issued), nil
 			})
 			received := ""
-			result, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Hour), func(data []byte) error {
+			credential, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Hour), func(data []byte) error {
 				received = string(data)
 				return nil
 			})
-			if err == nil || !strings.Contains(err.Error(), "does not cover") || received != issued || len(result.Credential) == 0 || requests != 1 {
-				t.Fatalf("short rotation lost: calls=%d retained=%v credential=%v err=%v", requests, received == issued, len(result.Credential) > 0, err)
+			if err == nil || !strings.Contains(err.Error(), "does not cover") || received != issued || len(credential) == 0 || requests != 1 {
+				t.Fatalf("short rotation lost: calls=%d retained=%v credential=%v err=%v", requests, received == issued, len(credential) > 0, err)
 			}
 			var doc map[string]json.RawMessage
-			if json.Unmarshal(result.Credential, &doc) != nil {
+			if json.Unmarshal(credential, &doc) != nil {
 				t.Fatal("invalid returned authority")
 			}
 			var token, scope, kind string
@@ -96,11 +96,11 @@ func TestGeminiAuthorityRenewalRetainsUnusableIssuedResponse(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			geminiTestClient(t, func(*http.Request) (*http.Response, error) { return geminiTestResponse(200, body), nil })
 			retained := ""
-			result, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Hour), func(data []byte) error {
+			credential, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Hour), func(data []byte) error {
 				retained = string(data)
 				return nil
 			})
-			if err == nil || retained != body || string(result.Received) != body || len(result.Credential) != 0 {
+			if err == nil || retained != body || len(credential) != 0 {
 				t.Fatal("unusable issued response lost or admitted as serving authority")
 			}
 		})
@@ -113,20 +113,22 @@ func TestGeminiAuthorityRenewalCancellationAfterIssuanceKeepsGrant(t *testing.T)
 	geminiTestClient(t, func(*http.Request) (*http.Response, error) {
 		return geminiTestResponse(200, `{"access_token":"inert-new-access","refresh_token":"inert-rotated-refresh","expires_in":3600}`), nil
 	})
-	result, err := renewGeminiAuthority(ctx, geminiTestAuthority(), time.Now().Add(time.Minute), func([]byte) error { cancel(); return nil })
-	if err != nil || len(result.Credential) == 0 || !errors.Is(ctx.Err(), context.Canceled) {
+	credential, err := renewGeminiAuthority(ctx, geminiTestAuthority(), time.Now().Add(time.Minute), func([]byte) error { cancel(); return nil })
+	if err != nil || len(credential) == 0 || !errors.Is(ctx.Err(), context.Canceled) {
 		t.Fatalf("issued rotation discarded after cancel: %v", err)
 	}
 }
 
-func TestGeminiAuthorityRenewalRefusesCustodyFailureAndRedirect(t *testing.T) {
+// A grant that could not be kept is still returned, so publishing keeps it; a redirect is never
+// followed with the grant and issues nothing.
+func TestGeminiAuthorityRenewalPublishesPastCustodyFailureAndRefusesRedirect(t *testing.T) {
 	t.Run("custody", func(t *testing.T) {
 		geminiTestClient(t, func(*http.Request) (*http.Response, error) {
 			return geminiTestResponse(200, `{"access_token":"inert-new-access","expires_in":3600}`), nil
 		})
-		result, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Minute), func([]byte) error { return errors.New("inert denied write") })
-		if err == nil || !strings.Contains(err.Error(), "custody unconfirmed") || len(result.Received) == 0 || len(result.Credential) != 0 {
-			t.Fatal("uncertain issued authority was silently retried or admitted")
+		credential, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Minute), func([]byte) error { return errors.New("inert denied write") })
+		if err != nil || !strings.Contains(string(credential), "inert-new-access") {
+			t.Fatalf("an issued grant was dropped because it could not be kept: %v", err)
 		}
 	})
 	t.Run("redirect", func(t *testing.T) {
@@ -140,8 +142,11 @@ func TestGeminiAuthorityRenewalRefusesCustodyFailureAndRedirect(t *testing.T) {
 			response.Header.Set("Location", "https://other.example.invalid/token")
 			return response, nil
 		})
-		result, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Minute), func([]byte) error { return nil })
-		if err == nil || calls != 1 || len(result.Credential) != 0 {
+		credential, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Minute), func([]byte) error {
+			t.Fatal("a redirect was kept as if it held a grant")
+			return nil
+		})
+		if err == nil || calls != 1 || len(credential) != 0 {
 			t.Fatal("redirect admitted")
 		}
 	})
@@ -153,8 +158,8 @@ func TestGeminiAuthorityRenewalCurrentGrantDoesNotRefresh(t *testing.T) {
 	doc["expiry_date"] = time.Now().Add(time.Hour).UnixMilli()
 	raw, _ := json.Marshal(doc)
 	geminiTestClient(t, func(*http.Request) (*http.Response, error) { t.Fatal("unnecessary native refresh"); return nil, nil })
-	result, err := renewGeminiAuthority(context.Background(), raw, time.Now().Add(time.Minute), nil)
-	if err != nil || string(result.Credential) != string(raw) || len(result.Received) != 0 {
+	credential, err := renewGeminiAuthority(context.Background(), raw, time.Now().Add(time.Minute), nil)
+	if err != nil || string(credential) != string(raw) {
 		t.Fatal("current authority changed")
 	}
 }
@@ -173,11 +178,11 @@ func TestGeminiAuthorityRenewalRetainsReceivedBytesOnReadFailure(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(&geminiBrokenBody{data: []byte(issued)})}, nil
 	})
 	retained := ""
-	result, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Minute), func(data []byte) error {
+	credential, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Minute), func(data []byte) error {
 		retained = string(data)
 		return nil
 	})
-	if err == nil || retained != issued || string(result.Received) != issued || len(result.Credential) != 0 {
+	if err == nil || retained != issued || len(credential) != 0 {
 		t.Fatal("uncertain received rotation was lost or became serving authority")
 	}
 }
@@ -190,13 +195,13 @@ func TestGeminiAuthorityRenewalBoundsUncertainResponseCustody(t *testing.T) {
 			})
 			var retained []byte
 			calls := 0
-			result, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Minute), func(data []byte) error {
+			credential, err := renewGeminiAuthority(context.Background(), geminiTestAuthority(), time.Now().Add(time.Minute), func(data []byte) error {
 				calls++
 				retained = append([]byte(nil), data...)
 				return nil
 			})
 			want := min(size, 1<<20)
-			if err == nil || len(result.Credential) != 0 || len(result.Received) != want || len(retained) != want {
+			if err == nil || len(credential) != 0 || len(retained) != want {
 				t.Fatal("invalid response exceeded recovery bound or became serving authority")
 			}
 			if (size == 0 && calls != 0) || (size != 0 && calls != 1) {
