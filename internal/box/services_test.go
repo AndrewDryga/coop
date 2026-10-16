@@ -36,20 +36,25 @@ func TestAutoUpServices(t *testing.T) {
 		rtName  string
 		reuse   bool
 		review  bool
+		probe   bool
 		want    bool
 	}{
-		{"defaults: on, networked, online, docker", true, true, "open", "docker", false, false, true},
-		{"COOP_AUTO_UP=0 opts out", false, true, "open", "docker", false, false, false},
-		{"no services network (COOP_NETWORK=0)", true, false, "open", "docker", false, false, false},
-		{"offline box (COOP_EGRESS=none)", true, true, "none", "docker", false, false, false},
-		{"Apple container has no compose", true, true, "open", "container", false, false, false},
-		{"read-only retry reuses prepared services", true, true, "open", "docker", true, false, false},
-		{"reviewer inspects worker evidence without starting services", true, true, "open", "docker", false, true, false},
+		{"defaults: on, networked, online, docker", true, true, "open", "docker", false, false, false, true},
+		{"COOP_AUTO_UP=0 opts out", false, true, "open", "docker", false, false, false, false},
+		{"no services network (COOP_NETWORK=0)", true, false, "open", "docker", false, false, false, false},
+		{"offline box (COOP_EGRESS=none)", true, true, "none", "docker", false, false, false, false},
+		{"Apple container has no compose", true, true, "open", "container", false, false, false, false},
+		{"read-only retry reuses prepared services", true, true, "open", "docker", true, false, false, false},
+		{"reviewer inspects worker evidence without starting services", true, true, "open", "docker", false, true, false, false},
+		{"a model probe only lists models", true, true, "open", "docker", false, false, true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := &config.Config{AutoUp: c.autoUp, Egress: c.egress}
 			spec := RunSpec{Network: c.network, ReuseServices: c.reuse, Review: c.review}
+			if c.probe {
+				spec.ActivityRole = forkspace.ExecutionRoleProbe
+			}
 			if got := autoUpServices(cfg, spec, runtime.Runtime{Name: c.rtName}); got != c.want {
 				t.Errorf("autoUpServices = %v, want %v", got, c.want)
 			}

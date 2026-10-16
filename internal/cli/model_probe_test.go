@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -202,3 +203,39 @@ func TestModelProbeRPCFailureNeverCachesPayload(t *testing.T) {
 type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
+
+// A probe removes its boxes either way; only a filtered probe, whose admitted policy may bind
+// services it had to start, removes its own private Compose project too, and only after its boxes
+// are gone: when they could not be removed, the services stay with them. An open probe starts none.
+func TestModelProbeCleanupRemovesAFilteredProbesServices(t *testing.T) {
+	repo := t.TempDir()
+	boxes := "label=" + box.LabelSupervisor + "=probe-supervisor"
+	project := "label=com.docker.compose.project=" + box.ComposeProjectFor(repo, "probe-supervisor")
+	for _, filtered := range []bool{false, true} {
+		calls := filepath.Join(t.TempDir(), "calls")
+		a := &app{cfg: &config.Config{}, rt: recordingRuntime(t, calls), rtSet: true}
+		_ = a.cleanupModelProbe(repo, "probe-supervisor", filtered)
+		got := readFileString(calls)
+		at, servicesAt := strings.Index(got, boxes), strings.Index(got, project)
+		if at < 0 {
+			t.Fatalf("filtered=%v: the probe's boxes were not removed:\n%s", filtered, got)
+		}
+		if (servicesAt >= 0) != filtered || filtered && servicesAt < at {
+			t.Fatalf("filtered=%v: services removed at %d, boxes at %d:\n%s", filtered, servicesAt, at, got)
+		}
+	}
+
+	calls := filepath.Join(t.TempDir(), "calls")
+	shim := filepath.Join(t.TempDir(), "runtime")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(calls) + "\ncase \"$*\" in *" + boxes + "*) exit 1 ;; esac\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{}, rt: runtime.Runtime{Name: shim}, rtSet: true}
+	if err := a.cleanupModelProbe(repo, "probe-supervisor", true); err == nil {
+		t.Fatal("a failed box removal was not reported")
+	}
+	if got := readFileString(calls); strings.Contains(got, project) {
+		t.Fatalf("the services went while a box may still use them:\n%s", got)
+	}
+}

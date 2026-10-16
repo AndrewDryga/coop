@@ -561,11 +561,6 @@ func runCompose(rt runtime.Runtime, stdout, stderr io.Writer, action string, arg
 	return nil
 }
 
-// autoUpServices reports whether box.Run should auto-start sibling services before launching a
-// box: the COOP_AUTO_UP toggle is on (default), the box joins the services network (so it could
-// reach them), it isn't offline (COOP_EGRESS=none, where there's nothing to reach), and the
-// runtime supports compose — Apple `container` does not — and this is not a retry explicitly
-// reusing its already-prepared stack. The caller checks whether a compose file exists.
 // LiveBoxes lists the coop boxes running in repo's project right now, other than except (a box
 // may pass its own execution id). Sibling services start only when this is empty: a running
 // agent can edit the compose file and swap a validated bind source for a link to a host path in
@@ -607,6 +602,14 @@ func DescribeLiveBoxes(live []forkspace.ExecutionObservation) string {
 	return strings.Join(parts, ", ")
 }
 
+// autoUpServices reports whether box.Run should auto-start sibling services before launching a
+// box: the COOP_AUTO_UP toggle is on (default), the box joins the services network (so it could
+// reach them), it isn't offline (COOP_EGRESS=none, where there's nothing to reach), and the
+// runtime supports compose — Apple `container` does not. Not for a retry reusing its
+// already-prepared stack, a reviewer inspecting a worker's evidence, or a model probe, which only
+// asks the agent for its model list and whose private project would outlive it. The caller checks
+// whether a compose file exists.
 func autoUpServices(cfg *config.Config, spec RunSpec, rt runtime.Runtime) bool {
-	return cfg.AutoUp && spec.Network && cfg.Egress == "open" && rt.SupportsCompose() && !spec.ReuseServices && !spec.Review
+	return cfg.AutoUp && spec.Network && cfg.Egress == "open" && rt.SupportsCompose() && !spec.ReuseServices && !spec.Review &&
+		spec.ActivityRole != forkspace.ExecutionRoleProbe
 }

@@ -21,6 +21,12 @@
   written in. Swapping that folder for a named pipe while `coop init` creates a file now stops it
   with an error instead of freezing it.
 
+- **`coop models` no longer leaves your project's services running.** Coop lists an editor agent's
+  models from a short-lived box, and that box also started the project's Compose services, which kept
+  running after it until a later `coop loop`, `coop fork` or `coop build`. A model refresh now starts
+  no services, and one under filtered networking, whose approved rules start the services they name,
+  removes them when it ends.
+
 - **An editor session removes its own services when it ends.** A `coop acp` editor session runs its
   own copy of the project's Compose services, and it left them running after it ended, along with
   the copy from before each reload, until a later `coop loop`, `coop fork` or `coop build` removed

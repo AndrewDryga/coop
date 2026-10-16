@@ -250,16 +250,7 @@ func (a *app) fetchACPModelCatalog(agent string, catalog agents.ModelCatalogSpec
 		}
 	}
 	child.Stop()
-	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
-	_, cleanupErr := a.rt.RemoveByLabel(cleanupCtx, box.LabelSupervisor, superID)
-	cleanupCancel()
-	if cleanupErr == nil {
-		if authorityRepo, _, bindingErr := forkspace.ResolveProjectBinding(repo); bindingErr != nil {
-			cleanupErr = bindingErr
-		} else {
-			cleanupErr = forkspace.RemoveDeadExecutionsBySource(authorityRepo, superID)
-		}
-	}
+	cleanupErr := a.cleanupModelProbe(repo, superID, probe.cfg.Egress == "filtered")
 	// A failed probe reports the cleanup problem too — it may be the reason (errors.Join drops a
 	// nil). A probe that ANSWERED does not: it has a real catalog, and cleanup is coop's own
 	// housekeeping — ACP probes refresh concurrently, so one sweeping the execution
@@ -273,6 +264,35 @@ func (a *app) fetchACPModelCatalog(agent string, catalog agents.ModelCatalogSpec
 		return nil, modelFetchError{cause: titleName(agent) + " returned no usable model catalog.", err: cleanupErr}
 	}
 	return models, nil
+}
+
+// cleanupModelProbe removes what one probe left: the boxes carrying its supervisor id and their
+// execution records, then, for a filtered probe, the private Compose project its admitted policy's
+// service grants started under that id. An open probe starts no services (autoUpServices), and a
+// filtered one cannot launch without the services its policy binds, so it removes them itself
+// rather than leave them running until a later loop, fork or build start sweeps them. The services
+// stay when a box could not be removed, since it may still use them; a failure to remove them
+// only warns, like an editor session's, and never decides whether the refresh worked.
+func (a *app) cleanupModelProbe(repo, superID string, filtered bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
+	_, err := a.rt.RemoveByLabel(ctx, box.LabelSupervisor, superID)
+	cancel()
+	if err != nil {
+		return err
+	}
+	if authorityRepo, _, bindingErr := forkspace.ResolveProjectBinding(repo); bindingErr != nil {
+		err = bindingErr
+	} else {
+		err = forkspace.RemoveDeadExecutionsBySource(authorityRepo, superID)
+	}
+	if filtered && superID != "" && a.rt.SupportsCompose() {
+		ctx, cancel := context.WithTimeout(context.Background(), acpServicesCleanupTimeout)
+		if stopErr := box.StopServicesForOwner(ctx, a.rt, repo, repo, superID, true); stopErr != nil {
+			ui.Warn("could not remove this model refresh's services (Compose project %s): %v", box.ComposeProjectFor(repo, superID), stopErr)
+		}
+		cancel()
+	}
+	return err
 }
 
 // Each catalog has its own account, config and capture: admission mutates the resolved posture,

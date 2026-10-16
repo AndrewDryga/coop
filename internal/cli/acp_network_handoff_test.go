@@ -50,7 +50,7 @@ func TestACPChildrenKeepAdmittedNetworkMode(t *testing.T) {
 				t.Run(shape.name, func(t *testing.T) {
 					root := t.TempDir()
 					recorded, shim := filepath.Join(root, "recorded"), filepath.Join(root, "inner")
-					body := "#!/bin/sh\nprintf 'mode:%s\\n' \"${COOP_EGRESS-UNSET}\" > " + strconv.Quote(recorded) + "\n"
+					body := "#!/bin/sh\nprintf 'role:%s mode:%s\\n' \"${COOP_ACP_ACTIVITY_ROLE-UNSET}\" \"${COOP_EGRESS-UNSET}\" > " + strconv.Quote(recorded) + "\n"
 					if err := os.WriteFile(shim, []byte(body), 0o700); err != nil {
 						t.Fatal(err)
 					}
@@ -75,7 +75,8 @@ func TestACPChildrenKeepAdmittedNetworkMode(t *testing.T) {
 						got = string(data)
 						return err == nil && strings.HasSuffix(got, "\n")
 					})
-					if want := "mode:" + tc.expected + "\n"; got != want {
+					// The role reaches the child: a model probe's box must know it is one (autoUpServices).
+					if want := "role:" + string(shape.role) + " mode:" + tc.expected + "\n"; got != want {
 						t.Fatalf("child received %q, want %q", got, want)
 					}
 				})

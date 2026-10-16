@@ -2,7 +2,7 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/cli/acp_cmd.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go]
+sources: [internal/cli/acp_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go]
 updated: 2026-10-16
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
@@ -87,7 +87,10 @@ under a new supervisor id with a new project. It never removes one while an inne
 supervisor id started still runs (`acpChildGroups`: a process group counts as gone only on the
 kernel's ESRCH), after a box sweep that failed, or for an empty id, the development project.
 `StopServicesForOwner` removes the volumes even when the networks could not go, under the caller's
-budget: once the containers are gone no sweep finds the project again. Coop's own override (`runServiceLabels`; the filtered path's override
+budget: once the containers are gone no sweep finds the project again. A model probe
+(`fetchACPModelCatalog`) starts no services in open mode (`autoUpServices` skips the probe role),
+and a filtered probe, whose admitted grants it must start, removes its own project afterwards
+(`cleanupModelProbe`). Coop's own override (`runServiceLabels`; the filtered path's override
 carries the same block) now gives every service `coop=service` and a `coop.host` label naming the
 process whose exit ends the run, scoped to the workspace that names the project
 (`serviceSupervisor`): the loop itself, or an editor session's supervisor, the parent of the inner
@@ -130,6 +133,7 @@ Traps:
   live session's services and volumes.
 
 ## Changelog
+- 2026-10-16 — model probes start no services in open mode; a filtered probe removes its own project.
 - 2026-10-16 — an editor session removes its own per-run services at exit and on reload, never while one
   of its inner children runs (task 2026-10-16-editor-sessions-remove-their-own-services-when-t).
 - 2026-10-16 — Docker client folders moved from TMPDIR to the private runfiles root; the private-TMPDIR
