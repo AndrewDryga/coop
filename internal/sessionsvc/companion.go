@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
@@ -24,6 +25,76 @@ const (
 	sessionCompanionHistoryBounded = "bounded\n"
 	sessionCompanionHistoryShallow = "shallow\n"
 )
+
+// companionPrepareParallelism bounds how many companion repositories one
+// session creation prepares at once. Each is a full local clone and checkout:
+// one after another, sixteen of them held a session's creation for six minutes
+// on a colima worker before the agent could start (2026-10-15).
+const companionPrepareParallelism = 4
+
+// testCompanionPrepareStarted, when set by a test, runs as each companion's
+// preparation starts, while it holds one of the parallel slots.
+var testCompanionPrepareStarted func(name string)
+
+// ensureSessionCompanionsContext prepares every companion workspace of a
+// session, at most companionPrepareParallelism at a time. It returns the ones
+// it prepared, in the job's order, so a failed creation rolls back exactly
+// those. The first failure stops the rest and is the one returned: a
+// companion stopped part way fails too ("signal: killed"), and naming that
+// would hide the cause.
+func ensureSessionCompanionsContext(
+	parent context.Context, stateRoot, sessionID string, bindings []session.CompanionRepository,
+) ([]session.CompanionRepository, error) {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	prepared := make([]*session.CompanionRepository, len(bindings))
+	slots := make(chan struct{}, companionPrepareParallelism)
+	var (
+		wait  sync.WaitGroup
+		mu    sync.Mutex
+		cause error
+	)
+	for index, binding := range bindings {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+			case <-ctx.Done():
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			if testCompanionPrepareStarted != nil {
+				testCompanionPrepareStarted(binding.Name)
+			}
+			resolved, err := ensureSessionCompanionContext(ctx, stateRoot, sessionID, binding)
+			if err != nil {
+				mu.Lock()
+				if cause == nil {
+					cause = fmt.Errorf("ensure companion %q: %w", binding.Name, err)
+				}
+				mu.Unlock()
+				cancel()
+				return
+			}
+			prepared[index] = &resolved
+		}()
+	}
+	wait.Wait()
+	result := make([]session.CompanionRepository, 0, len(bindings))
+	for _, companion := range prepared {
+		if companion != nil {
+			result = append(result, *companion)
+		}
+	}
+	if err := parent.Err(); err != nil {
+		return result, err
+	}
+	return result, cause
+}
 
 type sessionCompanionGitConfig struct {
 	Key   string

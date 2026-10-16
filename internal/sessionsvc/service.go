@@ -1845,6 +1845,7 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 			selected, base = job.Source.Binding.SelectedCommit, job.Source.Binding.BaseCommit
 			createReq.Source = session.CloneSourceBinding(&job.Source.Binding)
 		}
+		started := time.Now()
 		workspace, err = ensureSessionWorkspaceContext(ctx, s, execution.Repository, intent.ForkName, selected, intent.OwnerStoreID, intent.SessionID)
 		if err != nil {
 			if errors.Is(err, errSessionWorkspacePublicationPending) {
@@ -1854,20 +1855,27 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 			}
 			return failCreate(fmt.Errorf("ensure session workspace: %w", err))
 		}
+		workspaceDone := time.Now()
+		bindings := make([]session.CompanionRepository, 0, len(execution.Companions))
 		for index, companion := range execution.Companions {
 			path, err := sessionCompanionWorkspace(s.store.Root(), intent.SessionID, companion.Name)
 			if err != nil {
 				return failCreate(err)
 			}
-			resolved, err := ensureSessionCompanionContext(ctx, s.store.Root(), intent.SessionID, session.CompanionRepository{
+			bindings = append(bindings, session.CompanionRepository{
 				Name: companion.Name, Repository: companion.Repository, Workspace: path,
 				BaseCommit: job.Companions[index].Source.Binding.SelectedCommit,
 			})
-			if err != nil {
-				return failCreate(fmt.Errorf("ensure companion %q: %w", companion.Name, err))
-			}
-			companions = append(companions, resolved)
 		}
+		companions, err = ensureSessionCompanionsContext(ctx, s.store.Root(), intent.SessionID, bindings)
+		if err != nil {
+			return failCreate(err)
+		}
+		// Where a creation's time went, without names or paths: the controller
+		// only sees the operation running until it is done.
+		s.log.Info("session workspaces prepared", "operation_id", op.ID,
+			"workspace_ms", workspaceDone.Sub(started).Milliseconds(),
+			"companions", len(companions), "companions_ms", time.Since(workspaceDone).Milliseconds())
 		network, err := s.admitControllerJobNetwork(intent.JobDigest, intent.SessionID, execution, workspace.Path, intent.ForkName, companions)
 		if err != nil {
 			return failCreate(&session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()})

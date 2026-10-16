@@ -1846,7 +1846,9 @@ func EnsureAncestors(target string) error {
 		current = filepath.Join(current, part)
 		info, statErr := os.Lstat(current)
 		if errors.Is(statErr, os.ErrNotExist) {
-			if err := os.Mkdir(current, 0o700); err != nil {
+			// Companions are prepared several at once and share their session's parent, so
+			// another may create it between the check and this; it is inspected below either way.
+			if err := os.Mkdir(current, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 				return fmt.Errorf("create session state parent: %w", err)
 			}
 			info, statErr = os.Lstat(current)
