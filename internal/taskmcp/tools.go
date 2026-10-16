@@ -74,7 +74,7 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_complete",
-		description: "Move the task into 99_done/ after required verification passed. Normal implementation needs its task-bound commit. If the task is already satisfied or an investigation reasonably could not reproduce the issue, send outcome plus concrete reason and evidence to close without a fake commit. Human decisions use tasks_block. Before calling, promote any promised logs from tmp/ to artifacts/ and verify their durable paths, not links back into tmp/. Requires a nonempty, fully checked checklist. Refused when another live process holds the task.",
+		description: "Move the task into 99_done/ after required verification passed. Normal implementation needs its task-bound commit. If the task is already satisfied or an investigation reasonably could not reproduce the issue, send outcome plus concrete reason and evidence to close without a fake commit. Human decisions use tasks_block. Before calling, promote any promised logs from tmp/ to artifacts/ and verify their durable paths, not links back into tmp/. Keep evidence in artifacts/, not compiled programs or rebuildable bulk: put those in tmp/ and record a binary's commit, sha256 and build command in log.md. Requires a nonempty, fully checked checklist. Refused when another live process holds the task.",
 		schema: object(map[string]any{
 			"id":       idProp(),
 			"outcome":  enumProp("Omit for normal implementation completion. No-change choices require reason and evidence.", "already_satisfied", "could_not_reproduce", "wont_fix"),

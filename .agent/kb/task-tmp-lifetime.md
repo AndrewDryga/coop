@@ -31,7 +31,8 @@ the box could swap, as every other queue operation does). See
 
 Assigned MCP completion moves and normalizes the folder before the host finalizes it;
 its return does not mean scratch has already vanished. The tool description asks for
-promotion and verified durable paths before the call (links into tmp are not durable).
+promotion and verified durable paths before the call (links into tmp are not durable), and for
+keeping programs and rebuildable bulk out of artifacts/.
 All successful/already-done replies remind the agent of host cleanup and require an
 honest handoff: verified durable artifacts or an explicit unretained-log limitation.
 This feedback does not inspect artifacts or attest that a check ran. A native agent

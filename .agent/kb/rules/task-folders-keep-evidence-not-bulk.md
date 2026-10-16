@@ -2,7 +2,7 @@
 name: task-folders-keep-evidence-not-bulk
 description: "a task folder keeps evidence, never rebuildable bulk (record commit, sha256 and build command); scratch goes in tmp/; only the layout sits at the queue root"
 scope: agent-workflow
-sources: [internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/loop/loop.go, internal/taskmcp/tools.go, internal/scaffold/templates/agent/tasks/README.md, .agent/tasks/README.md]
+sources: [internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/loop/loop.go, internal/loop/prompts.go, internal/taskmcp/tools.go, internal/scaffold/templates/agent/tasks/README.md, .agent/tasks/README.md]
 check: "go test ./internal/tasks -run 'TestDoneWarnsAboutRebuildableBulk|TestTaskBulkWarningSkipsScratch|TestTaskBulkWarningStopsAtItsLimits|TestListWarnsAboutQueueRootStrays'"
 updated: 2026-10-16
 ---
@@ -46,6 +46,8 @@ agents did, and `coop tasks done` only ever removed `tmp/`.
   `coop tasks rm` and a person's call.
 
 ## Changelog
+- 2026-10-16 — the loop prompt and the `tasks_complete` description now state the rule before completion
+  (programs and rebuildable bulk go in tmp/; a binary is recorded by commit, sha256 and build command).
 - 2026-10-16 — the loop's finalize step and the in-box `tasks_complete` result warn too: they are
   how unattended agents finish tasks, so done alone missed most bulk. `tmp/` stopped counting,
   because assigned in-box completion measures before the host removes it: coop's queue has four

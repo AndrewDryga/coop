@@ -150,7 +150,8 @@
   and an agent that completes its task in the loop is told the same. `coop tasks` warns about any
   file or folder in `.agent/tasks` besides its README, state folders and backlog. Hidden files are
   left alone, and neither warning deletes anything or stops the command. A new project's tasks
-  README says what to keep instead: the commit, sha256 and build command.
+  README and the loop's instructions to agents say what to keep instead: the commit, sha256 and
+  build command.
 
 - **Box images check asdf before installing it.** Coop's box images download asdf, the tool that
   installs the versions in a project's `.tool-versions`. A build now compares that download with the

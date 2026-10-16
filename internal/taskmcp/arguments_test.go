@@ -58,7 +58,10 @@ func TestTaskArgumentSchemasDescribeRuntimeBoundsAndExamples(t *testing.T) {
 		}
 		switch name {
 		case "tasks_complete":
-			for _, want := range []string{"promote any promised logs", "verify their durable paths", "not links back into tmp/"} {
+			for _, want := range []string{
+				"promote any promised logs", "verify their durable paths", "not links back into tmp/",
+				"Keep evidence in artifacts/, not compiled programs or rebuildable bulk", "put those in tmp/", "record a binary's commit, sha256 and build command in log.md",
+			} {
 				if !strings.Contains(descriptor["description"].(string), want) {
 					t.Fatalf("completion descriptor lacks %q", want)
 				}
