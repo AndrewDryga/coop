@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 type releaseWorkflow struct {

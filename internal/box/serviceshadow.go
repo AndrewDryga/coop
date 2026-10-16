@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // serviceShadowOverride extends the primary box's secret shadowing to sibling services. A

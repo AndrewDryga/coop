@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/runtime"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Approval never widens an isolated boundary. Inspect every referenced volume on the

@@ -2,7 +2,7 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/Dockerfile, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
+sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
 updated: 2026-10-16
 ---
 
@@ -202,13 +202,31 @@ launches, kept both containers and both volumes until 2026-09-18. `coop net setu
 the exact path a workload gets, and it can never appear on a `RunSpec` a caller builds.
 
 The image is built from an embedded source tar plus a pinned Dockerfile, with no host compiler and
-no repository build context (`Context` in `gatewayimage/image.go`). After ANY change to `cmd/coop-net`,
-`internal/egress`, `internal/networkgateway`, `internal/networkview`, `internal/safefile`,
-root `go.mod`, `go.sum` or `LICENSE`, run
-`go generate ./internal/gatewayimage` — the canonical test compares every embedded byte against the
-checkout. Makefile's early `gateway-sources-check` refuses stale bytes without regenerating during
-qualification, so a stale tar is a red gate, and a filtered launch only ever runs the exact image pair a
-[[restricted-networking]] qualification names.
+no repository build context (`Context` in `gatewayimage/image.go`). `gatewayimage.Pack` defines the
+tar and `tools/gennetimage` writes it: the non-test Go files of `sourceDirs` (`cmd/coop-net`,
+`internal/egress`, `internal/networkgateway`, `internal/networkview`, `internal/safefile`), `LICENSE`,
+and the gateway's OWN go.mod and go.sum, which name only `sourceModules` (`go.yaml.in/yaml/v3`,
+`golang.org/x/net`, `golang.org/x/sys`) at the root's versions. A bump that leaves those three alone
+leaves the tar, `Fingerprint()` and every user's network setup alone, but most other bumps
+(x/crypto, the sqlite modules) also raise x/sys and so still move it; until 2026-10-16 the whole
+root go.mod/go.sum rode along and every Dependabot PR failed the freshness test. After a change to those
+packages, `LICENSE`, the root `go` line or a gateway module's version, run
+`go generate ./internal/gatewayimage` — the canonical test compares the embedded tar with a fresh
+`Pack` and names the files that drifted. Makefile's early `gateway-sources-check` refuses stale bytes
+without regenerating during qualification, so a stale tar is a red gate, and a filtered launch only
+ever runs the exact image pair a [[restricted-networking]] qualification names.
+
+Traps: the gateway go.mod drops the root `toolchain` line on purpose (the golang image sets
+`GOTOOLCHAIN=local`, so its pinned Go builds the gateway), and `Pack` refuses any other directive
+(replace, exclude, godebug, tool) until someone decides whether coop-net needs it. When coop-net
+starts loading a package from another module, `TestEmbeddedGatewayModuleLoadsOnItsOwn`
+(`go list -deps -mod=readonly` for Linux on the extracted tar) fails until that module joins
+`sourceModules`. The YAML module's own go.mod says `go 1.16`, so if it ever gains a requirement the
+build needs that module's `/go.mod` sum, which `Pack` cannot carry and `sourceModules` cannot name
+(the root does not require it): that failure means revisiting `Pack`, not the list. The pinned
+golang image must be at least the packed `go` line (`TestGatewayRecipeBuildsThePackedGoVersion`).
+The generator compiles `gatewayimage`, so `source.tar` must exist: restore a deleted one from git
+before regenerating.
 
 The Dockerfile is embedded on its own, not in the tar: editing it leaves `source.tar` byte-identical
 but still moves `Fingerprint()` (recipe plus tar), so every host sets up networking again. Its first
@@ -255,6 +273,11 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-16 — the tar carries its own go.mod and go.sum, narrowed to coop-net's three modules, and
+  `Pack` moved into gatewayimage so the source-dir list lives once instead of three times. Verified:
+  a real golang.org/x/text bump keeps `gateway-sources-check` green while an x/crypto bump that pulls
+  x/sys turns it red; the narrowed module builds a byte-identical linux/amd64 coop-net offline with
+  `-mod=readonly`; removing any of its six go.sum lines or the x/sys requirement fails the load.
 - 2026-10-16 — the network setup's Go base now comes from this recipe (`GoBase()` reads its
   build stage) instead of the box image's removed Go tools stage; verified against
   `gatewayimage/Dockerfile`, `image.go` and `verifyNetworkCandidate`.

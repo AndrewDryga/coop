@@ -18,7 +18,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ServiceStateRootEnv overrides where coop keeps the host-owned state behind sibling services —

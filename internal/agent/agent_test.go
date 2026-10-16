@@ -20,7 +20,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/pelletier/go-toml/v2"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // hasModelFlag reports whether a test command selects a model before its argument separator.

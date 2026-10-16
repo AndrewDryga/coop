@@ -31,8 +31,8 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"go.yaml.in/yaml/v3"
 	"golang.org/x/sys/unix"
-	"gopkg.in/yaml.v3"
 )
 
 // File is the repo-relative path of the project config.

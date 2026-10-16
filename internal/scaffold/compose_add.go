@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Adding a service to a project that already has one. This is an EDIT, not a rewrite: the file

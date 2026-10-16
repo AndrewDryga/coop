@@ -18,8 +18,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"go.yaml.in/yaml/v3"
 	"golang.org/x/net/publicsuffix"
-	"gopkg.in/yaml.v3"
 )
 
 const (

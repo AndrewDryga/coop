@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/runtime"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func validServiceImagePins(images map[string]string) bool {

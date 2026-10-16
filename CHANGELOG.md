@@ -65,6 +65,11 @@
   the same versions from a dated snapshot of the archive on `snapshot.ubuntu.com`, which never
   changes.
 
+- **Fewer upgrades ask you to run `coop net setup` again.** The network gateway image changed
+  whenever Coop updated any library it uses, and a changed gateway image needs a new network setup.
+  The gateway now builds from only the libraries it needs itself, so a release that leaves those
+  libraries alone keeps your network setup.
+
 - **`coop tasks watch --json` no longer reports `starting` for forks.** A background fork loop
   counts as running from the moment `coop fork <name> -d` returns, so the field, which was true
   only while a start was in progress, is gone, and so is the board's `starting` state. An

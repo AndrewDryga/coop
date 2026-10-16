@@ -20,7 +20,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/safefile"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Dir is the repo-relative home of presets: .agent/presets/<name>/preset.yaml.

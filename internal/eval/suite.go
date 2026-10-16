@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // SupportedVersion is the only suite manifest version v1 reads. A later, incompatible schema bumps
@@ -70,7 +70,7 @@ type Case struct {
 	Verifier string `yaml:"verifier"`
 
 	// Agent-case fields.
-	// Quote multiline text: yaml.v3 block scalars can lose leading newlines when frozen.
+	// Quote multiline text: yaml.v3 block scalars can misalign its indentation when frozen.
 	Instruction string       `yaml:"instruction,flow"` // the task text the model is given
 	Files       string       `yaml:"files"`            // an initial file tree the workspace starts from (optional)
 	Runtime     *CaseRuntime `yaml:"runtime,omitempty"`

@@ -3,7 +3,7 @@ name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
 sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_runtime_profile.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/compare.go, internal/eval/execute.go, internal/eval/fixtures.go, internal/eval/suite.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/runtime_profile.go, internal/eval/stage_profile.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go, examples/evals/maintenance/suite.yaml, examples/evals/maintenance/qualification.sh, examples/evals/maintenance/runtime-qualification.sh]
-updated: 2026-10-09
+updated: 2026-10-16
 ---
 
 `coop eval` measures configurations against each other, so its whole value rests on two trials
@@ -20,8 +20,8 @@ the map, and the reasoning behind the one place the obvious fix is wrong.
   Every trial uses those retained bytes, not a live suite source (`internal/eval/stage.go`,
   `internal/eval/stage_copy.go`, `internal/cli/eval_cmd.go`).
   The instruction field uses YAML flow style to quote multiline text. yaml.v3 block scalars
-  can misalign indentation or drop a leading newline during encoding. Frozen instruction
-  bytes stay unchanged; trimming them is not a fix.
+  can misalign indentation during encoding (go.yaml.in/yaml/v3 v3.0.5 fixed the dropped leading
+  newline, not that). Frozen instruction bytes stay unchanged; trimming them is not a fix.
 - **Workspace** — `eval.PrepareWorkspace` copies a frozen case input into a private tree with a
   synthetic initial commit and no `.git` from the source, so no author history travels
   (`internal/eval/workspace.go`). Git uses a fresh HOME/XDG, so the operator's global ignore file
@@ -160,6 +160,8 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-10-16 — the YAML module moved to go.yaml.in/yaml/v3 v3.0.5, which keeps a leading newline in
+  a block scalar; the instruction field stays flow style for the indentation half.
 - 2026-10-09 — replaced the old shared writable credential-home map with complete trial-local homes
   and one canonical host authority; inspected actual candidate/grader launch paths and fixtures.
 - 2026-10-01 — actual query-optimize preparation exposed the pinned YAML block emitter's
