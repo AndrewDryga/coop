@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -217,11 +218,40 @@ func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCre
 			}
 			return files, nil
 		}
+		// A first seed cut short after its receipt left some of its own files unwritten: check a
+		// seed against the home as if those were in place, since any file that is present must
+		// still be the seed's own.
+		checkSeed := func(files map[string][]byte, seed agents.NativeBrokerSeed) error {
+			filled := maps.Clone(files)
+			if _, err := withMissingSeedFiles(filled, seed.Files); err != nil {
+				return err
+			}
+			return native.Broker.Check(filled, seed)
+		}
 		files, err := readFiles()
 		if err != nil {
 			return err
 		}
 		if want.Family == seed.Family {
+			missing, err := withMissingSeedFiles(files, seed.Files)
+			if err != nil {
+				return err
+			}
+			if err := native.Broker.Check(files, *seed); err != nil {
+				return err
+			}
+			for _, name := range missing {
+				if err := publishMissingNativeAuth(custody, lock, root, name, seed.Files[name]); err != nil {
+					return err
+				}
+			}
+			if len(missing) == 0 {
+				return nil
+			}
+			files, err = readFiles()
+			if err != nil {
+				return err
+			}
 			return native.Broker.Check(files, *seed)
 		}
 		previous, err := native.Broker.Seed(want.Family)
@@ -229,26 +259,18 @@ func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCre
 			return err
 		}
 		previous.StorageHostname, previous.StorageUsername = want.Hostname, want.Username
-		if err := native.Broker.Check(files, previous); err != nil {
+		if err := checkSeed(files, previous); err != nil {
 			return err
 		}
 		// Only add missing public selectors. Native settings and unexpected grants
 		// are preserved; a host account change is not permission to replace them.
-		var missing []string
-		for name, data := range seed.Files {
-			if _, exists := files[name]; exists {
-				continue
-			}
-			if !accountNameValid(name) {
-				return errors.New("invalid native seed filename")
-			}
-			files[name] = data
-			missing = append(missing, name)
+		missing, err := withMissingSeedFiles(files, seed.Files)
+		if err != nil {
+			return err
 		}
 		if err := native.Broker.Check(files, *seed); err != nil {
 			return err
 		}
-		slices.Sort(missing)
 		for _, name := range missing {
 			if err := publishMissingNativeAuth(custody, lock, root, name, seed.Files[name]); err != nil {
 				return err
@@ -258,7 +280,7 @@ func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCre
 		if err != nil {
 			return err
 		}
-		if err := native.Broker.Check(files, previous); err != nil {
+		if err := checkSeed(files, previous); err != nil {
 			return err
 		}
 		if err := native.Broker.Check(files, *seed); err != nil {
@@ -311,7 +333,7 @@ func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCre
 			}
 			if len(prior) > 0 {
 				var old, new map[string]any
-				if json.Unmarshal(prior, &old) != nil || json.Unmarshal(data, &new) != nil {
+				if json.Unmarshal(prior, &old) != nil || json.Unmarshal(data, &new) != nil || old == nil || new == nil {
 					return errors.New("invalid native settings seed")
 				}
 				mergeNativeSeed(old, new)
@@ -332,20 +354,53 @@ func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCre
 	if err := native.Broker.Check(prepared, *seed); err != nil {
 		return err
 	}
+	// Merged settings first, then the receipt, then the other files. A seed cut short before the
+	// receipt leaves only merged settings, which a retry merges again (merging is idempotent); one
+	// cut short after it is finished by the receipt path above. Files written before the receipt
+	// would look planted to every later launch, which would then refuse the home.
+	merged := func(name string) bool { return slices.Contains(native.Broker.MergeJSON, name) }
 	for _, name := range names {
-		if err := config.WriteFileAtomicMode(filepath.Join(home, name), prepared[name], 0600); err != nil {
-			return err
+		if merged(name) {
+			if err := config.WriteFileAtomicMode(filepath.Join(home, name), prepared[name], 0600); err != nil {
+				return err
+			}
 		}
 	}
 	if err := custody.checkLock(lock); err != nil {
 		return err
 	}
-	seed.StorageHostname, seed.StorageUsername = want.Hostname, want.Username
 	data, err := json.Marshal(want)
 	if err != nil {
 		return err
 	}
-	return writeAccountPrivate(custody, lock, "seed.json", data)
+	if err := writeAccountPrivate(custody, lock, "seed.json", data); err != nil {
+		return err
+	}
+	for _, name := range names {
+		if !merged(name) {
+			if err := config.WriteFileAtomicMode(filepath.Join(home, name), prepared[name], 0600); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// withMissingSeedFiles adds to files the seed files it lacks and returns their names, sorted.
+func withMissingSeedFiles(files, seed map[string][]byte) ([]string, error) {
+	var missing []string
+	for name, data := range seed {
+		if _, exists := files[name]; exists {
+			continue
+		}
+		if !accountNameValid(name) {
+			return nil, errors.New("invalid native seed filename")
+		}
+		files[name] = data
+		missing = append(missing, name)
+	}
+	slices.Sort(missing)
+	return missing, nil
 }
 
 func publishMissingNativeAuth(custody *accountAuthorityRoot, lock, home *os.File, name string, data []byte) (result error) {

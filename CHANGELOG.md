@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An interrupted first launch no longer leaves an agent home refusing every launch.** Coop wrote
+  an account's sign-in markers into its agent home before noting that it had, so a launch cut short
+  in between made every later launch refuse the home as holding unmanaged credentials. Coop now notes
+  the setup first and finishes it at the next launch, and puts back a marker missing from the home.
+
 - **`coop usage` says partial when it cannot list some history.** An account or history folder
   Coop could not list, such as one without read permission, dropped out of the totals without a
   word. Now that provider's usage says it is partial and names the folder it could not list, and

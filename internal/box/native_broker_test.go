@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -333,4 +334,120 @@ func TestNativeRunRejectsCanonicalRollbackAndSameRevisionMutation(t *testing.T) 
 			}
 		})
 	}
+}
+
+// A first seed writes merged settings, then its receipt, then its markers, so a seed cut short at
+// either point is finished by the next launch, while markers that appear without a receipt (planted
+// in the home) are still refused.
+func TestNativeAuthFirstSeedRecoversFromAnInterruption(t *testing.T) {
+	ag, _ := agents.Get("claude")
+	native := ag.NativeCredentials()
+	// prepareNativeAuth fills in a seed's storage identity, so every call gets its own copy.
+	seedHome := func(t *testing.T) (string, agents.NativeBrokerSeed) {
+		t.Helper()
+		home := filepath.Join(t.TempDir(), "home")
+		if err := os.Mkdir(home, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		seed, err := native.Broker.Seed("claude-oauth")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return home, seed
+	}
+	for _, tc := range []struct {
+		name   string
+		remove []string // relative to the home's parent
+	}{
+		{"after the receipt", []string{"home/.credentials.json"}},
+		{"before the receipt", []string{"home/.credentials.json", "auth/seed.json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, pristine := seedHome(t)
+			seed := pristine
+			if err := prepareNativeAuth(t.Context(), home, native, &seed); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range tc.remove {
+				if err := os.Remove(filepath.Join(filepath.Dir(home), name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			again := pristine
+			if err := prepareNativeAuth(t.Context(), home, native, &again); err != nil {
+				t.Fatalf("launch after a seed cut short %s: %v", tc.name, err)
+			}
+			if !bytes.Contains(mustReadFile(t, filepath.Join(home, ".credentials.json")), []byte(again.Marker)) {
+				t.Fatal("the missing selector was not written")
+			}
+		})
+	}
+	t.Run("after the receipt, then a family change", func(t *testing.T) {
+		home, pristine := seedHome(t)
+		seed := pristine
+		if err := prepareNativeAuth(t.Context(), home, native, &seed); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(filepath.Join(home, ".credentials.json")); err != nil {
+			t.Fatal(err)
+		}
+		apikey, err := native.Broker.Seed("apikey")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := prepareNativeAuth(t.Context(), home, native, &apikey); err != nil {
+			t.Fatalf("family change after a seed cut short: %v", err)
+		}
+	})
+	t.Run("the receipt comes before the markers", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root writes into a read-only directory")
+		}
+		home, pristine := seedHome(t)
+		auth := filepath.Join(filepath.Dir(home), "auth")
+		if err := os.Mkdir(auth, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(auth, ".authority.lock"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(auth, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(auth, 0o700) })
+		seed := pristine
+		if err := prepareNativeAuth(t.Context(), home, native, &seed); err == nil {
+			t.Fatal("the seed succeeded without writing its receipt")
+		}
+		if _, err := os.Stat(filepath.Join(home, ".credentials.json")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("a marker was written before the receipt, so the next launch would refuse the home")
+		}
+	})
+	t.Run("null settings", func(t *testing.T) {
+		home, pristine := seedHome(t)
+		if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte("null"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		seed := pristine
+		if err := prepareNativeAuth(t.Context(), home, native, &seed); err == nil {
+			t.Fatal("null settings were merged")
+		}
+	})
+	t.Run("planted", func(t *testing.T) {
+		home, pristine := seedHome(t)
+		planted := []byte(`{"claudeAiOauth":{"accessToken":"inert-planted-access","refreshToken":"inert-planted-refresh"}}`)
+		if err := os.WriteFile(filepath.Join(home, ".credentials.json"), planted, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		seed := pristine
+		if err := prepareNativeAuth(t.Context(), home, native, &seed); err == nil {
+			t.Fatal("a grant planted in a home without a receipt was blessed")
+		}
+		if !bytes.Equal(mustReadFile(t, filepath.Join(home, ".credentials.json")), planted) {
+			t.Fatal("the refused seed changed the planted file")
+		}
+		if _, err := os.Stat(filepath.Join(filepath.Dir(home), "auth", "seed.json")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("a refused seed wrote its receipt")
+		}
+	})
 }
