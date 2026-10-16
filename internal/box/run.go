@@ -49,6 +49,7 @@ const (
 	LabelForkWorker     = "coop.fork-worker"     // detached loop only; foreground/ACP boxes are never stopped with it
 	LabelRun            = "coop.run"             // value=<loop run id>, so cancellation reaps the daemon-owned box
 	LabelExecution      = "coop.execution"       // exact host activity record; runtime cleanup never guesses by kind/name
+	LabelNetworkRun     = "coop.network.run"     // a filtered run's gateway containers and volumes: value=<network run id>
 	// LabelHost records the HOST PROCESS supervising this box, as
 	// v1:<workspace-scope>:<pid>:<start-token> — the versioned form parseSupervisorLabel reads
 	// back. Every other label above names a LOGICAL owner (a run, a supervisor id, a fork); none of

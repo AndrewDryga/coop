@@ -2,8 +2,8 @@
 name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
-sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/lifecycle_bench.py, tools/test_lifecycle_bench.py]
-updated: 2026-10-15
+sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/lifecyclebench/cases.go, tools/lifecyclebench/cases_test.go]
+updated: 2026-10-16
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -90,16 +90,19 @@ the capture (`TestSessionServiceLogsSanitizedOperationFailureWithCorrelationID`)
 alone would still permit an empty-log assertion. Keep correlation and redaction assertions intact.
 
 The lifecycle benchmark's timeout-cleanup fixtures publish readiness only after their PID,
-sample label and printed network identity exist. Their injected launch waits for that marker
-before the unchanged 0.5 s case timeout starts. A controlled 0.75 s startup delay reproduces the
-old empty-cleanup failure and passes with the handshake; production cleanup and timeouts stay
-unchanged. A readiness failure still reaps the fixture process.
+sample label and printed network identity exist. Their injected launch (the bench's `start`) waits
+for that marker before the unchanged 0.5 s case timeout starts. A controlled 0.75 s startup delay
+reproduces the old empty-cleanup failure and passes with the handshake; production cleanup and
+timeouts stay unchanged. A readiness failure still reaps the fixture process.
 
 A filesystem readiness marker does not mean the host consumed queued terminal output. Drain
 already-readable PTY bytes before sending terminal Ctrl-C: the signal flushes unread bytes, which
-may contain the only printed network-run identity. A controlled unread-output schedule preserves
-the real signal and exact leaked-gateway refusal/own-only cleanup assertions; no delay or relaxed
-ownership rule is needed.
+may contain the only printed network-run identity. `TestInterruptReadsWhatTheTerminalHoldsFirst`
+proves it on a real terminal with no timing at all: the identity is written, the bench's side is
+seen readable, Ctrl-C is typed, and the check waits for the terminal's `^C` echo, which follows its
+flush. On macOS, whose Ctrl-C discards output the bench has not read, it fails every run without
+the drain. Linux discards only output still on its way to the bench's side (by reading its tty
+code, not a run), so there the test passes either way.
 
 **Marker existence is not complete content.** Shell redirection creates a PGID marker before
 `printf` writes the bytes. Write a private sibling and rename it only after completion so the
@@ -109,6 +112,9 @@ exact PGID. Report joined helper output on failure and reap its resident group o
 path. The editor-stdin and stable-leader assertions remain unchanged.
 
 ## Changelog
+- 2026-10-16 — the lifecycle bench and its fixtures are Go (tools/lifecyclebench); the readiness
+  handshake is the bench's start seam, and the queued-terminal-output check uses a real PTY and the
+  `^C` echo instead of a patched select (task 2026-10-15-port-the-lifecycle-and-services-benchmarks-to-go).
 - 2026-10-15 — dropped internal/acpctl/process_live_test.go from sources (the live process registry was removed).
 - 2026-10-14 — runtime audit replaced ambient skip/path failure/invalid-request controls with
   hermetic selection, real clock health and valid lease/foreign-identity positives. TERM children

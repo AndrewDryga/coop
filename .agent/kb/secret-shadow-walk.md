@@ -2,8 +2,8 @@
 name: secret-shadow-walk
 description: every launch walks the whole checkout, gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs
 subsystem: box
-sources: [internal/box/mounts.go, internal/shadowpath/shadowpath.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, tools/lifecycle_bench.py]
-updated: 2026-10-06
+sources: [internal/box/mounts.go, internal/shadowpath/shadowpath.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, tools/lifecyclebench]
+updated: 2026-10-16
 ---
 
 `box.ComputeMounts` runs on every launch (`run.go`, and `restricted.go` for read-only and bare
@@ -46,3 +46,5 @@ and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 ## Changelog
 - 2026-10-04 — created with the decider memo and lstat precheck (task 2026-10-04-find-why-a-warm-start-takes-8-s-in-a-checkout-wi).
 - 2026-10-06 — the remaining cost was glob matching, not directory reads: globSet and policy chains (same task).
+- 2026-10-16 — `make lifecycle-bench` runs the Go port, tools/lifecyclebench (task
+  2026-10-15-port-the-lifecycle-and-services-benchmarks-to-go); nothing else was rechecked.

@@ -81,11 +81,6 @@ shellcheck: ## ShellCheck every tracked .sh: the installer, both sweep queue gua
 # every starter's verifier, is ours and is checked.
 	@git ls-files -z '*.sh' | grep -zv '^internal/eval/starters/[^/]*/files/' | xargs -0 shellcheck
 
-# Guard for the python-backed targets: name the fix instead of leaving make to print a bare
-# "python3: No such file or directory". No ## — it's a prerequisite, not something you run.
-require-python3:
-	@command -v python3 >/dev/null 2>&1 || { echo "python3 is not installed — run: brew install python3 (macOS) or apt-get install -y python3 (Debian)"; exit 1; }
-
 require-git-lfs:
 	@command -v git-lfs >/dev/null 2>&1 || { echo "git-lfs is not installed — run: brew install git-lfs (macOS) or apt-get install -y git-lfs (Debian)"; exit 1; }
 
@@ -107,21 +102,18 @@ docs-check: ## Fail if the generated docs or site pages drifted (run 'make docs'
 align: ## Check trailing-# comment alignment in README + site + CLI docs (run 'go run ./tools/aligncomments -write' to fix)
 	@go run ./tools/aligncomments -check
 
-# The benches' own tests run with the benches (bench-tools-test), not in the gate: the gate never
-# runs a bench.
-BENCH_TOOL_TESTS := test_lifecycle_bench.py test_services_bench.py
-bench-tools-test: require-python3 ## Test the lifecycle and services benches (each bench runs this first)
-	@for t in $(BENCH_TOOL_TESTS); do python3 -m unittest discover -s tools -p "$$t" || exit 1; done
+bench-tools-test: ## Test the lifecycle and services benches (each bench runs this first)
+	@go test -count=1 ./tools/lifecyclebench ./tools/servicesbench
 
 # Deliberately OUT of `check`: the benches launch real boxes, so they need a container runtime and
 # take minutes, and their numbers are a measurement to compare against — not a threshold to fail on.
 # A wall-clock assertion in the gate fails on a busy laptop and says nothing about the change.
-lifecycle-bench: require-python3 build bench-tools-test ## Measure real box start/stop latency (needs a runtime; writes samples + a report)
-	@python3 tools/lifecycle_bench.py --coop ./coop --repo $(or $(WORKSPACE),$(CURDIR)) \
+lifecycle-bench: build bench-tools-test ## Measure real box start/stop latency (needs a runtime; writes samples + a report)
+	@go run ./tools/lifecyclebench --coop ./coop --repo $(or $(WORKSPACE),$(CURDIR)) \
 	  --out $(or $(OUT),$(shell mktemp -d)/coop-lifecycle-bench) $(BENCH_ARGS)
 
-services-bench: require-services-workspace require-python3 build bench-tools-test ## Measure a warm start beside Compose services (needs a runtime; WORKSPACE=<project with approved services>)
-	@python3 tools/services_bench.py --coop ./coop --repo $(WORKSPACE) \
+services-bench: require-services-workspace build bench-tools-test ## Measure a warm start beside Compose services (needs a runtime; WORKSPACE=<project with approved services>)
+	@go run ./tools/servicesbench --coop ./coop --repo $(WORKSPACE) \
 	  --out $(or $(OUT),$(shell mktemp -d)/coop-services-bench) $(BENCH_ARGS)
 
 require-services-workspace:
@@ -214,10 +206,10 @@ check-race: race ## Free race-detector tests
 # Explicit reviewed owners, not an automatic changed-file router. The import-closure test
 # includes tagged/test/root/tool consumers; shared foundations/build inputs still need check.
 # LOCAL_* package lists are guarded by TestLocalCheckScopesCoverReverseConsumers.
-LOCAL_agent := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/agent ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/consult ./internal/forkctl ./internal/ladder ./internal/loop ./internal/loopcfg ./internal/preset ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs
-LOCAL_runtime := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/gatewayimage ./internal/loop ./internal/runtime ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./internal/testutil/nativedocker ./tools/gendocs ./tools/gennetimage
+LOCAL_agent := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/agent ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/consult ./internal/forkctl ./internal/ladder ./internal/loop ./internal/loopcfg ./internal/preset ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/lifecyclebench
+LOCAL_runtime := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/gatewayimage ./internal/loop ./internal/runtime ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./internal/testutil/nativedocker ./tools/gendocs ./tools/gennetimage ./tools/lifecyclebench
 LOCAL_sessions := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/session ./internal/sessionsvc ./internal/workerconnector ./internal/workerproto ./tools/gendocs ./internal/box/testdata/mcpprobe
-LOCAL_tasks := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/loop ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs
+LOCAL_tasks := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/loop ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/lifecyclebench
 LOCAL_connector := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/sessionsvc ./internal/workerconnector ./tools/gendocs ./internal/box/testdata/mcpprobe
 LOCAL_cli := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./tools/gendocs ./internal/box/testdata/mcpprobe
 
@@ -341,7 +333,7 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
+.PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: check-local bench-tools-test services-bench require-services-workspace
 .PHONY: check-static check-unit check-process check-race

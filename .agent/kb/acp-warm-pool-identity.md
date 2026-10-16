@@ -2,8 +2,8 @@
 name: acp-warm-pool-identity
 description: coop acp parks one box per signed-in provider the session is not using and lends it to a switch only on an identical identity — plain target at the default model/effort, same account, box image and network policy; prove a hit from the trace, never from timing
 subsystem: acp
-sources: [internal/acpctl/warm.go, internal/cli/acp_refresh.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, internal/box/derived_image.go, tools/lifecycle_bench.py]
-updated: 2026-10-15
+sources: [internal/acpctl/warm.go, internal/cli/acp_refresh.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, internal/box/derived_image.go, tools/lifecyclebench/acp.go]
+updated: 2026-10-16
 ---
 `coop acp` keeps a parked box (`acpctl.WarmPool`) for each signed-in provider the session is not
 using. After every factory spawn — the first one included, which is what fans the pool out —
@@ -55,7 +55,7 @@ only a LATER request needs must not run beside the one an editor blocks on. See
 `spawn: cold box for P@A` for each spawn, `warm pool: P@A parked` when a box parks (started, not
 proven up — a parked box that died is found by the replay after checkout, which starts another cold),
 and `replay: P@A is
-live on <adapter> <version>` once a replayed session runs. `tools/lifecycle_bench.py --cases
+live on <adapter> <version>` once a replayed session runs. `go run ./tools/lifecyclebench --cases
 acp_switch_cold,acp_switch_warm` times a Provider switch to the replayed `config_option_update` and
 counts a warm sample only on `spawn: warm box`; `TestScriptedACPProviderSwitchIsServedWarm` proves the
 wiring on the fixture runtime. The bench parses these lines, so change them together.
@@ -67,6 +67,8 @@ deferred reap waits for that same teardown. Measured on a filtered project with 
 editor close → everything gone in ~1.4 s.
 
 ## Changelog
+- 2026-10-16 — the bench that parses the trace lines is Go now (tools/lifecyclebench/acp.go); its
+  patterns were checked against the three Trace calls cited above.
 - 2026-10-15 — the checkout key gained the network policy fingerprint and the pool gained `Drain`
   (an overtaken in-flight fill spawns again), for a filtered session that adopts a newly approved
   policy; verified by the warm pool tests.

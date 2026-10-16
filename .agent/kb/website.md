@@ -2,7 +2,7 @@
 name: website
 description: site/ is static and partly generated; tools/gendocs owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
 subsystem: website
-sources: [tools/gendocs/site.go, tools/gendocs/scenes.go, tools/gendocs/site_test.go, tools/services_bench.py, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/docs.html, site/README.md, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/aligncomments/main.go, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
+sources: [tools/gendocs/site.go, tools/gendocs/scenes.go, tools/gendocs/site_test.go, tools/lifecyclebench/main.go, tools/servicesbench/main.go, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/docs.html, site/README.md, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/aligncomments/main.go, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
 updated: 2026-10-16
 ---
 
@@ -39,7 +39,7 @@ the homepage's and each is re-checked in its primary source; the decision is one
 its own step and the morning; both accounts stay in view side by side; one row of dots, each three
 tasks; the phone board keeps one fixed height, so measure the natural heights at 360-414 px and on
 a tablet before adding content. Its Project services figure (6.5 s) is our own number:
-`tools/services_bench.py`, the launch that starts Postgres and Redis (see
+`tools/servicesbench`, the launch that starts Postgres and Redis (see
 [[lifecycle-latency-measurement]]); measure again on a quiet machine before changing it.
 Traps: Chrome drops a row's computed style when it moves between lists, so CSS transitions never
 fire there and state changes are drawn with the Web Animations API; a multi-step keyframe sequence
@@ -142,7 +142,7 @@ before you touch that line, and use today's number. The Loops figure (120 tasks 
 9-hour run during our normal work, as the owner asked it to say) is the owner's own number from a
 run this machine's git and loop telemetry don't hold; ask the owner before you change it. The
 "3 s" start in the first story step is our own number: `make lifecycle-bench` (filtered_start, 10
-samples) on a clean clone, linked to `tools/lifecycle_bench.py`. Measure again on an idle machine
+samples) on a clean clone, linked to `tools/lifecyclebench/main.go`. Measure again on an idle machine
 before changing it, and never in a checkout with heavy local state, which starts slower.
 
 **The Zed card is a real screenshot** (`site/assets/img/zed-coop.png`): the window inside its 1px
@@ -193,6 +193,9 @@ nothing. A site test checks each landing page names its committed card.
   the `git log --grep` recount gives co:op's 1,090, as the Python counter did. The Node picker run
   and the image script are gone: the picker is checked from the parsed pages and site.js's table,
   and the images are redrawn by the README's steps.
+- 2026-10-16 — the two "we measured" links point at the Go benches (`tools/lifecyclebench/main.go`,
+  `tools/servicesbench/main.go`), in the templates and the built pages alike; the services-figure
+  test now accepts a tool path with a directory in it.
 - 2026-10-16 — the comment-alignment tool is Go now (`tools/aligncomments`); it still finds a
   trailing comment by the exact `<span class="t">` string and measures `<pre>` lines from column 0.
 - 2026-10-15 — deleted the `overnight.html` redirect: the URL was public for one day, and a retired

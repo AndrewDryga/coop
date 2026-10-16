@@ -494,7 +494,7 @@ func networkResourceRef(record networkstate.Execution, role string) runtime.Dock
 	for _, resource := range record.Resources {
 		if resource.Role == role {
 			return runtime.DockerRef{Name: resource.Name, ID: resource.ID, Labels: map[string]string{
-				"coop.network.run": record.ID, "coop.network.epoch": record.Epoch,
+				LabelNetworkRun: record.ID, "coop.network.epoch": record.Epoch,
 				"coop.network.scope": record.Scope, "coop.network.role": role,
 			}}
 		}

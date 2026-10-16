@@ -2,46 +2,52 @@
 name: lifecycle-latency-measurement
 description: how to measure a box/editor start or stop change without fooling yourself — pair the two builds and alternate them, never bisect a noisy metric single-shot, build the comparison binary where its version stamp is honest, and know why an old binary cannot run in an approved project
 subsystem: testing
-sources: [tools/lifecycle_bench.py, tools/test_lifecycle_bench.py, tools/services_bench.py, tools/test_services_bench.py, Makefile, internal/cli/acp_cmd.go, internal/cli/cli.go, internal/runtime/docker_lifecycle.go]
+sources: [tools/lifecyclebench, tools/servicesbench, Makefile, internal/box/run.go, internal/cli/acp_cmd.go, internal/cli/cli.go, internal/runtime/docker_lifecycle.go]
 updated: 2026-10-16
 ---
 
-`make lifecycle-bench` (`tools/lifecycle_bench.py`) is the instrument for every start/stop claim in
-this repo. It is deliberately OUT of `make check`: it launches real boxes, needs a runtime, and its
-output is a measurement to compare against, not a threshold to fail on. Cases:
+`make lifecycle-bench` (`go run ./tools/lifecyclebench`) is the instrument for every start/stop
+claim in this repo. It is deliberately OUT of `make check`: it launches real boxes, needs a runtime,
+and its output is a measurement to compare against, not a threshold to fail on. Cases:
 `repeat_start`, `filtered_start`, `acp_initialize`, `acp_switch_cold`, `acp_switch_warm`,
 `normal_stop`, `filtered_stop`, `cancelled_stop`, `failed_start_preflight`,
 `failed_start_after_create`. `WORKSPACE=` picks the workspace; a bare one-file git repo is the
-control that separates what filtering costs from what the tree costs. The benches' own unit tests
-(`tools/test_lifecycle_bench.py`, `tools/test_services_bench.py`) run in `make bench-tools-test`,
-which `make lifecycle-bench` and `make services-bench` run first, stopping if it fails; they are not part of
-the gate, which never runs a bench. What the stop boundary
-covers — gateway containers AND volumes, both label families — is pinned by `OwnershipTest` in
-`tools/test_lifecycle_bench.py`, because a stop number is only as honest as that question.
+control that separates what filtering costs from what the tree costs. The benches' own tests need
+no runtime (a fake one and a stand-in coop shell script) and take seconds, so the gate's
+`go test ./...` runs them too; `make bench-tools-test` runs just them, and `make lifecycle-bench`
+and `make services-bench` run it first, stopping if it fails. What the stop boundary covers —
+gateway containers AND volumes, both label families, listed by `internal/box`'s own label
+constants — is pinned by `TestOwnedSpansBoxesGatewaysAndVolumes` and
+`TestWaitUntilGoneCountsOnlyItsOwn`, because a stop number is only as honest as that question. A
+runtime listing that fails is an error, never an empty answer: read as "nothing left", it would end
+a stop's clock early. So is an inspect that fails for any reason but the runtime's "no such" answer.
 
 Sampling-loop unit tests use deterministic environment metadata and do not need Docker. Production
 metadata is best-effort: an absent or timed-out runtime info query leaves `runtime_daemon` unknown,
 so metadata collection can still retain the samples. This does not relax the real cases' runtime
-requirements; `EnvironmentTest` covers the metadata failure paths separately.
+requirements; `TestEnvironmentMetadataIsBestEffort` covers the metadata failure paths separately.
 
 **It removes only what its own launch made.** The bench refuses to start while another run's coop
 containers or volumes exist (they would slow every sample, and they are not its to remove). Every
 launch it makes carries a per-sample label (`coop-bench.sample`, added to `COOP_RUN_ARGS`, which an
 editor session's per-provider coop processes inherit too), and every case cleans up through one
-`Ownership`: boxes with that label or naming the launched coop process in `coop.host`, plus the
+`ownership`: boxes with that label or naming the launched coop process in `coop.host`, plus the
 gateway containers and volumes of a network run those boxes carry or the launch printed
 (`coop net inspect <id>`, kept even when a timed-out sample's output is drained on the way out).
 Waiting for a stop counts only those too, so every case hears what its launch printed before it
-waits; anything else that appeared during the sample is reported and left alone. Every launch runs
-inside try/finally: one that outlives its case, or a bench interrupted mid-launch, is still stopped,
-heard and cleaned. Until 2026-10-07 the cleanup force-removed every coop-labelled container and volume
+waits; anything else that appeared during the sample is reported and left alone. Every case stops
+and cleans its launch in a deferred finish: one that outlives its case, or a bench interrupted
+mid-launch (Ctrl-C ends the sample in flight; a second Ctrl-C ends the bench), is still stopped,
+heard and cleaned. The bench's own runtime queries and removals run in a process group of their
+own, so the terminal's Ctrl-C cannot kill a cleanup halfway. Until 2026-10-07 the cleanup force-removed every coop-labelled container and volume
 that appeared during a sample, so a loop or editor session starting meanwhile would have lost its box
-and its service volumes. `OtherRunsTest` pins the rules; `EveryCaseCleansOnlyItsOwnTest` drives each
-case with a stand-in coop and another run's resources appearing mid-sample.
+and its service volumes. `TestOwnershipClaimsOnlyWhatItsLaunchMade` pins the rules;
+`TestEveryCaseCleansUpOnlyWhatItsLaunchMade` drives every case in the table with a stand-in coop
+and another run's resources appearing mid-sample.
 
-## A start with services: tools/services_bench.py
+## A start with services: tools/servicesbench
 
-`tools/services_bench.py` times a warm start in a project with Compose services, the Orchestrator
+`tools/servicesbench` times a warm start in a project with Compose services, the Orchestrator
 page's Project services figure. `make services-bench WORKSPACE=<project>` builds `./coop`, tests
 the bench, then measures that build. Same boundary as the start cases (launch to the box's command
 running, seen as a marker file on the host), two cases taken in turns after one warm-up each:
@@ -61,7 +67,7 @@ task 2026-10-07-measure-the-warm-start-with-services-for-the-ove.
 ## Pair the builds and alternate them; do not subtract a stored baseline
 
 A retained baseline is a reference, not a subtrahend. Build the old revision's binary, measure BOTH
-back to back with TODAY's `lifecycle_bench.py` as the instrument, and alternate which arm goes first
+back to back with TODAY's `tools/lifecyclebench` as the instrument, and alternate which arm goes first
 between rounds (A B / B A / …). Report the per-round difference, not two pooled medians: drift lands
 on both arms in a round and cancels in the difference, and flipping the order keeps warm-up from
 masquerading as the result.
@@ -110,7 +116,14 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 
 - **Cancellation must go through a real terminal.** Coop runs the client in its own foreground
   process group so the tty delivers `^C`; a script-delivered SIGINT hits coop, not the workload, and
-  the case then reports that cancellation never happens.
+  the case then reports that cancellation never happens. The bench opens that terminal with
+  `golang.org/x/sys/unix` (`tools/lifecyclebench/pty_*.go`). On macOS it names the far side
+  `/dev/ttys%03d` from the master's minor number, as the kernel's TIOCPTYGNAME does: x/sys/unix wraps
+  no ioctl that fills a name buffer there, and the raw `SYS_IOCTL` syscall fails staticcheck (SA1019).
+- **Ask whether the launch ended before looking for its marker.** The other order loses a launch
+  that writes its marker and exits between the two looks. With the services bench's 5 ms wait, it
+  lost every `stopped` sample of a fast stand-in coop. A launch always writes the marker before it
+  exits, so a launch seen ended first always has its marker seen.
 - **A box occasionally starts with no working directory** — `sh: 1: cannot create
   ./.coop-bench-ready: Directory nonexistent`, or in the pty case just "the box never announced
   itself". Seen only in the bare `/tmp` control during bench runs, on BOTH builds (5/64 and 3/64), and
@@ -140,6 +153,13 @@ until 2026-09-20's paired A/B put a number against it. Both now state the number
 ## Changelog
 - 2026-10-16 — `make tools-test` is gone (the site tests moved to Go, in `make docs-check`), so the bench
   paragraph no longer names it; nothing else in the card was rechecked.
+- 2026-10-16 — both benches are Go now (`tools/lifecyclebench`, `tools/servicesbench`; task
+  2026-10-15-port-the-lifecycle-and-services-benchmarks-to-go): the same cases, samples.json and
+  report, and the same own-launch-only cleanup, with the labels taken from `internal/box`. Their tests
+  run in the gate again (seconds, no runtime). A failed runtime listing, or an inspect failing other
+  than "no such", is now an error; the marker waits ask whether the launch ended first; Ctrl-C no
+  longer reaches the bench's cleanup commands. Compared with the Python bench on one machine (2026-10-16): the same
+  report sections and samples.json shape.
 - 2026-10-15 — the bench tests moved out of `make tools-test` into `make bench-tools-test`, which
   `make lifecycle-bench` and the new `make services-bench` run first (task
   2026-10-15-run-the-benchmark-tool-tests-only-with-make-life).
