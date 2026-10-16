@@ -19,9 +19,8 @@ each time — this is the contract; follow it.
   release prep). Broad free gate green for the executable candidate: `make check`.
   A later changelog-only finalization/reopening uses the actual notes/docs checks; do not repeat
   unchanged local broad proof. The exact-tag release workflow still runs all free CI checks.
-- The gate is free and deterministic. Saved live-provider reports are optional dated evidence,
-  not release permission; do not request a waiver or run paid models to finalize a version.
-  `make provider-status` is informational; `make provider-verify` is an explicit free strict check.
+- The gate is free and deterministic. Live-provider suites run on demand and are not release
+  permission; do not request a waiver or run paid models to finalize a version.
 - Identify the latest published, non-draft, non-prerelease version with
   `gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt` before comparing
   changes. A local or failed tag is not a published release.

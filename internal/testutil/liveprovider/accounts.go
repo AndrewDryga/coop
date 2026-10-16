@@ -8,7 +8,7 @@ import (
 )
 
 const AccountsSummaryPrefix = "COOP_PROVIDER_ACCOUNTS_LIVE_SUMMARY "
-const StatusNotConfigured = agents.QualificationNotConfigured
+const StatusNotConfigured = "not_configured"
 
 // AccountsSummary records availability without naming accounts. Every configured pair must pass;
 // only a provider with fewer than two stored accounts can be not_configured, never a bad pair.

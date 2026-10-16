@@ -166,7 +166,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [one-upgrade-for-old-state](one-upgrade-for-old-state.md) — an old on-disk format is read for one upgrade step, then refused with the state version that converts it; check a worker with the new build before swapping it
 
 **Agent workflow** — how an agent works here, not what it ships
-- [live-provider-evidence-is-optional](live-provider-evidence-is-optional.md) — saved reports are optional dated evidence, never release permission or implicit provider spending
+- [live-provider-evidence-is-optional](live-provider-evidence-is-optional.md) — live provider suites run on demand; no gate, release or committed report depends on them
 - [eval-spend-gates-follow-account-billing](eval-spend-gates-follow-account-billing.md) — eval spending gates follow selected account billing; included subscription allowance needs no new spending prerequisite
 - [full-product-audits-use-every-feature](full-product-audits-use-every-feature.md) — a full audit manually exercises each advertised supported feature on claimed platforms and labels unrun paths honestly
 - [audit-findings-need-practical-impact](audit-findings-need-practical-impact.md) — audit realistic agent access and practical impact; avoid speculative machinery and unproven product-defect claims

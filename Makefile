@@ -220,10 +220,10 @@ check-race: race ## Free race-detector tests
 # Explicit reviewed owners, not an automatic changed-file router. The import-closure test
 # includes tagged/test/root/tool consumers; shared foundations/build inputs still need check.
 # LOCAL_* package lists are guarded by TestLocalCheckScopesCoverReverseConsumers.
-LOCAL_agent := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/agent ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/consult ./internal/forkctl ./internal/ladder ./internal/loop ./internal/loopcfg ./internal/preset ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/qualify
-LOCAL_runtime := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/gatewayimage ./internal/loop ./internal/runtime ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./internal/testutil/nativedocker ./tools/gendocs ./tools/gennetimage ./tools/qualify
+LOCAL_agent := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/agent ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/consult ./internal/forkctl ./internal/ladder ./internal/loop ./internal/loopcfg ./internal/preset ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs
+LOCAL_runtime := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/gatewayimage ./internal/loop ./internal/runtime ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./internal/testutil/nativedocker ./tools/gendocs ./tools/gennetimage
 LOCAL_sessions := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/session ./internal/sessionsvc ./internal/workerconnector ./internal/workerproto ./tools/gendocs ./internal/box/testdata/mcpprobe
-LOCAL_tasks := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/loop ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/qualify
+LOCAL_tasks := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/loop ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs
 LOCAL_connector := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/sessionsvc ./internal/workerconnector ./tools/gendocs ./internal/box/testdata/mcpprobe
 LOCAL_cli := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./tools/gendocs ./internal/box/testdata/mcpprobe
 
@@ -316,37 +316,6 @@ provider-delegate-live-e2e-all: ## Strict write-capable coop-delegate probe for 
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
 		go test -timeout 30m -tags providerlivee2e -run '^TestProviderDelegateLiveCompatibility$$' -count=1 -v ./internal/cli/
 
-# Qualifies the locked clients before a pin moves (package.json/package-lock.json, an adapter's
-# LockedClients): it rebuilds this host's box and filtered setup from the working tree, runs every
-# strict live suite against them, and records the result. Every provider answers real
-# prompts. Full logs stay in the printed directory; a failure shows its tail.
-# Included subscriptions need no new spend permission; unknown API-key billing or overage does.
-provider-status: ## Show saved live-provider evidence; no provider calls or release requirement
-	@go run ./tools/qualify -status
-
-provider-verify: ## Strictly verify the saved report against today's clients; no provider calls
-	@go run ./tools/qualify -verify
-
-# The three offline suites run FIRST: they need only the image the setup step just built and call no
-# model, so a red there costs nothing — behind the paid suites, the same red would arrive after every
-# provider had already answered real prompts.
-provider-qualify: ## Opt-in live model calls: record dated evidence (not a release requirement)
-	@go run ./tools/qualify -preflight
-	@logs="$$(mktemp -d)"; echo "logs: $$logs"; \
-	go build -o "$$logs/coop" . && mkdir "$$logs/repo" \
-	  && (cd "$$logs/repo" && git init -q && "$$logs/coop" build && "$$logs/coop" net setup) < /dev/null > "$$logs/setup.log" 2>&1 \
-	  || { tail -n 40 "$$logs/setup.log"; exit 1; }; \
-	for suite in native-roles-e2e skills-e2e mcp-e2e \
-	             provider-live-e2e-all provider-resume-live-e2e-all provider-loop-live-e2e-all provider-consult-live-e2e-all provider-delegate-live-e2e-all \
-	             provider-network-live-e2e-all provider-accounts-live-e2e-all acp-e2e; do \
-	  echo "== $$suite"; \
-	  COOP_LIVE_TARGETS=all $(MAKE) --no-print-directory $$suite < /dev/null > "$$logs/$$suite.log" 2>&1 || { tail -n 40 "$$logs/$$suite.log"; exit 1; }; \
-	done; \
-	targets="$$(go run ./tools/qualify -targets)" || exit 1; echo "== provider-live-e2e-effort ($$targets)"; \
-	COOP_LIVE_TARGETS="$$targets" $(MAKE) --no-print-directory provider-live-e2e-all < /dev/null > "$$logs/provider-live-e2e-effort.log" 2>&1 \
-	  || { tail -n 40 "$$logs/provider-live-e2e-effort.log"; exit 1; }; \
-	go run ./tools/qualify -logs "$$logs"
-
 acp-scripted-e2e: ## Deterministic ACP process e2e (no runtime or provider credentials needed)
 	@go test -run '^TestScriptedACP' -count=1 -v ./internal/acpproxy/
 
@@ -377,9 +346,8 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
+.PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
-.PHONY: provider-status provider-verify
 .PHONY: check-local bench-tools-test services-bench require-services-workspace
 .PHONY: check-static check-unit check-process check-race
 .PHONY: check-process-loop check-process-rest check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2

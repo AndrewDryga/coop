@@ -355,68 +355,6 @@ func QualifiedClients() []string {
 	return out
 }
 
-// QualifiedClientSet is what a qualification is keyed on: the lock's digest (so no dependency moves
-// unqualified) and, per platform, each client's provider, kind, package or native binary, version,
-// the versions of the executables it requires, and a native artifact's digest. Paths stay out —
-// moving a launcher is not a new client.
-func QualifiedClientSet() (lock string, clients map[string][]string, err error) {
-	clients = make(map[string][]string)
-	for _, arch := range []string{"amd64", "arm64"} {
-		closure, err := LockedClientClosure(ClientPlatform{OS: "linux", Architecture: arch, Libc: "glibc"})
-		if err != nil {
-			return "", nil, err
-		}
-		if lock == "" {
-			sum := sha256.Sum256(closure.Files["package-lock.json"])
-			lock = hex.EncodeToString(sum[:])
-		}
-		platform := closure.Platform.OS + "/" + closure.Platform.Architecture
-		for _, client := range closure.Clients {
-			name := client.Package
-			if name == "" {
-				name = client.Binary
-			}
-			line := fmt.Sprintf("%s %s %s %s", client.Provider, client.Client, name, client.Version)
-			for _, executable := range client.RequiredExecutables {
-				owner := strings.TrimPrefix(lockedExecutablePackage(executable.Path), "node_modules/")
-				if owner == "" {
-					owner = path.Base(executable.Path)
-				}
-				line += " requires " + owner + " " + executable.Version
-			}
-			if client.NativeArtifact != nil {
-				line += " sha256 " + client.NativeArtifact.SHA256
-			}
-			clients[platform] = append(clients[platform], line)
-		}
-	}
-	return lock, clients, nil
-}
-
 // FileNames returns paths in archive order, useful for deterministic
 // build contexts. Files and Clients are fresh per closure, never mutable globals.
 func (c ClientClosure) FileNames() []string { return slices.Sorted(maps.Keys(c.Files)) }
-
-// QualificationMismatch explains why saved live evidence does not describe today's client set.
-// It is informational unless an operator explicitly asks to verify that report. Empty means the
-// client identities match, not that a model was called or every platform was exercised.
-func QualificationMismatch(q Qualification, lock string, clients map[string][]string) string {
-	if q.Lock != lock {
-		return fmt.Sprintf("the locked dependency set changed (record %.12s…, built %.12s…)", q.Lock, lock)
-	}
-	for platform, want := range clients {
-		got, ok := q.Clients[platform]
-		if !ok {
-			return fmt.Sprintf("platform %s has no qualified client set in the record", platform)
-		}
-		if !slices.Equal(got, want) {
-			return fmt.Sprintf("platform %s qualified %v but this binary builds %v", platform, got, want)
-		}
-	}
-	for platform := range q.Clients {
-		if _, ok := clients[platform]; !ok {
-			return fmt.Sprintf("the record qualifies platform %s, which this binary no longer builds", platform)
-		}
-	}
-	return ""
-}

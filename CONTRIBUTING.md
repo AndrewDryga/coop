@@ -100,8 +100,8 @@ These test layers apply to a source checkout.
 | Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, govulncheck, unit tests under `-race` (CI also runs them plain), deterministic provider process E2E, tagged process-control races, generated docs, rules cards, maintenance tools, and comment alignment; no runtime or credentials |
 | Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork policy, ACP switching/recovery, and live-harness contracts with fixtures |
 | Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` | real box isolation, process reaping/signal forwarding, and report-only review mounts; requires Docker (or Apple `container` for doctor) |
+| Pinned clients, offline | `make native-roles-e2e` · `make skills-e2e` · `make mcp-e2e` | each pinned client's own role, skill and MCP handling, with no network, in the locked image `coop net setup` builds; no credentials or model calls |
 | Upstream compatibility | provider live targets [below](#live-provider-suites) · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
-| Full client qualification | `make provider-qualify` | operator-only image build, offline client probes and paid live suites; writes a version-pinned record only after all required checks pass |
 
 The deterministic provider suite, `make provider-scripted-e2e`, exercises the real co:op
 CLI/box/runtime boundary with strict fixtures matching each provider's native commands
@@ -190,27 +190,20 @@ fails on every skip. It has no stable summary prefix on purpose. Use `make acp-s
 injected limits, malformed responses, switching, fallback and replay cases that should not spend
 live quota.
 
-## Qualifying clients
+## Checking the pinned clients
 
-Run `make provider-qualify` only as an operator, after the ordinary gate and other engineering work
-are finished. It rebuilds this host's box/filtered images and spends quota across every provider.
-It prints a directory containing full suite logs. All suites must pass before it writes
-`internal/agent/locked-clients/qualification.json`.
+Run the offline client probes before any live suite: they call no model, so a red there costs
+nothing. Offline MCP (`make mcp-e2e`) covers Codex, Gemini and Grok. Claude's shared MCP route is
+proven only by the live network suite, which requires a shared MCP tool call from every provider.
 
-The schema-2 record names required suite/provider coverage, exact client pins and the tested
-platform. It does not establish live macOS or Linux/arm64 parity. The final output names any
-providers with unverified account recovery. Only that row may say `not_configured`, and an
-unreadable account directory fails. Offline MCP (`make mcp-e2e`) covers Codex, Gemini and Grok.
-The live network suite requires a shared MCP tool call from every provider.
-
-Saved reports are optional dated evidence, not build or release permission. `make provider-status`
-shows missing or stale evidence as UNVERIFIED without failing a build. `make provider-verify`
-strictly checks the saved report and refuses missing, malformed or incomplete evidence.
-Neither command calls providers or reads credentials. Ordinary CI makes no model calls and needs
-no provider waiver. A matching report still does not prove a new live run or platform parity.
+After a client pin moves, run the smallest affected live suite with its scope and billing clear.
+Clear `COOP_IMAGE` and `COOP_BASE_IMAGE` (in the shell and in coop.conf) first: an open-network suite
+runs whatever image they name, so it would not test Coop's own pinned clients.
+No report is saved: a live run proves that run only, and a missing one stays unverified, never
+waived. Builds, CI and releases make no model calls and never wait for a live run.
 
 The [client qualification KB](.agent/kb/provider-client-qualification.md) covers the locked
-clients and the schema-2 record in detail.
+clients, the conformance rows and the client bump procedure.
 
 ## Adding a provider
 

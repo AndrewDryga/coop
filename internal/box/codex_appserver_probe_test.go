@@ -10,7 +10,7 @@ package box
 // MCP server it spawned with it, so the feeder has to stay open until the answer is in. Both probes
 // used to hold it open for a FIXED sleep, which is wrong in both directions: too short and a slow or
 // freshly-built host closes stdin mid-handshake, which reads as "the client never launched the
-// server" — a false red that aborts `provider-qualify` and looks exactly like a real regression;
+// server" — a false red in `skills-e2e` or `mcp-e2e` that looks exactly like a real regression;
 // too long and every green run pays the worst case whether it needs to or not.
 //
 // So the feeder waits for the REPLY instead, and the fixed number left is only a give-up bound.

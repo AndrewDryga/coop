@@ -1,9 +1,9 @@
 ---
 name: provider-client-qualification
-description: locked clients, strict schema2 qualification requirements and Linux/amd64 live evidence
+description: locked clients, conformance rows, on-demand live suites and the client bump procedure
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-10-15
+sources: [internal/agent/locked_clients.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
+updated: 2026-10-16
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -25,43 +25,25 @@ filtered client image uses a separate tar context whose file modes are explicit.
 staging regression runs under a private umask. A rebuilt Ubuntu image confirmed
 `/etc` is 0755 and Codex, Claude and Grok launch as a non-root user.
 
-A live qualification child running a brokered API key must receive the host's
+A live-suite child running a brokered API key must receive the host's
 `NetworkStateHome`, so `ChildEnvironment` selects the filtered credential gateway.
 This applies to both native-resume stages, not only the ordinary prompt suite;
 signed-in accounts keep their open path. The selected credential kind is determined
 from the real host config before the isolated child starts.
 
-**The record.** `make provider-qualify` calls real models, last after other engineering.
-Included subscription access needs no additional spend permission; unknown API-key billing or
-paid overage does. Credentials being present does not prove an account's billing allowance.
-It rebuilds this host's images, runs offline probes first and every required live suite, then
-atomically writes `locked-clients/qualification.json`. `QualificationRequirements` is the single
-schema2 suite/provider/evidence map used by the recorder and explicit saved-report verifier.
-Every CLI row must report the exact pinned version; test-only rows must pass their stated scope.
-Only second-account recovery permits `not_configured` (fewer than two configured accounts), never
-a pass implied by missing prerequisites. Unreadable account catalogs fail, and the recorder's
-success output names any providers whose account recovery remains unverified. Existing records
-must have complete exact scopes and match `QualifiedClientSet()` (lock SHA-256 and every platform's
-client/native artifact identity).
-Malformed, duplicate, non-strict, failed-footer or incomplete summaries cannot produce a record.
-The 2026-09-26 Linux/amd64 record was produced from strict pinned-client suite logs: offline
-roles/skills/MCP, direct prompt, native resume/loop/consult/delegate, filtered networking,
-ACP adapters and the model+effort probe. `make provider-qualify` reached ACP but stopped on a
-stale Frontier test expectation after its preset lead changed; a one-line test repair and a
-complete green ACP rerun supplied that row. The production source was unchanged between the
-earlier green suites and that replay. The recorder validated all required logs and pins before
-writing the record. This is not a claim that one uninterrupted `make provider-qualify`
-invocation passed, or that macOS/Linux-arm64 live provider parity was exercised. Only one
-account was configured per provider, so all four second-account recovery entries remain
-`not_configured`, not proved. Missing or stale evidence is not proof of compatibility.
+**Live runs.** The live suites are on-demand Make targets that call real models; run them last,
+after other engineering. Included subscription access needs no additional spend permission;
+unknown API-key billing or paid overage does. Credentials being present does not prove an
+account's billing allowance. A strict `-all` run fails on any skip, and each passed row names the
+CLI version the provider ran. Only second-account recovery reports `not_configured` (fewer than
+two configured accounts), never a pass implied by a missing prerequisite; an unreadable account
+catalog fails. A passing run proves that run on that host's platform, not the next client pin or
+macOS/Linux-arm64 parity.
 
-**Permanent policy.** Saved live-provider evidence is not build or release permission.
-`make provider-status` reads the report without loading credentials or starting a runtime/model;
-missing, malformed or mismatched evidence prints UNVERIFIED and remains informational.
-`make provider-verify` performs the same free, strict validation but refuses invalid or missing
-evidence. A valid report names its original date/platform, not a new live test. Ordinary tests
-retain locked-client integrity and synthetic evidence-parser tests; there is no release-number
-allowlist or waiver. Historical records remain unchanged. Local restricted-network, kernel,
+**Permanent policy.** Live-provider evidence is never build or release permission, and no report
+of it is committed: the saved record went stale with the next pin and turned every release into a
+waiver request. A missing live run is reported as unverified, not waived. Ordinary tests keep
+locked-client integrity; there is no release-number allowlist. Local restricted-network, kernel,
 approval identity and credential-lease admission checks remain mandatory.
 
 Live harnesses route brokered API keys through the host's filtered gateway automatically, using
@@ -93,9 +75,9 @@ session (an OPEN singleton still shows every repo preset, unfiltered by lead cap
 
 **Conformance rows** (D = deterministic in `make check`; R = the real pinned client, run OFFLINE in
 the locked image with `--network none` — free, but outside `make check` because it needs the image
-`coop net setup` builds. An R suite gates `provider-qualify` before model calls and enters
-the record with its explicit provider scope. L = a live assertion implemented in the harness,
-not a claim that it has run successfully; all four providers except unavailable second accounts):
+`coop net setup` builds. Run the R suites before any paid one: a red there costs nothing.
+L = a live assertion implemented in the harness, not a claim that it has run successfully; all
+four providers except unavailable second accounts):
 
 The three R probes bind-mount synthetic files from `t.TempDir()` into the locked client image,
 which runs as `node`. Go keeps the enclosing test directory private; under host umask 077, the
@@ -109,8 +91,8 @@ read-only and the client unprivileged. A Mac pass at umask 022 does not prove Li
 - resume — D `TestResume`, fork session process, ACP target replay, consult continuity;
   L `provider-resume-live-e2e-all`, `provider-network-live-e2e-all`.
 - cancel — D DirectMatrix "cancellation", `TestScriptedACPCancelAndContinue`; L `acp-e2e`.
-- model + effort — D DirectMatrix argv/env, loop lifecycle matrix; L `provider-live-e2e-effort`
-  (`tools/qualify -targets`: each `ExampleModel` at high effort).
+- model + effort — D DirectMatrix argv/env, loop lifecycle matrix; L `provider-live-e2e-all` given
+  an explicit registry-ordered `provider:model/effort` list (each adapter's `ExampleModel` at `high`).
 - skills — D `TestSynthSkillsMounts` (the mount plan) AND
   `TestProviderScriptedSharedSkillsReachEveryCapableClient` (process level, per provider): the repo's
   shared `.agent/skills` reaches each skills-capable client at its OWN `$HOME/.<provider>/skills`,
@@ -203,8 +185,7 @@ move the adapter's `LockedClients` (versions, platform paths; Grok's URL and bot
 `TestUsageGeminiQuotaModuleIsQualifiedOnTheLockedClient` for the quota helper's hashed bundle module,
 the captured `login-failures` and `grok-*-tools.jsonl` fixtures), and run the affected deterministic
 closure/request/adaptor tests. Offer the smallest affected live check with its scope and billing
-clear; a missing live run is reported, not waived. A full dated report can be refreshed explicitly
-with `make provider-qualify`; never rewrite old results to match new pins.
+clear; a missing live run is reported, not waived.
 `validateClientClosure` also pins Playwright's version.
 
 A brokered client's request shape is pinned too: `TestCredentialBrokerRoutesAdmitWhatThePinnedClientsSend`
@@ -230,9 +211,9 @@ probes OAuth discovery paths and GETs the endpoint without the configured header
 
 Traps: the strict suites fail on any skip, so every provider needs a signed-in default account whose
 access token outlives the run (a Claude or Grok token hours old is skipped as refresh-required —
-one real prompt refreshes it); `provider-qualify`'s preflight refuses `COOP_IMAGE` (it would
-qualify a foreign image) and a provider with no default credential, using the ordinary presence
-policy so an env-only account needs no directory; a changed client layer makes every
+one real prompt refreshes it); open-network suites run whatever image `COOP_IMAGE` (shell or
+coop.conf) or a custom `COOP_BASE_IMAGE` names, while filtered suites refuse `COOP_IMAGE`, so
+clear both to check Coop's own pinned clients; a changed client layer makes every
 host re-run filtered setup once — a filtered launch does it itself, an editor session refuses until
 `coop net setup`.
 
@@ -244,6 +225,11 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-10-16 — retired the saved live-provider report on the owner's 2026-10-15 audit decision:
+  deleted `locked-clients/qualification.json` (written 2026-09-26 on Linux/amd64; its lock digest
+  and Claude 2.1.260 no longer matched the lock), its schema2 validator, `tools/qualify` and the
+  `provider-status`, `provider-verify` and `provider-qualify` targets. The live suites stay as
+  on-demand targets; the R probes and the model+effort run are invoked directly.
 - 2026-10-15 — the bump checklist now names the Gemini quota module tripwire, which pins the exact
   locked gemini-cli tarball its content-hashed import was checked in.
 - 2026-10-14 — stronger direct-matrix runtime/cwd/exit/cleanup keeper replaces redundant smoke

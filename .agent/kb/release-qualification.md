@@ -3,13 +3,13 @@ name: release-qualification
 description: "tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity"
 subsystem: release
 sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/release_preflight.py, release_test.go]
-updated: 2026-10-15
+updated: 2026-10-16
 ---
 
 Release `ci` locally calls ci.yml from the event commit; its Make-owned broad checks, Docker
 doctor and Docker review-write jobs must succeed before the privileged publisher starts.
 Every checkout explicitly uses github.sha. CI remains contents-read only. It makes no live model
-calls and does not require a fresh saved provider report or a version-specific waiver.
+calls and needs no live-provider run or version-specific waiver.
 
 The status-only `check` job runs even after a dependency fails and passes only when every free
 owner and both runtime jobs succeeded. Read-only jobs may cache modules and compiled objects;
@@ -35,6 +35,8 @@ tag or protection during build/publication. Local fixture tests cannot prove hos
 or publication succeeded. Test refs/remotes are confined to temporary filesystem repositories.
 
 ## Changelog
+- 2026-10-16 — the saved provider report and its targets are gone; nothing in CI or the release
+  read it since 2026-10-14, so the release path is unchanged.
 - 2026-10-15 — CI lost its CHANGELOG-only path, so a release call and a main push run the same
   jobs; the required status passes only when all of them succeed.
 - 2026-10-15 — the reusable CI call runs every Make owner in CI_OWNERS, not four; owner caches

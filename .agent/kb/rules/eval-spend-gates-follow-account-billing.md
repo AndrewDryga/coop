@@ -2,9 +2,9 @@
 name: eval-spend-gates-follow-account-billing
 description: eval spending gates follow the selected account's billing mode rather than assuming all native CLI runs incur new charges
 scope: agent-workflow
-sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_loop.go, internal/testutil/liveprovider/credentials.go, tools/qualify/main.go, Makefile, README.md, docs/cli.md, docs/evals.md]
+sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_loop.go, internal/testutil/liveprovider/credentials.go, Makefile, README.md, docs/cli.md, docs/evals.md]
 check: none
-updated: 2026-10-05
+updated: 2026-10-16
 ---
 
 # Base eval spending gates on the selected account's billing mode
@@ -64,3 +64,4 @@ usage-billed API-key access; it does not establish the billing mode of every sto
   does not block its work and was left with its active owner. Account billing and current quota
   require external evidence, so this remains a review rule with `check: none`.
 - 2026-10-05 — the README became a short landing page and its detail moved to docs/evals.md (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.
+- 2026-10-16 — `tools/qualify` was deleted with the saved provider report; dropped from sources.

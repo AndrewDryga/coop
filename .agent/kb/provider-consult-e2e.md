@@ -114,8 +114,7 @@ must create its one exact nonce file, without staging or committing. The verifie
 tree (ignored files and Git metadata included) before semantic Git checks, then removes only the
 verified fixture output and proves the original repository is restored. Failures preserve the
 output for the enclosing disposable test's lifetime. `COOP_DELEGATE_LIVE_SUMMARY` is separate
-evidence; the recorder rejects a consult summary offered in its place. Both rings are required
-for full qualification, but deterministic controls alone are not live proof.
+evidence from the consult summary; deterministic controls alone are not live proof.
 
 Triage `skipped` as a prerequisite first: `credential_refresh_required` needs trusted-source
 renewal before an access-only projection, not necessarily re-login (see
@@ -133,6 +132,8 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-10-16 — the saved-report recorder that read each ring's summary line is gone; each suite
+  still emits its own.
 - 2026-10-16 — the delegate wrapper's two FIFO captures re-deliver a lost EOF too (its own
   `await_capture`, polling the capture process, still unbounded); before, the race could hang it for
   good.
