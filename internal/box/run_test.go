@@ -237,26 +237,6 @@ func TestRunArtifactsStayOutOfSystemTempAcrossRuns(t *testing.T) {
 	}
 }
 
-func TestExistingRunArtifactRootIsReadOnlyAndFindsCreatedRoot(t *testing.T) {
-	cfg := &config.Config{BoxHome: filepath.Join(t.TempDir(), "box-home")}
-	root := filepath.Join(cfg.BoxHome, "runfiles")
-
-	if got, exists, err := ExistingRunArtifactRoot(cfg); err != nil || exists || got != "" {
-		t.Fatalf("locate absent runfiles = (%q, %v, %v), want absent", got, exists, err)
-	}
-	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		t.Fatalf("read-only lookup created runfiles root: %v", err)
-	}
-	created, err := privateRunArtifactRoot(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, exists, err := ExistingRunArtifactRoot(cfg)
-	if err != nil || !exists || got != created {
-		t.Fatalf("locate created runfiles = (%q, %v, %v), want (%q, true, nil)", got, exists, err, created)
-	}
-}
-
 func TestRunRejectsBroadRunfilesBindBeforeWritingPrivateArtifacts(t *testing.T) {
 	boxHome := t.TempDir()
 	repo := t.TempDir()

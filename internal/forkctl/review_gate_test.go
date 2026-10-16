@@ -143,7 +143,8 @@ func TestForkReviewGateOutcomes(t *testing.T) {
 			t.Fatal(err)
 		}
 		c := &Control{
-			cfg: &config.Config{RepoOverride: repo, BaseImage: "gate-image", Gate: []string{"true"}, Egress: "none"},
+			// The gate box is real up to its runtime, so its run files need a Coop home of the test's own.
+			cfg: &config.Config{RepoOverride: repo, BaseImage: "gate-image", Gate: []string{"true"}, Egress: "none", BoxHome: t.TempDir()},
 			rt:  runtime.Runtime{Name: runtimePath},
 		}
 		_, code, err := reviewCommandOutput(t, c, "perf", "--gate", "--stat")

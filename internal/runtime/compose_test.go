@@ -21,7 +21,10 @@ func TestComposeRegistryConfigStaysUnderProtectedCoopHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	protected := filepath.Join(coopconfig.RootDir(), "runfiles")
+	protected, err := filepath.EvalSymlinks(filepath.Join(coopconfig.RootDir(), "runfiles"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if relative, err := filepath.Rel(protected, root); err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		t.Fatalf("Compose registry config escaped protected Coop home: %s (%v)", root, err)
 	}

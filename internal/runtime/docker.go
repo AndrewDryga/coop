@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 // Docker binds lifecycle operations to one local endpoint and daemon. It is
@@ -100,20 +103,7 @@ func bindDocker(ctx context.Context, rt Runtime, endpoint, expectedID string, la
 		// must not prevent exact-endpoint recovery of an existing workload.
 		pluginConfig, _ = filepath.Abs(pluginConfig)
 	}
-	// Docker otherwise injects proxy URLs from the mutable host CLI config into
-	// container env, potentially including credentials. Lifecycle calls need no
-	// registry login or plugin settings; use an empty private config after discovery.
-	clientConfig, err := os.MkdirTemp("", "coop-docker-client-")
-	if err != nil {
-		return nil, errors.New("private Docker client configuration unavailable")
-	}
-	d := &Docker{binary: binary, endpoint: endpoint, clientConfig: clientConfig, pluginConfig: pluginConfig, env: boundDockerEnvironment(env), launchAllowed: launchAllowed}
-	bound := false
-	defer func() {
-		if !bound {
-			_ = d.Close()
-		}
-	}()
+	d := &Docker{binary: binary, endpoint: endpoint, pluginConfig: pluginConfig, env: boundDockerEnvironment(env), launchAllowed: launchAllowed}
 	info, err := d.readInfo(ctx)
 	if err != nil {
 		return nil, err
@@ -129,15 +119,28 @@ func bindDocker(ctx context.Context, rt Runtime, endpoint, expectedID string, la
 			return nil, errors.New("Docker rootless/user-remapped networking is not qualified")
 		}
 	}
+	// Docker otherwise injects proxy URLs from the mutable host CLI config into
+	// container env, potentially including credentials. Lifecycle calls need no
+	// registry login or plugin settings; use an empty private config after discovery,
+	// made only now so a daemon that is down or unqualified leaves nothing behind.
+	// A run uses it throughout without mounting it, so the daily sweep cannot tell a live
+	// one from a killed run's; it may clear one only in Coop's owner-only runfiles, where
+	// no other user can recreate it. Runtime code has no Config: nil is Coop's home.
+	runfiles, err := config.PrivateRunfiles(nil)
+	if err == nil {
+		d.clientConfig, err = os.MkdirTemp(runfiles, "coop-docker-client-")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("private Docker client configuration unavailable: %w", err)
+	}
 	d.info = info
-	bound = true
 	return d, nil
 }
 
 // Close removes only the exact empty client directory, never any runtime
 // resource. An unexpected file is preserved and reported, not recursively erased.
-// A directory already gone is no failure: the daily temp sweep removes a long
-// run's once it is an hour old, and Docker reads a missing one as empty.
+// A directory already gone is no failure: the daily sweep of Coop's runfiles
+// removes a long run's once it is an hour old, and Docker reads a missing one as empty.
 func (d *Docker) Close() error {
 	if d.closed.Swap(true) {
 		return nil

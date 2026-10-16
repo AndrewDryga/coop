@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 // reapMinimumAge is how long a temp entry must exist before it can be reaped
@@ -39,12 +41,13 @@ var tempPrefixes = []string{
 	"coop-compose-client-",
 }
 
-// dockerClientPrefix names the empty directory a coop hands Docker as its client config for a
-// whole run, never mounting it, so old and unmounted does not mean unused here. Docker reads a
-// missing one as empty, but in a temp directory other users can write — a shared /tmp — removing a
-// live run's would let any of them recreate it with a Docker config of their own. It is reaped
-// only where no one else can add an entry.
-const dockerClientPrefix = "coop-docker-client-"
+// runfilesPrefixes adds what only the private runfiles root holds: the empty folder a coop hands
+// Docker as its client config for a whole run, never mounting it, so old and unmounted does not
+// mean unused there. Removing a live one costs the run nothing, since Docker reads a missing one as
+// empty, and in that owner-only folder no one else can recreate it. In a shared /tmp anyone could,
+// with a Docker config of their own, so a temp directory sweep never looks for these, not even the
+// ones earlier versions left there.
+var runfilesPrefixes = slices.Concat(tempPrefixes, []string{"coop-docker-client-"})
 
 // mountLister is the part of the runtime reaping needs, named here so this can
 // be tested without a container runtime.
@@ -73,6 +76,21 @@ func ReapOrphanTempEntries(
 	dir string,
 	now time.Time,
 ) (int, error) {
+	return reapOrphanEntries(ctx, lister, dir, tempPrefixes, now)
+}
+
+// ReapOrphanRunfiles sweeps Coop's private runfiles root by the same rules, Docker client folders
+// included. It locates the root itself, so these folders are only ever reaped from the validated
+// owner-only one, and it creates nothing: a host that never staged a run has no root to sweep.
+func ReapOrphanRunfiles(ctx context.Context, lister mountLister, cfg *config.Config, now time.Time) (int, error) {
+	root, exists, err := config.ExistingRunfiles(cfg)
+	if err != nil || !exists {
+		return 0, err
+	}
+	return reapOrphanEntries(ctx, lister, root, runfilesPrefixes, now)
+}
+
+func reapOrphanEntries(ctx context.Context, lister mountLister, dir string, prefixes []string, now time.Time) (int, error) {
 	mounted, err := lister.MountSourcesByLabel(ctx, LabelKey, LabelBox)
 	if err != nil {
 		return 0, fmt.Errorf("%w: %w", ErrMountsUnknown, err)
@@ -81,12 +99,11 @@ func ReapOrphanTempEntries(
 	if err != nil {
 		return 0, err
 	}
-	private := writableOnlyByMe(dir)
 	var removed int
 	var failures []error
 	for _, entry := range entries {
 		name := entry.Name()
-		if !hasTempPrefix(name) && !(private && strings.HasPrefix(name, dockerClientPrefix)) {
+		if !slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) }) {
 			continue
 		}
 		path := filepath.Join(dir, name)
@@ -112,26 +129,6 @@ func tempEntryMounted(path string, mounted map[string]bool) bool {
 		source = filepath.Clean(source)
 		rel, err := filepath.Rel(path, source)
 		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
-}
-
-// writableOnlyByMe reports whether no other user can add an entry to dir: it is this user's own
-// and grants no group or world write.
-func writableOnlyByMe(dir string) bool {
-	info, err := os.Stat(dir)
-	if err != nil {
-		return false
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && stat.Uid == uint32(os.Geteuid()) && info.Mode().Perm()&0o022 == 0
-}
-
-func hasTempPrefix(name string) bool {
-	for _, prefix := range tempPrefixes {
-		if strings.HasPrefix(name, prefix) {
 			return true
 		}
 	}

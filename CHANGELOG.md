@@ -128,8 +128,11 @@
   `coop claude`, `coop acp` and `coop loop`, counts only once it has finished, and skips a box
   that is already gone. A pass that could not ask Docker which files boxes use does not count, so
   the next box tries again. It also removes the Docker and Compose client folders killed runs
-  leave behind, the Docker ones only from a temp folder no other user can write to. It still
-  removes only Coop's own entries that are over an hour old and that no box uses.
+  leave behind. Coop now keeps each run's Docker client folder in its own private folder, as it
+  already did the Compose one, because removing one from a shared /tmp is not safe. The cleanup
+  leaves the ones earlier versions put in the temp folder, possibly thousands. While no Coop is
+  running, you can delete the `coop-docker-client-*` folders in `$TMPDIR` (or `/tmp`) yourself.
+  The cleanup still removes only Coop's own entries that are over an hour old and that no box uses.
 
 - **`coop tasks` points out bulk left in the task queue.** Agents sometimes kept compiled
   programs, release tarballs and toolchains in task folders, and left release files next to the

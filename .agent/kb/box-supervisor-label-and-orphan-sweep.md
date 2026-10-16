@@ -2,7 +2,7 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go]
+sources: [internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go]
 updated: 2026-10-16
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
@@ -55,18 +55,28 @@ command's own box work reports a broken runtime loudly, and Apple's `container` 
 inspection at all, so it would otherwise print on every start. `coop doctor` is the reporting
 surface: the count and the container ids, outside its pass/fail tally, reaping nothing.
 
-Files get a separate daily sweep (`cli.startTempReap` → `box.ReapOrphanTempEntries`): coop-prefixed
-entries in TMPDIR and the private runfiles root that are over an hour old AND mounted by no box. It
-starts once per process from `runBox` (direct, editor and fork launches), the readonly/bare launches,
-and `collectOrphanBoxes` (loop and fork starts, and a build's recycle near its end); doctor probes,
-eval trials and fork merge gates launch boxes without it. It stamps `BoxHome/temp-reap` only after a
-pass whose mount listing succeeded (`box.ErrMountsUnknown` marks one that did not): a goroutine dies
-with its process, stamping first let a short command use up the day, and a pass that could not list
-removed nothing, so the next launch retries it. `MountSourcesByLabel` skips a box removed between
-`ps` and its inspect only when the same listing, run again, no longer shows its id. Trap: a
-`coop-docker-client-*` directory is in use for a whole run yet never mounted, so it is reaped only
-from a directory no other user can write (on a shared /tmp another user could recreate a live run's
-Docker config), and `Docker.Close` accepts one already removed.
+Files get a separate daily sweep (`cli.startTempReap` → `box.ReapOrphanTempEntries` for TMPDIR,
+then `box.ReapOrphanRunfiles` for the private runfiles root): coop-prefixed entries that are over an
+hour old AND mounted by no box. It starts once per process from `runBox` (direct, editor and fork
+launches), the readonly/bare launches, and `collectOrphanBoxes` (loop and fork starts, and a
+build's recycle near its end); doctor probes, eval trials and fork merge gates launch boxes without
+it. It stamps `BoxHome/temp-reap` only after a pass whose mount listing succeeded
+(`box.ErrMountsUnknown` marks one that did not): a goroutine dies with its process, stamping first
+let a short command use up the day, and a pass that could not list removed nothing, so the next
+launch retries it. `MountSourcesByLabel` skips a box removed between `ps` and its inspect only when
+the same listing, run again, no longer shows its id.
+
+Trap: a `coop-docker-client-*` directory (`runtime.bindDocker`) is in use for a whole run yet never
+mounted. It lives in the runfiles root beside the run files and `coop-compose-client-*`, made only
+once the daemon qualifies. One helper owns that root: `config.PrivateRunfiles` creates it for runs
+and, with a nil Config, for the runtime (which has none; Load sets BoxHome to RootDir), and
+`config.ExistingRunfiles` finds it for the sweep. Either refuses a runfiles that is a link or
+someone else's; the Coop home above it may be a link. Removing a live client folder there is
+harmless (Docker reads a missing one as empty; `Docker.Close` accepts it) and no other user can
+recreate it, so only `ReapOrphanRunfiles` looks for the prefix. A TMPDIR sweep never does, not even
+for earlier versions' leftovers: on a shared /tmp another user could recreate a live run's Docker
+config. Binding tests get a config root of their own from `dockersock.ServeHandler`, never the
+developer's ~/.config/coop.
 
 **A killed run's own Compose services.** A loop's or editor session's private project
 (`ComposeProjectFor(workspace, owner)`, `<ComposeProject(workspace)>-run-<8 hex>`) stayed behind
@@ -114,6 +124,10 @@ Traps:
   live session's services and volumes.
 
 ## Changelog
+- 2026-10-16 — Docker client folders moved from TMPDIR to the private runfiles root; the private-TMPDIR
+  special case is gone and only ReapOrphanRunfiles reaps them; the root's one helper is
+  internal/config/runfiles.go (a linked Coop home is fine, a linked or foreign runfiles is refused);
+  fake-daemon tests get their own XDG_CONFIG_HOME.
 - 2026-10-16 — the box survey skips Compose containers, so labels a development project's file plants
   never reach the box sweep (task 2026-10-16-keep-planted-coop-labels-on-development-services).
 - 2026-10-16 — per-run Compose services carry the label of the loop or editor-session supervisor that

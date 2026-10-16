@@ -22,6 +22,7 @@ import (
 	"text/template"
 	"time"
 
+	coopconfig "github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 )
@@ -607,7 +608,82 @@ func TestDockerRebindUsesCapturedBinaryAndEndpoint(t *testing.T) {
 	}
 }
 
-// A run that outlives the temp sweep's hour of grace loses its empty client directory to it, and
+// A binding's client directory lives in Coop's owner-only runfiles folder, not TMPDIR: the run uses
+// it throughout without mounting it, so the daily sweep may remove a live one, and in a shared /tmp
+// another user could then recreate it with a Docker config of their own. Close removes it, and a
+// daemon that does not qualify leaves nothing behind. The fake daemon gives the test a config root
+// of its own, so none of this touches the developer's ~/.config/coop.
+func TestDockerClientDirectoryLivesInPrivateRunfiles(t *testing.T) {
+	developers := coopconfig.RootDir()
+	rt, file := fixtureDocker(t, dockerFixture{})
+	runfiles := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "coop", "runfiles")
+	if !filepath.IsAbs(runfiles) || pathWithin(developers, runfiles) {
+		t.Fatalf("a Docker-binding test would write into the developer's config root %s: %s", developers, runfiles)
+	}
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved, err := filepath.EvalSymlinks(runfiles); err != nil || filepath.Dir(d.clientConfig) != resolved ||
+		!strings.HasPrefix(filepath.Base(d.clientConfig), "coop-docker-client-") {
+		t.Fatalf("client directory %s is not in the private runfiles folder %s (%v)", d.clientConfig, runfiles, err)
+	}
+	for _, path := range []string{runfiles, d.clientConfig} {
+		if info, err := os.Lstat(path); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+			t.Fatalf("%s is not an owner-only directory: %v, %v", path, info, err)
+		}
+	}
+	if entries, err := os.ReadDir(d.clientConfig); err != nil || len(entries) != 0 {
+		t.Fatalf("client directory is not empty: %v, %v", entries, err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(runfiles); err != nil || len(entries) != 0 {
+		t.Fatalf("close left the runfiles folder %v, %v; want it empty", entries, err)
+	}
+
+	writeDockerFixture(t, file, dockerFixture{Mode: "rootless"})
+	if err := os.RemoveAll(filepath.Dir(runfiles)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BindDocker(context.Background(), rt, fixtureSock(), ""); err == nil {
+		t.Fatal("an unqualified daemon was bound for launch")
+	}
+	if _, err := os.Lstat(filepath.Dir(runfiles)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a refused binding created Coop state: %v", err)
+	}
+}
+
+// Dotfiles setups make Coop's home a link. A Docker binding, which every open run with signed-in
+// credentials makes, must still work there, and its client folder must land where the daily sweep
+// looks for the loaded Config.
+func TestDockerClientDirectoryFollowsALinkedCoopHome(t *testing.T) {
+	rt, _ := fixtureDocker(t, dockerFixture{})
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "coop")); err != nil {
+		t.Fatal(err)
+	}
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
+	if err != nil {
+		t.Fatalf("a linked Coop home broke the Docker binding: %v", err)
+	}
+	defer d.Close()
+	swept, exists, err := coopconfig.ExistingRunfiles(&coopconfig.Config{BoxHome: coopconfig.RootDir()})
+	if err != nil || !exists || filepath.Dir(d.clientConfig) != swept {
+		t.Fatalf("client directory %s is not in the runfiles the sweep visits (%q, %v, %v)", d.clientConfig, swept, exists, err)
+	}
+	if want, err := filepath.EvalSymlinks(filepath.Join(target, "runfiles")); err != nil || swept != want {
+		t.Fatalf("runfiles = %q, want the linked home's %q (%v)", swept, want, err)
+	}
+}
+
+func pathWithin(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && filepath.IsLocal(rel)
+}
+
+// A run that outlives the daily sweep's hour of grace loses its empty client directory to it, and
 // Docker reads a missing one as empty. Its close must not then report a failure: a filtered run
 // would call its teardown incomplete, and an open run would retain its private state. A file nobody
 // expected in the directory is still preserved and reported.

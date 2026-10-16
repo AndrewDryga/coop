@@ -43,8 +43,13 @@ func Serve(t testing.TB, info func() (Info, error)) string {
 }
 
 // ServeHandler is Serve with any handler, for a daemon that answers badly.
+//
+// A Docker binding keeps its client folder in Coop's config root, so the test also gets a config
+// root of its own (XDG_CONFIG_HOME), never the developer's ~/.config/coop. A test that needs a
+// particular root sets it after starting the daemon.
 func ServeHandler(t testing.TB, handler http.Handler) string {
 	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	dir, err := os.MkdirTemp("/tmp", "coop-sock-")
 	if err != nil {
 		t.Fatal(err)

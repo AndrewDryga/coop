@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 type fakeMounts struct {
@@ -139,48 +141,118 @@ func writeDirEntry(t *testing.T, dir, name string, age time.Duration) string {
 }
 
 // Coop's Docker and Compose client directories are coop entries too. A killed run leaves one
-// behind every time (3,731 Docker client directories on one Mac), so the sweep must know both
-// names, under the same old-and-unmounted rule as everything else.
-//
-// A live run keeps handing Docker its client directory without mounting it, so in a temp
-// directory other users can write, removing one would let any of them recreate it with a Docker
-// config of their own. There the Docker client directories stay; everything else is swept as before.
-func TestReapCoversCoopClientConfigs(t *testing.T) {
-	for _, tc := range []struct {
-		name         string
-		mode         os.FileMode
-		dockerReaped bool
-	}{
-		{name: "private temp directory", mode: 0o700, dockerReaped: true},
-		{name: "shared temp directory", mode: 0o1777},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+// behind every time (3,731 Docker client directories on one Mac), so the sweep of Coop's private
+// runfiles root, where both now live, removes them under the same old-and-unmounted rule as
+// everything else.
+func TestReapRunfilesCoversCoopClientConfigs(t *testing.T) {
+	cfg := &config.Config{BoxHome: t.TempDir()}
+	root := filepath.Join(cfg.BoxHome, "runfiles")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	docker := writeDirEntry(t, root, "coop-docker-client-123", 3*time.Hour)
+	compose := writeDirEntry(t, root, "coop-compose-client-456", 3*time.Hour)
+	run := writeDirEntry(t, root, "coop-run-789", 3*time.Hour)
+	starting := writeDirEntry(t, root, "coop-docker-client-012", time.Minute)
+	notOurs := writeDirEntry(t, root, "someone-elses-dir", 3*time.Hour)
+
+	removed, err := ReapOrphanRunfiles(context.Background(), fakeMounts{sources: map[string]bool{}}, cfg, time.Now())
+	if err != nil || removed != 3 {
+		t.Fatalf("reap = %d, %v; want 3", removed, err)
+	}
+	for name, path := range map[string]string{"Docker client": docker, "Compose client": compose, "run": run} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("the old %s directory survived: %v", name, err)
+		}
+	}
+	for name, path := range map[string]string{"a client directory younger than an hour": starting, "another program's directory": notOurs} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was removed: %v", name, err)
+		}
+	}
+}
+
+// A live run keeps handing Docker its client directory without mounting it, so in a temp directory
+// other users can write, removing one would let any of them recreate it with a Docker config of
+// their own. A temp directory sweep therefore never removes one, not even from a temp directory
+// only this user can write, where earlier versions left theirs; everything else is swept as before.
+func TestReapTempLeavesDockerClientConfigs(t *testing.T) {
+	for name, mode := range map[string]os.FileMode{"private temp directory": 0o700, "shared temp directory": 0o1777} {
+		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.Chmod(dir, tc.mode); err != nil {
+			if err := os.Chmod(dir, mode); err != nil {
 				t.Fatal(err)
 			}
 			docker := writeDirEntry(t, dir, "coop-docker-client-123", 3*time.Hour)
 			compose := writeDirEntry(t, dir, "coop-compose-client-456", 3*time.Hour)
-			starting := writeDirEntry(t, dir, "coop-docker-client-789", time.Minute)
 
 			removed, err := ReapOrphanTempEntries(context.Background(), fakeMounts{sources: map[string]bool{}}, dir, time.Now())
-			want := 1
-			if tc.dockerReaped {
-				want = 2
-			}
-			if err != nil || removed != want {
-				t.Fatalf("reap = %d, %v; want %d", removed, err, want)
+			if err != nil || removed != 1 {
+				t.Fatalf("reap = %d, %v; want 1", removed, err)
 			}
 			if _, err := os.Stat(compose); !os.IsNotExist(err) {
 				t.Errorf("the old Compose client directory survived: %v", err)
 			}
-			if _, err := os.Stat(docker); os.IsNotExist(err) != tc.dockerReaped {
-				t.Errorf("old Docker client directory reaped = %v, want %v", os.IsNotExist(err), tc.dockerReaped)
-			}
-			if _, err := os.Stat(starting); err != nil {
-				t.Errorf("a client directory younger than an hour was removed: %v", err)
+			if _, err := os.Stat(docker); err != nil {
+				t.Errorf("a temp directory sweep removed a Docker client directory: %v", err)
 			}
 		})
+	}
+}
+
+// The sweep removes in-use Docker client folders only because no other user can recreate one in
+// Coop's own runfiles. A runfiles that is a link, or that someone else owns, is not that folder, so
+// the sweep refuses it and removes nothing there.
+func TestReapRunfilesRefusesALinkedOrForeignRoot(t *testing.T) {
+	for name, setup := range map[string]func(t *testing.T, runfiles, target string){
+		"link": func(t *testing.T, runfiles, target string) {
+			if err := os.Symlink(target, runfiles); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"someone else's": func(t *testing.T, runfiles, target string) {
+			if os.Geteuid() != 0 {
+				t.Skip("giving the folder another owner needs root")
+			}
+			if err := os.Rename(target, runfiles); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chown(runfiles, 65534, 65534); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := &config.Config{BoxHome: t.TempDir()}
+			runfiles := filepath.Join(cfg.BoxHome, "runfiles")
+			target := filepath.Join(t.TempDir(), "elsewhere")
+			if err := os.Mkdir(target, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			writeDirEntry(t, target, "coop-docker-client-123", 3*time.Hour)
+			setup(t, runfiles, target)
+
+			removed, err := ReapOrphanRunfiles(context.Background(), fakeMounts{sources: map[string]bool{}}, cfg, time.Now())
+			if err == nil || removed != 0 {
+				t.Fatalf("reap of a %s runfiles = %d, %v; want a refusal", name, removed, err)
+			}
+			if _, err := os.Stat(filepath.Join(runfiles, "coop-docker-client-123")); err != nil {
+				t.Fatalf("the refused sweep removed a Docker client folder: %v", err)
+			}
+		})
+	}
+}
+
+// A host that never staged a run has no runfiles root. Looking for one creates nothing and asks
+// the runtime nothing, so an unavailable runtime is no error there.
+func TestReapRunfilesWithoutARootDoesNothing(t *testing.T) {
+	cfg := &config.Config{BoxHome: filepath.Join(t.TempDir(), "box-home")}
+	removed, err := ReapOrphanRunfiles(context.Background(), fakeMounts{err: errors.New("cannot connect to the docker daemon")}, cfg, time.Now())
+	if err != nil || removed != 0 {
+		t.Fatalf("reap without a root = %d, %v; want 0, nil", removed, err)
+	}
+	if _, err := os.Stat(cfg.BoxHome); !os.IsNotExist(err) {
+		t.Fatalf("looking for the runfiles root created state: %v", err)
 	}
 }
 

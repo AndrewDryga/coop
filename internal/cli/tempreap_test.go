@@ -116,6 +116,19 @@ exit 0
 	return f
 }
 
+// oldDir makes dir, and any missing parent, owner-only and three hours old: an orphan to a sweep.
+func oldDir(t *testing.T, dir string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-3 * time.Hour)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 // canceledLaunch runs a launch that box.Run refuses before any host work, so the sweep it may
 // start is all that happens.
 func canceledLaunch(t *testing.T, a *app) {
@@ -165,6 +178,12 @@ func TestTempReapStampsTheDayOnlyOnceItFinishes(t *testing.T) {
 // read, because that would fail again within the day.
 func TestTempReapRetriesAPassThatCouldNotListMounts(t *testing.T) {
 	tmp, dir := t.TempDir(), t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	// A runfiles root the pass cannot use: a file stands where the folder belongs.
+	cfg := &config.Config{BoxHome: dir}
+	if err := os.WriteFile(filepath.Join(dir, "runfiles"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	orphan := filepath.Join(tmp, "coop-mcp-orphan")
 	if err := os.WriteFile(orphan, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -180,9 +199,9 @@ func TestTempReapRetriesAPassThatCouldNotListMounts(t *testing.T) {
 		}
 		return containerruntime.Runtime{Name: path}
 	}
-	stamp := filepath.Join(dir, "temp-reap")
+	stamp := tempReapPath(cfg)
 
-	reapTemp(fake("broken", "#!/bin/sh\necho 'daemon unavailable' >&2\nexit 1\n"), []string{tmp}, stamp)
+	reapTemp(fake("broken", "#!/bin/sh\necho 'daemon unavailable' >&2\nexit 1\n"), cfg, stamp)
 	if pathExists(stamp) {
 		t.Fatal("a pass that could not list mounts used up the day")
 	}
@@ -200,7 +219,7 @@ func TestTempReapRetriesAPassThatCouldNotListMounts(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "gone-repo", "objects"), filepath.Join(view, "objects")); err != nil {
 		t.Fatal(err)
 	}
-	reapTemp(fake("working", "#!/bin/sh\nexit 0\n"), []string{filepath.Join(tmp, "missing"), tmp}, stamp)
+	reapTemp(fake("working", "#!/bin/sh\nexit 0\n"), cfg, stamp)
 	if !pathExists(stamp) {
 		t.Fatal("a pass that listed mounts did not count for the day")
 	}
@@ -215,6 +234,10 @@ func TestTempReapRetriesAPassThatCouldNotListMounts(t *testing.T) {
 // Both kinds of trigger start the sweep: a launch through runBox, and the orphan-box sweep a loop
 // or fork start runs before its boxes, which launch inside the loop engine. Only Main's process
 // sweeps, so an app built for one operation never does.
+//
+// The sweep clears a killed run's Docker client folder from Coop's private runfiles, and never one
+// in the temp directory: in a shared /tmp another user could recreate a live one with a Docker
+// config of their own.
 func TestTempReapStartsWithABox(t *testing.T) {
 	for name, start := range map[string]func(*testing.T, *app){
 		"direct launch": canceledLaunch,
@@ -223,10 +246,18 @@ func TestTempReapStartsWithABox(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			stubRecoverNetworkRuns(t, nil, nil)
 			f := newTempSweepFixture(t, false)
+			killed := oldDir(t, filepath.Join(f.app.cfg.BoxHome, "runfiles", "coop-docker-client-killed"))
+			earlier := oldDir(t, filepath.Join(filepath.Dir(f.orphan), "coop-docker-client-earlier"))
 			start(t, f.app)
 			wait.ForFile(t, f.stamp)
 			if pathExists(f.orphan) {
 				t.Error("the sweep left an old, unmounted coop entry behind")
+			}
+			if pathExists(killed) {
+				t.Error("the sweep left a killed run's Docker client folder in the runfiles")
+			}
+			if !pathExists(earlier) {
+				t.Error("the sweep removed a Docker client folder from the temp directory")
 			}
 		})
 	}

@@ -60,31 +60,28 @@ func (a *app) startTempReap() {
 	if !tempReapDue(stamp, time.Now()) {
 		return
 	}
-	roots := []string{os.TempDir()}
-	// Ordinary run credentials and policy snapshots now live outside the shared system temp
-	// directory so a prior box with a broad /tmp bind cannot observe a later run. Sweep that
-	// stable private root too; locating it is intentionally read-only so housekeeping never
-	// creates run state.
-	if root, exists, err := box.ExistingRunArtifactRoot(a.cfg); err == nil && exists {
-		roots = append(roots, root)
-	}
-	go reapTemp(a.rt, roots, stamp)
+	go reapTemp(a.rt, a.cfg, stamp)
 }
 
-// reapTemp is one pass over roots. It stamps the day only after a pass in which
-// the runtime said what is mounted. A process that exits mid-pass — a launch that
-// fails at once, a coop stopped — stamps nothing, and a pass that could not ask
-// removed nothing, so either way the next launch tries again. A pass that failed
-// any other way, such as a removal the filesystem refused, would fail again, so
-// it waits a day. Coops launched while one sweeps may sweep too, which only
-// repeats work: every pass asks what is mounted before it removes anything.
-func reapTemp(rt runtime.Runtime, roots []string, stamp string) {
+// reapTemp is one pass over the system temp directory and Coop's private runfiles root. That root
+// keeps ordinary run credentials and policy snapshots out of the shared temp directory, where a
+// prior box with a broad /tmp bind could observe a later run, and holds each run's Docker client
+// folder. Locating it is read-only, so housekeeping never creates run state.
+//
+// It stamps the day only after a pass in which the runtime said what is mounted. A process that
+// exits mid-pass — a launch that fails at once, a coop stopped — stamps nothing, and a pass that
+// could not ask removed nothing, so either way the next launch tries again. A pass that failed any
+// other way, such as a removal the filesystem refused, would fail again, so it waits a day. Coops
+// launched while one sweeps may sweep too, which only repeats work: every pass asks what is mounted
+// before it removes anything.
+func reapTemp(rt runtime.Runtime, cfg *config.Config, stamp string) {
 	ctx, cancel := context.WithTimeout(context.Background(), tempReapTimeout)
 	defer cancel()
-	for _, root := range roots {
-		if _, err := box.ReapOrphanTempEntries(ctx, rt, root, time.Now()); errors.Is(err, box.ErrMountsUnknown) {
-			return
-		}
+	if _, err := box.ReapOrphanTempEntries(ctx, rt, os.TempDir(), time.Now()); errors.Is(err, box.ErrMountsUnknown) {
+		return
+	}
+	if _, err := box.ReapOrphanRunfiles(ctx, rt, cfg, time.Now()); errors.Is(err, box.ErrMountsUnknown) {
+		return
 	}
 	// Views of repositories that are gone; the sweep keeps one it cannot judge or that holds an
 	// unfinished rebase or merge.

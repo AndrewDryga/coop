@@ -399,7 +399,7 @@ func prepareCompositionArtifactParent(artifacts *compositionArtifactOps, cfg *co
 	if artifacts.parent != "" {
 		return func() {}, nil
 	}
-	base, err := privateRunArtifactRoot(cfg)
+	base, err := config.PrivateRunfiles(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("prepare private run artifact root: %w", err)
 	}
@@ -433,70 +433,6 @@ func compositionArtifactExposureRoots(cfg *config.Config, spec RunSpec) []string
 		roots = append(roots, m.Host)
 	}
 	return roots
-}
-
-// privateRunArtifactRoot is a stable Coop-owned parent that every launch protects. System TMPDIR
-// cannot provide cross-run confidentiality: one long-lived box with a broad /tmp bind can watch a
-// later run even when that later run has no such argument. Keeping all ordinary runfiles under the
-// already-protected Coop control home makes that earlier launch fail its own authority validation.
-func privateRunArtifactRoot(cfg *config.Config) (string, error) {
-	root, err := runArtifactRootPath(cfg)
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", err
-	}
-	return validatePrivateRunArtifactRoot(root)
-}
-
-func runArtifactRootPath(cfg *config.Config) (string, error) {
-	base := ""
-	if cfg != nil {
-		base = cfg.BoxHome
-		if base == "" {
-			base = cfg.ConfigDir
-		}
-	}
-	if base == "" {
-		cache, err := os.UserCacheDir()
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(cache, "coop")
-	}
-	return filepath.Join(base, "runfiles"), nil
-}
-
-func validatePrivateRunArtifactRoot(root string) (string, error) {
-	info, err := os.Lstat(root)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return "", errors.Join(err, errors.New("private run artifact root is not a real directory"))
-	}
-	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || stat.Uid != uint32(os.Geteuid()) {
-		return "", errors.New("private run artifact root is not owned by the current user")
-	}
-	if err := os.Chmod(root, 0o700); err != nil {
-		return "", err
-	}
-	return filepath.EvalSymlinks(root)
-}
-
-// ExistingRunArtifactRoot locates the stable private runfiles directory for housekeeping without
-// creating it. A command that has never staged a run must not acquire filesystem state merely
-// because the daily orphan reaper was due.
-func ExistingRunArtifactRoot(cfg *config.Config) (string, bool, error) {
-	root, err := runArtifactRootPath(cfg)
-	if err != nil {
-		return "", false, err
-	}
-	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
-		return "", false, nil
-	} else if err != nil {
-		return "", false, err
-	}
-	root, err = validatePrivateRunArtifactRoot(root)
-	return root, err == nil, err
 }
 
 // preflightCompositionArtifactExposure runs before any generated env, MCP, instruction, broker or

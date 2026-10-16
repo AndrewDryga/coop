@@ -153,12 +153,8 @@ func composeAuthEnvironment() (string, error) {
 }
 
 func privateComposeClientConfig() (string, func(), error) {
-	coopHome := config.RootDir()
-	if err := config.EnsurePrivateDir(coopHome); err != nil {
-		return "", nil, err
-	}
-	parent := filepath.Join(coopHome, "runfiles")
-	if err := config.EnsurePrivateDir(parent); err != nil {
+	parent, err := config.PrivateRunfiles(nil)
+	if err != nil {
 		return "", nil, err
 	}
 	root, err := os.MkdirTemp(parent, "coop-compose-client-")
