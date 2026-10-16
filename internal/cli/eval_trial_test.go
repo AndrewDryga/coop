@@ -426,9 +426,9 @@ func TestTrialAttemptCannotRewriteTheNextTrialsInstructions(t *testing.T) {
 		if result := r.run(context.Background(), trial); result.Status != eval.TrialPassed {
 			t.Fatalf("trial %d = %s: %s", repetition, result.Status, result.Detail)
 		}
-		homes := box.HistoryStores(cfg, "codex", "default")
-		if len(homes) != repetition+1 {
-			t.Fatalf("trial homes = %v, want %d", homes, repetition+1)
+		homes, err := box.HistoryStores(cfg, "codex", "default")
+		if err != nil || len(homes) != repetition+1 {
+			t.Fatalf("trial homes = %v, %v; want %d", homes, err, repetition+1)
 		}
 		home := homes[0]
 		if home == firstHome {

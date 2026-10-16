@@ -398,7 +398,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// Validate a pinned @account before any image/clone work, so a typo'd account fails
 	// fast and never leaves a stray fork behind (forkspace.Setup would otherwise clone first, then
 	// fail).
-	if fa.credential != "" && !slices.Contains(box.EffectiveProfiles(a.cfg, fa.agent), fa.credential) {
+	if fa.credential != "" && !a.hasProfile(fa.agent, fa.credential) {
 		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", fa.agent, fa.credential, fa.agent, fa.credential)
 	}
 	if repo == "" {

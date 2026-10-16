@@ -139,7 +139,8 @@ type accountRow struct {
 // the one fact a person cannot see for themselves.
 func (a *app) accountBlock(agent string) accountBlock {
 	block := accountBlock{agent: agent, title: titleName(agent)}
-	profiles := box.EffectiveProfiles(a.cfg, agent)
+	// A listing error only shortens this read-only view, so it lists the accounts it can read.
+	profiles, _ := box.EffectiveProfiles(a.cfg, agent)
 	def := a.cfg.DefaultProfileOf(agent)
 	// The marked default first, then the rest — the same order a loop's rotation fans out over
 	// accounts (accountsFor), so this listing reflects the try order.
@@ -263,10 +264,17 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 // requireProfile refuses an account this agent has no login for, with the two commands that
 // resolve it — the agent's own list, and signing this one in.
 func (a *app) requireProfile(agent, profile string) error {
-	if slices.Contains(box.EffectiveProfiles(a.cfg, agent), profile) {
+	if a.hasProfile(agent, profile) {
 		return nil
 	}
 	return noAccountErr(agent, profile)
+}
+
+// hasProfile reports whether agent lists profile. It ignores listing errors because it fails
+// closed: an account a failed listing hides is refused like a missing one.
+func (a *app) hasProfile(agent, profile string) bool {
+	profiles, _ := box.EffectiveProfiles(a.cfg, agent)
+	return slices.Contains(profiles, profile)
 }
 
 // showProfile answers the one question this depth is asked: which account a run will use, and the

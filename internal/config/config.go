@@ -697,11 +697,12 @@ func (c *Config) AgentProfileDir(agent, name string) string {
 }
 
 // Profiles lists agent's credential profile names from its profiles/ dir, or nothing when the
-// agent has never been used (or has no profiles/ dir yet).
-func (c *Config) Profiles(agent string) []string {
+// agent has never been used (or has no profiles/ dir yet). Any other listing error comes back
+// with the names read before it: a profile it hides is not an absent one.
+func (c *Config) Profiles(agent string) ([]string, error) {
 	entries, err := os.ReadDir(filepath.Join(c.ConfigDir, agent, profilesSubdir))
-	if err != nil {
-		return nil
+	if errors.Is(err, os.ErrNotExist) {
+		err = nil
 	}
 	var names []string
 	for _, e := range entries {
@@ -709,7 +710,7 @@ func (c *Config) Profiles(agent string) []string {
 			names = append(names, e.Name())
 		}
 	}
-	return names
+	return names, err
 }
 
 func xdgConfigHome() string {

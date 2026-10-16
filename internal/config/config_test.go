@@ -488,16 +488,16 @@ func TestProfilesListing(t *testing.T) {
 	c := &Config{ConfigDir: dir}
 
 	// Never used → no profiles.
-	if got := c.Profiles("codex"); got != nil {
-		t.Errorf("unused agent Profiles = %v, want nil", got)
+	if got, err := c.Profiles("codex"); got != nil || err != nil {
+		t.Errorf("unused agent Profiles = %v, %v; want nil, nil", got, err)
 	}
 	// A bare agent dir with no profiles/ reports nothing — there's no "default" until the
 	// profiles/ dir exists.
 	if err := os.MkdirAll(filepath.Join(dir, "codex"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.Profiles("codex"); got != nil {
-		t.Errorf("bare agent dir (no profiles/) Profiles = %v, want nil", got)
+	if got, err := c.Profiles("codex"); got != nil || err != nil {
+		t.Errorf("bare agent dir (no profiles/) Profiles = %v, %v; want nil, nil", got, err)
 	}
 	// The profiles/ subdirs are the profile names.
 	for _, p := range []string{"default", "work", "personal"} {
@@ -505,10 +505,22 @@ func TestProfilesListing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got := c.Profiles("codex")
+	got, err := c.Profiles("codex")
 	slices.Sort(got)
-	if !slices.Equal(got, []string{"default", "personal", "work"}) {
-		t.Errorf("Profiles = %v", got)
+	if err != nil || !slices.Equal(got, []string{"default", "personal", "work"}) {
+		t.Errorf("Profiles = %v, %v", got, err)
+	}
+	// A profiles/ that exists but cannot be listed is an error, never "no profiles".
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a directory regardless of its mode")
+	}
+	profiles := filepath.Join(dir, "codex", "profiles")
+	if err := os.Chmod(profiles, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(profiles, 0o755) })
+	if got, err := c.Profiles("codex"); err == nil {
+		t.Errorf("unreadable profiles/ listed %v with no error", got)
 	}
 }
 

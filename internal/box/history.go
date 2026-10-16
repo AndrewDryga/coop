@@ -3,11 +3,13 @@ package box
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -71,13 +73,13 @@ func HistoryAccountRoot(cfg *config.Config, provider, account string) string {
 }
 
 // HistoryStores enumerates complete repository homes for one account's usage.
-func HistoryStores(cfg *config.Config, provider, account string) []string {
+func HistoryStores(cfg *config.Config, provider, account string) ([]string, error) {
 	return nativeHistoryHomes(HistoryAccountRoot(cfg, provider, account))
 }
 
 // ACPHistoryStores has no account attribution: credentials may change while
 // one editor conversation and its native history remain in the same home.
-func ACPHistoryStores(cfg *config.Config, provider string) []string {
+func ACPHistoryStores(cfg *config.Config, provider string) ([]string, error) {
 	return nativeHistoryHomes(filepath.Join(cfg.ConfigDir, provider, "acp-homes"))
 }
 
@@ -114,28 +116,41 @@ func ACPRepositorySessions(cfg *config.Config, provider, repo string) (map[strin
 	return ids, nil
 }
 
-func nativeHistoryHomes(path string) []string {
+// nativeHistoryHomes lists the complete homes under path; a missing path or home is no home. Any
+// other error comes back with the homes that could be listed: a home it hides still holds history.
+func nativeHistoryHomes(path string) ([]string, error) {
 	root, err := safefile.OpenRoot(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, withPath(path, err)
 	}
 	defer root.Close()
 	entries, err := root.ReadDir(-1)
-	if err != nil {
-		return nil
-	}
 	var homes []string
 	for _, entry := range entries {
 		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			continue
 		}
 		rel := filepath.Join(entry.Name(), "home")
-		home, err := safefile.OpenDir(root, rel)
-		if err != nil {
+		home, openErr := safefile.OpenDir(root, rel)
+		if openErr != nil {
+			if !errors.Is(openErr, os.ErrNotExist) {
+				err = errors.Join(err, withPath(filepath.Join(path, rel), openErr))
+			}
 			continue
 		}
 		_ = home.Close()
 		homes = append(homes, filepath.Join(path, rel))
 	}
-	return homes
+	return homes, err
+}
+
+// withPath names the folder a bare system error is about, so a report can say what to fix.
+func withPath(path string, err error) error {
+	if errno, ok := err.(syscall.Errno); ok {
+		return &os.PathError{Op: "open", Path: path, Err: errno}
+	}
+	return err
 }

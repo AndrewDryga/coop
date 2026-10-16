@@ -134,14 +134,43 @@ func TestProfileAuthedCredentialMatrix(t *testing.T) {
 				if !ProfileAuthed(cfg, name, profile) {
 					t.Errorf("ProfileAuthed(%s, %s via %s) = false", name, profile, source)
 				}
-				if got := EffectiveProfiles(cfg, name); !slices.Contains(got, profile) || len(got) != 1 {
-					t.Errorf("EffectiveProfiles(%s via %s) = %v, want exactly [%s]", name, source, got, profile)
+				if got, err := EffectiveProfiles(cfg, name); err != nil || !slices.Contains(got, profile) || len(got) != 1 {
+					t.Errorf("EffectiveProfiles(%s via %s) = %v, %v; want exactly [%s]", name, source, got, err, profile)
 				}
 				if source != "file" && ProfileAuthed(cfg, name, "personal") {
 					t.Errorf("env credential %s authenticated unrelated %s@personal", source, name)
 				}
 			})
 		}
+	}
+}
+
+// A credential store that cannot be listed is an error, never silently fewer accounts; the
+// accounts the other store lists still come back.
+func TestEffectiveProfilesReportListingErrors(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a directory regardless of its mode")
+	}
+	for _, store := range []string{"profiles", "credentials"} {
+		t.Run(store, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir()}
+			for _, dir := range []string{cfg.AgentProfileDir("claude", "work"), filepath.Join(cfg.ConfigDir, "claude", "credentials", "solo")} {
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got, err := EffectiveProfiles(cfg, "claude"); err != nil || len(got) != 2 {
+				t.Fatalf("EffectiveProfiles = %v, %v; want work and solo", got, err)
+			}
+			locked := filepath.Join(cfg.ConfigDir, "claude", store)
+			if err := os.Chmod(locked, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+			if got, err := EffectiveProfiles(cfg, "claude"); err == nil || len(got) != 1 {
+				t.Fatalf("EffectiveProfiles with %s unreadable = %v, %v; want the other account and an error", store, got, err)
+			}
+		})
 	}
 }
 

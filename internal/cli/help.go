@@ -221,7 +221,9 @@ func projectServices(cfg *config.Config, ref bool) (compose string, services []s
 // FIRST RUN hint on it without breaking the runtime-free help path.
 func anyAgentSignedIn(cfg *config.Config) bool {
 	for _, agent := range agents.Names() {
-		for _, p := range box.EffectiveProfiles(cfg, agent) {
+		// Only a hint: a listing error at worst shows the first-run hint to a signed-in user.
+		profiles, _ := box.EffectiveProfiles(cfg, agent)
+		for _, p := range profiles {
 			if box.ProfileAuthed(cfg, agent, p) {
 				return true
 			}

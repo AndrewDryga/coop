@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -505,7 +504,7 @@ func (a *app) selectRunProfile(tool, profile string) error {
 	if profile == "" {
 		return nil
 	}
-	if !slices.Contains(box.EffectiveProfiles(a.cfg, tool), profile) {
+	if !a.hasProfile(tool, profile) {
 		return noAccountErr(tool, profile)
 	}
 	if !box.ProfileAuthed(a.cfg, tool, profile) {

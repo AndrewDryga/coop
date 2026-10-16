@@ -120,7 +120,8 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 			var values []string
 			for _, name := range agents.Names() {
 				values = append(values, name)
-				for _, account := range box.EffectiveProfiles(a.cfg, name) {
+				accounts, _ := box.EffectiveProfiles(a.cfg, name) // shell completion is deliberately best-effort
+				for _, account := range accounts {
 					values = append(values, name+"@"+account)
 				}
 			}
@@ -258,7 +259,7 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if _, ok := agents.Get(prev[1]); !ok {
 			return nil
 		}
-		accounts := box.EffectiveProfiles(a.cfg, prev[1])
+		accounts, _ := box.EffectiveProfiles(a.cfg, prev[1]) // shell completion is deliberately best-effort
 		if len(prev) == 2 {
 			return accounts
 		}
@@ -339,8 +340,10 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 	for _, name := range agents.Names() {
 		ag, _ := agents.Get(name)
 		add(name)
+		var profiles []string
 		if wantAccounts {
-			for _, profile := range box.EffectiveProfiles(a.cfg, name) {
+			profiles, _ = box.EffectiveProfiles(a.cfg, name) // shell completion is deliberately best-effort
+			for _, profile := range profiles {
 				add(name + "@" + profile)
 			}
 		}
@@ -352,7 +355,7 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 			base := name + ":" + model
 			add(base)
 			if wantAccounts {
-				for _, profile := range box.EffectiveProfiles(a.cfg, name) {
+				for _, profile := range profiles {
 					add(base + "@" + profile)
 				}
 			}
@@ -366,7 +369,7 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 				effort := base + "/" + level
 				add(effort)
 				if wantAccounts {
-					for _, profile := range box.EffectiveProfiles(a.cfg, name) {
+					for _, profile := range profiles {
 						add(effort + "@" + profile)
 					}
 				}
@@ -380,7 +383,7 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 				effort := name + "/" + level
 				add(effort)
 				if wantAccounts {
-					for _, profile := range box.EffectiveProfiles(a.cfg, name) {
+					for _, profile := range profiles {
 						add(effort + "@" + profile)
 					}
 				}

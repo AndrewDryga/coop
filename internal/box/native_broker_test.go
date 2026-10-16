@@ -231,8 +231,8 @@ func TestNativeRunPublishesGuardOnlyExpiringAccess(t *testing.T) {
 	if !revoked.Revoked || revoked.Credential != "" || revoked.Binding != first.Binding || revoked.Revision <= first.Revision {
 		t.Fatal("removal did not revoke the original run binding")
 	}
-	if len(EffectiveProfiles(cfg, "codex")) != 0 {
-		t.Fatal("removed tombstone remained selectable")
+	if profiles, err := EffectiveProfiles(cfg, "codex"); err != nil || len(profiles) != 0 {
+		t.Fatal("removed tombstone remained selectable", profiles, err)
 	}
 }
 

@@ -37,7 +37,9 @@ func accountsFor(cfg *config.Config, agent string) []string {
 	if box.ProfileCredentialReady(cfg, agent, def, now) {
 		out = append(out, def)
 	}
-	for _, c := range box.EffectiveProfiles(cfg, agent) {
+	// A listing error can only drop accounts from the rotation, never add one, so it fails closed.
+	profiles, _ := box.EffectiveProfiles(cfg, agent)
+	for _, c := range profiles {
 		if c != def && box.ProfileCredentialReady(cfg, agent, c, now) {
 			out = append(out, c)
 		}
@@ -93,7 +95,9 @@ func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target
 		accounts := e.Accounts
 		if len(accounts) == 0 {
 			if len(runnable) == 0 {
-				for _, account := range box.EffectiveProfiles(cfg, agent) {
+				// Only a repair hint: an account a listing error hides just goes unnamed.
+				profiles, _ := box.EffectiveProfiles(cfg, agent)
+				for _, account := range profiles {
 					recordRepair(agent, account, false)
 				}
 				if !slices.Contains(missing, agent) {

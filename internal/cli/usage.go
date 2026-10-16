@@ -92,7 +92,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 		}
 	}()
 	retained, retainedErr := session.ReadUsageSnapshot(ctx, state, now.Add(-30*24*time.Hour), now)
-	rows, partial := a.usageCredentials(names, state)
+	rows, unlisted := a.usageCredentials(names, state)
 	unattributed := 0
 	for _, turn := range retained.Turns {
 		t, err := agents.ParseTarget(turn.Target)
@@ -117,6 +117,10 @@ func (a *app) cmdUsage(args []string) (int, error) {
 		found := false
 		for _, row := range rows {
 			found = found || !row.shared && row.account == target.Account()
+		}
+		if err := unlisted.accounts[target.Provider]; !found && err != nil {
+			// The account may be in the folder that could not be listed, so it is not known missing.
+			return 1, ui.CommandFailed(fmt.Sprintf("Could not list every %s account", titleName(target.Provider)), err.Error())
 		}
 		if !found {
 			return 2, noAccountErr(target.Provider, target.Account())
@@ -143,7 +147,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 				history := agents.ReadUsageHistory(ctx, path, ag.Usage(), cache)
 				row.history.Events = append(row.history.Events, history.Events...)
 				row.history.Available = row.history.Available || history.Available
-				row.history.Partial = row.history.Partial || history.Partial || partial
+				row.history.Partial = row.history.Partial || history.Partial || unlisted.partial(row.provider)
 			}
 			if row.shared || target.Account() != "" && row.account != target.Account() {
 				return
@@ -175,7 +179,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	wg.Wait()
 	// Only an uninterrupted check of every provider whose root listing reported no failure can tell
 	// unused cache entries from live ones; to a narrower check, live entries look unused.
-	if target.Provider == "" && !partial && ctx.Err() == nil {
+	if target.Provider == "" && len(unlisted.accounts)+len(unlisted.history) == 0 && ctx.Err() == nil {
 		cache.Prune()
 	}
 	rows = deduplicateUsageCredentials(rows)
@@ -187,7 +191,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 		rows = slices.DeleteFunc(rows, func(row usageCredential) bool { return row.shared || row.account != target.Account() })
 	}
 	details := target.Account() != ""
-	renderUsage(os.Stdout, ui.For(os.Stdout), ui.TermWidth(os.Stdout), time.Now(), names, rows, details)
+	renderUsage(os.Stdout, ui.For(os.Stdout), ui.TermWidth(os.Stdout), time.Now(), names, rows, unlisted, details)
 	<-reportsDone
 	renderUsageReports(os.Stdout, ui.For(os.Stdout), ui.TermWidth(os.Stdout), reports, reportErr)
 	var footer []string
@@ -223,24 +227,53 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	return 1, nil
 }
 
-func (a *app) usageCredentials(names []string, state string) ([]usageCredential, bool) {
+// usageUnlisted keeps, per provider, the first listing a usage check could not finish. A failed
+// account listing may hide an account; a failed history-folder listing only hides history. Either
+// makes the provider's usage partial and keeps the cache.
+type usageUnlisted struct {
+	accounts, history map[string]error
+}
+
+func (u usageUnlisted) partial(provider string) bool {
+	return u.accounts[provider] != nil || u.history[provider] != nil
+}
+
+// usageCredentials lists every history root of the named providers, and the listings that failed:
+// the roots those hide may be live.
+func (a *app) usageCredentials(names []string, state string) ([]usageCredential, usageUnlisted) {
 	var rows []usageCredential
-	partial := false
+	unlisted := usageUnlisted{accounts: map[string]error{}, history: map[string]error{}}
+	failed := func(kind map[string]error, name string, err error) {
+		if err != nil && kind[name] == nil {
+			kind[name] = err
+		}
+	}
 	for _, name := range names {
-		for _, account := range box.EffectiveProfiles(a.cfg, name) {
+		accounts, err := box.EffectiveProfiles(a.cfg, name)
+		failed(unlisted.accounts, name, err)
+		for _, account := range accounts {
 			// The profile, then every repository's history store of that account (box/history.go).
-			paths := append([]string{a.cfg.AgentProfileDir(name, account)}, box.HistoryStores(a.cfg, name, account)...)
+			stores, err := box.HistoryStores(a.cfg, name, account)
+			failed(unlisted.history, name, err)
+			paths := append([]string{a.cfg.AgentProfileDir(name, account)}, stores...)
 			rows = append(rows, usageCredential{provider: name, account: account, paths: paths})
 		}
 	}
-	// Private session paths freeze the selected account; shared editor paths do not.
+	// Private session paths freeze the selected account; shared editor paths do not. A session
+	// store that cannot be listed hides every provider's private accounts and homes.
 	sessions, err := usageDirs(filepath.Join(state, "acp"), 2000)
-	partial = err != nil && !errors.Is(err, os.ErrNotExist)
+	if !errors.Is(err, os.ErrNotExist) {
+		for _, name := range names {
+			failed(unlisted.accounts, name, err)
+		}
+	}
 	for _, id := range sessions {
 		for _, name := range names {
 			base := filepath.Join(state, "acp", id, name, "profiles")
 			accounts, err := usageDirs(base, 100)
-			partial = partial || err != nil && !errors.Is(err, os.ErrNotExist)
+			if !errors.Is(err, os.ErrNotExist) {
+				failed(unlisted.accounts, name, err)
+			}
 			for _, account := range accounts {
 				index := slices.IndexFunc(rows, func(row usageCredential) bool { return row.provider == name && row.account == account })
 				if index < 0 {
@@ -252,12 +285,16 @@ func (a *app) usageCredentials(names []string, state string) ([]usageCredential,
 		}
 	}
 	for _, name := range names {
-		paths := append([]string{filepath.Join(a.cfg.ConfigDir, name, "acp-sessions")}, box.ACPHistoryStores(a.cfg, name)...)
+		stores, err := box.ACPHistoryStores(a.cfg, name)
+		failed(unlisted.history, name, err)
+		paths := append([]string{filepath.Join(a.cfg.ConfigDir, name, "acp-sessions")}, stores...)
 		// Remote ACP homes also survive account switches. Do not charge their
 		// historical native events to whichever credential is selected today.
 		for _, id := range sessions {
 			privateCfg := &config.Config{ConfigDir: filepath.Join(state, "acp", id)}
-			paths = append(paths, box.ACPHistoryStores(privateCfg, name)...)
+			stores, err = box.ACPHistoryStores(privateCfg, name)
+			failed(unlisted.history, name, err)
+			paths = append(paths, stores...)
 		}
 		rows = append(rows, usageCredential{provider: name, account: "Unattributed ACP", shared: true, paths: paths})
 		ag, _ := agents.Get(name)
@@ -266,7 +303,7 @@ func (a *app) usageCredentials(names []string, state string) ([]usageCredential,
 		}
 	}
 	a.sortUsageCredentials(rows)
-	return rows, partial
+	return rows, unlisted
 }
 
 func (a *app) sortUsageCredentials(rows []usageCredential) {
@@ -297,7 +334,7 @@ func usageDirs(path string, limit int) ([]string, error) {
 		return nil, err
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("history directory is unsafe")
+		return nil, fmt.Errorf("%s is not a real directory", path)
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -309,7 +346,7 @@ func usageDirs(path string, limit int) ([]string, error) {
 		return nil, err
 	}
 	if len(entries) > limit {
-		return nil, errors.New("history directory exceeds its read limit")
+		return nil, fmt.Errorf("%s holds more than %d entries", path, limit)
 	}
 	var names []string
 	for _, entry := range entries {
@@ -389,7 +426,9 @@ func deduplicateUsageCredentials(rows []usageCredential) []usageCredential {
 	return rows
 }
 
-func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []string, rows []usageCredential, details bool) {
+// renderUsage draws each provider's block. A provider with a listing in unlisted ends its block
+// with a warning that its usage is partial.
+func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []string, rows []usageCredential, unlisted usageUnlisted, details bool) {
 	line := func(prefix, value string) {
 		if width <= 0 {
 			fmt.Fprintln(w, prefix+value)
@@ -399,16 +438,28 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			fmt.Fprintln(w, text)
 		}
 	}
-	// Quieter text is laid out as plain text first and dimmed after, so escape codes never count
-	// toward the wrapping width.
-	quiet := func(prefix, value string) {
+	// Dimmed or colored text is laid out as plain text first and styled after, so escape codes
+	// never count toward the wrapping width.
+	styled := func(style func(string) string, prefix, value string) {
 		texts := []string{prefix + value}
 		if width > 0 {
 			texts = ui.PrefixedLines(prefix, value, width)
 		}
 		for _, text := range texts {
-			fmt.Fprintln(w, pal.Dim(text))
+			fmt.Fprintln(w, style(text))
 		}
+	}
+	// The warning names what could not be listed, accounts first since only they can hide an
+	// account, then the first failure's own cause (a path and a reason) undimmed beneath it. Like a
+	// command failure's cause, it prints whole, so the path stays one piece to copy.
+	warnUnlisted := func(name string) {
+		headline, err := "Could not list every history folder, so usage is partial", unlisted.history[name]
+		if accountsErr := unlisted.accounts[name]; accountsErr != nil {
+			headline, err = "Could not list every "+titleName(name)+" account, so usage is partial", accountsErr
+		}
+		styled(pal.Yellow, "  ⚠ ", headline)
+		cause, _, _ := strings.Cut(err.Error(), "\n")
+		fmt.Fprintln(w, "    "+cause)
 	}
 	var grand usageAggregate
 	// Reset/expiry text is measured and wrapped before styling, so ANSI bytes never shift the
@@ -446,7 +497,16 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			}
 		}
 		if len(shown) == 0 {
-			line("  ", "No credentials. Sign in: coop login "+name)
+			switch {
+			case unlisted.accounts[name] != nil:
+				warnUnlisted(name) // Its accounts may be in what could not be listed: no sign-in advice.
+			case unlisted.history[name] != nil:
+				line("  ", "No credentials. Sign in: coop login "+name)
+				fmt.Fprintln(w)
+				warnUnlisted(name)
+			default:
+				line("  ", "No credentials. Sign in: coop login "+name)
+			}
 			continue
 		}
 		cols := usageLayout(shown, details, width)
@@ -580,23 +640,21 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 				if width > 0 && indent+utf8.RuneCountInString(total) > width {
 					indent = 4
 				}
-				quiet(strings.Repeat(" ", indent), total)
+				styled(pal.Dim, strings.Repeat(" ", indent), total)
 			}
 		}
 		if !details && subtotal.Known {
 			fmt.Fprintln(w)
 			line("  Subtotal  ", subtotal.label())
 		}
+		if unlisted.partial(name) {
+			fmt.Fprintln(w)
+			warnUnlisted(name)
+		}
 	}
 	if !details && grand.Known {
 		fmt.Fprintln(w)
-		texts := []string{"Total  " + grand.label()}
-		if width > 0 {
-			texts = ui.PrefixedLines("Total  ", grand.label(), width)
-		}
-		for _, text := range texts {
-			fmt.Fprintln(w, pal.Bold(text))
-		}
+		styled(pal.Bold, "Total  ", grand.label())
 	}
 }
 

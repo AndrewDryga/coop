@@ -50,7 +50,7 @@ func TestUsageAggregateCoverageAndRounding(t *testing.T) {
 				t.Fatalf("aggregate=%+v label=%q want known=%v label=%q", got, got.label(), tc.known, tc.label)
 			}
 			var out bytes.Buffer
-			renderUsage(&out, ui.Palette{}, 100, time.Now(), []string{"codex"}, tc.rows, false)
+			renderUsage(&out, ui.Palette{}, 100, time.Now(), []string{"codex"}, tc.rows, usageUnlisted{}, false)
 			if strings.Contains(out.String(), "Total  ") != tc.known || strings.Contains(out.String(), "Subtotal  ") != tc.known {
 				t.Fatalf("unknown aggregate fabricated or known aggregate omitted:\n%s", out.String())
 			}
@@ -93,9 +93,9 @@ func TestUsageResetCountExpiryAndGrayTiming(t *testing.T) {
 		}, Resets: &agents.UsageResetCredits{Available: &count, Expirations: []time.Time{now.Add(48 * time.Hour)}}}}
 	for _, width := range []int{0, 120, 80, 44, 30} {
 		var plain, colored bytes.Buffer
-		renderUsage(&plain, ui.Palette{}, width, now, []string{"codex"}, []usageCredential{row}, false)
+		renderUsage(&plain, ui.Palette{}, width, now, []string{"codex"}, []usageCredential{row}, usageUnlisted{}, false)
 		pal := ui.Colored()
-		renderUsage(&colored, pal, width, now, []string{"codex"}, []usageCredential{row}, false)
+		renderUsage(&colored, pal, width, now, []string{"codex"}, []usageCredential{row}, usageUnlisted{}, false)
 		text := plain.String()
 		if unstyled := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(colored.String(), ""); unstyled != text {
 			t.Fatalf("ANSI layout differs from plain width=%d:\n%s", width, unstyled)
@@ -120,21 +120,21 @@ func TestUsageResetCountExpiryAndGrayTiming(t *testing.T) {
 	}
 	var out bytes.Buffer
 	row.quota.Resets = &agents.UsageResetCredits{}
-	renderUsage(&out, ui.Palette{}, 120, now, []string{"codex"}, []usageCredential{row}, true)
+	renderUsage(&out, ui.Palette{}, 120, now, []string{"codex"}, []usageCredential{row}, usageUnlisted{}, true)
 	if !strings.Contains(out.String(), "Resets") || !strings.Contains(out.String(), "unavailable") || strings.Contains(out.String(), "0 available") || strings.Contains(out.String(), "Subtotal") || strings.Contains(out.String(), "Total  ") {
 		t.Fatalf("unknown reset count or exact-account detail view incorrect:\n%s", out.String())
 	}
 	count = 0
 	row.quota.Resets = &agents.UsageResetCredits{Available: &count}
 	out.Reset()
-	renderUsage(&out, ui.Palette{}, 120, now, []string{"codex"}, []usageCredential{row}, false)
+	renderUsage(&out, ui.Palette{}, 120, now, []string{"codex"}, []usageCredential{row}, usageUnlisted{}, false)
 	if !strings.Contains(out.String(), "0 available") || strings.Contains(out.String(), "reported expiry") {
 		t.Fatalf("known zero resets did not stay zero:\n%s", out.String())
 	}
 	count = 4
 	row.quota.Resets = &agents.UsageResetCredits{Available: &count, Expirations: []time.Time{now.Add(48 * time.Hour)}}
 	out.Reset()
-	renderUsage(&out, ui.Palette{}, 120, now, []string{"codex"}, []usageCredential{row}, true)
+	renderUsage(&out, ui.Palette{}, 120, now, []string{"codex"}, []usageCredential{row}, usageUnlisted{}, true)
 	if !strings.Contains(out.String(), "Reported reset expiry") || !strings.Contains(out.String(), "in 2d 0h (Oct 14, 19:13 UTC)") {
 		t.Fatalf("account details lost reported expiry:\n%s", out.String())
 	}
@@ -149,7 +149,7 @@ func TestUsageClaudeResetCountAndExpiry(t *testing.T) {
 	}}
 	for _, details := range []bool{false, true} {
 		var out bytes.Buffer
-		renderUsage(&out, ui.Palette{}, 120, now, []string{"claude"}, []usageCredential{row}, details)
+		renderUsage(&out, ui.Palette{}, 120, now, []string{"claude"}, []usageCredential{row}, usageUnlisted{}, details)
 		if !strings.Contains(out.String(), "Claude") || !strings.Contains(out.String(), "3 available") || !strings.Contains(out.String(), "Oct 14, 19:13 UTC") {
 			t.Fatalf("Claude reset metadata lost in details=%v:\n%s", details, out.String())
 		}
@@ -170,7 +170,7 @@ func TestUsageGrandTotalFiltersProvidersAndMarksUnknownCoverage(t *testing.T) {
 		{[]string{"codex", "claude"}, "Total  ≈$3.00/30d partial\n"},
 	} {
 		var out bytes.Buffer
-		renderUsage(&out, ui.Palette{}, 120, time.Now(), tc.names, rows, false)
+		renderUsage(&out, ui.Palette{}, 120, time.Now(), tc.names, rows, usageUnlisted{}, false)
 		if !strings.HasSuffix(out.String(), tc.want) || strings.Contains(out.String(), "$900") || strings.Contains(out.String(), "$903") {
 			t.Fatalf("filtered total leaked another provider or hid unknown coverage:\n%s", out.String())
 		}

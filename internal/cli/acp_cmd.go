@@ -213,7 +213,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	// Fail a bad credential fast, in the outer process, before spawning anything (the inner's
 	// applyOneOff does the real selection).
-	if profile != "" && !slices.Contains(box.EffectiveProfiles(a.cfg, tool), profile) {
+	if profile != "" && !a.hasProfile(tool, profile) {
 		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", tool, profile, tool, profile)
 	}
 	if innerProcess {

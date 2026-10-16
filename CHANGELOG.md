@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop usage` says partial when it cannot list some history.** An account or history folder
+  Coop could not list, such as one without read permission, dropped out of the totals without a
+  word. Now that provider's usage says it is partial and names the folder it could not list, and
+  when that hid accounts, `coop usage <provider>@<account>` says so instead of saying the account
+  does not exist.
+
 - **Coop removes the services killed loops and editor sessions leave behind.** A loop or editor
   session runs its own copy of the project's Compose services, and only a loop that ended cleanly
   removed them, so every killed loop and every editor session left its containers, data volumes and
@@ -81,9 +87,9 @@
 - **`coop usage` removes cached records of deleted transcripts.** The usage cache kept a record for
   every transcript it ever read, so it grew as Claude deleted month-old transcripts and as accounts
   and history folders were removed. Now `coop usage` without a provider, once it has read all
-  history, deletes the records it no longer needs. A one-provider check or an interrupted check
-  deletes nothing, and neither does a history folder Coop could only partly read. Coop removes only
-  its own record files.
+  history, deletes the records it no longer needs. A one-provider check, an interrupted check or a
+  check that could not list every history folder deletes nothing, and neither does a history folder
+  Coop could only partly read. Coop removes only its own record files.
 
 - **Signing keeps the IDs of signed and pushed commits.** Coop signs the commits agents make in a
   box after ordinary agent runs, after each loop cycle, at the end of a loop run, and with

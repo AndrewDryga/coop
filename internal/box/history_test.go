@@ -57,8 +57,45 @@ func TestHistoryStoresListOnlyCompleteNativeHomes(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), filepath.Join(root, "planted")); err != nil {
 		t.Fatal(err)
 	}
-	if got := HistoryStores(cfg, "claude", "work"); len(got) != 1 || got[0] != home {
-		t.Fatalf("HistoryStores=%v, want %s", got, home)
+	if got, err := HistoryStores(cfg, "claude", "work"); err != nil || len(got) != 1 || got[0] != home {
+		t.Fatalf("HistoryStores=%v, %v; want %s", got, err, home)
+	}
+}
+
+// Only a missing folder or home is empty. A folder or home that cannot be opened is an error, and
+// the homes beside it are still listed.
+func TestHistoryStoresReportListingErrors(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a directory regardless of its mode")
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	if got, err := HistoryStores(cfg, "claude", "work"); got != nil || err != nil {
+		t.Fatalf("missing account folder = %v, %v; want nil, nil", got, err)
+	}
+	root := HistoryAccountRoot(cfg, "claude", "work")
+	kept := filepath.Join(root, "kept", "home")
+	for _, dir := range []string{kept, filepath.Join(root, "locked", "home"), filepath.Join(root, "homeless")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := HistoryStores(cfg, "claude", "work"); err != nil || len(got) != 2 {
+		t.Fatalf("HistoryStores = %v, %v; want two homes and no error", got, err)
+	}
+	lock := func(dir string) {
+		t.Helper()
+		if err := os.Chmod(dir, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	}
+	lock(filepath.Join(root, "locked"))
+	if got, err := HistoryStores(cfg, "claude", "work"); err == nil || len(got) != 1 || got[0] != kept {
+		t.Fatalf("one unreadable home = %v, %v; want [%s] and an error", got, err, kept)
+	}
+	lock(root)
+	if got, err := HistoryStores(cfg, "claude", "work"); err == nil {
+		t.Fatalf("an unreadable account folder listed %v with no error", got)
 	}
 }
 

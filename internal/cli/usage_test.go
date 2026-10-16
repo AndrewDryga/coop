@@ -164,9 +164,9 @@ func TestUsageDiscoversPrivateRootsAndKeepsAmbiguityUnknown(t *testing.T) {
 	usageFixtureFile(t, filepath.Join(state, "acp", "session", "codex", "profiles", "retired", "sessions", "x.jsonl"), "fixture")
 	privateHome := filepath.Join(state, "acp", "session", "codex", "acp-homes", "repo-key", "home")
 	usageFixtureFile(t, filepath.Join(privateHome, "sessions", "new.jsonl"), "fixture")
-	rows, partial := a.usageCredentials([]string{"codex"}, state)
-	if partial || len(rows) != 3 || rows[0].account != "retired" || len(rows[0].paths) != 1 {
-		t.Fatalf("private discovery=%+v partial=%v", rows, partial)
+	rows, unlisted := a.usageCredentials([]string{"codex"}, state)
+	if unlisted.partial("codex") || len(rows) != 3 || rows[0].account != "retired" || len(rows[0].paths) != 1 {
+		t.Fatalf("private discovery=%+v unlisted=%+v", rows, unlisted)
 	}
 	if !rows[1].shared || !slices.Contains(rows[1].paths, privateHome) || slices.Contains(rows[0].paths, privateHome) {
 		t.Fatalf("account-independent private ACP history misattributed: %+v", rows)
@@ -186,7 +186,7 @@ func TestUsageDiscoversPrivateRootsAndKeepsAmbiguityUnknown(t *testing.T) {
 		t.Fatalf("ambiguous history fabricated zero or double charged: %+v", rows)
 	}
 	var out bytes.Buffer
-	renderUsage(&out, ui.Palette{}, 100, time.Now(), []string{"codex"}, rows[:1], true)
+	renderUsage(&out, ui.Palette{}, 100, time.Now(), []string{"codex"}, rows[:1], usageUnlisted{}, true)
 	if strings.Contains(out.String(), "≈$0") || !strings.Contains(out.String(), "history cannot be matched to one credential") {
 		t.Fatalf("ambiguous selected credential: %s", out.String())
 	}
@@ -200,8 +200,8 @@ func TestUsageRenderingIndependentFailuresAndReset(t *testing.T) {
 		{provider: "codex", account: "personal", quotaErr: agents.ErrUsageSignIn},
 	}
 	var wide, narrow bytes.Buffer
-	renderUsage(&wide, ui.Palette{}, 120, now, []string{"codex"}, rows, true)
-	renderUsage(&narrow, ui.Palette{}, 30, now, []string{"codex"}, rows, true)
+	renderUsage(&wide, ui.Palette{}, 120, now, []string{"codex"}, rows, usageUnlisted{}, true)
+	renderUsage(&narrow, ui.Palette{}, 30, now, []string{"codex"}, rows, usageUnlisted{}, true)
 	for _, wanted := range []string{"work · Pro", "≈$12.35 · partial history · 2 unpriced events", "100% used", "resets in 38m", "coop login codex@personal", "no usable history"} {
 		if !strings.Contains(wide.String(), wanted) {
 			t.Fatalf("missing %q: %s", wanted, wide.String())
@@ -245,7 +245,7 @@ func TestUsageAlignsEveryFactAndQuietsTheTotal(t *testing.T) {
 	}
 	names := []string{"codex", "gemini", "grok"}
 	var out bytes.Buffer
-	renderUsage(&out, ui.Palette{}, 120, now, names, rows, false)
+	renderUsage(&out, ui.Palette{}, 120, now, names, rows, usageUnlisted{}, false)
 	text := out.String()
 
 	// Codex: labels fit its longest label; balances, reasons and totals all start where
@@ -286,7 +286,7 @@ func TestUsageAlignsEveryFactAndQuietsTheTotal(t *testing.T) {
 	// Totals and account notes are quieter than the limits; bars keep their colours.
 	var colored bytes.Buffer
 	pal := ui.Colored()
-	renderUsage(&colored, pal, 120, now, names, rows, false)
+	renderUsage(&colored, pal, 120, now, names, rows, usageUnlisted{}, false)
 	for _, wanted := range []string{
 		pal.Dim(strings.TrimSuffix(at(value, "Σ≈$54.82/30d"), "\n")) + "\n",
 		"  blitz_ai_studio (API key)  " + pal.Dim("Σ≈$0.48/30d") + "\n",
@@ -301,14 +301,14 @@ func TestUsageAlignsEveryFactAndQuietsTheTotal(t *testing.T) {
 
 	// Account details keep the provider's flag, in words, for a limit but not for a balance.
 	out.Reset()
-	renderUsage(&out, ui.Palette{}, 120, now, []string{"codex"}, rows[:1], true)
+	renderUsage(&out, ui.Palette{}, 120, now, []string{"codex"}, rows[:1], usageUnlisted{}, true)
 	if !strings.Contains(out.String(), "100% used · limit reached") || strings.Count(out.String(), "limit reached") != 1 {
 		t.Fatalf("account details lost or misapplied the limit flag:\n%s", out.String())
 	}
 
 	// A fact too wide for its columns stacks under its label instead of spilling past the edge.
 	out.Reset()
-	renderUsage(&out, ui.Palette{}, 40, now, []string{"codex"}, rows[:2], false)
+	renderUsage(&out, ui.Palette{}, 40, now, []string{"codex"}, rows[:2], usageUnlisted{}, false)
 	if !strings.Contains(out.String(), "    Limits\n      unavailable · sign-in required\n") {
 		t.Fatalf("narrow limits fact did not stack:\n%s", out.String())
 	}
@@ -365,7 +365,7 @@ func TestUsageWrapsValuesInTheirColumn(t *testing.T) {
 			{Name: "Credits", Remaining: "60149.85"},
 		}}}}
 	var out bytes.Buffer
-	renderUsage(&out, ui.Palette{}, 44, now, []string{"codex"}, rows, false)
+	renderUsage(&out, ui.Palette{}, 44, now, []string{"codex"}, rows, usageUnlisted{}, false)
 	value := strings.Repeat(" ", 4+len("Credits")+2+12)
 	want := "  personal\n" +
 		"    Weekly   ██████████  100% used\n" +
@@ -411,7 +411,7 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 		{provider: "gemini", account: "vertex", quota: agents.UsageQuota{Auth: "Vertex"}},
 	}
 	var out bytes.Buffer
-	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude", "codex", "gemini"}, rows, false)
+	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude", "codex", "gemini"}, rows, usageUnlisted{}, false)
 	text := out.String()
 	for _, wanted := range []string{"  personal\n", "░░░░░░░░░░    0% used", "██████████  100% used", "Fable", "gpt-reserve · Weekly", "60,412.02 remaining", "Σ≈$406.48/30d", "Unassigned editor usage", "Σ≈$0.82/30d"} {
 		if !strings.Contains(text, wanted) {
@@ -458,7 +458,7 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 	t.Log("\n" + text)
 
 	out.Reset()
-	renderUsage(&out, ui.Palette{}, 30, now, []string{"claude"}, rows[:1], false)
+	renderUsage(&out, ui.Palette{}, 30, now, []string{"claude"}, rows[:1], usageUnlisted{}, false)
 	if !strings.Contains(out.String(), "    Σ≈$406.48/30d\n") {
 		t.Fatalf("narrow total did not use the compact fallback:\n%s", out.String())
 	}
@@ -472,7 +472,7 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 	}
 
 	out.Reset()
-	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude"}, rows[:1], true)
+	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude"}, rows[:1], usageUnlisted{}, true)
 	for _, wanted := range []string{"partial history", "approximate token tariff", "22 unpriced events", "3 retained turns", "Extra usage", "disabled"} {
 		if !strings.Contains(out.String(), wanted) {
 			t.Fatalf("account detail missing %q:\n%s", wanted, out.String())

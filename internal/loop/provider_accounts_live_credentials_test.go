@@ -24,14 +24,11 @@ import (
 // Absence means fewer than two configured accounts, not a broken credential or an incompatible
 // pair. This live probe selects like-for-like credentials; deterministic tests cover mixed families.
 func accountLivePair(cfg *config.Config, provider string) ([]liveprovider.Selection, bool, error) {
-	// EffectiveProfiles intentionally treats catalog read errors as absence. Qualification must
-	// distinguish an unused provider from a catalog it could not inspect.
-	for _, catalog := range []string{filepath.Dir(cfg.AgentProfileDir(provider, "default")), filepath.Join(cfg.ConfigDir, provider, "credentials")} {
-		if _, err := os.ReadDir(catalog); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, false, errors.New("cannot read configured account catalog")
-		}
+	// Qualification must distinguish an unused provider from a catalog it could not inspect.
+	accounts, err := box.EffectiveProfiles(cfg, provider)
+	if err != nil {
+		return nil, false, errors.New("cannot read configured account catalog")
 	}
-	accounts := box.EffectiveProfiles(cfg, provider)
 	slices.Sort(accounts)
 	if len(accounts) < 2 {
 		return nil, false, nil

@@ -2,6 +2,7 @@ package box
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,14 +13,17 @@ import (
 )
 
 // EffectiveProfiles returns stored profile directories plus one synthetic env-backed default when
-// needed. Consumers that mutate credential directories must continue to use Config.Profiles.
-func EffectiveProfiles(cfg *config.Config, agent string) []string {
-	profiles := cfg.Profiles(agent)
-	if entries, err := os.ReadDir(filepath.Join(cfg.ConfigDir, agent, "credentials")); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() && !slices.Contains(profiles, entry.Name()) {
-				profiles = append(profiles, entry.Name())
-			}
+// needed. Consumers that mutate credential directories must continue to use Config.Profiles. A
+// listing error other than a missing directory comes back with the accounts that could be listed.
+func EffectiveProfiles(cfg *config.Config, agent string) ([]string, error) {
+	profiles, err := cfg.Profiles(agent)
+	entries, listErr := os.ReadDir(filepath.Join(cfg.ConfigDir, agent, "credentials"))
+	if listErr != nil && !errors.Is(listErr, os.ErrNotExist) {
+		err = errors.Join(err, listErr)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && !slices.Contains(profiles, entry.Name()) {
+			profiles = append(profiles, entry.Name())
 		}
 	}
 	def := cfg.DefaultProfileOf(agent)
@@ -34,7 +38,7 @@ func EffectiveProfiles(cfg *config.Config, agent string) []string {
 			return err == nil && exists && record.Revoked
 		})
 	}
-	return profiles
+	return profiles, err
 }
 
 // ProfileAuthed reports whether the named agent profile has its credential marker file, or is the
