@@ -286,6 +286,9 @@ func writeAndSync(file *os.File, data []byte) error {
 // writeNewRepoFile is the one create-only boundary for scaffolded repository files. os.Root keeps
 // parent traversal inside repo; O_EXCL and O_NOFOLLOW make the final entry no-clobber. Existing
 // regular files are the supported re-init no-op, while links and unsupported entries are errors.
+// The parent is opened once and the file is created, checked and removed by name through it: a
+// box that fails the write and then swaps a parent for a link cannot point the cleanup at a
+// same-named file elsewhere, such as one .coopignore hides from it.
 func writeNewRepoFile(repo, dest string, data []byte, perm os.FileMode, write scaffoldFileWrite) (bool, error) {
 	root, err := os.OpenRoot(repo)
 	if err != nil {
@@ -296,14 +299,22 @@ func writeNewRepoFile(repo, dest string, data []byte, perm os.FileMode, write sc
 	if err != nil {
 		return false, err
 	}
-	if parent := filepath.Dir(rel); parent != "." {
-		if err := root.MkdirAll(parent, 0o755); err != nil {
+	dir, name := filepath.Dir(rel), filepath.Base(rel)
+	if dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
 			return false, fmt.Errorf("create scaffold parent for %s: %w", dest, err)
 		}
 	}
-	file, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, perm)
+	// "<dir>/." makes os.Root open every folder on the way with O_DIRECTORY. Opening the folder
+	// itself would block on a FIFO a box swapped in after MkdirAll until something wrote to it.
+	parent, err := root.OpenRoot(dir + string(filepath.Separator) + ".")
 	if err != nil {
-		if info, statErr := root.Lstat(rel); statErr == nil {
+		return false, fmt.Errorf("open scaffold parent for %s: %w", dest, repoPath(err, dir))
+	}
+	defer parent.Close()
+	file, err := parent.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, perm)
+	if err != nil {
+		if info, statErr := parent.Lstat(name); statErr == nil {
 			if info.Mode().IsRegular() {
 				return false, nil
 			}
@@ -311,29 +322,38 @@ func writeNewRepoFile(repo, dest string, data []byte, perm os.FileMode, write sc
 			// of them: the path it could not produce, and why.
 			return false, &fs.PathError{Op: "create", Path: dest, Err: ErrNotRegular}
 		}
-		return false, fmt.Errorf("create scaffold file %s: %w", dest, err)
+		return false, fmt.Errorf("create scaffold file %s: %w", dest, repoPath(err, rel))
 	}
 	created, statErr := file.Stat()
 	if statErr != nil {
 		_ = file.Close()
-		_ = root.Remove(rel)
-		return false, fmt.Errorf("inspect new scaffold file %s: %w", dest, statErr)
+		_ = parent.Remove(name)
+		return false, fmt.Errorf("inspect new scaffold file %s: %w", dest, repoPath(statErr, dest))
 	}
 	removePartial := func() {
-		if current, currentErr := root.Lstat(rel); currentErr == nil && os.SameFile(created, current) {
-			_ = root.Remove(rel)
+		if current, currentErr := parent.Lstat(name); currentErr == nil && os.SameFile(created, current) {
+			_ = parent.Remove(name)
 		}
 	}
 	if err := write(file, data); err != nil {
 		_ = file.Close()
 		removePartial()
-		return false, fmt.Errorf("write scaffold file %s: %w", dest, err)
+		return false, fmt.Errorf("write scaffold file %s: %w", dest, repoPath(err, dest))
 	}
 	if err := file.Close(); err != nil {
 		removePartial()
-		return false, fmt.Errorf("close scaffold file %s: %w", dest, err)
+		return false, fmt.Errorf("close scaffold file %s: %w", dest, repoPath(err, dest))
 	}
 	return true, nil
+}
+
+// repoPath puts the path a person knows on an error from a parent handle. The handle reports a
+// bare name when it cannot create a file, and spells the files it opened "<dir>/./<name>".
+func repoPath(err error, path string) error {
+	if pathErr, ok := err.(*fs.PathError); ok {
+		pathErr.Path = path
+	}
+	return err
 }
 
 func repoRelativePath(repo, dest string) (string, error) {

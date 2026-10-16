@@ -13,6 +13,14 @@
   repository, run Coop in a project folder with its own repository (`git init` there), or set
   `COOP_REPO`.
 
+- **`coop init` removes a partial file only where it wrote it.** When `coop init` could not finish
+  writing a file, for example because the disk was full, it looked the file's path up again to
+  remove what it had written. An agent in a box could swap a folder on that path for a link just
+  then, so the removal could take a file with the same name in another folder of your repository,
+  such as one `.coopignore` hides from agents. Now the removal goes through the folder the file was
+  written in. Swapping that folder for a named pipe while `coop init` creates a file now stops it
+  with an error instead of freezing it.
+
 - **An interrupted credential renewal no longer locks the account.** When a renewal of an agent's
   sign-in was cut short by Ctrl-C, a lost connection or a provider error, Coop refused that account
   until `coop login`. Now it finishes the renewal from the provider's answer when it got one, and

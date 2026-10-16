@@ -1,16 +1,21 @@
 package scaffold
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func captureScaffoldStderr(t *testing.T, fn func() error) (string, error) {
@@ -967,6 +972,126 @@ func TestInitKeepsRealInstructionFile(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(real); string(b) != "# my project rules" {
 		t.Error("real CLAUDE.md content was changed")
+	}
+}
+
+// A box can fill the disk to fail a scaffold write, then swap the file's parent for a link to a
+// folder .coopignore hides from it. The swapped path now names the hidden file, so a cleanup that
+// walks the path again would check or remove that file instead of the partial one.
+func TestWriteNewRepoFileCleanupIgnoresSwappedParent(t *testing.T) {
+	repo := t.TempDir()
+	hidden := filepath.Join(repo, "private", "README.md")
+	if err := os.MkdirAll(filepath.Dir(hidden), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hidden, []byte("hidden notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(repo, ".agent", "tasks")
+	moved := filepath.Join(repo, ".agent", "moved")
+	created, err := writeNewRepoFile(repo, filepath.Join(parent, "README.md"), []byte("complete"), 0o644, func(file *os.File, _ []byte) error {
+		if _, err := file.Write([]byte("par")); err != nil {
+			return err
+		}
+		if err := os.Rename(parent, moved); err != nil {
+			return err
+		}
+		if err := os.Symlink(filepath.Join("..", "private"), parent); err != nil {
+			return err
+		}
+		return syscall.ENOSPC
+	})
+	if created || !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("writeNewRepoFile = (%v, %v), want the full-disk failure", created, err)
+	}
+	if got, err := os.ReadFile(hidden); err != nil || string(got) != "hidden notes\n" {
+		t.Fatalf("cleanup reached the hidden file through the swapped parent: %q, %v", got, err)
+	}
+	if _, err := os.Lstat(filepath.Join(moved, "README.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial file was not removed from the folder it was written in: %v", err)
+	}
+}
+
+// A box can swap a scaffold file's parent for a FIFO between init creating the folder and opening
+// it. Opening a FIFO waits for a writer, so the open must refuse it instead of freezing coop init.
+// The swap races the open: a child process repeats the write against a swapper, and a hang shows
+// up as the child missing the deadline.
+func TestWriteNewRepoFileFailsFastOnAFIFOParent(t *testing.T) {
+	if repo := os.Getenv("COOP_SCAFFOLD_FIFO_REPO"); repo != "" {
+		parent := filepath.Join(repo, ".agent", "tasks")
+		var stop atomic.Bool
+		swapper := make(chan struct{})
+		go func() {
+			defer close(swapper)
+			for !stop.Load() {
+				_ = os.Remove(parent)
+				_ = syscall.Mkfifo(parent, 0o600)
+				_ = os.Remove(parent)
+				_ = os.Mkdir(parent, 0o755)
+			}
+		}()
+		dest := filepath.Join(parent, "README.md")
+		write := func(file *os.File, data []byte) error {
+			_, err := file.Write(data)
+			return err
+		}
+		for range 1000 {
+			if created, _ := writeNewRepoFile(repo, dest, []byte("x"), 0o644, write); created {
+				_ = os.Remove(dest)
+			}
+		}
+		stop.Store(true)
+		<-swapper
+		return
+	}
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "-test.run=^TestWriteNewRepoFileFailsFastOnAFIFOParent$", "-test.v")
+	cmd.Env = append(os.Environ(), "COOP_SCAFFOLD_FIFO_REPO="+repo)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("writes racing a FIFO parent: %v (deadline: %v)\n%s", err, ctx.Err(), output)
+	}
+}
+
+// The FIFO guard opens the parent as "<dir>/.", which still follows a parent link that stays
+// inside the repository: a scaffold file lands where it always did.
+func TestWriteNewRepoFileFollowsAnInRepoParentLink(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("config", filepath.Join(repo, ".agent")); err != nil {
+		t.Fatal(err)
+	}
+	if wrote, err := WriteProject(repo, nil); err != nil || !wrote {
+		t.Fatalf("WriteProject through an in-repo parent link = (%v, %v)", wrote, err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "config", "project.yaml")); err != nil {
+		t.Fatalf("project.yaml did not land in the link's target: %v", err)
+	}
+}
+
+// The parent handle spells the files it opens "<dir>/./<name>"; a write error names the repo path.
+func TestWriteNewRepoFileErrorsNameTheRepoPath(t *testing.T) {
+	repo := t.TempDir()
+	dest := filepath.Join(repo, ".agent", "compose.yml")
+	_, err := writeNewRepoFile(repo, dest, []byte("x"), 0o644, func(file *os.File, data []byte) error {
+		if err := file.Close(); err != nil {
+			return err
+		}
+		_, err := file.Write(data) // fails naming the file, as a full disk would
+		return err
+	})
+	if err == nil || strings.Contains(err.Error(), "/./") || !strings.Contains(err.Error(), "write "+dest+":") {
+		t.Fatalf("write error = %v, want it to name %s", err, dest)
 	}
 }
 

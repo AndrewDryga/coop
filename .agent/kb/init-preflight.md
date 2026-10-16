@@ -1,6 +1,6 @@
 ---
 name: init-preflight
-description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links
+description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links, and new files are created and cleaned up through one parent handle
 subsystem: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/cli/init_cmd.go, internal/cli/init_test.go]
 updated: 2026-10-16
@@ -36,7 +36,29 @@ rename (a same-user host editor is outside the threat model, audit decision 3.5)
 wins. A Compose file or `.gitignore` that appears between the read and the exclusive create is
 reported as existing, never overwritten.
 
+New files take the same discipline in `writeNewRepoFile`: it opens the file's parent once as an
+`os.Root` handle, creates the file there with `O_EXCL`, and after a failed write checks and removes
+it by name through that handle. An `os.Root` call on a nested path walks every parent again, so a
+check and a removal by that path are two walks: a box that fails the write (say by filling the
+disk) and swaps a parent for a link between them could have the removal take a same-named file the
+link reaches, such as one `.coopignore` hides. The parent is opened as `<dir>/.`: os.Root opens
+the last component of a path without `O_DIRECTORY`, so opening the folder itself blocked init on a
+FIFO a box swapped in after `MkdirAll`, while `<dir>/.` makes every folder on the way a directory
+open and still follows in-repo parent links. The handle reports a bare name when a create fails
+and spells its open files `<dir>/./<name>`, so `repoPath` puts the path `coop init` prints back
+on those errors. The in-place reader above still opens its folder by name, so a FIFO swapped in
+for that folder blocks it the same way.
+
 ## Changelog
+- 2026-10-16 — the create-only path keeps one parent handle, opened as `<dir>/.` so a FIFO parent
+  fails at once, and removes a partial file by name through it, no longer by checking and removing
+  the repo path (two walks a swapped parent could split). Pinned by
+  TestWriteNewRepoFileCleanupIgnoresSwappedParent (fails on the old cleanup and with a by-path
+  removal), TestWriteNewRepoFileFailsFastOnAFIFOParent (hung 6 of 6 runs on a plain
+  `OpenRoot(dir)`), TestWriteNewRepoFileFollowsAnInRepoParentLink,
+  TestWriteNewRepoFileErrorsNameTheRepoPath and 13w-init-write-failed. Probed the in-place reader:
+  `AddComposeServices` blocks in `readProjectFile` on a FIFO at `.agent`; `project.Load` refuses
+  that first in the CLI, so there it takes a race.
 - 2026-10-16 — `.gitignore` joined the in-place edits. updateGitignore had used os.ReadFile and
   os.WriteFile, which followed a link a box planted (out to a host file such as ~/.zshrc, or to an
   in-repo file `.coopignore` hides); a missing file is now created exclusively. The regular-file
