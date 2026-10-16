@@ -57,6 +57,19 @@ func TestHistoryStoresListOnlyCompleteNativeHomes(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), filepath.Join(root, "planted")); err != nil {
 		t.Fatal(err)
 	}
+	// A link or a file where a home belongs is skipped the same way, never a failed listing: Coop
+	// makes only real folders there, so reporting one would mark usage partial until removed.
+	for _, key := range []string{"linked", "filed"} {
+		if err := os.Mkdir(filepath.Join(root, key), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, "linked", "home")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "filed", "home"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if got, err := HistoryStores(cfg, "claude", "work"); err != nil || len(got) != 1 || got[0] != home {
 		t.Fatalf("HistoryStores=%v, %v; want %s", got, err, home)
 	}

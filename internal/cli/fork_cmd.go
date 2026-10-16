@@ -398,8 +398,10 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// Validate a pinned @account before any image/clone work, so a typo'd account fails
 	// fast and never leaves a stray fork behind (forkspace.Setup would otherwise clone first, then
 	// fail).
-	if fa.credential != "" && !a.hasProfile(fa.agent, fa.credential) {
-		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", fa.agent, fa.credential, fa.agent, fa.credential)
+	if fa.credential != "" {
+		if err := a.requireProfile(fa.agent, fa.credential); err != nil {
+			return refusalExit(err), err
+		}
 	}
 	if repo == "" {
 		repo, err = box.ResolveRepo(a.cfg.RepoOverride)
@@ -709,7 +711,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// Pin this interactive session's account/model/effort from the positional target, below any
 	// preset the fork carries.
 	if err := a.applyOneOff(fa.agent, fa.model, fa.credential, fa.effort); err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	// Codex mints its own IDs. Preserve an existing exact hint; otherwise snapshot IDs so the
 	// completed fresh run can claim only one uniquely new native session.
@@ -963,7 +965,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		a.acpAccountBindings = bindings
 	}
 	if err := a.applyOneOff(agent, model, profile, effort); err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	// isTargetHead accepted only a registered provider, so the adapter lookup cannot miss.
 	cmd := acpCommand(a.cfg, agent)

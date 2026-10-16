@@ -198,6 +198,16 @@ func reportExit(code int, err error) int {
 	return code
 }
 
+// refusalExit is the exit code for a command that refuses err: 2 for rejected input, or the code a
+// command failure drawn in the same block carries (ui.CommandFailed: 1), such as accounts that could
+// not be listed. Paths that can refuse for either reason return it instead of a flat 2.
+func refusalExit(err error) int {
+	if usage := asUsage(err); usage != nil && usage.ExitCode != 0 {
+		return usage.ExitCode
+	}
+	return 2
+}
+
 // asUsage is where a failure REPORTED AS DATA becomes the block a person reads. The engines below
 // the CLI keep rendering at the edges (internal/importdag_test.go), so they hand up the parts —
 // where the problem is, what is wrong, what to change — and the terminal's owner draws them in the

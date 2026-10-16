@@ -44,6 +44,16 @@
   `~/.config/coop/agents/codex/native-homes/<name>/<repository-key>/home/packages` while no Codex
   box runs.
 
+- **An accounts folder Coop cannot read no longer looks like a missing account.** When Coop could
+  not list an agent's accounts, such as a folder without read permission, a command that named one
+  (`coop claude@work`, `coop acp`, `coop fork`, `coop eval` or `coop credentials`) said the account
+  did not exist and suggested `coop login`. `coop credentials` showed fewer accounts, offered a
+  sign-in to an agent that had some, or called its default account missing. Now each of these says
+  Coop could not list every account and names the folder and the reason. Launches, `coop acp`,
+  `coop fork` and `coop credentials` then exit 1 instead of 2; `coop eval` already exited 1.
+  `coop acp`, `coop fork` and `coop eval` also refuse an account that does not exist with the same
+  message as other commands.
+
 - **An interrupted credential renewal no longer locks the account.** When a renewal of an agent's
   sign-in was cut short by Ctrl-C, a lost connection or a provider error, Coop refused that account
   until `coop login`. Now it finishes the renewal from the provider's answer when it got one, and

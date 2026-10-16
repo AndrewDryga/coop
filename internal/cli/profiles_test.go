@@ -70,6 +70,126 @@ func TestCmdProfilesDanglingDefault(t *testing.T) {
 	}
 }
 
+// A failed listing may hide accounts, so the listing says so with its cause instead of offering a
+// sign-in for an empty block or calling a default it could not see missing. Other agents stay whole.
+func TestCredentialsListingSaysWhenAccountsCannotBeListed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a directory regardless of its mode")
+	}
+	cfg := freshConfig(t)
+	// Claude lists work, but its default, solo, is in a credentials folder that can be searched and
+	// not listed. Codex's only account is in such a profiles folder.
+	writeAccount(t, cfg, "claude", "work", claudeReadyCredential)
+	claudeCredentials := filepath.Join(cfg.ConfigDir, "claude", "credentials")
+	if err := os.MkdirAll(filepath.Join(claudeCredentials, "solo"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	setDefault(t, cfg, "claude", "solo")
+	writeAccount(t, cfg, "codex", "work", codexReadyCredential)
+	codexProfiles := filepath.Dir(cfg.AgentProfileDir("codex", "work"))
+	for _, dir := range []string{claudeCredentials, codexProfiles} {
+		if err := os.Chmod(dir, 0o100); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	}
+	out := captureStdout(t, func() {
+		if code, err := (&app{cfg: cfg}).cmdCredentials(nil); code != 0 || err != nil {
+			t.Fatalf("cmdCredentials = (%d, %v)", code, err)
+		}
+	})
+	_, rest, _ := strings.Cut(out, "\nClaude\n")
+	claude, rest, _ := strings.Cut(rest, "\nCodex\n")
+	codex, rest, _ := strings.Cut(rest, "\nGemini\n")
+	gemini, _, _ := strings.Cut(rest, "\nGrok\n")
+	if want := "    work   refreshed just now\n\n  ⚠ Could not list every Claude account\n    open " + claudeCredentials + ": permission denied\n"; claude != want {
+		t.Errorf("Claude block = %q, want %q", claude, want)
+	}
+	if want := "  ⚠ Could not list every Codex account\n    open " + codexProfiles + ": permission denied\n"; codex != want {
+		t.Errorf("Codex block = %q, want %q", codex, want)
+	}
+	if want := "  No accounts. Sign in: coop login gemini\n"; gemini != want {
+		t.Errorf("one agent's failed listing changed another's block: Gemini block = %q", gemini)
+	}
+}
+
+// Every command that names an account refuses one a failed listing may hide, as before, but says
+// the accounts could not be listed, with the cause, instead of advising a sign-in that would not
+// help, and exits 1: the command could not do its job, the input was fine. An account that is
+// simply missing keeps its exit code, and an account the listing still returned stays usable.
+func TestAccountRefusalsNameAFailedListing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a directory regardless of its mode")
+	}
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cfg := freshConfig(t)
+	if err := os.Mkdir(filepath.Join(cfg.RepoOverride, ".git"), 0o755); err != nil { // eval resolves the repository
+		t.Fatal(err)
+	}
+	writeAccount(t, cfg, "claude", "work", claudeReadyCredential)
+	credentials := filepath.Join(cfg.ConfigDir, "claude", "credentials")
+	if err := os.MkdirAll(filepath.Join(credentials, "solo"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(credentials, 0o100); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(credentials, 0o700) })
+	// A preset whose lead pins each account: its refusal arrives wrapped in the preset's own words.
+	for _, account := range []string{"solo", "ghost"} {
+		writePresetFile(t, cfg.RepoOverride, "lead-"+account, "lead:\n  agent: [claude@"+account+"]\n")
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+	commands := []struct {
+		name    string
+		missing int // the exit code for an account that does not exist
+		refuse  func(account string) (int, error)
+	}{
+		{"credential", 2, func(account string) (int, error) { return a.cmdCredentials([]string{"claude", account}) }},
+		{"default", 2, func(account string) (int, error) { return a.cmdCredentials([]string{"claude", account, "default"}) }},
+		{"remove", 2, func(account string) (int, error) { return a.cmdCredentials([]string{"claude", account, "rm"}) }},
+		{"launch", 2, func(account string) (int, error) { return a.launchAgent("claude@"+account, nil) }},
+		{"preset", 2, func(account string) (int, error) {
+			p, err := a.loadRunPreset("lead-" + account)
+			if err != nil {
+				return 0, err
+			}
+			return a.launchPreset(p, nil)
+		}},
+		{"acp", 2, func(account string) (int, error) { return a.cmdACP([]string{"claude@" + account}) }},
+		{"fork", 2, func(account string) (int, error) { return a.forkCreate([]string{"scratchfork", "claude@" + account}) }},
+		{"eval", 1, func(account string) (int, error) {
+			return a.evalRun([]string{"core", "claude@" + account, "--timeout", "35m"})
+		}},
+	}
+	// Each refusal is checked as the block a person sees, which a wrapped one prints unwrapped.
+	want := "Could not list every Claude account — open " + credentials + ": permission denied"
+	for _, tc := range commands {
+		t.Run(tc.name, func(t *testing.T) {
+			if code, err := tc.refuse("solo"); code != 1 || asUsage(err) == nil || asUsage(err).Error() != want {
+				t.Fatalf("refusal = (%d, %v), want (1, %q)", code, err, want)
+			}
+		})
+	}
+	if pathExists(recorder) || cfg.DefaultProfileOf("claude") == "solo" || !pathExists(filepath.Join(credentials, "solo")) {
+		t.Fatal("an account a failed listing hides was used or removed")
+	}
+	if err := a.selectRunProfile("claude", "work"); err != nil {
+		t.Fatalf("an account the listing returned was refused: %v", err)
+	}
+	if err := os.Chmod(credentials, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range commands {
+		t.Run(tc.name+"-missing", func(t *testing.T) {
+			if code, err := tc.refuse("ghost"); code != tc.missing || asUsage(err) == nil || !strings.HasPrefix(asUsage(err).Error(), `No Claude account named "ghost"`) {
+				t.Fatalf("missing account = (%d, %v), want (%d, the missing-account refusal)", code, err, tc.missing)
+			}
+		})
+	}
+}
+
 // `coop profiles ls`/`list` steers to the bare listing (which already lists) instead of reading `ls`
 // as an unknown agent (rule: `ls` is the list verb, it must lead somewhere useful).
 func TestProfilesLsRedirect(t *testing.T) {

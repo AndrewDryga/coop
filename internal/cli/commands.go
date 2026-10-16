@@ -435,7 +435,7 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 		return a.loginTo(tool, acct)
 	}
 	if err := a.applyRunTarget(t, "coop "+tool); err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	a.nudgeIfUnauthed(tool)
 	peers, err := a.resolvePeers("coop "+tool, peerVals)
@@ -470,7 +470,7 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 		return 2, err
 	}
 	if err := a.applyPinnedPreset(p, tool); err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	a.nudgeIfUnauthed(tool)
 	peers, err := a.resolvePeers("coop "+p.Name, peerVals)
@@ -504,8 +504,8 @@ func (a *app) selectRunProfile(tool, profile string) error {
 	if profile == "" {
 		return nil
 	}
-	if !a.hasProfile(tool, profile) {
-		return noAccountErr(tool, profile)
+	if err := a.requireProfile(tool, profile); err != nil {
+		return err
 	}
 	if !box.ProfileAuthed(a.cfg, tool, profile) {
 		warnRows(fmt.Sprintf("%s is not signed in", profile),

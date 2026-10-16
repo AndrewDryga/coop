@@ -344,7 +344,7 @@ func TestResolveEvalConfigurationsRefusesBadPositionals(t *testing.T) {
 	if err := os.MkdirAll(cfg.AgentProfileDir("codex", "work"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.resolveEvalConfigurations([]string{"codex@work,missing"}); err == nil || !strings.Contains(err.Error(), `account "missing"`) {
+	if _, err := a.resolveEvalConfigurations([]string{"codex@work,missing"}); err == nil || !strings.Contains(err.Error(), `account named "missing"`) {
 		t.Errorf("a missing second account was not named: %v", err)
 	}
 	// A well-formed bare target resolves to a target configuration.

@@ -213,8 +213,10 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	// Fail a bad credential fast, in the outer process, before spawning anything (the inner's
 	// applyOneOff does the real selection).
-	if profile != "" && !a.hasProfile(tool, profile) {
-		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", tool, profile, tool, profile)
+	if profile != "" {
+		if err := a.requireProfile(tool, profile); err != nil {
+			return refusalExit(err), err
+		}
 	}
 	if innerProcess {
 		a.applyPreset(p, tool)
@@ -316,7 +318,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return a.cmdACPSupervise(inner, ctrl)
 	}
 	if err := a.applyOneOff(tool, model, profile, effort); err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	peers, err = a.resolvePeers("coop acp", peerVals)
 	if err != nil {
@@ -418,7 +420,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 // daemon's cleanup receipt, exactly as for a fork's ACP child.
 func (a *app) acpBare(tool, model, profile, effort string) (int, error) {
 	if err := a.applyOneOff(tool, model, profile, effort); err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	img, code, err := a.restrictedImage()
 	if err != nil {

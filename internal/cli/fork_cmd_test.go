@@ -108,7 +108,7 @@ func TestForkCreateRejectsUnknownAccountBeforeClone(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), BoxHome: t.TempDir()}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
-	if code, err := a.forkCreate([]string{"scratchfork", "claude@ghost"}); code != 2 || err == nil || err.Error() != "claude has no account \"ghost\" — sign in first: coop login claude@ghost" {
+	if code, err := a.forkCreate([]string{"scratchfork", "claude@ghost"}); code != 2 || err == nil || err.Error() != `No Claude account named "ghost" — Accounts: coop credentials claude — Sign in: coop login claude@ghost` {
 		t.Fatalf("forkCreate with a missing account = (%d, %v)", code, err)
 	}
 	if pathExists(recorder) || pathExists(forkspace.Workspace(cfg.RepoOverride, "scratchfork")) {
@@ -132,7 +132,7 @@ func TestForkCreateAcceptsEnvOnlyDefaultProfileBeforeImage(t *testing.T) {
 	if err == nil {
 		t.Fatal("forkCreate unexpectedly reached a runnable image")
 	}
-	if code == 2 && strings.Contains(err.Error(), "no account") {
+	if code == 2 && strings.Contains(err.Error(), "account named") {
 		t.Fatalf("env-only default was rejected before image lookup: (%d, %v)", code, err)
 	}
 	if pathExists(forkspace.Workspace(cfg.RepoOverride, "scratchfork")) {

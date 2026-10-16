@@ -2,7 +2,7 @@
 name: usage-history-cache
 description: coop usage's per-transcript token cache; changed files invalidate entries, and a complete full check prunes each history folder's unused entries
 subsystem: usage
-sources: [internal/agent/usage.go, internal/agent/usage_cache.go, internal/cli/usage.go, internal/box/history.go, internal/box/profiles.go, internal/config/config.go]
+sources: [internal/agent/usage.go, internal/agent/usage_cache.go, internal/cli/usage.go, internal/cli/target.go, internal/box/history.go, internal/box/profiles.go, internal/config/config.go]
 updated: 2026-10-16
 ---
 
@@ -32,15 +32,22 @@ Root listing: `usageCredentials` finds the folders through `box.EffectiveProfile
 `box.ACPHistoryStores` (every repository `home` of an account, of the shared editor and of each
 private editor session) and the private session listing. `usageUnlisted` keeps each provider's
 first failure, apart for accounts (`EffectiveProfiles` or a session store; a session store failure
-counts for every provider) and for history folders; a missing folder is no failure. Either kind
+counts for every provider) and for history folders. A missing folder is no failure, and neither is
+a link or a file at `<key>/home` (ENOTDIR, or ELOOP for a link on some systems): it is skipped like
+a link at `<key>`. Coop only ever makes a real folder there (`prepareNativeHome`), a launch refuses
+or sets aside anything else, and no reader follows a link, so only tampering leaves one; reporting
+it would keep usage partial and the cache unpruned until someone removed it. Either kind of failure
 makes only that provider's rows partial and stops `Prune`, because a folder a failed listing hides
 is live but looks unread. The provider's block then ends with `⚠ Could not list every <Provider>
 account, so usage is partial` (or `every history folder`) and, beneath it, the failure's cause: a
 path and a reason, undimmed and unwrapped. Only a failed account listing replaces the sign-in line
-of a block with no rows, and turns an exact `provider@account` that was not found into a listing
-error (exit 1) instead of `noAccountErr`: a failed history folder hides no account. Other product
-callers ignore these errors on purpose and say why; the tagged live account qualifier refuses a
-catalog it cannot read.
+of a block with no rows, and turns an exact `provider@account` that was not found into
+`accountsUnlistedErr` (exit 1) instead of `noAccountErr`: a failed history folder hides no account.
+
+Other callers: how account checks and `coop credentials` treat a failed account listing, and
+which commands bypass `requireProfile`, is in [[credential-presence-is-adapter-declared]].
+Best-effort callers (completion, rotation, hints) ignore the error and say why; the tagged live
+account qualifier refuses a catalog it cannot read.
 
 ## Changelog
 - 2026-10-15 — created: cache facts moved from [[usage-recorded-token-value]]; added per-folder
@@ -58,3 +65,7 @@ catalog it cannot read.
 - 2026-10-16 — the warning names what failed (accounts or history folders) with the cause beneath
   it; only a failed account listing drops the sign-in line. Bare system errors from the history
   listing now carry their path (`withPath`), and `usageDirs` errors name their folder.
+- 2026-10-16 — a link or a file at `<key>/home` is no home rather than a failed listing (checked
+  against `prepareNativeHome`, which only `Mkdirat`s it). Fixtures cover a linked and a filed home.
+  How other callers treat a failed account listing moved to
+  [[credential-presence-is-adapter-declared]], where a reader of `requireProfile` looks.

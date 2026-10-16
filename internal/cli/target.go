@@ -46,6 +46,12 @@ func noAccountErr(agent, account string) error {
 	}
 }
 
+// accountsUnlistedErr stands in for noAccountErr when agent's accounts could not all be listed: the
+// account may be in what could not be read, so it names that failure and its cause, not a sign-in.
+func accountsUnlistedErr(agent string, err error) error {
+	return ui.CommandFailed(fmt.Sprintf("Could not list every %s account", titleName(agent)), err.Error())
+}
+
 // needsAccountErr refuses a launch whose agent has no usable login at all — only where the run
 // actually requires one (a peer coop is about to mount, not a heads-up before an interactive run,
 // which stays the warning nudgeIfUnauthed prints).

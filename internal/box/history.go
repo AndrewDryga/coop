@@ -116,8 +116,11 @@ func ACPRepositorySessions(cfg *config.Config, provider, repo string) (map[strin
 	return ids, nil
 }
 
-// nativeHistoryHomes lists the complete homes under path; a missing path or home is no home. Any
-// other error comes back with the homes that could be listed: a home it hides still holds history.
+// nativeHistoryHomes lists the complete homes under path. A missing path or home is no home, and
+// neither is a link or a file at <key>/home, like a link at <key>: Coop only ever makes a real
+// folder there and reads no history through anything else, so reporting one would only keep usage
+// partial and its cache unpruned. Any other error comes back with the homes that could be listed:
+// a home it hides still holds history.
 func nativeHistoryHomes(path string) ([]string, error) {
 	root, err := safefile.OpenRoot(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -136,7 +139,8 @@ func nativeHistoryHomes(path string) ([]string, error) {
 		rel := filepath.Join(entry.Name(), "home")
 		home, openErr := safefile.OpenDir(root, rel)
 		if openErr != nil {
-			if !errors.Is(openErr, os.ErrNotExist) {
+			// A file fails as ENOTDIR; POSIX lets a link fail as ENOTDIR or ELOOP.
+			if !errors.Is(openErr, os.ErrNotExist) && !errors.Is(openErr, syscall.ENOTDIR) && !errors.Is(openErr, syscall.ELOOP) {
 				err = errors.Join(err, withPath(filepath.Join(path, rel), openErr))
 			}
 			continue

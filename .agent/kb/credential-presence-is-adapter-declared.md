@@ -2,8 +2,8 @@
 name: credential-presence-is-adapter-declared
 description: adapters own credential presence, selected env authority, and inspectable stored readiness
 subsystem: credentials
-sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-09-15
+sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/cli/target.go, internal/cli/cli.go, internal/testutil/liveprovider/credentials.go]
+updated: 2026-10-16
 ---
 
 Adapters own six credential facts: `AuthMarker` names their login file and canonical primary env
@@ -23,8 +23,8 @@ must have one adapter owner because out-of-scope stripping is provider-based. `E
 adds an authenticated env-only default even without a profile directory, so `coop credentials`,
 loop rotation, peer discovery, ACP defaults, and scoped mounts cannot disagree about
 the same login. The env key is provider-wide, so it authenticates exactly the configured default;
-other named profiles require their own marker file. Read, completion, and runnable-target paths use
-`EffectiveProfiles`; default-setting and removal keep using physical `Config.Profiles` entries. A
+other named profiles require their own marker file. Read, completion, runnable-target and account
+checks use `EffectiveProfiles`, including the checks before setting a default or removing one. A
 run on a marker-backed profile strips that provider's env keys before passing the env file, so the
 provider-wide token cannot shadow the account-specific marker mounted into the box. A marker owns
 presence when the adapter selects no env authority; the optional `MarkerCredentialSelector`
@@ -53,6 +53,23 @@ should not grow provider schema or env-key logic. Live projection is a stricter,
 source refreshability may make a stored login ready, but refresh authority is still omitted from the
 projected box credential.
 
+Account checks: `requireProfile` (internal/cli/profiles.go) checks a named account for launches,
+preset launches, `coop acp`, `coop fork`, `coop eval` and `coop credentials <agent> <account>`
+(show, default, rm). It fails closed: only a listed account passes. A missing account gets
+`noAccountErr` and exit 2 (eval exits 1 for any bad configuration). When the listing failed, the
+account may be in what could not be read, so it gets `accountsUnlistedErr` instead: "Could not list
+every <Agent> account" with the folder and reason, no sign-in advice, exit 1. `reportExit` keeps a
+command's own positive code over the error's, so these paths return `refusalExit(err)`
+(internal/cli/cli.go), never a flat 2; it looks through wrapping, which a preset's first rung adds.
+Not through `requireProfile`: rotation ladders check their rungs' accounts in `expandLadder` with
+`ProfileCredentialReady` (`coop loop`, preset ladders in fork loops, the lead expansion behind
+`coop acp --peer` and filtered editor sessions) and still advise `coop login` when a listing
+fails; `coop usage provider@account` uses its own listing ([[usage-history-cache]]).
+`coop credentials` lists what it could read and ends that agent's block with
+`⚠ Could not list every <Agent> account` and the first cause; such a block offers no sign-in when
+empty and never calls the default missing. Best-effort callers (completion, rotation, hints) ignore
+listing errors.
+
 The host privacy boundary is deliberately above provider-owned state. Configuration load and box
 home preparation require the shared credential root, provider root, `profiles/`, and selected
 profile to be real `0700` directories before reading or mounting them. Shared `env`, `defaults`,
@@ -60,6 +77,13 @@ and the default MCP file are `0600`. Coop does not recursively chmod provider tr
 the private ancestors protect those descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-10-16 - added account checks: what goes through `requireProfile` and what does not, the
+  failed-listing refusal (`accountsUnlistedErr`, exit 1 through `refusalExit`) and the
+  `coop credentials` warning; verified against internal/cli/profiles.go, cli.go, rotation.go,
+  acp_cmd.go and acp_network.go
+- 2026-10-16 - corrected drift: setting a default and removing an account check through
+  `requireProfile`, which uses `EffectiveProfiles` (physical `Config.Profiles` when this card was
+  written); verified against internal/cli/profiles.go
 - 2026-09-15 - added adapter-owned API-key broker contracts and native reusable-key detection;
   verified every recognized env key is either brokered in its qualified direct filtered shape or
   refused before runtime, while OAuth/access-token projection remains separate

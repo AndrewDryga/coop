@@ -68,7 +68,8 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 	for _, block := range blocks {
 		fmt.Println()
 		fmt.Println(pal.Bold(block.title))
-		if len(block.rows) == 0 {
+		// An empty block whose listing failed may still have accounts, so it offers no sign-in.
+		if len(block.rows) == 0 && block.unlisted == nil {
 			fmt.Printf("  No accounts. Sign in: %s\n", pal.Cyan("coop login "+block.agent))
 			continue
 		}
@@ -101,6 +102,15 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 			fmt.Println()
 			fmt.Printf("      Choose a default: %s\n", pal.Cyan(fmt.Sprintf("coop credentials %s %s default", block.agent, block.rows[0].profile)))
 		}
+		// The block ends with the failure the way coop usage reports it: the warning, then the
+		// first cause (a path and a reason) undimmed beneath it, unwrapped so the path copies whole.
+		if block.unlisted != nil {
+			if len(block.rows) > 0 {
+				fmt.Println()
+			}
+			cause, _, _ := strings.Cut(block.unlisted.Error(), "\n")
+			fmt.Printf("  %s\n    %s\n", pal.Yellow("⚠ Could not list every "+block.title+" account"), cause)
+		}
 	}
 	return 0, nil
 }
@@ -122,6 +132,7 @@ type accountBlock struct {
 	agent, title   string
 	rows           []accountRow
 	missingDefault string // the marked default, when no account of that name exists
+	unlisted       error  // why the accounts could not all be listed, so rows may be missing
 }
 
 // accountRow is one stored account: what a person needs to know about it, and — only when
@@ -138,9 +149,9 @@ type accountRow struct {
 // so a healthy row carries no status word: it says when its token material last changed, which is
 // the one fact a person cannot see for themselves.
 func (a *app) accountBlock(agent string) accountBlock {
-	block := accountBlock{agent: agent, title: titleName(agent)}
-	// A listing error only shortens this read-only view, so it lists the accounts it can read.
-	profiles, _ := box.EffectiveProfiles(a.cfg, agent)
+	// When the listing fails, the block keeps the accounts that could be read and says so.
+	profiles, err := box.EffectiveProfiles(a.cfg, agent)
+	block := accountBlock{agent: agent, title: titleName(agent), unlisted: err}
 	def := a.cfg.DefaultProfileOf(agent)
 	// The marked default first, then the rest — the same order a loop's rotation fans out over
 	// accounts (accountsFor), so this listing reflects the try order.
@@ -152,7 +163,8 @@ func (a *app) accountBlock(agent string) accountBlock {
 			}
 		}
 		profiles = ordered
-	} else if len(profiles) > 0 {
+	} else if len(profiles) > 0 && err == nil {
+		// Only a complete listing can call the default missing: a failed one may hide it.
 		block.missingDefault = def
 	}
 	for _, p := range profiles {
@@ -261,20 +273,18 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 	}
 }
 
-// requireProfile refuses an account this agent has no login for, with the two commands that
-// resolve it — the agent's own list, and signing this one in.
+// requireProfile refuses an account this agent does not list, with the two commands that resolve
+// it — the agent's own list, and signing this one in. It fails closed: an account a failed listing
+// hides is refused too, but by naming the failure, since signing in would not bring it back.
 func (a *app) requireProfile(agent, profile string) error {
-	if a.hasProfile(agent, profile) {
+	profiles, err := box.EffectiveProfiles(a.cfg, agent)
+	switch {
+	case slices.Contains(profiles, profile):
 		return nil
+	case err != nil:
+		return accountsUnlistedErr(agent, err)
 	}
 	return noAccountErr(agent, profile)
-}
-
-// hasProfile reports whether agent lists profile. It ignores listing errors because it fails
-// closed: an account a failed listing hides is refused like a missing one.
-func (a *app) hasProfile(agent, profile string) bool {
-	profiles, _ := box.EffectiveProfiles(a.cfg, agent)
-	return slices.Contains(profiles, profile)
 }
 
 // showProfile answers the one question this depth is asked: which account a run will use, and the
@@ -282,7 +292,7 @@ func (a *app) hasProfile(agent, profile string) bool {
 // nothing a person can act on (see .agent/kb/rules/entity-blocks-with-labeled-fields.md).
 func (a *app) showProfile(agent, profile string) (int, error) {
 	if err := a.requireProfile(agent, profile); err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	pal := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean
 	name := titleName(agent)
@@ -341,7 +351,7 @@ func (a *app) setProfileDefault(agent, name string) (int, error) {
 		return 2, unknownAgentErr(agent, "coop credentials")
 	}
 	if err := a.requireProfile(agent, name); err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	if a.cfg.DefaultProfileOf(agent) == name {
 		ui.Note("%s already uses %s by default.", titleName(agent), name)
@@ -388,7 +398,7 @@ func (a *app) removeProfile(agent, name string, yes bool) (int, error) {
 		return 2, unknownAgentErr(agent, "coop credentials")
 	}
 	if err := a.requireProfile(agent, name); err != nil && !box.NativeAccountRemoved(a.cfg, agent, name) {
-		return 2, err
+		return refusalExit(err), err
 	}
 	title := titleName(agent)
 	if name == a.cfg.DefaultProfileOf(agent) {

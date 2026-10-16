@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -387,11 +386,9 @@ func (a *app) resolveEvalConfigurations(positionals []string) ([]eval.Configurat
 			}
 			// A pinned @account must exist, refused by name before any work — the same promise every
 			// other launch makes. A bare target (no account) is left to the provider's own defaults.
-			// A listing error only hides accounts, so ignoring it fails closed.
-			profiles, _ := box.EffectiveProfiles(a.cfg, t.Provider)
 			for _, acct := range t.Accounts {
-				if !slices.Contains(profiles, acct) {
-					return nil, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", t.Provider, acct, t.Provider, acct)
+				if err := a.requireProfile(t.Provider, acct); err != nil {
+					return nil, err
 				}
 			}
 			c = eval.Configuration{Kind: eval.ConfigTarget, Label: t.String()}

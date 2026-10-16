@@ -120,7 +120,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 		}
 		if err := unlisted.accounts[target.Provider]; !found && err != nil {
 			// The account may be in the folder that could not be listed, so it is not known missing.
-			return 1, ui.CommandFailed(fmt.Sprintf("Could not list every %s account", titleName(target.Provider)), err.Error())
+			return 1, accountsUnlistedErr(target.Provider, err)
 		}
 		if !found {
 			return 2, noAccountErr(target.Provider, target.Account())
