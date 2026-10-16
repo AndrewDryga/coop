@@ -506,27 +506,17 @@ func StopServicesForOwner(ctx context.Context, rt runtime.Runtime, workspace, po
 	// The project's networks go with its containers: Docker hands out about thirty subnets in
 	// total, and every session in a fresh worktree gets its own project, so leaving a network
 	// behind per session exhausts the pool ("address pools fully subnetted") in a day's work.
-	if _, err := RemoveProjectNetworks(ctx, rt, project); err != nil {
-		return fmt.Errorf("stop session services: %w", err)
-	}
+	// The volumes go even when a network could not: no sweep finds a project once its containers
+	// are gone, so a volume left now stays for good. Both run under ctx's budget.
+	_, networkErr := RemoveProjectNetworks(ctx, rt, project)
+	var volumeErr error
 	if volumes {
-		owned, err := ServiceVolumesForOwner(rt, workspace, owner, io.Discard)
-		if err != nil {
-			return fmt.Errorf("stop session services: %w", err)
+		if _, err := rt.RemoveVolumesByLabel(ctx, composeProjectLabel, project); err != nil {
+			volumeErr = fmt.Errorf("remove owned volumes: %w", err)
 		}
-		if len(owned) > 0 {
-			args := []string{"volume", "rm"}
-			for _, volume := range owned {
-				args = append(args, volume.Name)
-			}
-			code, err := rt.Run(nil, io.Discard, io.Discard, args...)
-			if err != nil {
-				return fmt.Errorf("stop session services: remove owned volumes: %w", err)
-			}
-			if code != 0 {
-				return fmt.Errorf("stop session services: remove owned volumes: exit %d", code)
-			}
-		}
+	}
+	if err := errors.Join(networkErr, volumeErr); err != nil {
+		return fmt.Errorf("stop session services: %w", err)
 	}
 	return nil
 }

@@ -64,6 +64,7 @@ type app struct {
 	acpNetworkTargets   []agents.Target                              // exact provider/accounts admitted at startup, including optional warm/probe choices; never re-derived
 	acpAccountBindings  map[string]acpAccountBinding                 // filtered child-only account/default handoff, checked against its reloaded preset before mounts
 	acpResume           *acpctl.ResumeState                          // consumed once before admission; restored by the supervisor afterward
+	acpChildren         acpChildGroups                               // the process groups of the inner ACP children this process started (removeACPServices)
 	beforeSignRefUpdate func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
 	acpModels           func(agent string) ([]agents.Model, error)   // test seam for account-scoped model refresh; nil → a real ACP box
 	acpSupervise        func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor

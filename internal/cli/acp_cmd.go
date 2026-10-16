@@ -707,23 +707,33 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	closeRefresh := a.acpRefresh.start(ctrl)
 	defer closeRefresh()
 	// The parked boxes — and a replacement still waiting — are independent of the active one, so they
-	// stop while it does; the deferred Reap and close then wait for that same teardown to finish.
+	// stop while it does; the calls after Run then wait for that same teardown to finish.
 	stopping := func() { go reapPool(); go closeRefresh() }
 	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.Hooks(), acpproxy.RunOpts{Resume: resume, Reload: reload, Bindings: bindings, Stopping: stopping, Restarter: restarter})
+	// Run stopped the active box. Wait here for the parked boxes and a waiting replacement too: no
+	// inner child of this generation may run when its project services go, and a reload's execve
+	// would skip the deferred calls.
+	reapPool()
+	closeRefresh()
 	// A SIGHUP reload: write the combined state to a 0600 temp file and re-exec THIS binary in place —
-	// same PID + fd 0/1/2, so the editor's transport never breaks. Run's reload path already stopped
-	// the box; reap the warm boxes here (execve replaces the image, so deferred reap won't run) and
-	// skip the label sweep — the re-exec'd process regenerates its own superID and owns the next box.
+	// same PID + fd 0/1/2, so the editor's transport never breaks. The re-exec'd process regenerates
+	// its own superID and owns the next box.
 	if snap, ok := acpproxy.ReloadSnapshot(err); ok {
-		reapPool()
-		closeRefresh()
 		// Sweep any box still labelled with THIS superID before exec — a warm spawn that was mid-flight
 		// (reap only stops boxes already parked) would otherwise reparent to init and never be reaped
 		// (the re-exec'd process uses a fresh superID). Safe here: Run already stopped the active box
 		// and no new box is spawned until after exec, so nothing we need is swept.
-		warning, prior := acpReloadAfterCleanup(superID, a.reapACPBoxes(superID))
+		sweepErr := a.reapACPBoxes(superID)
+		warning, prior := acpReloadAfterCleanup(superID, sweepErr)
 		if warning != "" {
 			ui.Warn("%s", warning)
+		}
+		// The next generation starts its own project under its own id. This one's label names the same
+		// pid, so no sweep could take it before the whole supervisor exits. A box the sweep missed
+		// may still use the services, so they stay with it; the next generation's sweep and the
+		// orphan sweep after the supervisor exits take both.
+		if sweepErr == nil {
+			a.removeACPServices(repo, superID)
 		}
 		path, werr := acpctl.WriteResumeState(acpctl.ResumeState{Proxy: *snap, Ctrl: ctrl.Snapshot(), PriorSupervisor: prior})
 		if werr != nil {
@@ -739,7 +749,12 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// removes only its own box (by cidfile), so the last live generation — or a box orphaned by a
 	// swap — is cleaned up here by this supervisor's id. (Doing this per-generation would kill the
 	// just-spawned next box, which shares the id, fork-bombing the supervisor on the first resume.)
+	// The session's project services go after its boxes, which hold their network, and stay when a
+	// box could not be removed: the start sweep takes them once this supervisor is gone.
 	cleanupErr := a.reapACPBoxes(superID)
+	if cleanupErr == nil {
+		a.removeACPServices(repo, superID)
+	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return 1, errors.Join(err, cleanupErr)
 	}
@@ -774,6 +789,76 @@ func (a *app) reapACPBoxes(superID string) error {
 		return err
 	}
 	return forkspace.RemoveDeadExecutionsBySource(authorityRepo, superID)
+}
+
+// removeACPServices removes the private Compose project the inner children of superID started in
+// workspace, with its networks and volumes, as a loop removes its own at a clean exit: by the labels
+// Compose wrote, so a missing or broken Compose file cannot keep it. Never while an inner child of
+// superID still runs, since that child may be using the services or starting them, and never for an
+// empty id, which names the development project. The services are the session's scratch, so a
+// project that stays only warns; the start sweep takes it once the supervisor is gone.
+func (a *app) removeACPServices(workspace, superID string) {
+	if superID == "" || !a.rt.SupportsCompose() {
+		return
+	}
+	var err error
+	if a.acpChildren.running(superID) {
+		err = errors.New("one of its boxes is still running")
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), acpServicesCleanupTimeout)
+		err = box.StopServicesForOwner(ctx, a.rt, workspace, workspace, superID, true)
+		cancel()
+	}
+	if err != nil {
+		ui.Warn("could not remove this editor session's services (Compose project %s): %v", box.ComposeProjectFor(workspace, superID), err)
+	}
+}
+
+// acpChildGroups are the process groups of the inner children each supervisor id started, kept until
+// each is seen gone: the proof removeACPServices needs that none of a session's children still runs.
+type acpChildGroups struct {
+	mu     sync.Mutex
+	groups map[int]*acpChildGroup // process group → the child leading it
+}
+
+// acpChildGroup is one inner child's entry, so a child that stops removes its own entry and never one
+// a later child with a reused pid added.
+type acpChildGroup struct{ superID string }
+
+func (g *acpChildGroups) add(superID string, pgid int) *acpChildGroup {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.groups == nil {
+		g.groups = map[int]*acpChildGroup{}
+	}
+	child := &acpChildGroup{superID}
+	g.groups[pgid] = child
+	return child
+}
+
+func (g *acpChildGroups) remove(pgid int, child *acpChildGroup) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.groups[pgid] == child {
+		delete(g.groups, pgid)
+	}
+}
+
+// running reports whether a process group superID started still exists. Only the kernel's "no such
+// group" proves one gone; any other answer counts as running.
+func (g *acpChildGroups) running(superID string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for pgid, child := range g.groups {
+		if child.superID != superID {
+			continue
+		}
+		if !errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH) {
+			return true
+		}
+		delete(g.groups, pgid)
+	}
+	return false
 }
 
 // acpChildCapture renders a supervisor's network authority as the reference ONE
@@ -826,6 +911,10 @@ func newSupervisorID() (string, error) {
 }
 
 const acpCleanupTimeout = 5 * time.Second
+
+// acpServicesCleanupTimeout bounds removing a session's project services, as long as a loop's own
+// teardown of its project gets.
+const acpServicesCleanupTimeout = 30 * time.Second
 
 // acpFilteredStopGrace bounds a filtered child's own teardown — agent absence, the gateway's final
 // observation, then its guard, controller and volumes — before its process group is killed. It takes
@@ -1195,6 +1284,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	inR.Close()  // the child holds the read end now
 	outW.Close() // ...and the write end; outR sees EOF when the child exits
 	pid := cmd.Process.Pid
+	childGroup := a.acpChildren.add(superID, pid) // its own process group, so the pid names the group
 	waitDone := make(chan struct{})
 	go func() {
 		_ = cmd.Wait()
@@ -1218,6 +1308,9 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			inW.Close()
 			outR.Close()
 			groupGone := waitACPProcessGroupGone(pid, acpCleanupTimeout)
+			if groupGone {
+				a.acpChildren.remove(pid, childGroup)
+			}
 			runtimeGone := false
 			if cidPath != "" {
 				if cid, rerr := os.ReadFile(cidPath); rerr == nil {

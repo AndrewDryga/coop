@@ -154,6 +154,31 @@ func TestStopServicesForOwnerRemovesOnlyThatRunsData(t *testing.T) {
 	}
 }
 
+// The volumes go even when the project's networks could not: once its containers are gone no
+// sweep finds the project again, so a volume left behind stays for good.
+func TestStopServicesForOwnerRemovesVolumesPastANetworkFailure(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	volume := ComposeProjectFor(repo, "loop-one") + "_pgdata"
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	shim := filepath.Join(t.TempDir(), "runtime")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
+		"if [ \"$1 $2\" = \"network ls\" ]; then exit 1; fi\n" +
+		"if [ \"$1 $2\" = \"volume ls\" ]; then echo " + strconv.Quote(volume) + "; fi\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := StopServicesForOwner(context.Background(), runtime.Runtime{Name: shim}, repo, repo, "loop-one", true); err == nil {
+		t.Fatal("a failed network listing was not reported")
+	}
+	if data, err := os.ReadFile(recorder); err != nil || !strings.Contains(string(data), "volume rm "+volume) {
+		t.Fatalf("the volume stayed after a network failure:\n%s", data)
+	}
+}
+
 // Automatic service start validates the compose file before running it: a valid file reaches `compose up`,
 // an unsafe one is refused with a naming error and NO compose command is ever run.
 func TestAutomaticServiceStartValidates(t *testing.T) {

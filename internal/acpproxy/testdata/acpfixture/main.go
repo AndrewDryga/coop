@@ -54,6 +54,9 @@ func main() {
 }
 
 func serveRuntime(args []string) error {
+	if err := recordRuntime(args); err != nil {
+		return err
+	}
 	if len(args) == 1 && args[0] == "--version" {
 		fmt.Println("coop-acp-fixture 1")
 		return nil
@@ -71,6 +74,9 @@ func serveRuntime(args []string) error {
 	}
 	if len(args) >= 1 && (args[0] == "kill" || args[0] == "rm") {
 		return nil
+	}
+	if len(args) >= 2 && (args[0] == "network" || args[0] == "volume") && args[1] == "ls" {
+		return nil // no session ever starts services here, so none has a network or volume
 	}
 	if len(args) == 0 || args[0] != "run" {
 		return fmt.Errorf("unsupported command %q", strings.Join(args, " "))
@@ -133,6 +139,31 @@ func serveRuntime(args []string) error {
 	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
+}
+
+// recordRuntime appends one runtime call, as a JSON array, to the state's runtime.jsonl, so a test
+// can read what Coop asked of the runtime and in what order. Each call is one O_APPEND write.
+func recordRuntime(args []string) error {
+	state := os.Getenv("COOP_ACP_FIXTURE_STATE")
+	if state == "" {
+		return nil
+	}
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		return err
+	}
+	line, err := json.Marshal(args)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(state, "runtime.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func adapterProvider(args []string) (string, error) {

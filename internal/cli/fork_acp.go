@@ -61,6 +61,9 @@ func (a *app) superviseForkACP(repo, workspace, name string, target agents.Targe
 	defer stop()
 	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, hooks, acpproxy.RunOpts{})
 	cleanupErr := a.reapACPBoxes(superID)
+	if cleanupErr == nil {
+		a.removeACPServices(workspace, superID) // the fork's own children ran its services in the fork
+	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return 1, errors.Join(err, cleanupErr)
 	}

@@ -21,6 +21,12 @@
   written in. Swapping that folder for a named pipe while `coop init` creates a file now stops it
   with an error instead of freezing it.
 
+- **An editor session removes its own services when it ends.** A `coop acp` editor session runs its
+  own copy of the project's Compose services, and it left them running after it ended, along with
+  the copy from before each reload, until a later `coop loop`, `coop fork` or `coop build` removed
+  them. Now the session removes its services, their data volumes and network when it ends, and a
+  reload removes the copy it is done with, once none of the session's boxes is left running.
+
 - **An interrupted credential renewal no longer locks the account.** When a renewal of an agent's
   sign-in was cut short by Ctrl-C, a lost connection or a provider error, Coop refused that account
   until `coop login`. Now it finishes the renewal from the provider's answer when it got one, and
