@@ -36,33 +36,38 @@ cd site && python3 -m http.server 8000
 
 ## The landing pages and the docs' terminals
 
-`tools/gen_site.py` writes `index.html` from `tools/site/index.tpl.html` and `orchestrator.html`
-from `tools/site/orchestrator.tpl.html`, with the night board drawn at morning so the page reads whole
-without JavaScript. It fills in the
-parts that repeat, so nobody types them by hand: the icons, the provider marks
-(`tools/site/logos/`), the terminal scenes and the commands you copy. When you regenerate,
-the homepage's commit count adds up the `Coop-Task:` commits on `origin/main` of co:op, Emisar
-(`../emisar`) and Ryker (`../responder`), so fetch all three first. A missing checkout stops the
-script.
+`make docs` (`go run ./tools/gendocs`) writes `index.html` from `tools/site/index.tpl.html` and
+`orchestrator.html` from `tools/site/orchestrator.tpl.html`, with the night board drawn at morning
+so the page reads whole without JavaScript. It fills in the parts that repeat, so nobody types them
+by hand: the icons, the provider marks (`tools/site/logos/`), the terminal scenes and the commands
+you copy, all drawn in `tools/gendocs/scenes.go`.
 
-The script also fills the terminal windows in `docs.html`. You write the docs by hand,
-except between a `<!-- gen_site: NAME -->` and `<!-- /gen_site -->` marker. There the
-script writes the scene named `NAME`.
+The homepage's commit count is a plain number in its template. To update it, fetch co:op, Emisar
+and Ryker, add up the commits on each `origin/main` that carry a `Coop-Task:` trailer other than
+`none`, and edit the number:
 
 ```bash
-python3 tools/gen_site.py           # regenerate after editing the template or a scene
-python3 tools/gen_site.py --check   # what make tools-test runs: fails if any page is stale
+git log origin/main --grep='^Coop-Task: [^n]' --oneline | wc -l   # in each of the three repos
 ```
 
-The terminal scenes copy the CLI's real output. `TERMINAL_SOURCES` lists the sources for
-each terminal: the approved transcripts under `internal/cli/testdata/approved/` and the Go
-code that prints each line. When that output changes, `--check` fails and names the page,
-the terminal and the line. It keeps failing until the scene matches again.
+The tool also fills the terminal windows in `docs.html`. You write the docs by hand,
+except between a `<!-- gen_site: NAME -->` and `<!-- /gen_site -->` marker. There the
+tool writes the scene named `NAME`.
+
+```bash
+make docs         # regenerate after editing a template or a scene
+make docs-check   # fails if any page is stale, then runs the site's content tests
+```
+
+The terminal scenes copy the CLI's real output. `terminalSources` in `tools/gendocs/site.go`
+lists the sources for each terminal: the approved transcripts under
+`internal/cli/testdata/approved/` and the Go code that prints each line. When that output changes,
+`make docs-check` fails and names the page, the terminal and the line. It keeps failing until the
+scene matches again.
 
 Every page loads the stylesheets and scripts with `?v=` and a short hash of those files.
-`tools/gen_site.py` writes the hash. Regenerate after you change any of them, since
-`--check` fails until you do. Every browser then fetches the new copy instead of reusing a
-cached one.
+`make docs` writes the hash. Regenerate after you change any of them, since `make docs-check`
+fails until you do. Every browser then fetches the new copy instead of reusing a cached one.
 
 ## Deploy
 
@@ -75,18 +80,50 @@ You set it up once: in the repo, open Settings → Pages and set Source to "GitH
 
 ## SEO assets
 
-The favicon, app icons and social card under `assets/img/` are generated, and the results
-are committed. `zed-coop.png` is the exception: it's a real Zed screenshot, cropped by hand (see
-`.agent/kb/website.md`). `tools/gen_seo_assets.py` makes them with headless Chrome and ImageMagick. It
-draws the icons from the brand's mark, `brand/assets/coop-flat.svg`. It renders each landing page's
-social card from that page's own first screen: `og-image.png` for the homepage and
-`og-orchestrator.png` for the Orchestrator page.
+The favicon, the app icons and the two social cards under `assets/img/` are committed images,
+redrawn by hand with headless Chrome and ImageMagick when the mark or a landing page's first screen
+changes. `zed-coop.png` is a real Zed screenshot, cropped by hand (see `.agent/kb/website.md`).
+Work in a scratch folder and copy the results into `assets/img/`; below, `$CHROME` is the Chrome
+or Chromium binary.
+
+The icons are the brand's mark, `brand/assets/coop-flat.svg`, and `favicon.svg` is a copy of it.
+Draw the mark at 1024×1024 (an HTML page holding the SVG at `100vw` by `100vh`) and scale it down:
+`icon-192.png`, `icon-512.png`, and `favicon.ico` bundling 16, 32 and 48. `apple-touch-icon.png`
+(180) puts the glyph on a square tile with no rounded corners, since iOS rounds them;
+`icon-maskable-512.png` also scales the glyph to 64% around the centre, inside Android's round mask.
 
 ```bash
-python3 tools/gen_seo_assets.py          # regenerate everything
-python3 tools/gen_seo_assets.py icons    # just the favicon / app icons
-python3 tools/gen_seo_assets.py og       # just the 1200×630 social card
+"$CHROME" --headless=new --hide-scrollbars --user-data-dir="$(mktemp -d)" --default-background-color=00000000 \
+  --window-size=1024,1024 --screenshot=tile.png "file://$PWD/mark.html"
+magick tile.png -resize 512x512 icon-512.png
 ```
 
-Regenerate the card after you change the homepage's hero. If the site ever moves off
-`coop.dryga.com`, edit the canonical and `og:url` base, and `site/CNAME`.
+Each social card is its landing page's first screen at 1200×630: `og-image.png` for the homepage
+(the sandbox picture finished) and `og-orchestrator.png` for the Orchestrator page (the board at
+morning). Save a copy of the page with `<base href="file:///…/site/">` in its head, every
+`<script>` removed (headless Chrome runs scripts even with `--disable-javascript`), and this style
+before `</head>`:
+
+```css
+/* the homepage */
+.nav-links { visibility: hidden; }
+.actions, .story-steps, main > section:not(.story), footer { display: none; }
+.story { padding-top: 8px; }
+.story-lead { min-height: 0; }
+.stage { grid-row: 1; height: auto; }
+
+/* the Orchestrator page */
+.nav-links { visibility: hidden; }
+.actions, .night-steps, main > section:not(.night), footer { display: none; }
+.night-lead { min-height: 0; padding-block: 72px 0; }
+.night-stage { position: static; height: auto; padding-top: 40px; }
+```
+
+```bash
+"$CHROME" --headless=new --hide-scrollbars --user-data-dir="$(mktemp -d)" --allow-file-access-from-files \
+  --force-device-scale-factor=2 --window-size=1372,720 --screenshot=card.png "file://$PWD/card.html"
+magick card.png -resize '1200x630!' -strip og-image.png
+```
+
+Redraw a card after you change its page's hero. If the site ever moves off `coop.dryga.com`, edit
+the canonical and `og:url` base, and `site/CNAME`.

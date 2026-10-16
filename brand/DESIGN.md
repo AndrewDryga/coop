@@ -2,7 +2,7 @@
 
 Version 1 · September 2026. This guide set the direction for the website now at coop.dryga.com.
 `site/assets/css/site.css` copies its token values under short names (`--bg`, `--amber`), and
-`tools/gen_seo_assets.py` draws the icons from `assets/coop-flat.svg`. This guide, the
+the site's icons are drawn from `assets/coop-flat.svg`. This guide, the
 [tokens](tokens.css) and the [visual reference](index.html) form one handoff.
 
 ## 1. The direction
@@ -293,11 +293,11 @@ animation library, font CDN or build pipeline. When you implement it, consolidat
 into the website's own stylesheet. Don't leave two competing runtime token systems. Keep
 this guide as the design reference.
 
-`tools/gen_seo_assets.py` generates the existing favicon, app-icon and OG exports. When you
-implement the approved logo, update the script's canonical geometry and palette before you
-regenerate the exports. An edit to favicon.svg alone gets overwritten. Produce favicon
-16/32/48, Apple 180, PWA 192/512, maskable-safe 512 and OG 1200×630 assets from the same
-source. Don't bake preview checkerboards into them. The production asset rollout is
+The favicon and app-icon exports are committed images drawn from `assets/coop-flat.svg`, and the
+OG 1200×630 cards are screenshots of each landing page's first screen; `site/README.md`, "SEO
+assets", has the steps for both. When you implement the approved logo, change that mark first, then
+redraw favicon 16/32/48, Apple 180, PWA 192/512 and maskable-safe 512 from it, and the OG cards
+from the pages. Don't bake preview checkerboards into them. The production asset rollout is
 separate from this guide.
 
 ### Before calling the new website done
@@ -338,7 +338,7 @@ import Phoenix components.
   nav components in `portal/apps/emisar_web/lib/emisar_web/components/marketing_components.ex`;
   the narrative in `controllers/marketing_html/home.html.heex` in that same app.
 - co:op: `site/assets/css/site.css`, `site/assets/js/site.js`, `site/index.html`,
-  `site/docs.html`, `site/README.md` and `tools/gen_seo_assets.py`.
+  `site/docs.html` and `site/README.md`.
 - Protectorate: `protectorate/brand/README.md` and `protectorate/brand/DESIGN.md` in the
   sibling repository, for the umbrella identity. They aren't the authority on website fonts.
 

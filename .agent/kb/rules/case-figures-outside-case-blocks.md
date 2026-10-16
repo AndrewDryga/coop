@@ -2,9 +2,9 @@
 name: case-figures-outside-case-blocks
 description: "a homepage figure sits above or below its case's block, never inside it; a chapter gives every case a figure or none"
 scope: docs
-sources: [tools/site/index.tpl.html, site/index.html, site/assets/css/site.css, site/assets/js/site.js, tools/test_site_content.py]
-check: make tools-test
-updated: 2026-10-05
+sources: [tools/site/index.tpl.html, site/index.html, site/assets/css/site.css, site/assets/js/site.js, tools/gendocs/site_test.go]
+check: go test ./tools/gendocs -run 'TestCaseFiguresSitOutsideTheirCaseBlock|TestAChapterGivesEveryCaseAFigureOrNone'
+updated: 2026-10-16
 ---
 
 # Homepage: a case's figure stays outside the case's block
@@ -38,3 +38,7 @@ sstates (add it) or not show previous one but not leave that gap empty".
   The push case got a figure (35%, arXiv 2605.07769), so both chapters give all their cases one
   (7 of 7). Gated by test_a_chapter_gives_every_case_a_figure_or_none; removing the push figure
   fails it. site.js now builds the slot only when every case has a figure.
+- 2026-10-16 — both tests are Go now (tools/gendocs/site_test.go), run by `make docs-check`. Swept
+  site/index.html: 7 cases, 7 figures, 0 inside a block. A figure moved into the ssh block fails
+  TestCaseFiguresSitOutsideTheirCaseBlock; removing the ssh figure fails
+  TestAChapterGivesEveryCaseAFigureOrNone.

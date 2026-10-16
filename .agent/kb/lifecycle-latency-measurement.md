@@ -3,7 +3,7 @@ name: lifecycle-latency-measurement
 description: how to measure a box/editor start or stop change without fooling yourself — pair the two builds and alternate them, never bisect a noisy metric single-shot, build the comparison binary where its version stamp is honest, and know why an old binary cannot run in an approved project
 subsystem: testing
 sources: [tools/lifecycle_bench.py, tools/test_lifecycle_bench.py, tools/services_bench.py, tools/test_services_bench.py, Makefile, internal/cli/acp_cmd.go, internal/cli/cli.go, internal/runtime/docker_lifecycle.go]
-updated: 2026-10-15
+updated: 2026-10-16
 ---
 
 `make lifecycle-bench` (`tools/lifecycle_bench.py`) is the instrument for every start/stop claim in
@@ -15,7 +15,7 @@ output is a measurement to compare against, not a threshold to fail on. Cases:
 control that separates what filtering costs from what the tree costs. The benches' own unit tests
 (`tools/test_lifecycle_bench.py`, `tools/test_services_bench.py`) run in `make bench-tools-test`,
 which `make lifecycle-bench` and `make services-bench` run first, stopping if it fails; they are not part of
-`make tools-test` or the gate, which never runs a bench. What the stop boundary
+the gate, which never runs a bench. What the stop boundary
 covers — gateway containers AND volumes, both label families — is pinned by `OwnershipTest` in
 `tools/test_lifecycle_bench.py`, because a stop number is only as honest as that question.
 
@@ -138,6 +138,8 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 until 2026-09-20's paired A/B put a number against it. Both now state the number.
 
 ## Changelog
+- 2026-10-16 — `make tools-test` is gone (the site tests moved to Go, in `make docs-check`), so the bench
+  paragraph no longer names it; nothing else in the card was rechecked.
 - 2026-10-15 — the bench tests moved out of `make tools-test` into `make bench-tools-test`, which
   `make lifecycle-bench` and the new `make services-bench` run first (task
   2026-10-15-run-the-benchmark-tool-tests-only-with-make-life).

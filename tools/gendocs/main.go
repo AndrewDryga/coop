@@ -6,6 +6,10 @@
 // catches a help.go edit that wasn't regenerated. Without -check it writes the files. stdlib +
 // internal/cli only.
 //
+// It writes the website's generated pages the same way (site.go): site/index.html and
+// site/orchestrator.html from their templates in tools/site/, and the terminal windows in
+// site/docs.html. `-check` also fails when a site terminal shows a line the CLI no longer prints.
+//
 // The README carries no command tables: it links to docs/cli.md, which this tool writes. If a
 // generated command index is ever wanted elsewhere, add it in its own marker-bounded block.
 package main
@@ -13,6 +17,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +43,12 @@ func main() {
 		filepath.Join("site", "llms.txt"):      manual,
 		filepath.Join("docs", "man", "coop.1"): manPage(manual),
 	}
+	pages, err := sitePages(".")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gendocs: %v\n", err)
+		os.Exit(1)
+	}
+	maps.Copy(targets, pages)
 
 	drift := false
 	for path, want := range targets {
@@ -58,6 +69,17 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("wrote %s\n", path)
+	}
+	if *check {
+		problems, err := terminalDrift(readFrom("."))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gendocs: %v\n", err)
+			os.Exit(1)
+		}
+		for _, problem := range problems {
+			fmt.Fprintf(os.Stderr, "gendocs: terminal output no longer matches its source: %s\n", problem)
+			drift = true
+		}
 	}
 	if drift {
 		os.Exit(1)

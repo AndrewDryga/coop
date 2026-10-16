@@ -86,9 +86,6 @@ shellcheck: ## ShellCheck every tracked .sh: the installer, both sweep queue gua
 require-python3:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is not installed — run: brew install python3 (macOS) or apt-get install -y python3 (Debian)"; exit 1; }
 
-require-node:
-	@command -v node >/dev/null 2>&1 || { echo "Node.js is not installed — run: brew install node (macOS) or apt-get install -y nodejs (Debian)"; exit 1; }
-
 require-git-lfs:
 	@command -v git-lfs >/dev/null 2>&1 || { echo "git-lfs is not installed — run: brew install git-lfs (macOS) or apt-get install -y git-lfs (Debian)"; exit 1; }
 
@@ -100,22 +97,19 @@ snapshot: ## Build a local release snapshot with GoReleaser (no publish, no sign
 doctor: build ## Integration check: prove isolation holds (needs a runtime)
 	@./coop doctor
 
-docs: ## Regenerate CLI, manpage, and site docs from internal/cli/help.go
+docs: ## Regenerate the CLI docs and manpage from internal/cli/help.go, and the site's pages from tools/site/
 	@go run ./tools/gendocs
 
-docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make docs' to fix)
+docs-check: ## Fail if the generated docs or site pages drifted (run 'make docs' to fix) or the site fails its content tests
 	@go run ./tools/gendocs -check
+	@go test -count=1 ./tools/gendocs
 
 align: ## Check trailing-# comment alignment in README + site + CLI docs (run 'go run ./tools/aligncomments -write' to fix)
 	@go run ./tools/aligncomments -check
 
 # The benches' own tests run with the benches (bench-tools-test), not in the gate: the gate never
-# runs a bench, and their tests were most of this suite's time. Every other tools/test_*.py runs here.
+# runs a bench.
 BENCH_TOOL_TESTS := test_lifecycle_bench.py test_services_bench.py
-tools-test: require-python3 require-node ## Test the repository tools other than the benches
-	@for t in $(filter-out $(BENCH_TOOL_TESTS),$(notdir $(wildcard tools/test_*.py))); do \
-	  python3 -m unittest discover -s tools -p "$$t" || exit 1; done
-
 bench-tools-test: require-python3 ## Test the lifecycle and services benches (each bench runs this first)
 	@for t in $(BENCH_TOOL_TESTS); do python3 -m unittest discover -s tools -p "$$t" || exit 1; done
 
@@ -210,7 +204,7 @@ gate-%: FORCE
 
 FORCE:
 
-check-static: mod-check gateway-sources-check lint shellcheck build-all vuln align docs-check tools-test rules-check ## Free source, analyzer, build, docs and tool checks
+check-static: mod-check gateway-sources-check lint shellcheck build-all vuln align docs-check rules-check ## Free source, analyzer, build, docs and tool checks
 check-unit: test ## Free ordinary unit tests
 check-process: check-process-loop check-process-rest ## Free scripted-provider and process-control tests
 check-process-loop: provider-scripted-loop-e2e ## The scripted provider suite's loop tests
@@ -236,7 +230,7 @@ check-local: require-git-lfs ## Scoped local checks; SCOPE=docs|rules|agent|runt
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
 	@go test -count=1 -p 4 -timeout 20m $(LOCAL_$(ITERATION_SCOPE))
 else ifeq ($(SCOPE),docs)
-check-local: docs-check align rules-check tools-test
+check-local: docs-check align rules-check
 	@echo 'Local checks: docs, site content, alignment and rules'
 else ifeq ($(SCOPE),rules)
 check-local: rules-check
@@ -347,13 +341,12 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
+.PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: check-local bench-tools-test services-bench require-services-workspace
 .PHONY: check-static check-unit check-process check-race
 .PHONY: check-process-loop check-process-rest check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2
 .PHONY: provider-scripted-loop-e2e provider-scripted-other-e2e FORCE
 .PHONY: require-git-lfs
-.PHONY: require-node
 .PHONY: mod-check
 .PHONY: gateway-sources-check

@@ -78,10 +78,8 @@ It refuses a tag that is not the checked-out commit and prints the tag's finaliz
 section as the release notes. `go run ./tools/releasenotes verify-remote <tag>` then refuses if
 origin's tag changed since checkout. Run `notes` on a freshly tagged commit to preview the notes.
 
-The gate needs `staticcheck`, `govulncheck`, `shellcheck`, `python3`, `node` and `git-lfs`.
-Node runs the shipped site's picker and copy handlers in a small DOM fixture; it needs no
-npm install or browser. Missing Node fails that owner instead of skipping the script checks.
-The Makefile pins `govulncheck` and installs Staticcheck with `make install-staticcheck` from
+The gate needs `staticcheck`, `govulncheck`, `shellcheck` and `git-lfs`. The Makefile pins
+`govulncheck` and installs Staticcheck with `make install-staticcheck` from
 `tools/staticcheck.mod`. That separate dependency graph pins both the analyzer and its
 Go importer without changing Coop's runtime dependencies. CI and this repository's own box
 (`.agent/Dockerfile`) install the same pins; Coop's box images ship neither tool. A missing or
