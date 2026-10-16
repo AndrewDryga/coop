@@ -233,6 +233,140 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 	}
 }
 
+// The loop's finalize step warns once under its "Task completed" line when the task it accepted
+// keeps a compiled program or more than 25 MB in its folder, in the words `coop tasks done` uses,
+// and the agent's tasks_complete result carried the same facts once. A folder of evidence stays
+// quiet, names stay escaped, and the task completes with every file in place.
+func TestLoopWarnsAboutBulkInACompletedTask(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	const elf = "\x7fELF\x02\x01\x01\x00"
+	// What the run prints next starts a paragraph of its own instead of reading as part of the advice.
+	const advice = "\n  For a file a build can recreate, record its commit, sha256 and build command in log.md instead.\n" +
+		"\nFinal review remains pending for 1 accepted task"
+	for _, tc := range []struct {
+		name, file string // the one file in the task's artifacts/
+		content    string
+		mode       os.FileMode
+		size       int64    // a sparse apparent size past content, when set
+		want       []string // what follows "Task completed" must hold each; none means no warning
+		agent      string   // what the agent's result must hold
+	}{
+		{name: "program", file: "x\x1b[2Jy", content: elf, mode: 0o755,
+			want: []string{
+				"\n\n⚠ The task folder holds 1 compiled program\n\n",
+				"      Programs: artifacts/x\\u001B[2Jy\n      Archived tasks keep their files until someone deletes them.\n" + advice,
+			},
+			agent: "\n\nThe task folder holds 1 compiled program.\nPrograms: artifacts/x\\u001B[2Jy\n"},
+		{name: "oversized folder", file: "trace.jsonl", mode: 0o644, size: 25_000_001,
+			want:  []string{"⚠ The task folder holds 25.0 MB\n", "      Largest: artifacts/trace.jsonl (25.0 MB), ", advice},
+			agent: "\n\nThe task folder holds 25.0 MB.\nLargest: artifacts/trace.jsonl (25.0 MB), "},
+		{name: "evidence", file: "gate.log", content: "ok\n", mode: 0o644},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			repo, git := gitrepo.New(t)
+			writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+			git("add", ".gitignore")
+			git("commit", "-m", "base")
+			id := "ship-it"
+			dir := filepath.Join(repo, tasksRoot, stateTodo, id)
+			writeTaskFile(t, filepath.Join(dir, "task.md"), "# Ship it\n- [x] required checks passed\n")
+			writeTaskFile(t, filepath.Join(dir, "state.md"), "# State — Ship it\n\n**Status:** in progress\n**Done so far:** verified\n**Next action:** complete\n**Traps:** none\n")
+			artifact := filepath.Join(dir, "artifacts", tc.file)
+			writeTaskFile(t, artifact, tc.content)
+			if err := os.Chmod(artifact, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			if tc.size > 0 {
+				if err := os.Truncate(artifact, tc.size); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
+			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+			attempts := 0
+			var reply string
+			c.boxRun = func(s box.RunSpec) (int, error) {
+				if attempts++; attempts > 1 || s.TaskTools == nil {
+					t.Fatalf("unexpected attempt %d without usable task tools", attempts)
+				}
+				writeTaskFile(t, filepath.Join(repo, "answer.txt"), "implemented\n")
+				git("add", "answer.txt")
+				git("commit", "-m", "Ship it\n\nCoop-Task: "+id)
+				client, server := net.Pipe()
+				ctx, cancel := context.WithCancel(context.Background())
+				done := make(chan error, 1)
+				go func() { done <- s.TaskTools.Serve(ctx, server) }()
+				defer func() { cancel(); client.Close(); server.Close(); <-done }()
+				if err := client.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+					t.Fatal(err)
+				}
+				reader, encoder := bufio.NewReader(client), json.NewEncoder(client)
+				for _, call := range []map[string]any{
+					{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "0"}}},
+					{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tasks_complete", "arguments": map[string]any{"id": id}}},
+				} {
+					if err := encoder.Encode(call); err != nil {
+						t.Fatal(err)
+					}
+					line, err := reader.ReadBytes('\n')
+					if err != nil {
+						t.Fatal(err)
+					}
+					var result struct {
+						Result struct {
+							Content []struct{ Text string }
+							IsError bool
+						}
+					}
+					if err := json.Unmarshal(line, &result); err != nil || result.Result.IsError {
+						t.Fatalf("MCP %v: %s, %v", call["method"], line, err)
+					}
+					if len(result.Result.Content) > 0 {
+						reply = result.Result.Content[0].Text
+					}
+				}
+				_, err := io.WriteString(s.Stdout, "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"done\"}\n")
+				return 0, err
+			}
+			var code int
+			var err error
+			output := captureStderr(t, func() {
+				code, err = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: 1, Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
+			})
+			if code != 0 || err != nil {
+				t.Fatalf("loop = (%d, %v), want a completed task despite the warning\n%s", code, err, output)
+			}
+			_, after, found := strings.Cut(output, "✓ Task completed: Ship it")
+			if !found {
+				t.Fatalf("no completion line:\n%s", output)
+			}
+			if n, want := strings.Count(output, "The task folder "), min(len(tc.want), 1); n != want {
+				t.Errorf("the terminal shows the warning %d times, want %d:\n%s", n, want, output)
+			}
+			if n, want := strings.Count(reply, "The task folder "), min(len(tc.want), 1); n != want {
+				t.Errorf("the agent's result holds the warning %d times, want %d:\n%s", n, want, reply)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(after, want) {
+					t.Errorf("the completion lacks %q:\n%s", want, output)
+				}
+			}
+			if !strings.Contains(reply, tc.agent) {
+				t.Errorf("the agent's result lacks %q:\n%s", tc.agent, reply)
+			}
+			if strings.Contains(output, "\x1b[2J") || strings.Contains(reply, "\x1b[2J") {
+				t.Errorf("a raw control sequence reached the terminal or the agent:\n%q\n%q", output, reply)
+			}
+			info, err := os.Stat(filepath.Join(repo, tasksRoot, stateDone, id, "artifacts", tc.file))
+			if err != nil || info.Size() != max(tc.size, int64(len(tc.content))) {
+				t.Errorf("the archived task lost its file: %v, %v", info, err)
+			}
+		})
+	}
+}
+
 func TestAssignedNoChangeCompletionPreservesUnrelatedIndex(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))

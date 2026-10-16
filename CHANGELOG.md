@@ -145,10 +145,11 @@
 
 - **`coop tasks` points out bulk left in the task queue.** Agents sometimes kept compiled
   programs, release tarballs and toolchains in task folders, and left release files next to the
-  state folders, where they stayed until someone deleted them. `coop tasks done` now warns when
-  the folder it archives holds a compiled program or more than 25 MB, and `coop tasks` warns about
-  any file or folder in `.agent/tasks` besides its README, state folders and backlog. Hidden files
-  are left alone, and neither warning deletes anything or stops the command. A new project's tasks
+  state folders, where they stayed until someone deleted them. `coop tasks done` and `coop loop`
+  now warn when a task they complete keeps a compiled program or more than 25 MB in its folder,
+  and an agent that completes its task in the loop is told the same. `coop tasks` warns about any
+  file or folder in `.agent/tasks` besides its README, state folders and backlog. Hidden files are
+  left alone, and neither warning deletes anything or stops the command. A new project's tasks
   README says what to keep instead: the commit, sha256 and build command.
 
 - **Box images check asdf before installing it.** Coop's box images download asdf, the tool that

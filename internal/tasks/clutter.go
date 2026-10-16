@@ -4,13 +4,13 @@ import (
 	"cmp"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/ui"
+	"golang.org/x/sys/unix"
 )
 
 // Agents, not Coop, fill the queue with bulk: compiled binaries kept as "evidence", release
@@ -25,37 +25,65 @@ const bulkWarnBytes = 25_000_000
 // namesShown is how many names a warning lists: the first programs or strays, the largest files.
 const namesShown = 3
 
-// warnTaskBulk is done's heads-up when the folder it just archived holds a compiled program or more
-// than bulkWarnBytes. It looks at the whole folder, not only artifacts/: agents also leave builds at
-// the task's top level and in folders of their own naming.
-func warnTaskBulk(taskDir string) {
-	size, programs, largest := taskFolderBulk(taskDir)
-	big := size > bulkWarnBytes
-	if !big && len(programs) == 0 {
-		return
+// The measuring walk stops past either limit, and the folder then counts as bulk that could not be
+// measured fully: a box can build a tree of any shape with a shell loop, and the in-box task tool
+// measures it while the box's task channel waits. 10,000 empty folders, the slowest shape, take
+// about half a second. Evidence comes nowhere near either limit: in Coop's own queue the fullest
+// finished task holds about 1,400 entries, 10 folder levels at most.
+const (
+	walkMaxDepth   = 64     // folder levels below the task folder; also bounds the folders held open
+	walkMaxEntries = 10_000 // files and folders; the warning prints it as "10,000"
+)
+
+// TaskBulkWarning is the heads-up about a task that was just completed in the queue at queueRoot: a
+// headline and the facts behind it, one per line, when its folder holds a compiled program or more
+// than bulkWarnBytes, or is too deep or too full to measure. ok is false otherwise, which is most of
+// the time. It looks at the whole folder, not only artifacts/: agents also leave builds at the
+// task's top level and in folders of their own naming. `coop tasks done` and the loop print it with
+// WarnTaskBulk; the in-box task tool returns it to the agent that completed the task.
+func TaskBulkWarning(queueRoot, taskDir string) (headline string, facts []string, ok bool) {
+	m := taskFolderBulk(queueRoot, taskDir)
+	big := m.size > bulkWarnBytes
+	if !big && len(m.programs) == 0 && m.stopped == "" {
+		return "", nil, false
 	}
-	held := ui.Count(len(programs), "compiled program")
-	switch {
-	case big && len(programs) > 0:
-		held = ui.Bytes(uint64(size)) + ", including " + held
-	case big:
-		held = ui.Bytes(uint64(size))
+	if m.stopped != "" {
+		facts = append(facts, m.stopped)
 	}
-	var facts []string
-	if len(programs) > 0 {
-		facts = append(facts, "Programs: "+someNames(programs))
+	if len(m.programs) > 0 {
+		facts = append(facts, "Programs: "+someNames(m.programs))
 	}
 	if big {
-		files := make([]string, len(largest))
-		for i, f := range largest {
+		files := make([]string, len(m.largest))
+		for i, f := range m.largest {
 			files[i] = fmt.Sprintf("%s (%s)", ui.SafeInline(f.name), ui.Bytes(uint64(f.size)))
 		}
 		facts = append(facts, "Largest: "+ui.List(files, "and"))
 	}
 	facts = append(facts, "Archived tasks keep their files until someone deletes them.")
+	if m.stopped != "" {
+		return "The task folder could not be measured fully", facts, true
+	}
+	held := ui.Count(len(m.programs), "compiled program")
+	switch {
+	case big && len(m.programs) > 0:
+		held = ui.Bytes(uint64(m.size)) + ", including " + held
+	case big:
+		held = ui.Bytes(uint64(m.size))
+	}
+	return "The task folder holds " + held, facts, true
+}
+
+// WarnTaskBulk prints TaskBulkWarning under a completion a person reads, and reports whether it did.
+func WarnTaskBulk(queueRoot, taskDir string) bool {
+	headline, facts, ok := TaskBulkWarning(queueRoot, taskDir)
+	if !ok {
+		return false
+	}
 	ui.Note("")
-	ui.Warning("The task folder holds "+held, strings.Join(facts, "\n"),
+	ui.Warning(headline, strings.Join(facts, "\n"),
 		"For a file a build can recreate, record its commit, sha256 and build command in log.md instead.")
+	return true
 }
 
 // taskFile is a regular file in a task folder, by its slash-separated path inside the folder.
@@ -64,48 +92,137 @@ type taskFile struct {
 	size int64
 }
 
-// taskFolderBulk measures a task folder: the total size of its regular files, the executables among
-// them that are compiled programs, and its namesShown largest files, biggest first. The walk stays
-// inside the folder and never descends through a symlink. Anything it cannot read is skipped, since
-// the result only decides whether to warn.
-func taskFolderBulk(taskDir string) (size int64, programs []string, largest []taskFile) {
-	root, err := OpenTaskMetadataRoot(taskDir)
-	if err != nil {
-		return 0, nil, nil
-	}
-	defer root.Close()
-	_ = fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
-		if err != nil || !d.Type().IsRegular() {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return nil
-		}
-		size += info.Size()
-		largest = append(largest, taskFile{name, info.Size()})
-		slices.SortStableFunc(largest, func(a, b taskFile) int { return cmp.Compare(b.size, a.size) })
-		largest = largest[:min(len(largest), namesShown)]
-		if info.Mode().Perm()&0o111 != 0 && compiledProgram(root, name, info) {
-			programs = append(programs, name)
-		}
-		return nil
-	})
-	return size, programs, largest
+// bulkMeasure is what a task folder keeps once it is done: the total size of its regular files, the
+// executables among them that are compiled programs, its namesShown largest files, biggest first,
+// and, when the walk stopped at a limit, the fact that says which.
+type bulkMeasure struct {
+	size     int64
+	programs []string
+	largest  []taskFile
+	entries  int
+	stopped  string
 }
 
-// compiledProgram reports whether the regular file the walk listed as name starts with an ELF or
-// Mach-O header: what Coop's Linux boxes and macOS hosts build. An executable script is evidence a
-// person can read, so it does not count. The entry may have changed since the walk listed it, so
-// the open must not wait on a pipe (O_NONBLOCK), and os.SameFile rejects anything but the listed
-// file: os.Root follows a symlink that stays inside the folder even when asked not to.
-func compiledProgram(root *os.Root, name string, listed os.FileInfo) bool {
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+// taskFolderBulk measures a task folder of the queue at queueRoot. Its top-level tmp/ does not
+// count, since done removes it; the in-box task tool looks before the host has. The walk starts at
+// the project folder holding the queue and opens each folder from there down without following a
+// link: a box that swaps .agent, the state folder or the task folder for a link to a host folder
+// would otherwise learn, from the tool's answer, the names and sizes of the files in it. A folder
+// on the way that is a link measures nothing. For the repository's own queue the project folder is
+// the box's mount point, which the box cannot replace; a subproject's, a fork's or a COOP_TASKS
+// queue starts below a folder the box could swap, as every other operation on that queue does.
+func taskFolderBulk(queueRoot, taskDir string) bulkMeasure {
+	var m bulkMeasure
+	project := filepath.Dir(filepath.Dir(queueRoot))
+	rel, err := filepath.Rel(project, taskDir)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return m
+	}
+	fd, err := unix.Open(project, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
 	if err != nil {
+		return m
+	}
+	dir := os.NewFile(uintptr(fd), project)
+	for _, name := range strings.Split(rel, string(filepath.Separator)) {
+		sub := openBelow(dir, name, unix.O_DIRECTORY)
+		dir.Close()
+		if sub == nil {
+			return m
+		}
+		dir = sub
+	}
+	defer dir.Close()
+	m.walk(dir, "", 1)
+	return m
+}
+
+// walk measures the folder dir, at path prefix, whose entries sit level folders below the task
+// folder. The box is still running while the in-box task tool measures, and can swap any entry the
+// listing named, so every entry is opened as a folder first, from its parent (openBelow): one that
+// is a FIFO or a link by then is skipped like one that always was, never waited on or followed.
+// Opening each folder from its parent also keeps its cost flat at any depth; resolved from the
+// top, a chain of 500 folders took 5 s. Anything the walk cannot read is skipped, since the result
+// only decides whether to warn.
+func (m *bulkMeasure) walk(dir *os.File, prefix string, level int) {
+	for _, base := range m.list(dir, prefix) {
+		name := prefix + base
+		sub := openBelow(dir, base, unix.O_DIRECTORY)
+		if sub == nil {
+			m.measureFile(dir, base, name)
+			continue
+		}
+		if level > walkMaxDepth {
+			sub.Close()
+			m.stopped = fmt.Sprintf("Its folders nest more than %d levels deep.", walkMaxDepth)
+			return
+		}
+		m.walk(sub, name+"/", level+1)
+		sub.Close()
+		if m.stopped != "" {
+			return
+		}
+	}
+}
+
+// list returns the names in dir, at path prefix, in order, and counts them against the walk's
+// budget as it reads them: a box can put any number of entries in a folder, and every folder the
+// walk is inside holds its names until it is done. It reads no more than the budget has left, plus
+// one that shows the budget ran out and one for the top-level tmp/, which is skipped and not
+// counted; past the budget it stops the walk and returns nothing.
+func (m *bulkMeasure) list(dir *os.File, prefix string) []string {
+	names, _ := dir.Readdirnames(walkMaxEntries - m.entries + 2)
+	if prefix == "" {
+		names = slices.DeleteFunc(names, func(name string) bool { return name == "tmp" })
+	}
+	if m.entries += len(names); m.entries > walkMaxEntries {
+		m.stopped = "It holds more than 10,000 files and folders."
+		return nil
+	}
+	slices.Sort(names)
+	return names
+}
+
+// measureFile adds the entry base of dir, at path name, when it is a regular file, and notes it
+// when it is a compiled program. Its size comes from the folder itself, never through a link.
+func (m *bulkMeasure) measureFile(dir *os.File, base, name string) {
+	var st unix.Stat_t
+	if unix.Fstatat(int(dir.Fd()), base, &st, unix.AT_SYMLINK_NOFOLLOW) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG {
+		return
+	}
+	m.size += st.Size
+	m.largest = append(m.largest, taskFile{name, st.Size})
+	slices.SortStableFunc(m.largest, func(a, b taskFile) int { return cmp.Compare(b.size, a.size) })
+	m.largest = m.largest[:min(len(m.largest), namesShown)]
+	if st.Mode&0o111 != 0 && compiledProgram(dir, base, st) {
+		m.programs = append(m.programs, name)
+	}
+}
+
+// openBelow opens the entry base of dir the way ownAgentFiles in internal/box does: from its
+// parent, never through a link and never waiting on a FIFO. flags adds unix.O_DIRECTORY to open
+// only a folder. It returns nil when the entry cannot be opened that way.
+func openBelow(dir *os.File, base string, flags int) *os.File {
+	fd, err := unix.Openat(int(dir.Fd()), base, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK|flags, 0)
+	if err != nil {
+		return nil
+	}
+	return os.NewFile(uintptr(fd), filepath.Join(dir.Name(), base))
+}
+
+// compiledProgram reports whether the regular file the walk measured as base in dir starts with
+// an ELF or Mach-O header: what Coop's Linux boxes and macOS hosts build. An executable script is
+// evidence a person can read, so it does not count. The entry may have changed since it was
+// measured, so only a regular file with the measured inode is read: both come from the same folder
+// handle, so the inode alone names it (identity-fences-compare-the-inode), and a FIFO that took the
+// inode number back is never read, since its read would wait on its writer.
+func compiledProgram(dir *os.File, base string, measured unix.Stat_t) bool {
+	f := openBelow(dir, base, 0)
+	if f == nil {
 		return false
 	}
 	defer f.Close()
-	if opened, err := f.Stat(); err != nil || !os.SameFile(listed, opened) {
+	var opened unix.Stat_t
+	if unix.Fstat(int(f.Fd()), &opened) != nil || opened.Ino != measured.Ino || opened.Mode&unix.S_IFMT != unix.S_IFREG {
 		return false
 	}
 	var magic [4]byte

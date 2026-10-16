@@ -683,7 +683,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 				return -1, trustedCompletionError(err, t.ID)
 			}
 			ui.Note("%s is already done.", t.Title)
-			warnTaskBulk(t.Dir)
+			WarnTaskBulk(root, t.Dir)
 		case StateInProgress:
 			// Re-claiming a task already in progress (yours, or one the loop currently holds) is a
 			// legitimate take-over, not a no-op: it (re)asserts durable ownership regardless of who
@@ -751,7 +751,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		dir := filepath.Join(root, StateDone, t.ID)
 		ui.OK("Completed task: %s", t.Title)
 		ui.Note("\n  %s", displayPath(dir))
-		warnTaskBulk(dir)
+		WarnTaskBulk(root, dir)
 	default:
 		ui.OK("%s %s", pastVerb, t.ID)
 	}

@@ -3,7 +3,7 @@ name: task-tmp-lifetime
 description: task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist
 subsystem: tasks
 sources: [internal/tasks/cmd.go, internal/tasks/clutter.go, internal/tasks/lease.go, internal/tasks/audit.go, internal/loop/loop.go, internal/taskmcp/tools.go, internal/taskmcp/evidence_handoff_test.go, internal/scaffold/templates/agent/tasks/README.md]
-updated: 2026-10-15
+updated: 2026-10-16
 ---
 A task's `tmp/` is disposable but resumable: because it sits inside the task folder, ordinary
 todo/in-progress/blocked/reopen moves carry it along. `tasksFolderMove` removes only `tmp/` when a
@@ -16,10 +16,18 @@ removed without touching their targets. Cleanup errors fail completion/review lo
 retried with `coop tasks done <id>`. Anything a reviewer or future maintainer needs belongs in
 `artifacts/`, which survives done.
 
-Nothing else in the folder is ever removed. A host `coop tasks done` (including an already-done
-retry) only warns when the archived folder holds an executable ELF/Mach-O file or more than 25 MB
-(`warnTaskBulk`, `internal/tasks/clutter.go`); the loop and the in-box task channel complete tasks
-without that check. See [[task-folders-keep-evidence-not-bulk]].
+Nothing else in the folder is ever removed. Every completion path only warns when the folder holds
+an executable ELF/Mach-O file or more than 25 MB, or is too deep or too full to measure
+(`TaskBulkWarning`, `internal/tasks/clutter.go`):
+a host `coop tasks done` (including an already-done retry) and the loop after its finalize step
+print it, and a successful or already-done `tasks_complete` result ends with it when it applies.
+The task's top-level `tmp/` never counts, because assigned MCP completion measures the folder
+before the host has removed it; a `tmp/` further down does. The walk starts at the project folder
+holding the queue and follows no link on the way down to the task, so a box that swaps a folder
+between them for a link learns nothing about where it points; for the repository's own queue that
+folder is the box's mount point (a subproject's, fork's or COOP_TASKS queue starts below a folder
+the box could swap, as every other queue operation does). See
+[[task-folders-keep-evidence-not-bulk]].
 
 Assigned MCP completion moves and normalizes the folder before the host finalizes it;
 its return does not mean scratch has already vanished. The tool description asks for
@@ -34,6 +42,8 @@ Task authority does not live in `tmp/`. The host-only registry under
 scratch is never lease evidence and task-folder moves do not relocate authority.
 
 ## Changelog
+- 2026-10-16 — the loop's finalize step and the `tasks_complete` result now warn too, and `tmp/` no
+  longer counts; re-verified that no completion path removes anything but `tmp/`.
 - 2026-10-15 — added the done-time bulk warning; re-verified against `tasksFolderMoveWith` and
   `finalizeCompletedTask` that done still removes only `tmp/`.
 - 2026-09-13 — rechecked assigned versus host completion timing, added evidence-handoff feedback

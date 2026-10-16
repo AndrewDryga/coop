@@ -1340,6 +1340,9 @@ reviewAgain:
 				completedLine := taskReportLine(assignedCompletion.Item, scopes[assignedCompletion.Root])
 				completedLines = rememberCompletion(completedLines, completedLine)
 				printTaskCompleted(completedLine)
+				if tasks.WarnTaskBulk(assignedCompletion.Root, assignedCompletion.Item.Dir) {
+					ui.Note("") // what the run prints next is not part of the warning's advice
+				}
 			}
 			gateHits := tasks.ProtectedGateChanges(repo, iterHead, headAfter, gateSources)
 			health.noteIteration(finished, gateHits)

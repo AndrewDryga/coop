@@ -7,6 +7,10 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
+
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+	"golang.org/x/sys/unix"
 )
 
 // writeTaskBytes writes a task-folder file with an exact mode, creating its parents.
@@ -195,15 +199,216 @@ func TestDoneWarnsAboutRebuildableBulk(t *testing.T) {
 	// The limit is the folder's total and it is exclusive: exactly 25,000,000 bytes stays quiet,
 	// one byte more warns.
 	const limit, taskMD = 25_000_000, "# At the limit\n"
-	dir := t.TempDir()
+	queue, dir := doneTaskDir(t)
 	writeTaskFile(t, filepath.Join(dir, "task.md"), taskMD)
 	sparseFile(t, filepath.Join(dir, "artifacts", "trace.jsonl"), limit-int64(len(taskMD)))
-	if out := captureStderr(t, func() { warnTaskBulk(dir) }); out != "" {
+	if out := captureStderr(t, func() { WarnTaskBulk(queue, dir) }); out != "" {
 		t.Errorf("a folder of exactly 25,000,000 bytes warned:\n%s", out)
 	}
 	sparseFile(t, filepath.Join(dir, "artifacts", "trace.jsonl"), limit-int64(len(taskMD))+1)
-	if out := captureStderr(t, func() { warnTaskBulk(dir) }); !strings.Contains(out, "⚠ The task folder holds 25.0 MB\n") {
+	if out := captureStderr(t, func() { WarnTaskBulk(queue, dir) }); !strings.Contains(out, "⚠ The task folder holds 25.0 MB\n") {
 		t.Errorf("a folder one byte over 25,000,000 bytes did not warn:\n%s", out)
+	}
+}
+
+// Done removes a task's tmp/, folder or file, so scratch there never counts, though the in-box task
+// tool measures the folder before the host has removed it. A tmp folder further down is not that
+// scratch and still counts.
+func TestTaskBulkWarningSkipsScratch(t *testing.T) {
+	const elf = "\x7fELF\x02\x01\x01\x00"
+	queue, dir := doneTaskDir(t)
+	writeTaskFile(t, filepath.Join(dir, "task.md"), "# Ship it\n")
+	writeTaskBytes(t, filepath.Join(dir, "tmp", "coop"), elf, 0o755)
+	sparseFile(t, filepath.Join(dir, "tmp", "go.tar.gz"), 30_000_000)
+	if headline, facts, ok := TaskBulkWarning(queue, dir); ok {
+		t.Errorf("scratch in tmp/ warned: %s %q", headline, facts)
+	}
+	fileQueue, file := doneTaskDir(t)
+	sparseFile(t, filepath.Join(file, "tmp"), 30_000_000)
+	if headline, facts, ok := TaskBulkWarning(fileQueue, file); ok {
+		t.Errorf("a tmp file warned: %s %q", headline, facts)
+	}
+
+	writeTaskBytes(t, filepath.Join(dir, "artifacts", "tmp", "coop"), elf, 0o755)
+	headline, facts, ok := TaskBulkWarning(queue, dir)
+	if !ok || headline != "The task folder holds 1 compiled program" ||
+		strings.Join(facts, "\n") != "Programs: artifacts/tmp/coop\nArchived tasks keep their files until someone deletes them." {
+		t.Errorf("a program in artifacts/tmp/ = %v, %q, %q", ok, headline, facts)
+	}
+}
+
+// A box can build a tree no evidence needs, and the in-box task tool measures the folder while the
+// box's task channel waits, so the walk stops past 64 levels of folders or 10,000 entries and says
+// it could not measure the folder fully, still naming what it found. Each folder is opened from its
+// parent: opened from the top every time, a chain of a few hundred took seconds.
+func TestTaskBulkWarningStopsAtItsLimits(t *testing.T) {
+	const elf = "\x7fELF\x02\x01\x01\x00"
+	chain := func(t *testing.T, dir string, depth int) {
+		t.Helper()
+		writeTaskFile(t, filepath.Join(dir, "task.md"), "# Ship it\n")
+		if err := os.MkdirAll(filepath.Join(dir, strings.Repeat("d/", depth)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deepQueue, deep := doneTaskDir(t)
+	writeTaskBytes(t, filepath.Join(deep, "artifacts", "coop"), elf, 0o755)
+	chain(t, deep, 300)
+	start := time.Now()
+	out := captureStderr(t, func() { WarnTaskBulk(deepQueue, deep) })
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("measuring a chain of 300 folders took %v", took)
+	}
+	want := "⚠ The task folder could not be measured fully\n\n" +
+		"      Its folders nest more than 64 levels deep.\n" +
+		"      Programs: artifacts/coop\n" +
+		"      Archived tasks keep their files until someone deletes them.\n\n" +
+		"  For a file a build can recreate, record its commit, sha256 and build command in log.md instead.\n"
+	if !strings.HasSuffix(out, want) {
+		t.Errorf("a chain of 300 folders printed\n%s\nwant it to end with\n%s", out, want)
+	}
+
+	// A chain of exactly 64 folders is measured fully, and holds nothing to warn about.
+	limitQueue, limit := doneTaskDir(t)
+	chain(t, limit, 64)
+	if headline, facts, ok := TaskBulkWarning(limitQueue, limit); ok {
+		t.Errorf("64 levels of folders warned: %s %q", headline, facts)
+	}
+
+	// 10,000 files and folders are measured fully, tmp/ not counted; one more is not.
+	fullQueue, full := doneTaskDir(t)
+	for i := range walkMaxEntries {
+		if err := os.WriteFile(filepath.Join(full, fmt.Sprintf("f%05d", i)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTaskFile(t, filepath.Join(full, "tmp", "scratch.log"), "")
+	if headline, facts, ok := TaskBulkWarning(fullQueue, full); ok {
+		t.Errorf("10,000 entries warned: %s %q", headline, facts)
+	}
+	writeTaskFile(t, filepath.Join(full, "task.md"), "# Ship it\n")
+	headline, facts, ok := TaskBulkWarning(fullQueue, full)
+	if !ok || headline != "The task folder could not be measured fully" ||
+		strings.Join(facts, "\n") != "It holds more than 10,000 files and folders.\nArchived tasks keep their files until someone deletes them." {
+		t.Errorf("10,001 entries = %v, %q, %q", ok, headline, facts)
+	}
+
+	// However wide a folder is, the walk reads only the names its budget has left (plus two) and
+	// counts them as it reads them, so the box can make it neither read nor hold a million names.
+	f, err := os.Open(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	nearly := bulkMeasure{entries: walkMaxEntries - 5}
+	if names := nearly.list(f, ""); names != nil || nearly.stopped == "" || nearly.entries > walkMaxEntries+2 {
+		t.Errorf("with 5 entries of budget left, the walk counted %d names of a folder of 10,002 and returned %d (stopped %q)",
+			nearly.entries-(walkMaxEntries-5), len(names), nearly.stopped)
+	}
+}
+
+// The box is still running while the in-box task tool measures its folder, so an entry listed as a
+// folder can be a FIFO or a link by the time the walk opens it. The walk opens every entry as a
+// folder first, so entries that are a FIFO or links from the start take that same path: the walk
+// returns at once and never follows a link, to a folder of programs outside or back to its own.
+func TestBulkWalkNeverWaitsOnAFIFOOrFollowsALink(t *testing.T) {
+	const elf = "\x7fELF\x02\x01\x01\x00"
+	queue, dir := doneTaskDir(t)
+	writeTaskFile(t, filepath.Join(dir, "task.md"), "# Ship it\n")
+	writeTaskFile(t, filepath.Join(dir, "artifacts", "gate.log"), "ok\n")
+	if err := syscall.Mkfifo(filepath.Join(dir, "artifacts", "build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	writeTaskBytes(t, filepath.Join(outside, "bin", "go"), elf, 0o755)
+	for name, target := range map[string]string{"toolchain": outside, "self": "."} {
+		if err := os.Symlink(target, filepath.Join(dir, "artifacts", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	measured := make(chan bulkMeasure, 1)
+	go func() { measured <- taskFolderBulk(queue, dir) }()
+	select {
+	case m := <-measured:
+		if m.stopped != "" || len(m.programs) != 0 || m.entries != 6 {
+			t.Errorf("the walk went past the FIFO and links it listed: %+v", m)
+		}
+	case <-time.After(wait.Deadline):
+		t.Fatalf("measuring a folder holding a FIFO did not return within %v", wait.Deadline)
+	}
+}
+
+// The box can also swap a folder above the task folder, .agent or a state folder, for a link to a
+// host folder while the in-box task tool locates and then measures the task. The walk starts at
+// the project folder, which the box cannot replace, and follows no link down to the task, so it
+// measures nothing there rather than describe the host folder to the box.
+func TestBulkWalkNeverFollowsALinkAboveTheTask(t *testing.T) {
+	const elf = "\x7fELF\x02\x01\x01\x00"
+	for _, swapped := range []string{".agent", filepath.Join(".agent", "tasks", StateDone)} {
+		t.Run(swapped, func(t *testing.T) {
+			queue, dir := doneTaskDir(t)
+			project := filepath.Dir(filepath.Dir(queue))
+			rel, err := filepath.Rel(project, dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			outside := t.TempDir()
+			writeTaskBytes(t, filepath.Join(outside, strings.TrimPrefix(rel, swapped+string(filepath.Separator)), "bin", "secret-tool"), elf, 0o755)
+			if err := os.RemoveAll(filepath.Join(project, swapped)); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(project, swapped)); err != nil {
+				t.Fatal(err)
+			}
+			if headline, facts, ok := TaskBulkWarning(queue, dir); ok {
+				t.Errorf("the walk followed %s to a folder outside the project: %s %q", swapped, headline, facts)
+			}
+		})
+	}
+}
+
+// compiledProgram reads only the file the walk measured: an entry swapped since, for another
+// program or a FIFO, is never read, and a FIFO never makes it wait, even one with a writer.
+func TestCompiledProgramReadsOnlyTheMeasuredFile(t *testing.T) {
+	const elf = "\x7fELF\x02\x01\x01\x00"
+	dir := t.TempDir()
+	writeTaskBytes(t, filepath.Join(dir, "measured"), elf, 0o755)
+	writeTaskBytes(t, filepath.Join(dir, "swapped"), elf, 0o755)
+	if err := syscall.Mkfifo(filepath.Join(dir, "fifo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	stat := func(name string) unix.Stat_t {
+		var st unix.Stat_t
+		if err := unix.Fstatat(int(f.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	if !compiledProgram(f, "measured", stat("measured")) {
+		t.Fatal("the measured program was not recognized")
+	}
+	if compiledProgram(f, "swapped", stat("measured")) {
+		t.Error("a program other than the measured file was read")
+	}
+	// A silent writer holds the FIFO open, so a read of it would wait for data that never comes.
+	writer, err := os.OpenFile(filepath.Join(dir, "fifo"), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	read := make(chan bool, 1)
+	go func() { read <- compiledProgram(f, "fifo", stat("fifo")) }()
+	select {
+	case got := <-read:
+		if got {
+			t.Error("a FIFO read as a compiled program")
+		}
+	case <-time.After(wait.Deadline):
+		t.Fatalf("reading a FIFO did not return within %v", wait.Deadline)
 	}
 }
 
@@ -302,4 +507,16 @@ func TestListWarnsAboutQueueRootStrays(t *testing.T) {
 	if !strings.Contains(stderr, "holds 1 item that is not part of the queue\n") || !strings.Contains(stderr, "      release.log\n") {
 		t.Errorf("the roll-up skipped an empty queue's stray:\n%s", stderr)
 	}
+}
+
+// doneTaskDir makes an empty finished-task folder in a fresh queue, as the measuring walk expects
+// to find one, and returns the queue root and the folder.
+func doneTaskDir(t *testing.T) (string, string) {
+	t.Helper()
+	queue := filepath.Join(t.TempDir(), ".agent", "tasks")
+	dir := filepath.Join(queue, StateDone, "2026-10-16-ship-it")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return queue, dir
 }

@@ -566,6 +566,18 @@ func (s *Server) appendLog(_ context.Context, args json.RawMessage) *toolResult 
 
 const completionEvidenceHandoff = " — write nothing more inside that folder. Host finalization removes tmp/; never cite tmp/ as retained evidence. Cite only durable artifacts you verified before completion, or say the full log was not retained. Stored output is not independent proof a check ran."
 
+// bulkNote follows a completion with the bulk warning `coop tasks done` prints, or nothing when the
+// folder holds no bulk. Its advice is not the host's (record the build in log.md instead): the agent
+// has just been told to write nothing more inside that folder, so it leaves the decision to a person.
+func bulkNote(queueRoot, dir string) string {
+	headline, facts, ok := tasks.TaskBulkWarning(queueRoot, dir)
+	if !ok {
+		return ""
+	}
+	return "\n\n" + headline + ".\n" + strings.Join(facts, "\n") +
+		"\nLeave the folder as it is and say what these files are in your final reply, so a person can decide what to keep."
+}
+
 func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	var in struct {
 		ID       string         `json:"id"`
@@ -604,7 +616,7 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		if err := tasks.RequireCompletedChecklist(loc.item); err != nil {
 			return refusal(err.Error())
 		}
-		return textResult(fmt.Sprintf("%s is already done", loc.item.ID) + completionEvidenceHandoff)
+		return textResult(fmt.Sprintf("%s is already done", loc.item.ID) + completionEvidenceHandoff + bulkNote(loc.root, loc.item.Dir))
 	}
 	if loc.item.ID != s.authority.Assigned {
 		if claim.NoChange() {
@@ -618,7 +630,8 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 			}
 			return refusal(fmt.Sprintf("complete %s: %v", loc.item.ID, err))
 		}
-		return textResult(fmt.Sprintf("%s moved to %s/", loc.item.ID, tasks.StateDone) + completionEvidenceHandoff)
+		dir := filepath.Join(loc.root, tasks.StateDone, loc.item.ID)
+		return textResult(fmt.Sprintf("%s moved to %s/", loc.item.ID, tasks.StateDone) + completionEvidenceHandoff + bulkNote(loc.root, dir))
 	}
 	// The assigned task moves under the launching iteration's lease; the host finalizes it after
 	// the box exits (commit binding, receipt, tmp/ removal). Normalizing here keeps state.md's
@@ -640,6 +653,7 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	if err := tasks.RequireCompletedChecklist(loc.item); err != nil {
 		return refusal(err.Error())
 	}
+	dir := filepath.Join(loc.root, tasks.StateDone, loc.item.ID)
 	if claim.NoChange() {
 		if err := tasks.CompleteTaskWithClosure(loc.root, loc.item, tasks.TaskClosure(claim)); err != nil {
 			return refusal(fmt.Sprintf("complete %s: %v", loc.item.ID, err))
@@ -648,7 +662,6 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		if err := tasks.MoveTaskDir(loc.root, loc.item, tasks.StateDone); err != nil {
 			return refusal(fmt.Sprintf("complete %s: %v", loc.item.ID, err))
 		}
-		dir := filepath.Join(loc.root, tasks.StateDone, loc.item.ID)
 		if err := tasks.NormalizeTaskState(loc.item.ID, dir, "complete", "none", "—", "—"); err != nil {
 			return refusal(fmt.Sprintf("%s moved to %s/ but its state.md could not be normalized: %v", loc.item.ID, tasks.StateDone, err))
 		}
@@ -657,7 +670,7 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	if claim.NoChange() {
 		result = fmt.Sprintf("%s closed as %s", loc.item.ID, strings.ReplaceAll(claim.Outcome, "_", " "))
 	}
-	return textResult(result + completionEvidenceHandoff)
+	return textResult(result + completionEvidenceHandoff + bulkNote(loc.root, dir))
 }
 
 func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {
