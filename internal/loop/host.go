@@ -58,7 +58,7 @@ type Host struct {
 // Preparation is verified cleanup performed before a loop begins. Counts are successful
 // removals/recoveries only; failures remain best-effort diagnostics on their owning commands.
 type Preparation struct {
-	RemovedBoxes, RemovedNetworks, RecoveredFilteredRuns int
+	RemovedBoxes, RemovedServices, RemovedNetworks, RecoveredFilteredRuns int
 }
 
 func (h Host) sweepOrphanBoxes(repo string) Preparation {

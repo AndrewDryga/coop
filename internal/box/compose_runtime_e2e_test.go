@@ -4,6 +4,7 @@ package box
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -146,11 +147,11 @@ volumes:
 		_ = StopServicesForOwner(t.Context(), rt, repo, repo, "", true)
 	})
 
-	dev, err := startServicesFileContext(t.Context(), rt, repo, source, "", "", io.Discard, io.Discard, false, false, nil, nil)
+	dev, err := startServicesFileContext(t.Context(), rt, repo, source, "", "", nil, io.Discard, io.Discard, false, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loop, err := startServicesFileContext(t.Context(), rt, repo, source, loopOwner, "", io.Discard, io.Discard, false, false, nil, nil)
+	loop, err := startServicesFileContext(t.Context(), rt, repo, source, loopOwner, "", nil, io.Discard, io.Discard, false, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +180,74 @@ volumes:
 	}
 	if got := composeExec(t, rt, repo, source, loopOwner, "cat /data/owner"); got != "loop" {
 		t.Fatalf("stopping development disturbed loop data: %q", got)
+	}
+}
+
+// A killed run's own project goes at the next sweep, containers, volume and network, while the
+// development project stays. The project's file plants a live supervisor; only coop's own override,
+// naming the dead one, can make the run's services removable.
+func TestRuntimeReapOrphanServicesRemovesAKilledRunsProject(t *testing.T) {
+	rt, err := runtime.Detect(os.Getenv("COOP_RUNTIME"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, source := writeCompose(t, "")
+	body := `services:
+  probe:
+    image: alpine:3.24.2
+    command: ["sh", "-c", "sleep 300"]
+    labels:
+      - coop=service
+      - coop.host=` + liveSupervisorLabel(t, repo) + `
+    volumes:
+      - data:/data
+volumes:
+  data: {}
+`
+	if err := os.WriteFile(source, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const runOwner = "killed-loop"
+	run := ComposeProjectFor(repo, runOwner)
+	t.Cleanup(func() {
+		_ = StopServicesForOwner(context.Background(), rt, repo, repo, runOwner, true)
+		_ = StopServicesForOwner(context.Background(), rt, repo, repo, "", true)
+	})
+	if _, err := startServicesFileContext(t.Context(), rt, repo, source, "", "", nil, io.Discard, io.Discard, false, false, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	labels := map[string]string{LabelKey: LabelService, LabelHost: goneSupervisorLabel(t, repo)}
+	if _, err := startServicesFileContext(t.Context(), rt, repo, source, runOwner, "", labels, io.Discard, io.Discard, false, false, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := ReapOrphanServices(t.Context(), rt, repo)
+	if err != nil || removed != 1 {
+		t.Fatalf("ReapOrphanServices = %d, %v; want the killed run's one container", removed, err)
+	}
+	// The network sweep spans every workspace; removing just this project's network proves the same:
+	// nothing is attached any more.
+	if _, err := RemoveProjectNetworks(t.Context(), rt, run); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"ps", "-aq", "--filter", "label=" + composeProjectLabel + "=" + run}, ""},
+		{[]string{"volume", "ls", "-q", "--filter", "label=" + composeProjectLabel + "=" + run}, ""},
+		{[]string{"network", "ls", "-q", "--filter", "label=" + composeProjectLabel + "=" + run}, ""},
+	} {
+		var out bytes.Buffer
+		if code, err := rt.Run(nil, &out, io.Discard, check.args...); err != nil || code != 0 {
+			t.Fatalf("%v: %d, %v", check.args, code, err)
+		}
+		if got := strings.TrimSpace(out.String()); got != check.want {
+			t.Errorf("%v left %q", check.args, got)
+		}
+	}
+	if got := composeExec(t, rt, repo, source, "", "echo dev"); got != "dev" {
+		t.Fatalf("development project after the sweep = %q", got)
 	}
 }
 

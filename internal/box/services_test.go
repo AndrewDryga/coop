@@ -17,7 +17,7 @@ import (
 )
 
 func startAutomaticTestServices(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, exposedRoots ...string) (startedServices, error) {
-	return startServicesFileContext(context.Background(), rt, workspace, file, "", "", stdout, stderr, false, true, nil, nil, exposedRoots...)
+	return startServicesFileContext(context.Background(), rt, workspace, file, "", "", nil, stdout, stderr, false, true, nil, nil, exposedRoots...)
 }
 
 func startDefaultTestServices(rt runtime.Runtime, repo string, stdout, stderr io.Writer) (startedServices, error) {
@@ -275,7 +275,7 @@ func TestServiceLaunchRevalidatesBindAfterSandboxWindow(t *testing.T) {
 	go func() {
 		launch, err := forkspace.LockServiceLaunch(context.Background(), repo, true)
 		if err == nil {
-			_, err = startServicesFileContext(context.Background(), rt, repo, compose, "loop-one", "", io.Discard, io.Discard, false, false, nil, nil)
+			_, err = startServicesFileContext(context.Background(), rt, repo, compose, "loop-one", "", nil, io.Discard, io.Discard, false, false, nil, nil)
 			launch()
 		}
 		done <- err

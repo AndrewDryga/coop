@@ -1527,7 +1527,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				return finish(-1, fmt.Errorf("wait for a safe service launch: %w", lockErr))
 			}
 			serviceCtx = context.WithValue(serviceCtx, isolatedServiceParentKey{}, spec.IsolatedParent)
-			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, nil, nil, privateRoots...)
+			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, runServiceLabels(spec, serviceOwner), io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, nil, nil, privateRoots...)
 			unlock()
 			sections.serviceSecrets(started.hidden, cf)
 			servicePorts = started.ports

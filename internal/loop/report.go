@@ -100,6 +100,9 @@ func printLoopPreparation(prep Preparation, nudges []string, awake bool) {
 	if prep.RemovedBoxes > 0 {
 		ui.Pass("Removed %s whose Coop processes had stopped", ui.Count(prep.RemovedBoxes, "box", "boxes"))
 	}
+	if prep.RemovedServices > 0 {
+		ui.Pass("Removed %s whose Coop processes had stopped", ui.Count(prep.RemovedServices, "project service container"))
+	}
 	if prep.RemovedNetworks > 0 {
 		ui.Pass("Removed %s", ui.Count(prep.RemovedNetworks, "unused Coop network"))
 	}
@@ -112,7 +115,7 @@ func printLoopPreparation(prep Preparation, nudges []string, awake bool) {
 		printLoopStaleness(nudge)
 	}
 	if awake {
-		if prep.RemovedBoxes+prep.RemovedNetworks+prep.RecoveredFilteredRuns > 0 || len(nudges) > 0 {
+		if prep.RemovedBoxes+prep.RemovedServices+prep.RemovedNetworks+prep.RecoveredFilteredRuns > 0 || len(nudges) > 0 {
 			ui.Note("")
 		}
 		ui.Pass("Keeping this Mac awake using caffeinate")

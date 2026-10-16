@@ -233,7 +233,8 @@ func readProcessTrace(t *testing.T, path string) []*processTrace {
 
 // One box run's whole trace: three runtime invocations (image probe, daemon probe, run), the parsed
 // run contract, provider start and exit, and the runtime's exit. A command that reaps orphaned boxes
-// on its way in (loop, fork, build) adds exactly one runtime `ps` and one `network` listing. A loop
+// on its way in (loop, fork, build) adds exactly two runtime `ps` listings (boxes, then a dead run's
+// own project services) and one `network` listing. A loop
 // WORK box adds its task channel on top (box/taskchannel.go): the run-private volume is created,
 // coop's helper container is started on it, the host checks the volume's backing exposure before
 // launch, and the volume is removed after the box — four more runtime invocations.
@@ -247,7 +248,7 @@ const (
 
 const (
 	directTraceEvents   = 7
-	sweptTraceEvents    = directTraceEvents + 2
+	sweptTraceEvents    = directTraceEvents + 3
 	loopWorkTraceEvents = sweptTraceEvents + 4
 )
 
@@ -286,9 +287,10 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape t
 	}
 	wantPrefix := [][]string{{"image", "inspect", "fixture-image"}}
 	if shape != noOrphanBoxSweep {
-		// The orphan sweep, before the box work begins: one label-filtered container listing, then
-		// one for the compose networks a dead session leaves holding a subnet.
-		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"}, []string{"network", "<validated>"})
+		// The orphan sweep, before the box work begins: label-filtered container listings for boxes and
+		// for a dead run's own project services, then one for the compose networks a dead session
+		// leaves holding a subnet.
+		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"}, []string{"ps", "<validated>"}, []string{"network", "<validated>"})
 	}
 	wantPrefix = append(wantPrefix, []string{"info"})
 	wantSuffix := [][]string{}

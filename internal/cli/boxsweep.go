@@ -30,6 +30,9 @@ func (a *app) sweepOrphanBoxes(repo string) {
 	if result.RemovedBoxes > 0 {
 		ui.Note("Removed %s whose Coop processes had stopped", ui.Count(result.RemovedBoxes, "box", "boxes"))
 	}
+	if result.RemovedServices > 0 {
+		ui.Note("Removed %s whose Coop processes had stopped", ui.Count(result.RemovedServices, "project service container"))
+	}
 	if result.RemovedNetworks > 0 {
 		ui.Note("Removed %s", ui.Count(result.RemovedNetworks, "unused Coop network"))
 	}
@@ -58,16 +61,23 @@ func (a *app) collectOrphanBoxes(repo string) loop.Preparation {
 	// A loop launches its boxes inside its engine, past runBox, so its start carries the daily
 	// temp sweep; fork starts and a build's recycle start it here too.
 	a.startTempReap()
-	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
-	defer cancel()
-	result.RemovedBoxes, _ = box.ReapOrphanBoxes(ctx, a.rt, repo)
+	// Each step has its own budget, so a pile of leftovers in one cannot starve the next.
+	sweep := func(reap func(context.Context) (int, error)) int {
+		ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
+		defer cancel()
+		n, _ := reap(ctx)
+		return n
+	}
+	result.RemovedBoxes = sweep(func(ctx context.Context) (int, error) { return box.ReapOrphanBoxes(ctx, a.rt, repo) })
+	// A killed loop's or session's own Compose services go before the networks they hold.
+	result.RemovedServices = sweep(func(ctx context.Context) (int, error) { return box.ReapOrphanServices(ctx, a.rt, repo) })
 	// Networks are not scoped to a repo — a coop project's leftover network from ANY workspace
 	// eats one of Docker's ~31 subnets — so one pass per process covers them all.
 	if a.sweptNetworks {
 		return result
 	}
 	a.sweptNetworks = true
-	result.RemovedNetworks, _ = box.ReapOrphanNetworks(ctx, a.rt)
+	result.RemovedNetworks = sweep(func(ctx context.Context) (int, error) { return box.ReapOrphanNetworks(ctx, a.rt) })
 	result.RecoveredFilteredRuns = a.settleInterruptedFilteredRuns()
 	return result
 }

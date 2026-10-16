@@ -2,8 +2,8 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/box/sweep.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go]
-updated: 2026-10-15
+sources: [internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go]
+updated: 2026-10-16
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
 CLIENT's promise, no Go `defer` runs, and no PID 1 inside the box can help (that limit, and why a
@@ -67,23 +67,51 @@ removed nothing, so the next launch retries it. `MountSourcesByLabel` skips a bo
 from a directory no other user can write (on a shared /tmp another user could recreate a live run's
 Docker config), and `Docker.Close` accepts one already removed.
 
+**A killed run's own Compose services.** A loop's or editor session's private project
+(`ComposeProjectFor(workspace, owner)`, `<ComposeProject(workspace)>-run-<8 hex>`) stayed behind with
+its volumes and network whenever the run was killed: only a loop's clean exit tore it down, and an
+editor session's never did. Coop's own override (`runServiceLabels`; the filtered path's override
+carries the same block) now gives every service `coop=service` and a `coop.host` label naming the
+process whose exit ends the run, scoped to the workspace that names the project
+(`serviceSupervisor`): the loop itself, or an editor session's supervisor, the parent of the inner
+children that come and go while the session's project stays. The override is merged last, so a label
+the project's file planted is replaced, with an empty host when the process has no stable identity
+(checked with real Compose, map and list forms; Compose also replaces a planted
+`com.docker.compose.project`). The loop/fork/build start sweep's `ReapOrphanServices` lists every
+`coop=service` container in ONE `ps --format` call (each line a JSON array, so a label value cannot
+forge a line) and removes a project only when its label's scope is this workspace, its supervisor is
+provably dead and its name is exactly one of this workspace's per-run names (`runProject`), by exact
+labels, then the project's volumes; `ReapOrphanNetworks` takes the network once nothing is attached.
+Each sweep step has its own time budget. `coop fork rm` runs the same reap for the fork's workspace,
+which no later sweep reaches. Coop never labels the development project `coop up` runs, and the
+sweep never takes it, whatever its file plants, even when a checkout's name makes its project name
+look like a run's. Services started before this label stay untouched (remove those with
+`docker compose -p <project> down -v`).
+
 Post-build recycling is a separate authority boundary. It uses a bounded, error-reporting running
 container query to preserve the old-image notice, then `RemoveByLabel` to restart supervised boxes.
 A true no-match is success; query or partial-removal failure makes `build`/`update` fail with the
 already-built image called out explicitly. Do not reintroduce best-effort count/kill helpers there.
 
 Traps:
-- The sweep adds ONE runtime `ps` to loop/fork/build. The scripted process E2Es pin exact
-  runtime call counts, so those suites pass `sweepsOrphanBoxes` (see `assertDirectRunContract`); a
-  command that grows any OTHER runtime call still fails the count. The daily temp sweep would add
+- The sweep adds TWO runtime `ps` listings to loop/fork/build (boxes, then project services). The
+  scripted process E2Es pin exact runtime call counts, so those suites pass `sweepsOrphanBoxes` (see
+  `assertDirectRunContract`); a command that grows any OTHER runtime call still fails the count. The daily temp sweep would add
   more when due; `procharness.NewLayout` stamps `temp-reap` fresh so it never is there.
 - The scripted fixture must answer `inspect --format {{json .Config.Labels}}` (it does, as the
   `labels` command) or the sweep silently degrades to "unattributable" in every E2E.
 - A fork's boxes are scoped to the FORK's workspace, not the parent repo, so `coop fork <name>` from
   the parent never sweeps them; the fork's own loop start does, and `coop fork stop` still owns the
   exact-owner reap.
+- Never label a per-run project with the pid of the process that happens to run `up`. Compose hashes
+  labels into each service's configuration, so a label that changes between an editor session's
+  inner children recreates the services on every start, and a child's exit would let a sweep take a
+  live session's services and volumes.
 
 ## Changelog
+- 2026-10-16 — per-run Compose services carry the label of the loop or editor-session supervisor that
+  owns them; the loop/fork/build start sweep removes a provably dead run's services and volumes (task
+  2026-10-15-clean-up-per-run-services-that-killed-loops-leav).
 - 2026-10-15 — added the daily temp sweep: it rides the listed launch paths, stamps only after a
   successful mount listing, skips a provably vanished box, and reaps Compose and (only from a
   private temp dir) Docker client dirs; verified against `internal/cli/tempreap_test.go`,

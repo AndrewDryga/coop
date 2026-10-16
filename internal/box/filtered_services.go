@@ -245,7 +245,8 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		return "", nil, nil, nil, err
 	}
 	seedSubnet, _, _ := filteredServiceAddresses(existing, closure)
-	seed, err := filteredServiceOverride(network, closure, seedSubnet, nil)
+	labels := runServiceLabels(spec, owner)
+	seed, err := filteredServiceOverride(network, closure, seedSubnet, nil, labels)
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
@@ -269,7 +270,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
-	final, err := filteredServiceOverride(network, closure, subnet, addresses)
+	final, err := filteredServiceOverride(network, closure, subnet, addresses, labels)
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
@@ -346,7 +347,7 @@ func filteredServiceAddresses(network runtime.DockerNetwork, services []string) 
 	return netip.Prefix{}, nil, errors.New("filtered service network has no usable IPv4 address range")
 }
 
-func filteredServiceOverride(network string, services []string, subnet netip.Prefix, addresses map[string]netip.Addr) ([]byte, error) {
+func filteredServiceOverride(network string, services []string, subnet netip.Prefix, addresses map[string]netip.Addr, labels map[string]string) ([]byte, error) {
 	if network == "" || len(services) == 0 || addresses != nil && len(addresses) != len(services) {
 		return nil, errors.New("invalid filtered service network configuration")
 	}
@@ -364,6 +365,9 @@ func filteredServiceOverride(network string, services []string, subnet netip.Pre
 		}
 		fmt.Fprintf(&out, "\n    environment:\n      HTTP_PROXY: %s\n      HTTPS_PROXY: %s\n      NO_PROXY: %s\n      http_proxy: %s\n      https_proxy: %s\n      no_proxy: %s\n",
 			strconv.Quote(proxy), strconv.Quote(proxy), strconv.Quote(noProxy), strconv.Quote(proxy), strconv.Quote(proxy), strconv.Quote(noProxy))
+		if len(labels) > 0 {
+			out.WriteString(serviceLabelsYAML(labels))
+		}
 	}
 	fmt.Fprintf(&out, "networks:\n  %s:\n    name: %s\n    internal: true\n", filteredServiceNetworkKey, strconv.Quote(network))
 	if subnet.IsValid() {

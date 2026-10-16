@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -178,6 +180,53 @@ func workspaceScope(workspace string) string {
 	}
 	sum := sha256.Sum256([]byte(canonicalWorkspace(workspace)))
 	return hex.EncodeToString(sum[:12])
+}
+
+// runProject reports whether project is one of workspace's per-run projects (ComposeProjectFor with
+// an owner). Coop's own override labels only those, so this is never the development project `coop
+// up` runs, whose labels the project's file may set, however its checkout happens to be named.
+func runProject(workspace, project string) bool {
+	suffix, ok := strings.CutPrefix(project, ComposeProject(workspace)+"-run-")
+	_, err := hex.DecodeString(suffix)
+	return ok && len(suffix) == 8 && err == nil && suffix == strings.ToLower(suffix)
+}
+
+// ReapOrphanServices removes the per-run Compose services, and then their volumes, of every loop or
+// session in workspace whose supervisor is provably dead, and reports how many containers it removed:
+// a killed run leaves them behind, since only a clean exit tears them down. The proof is
+// SurveyOrphanBoxes': the supervisor label coop's own override wrote (runServiceLabels), a scope of
+// this workspace and the kernel's word that the pid is gone or reused. The project must also be one
+// of this workspace's per-run ones, whose labels coop's override always replaces. A service with no
+// provable label is left alone, and the network goes with ReapOrphanNetworks once nothing is
+// attached.
+func ReapOrphanServices(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
+	containers, err := rt.ContainerLabels(ctx, LabelKey, LabelService, LabelHost, composeProjectLabel)
+	if err != nil {
+		return 0, err
+	}
+	scope := workspaceScope(workspace)
+	type run struct{ project, host string }
+	var dead []run
+	for _, container := range containers {
+		project, host := container.Labels[composeProjectLabel], container.Labels[LabelHost]
+		ref, ok := parseSupervisorLabel(host)
+		if !ok || ref.scope != scope || !runProject(workspace, project) ||
+			slices.Contains(dead, run{project, host}) || !supervisorProvablyDead(ref.pid, ref.token) {
+			continue
+		}
+		dead = append(dead, run{project, host})
+	}
+	removed := 0
+	var errs []error
+	for _, r := range dead {
+		n, err := rt.RemoveByLabels(ctx, map[string]string{LabelKey: LabelService, LabelHost: r.host, composeProjectLabel: r.project})
+		removed += n
+		if err == nil {
+			_, err = rt.RemoveVolumesByLabel(ctx, composeProjectLabel, r.project)
+		}
+		errs = append(errs, err)
+	}
+	return removed, errors.Join(errs...)
 }
 
 // coopComposeProjectName matches the compose project names coop itself creates (ComposeProject:

@@ -28,7 +28,7 @@ type ServiceStart struct {
 // UpServicesReviewed is the terminal-only start path. Its review came from one validated file
 // snapshot under the exclusive service launch lock and is checked again before Compose runs.
 func UpServicesReviewed(rt runtime.Runtime, workspace, file string, review *ServiceStartReview, stdout, stderr io.Writer, exposedRoots ...string) (ServiceStart, error) {
-	started, err := startServicesFileContext(context.Background(), rt, workspace, file, "", "", stdout, stderr, false, false, review, nil, exposedRoots...)
+	started, err := startServicesFileContext(context.Background(), rt, workspace, file, "", "", nil, stdout, stderr, false, false, review, nil, exposedRoots...)
 	return ServiceStart{Names: started.names, Ports: started.ports}, err
 }
 
@@ -46,7 +46,7 @@ func safeServicePaths(paths []string) string {
 	return strings.Join(safe, ", ")
 }
 
-func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, owner, network string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, review *ServiceStartReview, selected []string, exposedRoots ...string) (startedServices, error) {
+func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, owner, network string, labels map[string]string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, review *ServiceStartReview, selected []string, exposedRoots ...string) (startedServices, error) {
 	if file == "" {
 		return startedServices{}, nil
 	}
@@ -98,6 +98,15 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	services, err := resolvedComposeServices(rt, args, stderr)
 	if err != nil {
 		return started, err
+	}
+	// A loop's or session's own project names the process whose exit ends it (runServiceLabels).
+	if len(labels) > 0 {
+		override, cleanup, err := writeServiceLabelOverride(services, labels, workspace, exposedRoots...)
+		if err != nil {
+			return started, err
+		}
+		defer cleanup()
+		args = append(args, "-f", override)
 	}
 	started.names = services
 	if len(selected) > 0 {

@@ -2,9 +2,9 @@
 name: destructive-confirm-gate
 description: "every unrecoverable delete routes through the one shared `ui.DestroyGate`"
 scope: security
-sources: [internal/ui/confirm.go, internal/box/reclaim.go, internal/box/derived_image.go]
+sources: [internal/ui/confirm.go, internal/box/reclaim.go, internal/box/derived_image.go, internal/box/sweep.go]
 check: "none"
-updated: 2026-09-22
+updated: 2026-10-16
 ---
 
 # Every unrecoverable delete goes through the one shared confirmation gate
@@ -52,6 +52,14 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
   still references, and never `-f`. An image of the user's own — whatever it is tagged — stays. This
   one runs unattended, in a `coop loop` iteration with no human present, which is exactly why every
   clause above is a precondition rather than a prompt.
+- Narrow exception: a loop's or editor session's private Compose project is that run's scratch copy
+  of the project's services, not user state. The loop removes it with its volumes at a clean exit,
+  and the loop/fork/build start sweep (`ReapOrphanServices`, `internal/box/sweep.go`) and `coop fork
+  rm` remove a killed run's, unattended. It earns that by being narrow: only this workspace's exact
+  per-run project names, only services carrying the supervisor label Coop's own override wrote, only
+  once the kernel proves that supervisor gone, volumes only by that project's label, and Docker still
+  refuses a volume a container uses. The development project `coop up` runs is never this exception:
+  its volumes go only through `coop down --delete-volumes` and its gate.
 - Narrow exception: `<task>/tmp/` is lifecycle-declared disposable scratch, not retained user state.
   Reaching done may remove exactly that containment-checked child without a second prompt (the loop
   cannot prompt), but it must preserve `artifacts/` and every other task file, refuse path escape or
@@ -61,6 +69,10 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
 
 ## Changelog
+- 2026-10-16 — named a killed run's private Compose project as a narrow exception when the
+  loop/fork/build start sweep and `coop fork rm` began removing it with its volumes. Swept the other
+  unprompted volume deletes: the loop's clean-exit teardown (`StopServicesForOwner`) is the same
+  per-run scratch; `coop down --delete-volumes` keeps its gate.
 - 2026-09-22 — filtered launches now consume an explicit build and never reclaim images. The
   existing narrow exception stays on the explicit build path; swept derived_image.go and reclaim.go.
 - 2026-09-20 — the exception now covers a filtered LAUNCH that builds a project's own box image, so

@@ -29,6 +29,12 @@ fi
 case "$1" in
 ps)
 	shift
+	format=
+	previous=
+	for arg do
+		[ "$previous" = --format ] && format=$arg
+		previous=$arg
+	done
 	for f in "$COOP_TEST_BOXES"/*; do
 		[ -e "$f" ] || continue
 		match=1
@@ -45,7 +51,17 @@ ps)
 				;;
 			esac
 		done
-		[ "$match" = 1 ] && printf '%s\n' "$(basename "$f")"
+		[ "$match" = 1 ] || continue
+		if [ -z "$format" ]; then
+			printf '%s\n' "$(basename "$f")"
+			continue
+		fi
+		# A one-call listing: the id, then each label the format names, as one JSON array.
+		line="[\"$(basename "$f")\""
+		for name in $(printf '%s' "$format" | grep -o '.Label "[^"]*"' | sed 's/^.Label "//; s/"$//'); do
+			line="$line,\"$(sed -n "s/.*\"$name\":\"\([^\"]*\)\".*/\1/p" "$f")\""
+		done
+		printf '%s]\n' "$line"
 	done
 	;;
 inspect)
@@ -87,6 +103,35 @@ network)
 		;;
 	esac
 	;;
+volume)
+	# One file per volume under $COOP_TEST_VOLUMES/<name>: its labels JSON.
+	case "$2" in
+	ls)
+		shift 2
+		for f in "$COOP_TEST_VOLUMES"/*; do
+			[ -e "$f" ] || continue
+			match=1
+			for filter in "$@"; do
+				case "$filter" in
+				label=*=*)
+					pair=${filter#label=}
+					grep -qF "\"${pair%%=*}\":\"${pair#*=}\"" "$f" || match=0
+					;;
+				esac
+			done
+			[ "$match" = 1 ] && printf '%s\n' "$(basename "$f")"
+		done
+		;;
+	rm)
+		# A volume labeled "in-use" stands for one a container still holds, which the runtime refuses.
+		if grep -qF '"in-use"' "$COOP_TEST_VOLUMES/$3"; then
+			echo "fake runtime: volume $3 is in use" >&2
+			exit 1
+		fi
+		rm -f "$COOP_TEST_VOLUMES/$3"
+		;;
+	esac
+	;;
 esac
 exit 0
 `
@@ -111,6 +156,11 @@ func fakeRuntime(t *testing.T) (runtime.Runtime, string) {
 		t.Fatal(err)
 	}
 	t.Setenv("COOP_TEST_NETWORKS", networks)
+	volumes := filepath.Join(dir, "volumes")
+	if err := os.MkdirAll(volumes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_VOLUMES", volumes)
 	return runtime.Runtime{Name: cli}, boxes
 }
 

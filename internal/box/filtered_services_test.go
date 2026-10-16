@@ -327,7 +327,7 @@ func TestFilteredServiceOverrideIsInternalAndKeepsPeerTrafficDirect(t *testing.T
 		"app": netip.MustParseAddr("192.168.40.16"),
 		"db":  netip.MustParseAddr("192.168.40.17"),
 	}
-	data, err := filteredServiceOverride("coop-example_filtered", services, netip.MustParsePrefix("192.168.40.0/24"), addresses)
+	data, err := filteredServiceOverride("coop-example_filtered", services, netip.MustParsePrefix("192.168.40.0/24"), addresses, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,6 +450,53 @@ func TestFilteredServiceStartUsesPrivateOwnershipBesideAnotherBox(t *testing.T) 
 	data, readErr := os.ReadFile(recorder)
 	if readErr != nil || !strings.Contains(string(data), "compose -p "+ComposeProjectFor(repo, owner)) {
 		t.Fatalf("filtered launch did not use its private Compose project: %v\n%s", readErr, data)
+	}
+}
+
+// A loop's filtered services carry the run's labels in the seed and the final override alike, so a
+// killed filtered run is swept like an open one.
+func TestFilteredRunServicesCarryTheRunLabels(t *testing.T) {
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: app:1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digests, err := composeServiceDigests(compose, repo, false, []string{"db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := RunSpec{Repo: repo, RunID: "run-one"}
+	host := serviceSupervisor(spec)
+	if host == "" {
+		t.Skip("this host has no stable process identity, so no service can be labeled")
+	}
+	docker := &filteredDaemonFixture{extraNetworks: []runtime.DockerNetwork{{
+		Name: ComposeProjectFor(repo, spec.RunID) + "_filtered", Internal: true,
+		Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")},
+	}}}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	_, _, _, prepared, err := resolveServiceBindings(t.Context(), docker, overrideRecorderRuntime(t, recorder), spec, compose,
+		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(prepared.cleanup)
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creates := 0
+	for _, call := range strings.Split(string(data), "CALL ")[1:] {
+		if !strings.Contains(call, " up --no-start ") {
+			continue
+		}
+		creates++
+		if !strings.Contains(call, `"coop": "service"`) || !strings.Contains(call, `"coop.host": "`+host+`"`) {
+			t.Errorf("a filtered create lacks the run's labels:\n%s", call)
+		}
+	}
+	if creates != 2 {
+		t.Fatalf("Compose creates = %d, want the seed and the final:\n%s", creates, data)
 	}
 }
 

@@ -1,12 +1,14 @@
 package forkctl
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -89,6 +91,13 @@ func stopForkServices(rt runtime.Runtime, repo, name string, exposedRoots ...str
 		ws := forkspace.Workspace(repo, name)
 		if err := box.DownServices(rt, ws, repo, true, io.Discard, io.Discard, exposedRoots...); err != nil {
 			ui.Note("fork %s: project services did not stop cleanly (%v). Check the reported service error and review any remaining containers or volumes", name, err)
+		}
+		// A killed fork run's own services are scoped to this workspace, which no later sweep
+		// reaches once it is gone.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if _, err := box.ReapOrphanServices(ctx, rt, ws); err != nil {
+			ui.Note("fork %s: services its stopped runs left behind were not all removed (%v). Review any remaining containers or volumes", name, err)
 		}
 	}
 }

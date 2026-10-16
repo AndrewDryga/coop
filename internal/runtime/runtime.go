@@ -742,6 +742,46 @@ type Container struct {
 	Labels map[string]string
 }
 
+// ContainerLabels lists every running or stopped container labeled key=value with the values of the
+// named labels, in one runtime call: a sweep that inspected each container in turn could run out of
+// time once enough had piled up. Each line is a JSON array, so no label value can forge another
+// container; a line it cannot read fails the whole listing.
+func (r Runtime) ContainerLabels(ctx context.Context, key, value string, names ...string) ([]Container, error) {
+	if r.kind() == runtimeAppleContainer {
+		return nil, errors.New("label inspection is unsupported by Apple container")
+	}
+	fields := []string{"{{json .ID}}"}
+	for _, name := range names {
+		fields = append(fields, `{{json (.Label "`+name+`")}}`)
+	}
+	args := []string{"ps", "-a", "--no-trunc", "--filter", "label=" + key + "=" + value, "--format", "[" + strings.Join(fields, ",") + "]"}
+	out, err := contextCommand(ctx, r.Name, args...).Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, nil))
+	}
+	var containers []Container
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var values []string
+		if err := json.Unmarshal([]byte(line), &values); err != nil || len(values) != len(names)+1 || values[0] == "" {
+			return nil, fmt.Errorf("unreadable container listing from %s ps", r.Name)
+		}
+		labels := make(map[string]string, len(names))
+		for i, name := range names {
+			if values[i+1] != "" {
+				labels[name] = values[i+1]
+			}
+		}
+		containers = append(containers, Container{ID: values[0], Labels: labels})
+	}
+	return containers, nil
+}
+
 // ContainersByLabel returns every running or stopped container matching key=value, each with its
 // labels. A decision made per container needs the id next to the labels that answer it.
 func (r Runtime) ContainersByLabel(ctx context.Context, key, value string) ([]Container, error) {
@@ -855,6 +895,30 @@ func (r Runtime) RemoveByLabels(ctx context.Context, labels map[string]string) (
 				}
 			}
 			return n, fmt.Errorf("run: %s rm -f %s: %w", r.Name, id, commandOutputError(err, out))
+		}
+		n++
+	}
+	return n, nil
+}
+
+// RemoveVolumesByLabel removes every volume labeled key=value and reports how many. A volume a
+// container still uses is refused by the runtime, and that refusal is returned.
+func (r Runtime) RemoveVolumesByLabel(ctx context.Context, key, value string) (int, error) {
+	if key == "" || value == "" {
+		return 0, errors.New("a volume label key and value are required")
+	}
+	args := []string{"volume", "ls", "-q", "--filter", "label=" + key + "=" + value}
+	out, err := contextCommand(ctx, r.Name, args...).Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
+		return 0, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, nil))
+	}
+	n := 0
+	for _, name := range strings.Fields(string(out)) {
+		if out, err := contextCommand(ctx, r.Name, "volume", "rm", name).CombinedOutput(); err != nil {
+			return n, fmt.Errorf("run: %s volume rm %s: %w", r.Name, name, commandOutputError(err, out))
 		}
 		n++
 	}

@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Coop removes the services killed loops and editor sessions leave behind.** A loop or editor
+  session runs its own copy of the project's Compose services, and only a loop that ended cleanly
+  removed them, so every killed loop and every editor session left its containers, data volumes and
+  network behind (13 such projects on one Mac). Coop now records which of its processes owns them.
+  Once that process is gone, the next `coop loop`, `coop fork` or `coop build` in that repository
+  removes them, and `coop fork rm` does the same for the fork's own runs. Services started by older
+  versions carry no owner; remove those with `docker compose -p <project> down -v`.
+
 - **Docker-excluded source edits no longer block filtered editor sessions.** Project image builds
   and startup checks now honor the configured Dockerfile's `.dockerignore`, or the root file when
   there is no specific one. Excluded files are omitted from both the build and its fingerprint;

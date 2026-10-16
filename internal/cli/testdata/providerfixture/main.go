@@ -47,6 +47,7 @@ type runtimeCommand struct {
 	Run     runCommand
 	Filters map[string]string
 	IDs     []string
+	Columns []string // labels a one-call ps listing prints after each id
 }
 
 type runCommand struct {
@@ -264,7 +265,23 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 			return err
 		}
 		for _, id := range ids {
-			fmt.Println(id)
+			if parsed.Columns == nil {
+				fmt.Println(id)
+				continue
+			}
+			record, err := readRuntimeContainer(root, id)
+			if err != nil {
+				return err
+			}
+			row := []string{id}
+			for _, name := range parsed.Columns {
+				row = append(row, record.Labels[name])
+			}
+			data, err := json.Marshal(row)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(data))
 		}
 		return nil
 	case "remove", "kill":
@@ -425,6 +442,16 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 		return runtimeCommand{Kind: "network-ls"}, nil
 	}
 	if len(args) > 0 && args[0] == "ps" {
+		// The services sweep lists labels in one call (runtime.ContainerLabels); the fixture answers
+		// that exact format and rejects any other.
+		if len(args) == 7 && args[1] == "-a" && args[2] == "--no-trunc" && args[3] == "--filter" && args[5] == "--format" {
+			filters, err := parsePS([]string{"-q", "--filter", args[4]})
+			columns, ok := containerLabelColumns(args[6])
+			if err != nil || !ok {
+				return runtimeCommand{}, fmt.Errorf("unsupported ps arguments %q", args[1:])
+			}
+			return runtimeCommand{Kind: "ps", Filters: filters, Columns: columns}, nil
+		}
 		filters, err := parsePS(args[1:])
 		if err != nil {
 			return runtimeCommand{}, err
@@ -990,6 +1017,32 @@ func parsePS(args []string) (map[string]string, error) {
 		filters[key] = value
 	}
 	return filters, nil
+}
+
+// containerLabelColumns reads the label names out of runtime.ContainerLabels' format,
+// `[{{json .ID}},{{json (.Label "name")}},...]`, and refuses any other format.
+func containerLabelColumns(format string) ([]string, bool) {
+	inner, ok := strings.CutPrefix(format, "[{{json .ID}}")
+	if !ok {
+		return nil, false
+	}
+	if inner, ok = strings.CutSuffix(inner, "]"); !ok {
+		return nil, false
+	}
+	columns := []string{}
+	for inner != "" {
+		rest, ok := strings.CutPrefix(inner, `,{{json (.Label "`)
+		if !ok {
+			return nil, false
+		}
+		name, tail, ok := strings.Cut(rest, `")}}`)
+		if !ok || name == "" || strings.ContainsAny(name, "\"{}\x00\r\n") {
+			return nil, false
+		}
+		columns = append(columns, name)
+		inner = tail
+	}
+	return columns, true
 }
 
 func parseRemoval(args []string) ([]string, error) {
