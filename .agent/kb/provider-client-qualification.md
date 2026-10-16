@@ -2,7 +2,7 @@
 name: provider-client-qualification
 description: locked clients, conformance rows, on-demand live suites and the client bump procedure
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
+sources: [internal/agent/locked_clients.go, internal/agent/codex.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
 updated: 2026-10-16
 ---
 
@@ -197,7 +197,13 @@ logs `method url` and answers 403, and the client's base URL pointed at it — C
 `GOOGLE_GEMINI_BASE_URL` with `settings.json` selecting `gemini-api-key` and
 `GEMINI_CLI_TRUST_WORKSPACE=true`, Codex its managed config's `base_url`. Also re-verify that the
 pinned codex still loads `/etc/codex/managed_config.toml` over `-c`, project and user config: the
-broker's Codex provider rides that file. MCP routes are pinned the same way
+broker's Codex provider rides that file, and so does `[features] daemon_auto_start = false`. Check
+that key still exists (`codex-rs/features/src/lib.rs`): on 0.159.2 it defaults on, and the first
+interactive start in a home without `-c` or `--profile` copies the whole client package (382 MB)
+into it under `packages/app-server-daemon` and runs a self-updater beside it; later starts reuse
+the copy. Any `-c` (Coop's effort flag, the API-key setup) or `--profile` already skips the server,
+so a live check needs a plain ChatGPT-login start with no effort, or it passes for the wrong
+reason. MCP routes are pinned the same way
 (`TestMCPRoutesAdmitWhatThePinnedClientsSend`): point each client (and claude-agent-acp's bundled SDK
 `claude`) at a local endpoint that answers `initialize`/`tools/list` and logs `method url` plus the
 Authorization shape — claude `--mcp-config` with `headers.Authorization: "Bearer ${VAR}"` (it ignores
@@ -225,6 +231,10 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-10-16 — the Codex bump check now covers `features.daemon_auto_start`, which Coop's managed
+  layer turns off: read in rust-v0.159.2 (`tui/src/startup_orchestration.rs`,
+  `tui/src/daemon_startup.rs`, `app-server-daemon/src/prepare_install.rs`), it is why seven native
+  homes on one Mac held a 382 MB client copy each, made once per home by a launch without `-c`.
 - 2026-10-16 — retired the saved live-provider report on the owner's 2026-10-15 audit decision:
   deleted `locked-clients/qualification.json` (written 2026-09-26 on Linux/amd64; its lock digest
   and Claude 2.1.260 no longer matched the lock), its schema2 validator, `tools/qualify` and the

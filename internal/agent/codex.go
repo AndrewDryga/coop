@@ -852,17 +852,25 @@ func (a codexAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any
 // codexManagedConfig is the pinned 0.159.2's managed layer, which it loads after -c, the project
 // and the user's own config (verified: its model beats the user's; /etc/codex/config.toml is only a
 // default the user's overrides) — so what it sets holds whatever a home or project sets.
+//
+// codexNoDaemon opens the layer's one [features] table. Otherwise 0.159.2's interactive screen,
+// launched without -c or --profile, starts a shared background server: the first time in a home it
+// copies the whole client package (382 MB) into $CODEX_HOME/packages, a home Coop keeps per
+// project, and its updater, five minutes in, downloads and runs Codex's installer and restarts the
+// server on the newest release. A box ends with its session, so the server shares nothing; off,
+// the screen serves itself in process from the image's client, as `codex exec` does.
 const (
 	codexManagedConfig  = "/etc/codex/managed_config.toml"
 	codexNoUpdateChecks = "check_for_update_on_startup = false\n"
+	codexNoDaemon       = "[features]\ndaemon_auto_start = false\n"
 	codexNativeCLISetup = "/etc/codex/native-cli.sh"
 	codexNativeACPSetup = "/etc/codex/native-acp.sh"
 )
 
-// UpdateControls: the managed layer keeps the update check off.
+// UpdateControls: the managed layer keeps the update check and the self-updating server off.
 func (codexAgent) UpdateControls() UpdateControls {
 	return UpdateControls{Files: []SystemFile{
-		{Path: codexManagedConfig, Content: codexNoUpdateChecks},
+		{Path: codexManagedConfig, Content: codexNoUpdateChecks + "\n" + codexNoDaemon},
 		{Path: codexNativeCLISetup, Content: `if [ "${COOP_NATIVE_CODEX_FAMILY:-}" = apikey ]; then
   set -- -c 'cli_auth_credentials_store="ephemeral"' "$@"
 fi
@@ -988,7 +996,7 @@ func (codexAgent) CredentialBroker() CredentialBrokerSpec {
 				"base_url = \"" + bases.Model + "\"\n" +
 				"env_key = \"OPENAI_API_KEY\"\n" +
 				"wire_api = \"responses\"\n\n" +
-				"[features]\n" +
+				codexNoDaemon +
 				"responses_websockets = false\n"}
 		},
 		// What that store actually fetches, captured from the pinned client offline: the featured

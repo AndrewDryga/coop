@@ -33,6 +33,17 @@
   them. Now the session removes its services, their data volumes and network when it ends, and a
   reload removes the copy it is done with, once none of the session's boxes is left running.
 
+- **Codex no longer copies itself into every project's home.** Unless you set an effort level or
+  an API key, interactive Codex started a background server in the box. The first time, it copied
+  the whole Codex install, 382 MB, into the project's Codex home, and it ran an updater that, five
+  minutes in, could download and run Codex's installer and restart the server on the newest Codex,
+  a version Coop has not tested. A box stops with its session, so the server never helped. Codex
+  now runs without it, as it already did in `coop loop`: new homes stay small, Codex no longer
+  downloads or runs its installer on its own, and sessions with an effort level or an API key no
+  longer open with "Running without the shared background server". To get the space back, delete
+  `~/.config/coop/agents/codex/native-homes/<name>/<repository-key>/home/packages` while no Codex
+  box runs.
+
 - **An interrupted credential renewal no longer locks the account.** When a renewal of an agent's
   sign-in was cut short by Ctrl-C, a lost connection or a provider error, Coop refused that account
   until `coop login`. Now it finishes the renewal from the provider's answer when it got one, and

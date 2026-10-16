@@ -7,7 +7,48 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
 )
+
+// Both managed layers Coop gives Codex, the image's and the API-key broker's mounted over it, keep
+// the background server off: with it on, the first interactive start in a home copies the whole
+// client into it and runs an updater. Codex refuses a managed file it cannot parse, and a second
+// [features] table would be one.
+func TestCodexManagedLayersKeepTheBackgroundServerOff(t *testing.T) {
+	var layers []SystemFile
+	for _, file := range (codexAgent{}).UpdateControls().Files {
+		if file.Path == codexManagedConfig {
+			layers = append(layers, file)
+		}
+	}
+	layers = append(layers, (codexAgent{}).CredentialBroker().Config(BrokerBases{Model: "https://coop-broker:15580/v1"}))
+	if len(layers) != 2 {
+		t.Fatalf("managed layers = %d, want the image's and the broker's", len(layers))
+	}
+	for i, layer := range layers {
+		var managed struct {
+			CheckForUpdateOnStartup *bool           `toml:"check_for_update_on_startup"`
+			ModelProvider           string          `toml:"model_provider"`
+			Features                map[string]bool `toml:"features"`
+		}
+		if layer.Path != codexManagedConfig {
+			t.Fatalf("managed layer %d is written to %s, want %s", i, layer.Path, codexManagedConfig)
+		}
+		if err := toml.Unmarshal([]byte(layer.Content), &managed); err != nil {
+			t.Fatalf("managed layer %d does not parse: %v\n%s", i, err, layer.Content)
+		}
+		daemon, set := managed.Features["daemon_auto_start"]
+		if managed.CheckForUpdateOnStartup == nil || *managed.CheckForUpdateOnStartup || !set || daemon {
+			t.Errorf("managed layer leaves an updater on:\n%s", layer.Content)
+		}
+		if i == 1 { // the broker's layer still selects its own provider over plain POSTs
+			if websockets, set := managed.Features["responses_websockets"]; managed.ModelProvider != "coop-broker" || !set || websockets {
+				t.Errorf("broker layer lost its provider:\n%s", layer.Content)
+			}
+		}
+	}
+}
 
 func TestCodexModelsMenu(t *testing.T) {
 	want := []string{

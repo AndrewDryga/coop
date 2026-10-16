@@ -2,9 +2,9 @@
 name: provider-bundles-carry-function-not-chatter
 description: a provider bundle grants what the client needs to function; the client's own update/telemetry chatter is switched off in the box, never granted and never hidden
 scope: security
-sources: [internal/agent/network_bundle.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/locked_clients_test.go, internal/mcp/mcp.go, internal/cli/provider_network_live_e2e_test.go]
-check: "go test ./internal/agent -run 'TestProviderBundlesCarryFunctionNotChatter|TestManagedClientDefaultsAreBoxOnly'"
-updated: 2026-10-09
+sources: [internal/agent/network_bundle.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/codex_test.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/locked_clients_test.go, internal/mcp/mcp.go, internal/cli/provider_network_live_e2e_test.go]
+check: "go test ./internal/agent -run 'TestProviderBundlesCarryFunctionNotChatter|TestManagedClientDefaultsAreBoxOnly|TestCodexManagedLayersKeepTheBackgroundServerOff'"
+updated: 2026-10-16
 ---
 
 # A provider bundle carries function; a managed client's chatter is switched off, not granted or hidden
@@ -39,7 +39,8 @@ talking to itself.
   binary, then the vendor docs), and project them box-only: Claude through `BoxEnv`
   (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, `DISABLE_UPDATES=1`), codex through the generated
   `config.toml` overlay (`check_for_update_on_startup`, `analytics.enabled`, the three `otel.*`
-  exporters), gemini through the generated `settings.json` (`general.enableAutoUpdate`,
+  exporters) and its managed layer's `features.daemon_auto_start = false` (a background server
+  with its own updater), gemini through the generated `settings.json` (`general.enableAutoUpdate`,
   `general.enableAutoUpdateNotification`, `privacy.usageStatisticsEnabled`) plus
   `GEMINI_TELEMETRY_ENABLED=false`, grok through `BoxEnv` (`GROK_TELEMETRY_ENABLED=false`).
   `EnsureDefaults` writes the host profile for first-run prompts only; a managed control there
@@ -71,6 +72,16 @@ Background: [[restricted-networking]] (bundles are one of five layers),
 [[mcp-authority-projection]] (the overlays are projections of the host profile, never edits).
 
 ## Changelog
+- 2026-10-16 — the overlay's update check never reached Codex 0.159.2's background server. Its
+  interactive screen starts one by default (any `-c` or `--profile` skips it), and the server's
+  updater, five minutes in, downloads `chatgpt.com/codex/install.sh`, runs it with `/bin/sh` and
+  restarts the server on the newest Codex: a client Coop never qualified, running in the box.
+  Where the native broker carries the Codex account, its proxy refuses that undeclared
+  chatgpt.com path; in an open box without one, nothing stopped it. Switched off at the source
+  with `features.daemon_auto_start = false` in the image's and the broker's managed layer;
+  `TestCodexManagedLayersKeepTheBackgroundServerOff` joins the check. Swept the other three
+  adapters' homes on one Mac for the same per-home client copy: none (Grok's largest extra is
+  17 MB of bundled skills and a ripgrep, Claude's a 14 MB plugin clone).
 - 2026-10-09 — swept native Codex routes and request validation after original-origin TLS
   mediation replaced base-URL/Git rewrites. Public downloads remain credential-free and exact;
   unrelated requests remain subject to the run's ordinary policy.

@@ -111,7 +111,7 @@ its home is mounted or not.
 | Client | In the box | Update switch in co:op's image |
 | --- | --- | --- |
 | Claude | runs with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and `DISABLE_UPDATES=1` | `DISABLE_UPDATES` |
-| Codex | reads a generated `config.toml` that sets `check_for_update_on_startup = false`, `analytics.enabled = false` and the `otel` exporters to `none`, on top of your own settings | `/etc/codex/managed_config.toml` |
+| Codex | reads a generated `config.toml` that sets `check_for_update_on_startup = false`, `analytics.enabled = false` and the `otel` exporters to `none`, on top of your own settings | `/etc/codex/managed_config.toml`, which also turns off Codex's background server and its updater |
 | Gemini | gets `general.enableAutoUpdate`, `general.enableAutoUpdateNotification` and `privacy.usageStatisticsEnabled` off, plus `GEMINI_TELEMETRY_ENABLED=false` | `/etc/gemini-cli/settings.json` |
 | Grok | runs with `GROK_TELEMETRY_ENABLED=false` and `GROK_DISABLE_AUTOUPDATER=1` | `GROK_DISABLE_AUTOUPDATER` |
 
