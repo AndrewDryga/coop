@@ -17,7 +17,7 @@ an error.
 | `COOP_RUNTIME` | auto (Docker preferred) | Picks the runtime: `docker` or `container`. |
 | `COOP_IMAGE` | auto | Forces a specific image. It overrides `.agent/Dockerfile` detection. |
 | `COOP_BASE_IMAGE` | `coop-box` | The shared base image. `coop-box` means co:op's own, tagged `coop-box:<definition>` per box definition. |
-| `COOP_REPO` | the git toplevel | The repo to operate on. It overrides detection from the current directory. |
+| `COOP_REPO` | the nearest folder with `.git` | The repo to operate on. It overrides detection from the current directory. |
 | `COOP_WORKDIR` | the real path | Where the repo mounts in the box. |
 | `COOP_HOME_IN_BOX` | `/home/node` | Where auth and instructions mount in the box. |
 | `COOP_RUN_ARGS` | unset | Extra container runtime args. Filtered runs accept only bind mounts, `-e KEY=VALUE` and `--label KEY=VALUE`. |

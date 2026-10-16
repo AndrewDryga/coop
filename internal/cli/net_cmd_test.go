@@ -19,6 +19,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
 	containerruntime "github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -1347,6 +1348,22 @@ func TestNetProjectRefusesToGuessOutsideAProject(t *testing.T) {
 	}
 	if got, err := netProject(dir); err != nil || got != dir {
 		t.Errorf("netProject(%q) = (%q, %v)", dir, got, err)
+	}
+}
+
+// A box can point core.worktree in the repository's config anywhere; the project a network verb
+// approves, forgets or lists is still the folder that holds .git.
+func TestNetProjectIgnoresAPlantedWorktree(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo, git := gitrepo.New(t)
+	git("config", "core.worktree", t.TempDir())
+	t.Chdir(repo)
+	want, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := netProject(""); err != nil || got != want {
+		t.Fatalf("netProject in a repository with a planted worktree = (%q, %v), want %s", got, err, want)
 	}
 }
 

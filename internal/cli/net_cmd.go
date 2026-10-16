@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -21,7 +20,6 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/egress"
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkreport"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
@@ -1388,20 +1386,23 @@ func openNetRunEvidence(ref string) (*networkstate.Evidence, error) {
 	return evidence, err
 }
 
-// netProject is the project a scoped verb acts on: the override, else the Git
-// top level. Outside a project there is no scope to guess, and guessing the cwd
-// would bind an approval to whatever directory the shell happened to be in.
+// netProject is the project a scoped verb acts on: the override, else the
+// repository box.FindRepo finds, never git's answer, which follows a
+// box-written core.worktree. Outside a project there is no scope to guess, and
+// guessing the cwd would bind an approval to whatever directory the shell
+// happened to be in.
 func netProject(override string) (string, error) {
 	if override != "" {
 		return filepath.Abs(override)
 	}
-	args := append(append([]string{}, forkspace.GitHardening...), "rev-parse", "--show-toplevel")
-	out, err := exec.Command("git", args...).Output()
-	top := strings.TrimSpace(string(out))
-	if err != nil || top == "" {
+	repo, ok, err := box.FindRepo()
+	if err != nil {
+		return "", err
+	}
+	if !ok {
 		return "", errors.New("not inside a project — 'coop net runs --all-projects' shows every recorded run")
 	}
-	return top, nil
+	return repo, nil
 }
 
 // netRender renders a bounded human view and performs ONE checked write: a

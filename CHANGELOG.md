@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Coop no longer lets a box's Git settings choose the project folder.** Coop asked Git where your
+  repository starts, and Git follows a setting in `.git/config` that an agent in a box can change. A
+  box could point it at another folder, such as your home folder, and the next Coop command used that
+  folder: `coop init` set it up, a launch mounted it into a box, and `coop net` approved or forgot
+  rules for it. Coop now takes the nearest folder that holds `.git`, never one another user owns, and
+  no longer climbs to a repository at your home folder or above it. If your home folder is a Git
+  repository, run Coop in a project folder with its own repository (`git init` there), or set
+  `COOP_REPO`.
+
 - **An interrupted credential renewal no longer locks the account.** When a renewal of an agent's
   sign-in was cut short by Ctrl-C, a lost connection or a provider error, Coop refused that account
   until `coop login`. Now it finishes the renewal from the provider's answer when it got one, and

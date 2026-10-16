@@ -3,26 +3,103 @@ package box
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
-	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 )
 
-// ResolveRepo returns the repo root to operate on: the override if set, else the
-// git top-level of the working directory, else the working directory itself.
+// ResolveRepo returns the repository to operate on: the override if set, else the repository that
+// FindRepo finds, else the working directory.
 func ResolveRepo(override string) (string, error) {
 	if override != "" {
 		return filepath.Abs(override)
 	}
-	if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
-		if top := strings.TrimSpace(string(out)); top != "" {
-			return top, nil
+	repo, ok, err := FindRepo()
+	if err != nil || ok {
+		return repo, err
+	}
+	return syscall.Getwd()
+}
+
+// FindRepo returns the nearest folder at or above the working directory that holds a .git; ok is
+// false when none does. It never asks git: git's answer follows core.worktree and other settings in
+// .git/config, which a box can write, so a planted core.worktree would have the next launch mount
+// whatever it names, the user's home folder say, as the workspace. Like git, it refuses a
+// repository another user owns. It also never climbs to a repository at the home folder or above
+// it: a box that deletes its own .git moves the walk up to whatever repository holds it, a home
+// folder kept in Git among them, and only the override can name one of those.
+func FindRepo() (repo string, ok bool, err error) {
+	// The kernel's name for the working directory, never $PWD's: on a case-insensitive disk $PWD
+	// keeps the case the user typed, while everything keyed by the repository's path (leases,
+	// Compose names, the case-sensitive mount in the box) needs the one spelling git reports.
+	wd, err := syscall.Getwd()
+	if err != nil {
+		return "", false, fmt.Errorf("find the working folder: %w", err)
+	}
+	root, ok, err := forkspace.RepositoryRoot(wd)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	if err := ownedRepository(root); err != nil {
+		return "", false, err
+	}
+	if home, above := homeOrAbove(root); above {
+		return "", false, fmt.Errorf("the nearest Git repository to %s is %s, at your home folder %s or above it, and Coop never "+
+			"uses one of those as a project: run `git init` in your project folder, or set COOP_REPO to the folder to use", wd, root, home)
+	}
+	return root, true, nil
+}
+
+// ownedRepository refuses, as git does, a repository whose folder or .git another user owns: on a
+// shared host anyone can create /tmp/.git, and on macOS a hard link to one of your own gitfiles
+// shows as yours, so the folder holding it has to be yours too.
+func ownedRepository(root string) error {
+	for _, path := range []string{root, filepath.Join(root, ".git")} {
+		if info, err := os.Lstat(path); err == nil {
+			if st, isUnix := info.Sys().(*syscall.Stat_t); isUnix && int(st.Uid) != os.Getuid() {
+				return fmt.Errorf("the Git repository at %s belongs to another user, so Coop does not use it as a project: "+
+					"set COOP_REPO to the folder to use", root)
+			}
 		}
 	}
-	return os.Getwd()
+	return nil
+}
+
+// homeOrAbove reports whether dir is the user's home folder or a folder above it, and names the
+// home folder. It compares folders, not spellings, so neither a case-insensitive disk nor a linked
+// home lets a repository at the home folder through. A HOME that is unset or relative falls back to
+// the account's home folder.
+func homeOrAbove(dir string) (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		u, err := user.Current()
+		if err != nil || u.HomeDir == "" {
+			return "", false
+		}
+		home = u.HomeDir
+	}
+	target, err := os.Stat(dir)
+	if err != nil {
+		return home, false
+	}
+	walk := home
+	if real, err := filepath.EvalSymlinks(home); err == nil {
+		walk = real
+	}
+	for ; ; walk = filepath.Dir(walk) {
+		if info, err := os.Stat(walk); err == nil && os.SameFile(info, target) {
+			return home, true
+		}
+		if filepath.Dir(walk) == walk {
+			return home, false
+		}
+	}
 }
 
 // ServicesProject is the deterministic per-REPO base name: a lowercased, sanitized basename.

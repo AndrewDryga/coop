@@ -33,7 +33,7 @@ type Config struct {
 	MCPInBox string // where MCPFile mounts in the box (Claude's --mcp-config)
 
 	RuntimeName   string // COOP_RUNTIME — "" means autodetect
-	RepoOverride  string // COOP_REPO — overrides git-toplevel detection
+	RepoOverride  string // COOP_REPO — overrides finding the repository from the working directory
 	ImageOverride string // COOP_IMAGE — overrides image selection
 
 	Homes         bool // COOP_HOMES — mount the per-agent home dirs

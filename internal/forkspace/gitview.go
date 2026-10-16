@@ -199,6 +199,48 @@ func openGitView(ctx context.Context, workTree string) (*gitView, error) {
 	return view, nil
 }
 
+// RepositoryRoot is the folder holding the nearest `.git` at or above dir, by the rules gitDirsOf
+// follows, so the folder Coop takes for a project and the git dir its views read never disagree.
+// ok is false when no folder up to the filesystem root holds one.
+func RepositoryRoot(dir string) (root string, ok bool, err error) {
+	root, _, err = nearestGitDir(dir)
+	if errors.Is(err, errNoRepository) {
+		return "", false, nil
+	}
+	return root, err == nil, err
+}
+
+// nearestGitDir finds the nearest `.git` at or above dir the way git does: a directory, or a
+// `gitdir: <path>` file for a linked worktree or a submodule. A `.git` that cannot be stat'd, a
+// dangling link say, or that is neither a folder nor a regular file is passed over as git passes
+// it. It returns the folder holding that `.git` and the git dir it names, or errNoRepository.
+func nearestGitDir(dir string) (root, gitDir string, err error) {
+	for ; ; dir = filepath.Dir(dir) {
+		dotGit := filepath.Join(dir, ".git")
+		info, statErr := os.Stat(dotGit)
+		switch {
+		case statErr == nil && info.IsDir():
+			return dir, dotGit, nil
+		case statErr == nil && info.Mode().IsRegular():
+			data, err := readGitFile(dotGit)
+			if err != nil {
+				return "", "", err
+			}
+			target := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(data)), "gitdir:"))
+			if target == "" || !strings.HasPrefix(strings.TrimSpace(string(data)), "gitdir:") {
+				return "", "", fmt.Errorf("%s is not a git directory pointer", dotGit)
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(dir, target)
+			}
+			return dir, filepath.Clean(target), nil
+		}
+		if parent := filepath.Dir(dir); parent == dir {
+			return "", "", errNoRepository
+		}
+	}
+}
+
 // gitDirsOf resolves the worktree's git dir and common dir the way git does, without running
 // git: the nearest `.git` above workTree — a directory, or a `gitdir: <path>` file for a linked
 // worktree — and that dir's `commondir` pointer when it has one. Symlinks are resolved first so
@@ -216,32 +258,12 @@ func gitDirsOf(workTree string) (gitDir, commonDir string, err error) {
 	if fileExists(filepath.Join(abs, "HEAD")) && fileExists(filepath.Join(abs, "objects")) && !fileExists(filepath.Join(abs, ".git")) {
 		return abs, abs, nil
 	}
-	for dir := abs; ; dir = filepath.Dir(dir) {
-		dotGit := filepath.Join(dir, ".git")
-		info, statErr := os.Stat(dotGit)
-		switch {
-		case statErr == nil && info.IsDir():
-			gitDir = dotGit
-		case statErr == nil:
-			data, err := os.ReadFile(dotGit)
-			if err != nil {
-				return "", "", err
-			}
-			target := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(data)), "gitdir:"))
-			if target == "" || !strings.HasPrefix(strings.TrimSpace(string(data)), "gitdir:") {
-				return "", "", fmt.Errorf("%s is not a git directory pointer", dotGit)
-			}
-			if !filepath.IsAbs(target) {
-				target = filepath.Join(dir, target)
-			}
-			gitDir = filepath.Clean(target)
-		default:
-			if parent := filepath.Dir(dir); parent != dir {
-				continue
-			}
-			return "", "", fmt.Errorf("%s: %w", workTree, errNoRepository)
-		}
-		break
+	_, gitDir, err = nearestGitDir(abs)
+	if errors.Is(err, errNoRepository) {
+		return "", "", fmt.Errorf("%s: %w", workTree, errNoRepository)
+	}
+	if err != nil {
+		return "", "", err
 	}
 	if real, err := filepath.EvalSymlinks(gitDir); err == nil {
 		gitDir = real

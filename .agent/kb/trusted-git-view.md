@@ -2,7 +2,7 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go]
+sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go]
 updated: 2026-10-16
 ---
 
@@ -66,6 +66,16 @@ re-sign scratch) and drops the previous life's operation state. The regression i
 `TestGitViewNeverExecutesRepositoryDrivers` (clean + textconv, local/included/worktree config,
 status/diff/checkout/rebase, with a raw positive control).
 
+Choosing the project never asks git: `box.FindRepo`, behind `ResolveRepo` and the `coop net` verbs'
+scope, walks up from the kernel's name for the working directory to the nearest `.git` by
+`forkspace.RepositoryRoot`, the rule `gitDirsOf` follows (a `.git` file is read only when it is a
+regular file of at most 64 KiB, never waiting on a FIFO). `rev-parse --show-toplevel` follows
+`core.worktree` from a box-writable `.git/config`, so a planted value moved the next launch's
+workspace mount anywhere, the home folder included. The walk also refuses a repository another
+user owns (the folder or its `.git`), and never climbs to one at the home folder or above it;
+only `COOP_REPO` can name one of those. Outside any repository the working directory is still
+the project.
+
 Session workspace clones use the view itself as their local transport source. A non-local,
 no-checkout clone plus an exact fetch of the validated commit avoids racing mutable loose-object
 files without exposing the source repository's executable Git configuration.
@@ -88,6 +98,7 @@ inline-diff positive control but never during production review. The loop's work
 keep their existing restrictions.
 
 ## Changelog
+- 2026-10-16 — choosing the project (`box.FindRepo`) walks to the nearest `.git` instead of asking git.
 - 2026-10-16 — the daily temp sweep removes views whose repository is gone (`SweepGitViews`).
 - 2026-10-10 — reproduced the pending-review fixture cleanup failure on actual Git 2.55 and
   restored saved config bytes, retaining unsupported-store, detached and malformed-HEAD checks.

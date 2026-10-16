@@ -179,6 +179,32 @@ func readGitPointerFile(path string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
+// readGitFile reads a `.git` file, a linked worktree's or a submodule's pointer to its git dir,
+// following a link as git does. A box can put anything there, so whatever the name leads to by
+// the time it is open must be a regular file of at most gitPointerLimit bytes: the open never
+// waits on a FIFO, and nothing is read without bound.
+func readGitFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%s is not a git directory pointer", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, gitPointerLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > gitPointerLimit {
+		return nil, fmt.Errorf("%s exceeds %d bytes", path, gitPointerLimit)
+	}
+	return data, nil
+}
+
 func resolveGitPointer(base string, data []byte, label string) (string, error) {
 	target := strings.TrimSpace(string(data))
 	if target == "" {
