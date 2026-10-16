@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop init` no longer edits a `.gitignore` link.** An agent in a box can change files in your
+  repository, so it could replace `.gitignore` with a link to a file such as `~/.zshrc`, and the
+  next `coop init` added Coop's ignore lines to that file. Now `coop init` stops and says so when
+  `.gitignore` is a link or anything else that is not a regular file, and leaves both the link and
+  the file it points to unchanged. Replace the link with a regular file, then run `coop init` again.
+
 - **An interrupted first launch no longer leaves an agent home refusing every launch.** Coop wrote
   an account's sign-in markers into its agent home before noting that it had, so a launch cut short
   in between made every later launch refuse the home as holding unmanaged credentials. Coop now notes

@@ -193,7 +193,7 @@ func readProjectFile(root *os.Root, rel, display string) (snap projectFileSnapsh
 		if info, statErr := dir.Lstat(name); errors.Is(statErr, os.ErrNotExist) {
 			return snap, false, nil
 		} else if statErr == nil && !info.Mode().IsRegular() {
-			return snap, false, fmt.Errorf("%s must be a regular file", display)
+			return snap, false, notRegular{display}
 		}
 		return snap, false, fmt.Errorf("open %s: %w", display, err)
 	}
@@ -205,7 +205,7 @@ func readProjectFile(root *os.Root, rel, display string) (snap projectFileSnapsh
 	// os.Root follows a link that stays inside it, even with O_NOFOLLOW, so only comparing the
 	// opened file with the named entry refuses a link at the file itself.
 	if named, err := dir.Lstat(name); err != nil || !info.Mode().IsRegular() || !os.SameFile(info, named) {
-		return snap, false, fmt.Errorf("%s must be a regular file", display)
+		return snap, false, notRegular{display}
 	}
 	data, err := io.ReadAll(file)
 	if err != nil {
@@ -213,6 +213,14 @@ func readProjectFile(root *os.Root, rel, display string) (snap projectFileSnapsh
 	}
 	return projectFileSnapshot{dir: dir, name: name, info: info, data: data}, true, nil
 }
+
+// notRegular is an in-place edit's refusal of a link or special file. It keeps its own sentence
+// while answering errors.Is(err, ErrNotRegular), so coop init gives the remedy it gives any entry in
+// the way: fix the path, not its permissions.
+type notRegular struct{ file string }
+
+func (e notRegular) Error() string        { return e.file + " must be a regular file" }
+func (e notRegular) Is(target error) bool { return target == ErrNotRegular }
 
 // replaceProjectFile writes next beside the file it read and renames it into place, so a failed
 // write leaves the original untouched.

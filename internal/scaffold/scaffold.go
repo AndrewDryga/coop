@@ -26,8 +26,9 @@ import (
 var templates embed.FS
 
 // ErrNotRegular is the one scaffold refusal that is not an OS error: the path a template would
-// occupy is already something else — a symlink, a directory — and replacing it is the caller's
-// call, not coop's. Exported because the remedy differs: this one is not fixed by permissions.
+// occupy, or a file coop edits in place, is already something else — a symlink, a directory — and
+// replacing it is the caller's call, not coop's. Exported because the remedy differs: this one is
+// not fixed by permissions.
 var ErrNotRegular = errors.New("an existing entry is not a regular file")
 
 // Init scaffolds the working set into repo. The toolchain is driven by
@@ -138,7 +139,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string, services ...string)
 	if _, err := WriteProject(repo, DetectSubprojects(repo), services...); err != nil {
 		return s.notices, err
 	}
-	if err := s.updateGitignore(agentDirs); err != nil {
+	if err := s.updateGitignore(agentDirs, writeAndSync); err != nil {
 		return s.notices, err
 	}
 	// The shared Claude fallback needs the same stack-aware commit gate even when the repo keeps no
@@ -536,10 +537,25 @@ func coopIgnoreStanza() []string {
 	)
 }
 
-func (s *scaffolder) updateGitignore(agentDirs []string) error {
-	gi := filepath.Join(s.repo, ".gitignore")
-	data, _ := os.ReadFile(gi) // missing file → empty; we create it below
-	orig := string(data)
+// updateGitignore edits .gitignore through the rooted reader and staged replacement the other
+// in-place edits use. A box can write the repository, so .gitignore may be a link it planted to a
+// host file such as ~/.zshrc: the read refuses a link or any other non-regular entry, and the edit
+// is renamed into place rather than written through whatever the name points to by then.
+func (s *scaffolder) updateGitignore(agentDirs []string, write scaffoldFileWrite) error {
+	root, err := os.OpenRoot(s.repo)
+	if err != nil {
+		return fmt.Errorf("open scaffold root %s: %w", s.repo, err)
+	}
+	defer root.Close()
+	dest := filepath.Join(s.repo, ".gitignore")
+	before, present, err := readProjectFile(root, ".gitignore", ".gitignore")
+	if err != nil {
+		return err
+	}
+	if present {
+		defer before.dir.Close()
+	}
+	orig := string(before.data) // missing file → empty; we create it below
 	var lines []string
 	if orig != "" {
 		lines = strings.Split(strings.TrimSuffix(orig, "\n"), "\n")
@@ -577,10 +593,14 @@ func (s *scaffolder) updateGitignore(agentDirs []string) error {
 	if out == orig {
 		return nil // already up to date
 	}
-	if err := os.WriteFile(gi, []byte(out), 0o644); err != nil {
-		return err
+	if present {
+		return replaceProjectFile(before, dest, []byte(out), write)
 	}
-	return nil
+	created, err := writeNewRepoFile(s.repo, dest, []byte(out), 0o644, write)
+	if err == nil && !created { // a file appeared after the read; an exclusive create never overwrites it
+		return fmt.Errorf("%s already exists", dest)
+	}
+	return err
 }
 
 func hasIgnoreLine(lines []string, want string) bool {

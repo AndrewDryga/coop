@@ -380,6 +380,97 @@ func TestInPlaceEditsRefuseLeafLinks(t *testing.T) {
 	}
 }
 
+// A box can replace .gitignore with a link. Following one out of the repository would append Coop's
+// lines to a host file such as ~/.zshrc; following one inside it would edit a file .coopignore may
+// hide from the box. Either way the edit is refused and nothing is written.
+func TestUpdateGitignoreRefusesLinks(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		outside bool
+	}{
+		{name: "link out of the repository", outside: true},
+		{name: "link inside the repository"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			// A link inside the repository is relative: the box's absolute paths are not the host's.
+			target, link, want := filepath.Join(repo, ".env"), ".env", []string{".env", ".gitignore"}
+			if tc.outside {
+				target = filepath.Join(t.TempDir(), ".zshrc")
+				link, want = target, []string{".gitignore"}
+			}
+			const body = "export TOKEN=keep\n"
+			if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gi := filepath.Join(repo, ".gitignore")
+			if err := os.Symlink(link, gi); err != nil {
+				t.Fatal(err)
+			}
+			// ErrNotRegular is what makes coop init say "fix the path" rather than "or permissions".
+			err := (&scaffolder{repo: repo}).updateGitignore(nil, writeAndSync)
+			if !errors.Is(err, ErrNotRegular) || err.Error() != ".gitignore must be a regular file" {
+				t.Fatalf("edit through a .gitignore link = %v, want a regular-file refusal matching ErrNotRegular", err)
+			}
+			if got, err := os.Readlink(gi); err != nil || got != link {
+				t.Fatalf(".gitignore link replaced: %q, %v", got, err)
+			}
+			if got, err := os.ReadFile(target); err != nil || string(got) != body {
+				t.Fatalf("link target changed: %q, %v", got, err)
+			}
+			entries, err := os.ReadDir(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, entry := range entries {
+				names = append(names, entry.Name())
+			}
+			if !slices.Equal(names, want) {
+				t.Fatalf("repository holds %v after the refusal, want %v", names, want)
+			}
+		})
+	}
+}
+
+// The edit is renamed into place, so a .gitignore swapped for a link between the read and the write
+// is replaced rather than written through: the bytes the box left in the file never reach the host
+// file the link names.
+func TestUpdateGitignoreReplacesALinkSwappedInBeforeTheWrite(t *testing.T) {
+	repo := t.TempDir()
+	outside := filepath.Join(t.TempDir(), ".zshrc")
+	const host = "export PATH=/usr/bin\n"
+	if err := os.WriteFile(outside, []byte(host), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gi := filepath.Join(repo, ".gitignore")
+	const payload = "node_modules/\n"
+	if err := os.WriteFile(gi, []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := (&scaffolder{repo: repo}).updateGitignore(nil, func(file *os.File, data []byte) error {
+		if err := os.Remove(gi); err != nil {
+			return err
+		}
+		if err := os.Symlink(outside, gi); err != nil {
+			return err
+		}
+		return writeAndSync(file, data)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != host {
+		t.Fatalf("edit followed the swapped link: %q, %v", got, err)
+	}
+	if info, err := os.Lstat(gi); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf(".gitignore is not the renamed edit: %v, %v", info, err)
+	}
+	if data, err := os.ReadFile(gi); err != nil || !strings.HasPrefix(string(data), payload) || !strings.Contains(string(data), "\n**/.agent/*\n") {
+		t.Fatalf("edit did not land in .gitignore: %v\n%s", err, data)
+	}
+}
+
 // The read, the staging and the rename share one directory handle, so a parent swapped for a link
 // mid-edit cannot carry content read in one directory into another.
 func TestRegisterSubprojectsEditStaysWhereItRead(t *testing.T) {
