@@ -263,8 +263,9 @@ provider-scripted-other-e2e: ## The scripted provider suite's other tests and it
 
 # Selects every deterministic test in the providerlivee2e files; a test that needs a
 # real provider is named …LiveCompatibility (its subprocess …LiveChild) and runs only on demand.
-# internal/live_selection_test.go fails when a tagged test is neither, or its package is not listed
-# here, so a rename or a new package cannot drop one silently.
+# live_selection_test.go fails when a tagged test is neither, its package is not listed here, or a
+# prefix selects a paid test, so a rename or a new package cannot drop one or run one silently. Keep
+# one go test line that runs tests; others may only compile (-c).
 live-process-control: ## Deterministic tests of the tagged live-provider harness and contracts
 	@go test -race -tags providerlivee2e -run '^Test(ProviderConsultLiveContract|ProviderLoopLiveContract|ProviderResumeLiveContract|ProviderNetworkLiveContract|ProviderLiveStreamContract|ProviderAccountsLiveContract)' -count=1 ./internal/cli/ ./internal/loop/
 	@tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' 0; go test -c -tags acpe2e -o "$$tmp" ./internal/acpproxy/

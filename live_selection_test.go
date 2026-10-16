@@ -1,4 +1,4 @@
-package internal_test
+package main
 
 import (
 	"bufio"
@@ -18,16 +18,17 @@ import (
 // `go test`. The deterministic ones must be selected by `make live-process-control`; the ones that
 // need a real provider (named …LiveCompatibility, with …LiveChild subprocesses) run only on demand.
 // A rename, or a tagged file in a package the target does not list, would drop a deterministic test
-// silently, so every tagged test must be one or the other.
+// silently, so every tagged test must be one or the other. The target runs inside `make check`, so a
+// provider test its prefixes happen to match would spend money in the free gate.
 var liveOnlyName = regexp.MustCompile(`(LiveCompatibility|LiveChild)$`)
 
 func TestTaggedTestsRunUnderLiveProcessControl(t *testing.T) {
-	problems, err := liveSelectionProblems("..")
+	problems, err := liveSelectionProblems(".")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(problems) > 0 {
-		t.Fatalf("tagged tests run under no make target — give a deterministic one a live-process-control prefix in a listed package, or name one that needs a real provider …LiveCompatibility:\n%s", strings.Join(problems, "\n"))
+		t.Fatalf("live-process-control and the tagged tests disagree — give a deterministic test a prefix in a listed package, name one that needs a real provider …LiveCompatibility, or narrow a prefix that selects one:\n%s", strings.Join(problems, "\n"))
 	}
 }
 
@@ -48,13 +49,15 @@ func TestLiveSelectionProblemsFindWhatTheTargetMisses(t *testing.T) {
 		"provider-live-e2e: ## y\n\t@go test -run \"^TestLiveC\" ./internal/c/\n")
 	write("internal/a/a_live_test.go", "// A header comment above the build line.\n\n//go:build providerlivee2e && !windows\n\npackage a\n\n"+
 		"func TestLiveAWorks(t *testing.T)                  {}\n"+
+		"func TestLiveAWorksLiveCompatibility(t *testing.T) {}\n"+
 		"func TestProviderLiveCompatibility(t *testing.T)   {}\n"+
 		"func TestProviderLiveChild(t *testing.T)           {}\n"+
 		"func TestMain(m *testing.M)                        {}\n"+
 		"func TestRenamedDeterministic(t *testing.T)        {}\n")
 	write("internal/a/a_default_test.go", "//go:build !providerlivee2e\n\npackage a\n\nfunc TestUntagged(t *testing.T) {}\n")
 	write("internal/b/b_test.go", "package b\n\nfunc TestLiveBPlain(t *testing.T) {}\n")
-	write("internal/c/c_live_test.go", "//go:build providerlivee2e\n\npackage c\n\nfunc TestLiveAUnlisted(t *testing.T) {}\n")
+	write("internal/b/b_live_test.go", "//go:build providerlivee2e\n\npackage b\n\nfunc TestLiveBHelperLiveChild(t *testing.T) {}\n")
+	write("internal/c/c_live_test.go", "//go:build providerlivee2e\n\npackage c\n\nfunc TestLiveAUnlisted(t *testing.T) {}\nfunc TestLiveAUnlistedLiveCompatibility(t *testing.T) {}\n")
 	write("internal/a/testdata/x_live_test.go", "//go:build providerlivee2e\n\npackage x\n\nfunc TestIgnored(t *testing.T) {}\n")
 	write(".hidden/x_live_test.go", "//go:build providerlivee2e\n\npackage x\n\nfunc TestIgnored(t *testing.T) {}\n")
 
@@ -63,7 +66,9 @@ func TestLiveSelectionProblemsFindWhatTheTargetMisses(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
+		"internal/a: TestLiveAWorksLiveCompatibility needs a real provider, but live-process-control selects it",
 		"internal/a: TestRenamedDeterministic matches no live-process-control prefix",
+		"internal/b: TestLiveBHelperLiveChild needs a real provider, but live-process-control selects it",
 		"internal/b: listed by live-process-control but has no selected tagged test",
 		"internal/c: TestLiveAUnlisted is in a package live-process-control does not list",
 	}
@@ -81,6 +86,8 @@ func TestLiveProcessControlSelectionRejectsAnUnreadableTarget(t *testing.T) {
 		"no packages":      "live-process-control:\n\t@go test " + liveTags + " -run '^TestX' ./...\n",
 		"no live tag":      "live-process-control:\n\t@go test -tags acpe2e -run '^TestX' ./internal/x/\n",
 		"a skip":           "live-process-control:\n\t@go test " + liveTags + " -run '^TestX' -skip '^TestXY' ./internal/x/\n",
+		"a second run":     "live-process-control:\n\t@go test " + liveTags + " -run '^TestX' ./internal/x/\n\t@go test " + liveTags + " ./internal/y/\n",
+		"two run lines":    "live-process-control:\n\t@go test " + liveTags + " -run '^TestX' ./internal/x/\n\t@go test -run '^TestLive' ./internal/y/\n",
 	} {
 		if _, _, err := liveProcessControlSelection(makefile); err == nil {
 			t.Errorf("%s: selection was read from %q", name, makefile)
@@ -114,6 +121,9 @@ func liveSelectionProblems(root string) ([]string, error) {
 		for _, name := range names {
 			switch {
 			case liveOnlyName.MatchString(name):
+				if pattern.MatchString(name) && listed[pkg] {
+					problems = append(problems, pkg+": "+name+" needs a real provider, but live-process-control selects it")
+				}
 			case !pattern.MatchString(name):
 				problems = append(problems, pkg+": "+name+" matches no live-process-control prefix")
 			case !listed[pkg]:
@@ -141,43 +151,52 @@ func liveProcessControlSelection(makefile string) (*regexp.Regexp, []string, err
 		return nil, nil, errors.New("the Makefile has no live-process-control target")
 	}
 	run := regexp.MustCompile(`-run '([^']+)'`)
-	for _, line := range strings.Split(recipe, "\n")[1:] {
-		if !strings.HasPrefix(line, "\t") {
+	var line string
+	for _, next := range strings.Split(recipe, "\n")[1:] {
+		if !strings.HasPrefix(next, "\t") {
 			break // the recipe ends at its first line without a leading tab
 		}
-		m := run.FindStringSubmatch(line)
-		if m == nil || !strings.Contains(line, "go test") {
+		if !strings.Contains(next, "go test") {
 			continue
 		}
-		if strings.Contains(line, "-skip") {
-			return nil, nil, errors.New("live-process-control's go test line uses -skip: " + line)
+		// One line may run tests, the one read below; any other test run would go unread. A
+		// compile-only line (-c) runs nothing.
+		if line == "" && run.MatchString(next) {
+			line = next
+		} else if !slices.Contains(strings.Fields(next), "-c") {
+			return nil, nil, errors.New("live-process-control runs a go test line the check cannot read: " + next)
 		}
-		pattern, err := regexp.Compile(strings.ReplaceAll(m[1], "$$", "$"))
-		if err != nil {
-			return nil, nil, err
-		}
-		var pkgs []string
-		tagged := map[string]bool{}
-		fields := strings.Fields(line)
-		for i, field := range fields {
-			if field == "-tags" && i+1 < len(fields) {
-				for _, tag := range strings.Split(fields[i+1], ",") {
-					tagged[tag] = true
-				}
-			}
-			if strings.HasPrefix(field, "./") && field != "./..." {
-				pkgs = append(pkgs, path.Clean(field))
-			}
-		}
-		if !tagged["providerlivee2e"] {
-			return nil, nil, errors.New("live-process-control's go test line lacks -tags providerlivee2e: " + line)
-		}
-		if len(pkgs) == 0 {
-			return nil, nil, errors.New("live-process-control's go test line names no packages: " + line)
-		}
-		return pattern, pkgs, nil
 	}
-	return nil, nil, errors.New("live-process-control has no go test -run '…' line")
+	if line == "" {
+		return nil, nil, errors.New("live-process-control has no go test -run '…' line")
+	}
+	if strings.Contains(line, "-skip") {
+		return nil, nil, errors.New("live-process-control's go test line uses -skip: " + line)
+	}
+	pattern, err := regexp.Compile(strings.ReplaceAll(run.FindStringSubmatch(line)[1], "$$", "$"))
+	if err != nil {
+		return nil, nil, err
+	}
+	var pkgs []string
+	tagged := map[string]bool{}
+	fields := strings.Fields(line)
+	for i, field := range fields {
+		if field == "-tags" && i+1 < len(fields) {
+			for _, tag := range strings.Split(fields[i+1], ",") {
+				tagged[tag] = true
+			}
+		}
+		if strings.HasPrefix(field, "./") && field != "./..." {
+			pkgs = append(pkgs, path.Clean(field))
+		}
+	}
+	if !tagged["providerlivee2e"] {
+		return nil, nil, errors.New("live-process-control's go test line lacks -tags providerlivee2e: " + line)
+	}
+	if len(pkgs) == 0 {
+		return nil, nil, errors.New("live-process-control's go test line names no packages: " + line)
+	}
+	return pattern, pkgs, nil
 }
 
 // liveTaggedTests maps each package under root to the tests of its files that build only with the
