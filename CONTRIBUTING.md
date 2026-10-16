@@ -73,6 +73,11 @@ saved only by pushes to main, but behavioral tests always rerun: Go's test-resul
 see every input that a child process builds or reads. The release publisher starts fresh without
 that cache or imported artifacts.
 
+Before GoReleaser publishes a tag, the release job runs `go run ./tools/releasenotes notes <tag>`.
+It refuses a tag that is not the checked-out commit and prints the tag's finalized CHANGELOG.md
+section as the release notes. `go run ./tools/releasenotes verify-remote <tag>` then refuses if
+origin's tag changed since checkout. Run `notes` on a freshly tagged commit to preview the notes.
+
 The gate needs `staticcheck`, `govulncheck`, `shellcheck`, `python3`, `node` and `git-lfs`.
 Node runs the shipped site's picker and copy handlers in a small DOM fixture; it needs no
 npm install or browser. Missing Node fails that owner instead of skipping the script checks.

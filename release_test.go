@@ -48,28 +48,40 @@ type releaseStep struct {
 	Env             map[string]string `yaml:"env"`
 }
 
-func runReleasePreflight(t *testing.T, repo, command, tag string, env ...string) (string, string, error) {
+// buildReleaseNotes compiles the release workflow's preflight command, tools/releasenotes.
+func buildReleaseNotes(t *testing.T) string {
 	t.Helper()
-	script, err := filepath.Abs("tools/release_preflight.py")
-	if err != nil {
-		t.Fatal(err)
+	// Go's test cache cannot observe the sources the go build child reads, so read them here.
+	sources, err := filepath.Glob("tools/releasenotes/*.go")
+	if err != nil || len(sources) == 0 {
+		t.Fatalf("tools/releasenotes has no Go sources: %v", err)
 	}
-	// Go's test cache cannot observe files read inside the Python child.
-	if _, err := os.ReadFile(script); err != nil {
-		t.Fatal(err)
+	for _, source := range sources {
+		if _, err := os.ReadFile(source); err != nil {
+			t.Fatal(err)
+		}
 	}
-	cmd := exec.Command("python3", script, command, tag)
+	tool := filepath.Join(t.TempDir(), "releasenotes")
+	if out, err := exec.Command("go", "build", "-o", tool, "./tools/releasenotes").CombinedOutput(); err != nil {
+		t.Fatalf("build tools/releasenotes: %v\n%s", err, out)
+	}
+	return tool
+}
+
+func runReleaseNotes(tool, repo, command, tag string, env ...string) (string, string, error) {
+	cmd := exec.Command(tool, command, tag)
 	cmd.Dir = repo
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_SYSTEM="+os.DevNull, "GIT_CONFIG_COUNT=0", "GIT_TERMINAL_PROMPT=0")
 	cmd.Env = append(cmd.Env, env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err = cmd.Run()
+	err := cmd.Run()
 	return stdout.String(), stderr.String(), err
 }
 
 func TestReleaseNotesPreflight(t *testing.T) {
+	tool := buildReleaseNotes(t)
 	repo, git := gitrepo.New(t)
 	git("commit", "--allow-empty", "-qm", "fixture")
 	for _, tag := range []string{"v1.2.3", "v1.2.3-rc.1+build.007", "v0.0.0", "v1.2.3-0"} {
@@ -156,7 +168,7 @@ func TestReleaseNotesPreflight(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(repo, "CHANGELOG.md"), []byte(tc.changelog), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			out, diagnostic, err := runReleasePreflight(t, repo, "notes", tag)
+			out, diagnostic, err := runReleaseNotes(tool, repo, "notes", tag)
 			if tc.want != "" {
 				if err != nil || diagnostic != "" || out != tc.want {
 					t.Fatalf("out=%q stderr=%q err=%v; want %q", out, diagnostic, err, tc.want)
@@ -169,6 +181,7 @@ func TestReleaseNotesPreflight(t *testing.T) {
 }
 
 func TestReleaseRemoteLookupFailsClosed(t *testing.T) {
+	tool := buildReleaseNotes(t)
 	repo, git := gitrepo.New(t)
 	git("commit", "--allow-empty", "-qm", "fixture")
 	git("tag", "v1.2.3")
@@ -205,7 +218,7 @@ exec "$COOP_TEST_REAL_GIT" "$@"
 		{"malformed delimiter", strings.ReplaceAll(refLine, "\t", " "), "0", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, diagnostic, err := runReleasePreflight(t, repo, "verify-remote", "v1.2.3",
+			out, diagnostic, err := runReleaseNotes(tool, repo, "verify-remote", "v1.2.3",
 				"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"COOP_TEST_REAL_GIT="+realGit, "COOP_TEST_REMOTE_OUTPUT="+tc.output,
 				"COOP_TEST_REMOTE_STATUS="+tc.status)
@@ -218,6 +231,7 @@ exec "$COOP_TEST_REAL_GIT" "$@"
 }
 
 func TestReleaseTagIdentity(t *testing.T) {
+	tool := buildReleaseNotes(t)
 	for _, annotated := range []bool{false, true} {
 		name := "lightweight"
 		if annotated {
@@ -239,7 +253,7 @@ func TestReleaseTagIdentity(t *testing.T) {
 			}
 			check := func(command string, success bool) {
 				t.Helper()
-				out, diagnostic, err := runReleasePreflight(t, repo, command, "v1.2.3")
+				out, diagnostic, err := runReleaseNotes(tool, repo, command, "v1.2.3")
 				if success {
 					if err != nil || diagnostic != "" || (command == "verify-remote" && out != "") {
 						t.Fatalf("%s: out=%q stderr=%q err=%v", command, out, diagnostic, err)
@@ -559,9 +573,10 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 	}) {
 		t.Error("publisher permissions must remain explicitly scoped")
 	}
-	notes, remote, publisher, setups := -1, -1, -1, 0
+	setup, notes, remote, publisher, setups := -1, -1, -1, -1, 0
 	for i, step := range publish.Steps {
 		if strings.HasPrefix(step.Uses, "actions/setup-go@") {
+			setup = i
 			setups++
 			if step.With["cache"] != "false" || step.With["go-version-file"] != "go.mod" {
 				t.Error("privileged publisher must use the repo toolchain without the unprivileged CI cache")
@@ -574,12 +589,12 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 			t.Error("publisher needs full tag history")
 		}
 		switch strings.TrimSpace(step.Run) {
-		case `python3 tools/release_preflight.py notes "$RELEASE_TAG" > "$RUNNER_TEMP/release-notes.md"`:
+		case `go run ./tools/releasenotes notes "$RELEASE_TAG" > "$RUNNER_TEMP/release-notes.md"`:
 			notes = i
-		case `python3 tools/release_preflight.py verify-remote "$RELEASE_TAG"`:
+		case `go run ./tools/releasenotes verify-remote "$RELEASE_TAG"`:
 			remote = i
 		}
-		if strings.Contains(step.Run, "tools/release_preflight.py") && step.Env["RELEASE_TAG"] != "${{ github.ref_name }}" {
+		if strings.Contains(step.Run, "tools/releasenotes") && step.Env["RELEASE_TAG"] != "${{ github.ref_name }}" {
 			t.Error("tag must enter the helper as quoted data, not shell source")
 		}
 		if strings.HasPrefix(step.Uses, "goreleaser/goreleaser-action@") {
@@ -593,8 +608,9 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 	if setups != 1 {
 		t.Error("publisher needs exactly one fresh pinned-toolchain setup")
 	}
-	if notes != 1 || remote < notes || publisher != remote+1 {
-		t.Errorf("preflight must follow checkout and remote recheck immediately precede publisher: notes=%d remote=%d publisher=%d", notes, remote, publisher)
+	if setup != 1 || notes != setup+1 || remote < notes || publisher != remote+1 {
+		t.Errorf("preflight must follow checkout and Go setup, and remote recheck immediately precede publisher: setup=%d notes=%d remote=%d publisher=%d",
+			setup, notes, remote, publisher)
 	}
 	data, err := os.ReadFile(".goreleaser.yaml")
 	if err != nil {

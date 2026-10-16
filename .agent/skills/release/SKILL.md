@@ -59,6 +59,10 @@ each time — this is the contract; follow it.
 - Commit CHANGELOG-only: `changelog: finalize <version> (<one-line summary>)`.
 - Annotated tag on THAT finalize commit: `git tag -a "v<version>" -m "v<version>"`
   (tags are annotated and point at the finalize commit, never the re-open commit).
+- Still on that commit, run the release workflow's own check:
+  `go run ./tools/releasenotes notes "v<version>"` prints the notes it will publish, or refuses
+  as the workflow would (tag not at HEAD; section unfinalized, empty or malformed). Fix and
+  re-tag locally rather than push a tag that fails publication.
 - Re-open: add a fresh `## Unreleased` + the placeholder comment back; commit
   `changelog: open an Unreleased section after v<version>`.
 

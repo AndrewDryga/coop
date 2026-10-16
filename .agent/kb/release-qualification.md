@@ -2,7 +2,7 @@
 name: release-qualification
 description: "tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity"
 subsystem: release
-sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/release_preflight.py, release_test.go]
+sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/releasenotes/main.go, release_test.go]
 updated: 2026-10-16
 ---
 
@@ -16,10 +16,11 @@ owner and both runtime jobs succeeded. Read-only jobs may cache modules and comp
 tests rerun. The publisher remains fresh, uncached and without imported CI artifacts. See
 [[ci-free-checks]].
 
-The preflight helper compares the event tag's peeled commit to HEAD and extracts the first real
-ATX H2 section of CHANGELOG.md. Its heading must exactly match the SemVer tag without `v`;
-Unreleased, empty notes, Setext release headings, raw HTML blocks and unclosed comments/fences
-refuse. Code examples stay literal, comments outside code are removed, and failures emit no partial notes. This is a
+The preflight, `go run ./tools/releasenotes notes <tag>`, runs right after checkout and Go setup.
+It compares the event tag's peeled commit to HEAD and extracts the first real ATX H2 section of
+CHANGELOG.md. Its heading must exactly match the SemVer tag without `v`; Unreleased, empty notes,
+Setext release headings, raw HTML blocks and unclosed comments/fences refuse. Code examples stay
+literal, comments outside code are removed, and failures emit no partial notes. This is a
 release-format validator, not a general Markdown renderer.
 
 GoReleaser 2.18.2 prefers GORELEASER_CURRENT_TAG over other tags at HEAD, so the workflow pins it
@@ -29,12 +30,16 @@ rewriting the files after qualification; the completions hook remains generated 
 The canonical gate starts with the same nonmutating `mod-check`, so module metadata drift
 fails before long behavioral suites, not for the first time in the privileged publisher.
 
-The remote raw/peeled tag recheck runs just before GoReleaser starts, not atomically with GitHub
-publication. Keep v* update/deletion rules enforced; trusted bypass actors must not mutate the
-tag or protection during build/publication. Local fixture tests cannot prove hosted CI, signing
-or publication succeeded. Test refs/remotes are confined to temporary filesystem repositories.
+The remote raw/peeled tag recheck, `verify-remote <tag>`, runs just before GoReleaser starts, not
+atomically with GitHub publication. Keep v* update/deletion rules enforced; trusted bypass actors
+must not mutate the tag or protection during build/publication. Local fixture tests cannot prove
+hosted CI, signing or publication succeeded. Test refs/remotes are confined to temporary
+filesystem repositories.
 
 ## Changelog
+- 2026-10-16 — the preflight is Go (tools/releasenotes), so unit tests need no python3; it gives
+  byte-identical notes for all 42 release tags. verify-remote accepts only LF-separated ls-remote
+  lines.
 - 2026-10-16 — the saved provider report and its targets are gone; nothing in CI or the release
   read it since 2026-10-14, so the release path is unchanged.
 - 2026-10-15 — CI lost its CHANGELOG-only path, so a release call and a main push run the same
