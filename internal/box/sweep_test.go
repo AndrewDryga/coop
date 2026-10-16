@@ -268,13 +268,15 @@ func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
 	addFakeBox(t, boxes, "malformed-version", map[string]string{LabelHost: "v0:" + workspaceScope(workspace) + ":2:linux-proc-v1:1"})
 	addFakeBox(t, boxes, "malformed-pid", map[string]string{LabelHost: supervisorLabelVersion + ":" + workspaceScope(workspace) + ":nope:linux-proc-v1:1"})
 	addFakeBox(t, boxes, "malformed-token", map[string]string{LabelHost: supervisorLabelVersion + ":" + workspaceScope(workspace) + ":2:homemade-v9:1"})
+	// A development service whose Compose file planted a box's labels is no box at all.
+	addFakeBox(t, boxes, "planted-dev-service", map[string]string{LabelHost: gone, composeProjectLabel: ComposeProject(workspace)})
 
 	survey, err := SurveyOrphanBoxes(context.Background(), rt, workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if survey.Checked != 9 {
-		t.Errorf("checked %d boxes, want 9", survey.Checked)
+	if survey.Checked != 10 {
+		t.Errorf("checked %d boxes, want 10", survey.Checked)
 	}
 	var orphans []string
 	for _, orphan := range survey.Orphans {
@@ -289,7 +291,7 @@ func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
 	}
 	unattributed := append([]string(nil), survey.Unattributed...)
 	slices.Sort(unattributed)
-	want := []string{"malformed-pid", "malformed-token", "malformed-version", "unlabeled"}
+	want := []string{"malformed-pid", "malformed-token", "malformed-version", "planted-dev-service", "unlabeled"}
 	if !slices.Equal(unattributed, want) {
 		t.Errorf("unattributed = %v, want %v", unattributed, want)
 	}
@@ -309,6 +311,8 @@ func TestReapOrphanBoxesRemovesOnlyProvablyDeadOwnScope(t *testing.T) {
 	addFakeBox(t, boxes, "live", map[string]string{LabelHost: liveSupervisorLabel(t, workspace)})
 	addFakeBox(t, boxes, "foreign", map[string]string{LabelHost: deadSupervisorLabel(foreign)})
 	addFakeBox(t, boxes, "legacy", map[string]string{})
+	gone := goneSupervisorLabel(t, workspace)
+	addFakeBox(t, boxes, "planted-dev-service", map[string]string{LabelHost: gone, composeProjectLabel: ComposeProject(workspace)})
 
 	n, err := ReapOrphanBoxes(context.Background(), rt, workspace)
 	if err != nil || n != 2 {
@@ -323,7 +327,7 @@ func TestReapOrphanBoxesRemovesOnlyProvablyDeadOwnScope(t *testing.T) {
 		remaining = append(remaining, entry.Name())
 	}
 	slices.Sort(remaining)
-	if want := []string{"foreign", "legacy", "live"}; !slices.Equal(remaining, want) {
+	if want := []string{"foreign", "legacy", "live", "planted-dev-service"}; !slices.Equal(remaining, want) {
 		t.Fatalf("remaining boxes = %v, want %v", remaining, want)
 	}
 	events := fakeRuntimeEvents(t)

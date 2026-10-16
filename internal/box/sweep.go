@@ -26,7 +26,7 @@ const supervisorLabelVersion = "v1"
 type OrphanBox struct {
 	ID       string // container id
 	PID      int    // the supervisor it recorded
-	Evidence string // its LabelHost value — what the finding rests on, printed by `coop doctor`
+	Evidence string // its LabelHost value — what the finding rests on
 }
 
 // OrphanSurvey is one scan of the coop boxes a runtime can see, classified for a single workspace.
@@ -54,6 +54,13 @@ func SurveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace string
 	scope := workspaceScope(workspace)
 	survey := OrphanSurvey{Checked: len(containers)}
 	for _, container := range containers {
+		// Coop never puts a Compose label on a box. One that carries it is a development service
+		// whose file planted coop=box with a dead supervisor of this workspace, or a box whose image
+		// carries the label; either way it is reported and never removed.
+		if container.Labels[composeProjectLabel] != "" {
+			survey.Unattributed = append(survey.Unattributed, container.ID)
+			continue
+		}
 		host := container.Labels[LabelHost]
 		ref, ok := parseSupervisorLabel(host)
 		if !ok {

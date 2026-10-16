@@ -31,6 +31,7 @@ The decision table (`box.SurveyOrphanBoxes`), applied per container:
 | unreadable identity (`Inspect` → Unknown)       | untouched (fails closed)   |
 | another workspace's scope                       | untouched                  |
 | no label (pre-upgrade), or a value this version can't parse | REPORTED, never reaped |
+| any value on a container carrying a Compose project label | REPORTED, never reaped |
 
 This is the fork lifecycle's `OwnerProvablyDead` doctrine (`internal/forkspace/state.go`) applied to an
 identity carried by the container instead of a pidfile. **Never** container age, image, or name — the
@@ -52,7 +53,7 @@ points that already reap: loop start, fork start, and `coop build`/`update`'s re
 is deliberately silent — the
 command's own box work reports a broken runtime loudly, and Apple's `container` CLI has no label
 inspection at all, so it would otherwise print on every start. `coop doctor` is the reporting
-surface: count, ids, and the label evidence, outside its pass/fail tally, reaping nothing.
+surface: the count and the container ids, outside its pass/fail tally, reaping nothing.
 
 Files get a separate daily sweep (`cli.startTempReap` → `box.ReapOrphanTempEntries`): coop-prefixed
 entries in TMPDIR and the private runfiles root that are over an hour old AND mounted by no box. It
@@ -68,9 +69,9 @@ from a directory no other user can write (on a shared /tmp another user could re
 Docker config), and `Docker.Close` accepts one already removed.
 
 **A killed run's own Compose services.** A loop's or editor session's private project
-(`ComposeProjectFor(workspace, owner)`, `<ComposeProject(workspace)>-run-<8 hex>`) stayed behind with
-its volumes and network whenever the run was killed: only a loop's clean exit tore it down, and an
-editor session's never did. Coop's own override (`runServiceLabels`; the filtered path's override
+(`ComposeProjectFor(workspace, owner)`, `<ComposeProject(workspace)>-run-<8 hex>`) stayed behind
+with its volumes and network whenever the run was killed: only a loop's clean exit tore it down, and
+an editor session's never did. Coop's own override (`runServiceLabels`; the filtered path's override
 carries the same block) now gives every service `coop=service` and a `coop.host` label naming the
 process whose exit ends the run, scoped to the workspace that names the project
 (`serviceSupervisor`): the loop itself, or an editor session's supervisor, the parent of the inner
@@ -85,8 +86,12 @@ labels, then the project's volumes; `ReapOrphanNetworks` takes the network once 
 Each sweep step has its own time budget. `coop fork rm` runs the same reap for the fork's workspace,
 which no later sweep reaches. Coop never labels the development project `coop up` runs, and the
 sweep never takes it, whatever its file plants, even when a checkout's name makes its project name
-look like a run's. Services started before this label stay untouched (remove those with
-`docker compose -p <project> down -v`).
+look like a run's. Coop never puts a Compose label on a box, so `SurveyOrphanBoxes` reports a
+`coop=box` container that carries one instead of reaping it: a development service whose file
+planted a dead supervisor, or a box whose image carries the label. Removal still matches by the
+exact `coop.host` value, so it also relies on a box being unable to learn its own supervisor's host
+pid and start token (no environment variable or mounted file carries them). Services started before
+this label stay untouched (remove those with `docker compose -p <project> down -v`).
 
 Post-build recycling is a separate authority boundary. It uses a bounded, error-reporting running
 container query to preserve the old-image notice, then `RemoveByLabel` to restart supervised boxes.
@@ -109,6 +114,8 @@ Traps:
   live session's services and volumes.
 
 ## Changelog
+- 2026-10-16 — the box survey skips Compose containers, so labels a development project's file plants
+  never reach the box sweep (task 2026-10-16-keep-planted-coop-labels-on-development-services).
 - 2026-10-16 — per-run Compose services carry the label of the loop or editor-session supervisor that
   owns them; the loop/fork/build start sweep removes a provably dead run's services and volumes (task
   2026-10-15-clean-up-per-run-services-that-killed-loops-leav).
