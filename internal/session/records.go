@@ -140,6 +140,12 @@ const (
 	EventWorkspaceTaskBound     EventType = "workspace.task_bound"
 	EventOutputContractRejected EventType = "output_contract.rejected"
 	EventTurnAwaitingValidation EventType = "turn.awaiting_validation"
+	// EventPromptSent records what one session/prompt carried, at the send:
+	// the caller's prompt and output schema by digest, and the text Coop wrote
+	// around them as sent (sessionsvc/prompt_record.go). A caller showing its
+	// prompt showed only its own half: the output contract, a correction and
+	// the output-folder note reached the model unrecorded (2026-10-15).
+	EventPromptSent EventType = "prompt.sent"
 
 	// Activity events narrate what the model did inside a turn. Everything
 	// above is a lifecycle fact Coop decided; these are observations of the

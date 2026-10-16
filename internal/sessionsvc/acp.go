@@ -3156,12 +3156,14 @@ func (r *sessionTurnRunner) runACP(
 	}
 	prompt := map[string]any{"sessionId": nativeID, "prompt": content}
 	id := next()
-	if err := writeRequest(id, "session/prompt", prompt); err != nil {
+	sendErr := writeRequest(id, "session/prompt", prompt)
+	r.recordPromptSent(ctx, bound.ID, leased, content, sendErr)
+	if sendErr != nil {
 		if ctx.Err() != nil {
 			// Cancellation can win after delivery but before Write reports success.
 			cancelSession(nativeID)
 		}
-		return "", nil, session.Usage{}, err
+		return "", nil, session.Usage{}, sendErr
 	}
 	if checkpointSend {
 		checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)

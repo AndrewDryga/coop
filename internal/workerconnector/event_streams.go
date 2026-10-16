@@ -344,7 +344,7 @@ func (e *Executor) collectActivity(ctx context.Context, maximumBytes int) ([]wor
 
 func operatorActivityEvent(kind string) bool {
 	switch kind {
-	case "tool.started", "tool.completed", "model.plan", "model.thought", "model.progress", "permission.decided", "activity.elided", "provider.backoff", "provider.alive", "network":
+	case "tool.started", "tool.completed", "model.plan", "model.thought", "model.progress", "permission.decided", "activity.elided", "provider.backoff", "provider.alive", "network", "prompt.sent":
 		return true
 	default:
 		return false
@@ -422,6 +422,10 @@ func publicActivityPayload(kind string, raw json.RawMessage) (json.RawMessage, b
 	case "provider.alive":
 		copyPublicInteger(public, "frames", value["frames"])
 		copyPublicInteger(public, "bytes", value["bytes"])
+	case "prompt.sent":
+		if !copyPromptRecord(public, value, narrated.root) {
+			return nil, false
+		}
 	case "network":
 		// One sealed filtered run's refusals, exactly as the daemon grouped them. The daemon
 		// already applied the policy's destination projection before it appended the event —
