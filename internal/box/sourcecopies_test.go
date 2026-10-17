@@ -407,6 +407,32 @@ func TestRepositoryCopiesCleanEarlierFallbackOnLaterFailure(t *testing.T) {
 	}
 }
 
+// A fallback whose own copy fails part-way takes its private folder with it, a file's copy and a
+// folder's alike: a source the copy cannot read leaves nothing in the copy parent.
+func TestRepositoryCopiesRemoveAFallbackCopyThatFailed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file without read permission")
+	}
+	for _, unreadable := range []string{".agent/claude/settings.json", ".agent/claude/hooks/pre-tool.sh"} {
+		t.Run(filepath.Base(unreadable), func(t *testing.T) {
+			copies, repo := copyParent(t), t.TempDir()
+			path := filepath.Join(repo, filepath.FromSlash(unreadable))
+			writeCopyFixture(t, path, "#!/bin/sh\n")
+			if err := os.Chmod(path, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+			mounts, dirs, err := synthHomeFallbackMounts(repo, "/home/node", copies, []string{"claude"})
+			if err == nil || len(mounts) != 0 || len(dirs) != 0 {
+				t.Fatalf("a fallback that could not be read = %v, %v, %v; want a refusal and nothing to mount", mounts, dirs, err)
+			}
+			if entries, err := os.ReadDir(copies); err != nil || len(entries) != 0 {
+				t.Fatalf("the failed copy kept its folder: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
 func TestRepositoryCopiesHandleCaseAliases(t *testing.T) {
 	pinHome(t)
 	copies := copyParent(t)
