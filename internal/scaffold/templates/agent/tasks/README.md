@@ -174,8 +174,8 @@ reviewer (or the next agent) needs. Add to the bottom; never rewrite it. This is
 ## decision.md — a blocked one-way door
 
 A task goes to `50_blocked/` when it hits a choice that's expensive to undo and needs a human.
-`coop tasks block <id>` creates this file; the agent fills the question, options, and a
-recommendation; **the human resolves it — write the Resolution and run `coop tasks unblock <id>`,
+`coop tasks block <id>` creates this file; the agent fills the question, why it is blocked, the
+options, and a recommendation; **the human resolves it — write the Resolution and run `coop tasks unblock <id>`,
 or do both at once with `coop tasks unblock <id> "<answer>"`.**
 `coop tasks decisions` lists every open one with its full recommendation.
 To answer "not now", run `coop tasks park <id> ["<reason>"]`: the task moves to the backlog with
@@ -183,9 +183,11 @@ its decision still open, so no preflight re-queues it, and `coop backlog promote
 
 **Template:**
 
-    # Decision: <question>?
+    # Decision: <the question, in plain words>?
 
     **Blocks:** this task (<id>).
+
+    **Why it is blocked:** <what happened, and why the task cannot go on without an answer>
 
     **The decision:** <what needs to be chosen and why you cannot safely proceed>
 
@@ -201,9 +203,12 @@ its decision still open, so no preflight re-queues it, and `coop backlog promote
 
 **Example** (agent filled, awaiting the human):
 
-    # Decision: where does the timeout setting live?
+    # Decision: should the timeout be saved in the config file?
 
     **Blocks:** this task (2026-06-26-timeout-fail-closed).
+
+    **Why it is blocked:** The fix works with the timeout read from an env var. Saving it in the
+    config file too would change the file's format, which older releases cannot read.
 
     **The decision:** Whether the timeout stays an env var only, or is also persisted in the
     config file — persisting changes the on-disk format, which older releases can't read.

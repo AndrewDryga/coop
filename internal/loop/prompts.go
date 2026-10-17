@@ -63,7 +63,7 @@ func LoopWorkPrompt(repo, assignedRoot, assignedID, agent string, peers []agents
 		commitPolicy,
 		citationPolicy,
 		completionPolicy,
-		"If you hit a one-way-door decision, call tasks_block on your task with the question, the options, and your recommendation; a human resolves it, so stop working the task after that.",
+		"If you hit a one-way-door decision, call tasks_block on your task with the question, why the task is blocked, the options, and your recommendation; a human resolves it, so stop working the task after that.",
 		discoveryPolicy,
 		"Work exactly ONE task per run: take the assigned task to done — or to blocked — then STOP without claiming or starting another, even if 00_todo/ still has tasks. The loop re-invokes you in a fresh box with fresh context for the next one; draining the whole queue in a single run is the loop's job, not yours.",
 		"Mutate ONLY your assigned task. The tools refuse a task another live process holds, and tidying any other task — including one sitting in 10_in_progress/ whose work already looks committed and finished — is not yours to do: if a task looks stale or already done, say so in your own task's log and move on; the host reconciles it.",

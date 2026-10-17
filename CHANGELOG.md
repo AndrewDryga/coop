@@ -41,6 +41,13 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **A blocked task's decision now says why it is blocked.** `coop tasks block` takes `--why`,
+  what happened and why the task cannot go on, and the agent's block tool asks for the same. It is
+  written under the task it blocks, and the question becomes the decision's heading, so
+  `coop tasks decisions` lists the question itself instead of the task's title. A decision request
+  now needs a question on one line, why, at least one option and a recommendation. The empty
+  decision.md that `coop tasks block` writes has a place for why, too.
+
 - **A task a fork proposes can no longer be written outside the queue.** When `coop fork merge`
   imported a task a fork's agent proposed, it wrote the task's files and moved its folder into the
   queue by path. A box working in the same project can write the queue, and a folder it swapped

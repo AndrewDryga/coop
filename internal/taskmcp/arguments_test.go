@@ -206,7 +206,7 @@ func TestTaskArgumentListBoundsAndNestedTypes(t *testing.T) {
 			item := any(map[string]any{"text": strings.Repeat("é", lineLimit/2)})
 			if name == "tasks_block" {
 				field = "options"
-				args["decision"], args["recommendation"] = "A decision", "A"
+				args["question"], args["why"], args["recommendation"] = "A question?", "W", "A"
 				item = strings.Repeat("é", lineLimit/2)
 			}
 			before := taskFiles(t, root)
@@ -342,7 +342,7 @@ func TestMissingArgumentsReportEveryFieldWithoutMutation(t *testing.T) {
 				missing string
 			}{
 				{"tasks_propose", map[string]any{"kind": "task", "title": "Follow-up", "context": "private argument text"}, "acceptance, approach, subtasks"},
-				{"tasks_block", map[string]any{"id": "t1"}, "decision, options, recommendation"},
+				{"tasks_block", map[string]any{"id": "t1"}, "question, why, options, recommendation"},
 			}
 			beforeState := taskFiles(t, root)
 			text := sess.mustRefuse("tasks_update_state", map[string]any{"id": "t1"})

@@ -85,13 +85,14 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_block",
-		description: "Park the task in 50_blocked/ on a one-way-door decision a human must make, writing its decision.md (question, options, your recommendation). Refused when another live process holds the task.",
+		description: "Park the task in 50_blocked/ on a one-way-door decision a human must make, writing its decision.md (question, why it is blocked, options, your recommendation). Refused when another live process holds the task.",
 		schema: object(map[string]any{
 			"id":             idProp(),
-			"decision":       textProp("What must be chosen, and why it cannot be undone cheaply.", true, blockLimit),
+			"question":       textProp("The question for the human, in plain words, on one line.", false, lineLimit),
+			"why":            textProp("What happened, and why the task cannot go on without an answer.", true, blockLimit),
 			"options":        array(textProp("One option: A — <name>: <consequence>.", false, lineLimit), "1 to 64 options."),
-			"recommendation": textProp("Your pick and why.", true, blockLimit),
-		}, "id", "decision", "options", "recommendation"),
+			"recommendation": textProp("The option best for the product in the long term, and why.", true, blockLimit),
+		}, "id", "question", "why", "options", "recommendation"),
 		run: (*Server).block,
 	},
 	{
@@ -680,14 +681,18 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {
 	var in struct {
 		ID             string   `json:"id"`
-		Decision       string   `json:"decision"`
+		Question       string   `json:"question"`
+		Why            string   `json:"why"`
 		Options        []string `json:"options"`
 		Recommendation string   `json:"recommendation"`
 	}
 	if r := decodeArgs(args, &in); r != nil {
 		return r
 	}
-	if r := checkText("decision", in.Decision, true, blockLimit); r != nil {
+	if r := checkText("question", in.Question, false, lineLimit); r != nil {
+		return r
+	}
+	if r := checkText("why", in.Why, true, blockLimit); r != nil {
 		return r
 	}
 	if r := checkText("recommendation", in.Recommendation, true, blockLimit); r != nil {
@@ -708,7 +713,7 @@ func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {
 	if loc.item.State == tasks.StateDone {
 		return refusal(fmt.Sprintf("%s is already done — a shipped task is not blocked from the box; a human reopens it with `coop tasks block`", loc.item.ID))
 	}
-	decision := tasks.Decision{Question: in.Decision, Options: in.Options, Recommendation: in.Recommendation}
+	decision := tasks.Decision{Question: in.Question, Why: in.Why, Options: in.Options, Recommendation: in.Recommendation}
 	// Before anything moves: text that would forge the human's answer is refused, not parked.
 	if err := tasks.CheckDecision(decision); err != nil {
 		return refusal(err.Error())

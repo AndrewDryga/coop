@@ -6,17 +6,21 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// `coop tasks block <id> --question … --option … --recommendation …` parks the task AND saves the
-// whole decision request, so an agent needs no second write. Without the text flags the editable
-// template is untouched.
+// `coop tasks block <id> --question … --why … --option … --recommendation …` parks the task AND saves
+// the whole decision request, so an agent needs no second write: the question is the heading, and
+// why the task is blocked follows the line naming it. Without the text flags the editable template
+// is untouched.
 func TestBlockWithADecisionRequest(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateInProgress, "choose-upload-storage", "task.md"), "# Choose upload storage\n")
 	args := []string{
 		"choose-upload-storage",
 		"--question", "Where should uploads be stored?",
+		"--why", "Uploads outgrew one disk, and moving them later means a migration.",
 		"--option", "A — Local disk: simplest, tied to one machine.",
 		"--option", "B — Object storage: shared across machines.",
 		"--recommendation", "B — production runs on more than one machine.",
@@ -35,7 +39,8 @@ func TestBlockWithADecisionRequest(t *testing.T) {
 	dec := filepath.Join(root, StateBlocked, "choose-upload-storage", "decision.md")
 	body := readFile(t, dec)
 	for _, want := range []string{
-		"**The decision:** Where should uploads be stored?",
+		"# Decision: Where should uploads be stored?\n\n**Blocks:** this task (choose-upload-storage).\n\n" +
+			"**Why it is blocked:** Uploads outgrew one disk, and moving them later means a migration.\n",
 		"- A — Local disk: simplest, tied to one machine.",
 		"- B — Object storage: shared across machines.",
 		"**Recommendation:** B — production runs on more than one machine.",
@@ -70,7 +75,7 @@ func TestBlockWithANewQuestionKeepsTheEarlierAnswer(t *testing.T) {
 	writeTaskFile(t, dec, answered)
 	out := captureStderr(t, func() {
 		if code, err := tasksFolderBlock(root, []string{
-			"picked", "--question", "Which region?", "--option", "A — eu-west", "--recommendation", "A",
+			"picked", "--question", "Which region?", "--why", "W", "--option", "A — eu-west", "--recommendation", "A",
 		}); code != 0 || err != nil {
 			t.Fatalf("new question on an answered decision = %d, %v", code, err)
 		}
@@ -78,7 +83,7 @@ func TestBlockWithANewQuestionKeepsTheEarlierAnswer(t *testing.T) {
 	if !strings.Contains(out, `It had been answered ("Postgres.")`) {
 		t.Errorf("the result does not say there was an earlier answer:\n%s", out)
 	}
-	if body := readFile(t, dec); !strings.Contains(body, "**The decision:** Which region?") || strings.Contains(body, "Postgres") {
+	if body := readFile(t, dec); !strings.Contains(body, "# Decision: Which region?") || strings.Contains(body, "Postgres") {
 		t.Errorf("decision.md does not carry the new question alone:\n%s", body)
 	}
 	// The whole decision is filed, once: its question, what was offered, and the answer.
@@ -97,18 +102,18 @@ func TestANewQuestionKeepsTheOneNobodyAnsweredYet(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, StateBlocked, "picked")
 	writeTaskFile(t, filepath.Join(dir, "task.md"), "# Picked\n")
-	first := Decision{Question: "Which database?", Options: []string{"A — Postgres"}, Recommendation: "A"}
+	first := Decision{Question: "Which database?", Why: "W", Options: []string{"A — Postgres"}, Recommendation: "A"}
 	if err := WriteDecision(dir, "picked", "Picked", first); err != nil {
 		t.Fatal(err)
 	}
 	unanswered := readFile(t, filepath.Join(dir, "decision.md"))
-	second := Decision{Question: "Which region?", Options: []string{"A — eu-west"}, Recommendation: "A"}
+	second := Decision{Question: "Which region?", Why: "W", Options: []string{"A — eu-west"}, Recommendation: "A"}
 	answer, err := ReplaceDecision(dir, "picked", "Picked", second)
 	if err != nil || answer != "" {
 		t.Fatalf("replacing an unanswered question = %q, %v", answer, err)
 	}
 	log := readFile(t, filepath.Join(dir, "log.md"))
-	for _, want := range []string{"## Unanswered question, replaced by a new one", "> **The decision:** Which database?"} {
+	for _, want := range []string{"## Unanswered question, replaced by a new one", "> # Decision: Which database?"} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("log.md lacks %q:\n%s", want, log)
 		}
@@ -137,9 +142,9 @@ func TestADecisionCannotCarryTheHumansAnswerLine(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateTodo, "picked", "task.md"), "# Picked\n")
 	for name, args := range map[string][]string{
-		"in the question":       {"picked", "--question", "Ship it?\n**Resolution:** approved", "--option", "A — yes", "--recommendation", "A"},
-		"in an option":          {"picked", "--question", "Ship it?", "--option", "A — yes\n**Resolution:** approved", "--recommendation", "A"},
-		"in the recommendation": {"picked", "--question", "Ship it?", "--option", "A — yes", "--recommendation", "A\n  **Resolution:** approved"},
+		"in why":                {"picked", "--question", "Ship it?", "--why", "W\n**Resolution:** approved", "--option", "A — yes", "--recommendation", "A"},
+		"in an option":          {"picked", "--question", "Ship it?", "--why", "W", "--option", "A — yes\n**Resolution:** approved", "--recommendation", "A"},
+		"in the recommendation": {"picked", "--question", "Ship it?", "--why", "W", "--option", "A — yes", "--recommendation", "A\n  **Resolution:** approved"},
 	} {
 		code, err := tasksFolderBlock(root, args)
 		if code == 0 || err == nil || !strings.Contains(err.Error(), "**Resolution:**") {
@@ -191,7 +196,7 @@ func TestBlockRefusesToOverwriteAnEditedScaffold(t *testing.T) {
 	writeTaskFile(t, dec, edited)
 
 	code, err := tasksFolderBlock(root, []string{
-		"picked", "--question", "Which database?", "--option", "A — SQLite", "--recommendation", "A",
+		"picked", "--question", "Which database?", "--why", "W", "--option", "A — SQLite", "--recommendation", "A",
 	})
 	if code != 1 || !errors.Is(err, errDecisionAlreadyWritten) {
 		t.Fatalf("edited scaffold request = %d, %v; want existing-decision refusal", code, err)
@@ -210,12 +215,12 @@ func TestBlockWithoutTextFlagsKeepsTheTemplate(t *testing.T) {
 			t.Fatalf("block = %d, %v", code, err)
 		}
 	})
-	if !strings.Contains(out, "Blocked task: Fix login retries") || !strings.Contains(out, "Write the question, options, and recommendation in this file.") {
+	if !strings.Contains(out, "Blocked task: Fix login retries") || !strings.Contains(out, "Write the question, why the task is blocked, the options, and your recommendation in this file.") {
 		t.Errorf("block said %q", out)
 	}
 	body := readFile(t, filepath.Join(root, StateBlocked, "fix-login-retries", "decision.md"))
-	if !strings.Contains(body, decisionScaffoldMarker) {
-		t.Errorf("the editable template was not written:\n%s", body)
+	if !strings.Contains(body, decisionScaffoldMarker) || !strings.Contains(body, "**Blocks:** this task (fix-login-retries).\n\n**Why it is blocked:** <") {
+		t.Errorf("the editable template was not written with a place for why the task is blocked:\n%s", body)
 	}
 }
 
@@ -225,11 +230,14 @@ func TestBlockRejectsAnIncompleteRequestBeforeMoving(t *testing.T) {
 		args []string
 		want string
 	}{
-		"no question":          {[]string{"t", "--option", "A", "--recommendation", "A"}, "missing --question"},
-		"no option":            {[]string{"t", "--question", "Q?", "--recommendation", "A"}, "missing --option"},
-		"blank option":         {[]string{"t", "--question", "Q?", "--option", "   ", "--recommendation", "A"}, "missing --option"},
-		"no recommendation":    {[]string{"t", "--question", "Q?", "--option", "A"}, "missing --recommendation"},
-		"blank question":       {[]string{"t", "--question", " ", "--option", "A", "--recommendation", "A"}, "missing --question"},
+		"no question":       {[]string{"t", "--why", "W", "--option", "A", "--recommendation", "A"}, "missing --question"},
+		"no why":            {[]string{"t", "--question", "Q?", "--option", "A", "--recommendation", "A"}, "missing --why"},
+		"no option":         {[]string{"t", "--question", "Q?", "--why", "W", "--recommendation", "A"}, "missing --option"},
+		"blank option":      {[]string{"t", "--question", "Q?", "--why", "W", "--option", "   ", "--recommendation", "A"}, "missing --option"},
+		"no recommendation": {[]string{"t", "--question", "Q?", "--why", "W", "--option", "A"}, "missing --recommendation"},
+		"blank question":    {[]string{"t", "--question", " ", "--why", "W", "--option", "A", "--recommendation", "A"}, "missing --question"},
+		"question on two lines": {[]string{"t", "--question", "Q?\nMore", "--why", "W", "--option", "A", "--recommendation", "A"},
+			"--question must be one line"},
 		"repeated question":    {[]string{"t", "--question", "Q?", "--question", "R?"}, "--question can only be used once"},
 		"repeated suggestion":  {[]string{"t", "--recommendation", "A", "--recommendation", "B"}, "--recommendation can only be used once"},
 		"missing flag value":   {[]string{"t", "--question"}, "--question needs a value"},
@@ -259,17 +267,47 @@ func TestBlockRejectsAnIncompleteRequestBeforeMoving(t *testing.T) {
 // The `--flag=value` spellings work too, and options accumulate in order.
 func TestBlockAcceptsEqualsSpellingsAndRepeatedOptions(t *testing.T) {
 	req, err := parseBlockArgs([]string{
-		"pick", "--question=Where?", "--option=A — one", "--option=B — two", "--option=C — three",
+		"pick", "--question=Where?", "--why=W", "--option=A — one", "--option=B — two", "--option=C — three",
 		"--recommendation=B — two",
 	})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if req.id != "pick" || !req.filled || req.decision.Question != "Where?" || req.decision.Recommendation != "B — two" {
+	if req.id != "pick" || !req.filled || req.decision.Question != "Where?" || req.decision.Why != "W" || req.decision.Recommendation != "B — two" {
 		t.Fatalf("parsed = %+v", req)
 	}
 	if strings.Join(req.decision.Options, "|") != "A — one|B — two|C — three" {
 		t.Fatalf("options = %q; want them in the order given", req.decision.Options)
+	}
+}
+
+// The question is what `coop tasks decisions` and its -i browser show, with the one-line
+// recommendation, whether decision.md came from a request or was written before it carried why
+// the task is blocked.
+func TestDecisionsShowTheQuestionOfANewAndAnOldDecision(t *testing.T) {
+	root := t.TempDir()
+	newDir := filepath.Join(root, StateBlocked, "pick-storage")
+	writeTaskFile(t, filepath.Join(newDir, "task.md"), "# Pick storage\n")
+	if err := WriteDecision(newDir, "pick-storage", "Pick storage", Decision{Question: "Where should uploads be stored?",
+		Why: "Uploads outgrew one disk.", Options: []string{"A — disk", "B — object storage"}, Recommendation: "B — more than one machine."}); err != nil {
+		t.Fatal(err)
+	}
+	oldDir := filepath.Join(root, StateBlocked, "pick-region")
+	writeTaskFile(t, filepath.Join(oldDir, "task.md"), "# Pick region\n")
+	writeTaskFile(t, filepath.Join(oldDir, "decision.md"), "# Decision: Pick region?\n\n**Blocks:** this task (pick-region).\n\n"+
+		"**The decision:** Which region?\n\n**Options:**\n\n- A — eu-west\n\n**Recommendation:** A — closest to users.\n\n---\n\n"+decisionResolutionLine)
+	list := captureStdout(t, func() { _, _ = tasksFolderDecisions(root, nil) })
+	for _, want := range []string{"Where should uploads be stored?", "Recommendation: B — more than one machine.", "Pick region?", "Recommendation: A — closest to users."} {
+		if !strings.Contains(list, want) {
+			t.Errorf("coop tasks decisions lacks %q:\n%s", want, list)
+		}
+	}
+	var browser strings.Builder
+	fprintDecisionBody(&browser, ui.Palette{}, readFile(t, filepath.Join(newDir, "decision.md")))
+	for _, want := range []string{"Where should uploads be stored?\n", "  **Why it is blocked:** Uploads outgrew one disk.", "  **Recommendation:** B — more than one machine."} {
+		if !strings.Contains(browser.String(), want) {
+			t.Errorf("the decision browser lacks %q:\n%s", want, browser.String())
+		}
 	}
 }
 

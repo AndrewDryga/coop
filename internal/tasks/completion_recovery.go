@@ -74,7 +74,8 @@ func ParkUncommittedCompletion(task QueuedTask) error {
 		}
 	}
 	if err := WriteDecision(dir, id, task.Item.Title, Decision{
-		Question: "Two attempts claimed completion without a task-bound commit or an accepted no-change outcome. No source or Git history changed, so Coop preserved the task as unfinished and continued the queue.",
+		Question: "Is this task already satisfied, or does it still need work?",
+		Why:      "Two attempts claimed completion without a task-bound commit or an accepted no-change outcome. No source or Git history changed, so Coop preserved the task as unfinished and continued the queue.",
 		Options: []string{
 			"A — confirm an eligible no-change outcome: review the acceptance and required checks, then unblock for completion through tasks_complete with outcome, reason and evidence; create no commit.",
 			"B — clarify unfinished implementation or missing acceptance: update the task and unblock it for another attempt.",

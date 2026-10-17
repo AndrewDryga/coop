@@ -59,7 +59,7 @@ Build *to* them, then *check the diff against them*.
    otherwise move the task folder to the existing `99_done/` directory yourself. A finished task
    is **moved**, never deleted — leave it in `99_done/`; never run
    `coop tasks rm` (pruning the archive is the human's call). Blocked instead? Fill in
-   `decision.md` (question · options · recommendation), then use `coop tasks block <id>` when
+   `decision.md` (question · why it is blocked · options · recommendation), then use `coop tasks block <id>` when
    available or move the folder to the existing `50_blocked/` directory yourself.
 8. Spot unrelated work? Use the proposal route supplied by the current run when there is one.
    Otherwise capture ready work in `00_todo/`: use `coop tasks add` when `coop` is on `PATH`, or

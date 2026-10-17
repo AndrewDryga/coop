@@ -598,6 +598,7 @@ FOR AI AGENTS
 
   coop tasks block choose-storage \
     --question "Where should uploads be stored?" \
+    --why "Uploads outgrew one disk, and moving them later means a migration." \
     --option "A — Local disk: simplest, tied to one machine." \
     --option "B — Object storage: shared across machines." \
     --recommendation "B — production runs on more than one machine."
@@ -724,17 +725,19 @@ coop tasks block: pause a task that needs a decision
 Usage: coop tasks block <id> [--tasks <path>]... [options]
 
 OPTIONS
-  --question <text>        explain the decision that is needed
+  --question <text>        ask the question that needs an answer, on one line
+  --why <text>             say what happened and why the task cannot go on
   --option <text>          describe a choice and its tradeoff; repeat for more choices
   --recommendation <text>  recommend a choice and explain why
 
 Without these options, creates decision.md for you to fill in.
-If you use any of them, include a question, at least one option, and a recommendation.
+If you use any of them, include a question, why, at least one option, and a recommendation.
 Existing answers and decision notes are never overwritten.
 
 FOR AI AGENTS
   coop tasks block choose-storage \
     --question "Where should uploads be stored?" \
+    --why "Uploads outgrew one disk, and moving them later means a migration." \
     --option "A — Local disk: simplest, tied to one machine." \
     --option "B — Object storage: shared across machines." \
     --recommendation "B — production runs on more than one machine."

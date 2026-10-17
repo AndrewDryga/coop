@@ -170,17 +170,19 @@ reviewer (or the next agent) needs. Add to the bottom; never rewrite it. This is
 ## decision.md — a blocked one-way door
 
 A task goes to `50_blocked/` when it hits a choice that's expensive to undo and needs a human.
-`coop tasks block <id>` creates this file; the agent fills the question, options, and a
-recommendation; **the human writes the Resolution and runs `coop tasks unblock <id>`.**
+`coop tasks block <id>` creates this file; the agent fills the question, why it is blocked, the
+options, and a recommendation; **the human writes the Resolution and runs `coop tasks unblock <id>`.**
 `coop tasks decisions` lists every open one with its recommendation.
 To answer "not now", run `coop tasks park <id> ["<reason>"]`: the task moves to the backlog with
 its decision still open, so no preflight re-queues it, and `coop backlog promote <id>` brings it back.
 
 **Template:**
 
-    # Decision: <question>?
+    # Decision: <the question, in plain words>?
 
     **Blocks:** this task (<id>).
+
+    **Why it is blocked:** <what happened, and why the task cannot go on without an answer>
 
     **The decision:** <what needs to be chosen and why you cannot safely proceed>
 
@@ -196,9 +198,12 @@ its decision still open, so no preflight re-queues it, and `coop backlog promote
 
 **Example** (agent filled, awaiting the human):
 
-    # Decision: store egress mode where?
+    # Decision: should the egress mode be saved in the project's config?
 
     **Blocks:** this task (2026-06-26-egress-fail-closed).
+
+    **Why it is blocked:** The fix works with the mode read from an env var. Saving it in
+    .agent/config too would change the file's format, which older coop cannot read.
 
     **The decision:** Whether the mode is an env var only or also persisted in .agent/config —
     persisting changes the on-disk format (a one-way door for older coop).

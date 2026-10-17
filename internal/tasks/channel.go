@@ -338,22 +338,25 @@ func RewriteSubtasks(taskDir string, subtasks []Subtask) error {
 	return AtomicWriteTaskFile(root, "task.md", []byte(out))
 }
 
-// Decision is the one-way-door question a box parks a task on.
+// Decision is the one-way-door question a box parks a task on: the question, on one line, why the
+// task cannot go on without an answer, the options and the recommended one.
 type Decision struct {
 	Question       string
+	Why            string
 	Options        []string
 	Recommendation string
 }
 
-// RenderDecision is the decision.md body for a filled-in request — the shape `coop tasks block`
-// seeds, with the Resolution line left for the human. Separate from the write so a caller can ask
-// "is the file already exactly this request?" without writing anything (see saveRequestedDecision).
-func RenderDecision(id, title string, d Decision) string {
+// RenderDecision is the decision.md body for a filled-in request, with the Resolution line left for
+// the human. The question is the heading, so `coop tasks decisions` lists the question itself, not
+// the task's title. Separate from the write so a caller can ask "is the file already exactly this
+// request?" without writing anything (see saveRequestedDecision).
+func RenderDecision(id string, d Decision) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<!-- Explain the choice and your recommendation. A human supplies the answer.\n"+
 		"     To save the answer and return this task to todo:\n"+
 		"     coop tasks unblock %s \"<answer>\" -->\n\n", id)
-	fmt.Fprintf(&b, "# Decision: %s?\n\n**Blocks:** this task (%s).\n\n**The decision:** %s\n\n**Options:**\n\n", title, id, d.Question)
+	fmt.Fprintf(&b, "# Decision: %s\n\n**Blocks:** this task (%s).\n\n**Why it is blocked:** %s\n\n**Options:**\n\n", d.Question, id, d.Why)
 	for _, option := range d.Options {
 		fmt.Fprintf(&b, "- %s\n", option)
 	}
@@ -366,7 +369,7 @@ func RenderDecision(id, title string, d Decision) string {
 // as answered — in `coop tasks`, to `coop tasks unblock`, and to the refusal that protects a real
 // answer. Callers check BEFORE they move a task, so a refused request changes nothing.
 func CheckDecision(d Decision) error {
-	for _, text := range append([]string{d.Question, d.Recommendation}, d.Options...) {
+	for _, text := range append([]string{d.Question, d.Why, d.Recommendation}, d.Options...) {
 		for _, line := range strings.Split(text, "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), decisionResolutionPrefix) {
 				return fmt.Errorf("a decision's text cannot carry a %s line — that line is the human's answer", decisionResolutionPrefix)
@@ -388,7 +391,7 @@ func WriteDecision(taskDir, id, title string, d Decision) error {
 		return err
 	}
 	defer root.Close()
-	return AtomicWriteTaskFile(root, "decision.md", []byte(RenderDecision(id, title, d)))
+	return AtomicWriteTaskFile(root, "decision.md", []byte(RenderDecision(id, d)))
 }
 
 // ReplaceDecision writes a new decision for a task whose decision.md may already carry a question —
@@ -412,7 +415,7 @@ func ReplaceDecision(taskDir, id, title string, d Decision) (earlierAnswer strin
 	if logErr != nil {
 		return "", logErr
 	}
-	rendered := RenderDecision(id, title, d)
+	rendered := RenderDecision(id, d)
 	if exists && string(body) == rendered {
 		return "", nil // the same question again: nothing replaced, nothing to archive
 	}

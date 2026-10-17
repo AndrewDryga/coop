@@ -439,12 +439,12 @@ func TestAssignedNoChangeCompletionRejectsSameStatusRewrite(t *testing.T) {
 func TestWorkerTerminalCorrectionPromptReturnsExactBoundedError(t *testing.T) {
 	got := workerTerminalCorrectionPrompt("task-a", 2, taskmcp.AssignedTerminalRefusal{
 		Action: "tasks_block",
-		Detail: "missing required fields: decision, options, recommendation; resend the complete arguments object.",
+		Detail: "missing required fields: question, why, options, recommendation; resend the complete arguments object.",
 	})
 	for _, want := range []string{
 		"TERMINAL TASK CORRECTION ONLY (2 of 2)",
 		"rejected tasks_block action",
-		"missing required fields: decision, options, recommendation; resend the complete arguments object.",
+		"missing required fields: question, why, options, recommendation; resend the complete arguments object.",
 		"Do not inspect or re-analyze source",
 	} {
 		if !strings.Contains(got, want) {

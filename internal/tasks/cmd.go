@@ -1742,9 +1742,9 @@ type blockRequest struct {
 
 // blockTextFlags are the flags that carry a decision request. They are optional as a SET: with none
 // of them `block` seeds the editable template, and with any of them the request must be complete.
-var blockTextFlags = []string{"--question", "--option", "--recommendation"}
+var blockTextFlags = []string{"--question", "--why", "--option", "--recommendation"}
 
-// parseBlockArgs reads `coop tasks block <id> [--question <text>] [--option <text>]... [--recommendation <text>]`,
+// parseBlockArgs reads `coop tasks block <id> [--question <text>] [--why <text>] [--option <text>]... [--recommendation <text>]`,
 // each also in its `--flag=value` spelling. Every check here runs BEFORE the task moves — including
 // in the multi-queue dispatcher, which parses the same way — so a malformed request can never leave
 // a task parked on a decision Coop could not write.
@@ -1780,6 +1780,8 @@ func parseBlockArgs(args []string) (blockRequest, error) {
 		switch flag {
 		case "--question":
 			req.decision.Question = value
+		case "--why":
+			req.decision.Why = value
 		case "--recommendation":
 			req.decision.Recommendation = value
 		case "--option":
@@ -1796,6 +1798,9 @@ func parseBlockArgs(args []string) (blockRequest, error) {
 		if req.decision.Question == "" {
 			missing = append(missing, "--question")
 		}
+		if req.decision.Why == "" {
+			missing = append(missing, "--why")
+		}
 		if len(req.decision.Options) == 0 {
 			missing = append(missing, "--option")
 		}
@@ -1803,7 +1808,11 @@ func parseBlockArgs(args []string) (blockRequest, error) {
 			missing = append(missing, "--recommendation")
 		}
 		if len(missing) > 0 {
-			return req, fmt.Errorf("coop tasks block: a decision request needs a question, at least one option and a recommendation — missing %s (or omit all three to write decision.md yourself)", strings.Join(missing, ", "))
+			return req, fmt.Errorf("coop tasks block: a decision request needs a question, why the task is blocked, at least one option and a recommendation — missing %s (or omit them all to write decision.md yourself)", strings.Join(missing, ", "))
+		}
+		// The question is decision.md's heading, which is one line.
+		if strings.ContainsAny(req.decision.Question, "\r\n") {
+			return req, errors.New("coop tasks block: --question must be one line; put the explanation in --why")
 		}
 	}
 	return req, nil
@@ -1877,7 +1886,7 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 		ui.Note("\nIt had been answered (%q); that decision is kept in its log.md.", earlierAnswer)
 	}
 	if !req.filled {
-		ui.Note("\nWrite the question, options, and recommendation in this file.")
+		ui.Note("\nWrite the question, why the task is blocked, the options, and your recommendation in this file.")
 		ui.Note("To fill them in as you block a task, see:")
 		ui.Note("\n  coop help tasks block")
 	}
@@ -1905,6 +1914,7 @@ func renderDecisionScaffold(id, title string) string {
 		"     coop tasks unblock " + id + " \"<answer>\" -->\n\n" +
 		"# Decision: " + title + "?\n\n" +
 		"**Blocks:** this task (" + id + ").\n\n" +
+		"**Why it is blocked:** <what happened, and why the task cannot go on without an answer>\n\n" +
 		"**The decision:** " + decisionScaffoldMarker + "\n\n" +
 		"**Options:**\n\n" +
 		"- **A — <name>:** <consequence>\n" +
@@ -1925,7 +1935,7 @@ var errDecisionAlreadyWritten = errors.New("the task already carries a decision 
 // with the file to edit.
 func saveRequestedDecision(taskDir, id, title string, d Decision) (earlierAnswer string, err error) {
 	existing, err := os.ReadFile(filepath.Join(taskDir, "decision.md"))
-	rendered := RenderDecision(id, title, d)
+	rendered := RenderDecision(id, d)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:

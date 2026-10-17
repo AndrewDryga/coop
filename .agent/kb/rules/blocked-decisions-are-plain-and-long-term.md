@@ -14,7 +14,9 @@ so they can answer it in one pass:
 
 - `# Decision:` is a real question in plain words, not the task title with a question mark.
 - **Why it is blocked:** what happened and why an agent cannot go on, in two or three sentences.
-- **The decision:** the one thing the human must choose or do.
+- **The decision:** the one thing the human must choose or do. A request written by
+  `coop tasks block --question … --why …` or the in-box `tasks_block` tool has no such line: its
+  question is the heading.
 - **Options:** what each one means for the user or the product, cost included. Drop an option the
   evidence has already ruled out instead of offering it.
 - **Recommendation:** one line naming the option that is best for the product in the long term,
@@ -37,6 +39,9 @@ lines that `coop tasks decisions` reads. Details an agent needs to resume go in 
 state.md, not decision.md. Related: [[cli-text-is-plain-english]].
 
 ## Changelog
+- 2026-10-17 — both writers now ask for it: `coop tasks block --why` and the in-box `tasks_block`
+  tool's `why` write `**Why it is blocked:**` after `**Blocks:**` and put the one-line question in
+  the heading; the editable scaffold carries a placeholder for it, and both task READMEs show it.
 - 2026-10-17 — created. Swept all 11 blocked decision.md files: 2 were already answered by the
   repo (main pushed, CI green) and closed with that evidence; 9 rewritten to this shape, 3 of them
   with changed options or recommendation (fork-record fence, release summary, case-insensitive
