@@ -41,6 +41,12 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **`coop tasks block` no longer asks for a decision that is already written.** Blocking a task
+  whose decision.md an agent had already filled in still said to write the question, options and
+  recommendation, and blocking a task that was already blocked said "Blocked task" as if it had
+  moved. The first now only names the file, and the second says the task is already blocked and
+  changes nothing.
+
 - **Lock files of deleted projects are cleaned up.** Every box launch keeps a small lock file for
   its project's folder in `~/.local/state/coop/executions/v1/service-locks`, and none was ever
   removed, so every temporary project, such as the one each `coop doctor` run makes, left one

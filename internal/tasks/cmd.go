@@ -1848,6 +1848,14 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			return 1, fmt.Errorf("%s was already answered (%q) — work it instead of blocking it again; to ask something new, block it with --question", t.ID, answer)
 		}
 	}
+	// A plain block of a blocked task has nothing to do; saying "Blocked" would claim a move.
+	if !req.filled && t.State == StateBlocked {
+		ui.Note("%s is already blocked.", t.Title)
+		if t.HasDecision {
+			ui.Note("\n  %s", displayPath(filepath.Join(t.Dir, "decision.md")))
+		}
+		return 0, nil
+	}
 	if t.State == StateDone {
 		if err := refuseForkTaskOwner(root, t.ID, "block"); err != nil {
 			return 1, err
@@ -1880,12 +1888,18 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			return -1, err
 		}
 	}
+	// An agent often writes decision.md before it blocks; only the template still needs writing.
+	written := req.filled
+	if !written {
+		body, err := os.ReadFile(dec)
+		written = err == nil && !strings.Contains(string(body), decisionScaffoldMarker)
+	}
 	ui.OK("Blocked task: %s", t.Title)
 	ui.Note("\n  %s", displayPath(dec))
 	if earlierAnswer != "" {
 		ui.Note("\nIt had been answered (%q); that decision is kept in its log.md.", earlierAnswer)
 	}
-	if !req.filled {
+	if !written {
 		ui.Note("\nWrite the question, why the task is blocked, the options, and your recommendation in this file.")
 		ui.Note("To fill them in as you block a task, see:")
 		ui.Note("\n  coop help tasks block")

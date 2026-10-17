@@ -224,6 +224,40 @@ func TestBlockWithoutTextFlagsKeepsTheTemplate(t *testing.T) {
 	}
 }
 
+// An agent that wrote decision.md before blocking is not told to write it; a task already blocked
+// is said to be so, and nothing about it changes.
+func TestBlockSaysWhatIsLeftToDo(t *testing.T) {
+	root := t.TempDir()
+	written := "# Decision: Which disk?\n\n**Why it is blocked:** W\n\n**Options:**\n\n- A — one\n\n**Recommendation:** A\n\n---\n\n" + decisionResolutionLine
+	writeTaskFile(t, filepath.Join(root, StateInProgress, "pick-disk", "task.md"), "# Pick disk\n")
+	writeTaskFile(t, filepath.Join(root, StateInProgress, "pick-disk", "decision.md"), written)
+	out := captureStderr(t, func() {
+		if code, err := tasksFolderBlock(root, []string{"pick-disk"}); code != 0 || err != nil {
+			t.Fatalf("block = %d, %v", code, err)
+		}
+	})
+	dec := filepath.Join(root, StateBlocked, "pick-disk", "decision.md")
+	if !strings.Contains(out, "Blocked task: Pick disk") || strings.Contains(out, "Write the question") || readFile(t, dec) != written {
+		t.Errorf("blocking with a written decision said:\n%s\nand left:\n%s", out, readFile(t, dec))
+	}
+
+	out = captureStderr(t, func() {
+		if code, err := tasksFolderBlock(root, []string{"pick-disk"}); code != 0 || err != nil {
+			t.Fatalf("block again = %d, %v", code, err)
+		}
+	})
+	if !strings.Contains(out, "Pick disk is already blocked.") || strings.Contains(out, "Blocked task") || readFile(t, dec) != written {
+		t.Errorf("blocking a blocked task said:\n%s", out)
+	}
+	writeTaskFile(t, filepath.Join(root, StateBlocked, "no-decision", "task.md"), "# No decision\n")
+	if code, err := tasksFolderBlock(root, []string{"no-decision"}); code != 0 || err != nil {
+		t.Fatalf("block a blocked task without decision.md = %d, %v", code, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, StateBlocked, "no-decision", "decision.md")); !os.IsNotExist(err) {
+		t.Errorf("blocking a blocked task wrote a decision.md: %v", err)
+	}
+}
+
 // An incomplete or malformed request is rejected BEFORE anything moves.
 func TestBlockRejectsAnIncompleteRequestBeforeMoving(t *testing.T) {
 	for name, tc := range map[string]struct {
