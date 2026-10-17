@@ -17,6 +17,14 @@
   any other unusable preset name, listed as a preset that could not load, with the name shown
   escaped, and every name `coop presets` lists is escaped.
 
+- **Coop shows invisible characters in names an agent chose.** Where Coop escapes a name an agent
+  in a box could have chosen, such as a file, folder or service name, it shows the control
+  characters in it as codes, such as `\u001B`. Invisible characters, such as a zero-width space, a
+  byte-order mark, a soft hyphen or a variation selector after a plain letter, and the Unicode line
+  and paragraph separators, were printed as they were, so a folder named `w\u200Beb` looked exactly
+  like `web`. Now Coop shows them as codes too. An emoji joined from several, such as a family,
+  shows its parts with `\u200D` between them.
+
 - **Coop's home-folder checks also see your home folder through a second mount.** macOS reaches
   your home folder as `/System/Volumes/Data/Users/<you>` as well as `/Users/<you>`, also when it
   is on another disk, and a Linux bind mount, such as `/data/home` mounted at `/home`, reaches it

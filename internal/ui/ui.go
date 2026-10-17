@@ -10,17 +10,36 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 )
 
-// SafeInline keeps repository and daemon text from adding terminal commands,
-// new lines, or direction changes to a human approval prompt.
+// SafeInline keeps repository and daemon text from adding terminal commands, new lines, direction
+// changes or invisible characters to a line a person reads: a folder named "w\u200Beb" must not
+// pass for "web". Control and format characters (Unicode Cc and Cf: direction marks, zero-width
+// spaces and joiners, the byte-order mark, the soft hyphen, tag characters), the line and
+// paragraph separators, and the other code points Unicode draws as nothing, such as the Hangul
+// fillers, the grapheme joiner and the unassigned rest of the tag block, are written as their
+// code: \u200B, or \U000E0041 above U+FFFF. Letters, accents, CJK, emoji and variation selectors,
+// which emoji and CJK ideographs need, stay as they are, except a variation selector at the start
+// or after an ASCII letter, which no emoji or ideograph puts there and which draws as nothing.
+// Joiners and tag characters are escaped inside emoji too, since they hide just as well in a
+// name: a family emoji or England's flag shows its parts with the codes between them, and so does
+// a Persian or Indic word that needs a zero-width joiner or non-joiner. Invalid UTF-8 becomes
+// U+FFFD.
 func SafeInline(value string) string {
 	var out strings.Builder
+	previous := rune(-1)
 	for _, r := range value {
-		if unicode.IsControl(r) || r == 0x061c || r == 0x200e || r == 0x200f || r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x2069 {
-			fmt.Fprintf(&out, "\\u%04X", r)
-		} else {
+		hiddenSelector := unicode.Is(unicode.Variation_Selector, r) &&
+			(previous < 0 || previous < utf8.RuneSelf && unicode.IsLetter(previous))
+		previous = r
+		switch {
+		case !hiddenSelector && !unicode.IsControl(r) && !unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp, unicode.Other_Default_Ignorable_Code_Point):
 			out.WriteRune(r)
+		case r > 0xFFFF:
+			fmt.Fprintf(&out, "\\U%08X", r)
+		default:
+			fmt.Fprintf(&out, "\\u%04X", r)
 		}
 	}
 	return out.String()
