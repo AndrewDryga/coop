@@ -89,9 +89,5 @@ func ownerProcessLive(record TaskOwnerRecord) bool {
 	if record.ActorPID == 0 {
 		return true
 	}
-	switch processidentity.Inspect(record.ActorPID, record.ActorStart) {
-	case processidentity.Gone, processidentity.Mismatch:
-		return false
-	}
-	return true
+	return !processidentity.Inspect(record.ActorPID, record.ActorStart).ProvesGone()
 }

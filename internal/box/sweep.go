@@ -305,12 +305,7 @@ func supervisorProvablyDead(ref supervisorRef, host string) bool {
 	if ref.origin(host) != originHere {
 		return false
 	}
-	switch processidentity.Inspect(ref.pid, ref.token) {
-	case processidentity.Gone, processidentity.Mismatch:
-		return true
-	default:
-		return false
-	}
+	return processidentity.Inspect(ref.pid, ref.token).ProvesGone()
 }
 
 // supervisorScope is the workspace a box belongs to for sweeping: the trusted policy repo when the

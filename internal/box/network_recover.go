@@ -194,9 +194,7 @@ var networkRecoveryOrder = []string{"agent", "guard", "controller", "ipc", "obse
 
 func recoverNetworkRun(ctx context.Context, evidence *networkstate.Evidence, record networkstate.Execution, connect recoverConnect) (out NetworkRecovery) {
 	out = NetworkRecovery{RunID: record.ID}
-	switch processidentity.Inspect(record.Supervisor.PID, record.Supervisor.StartToken) {
-	case processidentity.Gone, processidentity.Mismatch:
-	default:
+	if !processidentity.Inspect(record.Supervisor.PID, record.Supervisor.StartToken).ProvesGone() {
 		out.Live = true
 		out.Skipped = "its supervisor (pid " + strconv.Itoa(record.Supervisor.PID) + ") is still running or its identity is uncertain"
 		return out

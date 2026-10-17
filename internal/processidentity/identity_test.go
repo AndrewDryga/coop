@@ -83,3 +83,13 @@ func TestParentAndCommandOfTheCurrentProcess(t *testing.T) {
 		t.Fatal("an impossible pid must read as unknown, not as a process")
 	}
 }
+
+// Only a pid that is gone, or now another process, proves the recorded process gone; every caller
+// that deletes a record or reaps a box on that proof shares this one rule.
+func TestOnlyGoneAndMismatchProveGone(t *testing.T) {
+	for state, want := range map[State]bool{Gone: true, Mismatch: true, Match: false, Unknown: false, Foreign: false} {
+		if got := state.ProvesGone(); got != want {
+			t.Errorf("%v.ProvesGone() = %v, want %v", state, got, want)
+		}
+	}
+}

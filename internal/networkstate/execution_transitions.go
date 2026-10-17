@@ -181,8 +181,7 @@ func recordResourceCreated(record *Execution, role, objectID string) (bool, erro
 // negative observation of an ambiguous creation into confirmed absence.
 func (e *Evidence) ReconcileInterruptedResource(ctx context.Context, id string, revision networkview.Count, daemon, role, name, objectID string) (Execution, error) {
 	return e.files.mutateExecution(ctx, id, revision, func(record *Execution) (bool, error) {
-		state := processidentity.Inspect(record.Supervisor.PID, record.Supervisor.StartToken)
-		if state != processidentity.Gone && state != processidentity.Mismatch {
+		if !processidentity.Inspect(record.Supervisor.PID, record.Supervisor.StartToken).ProvesGone() {
 			return false, errors.New("network supervisor is live or its identity is uncertain")
 		}
 		resource, err := resourceAt(record, role)
@@ -292,8 +291,7 @@ func (e *Evidence) RecoverInterrupted(ctx context.Context, id string, revision n
 		if record.Receipt != nil {
 			return false, nil
 		}
-		state := processidentity.Inspect(record.Supervisor.PID, record.Supervisor.StartToken)
-		if state != processidentity.Gone && state != processidentity.Mismatch {
+		if !processidentity.Inspect(record.Supervisor.PID, record.Supervisor.StartToken).ProvesGone() {
 			return false, errors.New("network supervisor is live or its identity is uncertain")
 		}
 		return sealExecution(record, "supervisor_lost", true)

@@ -22,6 +22,12 @@ const (
 	Foreign
 )
 
+// ProvesGone reports whether the recorded process no longer runs: its pid is gone, or now names a
+// different process. It is the one rule for deleting a record or reaping what that process owned.
+// Unknown and Foreign never count: the process may still run, and acting on it could take a live
+// run's state.
+func (s State) ProvesGone() bool { return s == Gone || s == Mismatch }
+
 // StartToken returns a stable, opaque token for pid, or an empty string when the kernel identity
 // cannot be read. Destructive callers must treat an empty token as unauthorised, not as a match.
 func StartToken(pid int) string { return platformStartToken(pid) }
