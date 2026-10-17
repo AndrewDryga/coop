@@ -197,6 +197,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 				"Make .tool-versions a readable regular file of at most 1 MiB, or a link to one inside the project, then run "+rerun+" again.",
 				"No files were changed.")
 		}
+		if errors.As(err, new(scaffold.UnknownStack)) {
+			return 1, reported("Could not use --stack "+stack, "Coop sets up a project's tools from its .tool-versions, and the only stack it knows is asdf.",
+				"Pin the versions in .tool-versions and run coop init, or run coop init --stack asdf.",
+				"No files were changed.")
+		}
 		return 1, reported("Could not use --stack "+stack, sentence(firstLine(err)),
 			"Add the tool versions this project needs, then run coop init --stack "+stack+".")
 	}

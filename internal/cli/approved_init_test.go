@@ -699,3 +699,15 @@ func TestSettledProjectIgnoresAmbientHooks(t *testing.T) {
 		})
 	}
 }
+
+// An unknown --stack names the choices that work; it never suggests running the same value again.
+func TestApprovedInitUnknownStack(t *testing.T) {
+	repo := t.TempDir()
+	a, normalize := initApp(t, repo)
+	var code int
+	out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--stack", "node"}) })
+	if code != 1 {
+		t.Errorf("an unknown stack exited %d, want 1", code)
+	}
+	assertApprovedOutput(t, "13u-stack-unknown", normalize(out))
+}
