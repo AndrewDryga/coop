@@ -1499,13 +1499,18 @@ func TestPolicyScanNamesAnUnreadableCoopignore(t *testing.T) {
 	}
 }
 
-// A file whose name alone makes it a secret is still named when the .coopignore above it cannot be
-// read: forcing the merge past the unreadable .coopignore must not land a .env nobody saw.
+// A file the readable rules hide is still named when another .coopignore above it cannot be read:
+// a rule in the root .coopignore, its own name or a folder's name above it. Forcing the merge past
+// the unreadable .coopignore must not land a db.prod.json or a .env nobody saw. The file the
+// readable rules leave visible gets the one warning that names the unreadable .coopignore.
 func TestPolicyScanNamesASecretUnderAnUnreadableCoopignore(t *testing.T) {
 	repo := initRepo(t)
+	writeTaskFile(t, filepath.Join(repo, ".coopignore"), "*.prod.json\n")
+	git(t, repo, "add", ".coopignore")
+	git(t, repo, "commit", "-qm", "rules")
 	git(t, repo, "checkout", "-q", "-b", "candidate")
 	// A secret folder hides what it holds whatever the file is called, so those files count too.
-	secrets := []string{"config/sub/.env", "config/sub/secrets/token.txt", "config/sub/.aws/config"}
+	secrets := []string{"config/sub/.aws/config", "config/sub/.env", "config/sub/db.prod.json", "config/sub/secrets/token.txt"}
 	for _, path := range secrets {
 		writeTaskFile(t, filepath.Join(repo, filepath.FromSlash(path)), "TOKEN=x\n")
 	}
@@ -1517,13 +1522,19 @@ func TestPolicyScanNamesASecretUnderAnUnreadableCoopignore(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := PolicyScan(repo, "candidate")
-	for _, path := range secrets {
-		if !slices.Contains(got, "secret-like file: "+path) {
-			t.Errorf("PolicyScan = %q; want %s named beside the unreadable .coopignore", got, path)
+	var named []string
+	unreadable := 0
+	for _, warn := range got {
+		if path, ok := strings.CutPrefix(warn, "secret-like file: "); ok {
+			named = append(named, path)
+		}
+		if strings.HasPrefix(warn, "coop cannot tell what config/.coopignore hides, because it is a folder") {
+			unreadable++
 		}
 	}
-	if slices.Contains(got, "secret-like file: config/sub/app.yml") {
-		t.Errorf("PolicyScan = %q; app.yml is not a secret by its names", got)
+	slices.Sort(named)
+	if !slices.Equal(named, secrets) || unreadable != 1 {
+		t.Errorf("PolicyScan = %q; want %q named and one warning for config/.coopignore", got, secrets)
 	}
 }
 

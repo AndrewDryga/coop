@@ -106,14 +106,18 @@ func TestReviewScanNamesAnUnreadableCoopignore(t *testing.T) {
 	}
 }
 
-// A file whose name alone makes it a secret is still named when the .coopignore above it cannot be
-// read, so the review never reports only the .coopignore for a candidate that adds a .env.
+// A file the readable rules hide is still named when another .coopignore above it cannot be read:
+// a rule in the root .coopignore, its own name or a folder's name above it. So the review never
+// reports only the .coopignore for a candidate that adds a db.prod.json or a .env; the file the
+// readable rules leave visible gets the one finding that names the unreadable .coopignore.
 func TestReviewScanNamesASecretUnderAnUnreadableCoopignore(t *testing.T) {
 	repo, git := gitrepo.New(t)
-	git("commit", "--allow-empty", "-qm", "base")
+	sessionWorkspaceWrite(t, filepath.Join(repo, ".coopignore"), "*.prod.json\n")
+	git("add", ".coopignore")
+	git("commit", "-qm", "base")
 	parent := gitOut(repo, "rev-parse", "HEAD")
 	// A secret folder hides what it holds whatever the file is called, so those files count too.
-	secrets := []string{"config/sub/.env", "config/sub/secrets/token.txt", "config/sub/.aws/config"}
+	secrets := []string{"config/sub/.aws/config", "config/sub/.env", "config/sub/db.prod.json", "config/sub/secrets/token.txt"}
 	for _, path := range secrets {
 		if err := os.MkdirAll(filepath.Join(repo, filepath.Dir(filepath.FromSlash(path))), 0700); err != nil {
 			t.Fatal(err)
@@ -130,13 +134,19 @@ func TestReviewScanNamesASecretUnderAnUnreadableCoopignore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range secrets {
-		if !slices.Contains(findings, "secret-like file: "+path) {
-			t.Errorf("findings = %q; want %s named beside the unreadable config/.coopignore", findings, path)
+	var named []string
+	unreadable := 0
+	for _, finding := range findings {
+		if path, ok := strings.CutPrefix(finding, "secret-like file: "); ok {
+			named = append(named, path)
+		}
+		if finding == "coop cannot tell what config/.coopignore hides, because it is a link" {
+			unreadable++
 		}
 	}
-	if slices.Contains(findings, "secret-like file: config/sub/app.yml") {
-		t.Errorf("findings = %q; app.yml is not a secret by its names", findings)
+	slices.Sort(named)
+	if !slices.Equal(named, secrets) || unreadable != 1 {
+		t.Errorf("findings = %q; want %q named and one finding for config/.coopignore", findings, secrets)
 	}
 }
 

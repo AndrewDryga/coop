@@ -190,8 +190,9 @@
   Now starting or building a box refuses and names that `.coopignore` and why, and so do
   `coop up`, `coop check-secrets`, `coop init` and a preset stored under it; `coop loop` stops at
   the first launch that meets one instead of retrying it. `coop fork merge` asks for `--force` and
-  still names every file under it whose name, or a folder's name above it, marks it as a secret,
-  such as `.env` or anything in `secrets/` or `.aws/`, and session reviews report it.
+  session reviews report it. Both still name every file under it that your other `.coopignore`
+  rules hide, or that its name or a folder above it marks as a secret, such as `.env` or anything
+  in `secrets/` or `.aws/`.
 
 - **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
   `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a

@@ -289,7 +289,7 @@ func scanVisibleTree(repo string, includeIgnored bool) (treeScan, error) {
 		// (gitignored, or coop's own .agent/ state) is protected on both sides and skipped.
 		hidden, err := shadowed(rel)
 		if err != nil {
-			return treeScan{}, err // a .coopignore coop cannot read: the box would not start either
+			return treeScan{}, err // a .coopignore coop cannot read leaves this file undecided
 		}
 		if hidden && !committable[rel] {
 			continue

@@ -2,7 +2,7 @@
 name: secret-shadow-walk
 description: every launch walks the whole checkout from a real-folder root (a linked root and a link to home are refused, though a box that writes the root's parent can still swap it), gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs; the .coopignore files above the repository, short of home, apply too
 subsystem: box
-sources: [internal/box/mounts.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, tools/lifecyclebench]
+sources: [internal/box/mounts.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, internal/forkctl/merge.go, internal/sessionsvc/review_scan.go, tools/lifecyclebench]
 updated: 2026-10-17
 ---
 
@@ -103,21 +103,35 @@ therefore drop out. Only root can give a file away, so `TestRulesAboveFollowTheF
 through the `ownerOf` variable. Nothing else carries: neither the built-in secret names of the
 folders above (a project under `~/work/secrets/` must not vanish) nor a rule that hides the project
 folder itself (the root is never hidden). A box cannot plant a `.git` in a folder it sees only as a
-read-only decoy. A `.coopignore` that is there but is not a regular file of at most 1 MiB coop
+read-only decoy. `TestNestedRepositoryKeepsTheRulesAboveIt` (box) covers a planted `.git` folder,
+a gitfile and a real submodule through the mount plan and a source copy.
+
+**An unreadable `.coopignore`.** One that is there but is not a regular file of at most 1 MiB coop
 can read (a link, a folder, a FIFO, no read permission, too large), above the repository or inside
-it, is `shadowpath.UnreadableCoopignore`: the decider (`NewDecider`, now `(bool, error)`) answers
-every path it covers "hidden" with that error, as a snapshot does. Launches, service binds and the
-build context refuse it; every command draws it the same way (`asUsage`, `reportUnreadableCoopignore`,
-and through it `buildFailure`, `updateBoxFailure` and `coop up`'s `composeRefusal`): "Could not read
-<file>", escaped, with "Remove it if you did not create it" first in the fix. The loop stops at the
-first launch that meets one (`stopsTheRun`) rather than retry it into "Stopped after 5 failed
-attempts", which would hide the file's name. `coop fork merge` warns (needs --force) and still
-names a file whose name, or a folder name above it, alone marks it as a secret (`BuiltinSecret`,
-the decider's own per-name check, `secretName`); the isolated publication refuses; session review
-scans report it once; a preset file under it fails naming the .coopignore, not the preset, escaped
-in `coop presets` too. `TestNestedRepositoryKeepsTheRulesAboveIt`
-(box) covers a planted `.git` folder, a gitfile and a real submodule through the mount plan and a
-source copy.
+it, is `shadowpath.UnreadableCoopignore`. A snapshot (`OpenTree`) refuses it outright. The decider
+(`NewDecider`, `(bool, error)`) still decides what the rest decides. Rules only ever hide: there is
+no negation syntax, and the allow lists rescue built-in names only. So a path that a readable rule
+hides (above the unreadable file, below it, or in a folder above the repository), or that a secret
+name hides (its own or a folder's above it), is plainly hidden, and every other path the file
+covers comes back hidden with that error: the nearest unreadable file above the repository,
+else the top-most inside it. For that,
+`enclosingPolicies` and the decider's chains read on past an unreadable file, carrying the first
+error, and the directory memo keeps only "hidden by what coop can read": a folder left undecided
+does not decide what it holds. `TestReadableRulesStillHideBelowAnUnreadableCoopignore` and the
+`linked/` subtree of `TestDeciderMatchesShadowed` pin it. Launches, service binds, the build
+context and check-secrets refuse at the first path whose answer carries the error, and none of
+what that file could hide stays visible without one, since its rules reach only its own folder's
+subtree (`TestAnUnreadableCoopignoreStopsTheBoxPastWhatTheRulesHide`: the mounts bind a regular
+oversized one without asking about it). Every command draws it the same way (`asUsage`,
+`reportUnreadableCoopignore`, and through it `buildFailure`, `updateBoxFailure` and `coop up`'s
+`composeRefusal`): "Could not read <file>", escaped, with "Remove it if you did not create it"
+first in the fix. The loop stops at the first launch that meets one (`stopsTheRun`) rather than
+retry it into "Stopped after 5 failed attempts", which would hide the file's name. `coop fork
+merge` warns once per unreadable file that covers a file the readable rules leave visible (needs
+--force), and session review scans report it once;
+both name every changed file the readable rules or a secret name hide as secret-like. The isolated
+publication refuses; a preset file under it fails naming the .coopignore, not the preset, escaped
+in `coop presets` too.
 
 The prefix keeps the spelling of the repository path it was given. FindRepo uses the disk's own
 spelling, but a `COOP_REPO` typed in another case on a case-insensitive disk (`~/work/App` for
@@ -136,6 +150,12 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-10-17 — below an unreadable `.coopignore` the readable rules still decide: the decider
+  answers plain "hidden" for what they or a secret name hide and carries the error only for the
+  rest, reading on past the unreadable file; the scans name every file the readable rules hide, and
+  `BuiltinSecret` and its box wrapper are gone (task
+  2026-10-17-name-the-files-readable-coopignore-rules-hide-wh). Checked against shadowpath.go,
+  box/mounts.go, forkctl/merge.go and sessionsvc/review_scan.go.
 - 2026-10-17 — `HomeOrAbove` also walks up the other paths the mount table gives to home: every
   local macOS volume's mount point plus home's real path (the data volume) and Linux mounts of
   home's filesystem from /proc/self/mountinfo; the `.coopignore` walk keeps the real-path check

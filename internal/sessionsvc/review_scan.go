@@ -72,14 +72,13 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 		if fields[4] == "D" {
 			continue
 		}
+		// A file the readable rules or a secret name hide comes back without an error even under a
+		// .coopignore coop cannot read, so it is named whatever that file says.
 		switch hidden, policyErr := shadowed(path); {
 		case policyErr != nil:
 			if !unreadable[policyErr.Error()] {
 				unreadable[policyErr.Error()] = true
 				add(policyErr.Error())
-			}
-			if box.BuiltinSecret(path) {
-				add("secret-like file: " + path) // named by itself, whatever the .coopignore says
 			}
 		case hidden:
 			add("secret-like file: " + path)

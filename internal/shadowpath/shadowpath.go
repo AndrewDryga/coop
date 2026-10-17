@@ -237,8 +237,10 @@ type enclosingPolicy struct {
 // of the folder decides, not the file's: a .coopignore in a folder another user owns is skipped,
 // since anyone can create /tmp/.coopignore or hard-link one of your files there so it looks like
 // yours, while one saved with sudo in your own folder applies. Root's /tmp, /private and /Volumes
-// therefore count for nothing. It returns the rules it read and their size, or the first
-// .coopignore it cannot read as an UnreadableCoopignore naming its full path.
+// therefore count for nothing. It returns the rules it read and their size, and the first
+// .coopignore it cannot read, the nearest the repository, as an UnreadableCoopignore naming its
+// full path. It reads on past that one: OpenTree refuses the error, while NewDecider still lets
+// the readable rules hide what they hide.
 func enclosingPolicies(repo string) ([]enclosingPolicy, int64, error) {
 	canonical, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -249,6 +251,7 @@ func enclosingPolicies(repo string) ([]enclosingPolicy, int64, error) {
 	var (
 		policies []enclosingPolicy
 		size     int64
+		unread   error
 	)
 	for child, dir := canonical, filepath.Dir(canonical); dir != child; child, dir = dir, filepath.Dir(dir) {
 		if homeOnRealPath(dir) {
@@ -263,7 +266,10 @@ func enclosingPolicies(repo string) ([]enclosingPolicy, int64, error) {
 		}
 		root, err := safefile.OpenRoot(dir)
 		if err != nil {
-			return nil, 0, unreadableCoopignore(nil, file, err)
+			if unread == nil {
+				unread = unreadableCoopignore(nil, file, err)
+			}
+			continue
 		}
 		data, err := readCoopignore(root, file)
 		_ = root.Close()
@@ -271,7 +277,10 @@ func enclosingPolicies(repo string) ([]enclosingPolicy, int64, error) {
 			continue // removed since the Lstat
 		}
 		if err != nil {
-			return nil, 0, err
+			if unread == nil {
+				unread = err
+			}
+			continue
 		}
 		size += int64(len(data))
 		if g := ParseUserGlobs(data); len(g.Base) > 0 || len(g.Path) > 0 {
@@ -279,7 +288,7 @@ func enclosingPolicies(repo string) ([]enclosingPolicy, int64, error) {
 			policies = append(policies, enclosingPolicy{prefix: filepath.ToSlash(rel) + "/", globs: g})
 		}
 	}
-	return policies, size, nil
+	return policies, size, unread
 }
 
 // readCoopignore reads the .coopignore in dir; file is the path a refusal names it by. Nothing there
@@ -511,8 +520,12 @@ func RepoCommentedEntries(repo string) []string {
 // the reference (TestDeciderMatchesShadowed).
 //
 // A .coopignore that is there but cannot be read, in the repository or a folder above it, leaves
-// the paths it covers undecided: for those the predicate returns its UnreadableCoopignore, as
-// OpenTree does, and reports them hidden, so even a caller that cannot refuse hides them.
+// the paths it covers undecided unless the rest decides them. Rules only ever hide, so a path that
+// a readable rule or a secret name hides, by its own name or a folder's above it, is hidden
+// whatever that file says: shadowed's answer with the file read as empty, which lets a scan name
+// it. Every other path it covers comes back hidden with its UnreadableCoopignore, which OpenTree
+// refuses too: a caller that refuses meets it at the first such path, and one that cannot refuse
+// still hides it.
 func NewDecider(repo string) func(string) (bool, error) {
 	canonical, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -523,7 +536,8 @@ func NewDecider(repo string) func(string) (bool, error) {
 	// repository first. Almost every chain is empty; a directory without rules can never match, so
 	// skipping it changes nothing. A folder above the repository matches its path rules against
 	// prefix plus the path; one inside it, against the path below dir. A chain that meets a
-	// .coopignore it cannot read carries that error instead.
+	// .coopignore it cannot read carries the first such error, and keeps the rules of the ones it
+	// can read, below that one too.
 	type policy struct {
 		dir, prefix string
 		globs       UserGlobs
@@ -547,28 +561,27 @@ func NewDecider(repo string) func(string) (bool, error) {
 			}
 			c.err = unread
 		}
+		data, err := readRepoPolicy(canonical, dirRel)
 		if c.err == nil {
-			var data []byte
-			data, c.err = readRepoPolicy(canonical, dirRel)
-			if g := ParseUserGlobs(data); len(g.Base) > 0 || len(g.Path) > 0 {
-				c.policies = append(c.policies[:len(c.policies):len(c.policies)], policy{dir: dirRel, globs: g}) // never extend a shared chain
-			}
+			c.err = err
+		}
+		if g := ParseUserGlobs(data); len(g.Base) > 0 || len(g.Path) > 0 {
+			c.policies = append(c.policies[:len(c.policies):len(c.policies)], policy{dir: dirRel, globs: g}) // never extend a shared chain
 		}
 		chains[dirRel] = c
 		return c.policies, c.err
 	}
 	secret, allow := compileGlobs(SecretGlobs), compileGlobs(AllowGlobs)
 	template, hard := compileGlobs(allowTemplateGlobs), compileGlobs(hardSecretGlobs)
-	here := func(relSlash string) (bool, error) { // shadowedHere, with the same answers
+	// here is shadowedHere over the rules coop can read, with the same answers: hidden by the path's
+	// own name or a readable rule on its chain, else not, with the chain's error, if it has one.
+	here := func(relSlash string) (bool, error) {
 		name := relSlash[strings.LastIndexByte(relSlash, '/')+1:]
 		lname := strings.ToLower(name)
 		if secret.matches(lname) && !(allow.matches(lname) || template.matches(lname) && !hard.matches(lname)) {
 			return true, nil
 		}
 		chain, err := policies(parentSlash(relSlash))
-		if err != nil {
-			return true, err
-		}
 		for _, p := range chain {
 			remaining := relSlash
 			if p.dir != "" {
@@ -578,30 +591,30 @@ func NewDecider(repo string) func(string) (bool, error) {
 				return true, nil
 			}
 		}
-		return false, nil
+		return false, err
 	}
-	type verdict struct {
-		hidden bool
-		err    error
-	}
-	dirs := map[string]verdict{"": {}} // the repository root is never hidden
-	var dirShadowed func(string) (bool, error)
-	dirShadowed = func(dirRel string) (bool, error) {
-		v, ok := dirs[dirRel]
+	// Whether a directory is hidden by what coop can read, by its own verdict or one above it. Only
+	// that is remembered: a directory left undecided does not decide what it holds, since their own
+	// names and rules can still hide them, and each carries its own chain's error otherwise.
+	dirs := map[string]bool{"": false} // the repository root is never hidden
+	var dirShadowed func(string) bool
+	dirShadowed = func(dirRel string) bool {
+		hidden, ok := dirs[dirRel]
 		if !ok {
-			if v.hidden, v.err = dirShadowed(parentSlash(dirRel)); !v.hidden {
-				v.hidden, v.err = here(dirRel)
+			if hidden = dirShadowed(parentSlash(dirRel)); !hidden {
+				hidden, _ = here(dirRel)
 			}
-			dirs[dirRel] = v
+			dirs[dirRel] = hidden
 		}
-		return v.hidden, v.err
+		return hidden
 	}
 	return func(relSlash string) (bool, error) {
 		relSlash = cleanSlash(relSlash)
-		if hidden, err := dirShadowed(parentSlash(relSlash)); hidden {
-			return true, err
+		if dirShadowed(parentSlash(relSlash)) {
+			return true, nil
 		}
-		return here(relSlash)
+		hidden, err := here(relSlash)
+		return hidden || err != nil, err
 	}
 }
 
@@ -746,18 +759,6 @@ func shadowedByCoopignore(relSlash string, enclosing []enclosingPolicy, loadDir 
 		}
 		remaining = remaining[i+1:]
 	}
-}
-
-// BuiltinSecret reports whether the file at relSlash, or a folder above it, is a secret by its name
-// alone, as `secrets/` or `.aws/` is: what the decider checks for each before any .coopignore. A scan
-// that cannot read a .coopignore still names such a file instead of only the .coopignore.
-func BuiltinSecret(relSlash string) bool {
-	for name := range strings.SplitSeq(cleanSlash(relSlash), "/") {
-		if secretName(name) {
-			return true
-		}
-	}
-	return false
 }
 
 func MatchesAny(name string, globs []string) bool {

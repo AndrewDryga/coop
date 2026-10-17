@@ -110,7 +110,9 @@ func TestCommentedEntries(t *testing.T) {
 // NewDecider remembers directory verdicts for speed; shadowed is the plain definition. Every path
 // of a tree with secrets at several depths, nested .coopignore rules, rules in the folder above
 // the repository, allow-listed names and paths inside hidden directories gets the same answer from
-// both, asked in shuffled order so the memo cannot lean on a walk's order.
+// both, asked in shuffled order so the memo cannot lean on a walk's order. Below a .coopignore the
+// safe read refuses, a path shadowed hides, reading that file as empty, is hidden with no error,
+// and every other path carries the refusal.
 func TestDeciderMatchesShadowed(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // a sibling of outer: the walk above the repository stops below their parent
 	outer := t.TempDir()
@@ -153,6 +155,21 @@ func TestDeciderMatchesShadowed(t *testing.T) {
 		"Credentials/README.md":          "",
 		"docs/kubeconfig.yaml.example":   "",
 		"docs/guide/credentials.yml":     "",
+		// below linked/.coopignore, a link planted next: hidden by a name, a folder's name, a rule
+		// in the root, above the repository or below the link, or by nothing coop can read
+		"linked/plain.txt":        "",
+		"linked/.env":             "",
+		"linked/db.dump":          "",
+		"linked/app.json":         "",
+		"linked/vault/key.txt":    "",
+		"linked/secrets/a/b.txt":  "",
+		"linked/sub/.coopignore":  "x.txt\ncfg/*.yml\n",
+		"linked/sub/x.txt":        "",
+		"linked/sub/deep/x.txt":   "",
+		"linked/sub/cfg/a.yml":    "",
+		"linked/sub/cfg/b.json":   "",
+		"linked/sub/y.txt":        "",
+		"linked/sub/.env.example": "",
 	}
 	for rel, body := range files {
 		p := filepath.Join(repo, filepath.FromSlash(rel))
@@ -164,18 +181,13 @@ func TestDeciderMatchesShadowed(t *testing.T) {
 		}
 	}
 	// Links the safe read refuses: a .coopignore that is a symlink, which leaves the paths below it
-	// undecided, and a directory reached through one, which has no rules of its own (the folder it
-	// reaches is judged by its own path). The decider's lstat shortcut must not change either.
+	// that nothing readable hides undecided, and a directory reached through one, which has no rules
+	// of its own (the folder it reaches is judged by its own path). The decider's lstat shortcut must
+	// not change either.
 	if err := os.WriteFile(filepath.Join(repo, "outside-rules"), []byte("*\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(repo, "linked"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.Symlink("../outside-rules", filepath.Join(repo, "linked", CoopIgnoreFile)); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, "linked", "plain.txt"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("pkg", filepath.Join(repo, "pkglink")); err != nil {
@@ -210,25 +222,31 @@ func TestDeciderMatchesShadowed(t *testing.T) {
 	}
 	rand.New(rand.NewPCG(1, 2)).Shuffle(len(paths), func(i, j int) { paths[i], paths[j] = paths[j], paths[i] })
 	decide := NewDecider(repo)
-	hidden := 0
+	unreadable := UnreadableCoopignore{File: "linked/.coopignore", Reason: "is a link"}
+	hidden, decidedBelow, undecided := 0, 0, 0
 	for _, rel := range paths {
 		got, err := decide(rel)
-		if strings.HasPrefix(rel, "linked/") {
-			if want := (UnreadableCoopignore{File: "linked/.coopignore", Reason: "is a link"}); !got || err != want {
-				t.Errorf("%s: decider says hidden=%t, %v; want hidden with %q", rel, got, err, want)
-			}
-			continue
+		want, wantErr := shadowed(rel, enclosing, reference), error(nil)
+		switch {
+		case !strings.HasPrefix(rel, "linked/"):
+		case want:
+			decidedBelow++
+		default:
+			want, wantErr = true, unreadable
+			undecided++
 		}
-		want := shadowed(rel, enclosing, reference)
-		if got != want || err != nil {
-			t.Errorf("%s: decider says hidden=%t, %v; shadowed says %t", rel, got, err, want)
+		if got != want || err != wantErr {
+			t.Errorf("%s: decider says hidden=%t, %v; want hidden=%t, %v", rel, got, err, want, wantErr)
 		}
-		if want {
+		if want && wantErr == nil {
 			hidden++
 		}
 	}
-	if hidden == 0 || hidden == len(paths) {
-		t.Fatalf("the tree should mix hidden and visible paths, got %d of %d hidden", hidden, len(paths))
+	if hidden == 0 || hidden+undecided == len(paths) {
+		t.Fatalf("the tree should mix hidden and visible paths, got %d hidden and %d undecided of %d", hidden, undecided, len(paths))
+	}
+	if decidedBelow < 8 || undecided < 3 {
+		t.Fatalf("below linked/.coopignore %d paths are hidden by what coop can read and %d undecided; the tree no longer tests both", decidedBelow, undecided)
 	}
 }
 
@@ -380,6 +398,140 @@ func TestAnUnreadableCoopignoreIsRefused(t *testing.T) {
 	if hidden, err := NewDecider(repo)("config/app.yml"); hidden || err != nil {
 		t.Errorf("no .coopignore: hidden=%t, %v; want visible", hidden, err)
 	}
+}
+
+// Rules only ever hide, so a .coopignore coop cannot read leaves undecided only what the rest
+// leaves visible. A path that a readable rule hides, whether the rule sits above the unreadable
+// file, in a folder above the repository (nearer it or farther than an unreadable one there) or
+// below it, past a second unreadable file too, or that its own name or a folder's name above it
+// marks as a secret, is hidden with no error, so a scan can name it. Every other path below the
+// unreadable file, the file itself and the folders it covers included, carries the error of the
+// nearest one above the repository, else the top-most inside it, which still fails a snapshot. Each path is asked of one decider, a
+// folder before what it holds, and of a fresh one, so the memo cannot answer for what a folder holds.
+func TestReadableRulesStillHideBelowAnUnreadableCoopignore(t *testing.T) {
+	type answer struct {
+		rel    string
+		hidden bool
+		err    error
+	}
+	write := func(t *testing.T, path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unreadable := func(t *testing.T, path string) {
+		t.Helper()
+		if err := os.MkdirAll(path, 0o755); err != nil { // a folder where the rules belong
+			t.Fatal(err)
+		}
+	}
+	check := func(t *testing.T, repo string, want []answer, refused error) {
+		t.Helper()
+		shared := NewDecider(repo)
+		for _, w := range want {
+			for name, decide := range map[string]func(string) (bool, error){"a shared decider": shared, "a fresh decider": NewDecider(repo)} {
+				if hidden, err := decide(w.rel); hidden != w.hidden || err != w.err {
+					t.Errorf("%s: %s says hidden=%t, %v; want hidden=%t, %v", w.rel, name, hidden, err, w.hidden, w.err)
+				}
+			}
+		}
+		root, err := safefile.OpenRoot(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+		tree, _, err := OpenTree(root, repo, "config")
+		if err == nil {
+			_ = tree.Close()
+		}
+		if !errors.Is(err, refused) {
+			t.Errorf("snapshot of config = %v; want %q", err, refused)
+		}
+	}
+
+	t.Run("in the repository", func(t *testing.T) {
+		home, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", home)
+		outer := filepath.Join(home, "work")
+		repo := filepath.Join(outer, "app")
+		write(t, filepath.Join(outer, CoopIgnoreFile), "*.dump\napp/config/sub/outer.yml\n")
+		write(t, filepath.Join(repo, CoopIgnoreFile), "*.prod.json\nvault/\n")
+		unreadable(t, filepath.Join(repo, "config", CoopIgnoreFile))
+		write(t, filepath.Join(repo, "config", "sub", CoopIgnoreFile), "local.yml\ncfg/*.yml\n")
+		write(t, filepath.Join(repo, "config", "sub", "deep", "er", CoopIgnoreFile), "*.log\n")
+		// A second unreadable one, below the first and above the rules in er/.
+		if err := os.Symlink("elsewhere", filepath.Join(repo, "config", "sub", "deep", CoopIgnoreFile)); err != nil {
+			t.Fatal(err)
+		}
+		first := UnreadableCoopignore{File: "config/.coopignore", Reason: "is a folder"}
+		check(t, repo, []answer{
+			// A folder's .coopignore covers what the folder holds, not the folder.
+			{"config", false, nil},
+			// Left visible by the readable rules: the unreadable file, a folder below it and files.
+			{"config/.coopignore", true, first},
+			{"config/sub", true, first},
+			{"config/sub/app.yml", true, first},
+			{"config/sub/cfg/b.json", true, first},
+			// Hidden by the root rule above the unreadable file, a name rule and a path rule above
+			// the repository, a name rule and a path rule below the unreadable file, a secret name,
+			// its own or a folder's, and a folder a readable rule hides.
+			{"config/sub/db.prod.json", true, nil},
+			{"config/sub/backup.dump", true, nil},
+			{"config/sub/outer.yml", true, nil},
+			{"config/sub/local.yml", true, nil},
+			{"config/sub/cfg/a.yml", true, nil},
+			{"config/sub/.env", true, nil},
+			{"config/sub/.aws", true, nil},
+			{"config/sub/.aws/config", true, nil},
+			{"config/vault", true, nil},
+			{"config/vault/key.txt", true, nil},
+			// Past the second unreadable file the rules still count, and the error is the first one's.
+			{"config/sub/deep", true, first},
+			{"config/sub/deep/notes.txt", true, first},
+			{"config/sub/deep/local.yml", true, nil},
+			{"config/sub/deep/er/run.log", true, nil},
+			{"config/sub/deep/er/run.txt", true, first},
+			// Outside what the unreadable file covers.
+			{"src/main.go", false, nil},
+			{"db.prod.json", true, nil},
+		}, first)
+	})
+
+	t.Run("above the repository", func(t *testing.T) {
+		home, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", home)
+		team := filepath.Join(home, "work", "team")
+		repo := filepath.Join(team, "group", "app")
+		// Readable rules farther from the repository than the unreadable file, and nearer it.
+		write(t, filepath.Join(home, "work", CoopIgnoreFile), "*.bak\n")
+		unreadable(t, filepath.Join(team, CoopIgnoreFile))
+		write(t, filepath.Join(team, "group", CoopIgnoreFile), "*.tmp\napp/config/*.json\n")
+		write(t, filepath.Join(repo, CoopIgnoreFile), "*.prod.yml\n")
+		write(t, filepath.Join(repo, "config", CoopIgnoreFile), "local.yml\n")
+		first := UnreadableCoopignore{File: filepath.Join(team, CoopIgnoreFile), Reason: "is a folder"}
+		check(t, repo, []answer{
+			{"notes.bak", true, nil},
+			{"notes.tmp", true, nil},
+			{"config/app.json", true, nil},
+			{"config/db.prod.yml", true, nil},
+			{"config/local.yml", true, nil},
+			{".env", true, nil},
+			{"secrets/notes.md", true, nil},
+			{"config", true, first},
+			{"config/app.yml", true, first},
+			{"src/main.go", true, first},
+		}, first)
+	})
 }
 
 // The owner of the folder holding a .coopignore above the repository decides whether it applies,

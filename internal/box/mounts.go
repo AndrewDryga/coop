@@ -44,7 +44,8 @@ type Mount struct {
 // folder — matches it (its basename patterns apply anywhere in that directory's subtree; its
 // path patterns are relative to that directory). An explicit .coopignore match is
 // authoritative: it re-hides even an AllowGlobs-whitelisted name. A .coopignore it cannot read
-// stops the launch (UnreadableCoopignore) rather than leave what it names visible.
+// stops the launch (UnreadableCoopignore) at the first path under it that the other rules leave
+// visible, rather than leave what it names visible.
 //
 // Its only inputs are the repo tree, the .coopignore files in it and in the folders above it
 // (shadowpath.enclosingPolicies), and $HOME, which bounds that walk (no container runtime, no
@@ -106,7 +107,8 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 // hidden commit candidates because hiding a file from the box does not prevent committing it.
 // A hidden directory hides every descendant, including names an allow rule would otherwise
 // rescue. A path under a .coopignore coop cannot read comes back hidden with an
-// UnreadableCoopignore, which every caller that can refuse returns.
+// UnreadableCoopignore, which every caller that can refuse returns, unless a readable rule or a
+// secret name, its own or a folder's above it, already hides it.
 func NewShadowDecider(repo string) func(relSlash string) (bool, error) {
 	return shadowpath.NewDecider(repo)
 }

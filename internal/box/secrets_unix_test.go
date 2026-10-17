@@ -126,6 +126,57 @@ func TestAnUnreadableCoopignoreStopsWhatTheBoxSees(t *testing.T) {
 	}
 }
 
+// Below a .coopignore coop cannot read, what the other rules hide is decided and carries no
+// refusal, but what they leave visible still does, so what the box sees stops there: the mounts and
+// a service's binds meet a secret name and a file a root rule hides before it, and bind the
+// oversized .coopignore itself without asking about it.
+func TestAnUnreadableCoopignoreStopsTheBoxPastWhatTheRulesHide(t *testing.T) {
+	pinHome(t)
+	repo := realPath(t, t.TempDir())
+	for rel, body := range map[string]string{
+		CoopIgnoreFile:       "*.prod.json\n",
+		"config/.env":        "TOKEN=x\n",
+		"config/a.prod.json": "{}\n",
+		"config/app.yml":     "name: app\n",
+	} {
+		mkdirs(t, filepath.Dir(filepath.Join(repo, rel)))
+		if err := os.WriteFile(filepath.Join(repo, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oversized := unreadableCoopignores[3]
+	if oversized.name != "oversized" {
+		t.Fatalf("unreadableCoopignores[3] is %q; this test needs the regular file the mounts bind", oversized.name)
+	}
+	oversized.plant(t, filepath.Join(repo, "config", CoopIgnoreFile))
+	want := UnreadableCoopignore{File: "config/.coopignore", Reason: oversized.reason}
+	decide := NewShadowDecider(repo)
+	for rel, err := range map[string]error{"config/.env": nil, "config/a.prod.json": nil, "config/app.yml": want} {
+		if hidden, got := decide(rel); !hidden || got != err {
+			t.Fatalf("%s: hidden=%t, %v; want hidden, %v", rel, hidden, got, err)
+		}
+	}
+	compose := filepath.Join(repo, "compose.yml")
+	body := fmt.Sprintf("services:\n  probe:\n    image: alpine:3.24.2\n    user: \"%d:%d\"\n    mem_limit: 128m\n    cpus: 1\n    volumes:\n      - \"./config:/config\"\n",
+		os.Getuid(), os.Getgid())
+	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readValidatedCompose(compose, repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, mountErr := ComputeMounts(repo, "/workspace")
+	_, _, serviceErr := serviceShadowPlan(repo, compose, data)
+	_, buildErr := buildContextSelection(context.Background(), repo)
+	for i, plan := range []string{"mounts", "service binds", "build context"} {
+		var got UnreadableCoopignore
+		if err := []error{mountErr, serviceErr, buildErr}[i]; !errors.As(err, &got) || got != want {
+			t.Errorf("%s: %v; want %q", plan, err, want)
+		}
+	}
+}
+
 // The launch itself stops at the refusal: Docker is never asked to run a box without the rules.
 func TestRunRefusesAnUnreadableCoopignore(t *testing.T) {
 	pinHome(t)

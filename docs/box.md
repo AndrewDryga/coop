@@ -62,7 +62,8 @@ changes a file it hides unless you pass `--force` (an isolated fork has no overr
 user owns, such as `/tmp`, is ignored.
 
 A `.coopignore` must be a regular file of at most 1 MiB that Coop can read. If one is a link, a
-folder or anything else, Coop cannot tell what it hides, so starting a box refuses and names it.
+folder or anything else, Coop cannot tell what it hides, so starting a box refuses and names it
+when it covers a file your other `.coopignore` rules leave visible.
 
 The boundary is `.coopignore`, not `.gitignore`. A normal `coop run`, `coop loop` or `coop shell`
 binds your whole working tree. A file that Git ignores but that is on disk (a

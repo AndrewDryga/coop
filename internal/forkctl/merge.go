@@ -52,14 +52,13 @@ func PolicyScan(repo, ref string) []string {
 			continue
 		}
 		path := f[len(f)-1]
+		// A file the readable rules or a secret name hide comes back without an error even under a
+		// .coopignore coop cannot read, so it is named whatever that file says.
 		switch hidden, err := shadowed(filepath.ToSlash(path)); {
 		case err != nil: // coop cannot tell whether the file is hidden, so the merge waits for --force
 			if !unreadable[err.Error()] {
 				unreadable[err.Error()] = true
 				warns = append(warns, err.Error()+" — remove it if you did not create it, or make it a readable regular file of at most 1 MiB, then merge again")
-			}
-			if box.BuiltinSecret(filepath.ToSlash(path)) {
-				warns = append(warns, "secret-like file: "+path) // named by itself, whatever the .coopignore says
 			}
 		case hidden:
 			warns = append(warns, "secret-like file: "+path)
