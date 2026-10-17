@@ -70,9 +70,13 @@ record as left for cleanup, so `gatherForkStatus` sets it aside, while `coop tas
 
 ## Unsupported state never becomes an identity
 
-`ParseWorkerState` accepts only `owner-v1`/`owner-v2` records naming a pid above 1. Headerless or
-malformed bytes fail for a missing supported owner header or a bad pid; an unknown `owner-*` header
-keeps a distinct unsupported-version error. Neither becomes a `WorkerState`.
+`ParseWorkerState` accepts only `owner-v1`/`owner-v2` records naming a pid above 1 and a start
+token of a known shape (`processidentity.Stable`; another system's token passes and is judged
+Foreign). Headerless or malformed bytes fail for a missing supported owner header, a bad pid or a
+missing or unknown token, and `Marshal` refuses the same, so no writer publishes what the readers
+refuse. A pid without its token cannot say which kernel it was read on, so a record like that is
+malformed rather than a worker stop could prove gone. An unknown `owner-*` header keeps a distinct
+unsupported-version error. Neither becomes a `WorkerState`.
 `forkctl.CheckWorkerStateFormat` refuses before start, recreate, merge, removal or stop probes the
 runtime or changes workspace metadata, and the locked start and stop parse again. `RunningPid`
 returns 0 for such bytes while `NeedsStop` and `StateOwner` stay held; Coop never infers or signals
@@ -93,7 +97,11 @@ reaps the box through the dead worker's activity record. Skipping the check stay
 A live Match, an unreadable identity (Unknown: no stable token, or `/proc` and sysctl unreadable)
 and a token of the other platform's shape (Foreign, decided before any pid is probed: a Linux pid
 means nothing to macOS's kernel, nor the reverse; `processidentity.Native`) are all unproven and
-fail closed. There is no mtime, age or "it's been a while" anywhere in this
+fail closed. `ProcessIdentityOf` is `processidentity.Inspect` asked through this package's
+`SignalPID` and `ReadProcStartToken` (`processidentity.Kernel`), so fork tests can stub liveness
+and the fork lifecycle, claims, leases, network records and the box sweep share one answer: a pid
+of 1 or below, or a token of no known shape, is Unknown before any pid is asked, never Gone. There
+is no mtime, age or "it's been a while" anywhere in this
 subsystem, and adding one is a rule violation, not an optimization: file age cannot tell a wedged
 host from a busy one. `forkspace.StateOwner` wraps it for "may I touch this fork?": only a missing
 record or a provably dead worker answers "not held". `recoverInterruptedRebase`
@@ -155,6 +163,15 @@ to a process or a container, or prints, it is supervision.
   not a regular file gets "remove it", not the permissions advice: a log only holds output.
 
 ## Changelog
+- 2026-10-17 — one identity check: `ProcessIdentityOf` delegates to `processidentity.Inspect`
+  through `processidentity.Kernel`, and `ProcessIdentity` is an alias of `processidentity.State`
+  under the old names. The copies differed for a pid of 1 or below and for a missing pid with no
+  token or one of no known shape: forkspace said Gone, so `coop fork stop` reaped the fork's boxes
+  and deleted such a record. Both are now Unknown, and `ParseWorkerState`/`Marshal` refuse a record
+  without a stable token, so stop prints the guarded malformed-record recovery instead of a
+  "verify, then retry stop" that could never pass. No coop writes such a record (`WritePid` has
+  refused one since 2026-07-16). Re-verified against state.go, execution.go, supervise.go and
+  identity.go (task 2026-10-17-read-a-process-start-token-through-one-check-not).
 - 2026-10-17 — `coop fork ls` lists a fork whose record another system wrote as `elsewhere`,
   naming that system in its words and in `--json`'s `detached_system`, never as cleanup or
   running; it ranks above unknown and cleanup. Before, it read "cleanup needed", or "status

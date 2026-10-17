@@ -62,24 +62,44 @@ func PIDNamespace() (namespace string, ok bool) { return platformPIDNamespace() 
 // namespace has another.
 const InitialPIDNamespace = "pid:[4026531836]"
 
-// Inspect separates liveness from authority to signal. Unknown is fail-closed: the process appears
-// live, but its identity cannot be proved. A reused pid is Mismatch, not Match, and another
+// Inspect separates liveness from authority to signal, asking this kernel. Unknown is fail-closed:
+// nothing proves the process alive or dead. A reused pid is Mismatch, not Match, and another
 // operating system's token is Foreign before any pid here is asked.
 func Inspect(pid int, token string) State {
+	return Kernel{Signal: syscall.Kill, StartToken: StartToken}.Inspect(pid, token)
+}
+
+// Kernel is what Inspect asks the kernel: kill(2), only ever with signal 0, and a pid's start token.
+// A package that keeps its own seams for the two, as forkspace does for its tests, inspects through
+// them by the same rules.
+type Kernel struct {
+	Signal     func(pid int, sig syscall.Signal) error
+	StartToken func(pid int) string
+}
+
+// Inspect answers as the package's Inspect does, asking k. A pid of 1 or below names no process a
+// record can hold (kill(2) aims 0 at the caller's own group and -1 at every process), and without a
+// token of a known shape a pid cannot say which kernel it was read on, so a missing pid here proves
+// nothing: both are Unknown before any pid is asked, never Gone, which would let a caller delete
+// what that process may still own.
+func (k Kernel) Inspect(pid int, token string) State {
 	if pid <= 1 || !Stable(token) {
 		return Unknown
 	}
 	if !Native(token) {
 		return Foreign
 	}
-	if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+	if err := k.Signal(pid, 0); errors.Is(err, syscall.ESRCH) {
 		return Gone
 	} else if err != nil {
 		return Unknown
 	}
-	current := StartToken(pid)
+	current := k.StartToken(pid)
 	if current == "" {
-		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+		// The process may have exited between kill(0) and the identity read. Recheck so that an
+		// ordinary exit is not misreported as an unverifiable live pid, while pid reuse still fails
+		// closed.
+		if err := k.Signal(pid, 0); errors.Is(err, syscall.ESRCH) {
 			return Gone
 		}
 		return Unknown

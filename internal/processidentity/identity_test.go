@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -21,6 +22,63 @@ func TestCurrentProcessIdentity(t *testing.T) {
 	}
 	if got := Inspect(-1, token); got != Unknown {
 		t.Fatalf("invalid pid identity = %v, want unknown", got)
+	}
+}
+
+// Every kind of pid and token Inspect can be handed, against a stand-in kernel. A pid of 1 or below,
+// a token of no known shape and another system's token are decided before the kernel is asked
+// anything: even when it would say the pid is missing, a record that cannot name the kernel it was
+// read on is Unknown, never Gone. Only this kernel's own answer makes a pid Gone or Mismatch.
+func TestInspectEveryInputClass(t *testing.T) {
+	native := platformTokenPrefix + "7:7"
+	foreign := map[string]string{"linux-proc-v1:": "darwin-kinfo-v1:7:7", "darwin-kinfo-v1:": "linux-proc-v1:boot:7"}[platformTokenPrefix]
+	missing, refused := syscall.ESRCH, syscall.EPERM
+	for _, tc := range []struct {
+		name    string
+		pid     int
+		token   string
+		answers []error // what kill(pid, 0) returns, call by call
+		current string  // the start token the kernel reads for pid now
+		want    State
+		asked   int // kill(pid, 0) calls Inspect makes
+	}{
+		{name: "pid 1", pid: 1, token: native, answers: []error{nil}, current: native, want: Unknown},
+		{name: "pid 0", pid: 0, token: native, answers: []error{nil}, current: native, want: Unknown},
+		{name: "pid -1, kill's every-process target", pid: -1, token: native, answers: []error{nil}, current: native, want: Unknown},
+		{name: "no token, pid missing", pid: 4242, token: "", answers: []error{missing}, want: Unknown},
+		{name: "no token, pid live", pid: 4242, token: "", answers: []error{nil}, current: native, want: Unknown},
+		{name: "token of no known shape, pid missing", pid: 4242, token: "homemade-v9:1", answers: []error{missing}, want: Unknown},
+		{name: "another system's token, pid missing", pid: 4242, token: foreign, answers: []error{missing}, want: Foreign},
+		{name: "another system's token, pid live", pid: 4242, token: foreign, answers: []error{nil}, current: native, want: Foreign},
+		{name: "pid missing", pid: 4242, token: native, answers: []error{missing}, want: Gone, asked: 1},
+		{name: "kill refused", pid: 4242, token: native, answers: []error{refused}, want: Unknown, asked: 1},
+		{name: "start token unreadable, then the pid is missing", pid: 4242, token: native, answers: []error{nil, missing}, want: Gone, asked: 2},
+		{name: "start token unreadable, pid still live", pid: 4242, token: native, answers: []error{nil, nil}, want: Unknown, asked: 2},
+		{name: "start token unreadable, then kill refused", pid: 4242, token: native, answers: []error{nil, refused}, want: Unknown, asked: 2},
+		{name: "pid reused", pid: 4242, token: native, answers: []error{nil}, current: native + "0", want: Mismatch, asked: 1},
+		{name: "same process", pid: 4242, token: native, answers: []error{nil}, current: native, want: Match, asked: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asked := 0
+			kernel := Kernel{
+				Signal: func(pid int, sig syscall.Signal) error {
+					if pid != tc.pid || sig != 0 || asked >= len(tc.answers) {
+						t.Fatalf("kill(%d, %d) as call %d, want kill(%d, 0) at most %d times", pid, sig, asked+1, tc.pid, len(tc.answers))
+					}
+					asked++
+					return tc.answers[asked-1]
+				},
+				StartToken: func(pid int) string {
+					if pid != tc.pid {
+						t.Fatalf("start token read for pid %d, want %d", pid, tc.pid)
+					}
+					return tc.current
+				},
+			}
+			if got := kernel.Inspect(tc.pid, tc.token); got != tc.want || asked != tc.asked {
+				t.Fatalf("Inspect(%d, %q) = %v after %d kill calls, want %v after %d", tc.pid, tc.token, got, asked, tc.want, tc.asked)
+			}
+		})
 	}
 }
 

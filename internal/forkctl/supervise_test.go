@@ -214,6 +214,9 @@ func TestForkStopRejectsInvalidStateWithoutSideEffects(t *testing.T) {
 		// A cleanup record can name a worker that still runs, so the file goes only after a check.
 		{name: "retired cleanup marker", raw: forkspace.OwnerStateV1 + "reap-pending\n" + stable, want: malformed, guarded: true},
 		{name: "retired launch reservation", raw: forkspace.OwnerStateV1 + "start-launched\n" + stable, want: malformed, guarded: true},
+		// No start token: whether or not the pid answers, nothing proves it this fork's worker or
+		// proves it gone, so stop neither signals it nor reaps the fork's boxes on its word.
+		{name: "no start token", raw: forkspace.OwnerStateV1 + "2147483646\n", want: malformed, guarded: true},
 		{name: "future owner", raw: "owner-v3\nopaque\n", want: []string{"unsupported detached-worker state version", "use the Coop version that wrote it", "do not edit its header"}},
 	}
 	oldSignal := forkspace.SignalPID
@@ -1415,7 +1418,7 @@ func TestRecordStartedForkKillsChildWhenStateWriteFails(t *testing.T) {
 // waitForExit returns immediately-true for a dead pid and false (after the timeout) for a live one
 // — ForkStop uses it to confirm death before clearing the pidfile.
 func TestWaitForExit(t *testing.T) {
-	if exited, err := waitForExit(2147483646, "", 2*time.Second); !exited || err != nil { // a pid that isn't running
+	if exited, err := waitForExit(deadWorker.Pid, deadWorker.Token, 2*time.Second); !exited || err != nil { // a pid that isn't running
 		t.Errorf("waitForExit(dead) = (%v, %v), want (true, nil)", exited, err)
 	}
 	token := forkspace.ProcStartToken(os.Getpid())

@@ -172,6 +172,21 @@ func TestForkRunningPid(t *testing.T) {
 	if got, err := os.ReadFile(PidPath(repo, "perf")); err != nil || string(got) != string(unsupported) {
 		t.Fatalf("unsupported state changed = %q, %v; want exact %q", got, err, unsupported)
 	}
+	// A record with no start token holds the fork too, even though its pid is missing here: without
+	// the token nothing says which kernel that pid was read on.
+	tokenless := []byte(OwnerStateV1 + "2147483646\n")
+	if err := os.WriteFile(PidPath(repo, "tokenless"), tokenless, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := RunningPid(repo, "tokenless"); got != 0 {
+		t.Errorf("RunningPid(no start token) = %d, want 0", got)
+	}
+	if pid, held := StateOwner(repo, "tokenless"); pid != 0 || !held {
+		t.Errorf("StateOwner(no start token) = (%d, %v), want (0, true)", pid, held)
+	}
+	if got, err := os.ReadFile(PidPath(repo, "tokenless")); err != nil || !bytes.Equal(got, tokenless) || !NeedsStop(repo, "tokenless") {
+		t.Fatalf("a record with no start token changed = %q, %v, or stopped needing stop; want exact %q", got, err, tokenless)
+	}
 	// A dead/out-of-range pid → 0, but its state remains until forkStop reaps any orphaned box.
 	if err := os.WriteFile(PidPath(repo, "dead"), []byte(OwnerStateV1+"2147483646\n"+starttoken.Stale()+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -659,6 +674,10 @@ func TestForkWorkerStateWireFormat(t *testing.T) {
 		{name: "known header missing newline", raw: "owner-v1", bad: true},
 		{name: "empty", bad: true},
 		{name: "pid one", raw: OwnerStateV1 + "1\ntoken\n", bad: true},
+		// Without a start token of a known shape no kernel can say the pid was the worker, or that
+		// it is gone, so stop could never act on the record.
+		{name: "no start token", raw: OwnerStateV1 + "42\n", bad: true},
+		{name: "start token of no known shape", raw: OwnerStateV2 + GenerationTag + string(generation) + "\n42\nhomemade-v9:1\n", bad: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -688,6 +707,12 @@ func TestForkWorkerStateWireFormat(t *testing.T) {
 				t.Fatalf("state round trip = %+v, %v; want %+v", roundTrip, err, got)
 			}
 		})
+	}
+	// Marshal refuses the same records, so no writer publishes one every reader refuses.
+	for _, token := range []string{"", "homemade-v9:1"} {
+		if data, err := (WorkerState{Pid: 42, Token: token}).Marshal(); err == nil {
+			t.Errorf("Marshal(pid 42, token %q) = %q, want the refusal ParseWorkerState gives", token, data)
+		}
 	}
 }
 
@@ -761,6 +786,54 @@ func TestForkRecordFromAnotherSystemStaysHeld(t *testing.T) {
 		if after, err := os.ReadFile(PidPath(repo, name)); err != nil || !bytes.Equal(after, before) {
 			t.Errorf("%s record changed = (%q, %v), want %q", name, after, err, before)
 		}
+	}
+}
+
+// ProcessIdentityOf is processidentity.Inspect through this package's seams, so stubbing SignalPID
+// and ReadProcStartToken decides what every lifecycle probe sees. A pid of 1 or below and a token of
+// no known shape are Unknown and never provably dead, and no pid is asked about them: a missing pid
+// proves nothing when the record cannot say which kernel it was read on.
+func TestProcessIdentityOfAsksThroughTheForkSeams(t *testing.T) {
+	const pid = 2147483646 // no process has it, so only the stubs can make it live
+	token := starttoken.Stale()
+	oldSignal, oldRead := SignalPID, ReadProcStartToken
+	t.Cleanup(func() { SignalPID, ReadProcStartToken = oldSignal, oldRead })
+	for _, tc := range []struct {
+		name    string
+		pid     int
+		token   string
+		answer  error  // what the stubbed kill(pid, 0) returns
+		current string // the stubbed start token of pid now
+		want    ProcessIdentity
+		asked   bool
+	}{
+		{name: "the recorded process", pid: pid, token: token, current: token, want: ProcessIdentityMatch, asked: true},
+		{name: "a reused pid", pid: pid, token: token, current: token + "0", want: ProcessIdentityMismatch, asked: true},
+		{name: "a missing pid", pid: pid, token: token, answer: syscall.ESRCH, want: ProcessGone, asked: true},
+		{name: "a live pid whose start token cannot be read", pid: pid, token: token, want: ProcessIdentityUnknown, asked: true},
+		{name: "pid 1", pid: 1, token: token, answer: syscall.ESRCH, want: ProcessIdentityUnknown},
+		{name: "pid -1", pid: -1, token: token, answer: syscall.ESRCH, want: ProcessIdentityUnknown},
+		{name: "no start token, pid missing", pid: pid, answer: syscall.ESRCH, want: ProcessIdentityUnknown},
+		{name: "start token of no known shape, pid missing", pid: pid, token: "homemade-v9:1", answer: syscall.ESRCH, want: ProcessIdentityUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asked := false
+			SignalPID = func(got int, sig syscall.Signal) error {
+				if got != tc.pid || sig != 0 {
+					t.Errorf("kill(%d, %d), want kill(%d, 0)", got, sig, tc.pid)
+				}
+				asked = true
+				return tc.answer
+			}
+			ReadProcStartToken = func(int) string { return tc.current }
+			got := ProcessIdentityOf(tc.pid, tc.token)
+			if got != tc.want || asked != tc.asked {
+				t.Fatalf("ProcessIdentityOf(%d, %q) = %v, asked the kernel: %v; want %v, %v", tc.pid, tc.token, got, asked, tc.want, tc.asked)
+			}
+			if dead := tc.want == ProcessGone || tc.want == ProcessIdentityMismatch; OwnerProvablyDead(got) != dead {
+				t.Fatalf("OwnerProvablyDead(%v) = %v, want %v", got, !dead, dead)
+			}
+		})
 	}
 }
 

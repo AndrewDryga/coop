@@ -67,7 +67,7 @@ func workerStateFormatError(repo, name string, err error) error {
 		// folder's contents, so the inspection is ls -ld.
 		return fmt.Errorf("fork %s state: %w — Coop left it unchanged (inspect it with: ls -ld %q). %s", name, err, path, recovery)
 	default:
-		return fmt.Errorf("fork %s state at %q is malformed — Coop left the exact file unchanged and will not infer a process identity from it (inspect it with: sed -n '1,4p' %q). %s", name, path, path, recovery)
+		return fmt.Errorf("fork %s state at %q is malformed (%v) — Coop left the exact file unchanged and will not infer a process identity from it (inspect it with: sed -n '1,4p' %q). %s", name, path, err, path, recovery)
 	}
 }
 

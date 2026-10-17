@@ -202,52 +202,23 @@ func TryLockState(repo, name string) (func(), bool) {
 	}, true
 }
 
-// ProcessIdentity is what the kernel can prove about the process a fork's state names.
-type ProcessIdentity uint8
+// ProcessIdentity is what the kernel can prove about the process a fork's state names:
+// processidentity's answer, under the names the fork lifecycle uses.
+type ProcessIdentity = processidentity.State
 
 const (
-	ProcessGone ProcessIdentity = iota
-	ProcessIdentityMatch
-	ProcessIdentityMismatch
-	ProcessIdentityUnknown
-	ProcessIdentityForeign // another operating system wrote the token (processidentity.Foreign)
+	ProcessGone             = processidentity.Gone
+	ProcessIdentityMatch    = processidentity.Match
+	ProcessIdentityMismatch = processidentity.Mismatch
+	ProcessIdentityUnknown  = processidentity.Unknown
+	ProcessIdentityForeign  = processidentity.Foreign // another operating system wrote the token
 )
 
-// ProcessIdentityOf separates conservative liveness from authorization to signal. Destructive
-// guards retain unknown and foreign state, but status calls only a corroborated identity running.
+// ProcessIdentityOf is processidentity.Inspect through this package's SignalPID and
+// ReadProcStartToken, so a test that stubs them steers every lifecycle probe. Destructive guards
+// retain unknown and foreign state, but status calls only a corroborated identity running.
 func ProcessIdentityOf(pid int, token string) ProcessIdentity {
-	if pid <= 1 { // a detached worker cannot be init; -1 is kill(2)'s broadcast target
-		return ProcessGone
-	}
-	// A pid recorded on another operating system is not this kernel's, so whether it is missing or
-	// taken here says nothing about the process that wrote the record.
-	if StableProcToken(token) && !processidentity.Native(token) {
-		return ProcessIdentityForeign
-	}
-	if err := SignalPID(pid, 0); errors.Is(err, syscall.ESRCH) {
-		return ProcessGone
-	} else if err != nil {
-		return ProcessIdentityUnknown
-	}
-	if token == "" {
-		return ProcessIdentityUnknown
-	}
-	if !StableProcToken(token) {
-		return ProcessIdentityUnknown
-	}
-	cur := ProcStartToken(pid)
-	if cur == "" {
-		// The process may have exited between kill(0) and the identity read. Recheck so that ordinary
-		// exit is not misreported as an unverifiable live PID, while PID reuse still fails closed.
-		if err := SignalPID(pid, 0); errors.Is(err, syscall.ESRCH) {
-			return ProcessGone
-		}
-		return ProcessIdentityUnknown
-	}
-	if cur != token {
-		return ProcessIdentityMismatch
-	}
-	return ProcessIdentityMatch
+	return processidentity.Kernel{Signal: SignalPID, StartToken: ReadProcStartToken}.Inspect(pid, token)
 }
 
 // processAlive reports the one identity that authorizes treating a fork as running.
@@ -261,9 +232,7 @@ func processAlive(pid int, token string) bool {
 // or one another operating system recorded are all unproven, so every caller (stop, the merge's
 // rebase recovery) fails closed on them. Identity is pid + start token or nothing: no file age, no
 // elapsed time.
-func OwnerProvablyDead(identity ProcessIdentity) bool {
-	return identity == ProcessGone || identity == ProcessIdentityMismatch
-}
+func OwnerProvablyDead(identity ProcessIdentity) bool { return identity.ProvesGone() }
 
 // StateOwner reports the worker a fork's lifecycle record still names as possibly running, so a
 // recovery that would disturb the fork can keep its hands off one somebody else owns. held is false
@@ -348,8 +317,8 @@ func ParseWorkerState(raw string) (WorkerState, error) {
 		body = rest
 	}
 	state.Pid, state.Token = parsePidfile(body)
-	if state.Pid <= 1 {
-		return WorkerState{}, fmt.Errorf("invalid detached worker pid %d", state.Pid)
+	if err := state.validate(); err != nil {
+		return WorkerState{}, err
 	}
 	return state, nil
 }
@@ -362,10 +331,23 @@ func (state WorkerState) Marshal() ([]byte, error) {
 		}
 		prefix = OwnerStateV2 + GenerationTag + string(state.Generation) + "\n"
 	}
-	if state.Pid <= 1 {
-		return nil, fmt.Errorf("invalid detached worker pid %d", state.Pid)
+	if err := state.validate(); err != nil {
+		return nil, err
 	}
 	return []byte(fmt.Sprintf("%s%d\n%s\n", prefix, state.Pid, state.Token)), nil
+}
+
+// validate refuses a record that names no process identity: a pid of 1 or below, or a start token
+// of no known shape. Without the token no kernel can say which process, or even which system, the
+// pid was, so stop could never prove that worker gone.
+func (state WorkerState) validate() error {
+	if state.Pid <= 1 {
+		return fmt.Errorf("invalid detached worker pid %d", state.Pid)
+	}
+	if !StableProcToken(state.Token) {
+		return fmt.Errorf("detached worker pid %d has no stable process identity", state.Pid)
+	}
+	return nil
 }
 
 // ReadWorkerState reads and parses a fork's lifecycle record. A failure to read it is an
