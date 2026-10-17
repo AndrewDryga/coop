@@ -41,6 +41,12 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **`coop fork merge` no longer merges a fork it could not check.** Before merging, Coop checks
+  the fork's changes for secrets, hooks and other risky files, and a git error while reading the
+  fork read as "nothing found", so the merge went ahead. A fork's agent can cause that error, for
+  example with a history unrelated to the project's. The merge now stops and says the fork could
+  not be checked, unless you pass `--force`, and `coop fork review` shows the same finding.
+
 - **A subproject folder with an odd name no longer breaks project.yaml.** `coop init` wrote each
   subproject's folder name into `.agent/project.yaml` as it was, so a name holding a colon and a
   space, a `#`, a quote or a control character made the file read a different value, or not load

@@ -43,7 +43,7 @@ func TestForkSecretAdvice(t *testing.T) {
 			if _, err := os.Lstat(filepath.Join(repo, "conf.yaml")); !os.IsNotExist(err) {
 				t.Fatalf("refusal wrote parent file: %v", err)
 			}
-			warnings := strings.Join(PolicyScan(repo, "review/candidate"), "\n")
+			warnings := strings.Join(mustPolicyScan(t, repo, "review/candidate"), "\n")
 			if !strings.Contains(warnings, "review the finding and remove any real credential from the fork before merging") {
 				t.Errorf("missing useful review guidance: %s", warnings)
 			}
@@ -68,7 +68,7 @@ func TestForkSecretAdvice(t *testing.T) {
 			if hidden {
 				want = "secret-like file: conf.yaml"
 			}
-			if got := strings.Join(PolicyScan(repo, "review/candidate"), "\n"); got != want {
+			if got := strings.Join(mustPolicyScan(t, repo, "review/candidate"), "\n"); got != want {
 				t.Errorf("after credential removal: %q, want %q", got, want)
 			}
 		})

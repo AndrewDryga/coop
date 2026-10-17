@@ -1194,6 +1194,48 @@ func TestForkMergeQueue(t *testing.T) {
 // --yes asks nothing, so those two blank lines must not stack: `coop fork merge --yes` keeps exactly
 // one blank line between sections, for one fork (with and without the service-data preview) and
 // for --all.
+// A fork's box can write the fork's repository, so it can make the merge policy's read fail: here
+// by committing a history unrelated to the project's, which git cannot diff against it. The scan
+// says so instead of reading as nothing flagged, merge refuses without --force, and a fork git can
+// read still merges.
+func TestForkMergeRefusesAForkItsPolicyScanCannotRead(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "orphan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "checkout", "-q", "--orphan", "unrelated")
+	writeTaskFile(t, filepath.Join(ws, "planted.txt"), "x\n")
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "unrelated history")
+	git(t, ws, "checkout", "-q", "-B", "orphan", "unrelated") // the fork's own branch, which merge fetches
+	git(t, repo, "fetch", "-q", ws, "orphan:refs/heads/review-orphan")
+	if warns, err := PolicyScan(repo, "review-orphan"); err == nil {
+		t.Fatalf("PolicyScan over an unrelated history = %q, nil; want the read failure", warns)
+	}
+
+	c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	var code int
+	stderr := captureStderr(t, func() { code, err = c.ForkMerge([]string{"orphan", "--yes"}) })
+	if code == 0 || !strings.Contains(stderr+fmt.Sprint(err), "Coop could not check the fork's changes against the merge policy") {
+		t.Fatalf("merge of an unreadable fork = (%d, %v)\n%s", code, err, stderr)
+	}
+	if !pathExists(ws) {
+		t.Fatal("the refused merge removed the fork")
+	}
+
+	ok, err := forkspace.Setup(repo, "readable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(ok, "fine.txt"), "fine\n")
+	git(t, ok, "add", "-A")
+	git(t, ok, "commit", "-qm", "fine")
+	if code, err := c.ForkMerge([]string{"readable", "--yes"}); code != 0 || err != nil {
+		t.Fatalf("merge of a readable fork = (%d, %v)", code, err)
+	}
+}
+
 func TestForkMergeYesPrintsOneBlankLineBetweenSections(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -1425,7 +1467,7 @@ func TestPolicyScanFlagsInteractionFiles(t *testing.T) {
 	git(t, repo, "commit", "-qm", "evil")
 	git(t, repo, "checkout", "-q", "main")
 
-	w := strings.Join(PolicyScan(repo, "evil"), "\n")
+	w := strings.Join(mustPolicyScan(t, repo, "evil"), "\n")
 	if !strings.Contains(w, ".envrc") {
 		t.Errorf("PolicyScan did not flag .envrc:\n%s", w)
 	}
@@ -1456,7 +1498,7 @@ func TestPolicyScanFlagsInteractionFiles(t *testing.T) {
 	git(t, repo, "add", "-A")
 	git(t, repo, "commit", "-qm", "bump")
 	git(t, repo, "checkout", "-q", "main")
-	if w := strings.Join(PolicyScan(repo, "benign"), "\n"); strings.Contains(w, "package.json adds") {
+	if w := strings.Join(mustPolicyScan(t, repo, "benign"), "\n"); strings.Contains(w, "package.json adds") {
 		t.Errorf("a benign package.json edit was wrongly flagged:\n%s", w)
 	}
 }
@@ -1473,7 +1515,7 @@ func TestPolicyScanHiddenAncestors(t *testing.T) {
 	git(t, repo, "add", "private/ordinary.go", "public/ordinary.go")
 	git(t, repo, "commit", "-qm", "public synthetic files")
 	git(t, repo, "checkout", "-q", "main")
-	if got := strings.Join(PolicyScan(repo, "candidate"), "\n"); got != "secret-like file: private/ordinary.go" {
+	if got := strings.Join(mustPolicyScan(t, repo, "candidate"), "\n"); got != "secret-like file: private/ordinary.go" {
 		t.Fatalf("PolicyScan = %q; want only the descendant of the hidden directory", got)
 	}
 }
@@ -1494,7 +1536,7 @@ func TestPolicyScanNamesAnUnreadableCoopignore(t *testing.T) {
 	}
 	want := "coop cannot tell what .coopignore hides, because it is a folder — remove it if you did not create it, " +
 		"or make it a readable regular file of at most 1 MiB, then merge again"
-	if got := strings.Join(PolicyScan(repo, "candidate"), "\n"); got != want {
+	if got := strings.Join(mustPolicyScan(t, repo, "candidate"), "\n"); got != want {
 		t.Fatalf("PolicyScan = %q; want one warning naming the .coopignore", got)
 	}
 }
@@ -1521,7 +1563,7 @@ func TestPolicyScanNamesASecretUnderAnUnreadableCoopignore(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, "config", ".coopignore"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got := PolicyScan(repo, "candidate")
+	got := mustPolicyScan(t, repo, "candidate")
 	var named []string
 	unreadable := 0
 	for _, warn := range got {
@@ -1570,7 +1612,7 @@ func TestPolicyScanFlagsAForkThatLinksItsCoopignore(t *testing.T) {
 			git(t, repo, "commit", "-qm", "move the rules away")
 			git(t, repo, "checkout", "-q", "main")
 			want := tc.flagged + " — the fork makes a .coopignore something other than a regular file, which Coop cannot read"
-			if got := PolicyScan(repo, "candidate"); !slices.Contains(got, want) {
+			if got := mustPolicyScan(t, repo, "candidate"); !slices.Contains(got, want) {
 				t.Fatalf("PolicyScan = %q; want %q", got, want)
 			}
 		})

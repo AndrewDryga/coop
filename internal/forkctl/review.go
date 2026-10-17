@@ -365,7 +365,11 @@ func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutco
 		// The SAME scan `coop fork merge` enforces — surfaced here so findings appear at review,
 		// not as a failed merge. Only a deny-policy hit actually blocks; a host-executed file is
 		// advisory, and calling it blocked would send a reviewer to --force it never needed.
-		warns, surfaces := PolicyScan(repo, ref), HostSurfaces(repo, ref)
+		warns, scanErr := PolicyScan(repo, ref)
+		if scanErr != nil {
+			warns = append(warns, "Coop could not check these changes: "+scanErr.Error())
+		}
+		surfaces := HostSurfaces(repo, ref)
 		if len(warns) > 0 || len(surfaces) > 0 {
 			cause := append([]string{}, warns...)
 			for _, f := range surfaces {

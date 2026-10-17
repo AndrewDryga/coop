@@ -34,11 +34,16 @@ func HostSurfaces(repo, ref string) []hostsurface.Finding {
 // PolicyScan returns human-readable concerns about a fork's added/changed files:
 // secret-looking filenames, large blobs, and — by scanning each changed blob's
 // content — real tokens sitting in ordinary files (which a filename check can't see).
-// Empty means nothing flagged.
-func PolicyScan(repo, ref string) []string {
-	out := gitOut(repo, "diff", "--name-status", "HEAD..."+ref)
+// Empty means nothing flagged. A box can write the fork's repository, so it can make git fail to
+// read it, for example by giving the fork a history unrelated to the project's: the error comes
+// back, never an empty scan that would read as nothing flagged.
+func PolicyScan(repo, ref string) ([]string, error) {
+	out, err := gitOutErr(repo, "diff", "--name-status", "HEAD..."+ref)
+	if err != nil {
+		return nil, fmt.Errorf("read the fork's changes: %w", err)
+	}
 	if out == "" {
-		return nil
+		return nil, nil
 	}
 	// Flag a credential-looking filename with the SAME decider that shadows secrets from the box,
 	// so the merge gate can't drift from the shadow denylist (it used to be a separate hand-rolled
@@ -73,11 +78,25 @@ func PolicyScan(repo, ref string) []string {
 		if reason, automatic := hostsurface.Classify(f[0], path); automatic {
 			warns = append(warns, path+" — "+reason) // runs by itself: blocks the merge unless forced
 		}
-		if size := gitBlobSize(repo, ref, path); size > 5<<20 {
+		entry, err := gitOutErr(repo, "ls-tree", ref, "--", path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s from the fork: %w", path, err)
+		}
+		if strings.HasPrefix(entry, "160000 ") {
+			continue // a submodule's commit: the fork changed which one, and has no content here to read
+		}
+		size, err := gitBlobSize(repo, ref, path)
+		if err != nil {
+			return nil, err
+		}
+		if size > 5<<20 {
 			warns = append(warns, fmt.Sprintf("large file (%dMB): %s", size>>20, path))
 			continue // don't read a huge blob's content
 		}
-		content := gitOut(repo, "show", ref+":"+path)
+		content, err := gitOutErr(repo, "show", ref+":"+path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s from the fork: %w", path, err)
+		}
 		if strings.IndexByte(content, 0) >= 0 { // skip binaries
 			continue
 		}
@@ -90,7 +109,7 @@ func PolicyScan(repo, ref string) []string {
 			warns = append(warns, fmt.Sprintf("possible secret in %s:%d (%s) — review the finding and remove any real credential from the fork before merging", path, s.Line, s.Kind))
 		}
 	}
-	return warns
+	return warns, nil
 }
 
 // notRegularCoopignore reports whether the fork's change at path leaves a .coopignore that is not a
@@ -107,9 +126,12 @@ func notRegularCoopignore(repo, ref, path string) bool {
 	return mode != "" && mode != "100644" && mode != "100755"
 }
 
-func gitBlobSize(repo, ref, path string) int64 {
-	n, _ := strconv.ParseInt(gitOut(repo, "cat-file", "-s", ref+":"+path), 10, 64)
-	return n
+func gitBlobSize(repo, ref, path string) (int64, error) {
+	out, err := gitOutErr(repo, "cat-file", "-s", ref+":"+path)
+	if err != nil {
+		return 0, fmt.Errorf("read the size of %s in the fork: %w", path, err)
+	}
+	return strconv.ParseInt(out, 10, 64)
 }
 
 // addedLifecycleScript returns the name of an npm install/prepare lifecycle script the fork ADDS
@@ -648,7 +670,11 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 			return mergeOutcome{skipped: true}, nil
 		}
 	}
-	if warns := PolicyScan(repo, ref); len(warns) > 0 && !force {
+	warns, scanErr := PolicyScan(repo, ref)
+	if scanErr != nil && !force {
+		return mergeOutcome{}, fmt.Errorf("%s: Coop could not check the fork's changes against the merge policy, so it did not merge them:\n%s\n(use --force to merge without the check)", name, indent(scanErr.Error()))
+	}
+	if len(warns) > 0 && !force {
 		return mergeOutcome{}, fmt.Errorf("%s: policy flagged risky changes:\n%s\n(use --force to merge anyway)", name, indent(strings.Join(warns, "\n")))
 	}
 	// Say which branch we're landing onto — merge rebases onto your *current* branch,

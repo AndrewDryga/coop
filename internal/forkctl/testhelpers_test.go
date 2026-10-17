@@ -79,6 +79,16 @@ func TestGitFixtureDisablesAutomaticMaintenance(t *testing.T) {
 // initRepo is a parent repo on `main` with one commit — the thing a fork is cut from. It lives in a
 // NAMED subdirectory of the temp dir because forkspace puts a fork's workspace in the sibling
 // <repo>-forks/, which must not collide with the temp root itself.
+// mustPolicyScan is PolicyScan for a fork git can read: a read failure fails the test.
+func mustPolicyScan(t *testing.T, repo, ref string) []string {
+	t.Helper()
+	warns, err := PolicyScan(repo, ref)
+	if err != nil {
+		t.Fatalf("PolicyScan(%s): %v", ref, err)
+	}
+	return warns
+}
+
 func initRepo(t *testing.T) string {
 	t.Helper()
 	// Both config doors shut in the PROCESS environment, so they reach the fork helpers under test
