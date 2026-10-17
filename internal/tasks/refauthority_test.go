@@ -293,8 +293,8 @@ func TestLockRefAuthorityRecoversAfterHolderIsKilled(t *testing.T) {
 	release()
 }
 
-// lockRefAuthority is the compare-and-swap window's mutual exclusion: acquire, contended acquire
-// (naming the holder), and release — the same shape as internal/cli's lockLoopCheckout tests, since
+// LockRefAuthority is the compare-and-swap window's mutual exclusion: acquire, contended acquire
+// (naming the holder), and release — the same shape as internal/loop's lockLoopCheckout tests, since
 // the spec mirrors its keying exactly. A stuck holder must fail fast (non-blocking), never wedge the
 // caller — see the contended case below. Moved from fork_loop_test.go with the function.
 func TestLockRefAuthorityRefusesConcurrentHolder(t *testing.T) {

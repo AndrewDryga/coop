@@ -4,7 +4,7 @@ description: "supervised long commands keep output static and only a bounded exc
 scope: agent-workflow
 sources: [AGENTS.md, internal/loop/bar.go, internal/loop/iteration.go, internal/ui/live.go, internal/loop/prompts.go, internal/loop/shell_recipe_test.go]
 check: "go test ./internal/loop -run 'TestLoopBarSupported|TestLoopCheckScript|TestLoopShellGuidance'"
-updated: 2026-09-19
+updated: 2026-10-17
 ---
 
 # Agent-supervised long commands use static, bounded output
@@ -41,6 +41,8 @@ frames, consumes context without adding evidence, and can obscure the final exit
 See also [[command-output-tiers]] and [[fix-the-bug-not-the-feature]].
 
 ## Changelog
+- 2026-10-17 — the 2026-08-09 entry names AGENTS.md's "Keep supervised output static and bounded"
+  bullet instead of a line number.
 - 2026-09-19 — the bounded tail is for long logs only; mutations are read whole (a truncated
   `coop tasks block` re-parked an answered decision).
 - 2026-09-14 — the user approved foreground-first checks after the Opus run kept using
@@ -58,8 +60,8 @@ See also [[command-output-tiers]] and [[fix-the-bug-not-the-feature]].
   and semantic readability remain review obligations rather than claims made by this unit test.
 - 2026-07-26 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
-- 2026-08-09 — validate-on-write backfill: read AGENTS.md (its only source) in full. 0 violations
-  — AGENTS.md:18 states this rule nearly verbatim and explicitly names this card by path ("follow
-  `.agent/kb/rules/static-bounded-supervision.md`: disable repainting where supported, redirect
-  the full log, preserve the exit status, and inspect only bounded tails or targeted filters"), a
-  direct, current, word-for-word match.
+- 2026-08-09 — validate-on-write backfill: read AGENTS.md (its only source) in full. 0 violations —
+  AGENTS.md's "Keep supervised output static and bounded" bullet states this rule nearly verbatim
+  and explicitly names this card by path ("follow `.agent/kb/rules/static-bounded-supervision.md`:
+  disable repainting where supported, redirect the full log, preserve the exit status, and inspect
+  only bounded tails or targeted filters"), a direct, current, word-for-word match.

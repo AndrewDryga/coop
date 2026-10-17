@@ -1,9 +1,9 @@
 ---
 name: coop-repo-box-go
-description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and three approved Go domains; big modules redirect to a blocked host, so the shared cache is filled from the host
+description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and four approved domains, the module proxy's storage.googleapis.com redirect included; module downloads share the coop-cache volume
 subsystem: box
 sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, tools/staticcheck.mod, Makefile, .tool-versions, agent_config_test.go]
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 A filtered box runs the locked client image, which carries the asdf binary but installs nothing on
@@ -25,16 +25,23 @@ pin. The gate checks both versions, and `TestOwnDockerfileInstallsTheGatePins` h
 Dockerfile's module path and govulncheck version to the Makefile's.
 
 The build needs the network, so `.agent/project.yaml` asks for `proxy.golang.org`, `sum.golang.org`
-and `vuln.go.dev` (TLS 443), approved by the owner with `coop approve`. `proxy.golang.org` hands a
-large module zip (modernc.org/sqlite) to `storage.googleapis.com`, which stays blocked because it
-would reach any public bucket. `GOMODCACHE` sits in `~/.cache`, the `coop-cache` volume every box
-shares, and that cache was filled from the host with the command in the Dockerfile's comment. Run it
-again when a new large dependency fails to download in a box.
+and `vuln.go.dev` (TLS 443), approved by the owner with `coop approve`. `proxy.golang.org` hands
+large module zips (modernc.org/sqlite) to `storage.googleapis.com`, and since 21e0fb08 (2026-10-14)
+the project allows that host too, so a box downloads them itself. That rule grants the whole host:
+any public bucket on it, not only Go's. `GOMODCACHE` sits in `~/.cache`, the `coop-cache` volume
+every box shares; the host command in the Dockerfile's comment fills that cache when a module still
+fails to download in a box. That comment still says the host stays blocked: editing the Dockerfile
+marks this repo's box image stale, so the fix rides along with the Dockerfile's next real change
+(queued).
 
 `coop init` in this repo also installs its generic `.githooks/` gate and sets `core.hooksPath`; coop
 doesn't use them, so they were removed after running it.
 
 ## Changelog
+- 2026-10-17 — storage.googleapis.com is allowed, not blocked: `.agent/project.yaml` has granted it
+  since 21e0fb08, so a box fetches the large zips itself and the host fill is only the fallback.
+  Rewrote that paragraph, the description and the index line against `.agent/project.yaml` and
+  21e0fb08; the matching .agent/Dockerfile comment waits for the Dockerfile's next real change.
 - 2026-10-16 — the analyzer module moved to `tools/staticcheck.mod` when Coop's box images dropped
   their Go tools stage; a root test now holds this Dockerfile's pins to the Makefile's. The
   storage.googleapis.com paragraph is left to the queued stale-cards task: `.agent/project.yaml`

@@ -3,7 +3,7 @@ name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
 sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
-updated: 2026-10-10
+updated: 2026-10-17
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -139,6 +139,8 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-10-17 — marked `sourceSelector` and `fenceExpectedPolicyDigests` in older entries as removed
+  with session policies (0e7c5c45); `decodeAPIError` remains in internal/workerconnector/unixapi.go.
 - 2026-10-10 — refreshed the outbound clock after activity/capacity collection; fake-clock
   regressions reproduce stale success/error reads without real waits and retain capacity ordering.
   An exactly full receipt-page test covers whole-second to fractional-clock expansion.
@@ -198,7 +200,8 @@ The traps the code does not make obvious:
   silence never reads as an empty network. See [[session-evidence-export]].
 - 2026-09-11 — hello carries an OPTIONAL `storage` object (`internal/workerproto/storage.go`), read from the daemon's owner-private `GET /v1/storage` by `LiveStorage` and forwarded verbatim. Any failure — old daemon, failed measurement, object that fails its own contract — publishes nothing rather than a wrong number, so an unmeasurable disk never stops a poll. See [[worker-storage-accounting]].
 - 2026-09-11 — `create_session` carries a `source` selector; the connector keeps its OWN bounded
-  copy of that union (`sourceSelector`, `internal/workerconnector/executor.go`) because this
+  copy of that union (`sourceSelector`, `internal/workerconnector/executor.go`; removed with the
+  capability on 2026-09-27) because this
   package may import only `secretscan` and `workerproto`, refuses a malformed one with
   `invalid_command` before any daemon call, and advertises `repository-source-selector:1` only on
   live daemon proof, independently of `repository-freshness:2`. See [[session-source-selection]].
@@ -210,7 +213,7 @@ The traps the code does not make obvious:
   bounded typed paths before diff truncation, independently of the owner-private preview.
 - 2026-09-06 — traced missing project paths through both activity projections; added bounded
   path metadata and verified HTTP bytes plus outbound restart/ACK while retaining raw-field privacy.
-- 2026-09-06 — create_session forwards policy_digest/authority_digest as expected_policy_digest/expected_authority_digest; the daemon fences them at intent capture (`fenceExpectedPolicyDigests`, `internal/sessionsvc/service.go`) with `policy_digest_mismatch`. `decodeAPIError` now reads the daemon's wrapped `{"error":{...}}` shape; before, every daemon refusal surfaced as `http_error`.
+- 2026-09-06 — create_session forwards policy_digest/authority_digest as expected_policy_digest/expected_authority_digest; the daemon fences them at intent capture (`fenceExpectedPolicyDigests`, `internal/sessionsvc/service.go`; removed with session policies on 2026-09-27) with `policy_digest_mismatch`. `decodeAPIError` now reads the daemon's wrapped `{"error":{...}}` shape; before, every daemon refusal surfaced as `http_error`.
 - 2026-09-06 — target-side placement fence: `Execute` refuses a still-leased `submit_turn`/`ensure_workspace` whose generation is below the journal's create origin for the session ref with a definite `placement_superseded` failure (`internal/workerconnector/executor.go`); reads and cleanup for the old generation stay allowed.
 - 2026-09-06 — reproduced a valid 244-byte ID failing at poll 1000000; bounded the shared formatter
   and covered the full protocol ID range, maximum sequence, disjoint identities and wrong-echo custody.

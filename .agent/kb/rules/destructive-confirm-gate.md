@@ -96,6 +96,8 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
 
 ## Changelog
+- 2026-10-17 — the 2026-08-09 and 2026-08-10 sweep entries name each call site's function (as it
+  was then) instead of file:line numbers, resolved against the files at those commits.
 - 2026-10-17 — the network-records exception now covers a `coop net setup` check's snapshot,
   safe to remove because only the check's own run names or loads it and a crashed setup is rerun,
   never resumed (not because an admission writes it again). One from before markers needs the
@@ -140,24 +142,26 @@ See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-
 - 2026-07-02 — created
 - 2026-07-14 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
-- 2026-08-09 — validate-on-write backfill: read `destroyGate` (util.go:542) and exhaustively
+- 2026-08-09 — validate-on-write backfill: read `destroyGate` (util.go) and exhaustively
   enumerated + traced all 17 `os.RemoveAll` call sites in internal/cli (non-test). 0 violations —
-  every user-state deletion (backlog.go:143→146, profiles.go:269→272, tasks.go:401,
-  taskcmd.go:1090/1110/1634, fork.go:355/1344, fork_merge.go:508, fork_fleet.go:487) is gated by
-  `destroyGate` immediately before it; taskcmd.go:821's tmp/ cleanup matches the documented
-  exception exactly (refuses a non-directory/symlinked task folder, unlinks a tmp symlink instead
-  of following it); the rest (fork.go:883 a scratch review clone, commands.go:1001/1026 ACP cid
-  bookkeeping, doctor.go/selfupdate.go/sign.go temp dirs, controller.go tree snapshots,
-  taskdir.go:359 disposable rebuildable split slices, tasklease.go:329/365 lease-adoption
-  staging) are ephemeral/derived/internal state outside "user state," not gate-bypasses.
+  every user-state deletion (`backlogFolderRemove`, `removeProfile`, `tasksAcrossQueues`,
+  `tasksFolderRemove` twice, `runDecisionBrowser`, `forkCreate`, `forkRm`, `forkMerge`,
+  `pruneFleet`) is gated by `destroyGate` immediately before it; `removeTaskTmp`'s tmp/ cleanup
+  matches the documented exception exactly (refuses a non-directory/symlinked task folder, unlinks a
+  tmp symlink instead of following it); the rest (`forkReviewCandidate.cleanup` a scratch review
+  clone, `spawnBox`'s ACP cid bookkeeping, doctor.go/selfupdate.go/sign.go temp dirs, controller.go
+  tree snapshots, `splitTodoFolders`' disposable rebuildable split slices,
+  `copyLegacyLeaseAuthorityRoot`'s lease-adoption staging) are ephemeral/derived/internal state
+  outside "user state," not gate-bypasses.
 - 2026-08-10 — the card's central claim had gone false: the `internal/tasks` extraction left a
   SECOND identical `destroyGate` (`internal/tasks/util.go`), and the pending fork/fleet extraction
   would have minted a third. Single-sourced into `internal/ui` as `ui.DestroyGate` (+ `ui.Confirm`,
   `ui.ConfirmationResponse`), byte-identical prompt and errors; both copies plus their duplicate
   `confirm`/`confirmationResponse` deleted. Zero import-DAG change — `ui` is a leaf and both
   consumers already held the edge. Swept the tree: exactly ONE definition remains, with all 10 call
-  sites repointed — `internal/cli` fork.go:356/1345, fork_fleet.go:487, fork_merge.go:471,
-  profiles.go:269 and `internal/tasks` backlog.go:158, cmd.go:1202/1222/1762, queue.go:412. (The
+  sites repointed — `internal/cli`'s `forkCreate`, `forkRm`, `pruneFleet`, `forkMerge` and
+  `removeProfile`, and `internal/tasks`' `backlogFolderRemove`, `tasksFolderRemove` (two),
+  `runDecisionBrowser` and `tasksAcrossQueues`. (The
   2026-08-09 entry's `tasks.go`/`taskcmd.go` paths are that extraction's pre-move names; the same
   sites are now `internal/tasks/queue.go` and `cmd.go`.) The gate's test moved with it to
   `internal/ui/confirm_test.go`. `check:` is still `none` — nothing mechanical catches a fourth copy.

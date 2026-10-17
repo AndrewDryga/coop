@@ -2,9 +2,9 @@
 name: menus-offer-only-accepted-tokens
 description: "an interactive menu shows only the tokens the parser accepts, and names an unknown answer instead of dropping it"
 scope: cli-grammar
-sources: [internal/cli/commands.go, internal/cli/init_test.go]
+sources: [internal/cli/init_cmd.go, internal/cli/init_test.go]
 check: "go test ./internal/cli -run TestPromptExactTokens"
-updated: 2026-09-11
+updated: 2026-10-17
 ---
 
 # An interactive menu offers exactly what it accepts — and rejects the rest out loud
@@ -37,13 +37,17 @@ works, everything off it is refused where the user can see it.
   second scanner over the same stdin buffers past its own line and eats the next answer.
 - A binary question keeps the shared `ui.Confirm`/`ui.ConfirmationResponse` parsing
   (`[Y/n]`/`[y/N]`) — this rule governs menus of values, not yes/no.
-- The same discipline for a flag: `parseExplicitList` already names an unknown `--services` /
-  `--agents` value and refuses. An interactive answer is held to the flag's standard, not below it.
+- The same discipline for a flag: `listOption.parse` (internal/cli/init_cmd.go) already names an
+  unknown `--services` / `--agents` value, lists the accepted choices, and refuses. An interactive
+  answer is held to the flag's standard, not below it.
 
 See also [[scaffold-fits-the-repo]] (what init may generate at all) and
 [[command-output-tiers]] (where the result of those answers is printed).
 
 ## Changelog
+- 2026-10-17 — `parseExplicitList` became `listOption.parse` (a2cfb50c), and `cmdInit`,
+  `promptExactTokens` and the list options moved to internal/cli/init_cmd.go; the flag bullet and
+  `sources` follow, verified against init_cmd.go.
 - 2026-09-11 — created, from the human-first `coop init` rework
   (task 2026-09-10-make-network-inspection-destination-first-and-ex). Swept every interactive
   prompt in the tree for the pattern: `grep -rn 'bufio.NewScanner(os.Stdin)|fmt.Scanln|ui.Confirm('`

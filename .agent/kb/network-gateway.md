@@ -23,28 +23,29 @@ mutex, clears retained access there, then tears down streams outside the mutex. 
 caller uses that same latch, so slow cleanup cannot admit a newer valid snapshot or replace
 the initiating credential-free diagnostic with a later lifecycle reason.
 
-**Controller** — UID `0:65532`, `CAP_ADD NET_ADMIN` and nothing else, on the bridge
-(`box/filtered_launch.go:151`, `:194`). It owns nftables table `coop_net`
-(`networkgateway/controller.go:316`): a nat/output `capture` chain redirects the agent's
-(the host-selected non-root `skuid`: native Linux user UID, or 1000 on Docker Desktop) TCP on every
-port the policy grants TLS on — `tcp dport { 443, 853, … }` — to the
-guard's `:15443`, and 53 tcp+udp to its `:15353`; a filter/output chain drops by default. A policy
-with no `tls` grant renders NO redirect rule at all (an empty nft set is a syntax error, and a
-default one would be an invention). Its order is the contract (`initialRules` in `controller.go`):
-Docker's resolver address 127.0.0.11 is refused first, counted as `protected_agent` (port 53 there
-never reaches the filter, because the capture rewrote it to the guard; see restricted-networking),
-then the agent's OWN loopback is accepted (`oifname "lo"` plus `ip daddr 127.0.0.0/8`, so a test
-server on 127.0.0.1:3000 is not an attempt on a protected address), then an approved `service:` grant's one container address,
-THEN the `protected4` interval set, then every other grant, then the deny. `protected4` is host
-addresses, loopback, link-local, metadata AND every subnet/gateway the Docker daemon reports at
-launch (`box/filtered.go:273`) — without that half, a granted `cidr: 172.17.0.0/16` would reach
-sibling containers and other sessions' boxes. Being the namespace owner it also publishes
-`serve.ports` (`controller.go:126`), and their ingress rule matches ONLY the bridge gateway address
-host-published traffic is NAT'd from, so a sibling container cannot reach a served port. Leases are relative kernel timeouts: the controller reserves
-the whole 250 ms commit budget plus a 20 ms tick allowance out of every TTL and returns the
-conservative lower bound to the guard (`controller.go:268`), so a slow kernel commit can never
-extend DNS authority. The controller commits ONE lease at a time and answers every concurrent
-request `gateway_lease_capacity` (`control.go`) — contention, not a verdict — so the guard and every
+**Controller** — UID `0:65532`, `CAP_ADD NET_ADMIN` and nothing else, on the bridge (`helperOptions`
+in box/filtered_launch.go, re-checked by `verifyContainer`). It owns nftables table `coop_net`
+(`Controller.initialRules` in networkgateway/controller.go): a nat/output `capture` chain redirects
+the agent's (the host-selected non-root `skuid`: native Linux user UID, or 1000 on Docker Desktop)
+TCP on every port the policy grants TLS on — `tcp dport { 443, 853, … }` — to the guard's `:15443`,
+and 53 tcp+udp to its `:15353`; a filter/output chain drops by default. A policy with no `tls` grant
+renders NO redirect rule at all (an empty nft set is a syntax error, and a default one would be an
+invention). Its order is the contract (`initialRules` in `controller.go`): Docker's resolver address
+127.0.0.11 is refused first, counted as `protected_agent` (port 53 there never reaches the filter,
+because the capture rewrote it to the guard; see restricted-networking), then the agent's OWN
+loopback is accepted (`oifname "lo"` plus `ip daddr 127.0.0.0/8`, so a test server on 127.0.0.1:3000
+is not an attempt on a protected address), then an approved `service:` grant's one container
+address, THEN the `protected4` interval set, then every other grant, then the deny. `protected4` is
+host addresses, loopback, link-local, metadata AND every subnet/gateway the Docker daemon reports at
+launch (`filteredProtectedAddresses` in box/filtered.go) — without that half, a granted
+`cidr: 172.17.0.0/16` would reach sibling containers and other sessions' boxes. Being the namespace
+owner it also publishes `serve.ports` (`validServePorts`, rendered in `initialRules`), and their
+ingress rule matches ONLY the bridge gateway address host-published traffic is NAT'd from, so a
+sibling container cannot reach a served port. Leases are relative kernel timeouts: the controller
+reserves the whole 250 ms commit budget plus a 20 ms tick allowance out of every TTL and returns the
+conservative lower bound to the guard (`leaseRules`), so a slow kernel commit can never extend DNS
+authority. The controller commits ONE lease at a time and answers every concurrent request
+`gateway_lease_capacity` (`control.go`) — contention, not a verdict — so the guard and every
 credential broker admit through the same `admitLease` (`guard.go`): wait their turn within the
 admission budget, and refresh an answer inside the commit margin once. (The broker once skipped
 both, and a client opening its MCP servers beside its model call lost one of them to a spurious
@@ -53,21 +54,22 @@ answer arrives already expired: a caching upstream serves a record at TTL 0 at t
 (Akamai's 20 s records through 1.1.1.1), which no lease can use.
 
 **Guard** — UID `65532:65532`, capless, read-only rootfs, sharing the controller's namespace
-(`filtered_launch.go:198`). It terminates nothing: it reads the connection's ORIGINAL destination
-before any byte (`SO_ORIGINAL_DST` through a raw `getsockopt`, `destination_linux.go:16`), parses
-the ClientHello for SNI, refuses every ECH offer including empty and GREASE ones (`hello.go:61`),
-then replays the original bytes to Envoy over a private filesystem socket with a PROXY v2 header
-carrying the validated destination AND port plus a `PP2_TYPE_UNIQUE_ID` correlation TLV
-(`proxy.go:15`). Envoy's `original_dst` cluster dials exactly that address:port — there is no
-`upstream_port_override` any more, so the port cannot come from anywhere but the kernel. Its DNS
-side admits the NAME alone (`AdmitsName`, never a port: a client must resolve before the kernel can
-record which granted port it dialed), then resolves upstream over DoH to a pinned peer. A flow has
-two clocks that must never be crossed: the ADMISSION budget (`GuardAdmissionTimeout`, 10 s —
-inspection, resolution, lease, private dial, replay) and the flow's LIFETIME (the guard's own
-context). `forwardTLS(flow, admission, …)` takes both, and only `flow` may close the private leg.
-Until 2026-09-18 the close was armed on the admission context, so every guarded TLS flow died 10 s
-after admission — long streamed model responses were cut mid-body and retried forever
-(`TestGuardFlowOutlivesTheAdmissionBudget`, `TestServiceProxyFlowOutlivesTheAdmissionBudget`).
+(`helperOptions` again). It terminates nothing: it reads the connection's ORIGINAL destination
+before any byte (`SO_ORIGINAL_DST` through a raw `getsockopt`, `readOriginalDestination` in
+destination_linux.go), parses the ClientHello for SNI, refuses every ECH offer including empty and
+GREASE ones (`Inspect` in hello.go), then replays the original bytes to Envoy over a private
+filesystem socket with a PROXY v2 header carrying the validated destination AND port plus a
+`PP2_TYPE_UNIQUE_ID` correlation TLV (`ProxyHeader` in proxy.go). Envoy's `original_dst` cluster
+dials exactly that address:port — there is no `upstream_port_override` any more, so the port cannot
+come from anywhere but the kernel. Its DNS side admits the NAME alone (`AdmitsName`, never a port: a
+client must resolve before the kernel can record which granted port it dialed), then resolves
+upstream over DoH to a pinned peer. A flow has two clocks that must never be crossed: the ADMISSION
+budget (`GuardAdmissionTimeout`, 10 s — inspection, resolution, lease, private dial, replay) and the
+flow's LIFETIME (the guard's own context). `forwardTLS(flow, admission, …)` takes both, and only
+`flow` may close the private leg. Until 2026-09-18 the close was armed on the admission context, so
+every guarded TLS flow died 10 s after admission — long streamed model responses were cut mid-body
+and retried forever (`TestGuardFlowOutlivesTheAdmissionBudget`,
+`TestServiceProxyFlowOutlivesTheAdmissionBudget`).
 
 Filtered project services use the same guard through a second, bounded listener on `:15444`.
 Compose puts only the approved service closure on an internal network and points standard HTTPS
@@ -103,48 +105,51 @@ lease/Envoy path.
 Facts the code cannot say twice, all still true:
 
 - The upstream PORT is the kernel's, never the client's. `policy.Domain(name, port)` runs in the
-  guard (`guard.go:252`), again in the controller before any element is installed
-  (`controller.go:222`), and leases are `ipv4_addr . inet_service` pairs (`ip daddr . tcp dport
-  @leases4 accept`), so one address on two granted ports is two leases. A connection whose original
-  destination IS the listener was dialed straight at the guard — nothing redirected it, so it
-  declares no port — and is refused as `tls_direct_dial_refused` and counted (`guard.go:188`). That
-  is spec §5's "a direct dial cannot select an upstream port", and it is why the guard's own egress
-  rule is port-agnostic only for ESTABLISHED flows.
+  guard (`Inspect`, given the original destination's port by `Guard.forward`), again in the
+  controller before any element is installed (`Controller.Admit`), and leases are
+  `ipv4_addr . inet_service` pairs (`ip daddr . tcp dport @leases4 accept`), so one address on two
+  granted ports is two leases. A connection whose original destination IS the listener was dialed
+  straight at the guard — nothing redirected it, so it declares no port — and is refused as
+  `tls_direct_dial_refused` and counted (`Guard.destination`). That is spec §5's "a direct dial
+  cannot select an upstream port", and it is why the guard's own egress rule is port-agnostic only
+  for ESTABLISHED flows.
 
 - **`tls_direct_dial_refused` and `dns_query_invalid` carry no destination.** The box shares the
   gateway's namespace, so anything in it can dial `127.0.0.1:15443`/`:15353` directly; the guard
   refuses the first (no redirect ⇒ no declared port) and cannot read the second as a query. A direct
   dial never declared a destination and an unreadable query never named one — which is NOT the same
   as "nothing was trying to leave": a client whose DNS is merely malformed (a missing TCP length
-  prefix, an oversized datagram, a multi-question query — `guard.go:459`, `:491`, `resolver.go:398`)
-  was trying to resolve a real name. Investigated
-  2026-09-19/20 (task `…-find-why-a-filtered-run-s-teardown-can-record-di`): a run's 4+4 burst was
-  read as a teardown artifact, but the evidence timeline put it 49 s into a 78 s run, 0.6 s before a
-  SUCCESSFUL connection to the same host — and a live repro (a box dialing both listeners) produced
-  exactly those two reasons mid-run. So every surface now separates them from blocked traffic
+  prefix, an oversized datagram, a multi-question query — `Guard.dnsTCP`, `Guard.dnsUDP`,
+  `parseQuery`) was trying to resolve a real name. Investigated 2026-09-19/20 (task
+  `…-find-why-a-filtered-run-s-teardown-can-record-di`): a run's 4+4 burst was read as a teardown
+  artifact, but the evidence timeline put it 49 s into a 78 s run, 0.6 s before a SUCCESSFUL
+  connection to the same host — and a live repro (a box dialing both listeners) produced exactly
+  those two reasons mid-run. So every surface now separates them from blocked traffic
   (`networkreport.LocalRefusal`, used by `net inspect`, `net watch`, the run listing, the box
-  summary and the loop's iteration block) instead of folding them into "remote addresses". Since 2026-09-20 the event
-  also carries the client's OWN port (`GuardEvent.SourcePort` → `networkview.Denial.SourcePort`,
-  rendered as "from port N inside the box", and carried to a fleet reader through
-  `workerproto.NetworkDenial.SourcePort`): it is the only handle on WHICH client, since there is no
-  destination to look up, and it survives a destinations-withheld projection because a port inside
-  the box names no endpoint. It is a SOURCE — never fed to `Destination()`, never counted as
-  traffic.
+  summary and the loop's iteration block) instead of folding them into "remote addresses". Since
+  2026-09-20 the event also carries the client's OWN port (`GuardEvent.SourcePort` →
+  `networkview.Denial.SourcePort`, rendered as "from port N inside the box", and carried to a fleet
+  reader through `workerproto.NetworkDenial.SourcePort`): it is the only handle on WHICH client,
+  since there is no destination to look up, and it survives a destinations-withheld projection
+  because a port inside the box names no endpoint. It is a SOURCE — never fed to `Destination()`,
+  never counted as traffic.
 
 - The pinned Envoy 1.39.1 `tls_inspector` caps ClientHello at 16 KiB, so both inspection layers use
-  the same bound (`hello.go:18`, `envoy.go:37`).
+  the same bound (`MaxHelloBytes` in hello.go, `max_client_hello_size` in envoy.go's
+  `EnvoyBootstrap`).
 - Envoy runs with `--disable-hot-restart` (`GuardRuntime.Run` in `service.go`): the box shares the
   guard's network namespace, and Envoy's hot-restart socket is an abstract Unix socket, which
   belongs to the namespace and ignores mounts, so the private tmpfs cannot hide it from the agent.
   Its access log format is a YAML block scalar because a single-quoted `\n` is literal text and
-  silently stops line intake (`envoy.go:59`).
+  silently stops line intake (the access log's `inline_string` in `EnvoyBootstrap`).
 - An admitted AAAA question gets a local NOERROR/NODATA answer, never REFUSED: refusing makes a
-  dual-stack musl client (the Codex image) discard its valid A answer (`resolver.go:398`).
-- Expiry authority is `BootInstant`, absolute nanoseconds on CLOCK_BOOTTIME (`clock.go:11`). Never
+  dual-stack musl client (the Codex image) discard its valid A answer (`Resolver.Answer`).
+- Expiry authority is `BootInstant`, absolute nanoseconds on CLOCK_BOOTTIME (clock.go). Never
   convert one to a `time.Time` or a context deadline — an ordinary Go timeout is a wakeup, a
   boot-clock check independently rejects a suspended or late kernel.
 - nft 1.0.2 rejects a table argument after `list counters inet`, and its JSON formatter prints
-  UINT64_MAX as `-1` (`kernel_events.go:122`, `:224`); only that private parser reinterprets it.
+  UINT64_MAX as `-1` (`readKernelCounters` and `nftUnsigned` in kernel_events.go); only that private
+  parser reinterprets it.
 - On OrbStack every Docker network also gets a HOST address (`192.168.<n>.0` on the Mac), so
   another filtered box's start — or another project's `compose up` — adds addresses outside a
   running box's launch envelope. The watch used to stop the run on that ("host address … appeared
@@ -164,51 +169,52 @@ only place bytes are metered), sampled `/proc/net/tcp` rows, and nftables counte
 observed; raw grants are only counted, per kernel counter; refused datagrams are a number with no
 destination, and Coop reports UNKNOWN rather than zero for anything unmeasured. Envoy is drained
 before the guard so a proxy event's admission registration is already eligible in the same sample
-(`collector.go:191`). A flow the proxy ended keeps its upstream socket in the kernel for a few
+(`Collector.sample`). A flow the proxy ended keeps its upstream socket in the kernel for a few
 samples; since 2026-09-10 the collector retains up to 128 such closed tuples and lets one explain
-exactly one lingering inode before it would be reported as a boundary gap (`collector.go:529`).
-That was worth fixing: the gap marked a fully metered smoke receipt partial and made `coop net
-setup` refuse a clean run about one time in three. A retained close expires after
-`ObservationStaleAfter` (3 s, three sampling intervals) and is evicted then, so a reused ephemeral
-port minutes later cannot hide a real gap; an unreadable clock folds nothing and evicts nothing.
-The resolver's own DoH connection leaves the same remnant, and is explained the same way — but only
-by exact identity. While a connection is owned, the first inventory row at its tuple, claimed by
-nothing else, BINDS its inode. A connection dialed and released between two samples never meets a
-sample, so `track()` also reads the inode from the connection's own fd (`socketInode`, `fstat` —
-the number /proc/net/tcp lists) and `Close` appends (tuple, inode, boot-clock release instant) to a
-bounded released list each sample drains after its inventory read (`drainReleased`). Either way
-`reconcileMaintenance` retains the tuple+inode pair under the same bound and expiry as a proxy
-close, `maintenanceAccountsFor` explains only that exact tuple, inode and UID 65532 within 3 s, and
-the bytes stay where they were metered, in the maintenance counters. What still explains nothing:
-a dial the collector catches in SYN_SENT and that stays unregistered past the 3 s bound — its only
-key is the peer address, and 1.1.1.1:443 is not an identity — and an inode-0 closing remnant, which
-stays an ownerless `kernel_closing_remnant` (the report hides it). macOS's fstat reports no socket
-inode; only the gateway's Linux container needs it.
+exactly one lingering inode before it would be reported as a boundary gap
+(`Collector.closeAccountsFor`). That was worth fixing: the gap marked a fully metered smoke receipt
+partial and made `coop net setup` refuse a clean run about one time in three. A retained close
+expires after `ObservationStaleAfter` (3 s, three sampling intervals) and is evicted then, so a
+reused ephemeral port minutes later cannot hide a real gap; an unreadable clock folds nothing and
+evicts nothing. The resolver's own DoH connection leaves the same remnant, and is explained the same
+way — but only by exact identity. While a connection is owned, the first inventory row at its tuple,
+claimed by nothing else, BINDS its inode. A connection dialed and released between two samples never
+meets a sample, so `track()` also reads the inode from the connection's own fd (`socketInode`,
+`fstat` — the number /proc/net/tcp lists) and `Close` appends (tuple, inode, boot-clock release
+instant) to a bounded released list each sample drains after its inventory read (`drainReleased`).
+Either way `reconcileMaintenance` retains the tuple+inode pair under the same bound and expiry as a
+proxy close, `maintenanceAccountsFor` explains only that exact tuple, inode and UID 65532 within 3
+s, and the bytes stay where they were metered, in the maintenance counters. What still explains
+nothing: a dial the collector catches in SYN_SENT and that stays unregistered past the 3 s bound —
+its only key is the peer address, and 1.1.1.1:443 is not an identity — and an inode-0 closing
+remnant, which stays an ownerless `kernel_closing_remnant` (the report hides it). macOS's fstat
+reports no socket inode; only the gateway's Linux container needs it.
 
-**Cleanup** is exact-owned and ordered (`box/filtered_cleanup.go:30`): remove the agent, prove the
-guard still answers AFTER the agent is gone, stop it, copy the single `final.json` out of the
-helper-only observations volume, then the controller, then the volumes and the artifact directory,
-then seal the receipt. Every exit runs the deferred containment, which removes the containers AND
-attempts both named volumes once nothing can still mount them (`filtered_cleanup.go:160`) — an
-early return on lost host storage used to leak a volume pair per interrupted run. Missing terminal
-evidence makes the receipt partial; it never blocks containment. When the supervising PROCESS dies
-instead, nothing local can finish it: `box.RecoverNetworkRuns` is the only path that settles such a
-run, and it takes every run still owed cleanup OR a receipt. A death after the teardown removed the
-containers and volumes leaves at most the artifact and no receipt, and retention keeps an unsealed
-run forever, so the pass finishes that one from the record alone: it connects to the recorded daemon
-only for a resource still at the runtime (`recoverLeftovers`), so a stopped or replaced daemon cannot
-hold the seal back, and `coop net recover` and `coop net inspect` resolve a runtime only when cleanup
-is pending. `NetworkRecovery.Sealed` means THIS pass wrote the receipt, never an earlier one.
-It runs from `coop net recover`, from `coop net inspect` of a run owed either (scoped to that run),
-from the orphan sweep at a loop,
-fork or build start, and before every other filtered host launch — `runBox` in `cli/boxsweep.go`,
-and a fork or session review gate through `forkctl.Host.SettleFilteredRuns` — never before an open
-or offline one, because finding the pending runs reads every retained record.
-The guard and controller carry only `coop.network.*` labels (the agent also carries `coop=box`), so
-the box sweep alone never reclaimed them: a run killed mid-teardown, followed only by direct
-launches, kept both containers and both volumes until 2026-09-18. `coop net setup` drives its ONE smoke through this same engine behind a host-only
-`networkSmokeLaunch` permit (`box/network_setup.go:225`) — the seam exists so the preflight proves
-the exact path a workload gets, and it can never appear on a `RunSpec` a caller builds.
+**Cleanup** is exact-owned and ordered (`filteredExecution.cleanup` in box/filtered_cleanup.go):
+remove the agent, prove the guard still answers AFTER the agent is gone, stop it, copy the single
+`final.json` out of the helper-only observations volume, then the controller, then the volumes and
+the artifact directory, then seal the receipt. Every exit runs the deferred containment, which
+removes the containers AND attempts both named volumes once nothing can still mount them
+(`containVolumes`) — an early return on lost host storage used to leak a volume pair per interrupted
+run. Missing terminal evidence makes the receipt partial; it never blocks containment. When the
+supervising PROCESS dies instead, nothing local can finish it: `box.RecoverNetworkRuns` is the only
+path that settles such a run, and it takes every run still owed cleanup OR a receipt. A death after
+the teardown removed the containers and volumes leaves at most the artifact and no receipt, and
+retention keeps an unsealed run forever, so the pass finishes that one from the record alone: it
+connects to the recorded daemon only for a resource still at the runtime (`recoverLeftovers`), so a
+stopped or replaced daemon cannot hold the seal back, and `coop net recover` and `coop net inspect`
+resolve a runtime only when cleanup is pending. `NetworkRecovery.Sealed` means THIS pass wrote the
+receipt, never an earlier one. It runs from `coop net recover`, from `coop net inspect` of a run
+owed either (scoped to that run), from the orphan sweep at a loop, fork or build start, and before
+every other filtered host launch — `runBox` in `cli/boxsweep.go`, and a fork or session review gate
+through `forkctl.Host.SettleFilteredRuns` — never before an open or offline one, because finding the
+pending runs reads every retained record. The guard and controller carry only `coop.network.*`
+labels (the agent also carries `coop=box`), so the box sweep alone never reclaimed them: a run
+killed mid-teardown, followed only by direct launches, kept both containers and both volumes until
+2026-09-18. `coop net setup` drives its ONE smoke through this same engine behind a host-only
+`networkSmokeLaunch` permit (`runSetupSmoke` hands it to `runWithNetworkSmoke`) — the seam exists so
+the preflight proves the exact path a workload gets, and it can never appear on a `RunSpec` a caller
+builds.
 
 The image is built from an embedded source tar plus a pinned Dockerfile, with no host compiler and
 no repository build context (`Context` in `gatewayimage/image.go`). `gatewayimage.Pack` defines the
@@ -283,6 +289,14 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-17 — replaced every line-number citation with the function, constant or template it meant
+  (`helperOptions`, `verifyContainer`, `initialRules`, `filteredProtectedAddresses`,
+  `validServePorts`, `leaseRules`, `readOriginalDestination`, `Inspect`, `ProxyHeader`,
+  `Controller.Admit`, `Guard.destination`, `Guard.dnsTCP`/`dnsUDP`, `parseQuery`, `Resolver.Answer`,
+  `MaxHelloBytes`, `EnvoyBootstrap`, `readKernelCounters`, `nftUnsigned`, `Collector.sample`,
+  `closeAccountsFor`, `filteredExecution.cleanup`, `containVolumes`, `runWithNetworkSmoke`), each
+  re-verified at HEAD. The guard's domain check is now cited at `Inspect` (the TLS path that gets
+  the kernel's port), not the service proxy's copy the old number had drifted onto.
 - 2026-10-17 — `internal/safetext` joined `sourceDirs`: egress imports it for the characters
   provenance text may not hold (task 2026-10-17-escape-c1-bidi-invisible-and-line-separator-char).
   A package coop-net newly imports fails `TestEmbeddedGatewayModuleLoadsOnItsOwn` until it is

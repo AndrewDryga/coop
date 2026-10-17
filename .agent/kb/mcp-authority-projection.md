@@ -49,13 +49,14 @@ credential-projection failures before the ACP child starts. Missing and server-e
 remain intentionally inert; malformed or ambiguous active configuration never degrades into a
 tool-free answer.
 
-`mcp.BindTaskTools` is a second coop-owned binding beside `BindResponderState`: for a loop work box
-it merges the reserved `coop-tasks` STDIO server (`{"command":"socat","args":["STDIO","UNIX-CONNECT:
-/coop/tasks/mcp.sock"]}`) into the same validated snapshot before the per-run artifact is written, so
-every projection — claude `--mcp-config`, codex TOML, gemini settings, ACP `session/new` — carries it
-unchanged. Unlike responder-state it needs no bearer token: the socket is mounted only into this run's
-box, so the mount is the authority. See [[in-box-task-channel]] for why the transport is a
-helper-container socket and not HTTP.
+`mcp.BindTaskTools` is a second coop-owned binding beside `BindControllerTools`: for a loop work box
+it merges the reserved `coop-tasks` STDIO server
+(`{"command":"socat","args":["STDIO","UNIX-CONNECT:/coop/tasks/mcp.sock"]}`) into the same
+validated snapshot before the per-run artifact is written, so every projection — claude
+`--mcp-config`, codex TOML, gemini settings, ACP `session/new` — carries it unchanged. Unlike
+`controller-tools` it needs no bearer token: the socket is mounted only into this run's box, so the
+mount is the authority. See [[in-box-task-channel]] for why the transport is a helper-container
+socket and not HTTP.
 
 The generated native configs are also where the MANAGED-CLIENT defaults live, so codex's
 `config.toml` and gemini's `settings.json` overlays exist for every box that mounts that home,
@@ -178,9 +179,9 @@ way.
 `--network none` cannot reach one, so `mcp.WithoutRemoteServers` removes each server with a `url`
 before any projection, `mcpScrub`'s names leave the env (and a `-e` of one is refused, as under
 filtered), and the network section names what was left out. An offline session's private copy is
-written without them and without the Responder binding. Its daemon-side `session/new` render reads
-that copy, so it needs no handoff. Residual: only names the configured file references are scrubbed
-— a leftover token elsewhere in the env file still rides a filtered box's env.
+written without them and without the controller-tools binding. Its daemon-side `session/new` render
+reads that copy, so it needs no handoff. Residual: only names the configured file references are
+scrubbed — a leftover token elsewhere in the env file still rides a filtered box's env.
 
 Credential scope is not proof of command consumption. `credentialScope` answers whose login may be
 mounted, while `nestedAgentCommand` answers whether an explicit peer or a consult/delegate role can
@@ -196,6 +197,9 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-10-17 — the Responder binding was renamed: `BindResponderState`/`responder-state` are
+  `BindControllerTools`/`controller-tools` since 0e7c5c45; verified against internal/mcp/mcp.go and
+  `captureSessionMCP` in internal/sessionsvc/acp.go.
 - 2026-10-17 — removed the read-only and bare modes: every session child hands its list over when
   online, and a read-only repository session brokers like any other box.
 - 2026-10-10 — actual editor session had no shared MCP tools: only daemon children requested the

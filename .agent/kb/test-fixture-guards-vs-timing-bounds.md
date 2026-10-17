@@ -2,23 +2,24 @@
 name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
-sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/lifecyclebench/cases.go, tools/lifecyclebench/cases_test.go, internal/agent/usage_report_test.go]
+sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/lifecyclebench/cases.go, tools/lifecyclebench/cases_test.go, internal/agent/usage_report_test.go, internal/workerconnector/job_sources.go, internal/workerconnector/job_sources_refresh_test.go]
 updated: 2026-10-17
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
 
 **A fixture guard** waits for a subprocess to write its marker, a goroutine to reach a lock, a
-container to start — "did the fixture get to step X". Timing is not the behavior under test, so
-the deadline exists only to turn a hung fixture into a failure instead of a hang. It must be
-generous: a healthy run pays nothing (the poll returns as soon as the condition holds), while a
-tight constant (2–5 s was common) fails whenever the gate's race suite runs beside a Docker-heavy
-suite — the 2026-09-06 inventory: `TestSpawnBoxExportsEmptyPresetSelection`, the fork lifecycle
-lock waiters, `TestConsultWrapperLockSerializesAndRecoversAfterOwnerExit`,
-`TestRunCanceledAfterServicesUpTearsDownAttemptedReviewCompose`,
-`TestRemoveByLabelAppleContainerExactMatch`, `waitForSessionTest`. All of them passed alone. They
-now use `internal/testutil/wait` (`wait.For`, `wait.ForFile`, `wait.Deadline` = 60 s, 5 ms poll),
-whose failure names the missing event and the deadline.
+container to start — "did the fixture get to step X". Timing is not the behavior under test, so the
+deadline exists only to turn a hung fixture into a failure instead of a hang. It must be generous: a
+healthy run pays nothing (the poll returns as soon as the condition holds), while a tight constant
+(2–5 s was common) fails whenever the gate's race suite runs beside a Docker-heavy suite — the
+2026-09-06 inventory: `TestSpawnBoxExportsEmptyPresetSelection`, the fork lifecycle lock waiters,
+`TestConsultWrapperLockSerializesAndRecoversAfterOwnerExit`,
+`TestRunCanceledAfterServicesUpTearsDownAttemptedReviewCompose` (deleted 2026-09-15: a review box no
+longer starts its own services), `TestRemoveByLabelAppleContainerExactMatch`, `waitForSessionTest`.
+All of them passed alone. The survivors now use `internal/testutil/wait` (`wait.For`,
+`wait.ForFile`, `wait.Deadline` = 60 s, 5 ms poll), whose failure names the missing event and the
+deadline.
 
 **A timing bound** is the behavior: a coop-owned consult must be reaped in seconds and never sit
 through the 30 s drain window; a forwarder must not delay a failed provider by more than a
@@ -41,13 +42,16 @@ worker). And record how the fixture process actually ended (`worker:exit exit st
 from.
 
 A fourth: an injected production deadline is a timing bound in disguise when the code runs a REAL
-subprocess under it. `TestRepositoryFetchMayOutliveRemoteIdentityLookup` handed production a 250 ms
-lookup budget and then let it run a real `rev-parse` plus a real `ls-remote` inside that budget —
-two process startups that fit on a quiet host and not on a loaded one. Observe the budget on the
-injected runner's contexts instead (`fetchDeadline − lookupDeadline ≥ fetchTimeout − lookupTimeout`
-is monotonic arithmetic that holds under any load), keep the real Git transfer for what it proves
-(the object arrived), and model slow startup with a PATH shim (`sleep 0.3; exec git`) to show the
-old test fails and the new one does not (`internal/sessionsvc/source_test.go`).
+subprocess under it. `TestRepositoryFetchMayOutliveRemoteIdentityLookup` once handed production a
+250 ms lookup budget and then let it run a real `rev-parse` plus a real `ls-remote` inside that
+budget — two process startups that fit on a quiet host and not on a loaded one. Observe the budget
+on the injected runner's contexts instead: the test now asserts that the `ls-remote` context has a
+deadline and that the fetch runs on a fresh context with none (git's HTTP low-speed settings bound
+the transfer), facts that hold under any load. Keep the real Git transfer for what it proves (the
+object arrived); a PATH shim (`sleep 0.3; exec git`) modelled slow startup when the fix was proved,
+failing the old test and not the new one. The test lives in
+`internal/workerconnector/job_sources_refresh_test.go`, against `RefreshDefault` in
+`internal/workerconnector/job_sources.go`.
 
 **Production liveness bounds meet the same load.** A production deadline that only guards a
 wedged runtime is not a speed requirement, and a fake runtime that is a shell script makes a test
@@ -70,12 +74,12 @@ foreground sleep may add the latter between listings, hiding an excluded leader 
 Publish one child's PID, keep the leader in builtin `wait`, and assert those known identities.
 Do not compare dynamic status/elapsed columns or loosen production cleanup assertions.
 
-**A child marker is not Docker inventory readiness.** Docker 28.0.4 starts the task before
-setting Running and checkpointing its query snapshot (Moby `daemon/start.go:222-235`);
-`docker ps` reads that snapshot. The signal-forwarding runtime test waits for both the child
-marker and exactly one matching running container before canceling. Query errors, duplicate
-matches and premature exit still fail; TERM receipt and zero containers after return stay
-strict. Its controlled initial-empty-inventory case fails the former one-shot assertion.
+**A child marker is not Docker inventory readiness.** Docker 28.0.4 starts the task before setting
+Running and checkpointing its query snapshot (Moby's `Daemon.containerStart` in `daemon/start.go`);
+`docker ps` reads that snapshot. The signal-forwarding runtime test waits for both the child marker
+and exactly one matching running container before canceling. Query errors, duplicate matches and
+premature exit still fail; TERM receipt and zero containers after return stay strict. Its controlled
+initial-empty-inventory case fails the former one-shot assertion.
 
 **A transient reader needs a barrier, not a longer poll.** The consult slow-drain fixture keeps
 its peer waiting until the host has frozen a capture reader. Only then does the peer produce its
@@ -121,6 +125,12 @@ on failure and reap its resident group on every assertion path. The editor-stdin
 stable-leader assertions remain unchanged.
 
 ## Changelog
+- 2026-10-17 — the fetch-versus-lookup test moved to the worker connector with source refresh
+  (0e7c5c45): it now asserts a deadline on the `ls-remote` context and none on the fetch's, so the
+  deadline arithmetic and `internal/sessionsvc/source_test.go` are gone from the paragraph (sources
+  gain the two workerconnector files); the deleted review-compose test is marked as such in the
+  2026-09-06 inventory. Verified against `RefreshDefault` and its test.
+- 2026-10-17 — named Moby's `Daemon.containerStart` instead of a daemon/start.go line range.
 - 2026-10-17 — macOS's /dev/fd answers stat with EBADF now and then under concurrent lookups
   (reproduced outside coop: 4 to 6 in 9,600 stats from 32 shells); the consult and delegate lost-EOF
   stubs stat their stdin descriptor directly instead (task

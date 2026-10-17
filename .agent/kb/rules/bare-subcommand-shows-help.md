@@ -4,7 +4,7 @@ description: "a bare group prints help or its default view, never an empty-token
 scope: cli-grammar
 sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/tasks/queue.go]
 check: "none"
-updated: 2026-09-27
+updated: 2026-10-17
 ---
 
 # A bare subcommand group shows help, never an "unknown command \"\"" error
@@ -30,6 +30,8 @@ Bare `coop` prints help; a bare group should match that.
   reviewed rule; check it whenever you add or touch a subcommand group.
 
 ## Changelog
+- 2026-10-17 — the 2026-08-09 sweep entry keeps its dispatcher names and drops their file:line
+  numbers.
 - 2026-09-27 — removed references to the obsolete test-only `unknownErr` helper; rechecked
   current dispatchers and their unknown-subcommand paths.
 - 2026-08-28 — refreshed the illustrative task grammar after copied-queue `split` was retired; the
@@ -44,11 +46,10 @@ Bare `coop` prints help; a bare group should match that.
 - 2026-07-02 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: swept every top-level group dispatcher's empty-token
-  handling — fork (cmdFork → forkHelp, fork.go:99), fleet (cmdFleet → groupHelp("fleet"),
-  fork_fleet.go:154), tasks (cmdTasks/tasksInQueue → list, tasks.go:306+330), backlog
-  (cmdBacklog/cmdBacklogFolder → list, backlog.go:88), credentials (cmdCredentials → list,
-  profiles.go:27), presets (cmdPresets → list, presetcmd.go:17), sessions (cmdSessions →
-  groupHelp("sessions"), session_cmd.go:116). 0 code violations — every group avoids the
+  handling — fork (cmdFork → forkHelp), fleet (cmdFleet → groupHelp("fleet")), tasks
+  (cmdTasks/tasksInQueue → list), backlog (cmdBacklog/cmdBacklogFolder → list), credentials
+  (cmdCredentials → list), presets (cmdPresets → list), sessions (cmdSessions →
+  groupHelp("sessions")). 0 code violations — every group avoids the
   empty-token error. 1 finding: the card's own "Current sweep" bullet is stale — it names "pool"
   (fully retired; not a case in cli.go's dispatch switch at all, confirmed by
   `TestV3RetiredForms`) and "profiles" (renamed to "credentials"), and never mentions backlog,

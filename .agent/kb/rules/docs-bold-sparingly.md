@@ -4,7 +4,7 @@ description: "bold marks structure, never mid-sentence emphasis, never inline co
 scope: docs
 sources: [README.md, docs, CONTRIBUTING.md, MIGRATING.md]
 check: "none"
-updated: 2026-10-05
+updated: 2026-10-17
 ---
 
 # Docs: bold is for structure, not emphasis
@@ -33,25 +33,27 @@ aid. (The README had grown to ~100 bold spans, most of them inline emphasis.)
 - 2026-06-17 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: ran the card's own smell check
-  (`grep -oE '\*\*[^*]+\*\*' README.md | wc -l` = 100 — one is a regex false-positive on a YAML
-  glob `**` inside a fenced code block at README.md:1560, not real markdown bold); read full
-  sentence context for every span whose bolded text wasn't obviously a header/numbered-step/
-  lead-in-label/table-left-column (~25 candidates). 23 confirmed mid-sentence emphasis violations,
-  e.g. README.md:481 "the **launched agent's** credentials", :546 "named **credentials**", :564
-  "gives you **fallbacks**", :740/:743 "A **native** role"/"A **consult** role", :762 "must **not**
-  commit", :1104/:1105 "gate **once**"/"signs off **again**", :1239 "their **own** queues", :1481
-  "coop **validates it before every run**", :1639 "`--tasks` **replaces** this" (inside a table
-  cell). Did not read context for the remaining ~75 spans (structural-looking on inspection:
-  section headers, numbered steps, troubleshooting-table left column, `Term.`/`Term:` lead-ins) —
-  a defined subset, not exhaustive. The count (100) and the fraction that's inline emphasis both
-  land close to the card's own "Why" baseline ("~100 bold spans, most of them inline emphasis"),
-  so the original cleanup looks incomplete or has regressed as prose was added since. Full list
-  queued for the lead; not fixed here. The rule itself still looks sound — this is compliance
-  drift, not a wrong rule.
-- 2026-08-09 — fixed sweep: all 23 flagged spans de-bolded (re-located by quoted text — README
-  churn earlier the same day had drifted line numbers, mostly +3 past README.md:~1460). 22 were
-  plain markup removal (the word/phrase reads the same without it); :762 "must **not** commit" was
-  reworded instead per the card's own guidance — "must never commit", so the prohibition still
-  lands on a word that's hard to skim past, without the markup crutch. None were already resolved.
-  Smell check now `grep -oE '\*\*[^*]+\*\*' README.md | wc -l` = 77 (100 − 23). `make align` green.
+  (`grep -oE '\*\*[^*]+\*\*' README.md | wc -l` = 100 — one is a regex false-positive on a YAML glob
+  `**` inside a fenced code block under README's "Path-routed context", not real markdown bold);
+  read full sentence context for every span whose bolded text wasn't obviously a
+  header/numbered-step/lead-in-label/table-left-column (~25 candidates). 23 confirmed mid-sentence
+  emphasis violations, e.g. in README's "Agents & config" "the **launched agent's** credentials";
+  "Multiple subscriptions, with failover" "named **credentials**" and "gives you **fallbacks**";
+  "Presets" "A **native** role"/"A **consult** role" and "must **not** commit"; "The loop" "gate
+  **once**"/"signs off **again**"; "Monorepos" "their **own** queues"; "Services" "coop **validates
+  it before every run**"; "Configuration" "`--tasks` **replaces** this" (inside a table cell). Did
+  not read context for the remaining ~75 spans (structural-looking on inspection: section headers,
+  numbered steps, troubleshooting-table left column, `Term.`/`Term:` lead-ins) — a defined subset,
+  not exhaustive. The count (100) and the fraction that's inline emphasis both land close to the
+  card's own "Why" baseline ("~100 bold spans, most of them inline emphasis"), so the original
+  cleanup looks incomplete or has regressed as prose was added since. Full list queued for the lead;
+  not fixed here. The rule itself still looks sound — this is compliance drift, not a wrong rule.
+- 2026-08-09 — fixed sweep: all 23 flagged spans de-bolded (re-located by quoted text — README churn
+  earlier the same day had drifted line numbers, mostly +3 from the "Services" section on). 22 were
+  plain markup removal (the word/phrase reads the same without it); "must **not** commit" was
+  reworded instead per the card's own guidance — "must never commit", so the prohibition still lands
+  on a word that's hard to skim past, without the markup crutch. None were already resolved. Smell
+  check now `grep -oE '\*\*[^*]+\*\*' README.md | wc -l` = 77 (100 − 23). `make align` green.
 - 2026-10-05 — the README became a short landing page and its detail moved to docs (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.
+- 2026-10-17 — the 2026-08-09 entries locate each bolded phrase by its README section instead of a
+  README line number.

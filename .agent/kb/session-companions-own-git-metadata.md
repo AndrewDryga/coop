@@ -9,7 +9,7 @@ updated: 2026-10-17
 # Session companions own their Git metadata
 
 `companionRepositoryMounts` projects only the pinned companion workspace at
-`/coop/repositories/<alias>` (`internal/box/run.go:724-727`); it deliberately does not expose the
+`/coop/repositories/<alias>` (internal/box/run.go); it deliberately does not expose the
 operator's source checkout or Git configuration. A linked worktree therefore cannot function in
 the box: its `.git` file points to an absolute worktree-admin directory under the unmounted source
 repository.
@@ -71,6 +71,9 @@ index: an inspection's `read-tree` would then overwrite staged work. Regression 
 model's index bytes before and after inspection, including staged edits and hidden index flags.
 
 ## Changelog
+- 2026-10-17 — dropped the run.go line numbers after `companionRepositoryMounts`, which the sentence
+  already names (re-verified its `/coop/repositories/<alias>` read-only bind in
+  internal/box/run.go).
 - 2026-10-17 — replaced the companion's and session submodules' non-local clone with a pinned
   history copy after a tenant's Work sessions waited six minutes for one 6.2 GB companion. Tests
   cover the two-pack delta regression, pin-only ownership with no file written into the source,

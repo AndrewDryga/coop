@@ -3,7 +3,7 @@ name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
 sources: [internal/tasks/audit.go, internal/tasks/completion_recovery.go, internal/tasks/completion_fingerprint.go, internal/loop/completion.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
-updated: 2026-09-22
+updated: 2026-10-17
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
 observed twice in emisar on 2026-08-01:
@@ -15,7 +15,7 @@ observed twice in emisar on 2026-08-01:
    holding the box open, and names them again on termination — before that it was silent for the
    whole window, which reads as a hung loop.
 3. `classifyIteration` returns `background_timeout`, and `RestoreBackgroundHandoffCompletion`
-   **moves the finished task back to `in_progress`** (`internal/tasks/audit.go:2552`) — the commit
+   **moves the finished task back to `in_progress`** (internal/tasks/audit.go) — the commit
    stays, the completion does not.
 4. A later run resumes it and `resumeLine` offers the case-(a) recipe: amend the bound commit with a
    `Coop-Recovery` trailer.
@@ -104,6 +104,8 @@ original diff from protected-gate review and signoff. The final report distingui
 completed work. See [[loop-completion-refusals-keep-work-moving]].
 
 ## Changelog
+- 2026-10-17 — dropped the audit.go line number after `RestoreBackgroundHandoffCompletion`, which
+  the sentence already names (re-verified in internal/tasks/audit.go).
 - 2026-09-22 — retained first-task evidence across automatic retries and unified completion repair
   with the content proof. Controller regressions deny prior-attempt source/commit changes and
   post-MCP hidden edits; retain unchanged inheritance, exact restoration, normal implementation

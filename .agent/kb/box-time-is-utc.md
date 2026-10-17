@@ -3,7 +3,7 @@ name: box-time-is-utc
 description: boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local
 subsystem: box
 sources: [internal/box/run.go, internal/ladder/limit.go]
-updated: 2026-08-10
+updated: 2026-10-17
 ---
 The box image's clock is UTC. coop forwards the HOST's timezone into every box as `-e TZ=...`
 (`internal/box/run.go`, via `hostTimezone()`), so agents render clock times on your wall clock.
@@ -13,7 +13,7 @@ and coop parses that back with `time.ParseInLocation(layout, s, time.Local)` (`l
 `internal/ladder/limit.go`) to schedule how long to wait. If a box rendered that time in UTC
 instead of the host zone, the parsed wait would land HOURS off. So the box TZ and the host
 `time.Local` must agree — if you touch either the TZ forwarding or the reset-time parser, keep them
-on the same clock. See [[credentials-expired-is-a-false-alarm]] for the OAuth `expiresAt` clock that
+on the same clock. See [[sign-in-again-is-actionable]] for the OAuth `expiresAt` clock that
 rides the same wall time.
 
 ## Changelog
@@ -25,3 +25,4 @@ rides the same wall time.
   `internal/cli/ratelimit.go` to `internal/loop/ratelimit.go` (`sleepForLimitAt`'s
   `resetAt.Local().Format`) with the loop-engine extraction. The reset-prose parse itself is still
   `internal/ladder/limit.go`; both re-verified, formatting unchanged.
+- 2026-10-17 — link follows the credentials card's rename to sign-in-again-is-actionable.

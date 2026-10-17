@@ -4,7 +4,7 @@ description: "when shared state breaks concurrency, isolate the state; never loc
 scope: box
 sources: [internal/box/profiles.go, internal/box/run.go, internal/box/repo.go, internal/box/services.go, internal/forkspace/execution.go, internal/agent/codex.go]
 check: "none"
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 
 # Isolate the state, don't serialize the users of it
@@ -46,6 +46,8 @@ left to lock.
   the short host-daemon mount boundary; it must not become ownership of the running stack.
 
 ## Changelog
+- 2026-10-17 — the 2026-08-09 entry names codex's `BoxEnv`, `renewCodexCredential` and
+  `assembleArgs` instead of line numbers.
 - 2026-10-15 — reverified the redirect: all 13 Codex native and ACP homes (active to 2026-10-14)
   hold no `.sqlite`; the pinned Codex 0.159.2 reads `CODEX_SQLITE_HOME` and prunes its own `logs`
   table. Deleted the host `sqlite3` feedback-log trigger in `EnsureDefaults`, which since 5.0
@@ -60,17 +62,17 @@ left to lock.
 - 2026-07-12 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: confirmed `CODEX_SQLITE_HOME` still wired exactly as
-  described (internal/agent/codex.go:671). Checked the `syscall.Flock` at codex.go:281-284: it
-  serializes concurrent WRITES to one credential's own `.refresh.lock` in trusted host storage
-  (renewCodexCredential) — not the rejected per-account session lock; matches the rule's own
-  exception ("share only what must be common — the credential"), not a violation. 2 findings on
-  the card itself (not the code): (1) `sources: internal/box/mounts.go` is stale/wrong —
+  described (codex's `BoxEnv` in internal/agent/codex.go). Checked the `syscall.Flock` in
+  `renewCodexCredential`: it serializes concurrent WRITES to one credential's own `.refresh.lock` in
+  trusted host storage (renewCodexCredential) — not the rejected per-account session lock; matches
+  the rule's own exception ("share only what must be common — the credential"), not a violation. 2
+  findings on the card itself (not the code): (1) `sources: internal/box/mounts.go` is stale/wrong —
   mounts.go handles repo-content `.coopignore` shadowing; the per-profile isolation this rule
   describes lives in internal/box/profiles.go (`EffectiveProfiles`/`ProfileAuthed`) and the mount
-  wiring in internal/box/run.go:1574 (`cfg.AgentDir(agent)`, one active-profile dir per box —
-  `make rules-check` only verifies the path exists, not its relevance, so it can't catch this).
-  (2) The "Why" section's `Agent.SharedHomePaths` no longer exists anywhere in the tree (0 hits)
-  — it named the FIRST fix's mechanism (a private per-box home), which the card's own "How to
+  wiring in internal/box/run.go's `assembleArgs` (`cfg.AgentDir(agent)`, one active-profile dir per
+  box — `make rules-check` only verifies the path exists, not its relevance, so it can't catch
+  this). (2) The "Why" section's `Agent.SharedHomePaths` no longer exists anywhere in the tree (0
+  hits) — it named the FIRST fix's mechanism (a private per-box home), which the card's own "How to
   apply" section already says was superseded by the simpler `CODEX_SQLITE_HOME` env var. Both
   flagged for the lead as a card correction (re-point sources, refresh the Why); the rule's actual
   guidance still holds in the current code.

@@ -41,7 +41,8 @@ sources: [internal/box/run.go, …]    # the code this describes — check drift
 updated: <YYYY-MM-DD>                # last edit
 ---
 
-<the fact; cite file:line for load-bearing claims; link related cards with [[name]]>
+<the fact; name the function, type or file behind a load-bearing claim — never a line number,
+ which moves as the file changes; link related cards with [[name]]>
 
 ## Changelog
 - <YYYY-MM-DD> — created / what changed (and what you verified it against)
@@ -49,14 +50,14 @@ updated: <YYYY-MM-DD>                # last edit
 
 `make rules-check` holds you to the mechanical half of that — every field present and non-empty,
 `name` matching the filename, `updated` a real date, every `sources:` path still existing, a
-changelog section, and Index pairing BOTH ways (every card indexed exactly once, every indexed link
-resolving). What it can't tell you is whether a card is still TRUE; only reading it against its
-`sources` does that.
+changelog section, no line-number citation (`run.go:1392`, `line 19`), and Index pairing BOTH ways
+(every card indexed exactly once, every indexed link resolving). What it can't tell you is whether a
+card is still TRUE; only reading it against its `sources` does that.
 
 ## Index
 - [local-development-checks](local-development-checks.md) — explicit Make owner scopes, reverse-consumer guard and broad fallback; no automatic selector or implicit live calls
 - [ci-free-checks](ci-free-checks.md) — Make-owned CI partitions, per-owner caches and a status-only required check
-- [coop-repo-box-go](coop-repo-box-go.md) — coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and three approved Go domains; big modules redirect to a blocked host, so the shared cache is filled from the host
+- [coop-repo-box-go](coop-repo-box-go.md) — coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and four approved domains, the module proxy's storage.googleapis.com redirect included; module downloads share the coop-cache volume
 - [website](website.md) — site/ is static and partly generated: tools/gendocs owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; night-board, code-block, cache-bust and social-card traps
 - [shell-completion-current-word](shell-completion-current-word.md) — current-word replacement and the Bash 3.2 COMP_WORDS/IFS trap in generated completion
 - [restricted-networking](restricted-networking.md) — the layers between an `--egress filtered` flag and `docker run`, where authority lives (never a repo, never a box), the precedence ladder, and what a filtered run refuses
@@ -86,7 +87,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [secret-shadow-walk](secret-shadow-walk.md) — every launch walks the whole checkout from a real-folder root (a linked root and a link to home are refused, though a box that writes the root's parent can still swap it), gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs; the .coopignore files above the repository, short of home, apply too
 - [repository-path-keys](repository-path-keys.md) — what is keyed by the repository's real path and what by its spelling; a resolved `COOP_REPO` moved a link user's forks, images, serve ports and agent history; place user-given paths with `box.RepoRelative` and match recorded fork paths with `box.SameFolder`; macOS tests must resolve `t.TempDir()`
 - [repository-source-copies](repository-source-copies.md) — skills and fallback copies retain rooted content authority and validate links only after relocation; a lead's own agents are copied without following any link
-- [credentials-expired-is-a-false-alarm](credentials-expired-is-a-false-alarm.md) — refreshable OAuth stays signed in; re-login required means the stored login cannot recover
+- [sign-in-again-is-actionable](sign-in-again-is-actionable.md) — refreshable OAuth stays usable; "Sign in again" means the stored login cannot recover — run the coop login it names
 - [credential-presence-is-adapter-declared](credential-presence-is-adapter-declared.md) — adapters own credential presence, selected env authority, and inspectable stored readiness
 - [native-credential-cutover](native-credential-cutover.md) — existing native writer locks keep their inode during private normalization; uncertain legacy grants remain in custody
 - [native-broker-account-discovery](native-broker-account-discovery.md) — guard-selected public account aliases must match native discovery without changing workspace routing

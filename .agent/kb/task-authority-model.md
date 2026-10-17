@@ -14,13 +14,13 @@ own top-of-file comment (`audit.go`) points back here rather than repeating it.
 |---|-----------|-----------|-------|----------|------|
 | 1 | **Owner** | typed durable record, `<key>.owner.json` | `internal/tasks/owner.go`; human claim (bound to the claiming process — pid + start token, `internal/tasks/claimactor.go` — when made without a terminal) or exact fork assignment | until human release, exact land, journaled discard, or `coop loop --preflight` finding the bound process gone (`ReleaseGoneOwners`, `internal/tasks/audit.go`) | record |
 | 2 | **Lease** | kernel flock, `<key>.lock` | `internal/tasks/lease.go` (`lockLeaseAuthority`, `TryTaskLease`); an outside agent holds the same lock through `coop tasks lease` (`internal/tasks/lease_cmd.go`) | one loop iteration, or one outside holder's command/process | process lock |
-| 3 | **Checkout** | kernel flock, `.locks/loop-<sha>.lock` | `lockLoopCheckout`, `internal/loop/lock.go:25` | one whole `coop loop` run | process lock |
-| 4 | **Ref** | kernel flock, `.locks/ref-<sha>.lock` | `LockRefAuthority`/`EnterRefAuthorityWindow`, `internal/tasks/refauthority.go:36,134` | validate→finalize→consume only (short) | process lock |
+| 3 | **Checkout** | kernel flock, `.locks/loop-<sha>.lock` | `lockLoopCheckout`, `internal/loop/lock.go` | one whole `coop loop` run | process lock |
+| 4 | **Ref** | kernel flock, `.locks/ref-<sha>.lock` | `LockRefAuthority`/`EnterRefAuthorityWindow`, `internal/tasks/refauthority.go` | validate→finalize→consume only (short) | process lock |
 
 The invariant all four protect: **exactly one writer acts on a task, and on the checkout, at a
 time — and when that can't be proven, refuse rather than act on unvalidated state.** Two more
-narrower locks exist beside these (the interactive session lock, `internal/cli/commands.go:82` /
-`lockSessionProducer`, `internal/cli/commands.go:94`, which serializes only a session-discovering
+narrower locks exist beside these (the interactive session lock, `lockInteractiveSession` /
+`lockSessionProducer` in `internal/cli/commands.go`, which serializes only a session-discovering
 adapter like codex; and the completion-window index lock, `internal/tasks/completion.go`, an internal
 integrity journal) — real, but scoped to one adapter or one bookkeeping structure rather than "who may
 act on this task," which is why they aren't in the headline four.
@@ -32,7 +32,7 @@ considered, because the audit half reads several of these types' unexported fiel
 pair split would have forced a much larger export surface for no functional gain; see that task's
 `spec.md` if the pair is ever revisited). Authority 3 (checkout) lives in `internal/loop/lock.go`;
 the two narrower locks stay beside their owners. `lockLoopCheckout` has exactly one loop-engine
-caller, unlike `lockRefAuthority`, which
+caller, unlike `LockRefAuthority`, which
 `internal/tasks/queue.go`'s own `done` verb takes directly (the forcing fact that moved authority 4
 with the rest: leaving it in `cli` would have required the new package to import back into it, which
 `internal/importdag_test.go`'s invariant 1 forbids).
@@ -41,10 +41,10 @@ with the rest: leaving it in `cli` would have required the new package to import
 
 Authorities 2-4 are **process locks**: a kernel flock, bound to an open file description, that dies
 with the process holding it. An unheld flock is definitionally unleased — `observeHeldTaskLease`
-(`internal/tasks/lease.go:1312`) states this outright: "An unlocked or missing lock is unleased even
+(`internal/tasks/lease.go`) states this outright: "An unlocked or missing lock is unleased even
 if a crashed controller left stale metadata behind; only a HELD lock means another controller owns
 the work." PID, run-id, and heartbeat are recovery evidence and UI only, never authority
-(`internal/tasks/lease.go:71-79`).
+(the `TaskLeaseOwner` comment in `internal/tasks/lease.go`).
 
 Authority 1 (owner) is deliberately NOT a process lock, because `coop tasks claim` exits
 immediately — there is no process left to hold anything. A human's ownership has to outlive the
@@ -55,18 +55,18 @@ PID liveness, or heartbeat age (unlike a lease, which a heartbeat CAN mark `leas
 though even a stalled lease still blocks nobody but its own kernel lock) — a timeout can't distinguish
 "went quiet for a good reason" from "abandoned," and guessing wrong is the 2026-07-25 dogfood incident
 this authority exists to fix: the loop adopted a task a founder had claimed, because claim held no
-lease and left no record, so `AssignLoopTaskOnly` (`internal/tasks/audit.go:3064`) saw a free flock
+lease and left no record, so `AssignLoopTaskOnly` (`internal/tasks/audit.go`) saw a free flock
 and took it.
 
 ## How claim and lease interact — claim wins unconditionally
 
 An outside holder follows the claim, too: `coop tasks lease` binds to the agent above it, and when that ancestry is already gone (a backgrounded holder from a short-lived tool shell) it binds to the live process on the task's owner record, so the claim and the lease name the same agent and `done`/`block` by that agent can stop the holder (`stopOwnLeaseHolder`). A claim bound to a process another operating system recorded (a state folder shared with a Linux container) counts as live, because this kernel cannot check that pid (`processidentity.Foreign`): pre-flight keeps it, `coop tasks ls` shows "PID 4242 on Linux", and a holder never binds to it, since it could never see that process exit.
 
-`skipOwnedCandidate` (`internal/tasks/audit.go:3041`) checks the claim record BEFORE `TryTaskLease`
+`skipOwnedCandidate` (`internal/tasks/audit.go`) checks the claim record BEFORE `TryTaskLease`
 even runs, for every in-progress AND todo candidate: an owned task is skipped like a busy lease, never
 leased, regardless of whether its lease actually is free. This ordering matters for the race between a
 human claiming a todo task and the loop scanning the same instant: `tasksFolderMove`'s claim path
-(`internal/tasks/cmd.go:481`) writes the owner record BEFORE it moves the folder, and rolls the record
+(`internal/tasks/cmd.go`) writes the owner record BEFORE it moves the folder, and rolls the record
 back if the move then loses the race — so the record is visible to any concurrent scan from the
 instant a claim begins, not from whenever its folder move happens to land. The record is cleared by
 `done` (`CompleteTrustedTask` for interactive completion; `FinalizeForkCandidateTask` for an exact
@@ -110,16 +110,22 @@ queue reconciliation in place of the durable candidate-land journal.
 
 Claim's record sits beside the lease authority's OWN durable siblings — `<key>.json` (lease
 metadata), `<key>.reopen.json` (audit-reopen), `<key>.departure.json` (trusted-done departure) — all
-in the same host-only, non-cache registry described by
-[[task-authority-registry-is-durable-state]]. Same `leaseAuthorityKey` derivation
-(`sha256(resolved-repo-root + NUL + task-id)`), same `AtomicWriteTaskFile`, same strict
-"reject a body whose TaskID doesn't match" validation. `coop tasks rm` removes it alongside every
-other per-task record (`removeTaskFolderAndRecords`, `internal/tasks/cmd.go:1240`) so a deleted
-task's claim can't outlive the task itself. See [[task-state-is-the-folder]] for the repo-local queue
-these authorities sit beside but never replace — the folder is still the only source of a task's
-lifecycle STATE; these four decide who may act on it.
+in the same host-only, non-cache registry described by [[task-authority-registry-is-durable-state]].
+Same `LeaseAuthorityKey` derivation (`sha256(resolved-queue-root + NUL + task-id)`, the queue root
+being the `.agent/tasks` folder), same `AtomicWriteTaskFile`, same strict "reject a body whose
+TaskID doesn't match" validation. `coop tasks rm` removes it alongside every other per-task record
+(`removeTaskFolderAndRecords`, `internal/tasks/cmd.go`) so a deleted task's claim can't outlive the
+task itself. See [[task-state-is-the-folder]] for the repo-local queue these authorities sit beside
+but never replace — the folder is still the only source of a task's lifecycle STATE; these four
+decide who may act on it.
 
 ## Changelog
+- 2026-10-17 — replaced the line-number citations with the functions they meant (adding
+  `lockInteractiveSession` and the `TaskLeaseOwner` comment) and corrected two renamed identifiers:
+  `leaseAuthorityKey` is now the exported `LeaseAuthorityKey` (same sha256 of root + NUL + id) and
+  `lockRefAuthority` is `LockRefAuthority`; verified against internal/tasks/lease.go,
+  refauthority.go, queue.go and internal/cli/commands.go. The key hashes the task-QUEUE root
+  (`.agent/tasks`, as `observeHeldTaskLease` derives it), not the repository root.
 - 2026-10-17 — a claim whose start token is the other platform's shape is no longer judged gone:
   `ownerProcessLive` counts it live, its label names the system, and `bindLeaseToClaimant` skips it.
   Verified against claimactor.go, owner.go and lease_cmd.go (task
@@ -160,8 +166,8 @@ lifecycle STATE; these four decide who may act on it.
   real but out of the headline four (narrower scope: one adapter / one bookkeeping journal, not
   "who may act on this task").
 - 2026-08-10 — line citations refreshed for the loop-engine extraction: `lockLoopCheckout` moved to
-  `internal/loop/lock.go:25` and `lockSessionProducer` landed beside its one wrapper in
-  `internal/cli/commands.go:94` (`internal/cli/fork_loop.go` is retired). Both bodies are unchanged,
+  `internal/loop/lock.go` and `lockSessionProducer` landed beside its one wrapper in
+  `internal/cli/commands.go` (`internal/cli/fork_loop.go` is retired). Both bodies are unchanged,
   and the four-authority model is untouched.
 - 2026-09-06 — an agent's claim is bound to its process identity and released by pre-flight once that process is gone; a person's claim (made at a terminal) stays unbound. The lease stays the only live-work authority.
 - 2026-09-06 — `coop tasks lease` lets an outside agent hold the iteration lock; the loop treats it like another iteration (skip, then resume once released).

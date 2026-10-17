@@ -2,12 +2,13 @@
 name: host-disk-exhaustion-stops-the-runtime
 description: a host out of disk OR memory kills the container runtime mid-run; both surface as unexplained "unexpected EOF" failures, never as a resource error
 subsystem: loop
-sources: [internal/box/run.go, internal/loop/loop.go, internal/cli/commands.go]
-updated: 2026-08-24
+sources: [internal/box/run.go, internal/loop/loop.go, internal/cli/commands.go, internal/acpproxy/proxy.go]
+updated: 2026-10-17
 ---
 A long loop can fill the host disk, and when it does the failure does NOT look like a disk problem.
 It looks like the loop breaking: `error waiting for container: unexpected EOF`, then
-`coop: iteration failed (n/5) — retrying in 10s` until the run gives up.
+`⚠ Task attempt failed` with `Retrying in 10 seconds · attempt n of 5.` until the run gives up with
+`✗ Stopped after 5 failed attempts`.
 
 Observed 2026-08-03. The runtime's own log named the real cause:
 
@@ -70,6 +71,11 @@ not enough; the editor has to reconnect.
 
 ## Changelog
 - 2026-08-03 — created after a full host disk stopped the OrbStack VM mid-run and presented as five unexplained iteration failures; records the diagnosis path and why prune alone does not return space.
-- 2026-08-24 — memory exhaustion recorded as a second cause with the same signature (jetsam took the VM while the disk had 53 GiB free); adds `unified-kill.log` as the discriminator and the ACP teardown path, which fails differently from the loop's retry. Same run fixed the misleading diagnosis it caused: `image inspect` cannot tell a dead daemon from a missing image, so `resolveImage` (`internal/cli/commands.go`) and the loop reported "not built — run 'coop build'" while the image was present the whole time; all three call sites (`resolveImage`, the loop's image guard, and the fork merge gate) now probe `EnsureDaemon` on that branch first.
+- 2026-08-24 — memory exhaustion recorded as a second cause with the same signature (jetsam took the VM while the disk had 53 GiB free); adds `unified-kill.log` as the discriminator and the ACP teardown path, which fails differently from the loop's retry. Same run fixed the misleading diagnosis it caused: `image inspect` cannot tell a dead daemon from a missing image, so `resolveImage` (`internal/cli/commands.go`) and the loop reported "not built — run 'coop build'" while the image was present the whole time; all three call sites (`resolveImage`, now `requireLaunchImage` in `internal/cli/commands.go`; the loop's image guard; and the fork merge gate, now `ensureGateImage` in `internal/forkctl/merge.go`) now probe `EnsureDaemon` on that branch first.
 - 2026-08-10 — sources repointed: the loop engine moved out of `internal/cli` into `internal/loop`; the `iteration failed (n/5) — retrying`
   narration this card diagnoses from is now `internal/loop/loop.go`, byte-identical.
+- 2026-10-17 — the quoted retry narration is the current `ui.Alert` ("Task attempt failed" /
+  "Retrying in 10 seconds · attempt n of 5.") and stop line, not the `iteration failed (n/5)` note
+  that ee0565e1 replaced; verified against `Control.Run` in internal/loop/loop.go. Added
+  internal/acpproxy/proxy.go (the rapid-failure cap) to sources, and named the 2026-08-24 entry's
+  call sites as they are today (`requireLaunchImage`, `ensureGateImage`).

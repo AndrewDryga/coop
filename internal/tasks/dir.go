@@ -22,7 +22,7 @@ import (
 // nothing can drift. Moving the folder between state dirs IS the state change.
 // The contract is in AGENTS.md; converting a legacy single-file queue is MIGRATING.md.
 
-// tasksRoot is the repo-relative task queue directory every reader works against.
+// TasksRoot is the repo-relative task queue directory every reader works against.
 const TasksRoot = ".agent/tasks"
 
 // Task state directories, in lifecycle order. The directory name IS the status. Each carries a
@@ -81,10 +81,10 @@ func taskQueueExists(path string) (bool, error) {
 // It allows leading indentation so nested steps still count; the marker is one char.
 var subtaskRe = regexp.MustCompile(`^[ \t]*[-*] \[(.)\] `)
 
-// splitFrontmatter separates a leading `---` … `---` YAML-ish header from the body.
+// SplitFrontmatter separates a leading `---` … `---` YAML-ish header from the body.
 // It parses only flat `key: value` lines (enough for id/title/labels/parent/updated);
 // comment (`#`) and blank lines are skipped. With no well-formed header, all of content
-// is the body and fields is empty. Kept dependency-free on purpose — coop is stdlib-only.
+// is the body and fields is empty.
 func SplitFrontmatter(content string) (fields map[string]string, body string) {
 	fields = map[string]string{}
 	lines, body, ok := frontmatterLines(content)
@@ -186,7 +186,7 @@ func frontmatterLines(content string) (lines []string, body string, ok bool) {
 
 // unquoteScalar strips a YAML scalar's surrounding quotes. A title that opens with a flow
 // indicator — `title: "[DEAD] …"` — MUST be quoted in the frontmatter, so the raw value arrives
-// with the quotes; return the text the author meant. Stdlib-only (no YAML dependency).
+// with the quotes; return the text the author meant.
 func unquoteScalar(v string) string {
 	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
 		if s, err := strconv.Unquote(v); err == nil { // handles \" \\ \n … for the common case

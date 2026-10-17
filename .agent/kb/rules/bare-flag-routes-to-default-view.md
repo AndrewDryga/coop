@@ -4,7 +4,7 @@ description: "a leading flag where a subcommand goes routes to the group's defau
 scope: cli-grammar
 sources: [internal/tasks/queue.go, internal/tasks/cmd.go, internal/tasks/backlog.go, internal/tasks/queue_validation_test.go]
 check: "none"
-updated: 2026-09-22
+updated: 2026-10-17
 ---
 
 # A bare leading flag routes to the group's default view
@@ -33,6 +33,8 @@ text is longest and least relevant to what they asked.
   rule; check it whenever a list command grows flags.
 
 ## Changelog
+- 2026-10-17 — the 2026-08-09 entries name `cmdTasks` and `cmdBacklogFolder` instead of
+  tasks.go/backlog.go line numbers.
 - 2026-09-22 — found and repaired validation bypasses in aggregate backlog and structured task
   dispatch. One/two-queue regression covers flags, extra arguments, lookup ordering and the
   backlog-specific missing-item hint. The old backlog test explicitly accepted ignored flags
@@ -40,17 +42,17 @@ text is longest and least relevant to what they asked.
   Both listing-default groups were swept; their standalone validators remain intact.
 - 2026-07-17 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
-- 2026-08-09 — validate-on-write backfill: swept internal/cli/tasks.go's `cmdTasks` (confirmed the
-  leading-flag-to-`ls` normalization at tasks.go:229) and checked every other group with a listing
-  default for the same treatment. 1 violation found: internal/cli/backlog.go's
-  `cmdBacklog`/`cmdBacklogFolder` — backlog gained a listing default after this rule was written
-  ("A bare `coop backlog` lists the drawer... like bare `coop tasks`", backlog.go:76) but never
-  got the matching normalization; a leading flag (e.g. `coop backlog -x`) falls through to
+- 2026-08-09 — validate-on-write backfill: swept internal/cli/tasks.go's `cmdTasks` (confirmed its
+  leading-flag-to-`ls` normalization) and checked every other group with a listing default for the
+  same treatment. 1 violation found: internal/cli/backlog.go's `cmdBacklog`/`cmdBacklogFolder` —
+  backlog gained a listing default after this rule was written ("A bare `coop backlog` lists the
+  drawer... like bare `coop tasks`", `cmdBacklogFolder`'s comment) but never got the matching
+  normalization; a leading flag (e.g. `coop backlog -x`) falls through to
   `unknownErr("backlog command", ...)` instead of routing to the listing. `backlogArgSpecs["ls"]`
   takes zero flags today, so nothing currently demonstrates user-visible breakage, but the
-  structural gap is real and the card's own "today: tasks" framing is now inaccurate. Queued for
-  the lead, not fixed here.
-- 2026-08-09 — fixed sweep: ported the tasks.go:229 normalization into BOTH backlog.go
+  structural gap is real and the card's own "today: tasks" framing is now inaccurate. Queued for the
+  lead, not fixed here.
+- 2026-08-09 — fixed sweep: ported `cmdTasks`' normalization into BOTH backlog.go
   dispatchers — `cmdBacklog` (before the multi-queue `switch sub`) and `cmdBacklogFolder` (before
   its own `switch sub`), so the invariant holds independently at each, not just via the caller.
   Added TestBacklogBareLeadingFlagRoutesToLs (internal/cli/backlog_test.go), mirroring

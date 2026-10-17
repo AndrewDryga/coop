@@ -58,6 +58,8 @@ route narrows it. Never reuse low-privilege caches or artifacts in the signing p
 Related: [[ci-free-checks]], [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-10-17 — the 2026-08-09 entry names ci.yml's `run: make check` step and the comment beside the
+  Makefile's `check:` target instead of line numbers.
 - 2026-10-17 — `check-unit` now also runs the unit tests with only the required host programs on
   PATH and without cgo (task 2026-10-16-inventory-the-host-programs-untagged-unit-tests). The race
   owners cannot repeat that locally, so it is named as CI-only, with the by-hand command.
@@ -93,10 +95,10 @@ Related: [[ci-free-checks]], [[static-bounded-supervision]].
   source, which would have turned CI red the moment `rules-check` ran there.
 - 2026-08-09 — validate-on-write backfill: independently re-verified. .github/workflows/ci.yml's
   `check` job is setup (checkout, setup-go, install the pinned staticcheck) then `run: make check`
-  (line 34) — no separate step list. The two other jobs (`doctor` → `make box-runtime-e2e`,
+  — no separate step list. The two other jobs (`doctor` → `make box-runtime-e2e`,
   `review-writes` → `make review-writes-e2e`) are the rule's one documented exception
-  (container-runtime-dependent), and Makefile:94 names both by hand right next to `check:`. 0
-  violations.
+  (container-runtime-dependent), and the comment beside the Makefile's `check:` target names both
+  by hand. 0 violations.
 - 2026-09-03 — routed the doctor job's duplicated build plus `./coop doctor` commands through the
   existing `make doctor` target. Re-verified that the Docker/Podman matrix, runtime environment,
   and separate init-process contract remain in CI; added a focused wiring regression.

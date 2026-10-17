@@ -3,15 +3,16 @@ name: acp-scripted-e2e
 description: ACP state machines are exhaustive in the scripted runtime; real adapters get an isolated conformance layer
 subsystem: acp
 sources: [Makefile, internal/acpproxy/scripted_matrix_e2e_test.go, internal/acpproxy/scripted_startup_e2e_test.go, internal/acpproxy/scripted_cancel_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, internal/acpproxy/testdata/acpfixture/main.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/cleanup.go]
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 
 `COOP_RUNTIME` lets process tests drive the built outer supervisor, inner re-exec, controller,
 proxy, target resolution, and stdio while a semantic JSON fixture owns provider replies. The
 scripted matrix covers every directed provider pair and deterministic model, limit, replay, and
-failure orderings (`internal/acpproxy/scripted_matrix_e2e_test.go:41`,
-`internal/acpproxy/scripted_matrix_e2e_test.go:111`). Run it with `make acp-scripted-e2e`; it does
-not require provider credentials (`Makefile:66`).
+failure orderings (`TestScriptedACPDirectedProviderSwitchMatrix` and
+`TestScriptedACPProviderRateLimitAutoRecovery` in internal/acpproxy/scripted_matrix_e2e_test.go).
+Run it with `make acp-scripted-e2e`; it does not require provider credentials (the target's own
+help line in the Makefile says so).
 
 The startup script passes a literal `["acp"]` argv, never an empty positional argument. It proves
 automatic choice stays switchable and selected providers survive SIGHUP. Cancellation scripts
@@ -55,6 +56,9 @@ installed-adapter prompts remain opt-in.
 Related: [[acp-replay-publication]], [[acp-target-commit]], [[acp-carry-echo]].
 
 ## Changelog
+- 2026-10-17 — named the two matrix tests and the `acp-scripted-e2e` Makefile target instead of line
+  numbers (the Makefile one pointed at `provider-live-e2e-all` even when written); both tests
+  re-verified in internal/acpproxy/scripted_matrix_e2e_test.go.
 - 2026-10-15 — the live ACP harness lost its cooplivetest process registry, control descriptor and
   pre-signal credential revocation; teardown is a group kill, config deletion and label sweep.
 - 2026-09-12 - literal automatic startup, cancellation/continue coverage, twelve directed live switches, and post-teardown credential deletion retry; verified new scripted tests and repeated Codex live cleanup

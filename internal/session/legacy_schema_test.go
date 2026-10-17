@@ -17,7 +17,7 @@ func TestHistoricalSchemaFixturesStayFrozen(t *testing.T) {
 	}
 }
 
-// Historical DDL1–24 frozen from260ccd2. Do not replace these with current production constants:
+// Historical DDL 1–24 frozen from 260ccd2. Do not replace these with current production constants:
 // migrations must repair independently authored old database bytes, not their own setup output.
 var legacySchemas = []string{
 	`

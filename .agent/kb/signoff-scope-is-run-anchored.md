@@ -12,14 +12,16 @@ with `reviewBaseline` anchored at run start. Empty diff ⇒ the pass is skipped 
 `coop loop` on an already-drained queue runs no review box.
 
 The trap is WHERE the baseline re-anchors. It moves forward only after a round whose structured
-PASS/FAIL receipt names the exact sorted done-to-actionable task-id delta, and it is taken
-from the POST-review done set (the reopened tasks have already left `99_done/`, so when their rework
-re-enters it they show up in the next round's diff). Two wrong placements that fail silently:
+PASS/FAIL receipt names the exact sorted done-to-actionable task-id delta, and it is computed,
+never rescanned: `reviewBaselineAfterVerdict` (internal/loop/signoff.go) takes the previous baseline
+plus the round's subjects, minus the reopened ids (they have left `99_done/`, so when their rework
+re-enters it they show up in the next round's diff) and minus concurrent completions. Three wrong
+placements that fail silently:
 
 - Re-anchoring on the lost-verdict path: the untrusted round's whole subject set must be reviewed
   again; a moved baseline would diff it away and the re-run would review nothing.
-- Re-anchoring from the PRE-review snapshot (e.g. `soSnap`): reopened tasks are still in that done
-  set, so their rework diffs to nothing and ships unreviewed.
+- Re-anchoring from the PRE-review done set (the queue as it stood before the review box ran):
+  reopened tasks are still in it, so their rework diffs to nothing and ships unreviewed.
 - Re-anchoring over a CONCURRENT host completion: a parallel session may `coop tasks done` an
   unrelated task while the review box runs. The review's completion window tolerates it (the
   window records the review's exact subject ids; a host-receipted non-subject completion is
@@ -167,6 +169,10 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-10-17 — the baseline is no longer a POST-review rescan: `reviewBaselineAfterVerdict` computes
+  it from the prior baseline and the round's subjects, minus reopened and concurrent ids; the gone
+  `soSnap` local (a0946fa2) is now described rather than named, and "two wrong placements" counts
+  the three listed. Verified against internal/loop/signoff.go and internal/loop/loop.go.
 - 2026-10-17 — the several-commit listing shows every character `safetext.Hidden` names as `?`
   (direction overrides, line separators and invisible characters too, not only controls).
 - 2026-10-17 — fourth review: the digest starts with the tree the window starts from, a requeued

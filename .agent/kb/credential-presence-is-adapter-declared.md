@@ -44,7 +44,7 @@ After presence succeeds, `ProfileCredentialReady` asks the adapter for marker re
 that exact profile has a marker. Claude, Codex, and Grok distinguish usable or refreshable OAuth
 from malformed, stripped, and nonrenewable records; Gemini returns unknown and preserves
 presence-based behavior. `coop credentials`, runnable ladder expansion, and the ACP Account selector
-use this same refinement, so a native login already labeled `re-login required` is neither attempted
+use this same refinement, so a native login already labeled `Sign in again` is neither attempted
 during failover nor offered as a normal editor switch. An env-only default likewise remains ready
 because there is no native marker to inspect. `ProfileAuthed` stays the broad presence predicate for
 callers that cannot require proven readiness, and opaque markers stay eligible because an adapter
@@ -94,6 +94,7 @@ and the default MCP file are `0600`. Coop does not recursively chmod provider tr
 the private ancestors protect those descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-10-17 — the expired-login label is `Sign in again` since 9f5b033c, not `re-login required`.
 - 2026-10-17 - a fork loop now checks each peer's login before `--fresh`, image or clone work, not
   after the clone; verified against internal/cli/fork_cmd.go
 - 2026-10-17 - a missing login now exits 1 from `coop acp --peer`'s lead expansion and a fork loop's

@@ -2,9 +2,9 @@
 name: no-color-in-width-fields
 description: "pad plain text to the column width, then style; never style inside a `%-16s`"
 scope: cli-output
-sources: [internal/ui/ui.go]
+sources: [internal/ui/ui.go, internal/cli/util.go]
 check: "none"
-updated: 2026-08-09
+updated: 2026-10-17
 ---
 
 # Never style a string inside a width-padded format field
@@ -37,19 +37,26 @@ when output.
 - Color in non-padded output (`%s`, standalone labels, the doctor report) is fine — there's
   no width to throw off.
 - Guard (review, not a clean auto-lint — `%s` bold is legitimate): inspect each hit of
-  `grep -rnE 'ui\.(Bold|Dim|Green|Red)\(' internal/ | grep -v _test` and confirm none lands
-  inside a `%-N` width field. After a fix the only hits should be non-width `%s` uses or
-  whole-line wrapping.
+  `grep -rnE '\b(ui|p|pal|palette)\.(Bold|Dim|Gray|Faint|Green|Red|Yellow|Cyan|Magenta|Link)\(' internal/ | grep -v _test`
+  and confirm none lands inside a `%-N` width field (most styling goes through a `ui.Palette` held
+  as `p`, `pal` or `palette`, so `ui.` alone misses it). After a fix the only hits should be
+  non-width `%s` uses or whole-line wrapping.
 
 ## Changelog
+- 2026-10-17 — the guard grep also covers `Magenta` and `Link` (a hyperlink's escape bytes break a
+  `%-Ns` field too).
 - 2026-06-17 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: ran the card's own guard
   (`grep -rnE 'ui\.(Bold|Dim|Green|Red)\(' internal/ | grep -v _test`, ~80 hits) and manually
   checked every native width verb (`%-Ns`/`%-Nd`) across internal/ (3 hits, all unrelated numeric
-  time formats — no styled column data) plus every `padRight`/`padLeft` caller (models.go,
-  presetcmd.go, util.go, fork.go, context.go, taskwatch.go, fleet_watch.go, profiles.go,
-  status.go) for a styled value passed into padding. 0 violations — the codebase uniformly pads
-  plain text first (via the rune-safe `padRight` helper — confirmed `utf8.RuneCountInString`,
-  util.go:306-311) and wraps the finished line/cell in color after; no native Go width verb is
-  ever applied to styled data.
+  time formats — no styled column data) plus every `padRight` caller (models.go, presetcmd.go,
+  util.go, fork.go, context.go, taskwatch.go, fleet_watch.go, profiles.go, status.go) for a styled
+  value passed into padding. 0 violations — the codebase uniformly pads plain text first (via the
+  rune-safe `padRight` helper in util.go — confirmed `utf8.RuneCountInString`) and wraps the
+  finished line/cell in color after; no native Go width verb is ever applied to styled data.
+- 2026-10-17 — the guard grep now covers `ui.Palette` methods (`p.`/`pal.`/`palette.` and all eight
+  styles — the old `ui\.` pattern matched 14 non-test lines, the new one 233); swept: 233 hits, none
+  on a line with a width verb. The 2026-08-09 entry's `padLeft` never existed (`git log -S` finds it
+  only in that entry) and its util.go line range is now just `padRight` in util.go; sources gain
+  internal/cli/util.go.

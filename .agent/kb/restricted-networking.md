@@ -10,17 +10,17 @@ updated: 2026-10-17
 between that flag and `docker run`:
 
 1. **Policy** — `internal/egress`: rule grammar, normalization, exact/wildcard matching, provider
-   bundles, `Compile` → an owner-keyed `Snapshot` with a fingerprint (`egress/snapshot.go:20`). It
+   bundles, `Compile` → an owner-keyed `Snapshot` with a fingerprint (egress/snapshot.go). It
    combines already-authorized inputs; it approves nothing.
 2. **Authority** — `internal/networkstate`: an owner-private `Store` under
-   `~/.local/state/coop/network` (`box/network_admission.go:19`). `Open` refuses when that root is
-   reachable from any agent mount (`networkstate/authority.go:39`), so it is never a box mount.
+   `~/.local/state/coop/network` (`box.NetworkStatePath`). `Open` refuses when that root is
+   reachable from any agent mount (`networkstate.Open`), so it is never a box mount.
    Each capture is published once as `snapshot-<fingerprint>.json`. One a project admission created
    carries an `admitted-` marker and goes once no run record names it and nothing admitted or
    loaded it for 90 days, serialized on `snapshot-lock`; a controller job's stays for good, and so
    does one from before markers unless its rule's recorded origin proves a `coop net setup` check
    made it ([[network-consumers]]).
-3. **Admission** — `box.AdmitNetwork` (`box/network_admission.go:58`) resolves the posture and, for
+3. **Admission** — `box.AdmitNetwork` (box/network_admission.go) resolves the posture and, for
    filtered mode only, captures the frozen policy the gateway will enforce. Once the mode resolves
    to filtered, `checkFilteredRuntime` is the first gate: a runtime that cannot serve the gateway is
    refused before `networkstate.Open`, so asking for something this host cannot do leaves no
@@ -30,41 +30,42 @@ between that flag and `docker run`:
    qualification rules (literal only, HTTPS on 443, no `headersHelper`/`oauth`) are derived only
    once the posture is filtered (`networkMCPDependenciesOf`), because on an open box those rules
    refuse ordinary client features.
-4. **Launch** — `box.Run` branches once, on `spec.CapturedEgress` (`box/run.go:399`): non-nil takes
-   the `filtered*.go` family, nil takes the open path byte for byte.
+4. **Launch** — `box.Run` branches once, on `spec.CapturedEgress` (in
+   `runWithCompositionArtifacts`): non-nil takes the `filtered*.go` family, nil takes the open path
+   byte for byte.
 5. **Per-host qualification** — `SetupNetwork` (`box/network_setup.go`), run by the first filtered
    launch that finds no current proof (`box/network_admission.go`, `ensureNetworkQualification`)
    and by `coop net setup` on demand.
 
-Authority never comes from the repository or the box. A repo's `box.egress`, its
-`box.egress_rules`, and a rules file that lives inside an agent mount, are *requests*; a human turns
-them into a grant with `coop approve`, the only caller of `Store.Approve`
-(`box/network_approval.go`). The approval is the EXACT snapshot of the file — mode, normalized
-rules, and each named service's reviewed definition — and ONE read-only check decides whether the
-file and the approval differ: `Admission.pendingApproval` (`networkstate/admission.go`), surfaced
-as `AdmissionPreview.Pending` / `*PendingApproval`. `coop init`, bare `coop net`, `coop approve`
-(which then has nothing to ask and writes nothing) and every launch through `AdmitNetwork` read the
-same answer, so no two of them can disagree. Without an approval only a widening is pending —
-`open`, or any rule; filtered/offline with no rules is what coop grants on its own, which is why a
-fresh `coop init` project (explicitly `filtered`) launches without a review. The file's mode counts
-only where it would decide anything: under `--egress` or `COOP_EGRESS` the file's
-`open` is moot and is not pending. `approve` has no `--mode`: to change access you edit the file.
-An approval binds three things beyond the rules: the project directory's private two-link anchor (a
-replacement or copied marker is pending; allocator metadata alone is never trusted), the reviewed Compose
-stanza of every `service:` grant as a digest recomputed at launch (`box/composecheck.go:415`,
-`box/network_approval.go`, `requestedServiceDigests`), and the same capability gate a launch applies
-— an unenforceable rule is refused at review, not remembered. `coop net forget` is the way back and the only caller of
-`Store.Forget` (`networkstate/approval_forget.go:59`): it removes exactly one approval file under the
-approval lock, proves the removal, and touches no evidence. It cannot sweep — a record is filed under
-a keyed hash of the canonical path and stores no path, so the store can answer "is this project
-approved?" and never "which projects are?" — and it derives that id LEXICALLY
-(`networkstate/approval_forget.go:34`), which is the only way to name the record a deleted checkout
-left behind. An approval made through a symlink is filed under its target, so once the link is gone
-its path locates nothing, and forget says so instead of removing another project's. Observed
-traffic is evidence, never a grant. Admission marks the resolved posture explicit through
-`cfg.SetEgress` (`box/network_admission.go:91`), so the project overlay cannot decide the mode a
-second time. A run that neither asks for filtered nor has a remembered posture writes NO host
-state — the preview creates no owner key (`networkstate/admission.go:45`).
+Authority never comes from the repository or the box. A repo's `box.egress`, its `box.egress_rules`,
+and a rules file that lives inside an agent mount, are *requests*; a human turns them into a grant
+with `coop approve`, the only caller of `Store.Approve` (`box/network_approval.go`). The approval is
+the EXACT snapshot of the file — mode, normalized rules, and each named service's reviewed
+definition — and ONE read-only check decides whether the file and the approval differ:
+`Admission.pendingApproval` (`networkstate/admission.go`), surfaced as `AdmissionPreview.Pending` /
+`*PendingApproval`. `coop init`, bare `coop net`, `coop approve` (which then has nothing to ask and
+writes nothing) and every launch through `AdmitNetwork` read the same answer, so no two of them can
+disagree. Without an approval only a widening is pending — `open`, or any rule; filtered/offline
+with no rules is what coop grants on its own, which is why a fresh `coop init` project (explicitly
+`filtered`) launches without a review. The file's mode counts only where it would decide anything:
+under `--egress` or `COOP_EGRESS` the file's `open` is moot and is not pending. `approve` has no
+`--mode`: to change access you edit the file. An approval binds three things beyond the rules: the
+project directory's private two-link anchor (a replacement or copied marker is pending; allocator
+metadata alone is never trusted), the reviewed Compose stanza of every `service:` grant as a digest
+recomputed at launch (`composeServiceDigests` in box/composecheck.go, `requestedServiceDigests` in
+box/network_approval.go), and the same capability gate a launch applies — an unenforceable rule is
+refused at review, not remembered. `coop net forget` is the way back and the only caller of
+`Store.Forget` (networkstate/approval_forget.go): it removes exactly one approval file under the
+approval lock, proves the removal, and touches no evidence. It cannot sweep — a record is filed
+under a keyed hash of the canonical path and stores no path, so the store can answer "is this
+project approved?" and never "which projects are?" — and it derives that id LEXICALLY
+(`Store.ApprovalAt`), which is the only way to name the record a deleted checkout left behind. An
+approval made through a symlink is filed under its target, so once the link is gone its path locates
+nothing, and forget says so instead of removing another project's. Observed traffic is evidence,
+never a grant. Admission marks the resolved posture explicit through `cfg.SetEgress` (in
+`AdmitNetwork`), so the project overlay cannot decide the mode a second time. A run that neither
+asks for filtered nor has a remembered posture writes NO host state — the preview creates no owner
+key (`networkstate.PreviewAdmission`).
 
 Approval review has a two-phase concurrency rule. An exact existing marker/private-anchor pair may
 be reviewed read-only without pausing running boxes. Any missing, replaced, or moved binding is a
@@ -187,7 +188,8 @@ Traps:
   image's pinned files while it has the daemon in hand; the first derived-image proof records the
   complete tree. A record that is missing, damaged or for another image/root is a MISS and the image
   is read; nothing there can make a changed image pass. `COOP_IMAGE` stays refused at
-  admission (`box/network_admission.go:175`): nothing qualified it and no proof can.
+  admission (`checkFilteredSupport` in box/network_admission.go): nothing qualified it and no proof
+  can.
 - The explicit filtered-build CLI cancels its context on SIGINT/SIGTERM: the runtime build owns
   a separate process group, so terminal signals alone cannot clean it up. Cancellation stops the
   builder and its children, removes staged inputs, and never publishes an unfinished approval.
@@ -220,16 +222,16 @@ Traps:
   and current build inputs, not an unrelated ordinary tag.
 - The host qualification keeps naming the LOCKED image, and so does the execution record's
   `ClientImage` — the derived image is recorded beside it as `ProjectImage`
-  (`networkstate/execution.go:75`), evidence of what ran, never authority. The preflight smoke may
-  never carry one; it qualifies the client image itself.
-- Extra runtime arguments (`COOP_RUN_ARGS`, `coop … -- …`) are reduced to bind mounts, `-e KEY=VALUE`
-  and `--label KEY=VALUE` (metadata: fleet accounting, a live test's reaping key — it changes neither
-  what the box knows nor what it reaches, and `validateMounts` already admits it); anything else is
-  refused by name (`box/filtered_mounts.go:25`). Coop's ownership labels take precedence if an
-  operator uses the same key. The gateway, not the environment, is the boundary — and a bind that
-  IS or CONTAINS the runtime's control surface
-  (`/var/run`, `/run`, `/proc`, `/sys`, `/dev`, `/`, the bound endpoint's socket) is refused too
-  (`box/filtered_mounts.go:482`): one curl over a daemon socket starts a container no gateway sees.
+  (`networkstate.Execution.ProjectImage`), evidence of what ran, never authority. The preflight
+  smoke may never carry one; it qualifies the client image itself.
+- Extra runtime arguments (`COOP_RUN_ARGS`, `coop … -- …`) are reduced to bind mounts,
+  `-e KEY=VALUE` and `--label KEY=VALUE` (metadata: fleet accounting, a live test's reaping key — it
+  changes neither what the box knows nor what it reaches, and `validateMounts` already admits it);
+  anything else is refused by name (`filteredExtraArgs` in box/filtered_mounts.go). Coop's ownership
+  labels take precedence if an operator uses the same key. The gateway, not the environment, is the
+  boundary — and a bind that IS or CONTAINS the runtime's control surface (`/var/run`, `/run`,
+  `/proc`, `/sys`, `/dev`, `/`, the bound endpoint's socket) is refused too (`runtimeControlPaths`
+  in box/filtered_mounts.go): one curl over a daemon socket starts a container no gateway sees.
 - Mount validation distinguishes host authority from agent-writable roots. `BoxHome` is
   protected against exposure but is not mounted wholesale, so a normal selected profile
   beneath its default `agents/` tree is an independent bind. The selected profile itself
@@ -240,11 +242,11 @@ Traps:
   retains `--mount` so a missing source is never created. Canonical CSV preserves quoted
   paths and readonly state; duplicate fields, non-bind types and ambiguous delimiters
   refuse. Generated helpers retain their exact inode binding like ordinary generated mounts.
-- The gateway captures every TLS port the policy grants (`Snapshot.TLSPorts`, `egress/snapshot.go:292`)
+- The gateway captures every TLS port the policy grants (`Snapshot.TLSPorts` in egress/snapshot.go)
   plus DNS on 53; the upstream port comes from the kernel's redirect record (SO_ORIGINAL_DST),
   never from the client, and a dial straight at the guard listener is refused. A raw `tcp` grant
   on a captured TLS port, a raw grant on 53, `tls` on 53, and a published `serve` port on a
-  captured port are refused (`SupportedRule`, `egress/snapshot.go:485`).
+  captured port are refused (`SupportedRule` in egress/snapshot.go).
 - Docker's own resolver is not a way out. A run with services joins a user-defined network, so
   Docker answers names at 127.0.0.11 in the namespace the box shares. Its port 53 reaches the guard,
   because the gateway's capture (nat output, priority -110) runs before Docker's own redirect
@@ -264,7 +266,8 @@ Traps:
   (26.0.0, with backports in the 25.0 and 23.0 lines) forwarded internal-network lookups from the
   host namespace, and coop checks no engine version yet.
 - IPv6 is refused everywhere on this runtime — address, CIDR or `icmpv6`
-  (`egress/snapshot.go:469`) — because the reference Docker bridge has none.
+  (`SupportedRule` and `supportedPrefix` in egress/snapshot.go) — because the reference Docker
+  bridge has none.
 - A provider bundle is FUNCTION, not everything the client asks for. Claude's core is
   `api.anthropic.com`, `platform.claude.com` (OAuth refresh) and `mcp-proxy.anthropic.com` (the
   claude.ai connectors a login has on by default); codex's is `chatgpt.com` and `auth.openai.com`
@@ -274,13 +277,12 @@ Traps:
   through the always-on `config.toml` overlay, gemini through its settings overlay plus
   `GEMINI_TELEMETRY_ENABLED=false`, grok through `BoxEnv` (`GROK_TELEMETRY_ENABLED=false`, which
   also stops its `grok.com` and `api.x.ai` lookups, and `GROK_DISABLE_AUTOUPDATER=1`) — every Coop
-  image also carries each client's update controls, homes mounted or not —
-  so a hello-and-exit session retains no refusal, and a later deliberate request to one of those
-  hosts is a real refusal nothing suppresses. Bundle content is
-  pinned per `NetworkBundleVersion` by the owner store on first admission
-  (`networkstate/bundles.go:18`): changing a bundle without bumping the version is refused as
-  integrity drift, so the version moves with the content (`2026-09-10.1` added the proxy). The
-  rule is [[provider-bundles-carry-function-not-chatter]].
+  image also carries each client's update controls, homes mounted or not — so a hello-and-exit
+  session retains no refusal, and a later deliberate request to one of those hosts is a real refusal
+  nothing suppresses. Bundle content is pinned per `NetworkBundleVersion` by the owner store on
+  first admission (`Store.checkBundles` in networkstate/bundles.go): changing a bundle without
+  bumping the version is refused as integrity drift, so the version moves with the content
+  (`2026-09-10.1` added the proxy). The rule is [[provider-bundles-carry-function-not-chatter]].
 - Online coding runs broker the selected accounts, API-key and subscription alike. The canonical
   host authority owns grants and renewal; repository-local native homes receive only public
   selectors, never access/refresh tokens (`box/native_broker.go`, `planNativeAccounts`). Each
@@ -325,6 +327,12 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-10-17 — replaced every line-number citation with the function, type or field it
+  meant (`box.NetworkStatePath`, `networkstate.Open`, `runWithCompositionArtifacts`,
+  `composeServiceDigests`, `Store.ApprovalAt`, `PreviewAdmission`, `checkFilteredSupport`,
+  `Execution.ProjectImage`, `filteredExtraArgs`, `runtimeControlPaths`, `SupportedRule`,
+  `supportedPrefix`, `Store.checkBundles`), each re-verified at HEAD; the IPv6 refusal now names
+  `supportedPrefix` too, which refuses the address and CIDR forms.
 - 2026-10-16 — layer 2: a setup check's snapshot from before markers goes too, proved by its rule's
   origin; the mechanism is in [[network-consumers]].
 - 2026-10-17 — the release suite has a runner, `make network-runtime-e2e`, and the qualification
@@ -460,4 +468,5 @@ direct runs and remote sessions consume one.
   runtime's control surfaces, and the never-produced hard ceiling is gone. Re-verified.
 - 2026-09-10 — created for the shipped feature (S0–S6, 54be097…f3e1d96), replacing eleven cards
   written for the abandoned custody design. Verified against the sources above.
-- 2026-09-10 — TLS on any granted port: the capture set follows `TLSPorts`, ports come from SO_ORIGINAL_DST; refs refreshed (SupportedRule moved to snapshot.go:485).
+- 2026-09-10 — TLS on any granted port: the capture set follows `TLSPorts`, ports come from
+  SO_ORIGINAL_DST; refs refreshed (SupportedRule moved within snapshot.go).

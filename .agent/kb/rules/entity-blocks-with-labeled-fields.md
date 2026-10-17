@@ -2,9 +2,9 @@
 name: entity-blocks-with-labeled-fields
 description: "useful facts first; compact tables for comparisons, labeled blocks for detailed permissions and roles"
 scope: cli-output
-sources: [internal/cli/profiles.go, internal/cli/presetcmd.go, internal/cli/session_cmd.go, internal/ui/ui.go]
+sources: [internal/cli/profiles.go, internal/cli/presetcmd.go, internal/cli/session_cmd.go, internal/cli/models.go, internal/ui/ui.go]
 check: "none"
-updated: 2026-09-11
+updated: 2026-10-17
 ---
 
 # List useful facts, not implementation bookkeeping
@@ -23,7 +23,9 @@ justify a block merely because the implementation can supply them.
 a table for preset comparison. Formatting cannot rescue a view that omits the user's question.
 
 **How to apply:**
-- Header: `p.Bold(displayAgentName(id))` at column 0 — the entity's own name, nothing else.
+- Header: `p.Bold(titleName(id))` (internal/cli/models.go) at column 0 — the entity's own name,
+  nothing else. Preset roles are the one variant: `presetDetail` (presetcmd.go) indents the bold
+  role name and puts `Mode:` beside it, so every label shares one gutter.
 - Fields: two-space indent, the label then the plain value, one fact per line; optional
   fields appear only when set. Blank line between blocks.
 - A problem replaces its fact and carries the exact remedy nearby; keep the cause and remedy
@@ -38,6 +40,10 @@ a table for preset comparison. Formatting cannot rescue a view that omits the us
 See also [[command-output-tiers]], [[list-output-echoes-source]].
 
 ## Changelog
+- 2026-10-17 — `displayAgentName` is gone (24350756); the header is `titleName`
+  (internal/cli/models.go, added to sources), as in `cmdModels` and the credentials listing.
+  Recorded the preset role-block variant `presetDetail` prints (indented name, `Mode:` on the same
+  line), verified in internal/cli/presetcmd.go.
 - 2026-09-11 — refined from the second complete CLI feedback batch: preset overview is a table,
   lead/roles use aligned Agent/Prompt values, account detail gives actions, and remote sessions
   lead with project/agent/access/network facts. Swept the saved account/preset/session examples;

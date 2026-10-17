@@ -118,6 +118,8 @@ escapes its path too. A name that reaches the terminal through the dispatcher's 
 (`reportExit`) is not escaped (queued).
 
 ## Changelog
+- 2026-10-17 — the second-review entry's `MaxCoopIgnoreBytes` is now the unexported `ignoreLimit`
+  (internal/shadowpath/shadowpath.go); noted where the entry names it.
 - 2026-10-17 — `detectDocker` walked with `filepath.WalkDir`, which opens each folder by path
   and follows a link a box swaps in after the listing, so init's pointer could name a Dockerfile
   from a folder outside the project. It now opens each first-level folder from the root with
@@ -169,12 +171,13 @@ escapes its path too. A name that reaches the terminal through the dispatcher's 
 - 2026-10-17 — second review (same task). Any `.coopignore` the snapshot reader refuses now stops
   the edit as `UnreadableCoopignore`, naming that `.coopignore` and why, instead of a bare read
   error blamed on the edited file ("Fix .agent/compose.yml"); `coop init` gives it its own headline
-  and fix (`reportUnreadableCoopignore`). `shadowpath` exports `MaxCoopIgnoreBytes` and its read
-  error names the `.coopignore` rather than `in ""`. Pinned by
-  TestInPlaceEditsRefuseAnUnreadableCoopignore (link, folder, FIFO, over 1 MiB, no read permission)
-  and TestInitNamesAnUnreadableCoopignore (the .gitignore check, `--services`, registration), both
-  failing with the old pass-through. The `openRealDir` wording now says what holds: os.Root follows
-  an in-repository link, and the identity check refuses it unless it leads back to the same folder.
+  and fix (`reportUnreadableCoopignore`). `shadowpath` exported `MaxCoopIgnoreBytes` (later the
+  unexported `ignoreLimit`) and its read error names the `.coopignore` rather than `in ""`. Pinned
+  by TestInPlaceEditsRefuseAnUnreadableCoopignore (link, folder, FIFO, over 1 MiB, no read
+  permission) and TestInitNamesAnUnreadableCoopignore (the .gitignore check, `--services`,
+  registration), both failing with the old pass-through. The `openRealDir` wording now says what
+  holds: os.Root follows an in-repository link, and the identity check refuses it unless it leads
+  back to the same folder.
 - 2026-10-16 — review fixes (same task). The `.coopignore` rules are now read through the
   directories the edit holds (`heldPolicy`), not by path: a reviewer reproduced a box swapping a
   held `config/` for a rule-free one during a slow listing and getting the secret staged in the

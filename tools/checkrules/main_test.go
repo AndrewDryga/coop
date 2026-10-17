@@ -184,6 +184,8 @@ func TestAuditRules(t *testing.T) {
 			want: []string{`check "go test ./internal/cli -run 'TestOne.*'" is not`}, gated: 1},
 		{name: "gated count tracks real checks", card: strings.Replace(goodCard, `check: "none"`, `check: "make align"`, 1), index: index,
 			makefile: "align:\n\t@true\n", gated: 1},
+		{name: "line-number citation", card: strings.Replace(goodCard, "**Why:** because.", "**Why:** see help.go:7.", 1), index: index,
+			want: []string{`sample-rule: cites ["help.go:7"] by line number`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -237,6 +239,9 @@ func TestAuditKB(t *testing.T) {
 			want: []string{"must match the filename", "not YYYY-MM-DD", "no '## Changelog' section"}},
 		{name: "missing frontmatter", card: "# Bare card\n\nno metadata at all\n", index: kbIndex,
 			want: []string{"no frontmatter (see .agent/kb/README.md for the card format)"}},
+		{name: "line-number citation", card: strings.Replace(goodKBCard, "citing internal/cli/help.go.",
+			"citing internal/cli/help.go:12 and Makefile:3-4.", 1), index: kbIndex,
+			want: []string{`sample-card: cites ["internal/cli/help.go:12", "Makefile:3-4"] by line number`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -254,6 +259,36 @@ func TestAuditKB(t *testing.T) {
 				t.Errorf("got %d cards, want 1", len(cards))
 			}
 		})
+	}
+}
+
+// A card names the function, type or file it describes, never the line: the line moves as the file
+// changes. A number counts after a file name or after "line", so a host and port or a clock time is
+// not a citation.
+func TestLineRef(t *testing.T) {
+	for text, want := range map[string]string{
+		"`appendPublish` (internal/box/run.go:1392) probes": "internal/box/run.go:1392",
+		"the window (project.go:47-48)":                     "project.go:47-48",
+		"names both by hand at Makefile:94":                 "Makefile:94",
+		"the comment at .agent/Dockerfile:12":               ".agent/Dockerfile:12",
+		"AGENTS.md:18 states it":                            "AGENTS.md:18",
+		"`.claude/hooks/commit-gate.sh:3` does":             ".claude/hooks/commit-gate.sh:3",
+		"drifted past README.md:~1460":                      "README.md:~1460",
+		"the bullet (line 19) and (`run.go` ~line 350)":     "line 19 line 350",
+		"Lines 12-15 hold it":                               "Lines 12-15",
+		"`appendPublish` in internal/box/run.go":            "",
+		"proved live against `dns.google:853`":              "",
+		"the call it makes (:~972)":                         ":~972",
+		"see the bullet on line\n19 of the card":            "line\n19",
+		"the preview on 127.0.0.1:8781":                     "",
+		"proxy.golang.org:443 redirects":                    "",
+		"updated 2026-10-15T08:57:14+02:00":                 "",
+		"README.md: the index":                              "",
+		"22 lines in a one-line pipeline 2 deadline 3":      "",
+	} {
+		if got := strings.Join(lineRef.FindAllString(text, -1), " "); got != want {
+			t.Errorf("%q: got %q, want %q", text, got, want)
+		}
 	}
 }
 

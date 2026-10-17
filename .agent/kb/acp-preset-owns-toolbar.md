@@ -3,7 +3,7 @@ name: acp-preset-owns-toolbar
 description: Active ACP presets own the whole lead target and refuse stale Provider/Account editor replays; the box's own wire messages are the only truth the controller may cache
 subsystem: acp
 sources: [internal/agent/agent.go, internal/acpctl/control.go, internal/acpproxy/proxy.go, internal/acpproxy/scripted_e2e_test.go, internal/acpproxy/e2e_test.go, internal/cli/help.go]
-updated: 2026-09-12
+updated: 2026-10-17
 ---
 
 ACP selection is tagged: `Preset != ""` means Provider and Account are empty. A preset's ladder
@@ -47,14 +47,16 @@ that truth, never an independent write. `git log --follow` on the pre-extraction
 `internal/cli/acpcontrol.go` carries at least 15 fix-shaped commits clustered on one bug shape: a new
 trigger (a `config_option_update`, a mid-turn switch, an auto-rotated account, a translated
 `set_model`) wrote or assumed a cache value at its own call site instead of routing through the small,
-closed set of existing resync entry points — `rewriteToEditor` (`internal/acpctl/control.go:908`),
-`rewriteUpdateConfigOptions` (`:972`), `configOptionUpdate` (`:1143`), `rewriteConfigOptions`
-(`:1903`), `sessionReady` (`:2544`). A new provider or message type is safe only when it is plumbed
+closed set of existing resync entry points, all `Control` methods in internal/acpctl/control.go —
+`rewriteToEditor`, `rewriteUpdateConfigOptions`, `configOptionUpdate`, `rewriteConfigOptions`,
+`sessionReady`. A new provider or message type is safe only when it is plumbed
 through one of those — never when it pokes `c.cached[...]` (or any of the other caches above) from a
 new call site. This is a semantic property a `check:` can't verify reliably (whether a new call site
 "routed through" the resync path is a design read, not a grep), so review is what catches a violation.
 
 ## Changelog
+- 2026-10-17 — named the five resync entry points by method instead of control.go line numbers
+  (re-verified all five still exist on `Control` in internal/acpctl/control.go).
 - 2026-09-12 — reverified toolbar projection and documented output-only singleton hiding without losing native model truth.
 - 2026-08-10 — extended with the box-wire-is-the-one-truth invariant and the closed set of resync
   entry points (the repeat-fix theme named by the acpctl extraction's seam map, ~15 fix-shaped commits

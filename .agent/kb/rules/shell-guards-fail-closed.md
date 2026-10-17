@@ -4,7 +4,7 @@ description: "a shell guard checks every command's status and fails CLOSED on am
 scope: agent-workflow
 sources: [.agent/skills/sweep/queue-guard.sh, internal/scaffold/templates/skills/sweep/queue-guard.sh, internal/scaffold/queue_guard_test.go, .claude/hooks/commit-gate.sh, install.sh, install_test.go, Makefile]
 check: "go test ./internal/scaffold -run TestSweepQueueGuard"
-updated: 2026-09-21
+updated: 2026-10-17
 ---
 
 # A shell guard fails closed, and says which way it fails
@@ -21,7 +21,8 @@ a failure into a confident "nothing found", so a guard may not use them:
 - `<(…)` process substitution — the inner command's status never reaches the enclosing shell.
 
 A script that deliberately fails OPEN is fine — it must say so in its header, the way
-`.claude/hooks/commit-gate.sh:3` does ("Fails open."), so nobody mistakes it for a guard.
+`.claude/hooks/commit-gate.sh`'s header comment does ("Fails open."), so nobody mistakes it for a
+guard.
 
 **Why:** the sweep guard shipped fail-open and released the agent while work remained. `7fd8150`
 (2026-07-14) shows the exact before/after: `paths=$(coop tasks queues 2>/dev/null)` swallowed a
@@ -51,21 +52,24 @@ Related: [[fix-the-bug-not-the-feature]] (a guard that keeps firing is fixed at 
 loosening it) and [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-10-17 — named commit-gate.sh's header comment and `baseDockerfileTemplate` (the entrypoint
+  heredoc) instead of line numbers.
 - 2026-09-21 — full offline installer execution reproduced `build && doctor` falling through to
   success after a failed build. Both phases now fail explicitly and retain the installed binary
   with recovery guidance. Swept executable build/doctor chains: only install.sh had this shape;
   other matches are user command examples. Root TestInstallSetupOutcome covers failure and success.
 - 2026-08-10 — created, promoting the `kb/inbox/shell-guards-fail-closed.md` draft that `7fd8150`
-  left behind (its sibling became [[hermetic-git-tests]]). **Swept every shell surface in the repo:**
-  4 `.sh` files plus the box entrypoint heredoc (`internal/box/image.go:115`). **0 violations.** Two
-  are the guard itself (`.agent/skills/sweep/queue-guard.sh` and its scaffold template — byte
-  identical, both fail closed on discovery and count failures since `7fd8150`); `install.sh` runs
-  `set -eu` with no `wc` pipeline or process substitution; `.claude/hooks/commit-gate.sh` is the
-  documented fail-open exception; the box entrypoint is best-effort provisioning (`|| true` on
-  purpose), not a guard, so the rule does not reach it. The rule is therefore PREVENTIVE — it holds
-  the fix in place rather than describing a live mess. Two gaps found and reported for the queue:
-  `make shellcheck` lints `install.sh` only (neither guard copy nor the commit hook), and nothing
-  pins the two guard copies byte-identical.
+  left behind (its sibling became [[hermetic-git-tests]]). **Swept every shell surface in the
+  repo:** 4 `.sh` files plus the box entrypoint heredoc (`baseDockerfileTemplate` in
+  internal/box/image.go). **0 violations.** Two are the guard itself
+  (`.agent/skills/sweep/queue-guard.sh` and its scaffold template — byte identical, both fail closed
+  on discovery and count failures since `7fd8150`); `install.sh` runs `set -eu` with no `wc`
+  pipeline or process substitution; `.claude/hooks/commit-gate.sh` is the documented fail-open
+  exception; the box entrypoint is best-effort provisioning (`|| true` on purpose), not a guard, so
+  the rule does not reach it. The rule is therefore PREVENTIVE — it holds the fix in place rather
+  than describing a live mess. Two gaps found and reported for the queue: `make shellcheck` lints
+  `install.sh` only (neither guard copy nor the commit hook), and nothing pins the two guard copies
+  byte-identical.
 - 2026-08-10 — **both gaps closed.** `make shellcheck` now lints every tracked `.sh`
   (`git ls-files '*.sh'`, 4 files: the installer, both guard copies, the commit hook) and fails
   closed on an empty list. The widened lint found exactly one real defect, in the newly-covered

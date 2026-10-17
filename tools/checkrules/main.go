@@ -12,6 +12,8 @@
 //   - every required key is present and non-empty (a blank `subsystem:` routes nowhere)
 //   - every path in sources: exists
 //   - a `## Changelog` section exists
+//   - no citation by line number (`run.go:1392`): the file changes under the card and the number
+//     quietly points at something else, so a card names the function, type or file instead
 //   - README.md indexes every card exactly once, and every indexed link resolves
 //
 // Rules (.agent/kb/rules) carry two more fields, so they get two more checks:
@@ -65,6 +67,12 @@ var (
 	goTest     = regexp.MustCompile(`^go test (\./\S+) -run (\w+|'\w+(?:\|\w+)*')$`)
 	makeTarget = regexp.MustCompile(`^make ([\w-]+)$`)
 	indexLink  = regexp.MustCompile(`(?m)^- \[([^\]]+)\]\(([^)]+\.md)\)`)
+	// A file name followed by a line number (internal/box/run.go:1392, Makefile:66-70,
+	// README.md:~1460), or the same thing in prose (line 19, ~line 350). Only a source extension or a
+	// Makefile/Dockerfile counts as a file, so a host and port (dns.google:853) stays allowed. A bare
+	// `:972` after a file named earlier is left to review: it reads exactly like a port. `:~972` never
+	// does, and "line" may wrap onto the next line before its number.
+	lineRef = regexp.MustCompile(`[\w./-]*(?:\.(?:go|md|txt|sh|py|jsonl?|ya?ml|toml|mod|js|ts|html|css|conf)|\b(?:Makefile|Dockerfile)):~?\d+(?:-\d+)?|\b[Ll]ines?\s+~?\d+(?:-\d+)?|:~\d+`)
 	// A mutating command whose output is piped into tail/head. The backtick in the excluded run of
 	// characters keeps a markdown table cell ("`coop fork logs` | tail a loop log") from reading as
 	// a pipeline. The rule card itself quotes the mistake it exists for, so it is not scanned.
@@ -297,6 +305,10 @@ func checkCard(root, path string, required []string, doc string) ([]string, map[
 
 	if !strings.Contains(text, "## Changelog") {
 		problems = append(problems, fmt.Sprintf("%s: no '## Changelog' section", slug))
+	}
+	if refs := lineRef.FindAllString(text, -1); len(refs) > 0 {
+		problems = append(problems, fmt.Sprintf("%s: cites %s by line number — the line moves as the file changes; "+
+			"name the function, type or file instead", slug, quoteList(refs)))
 	}
 	return problems, fm
 }

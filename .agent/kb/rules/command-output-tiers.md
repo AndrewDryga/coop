@@ -72,6 +72,8 @@ is not proof the live helpers conform; regression tests must exercise all output
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-10-17 — the 2026-08-09 sweep entry names `cmdSign`, `startUpdateCheck` and `cli.Main` instead
+  of line numbers.
 - 2026-10-17 — at a terminal, `coop fork rm <name> --force` ran its answered question straight
   into the forced stop's `Stopping fork <name>`. rm now prints one blank line after an answered
   question (`if !yes`) and one after the stop's lines, and none before `✓ Deleted fork`.
@@ -156,18 +158,17 @@ These entries record earlier decisions; the current rule above supersedes confli
 - 2026-07-04 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: swept `cmdInit` (the rule's own canonical example,
-  commands.go) and catalogued every `ui.Info` call site across internal/cli (~80 hits) by
-  containing command. 2 violations found: (1) internal/cli/sign.go:213 — `coop sign` (a
-  standalone, non-interleaved result command) uses `ui.Info("nothing to sign...")`; its own
-  sibling success path at sign.go:216 correctly uses `ui.OK(...)` — the null-result line should be
-  `ui.Note` per the "standalone result" tier, not the `coop:`-anchored voice. (2)
-  commands.go's `cmdInit` (~1506-1534) fires 2 (3 for a monorepo) sequential `coop:`-prefixed
-  `ui.Info` lines back to back ("monorepo: ...", "scaffolded into ...", "per-agent dirs:
-  .../no agents signed in...") instead of the rule's prescribed single closing anchor. Both
-  queued for the lead. Not flagged: the once-daily update-notice (updatecheck.go:150, deferred
-  after every command in cli.go:75) also fires `ui.Info` after standalone commands — judged
-  defensible, since it's a cross-cutting aside orthogonal to the invoked command's own tiering,
-  not a violation of this rule.
+  commands.go) and catalogued every `ui.Info` call site across internal/cli (~80 hits) by containing
+  command. 2 violations found: (1) internal/cli/sign.go's `cmdSign` — `coop sign` (a standalone,
+  non-interleaved result command) uses `ui.Info("nothing to sign...")`; its own sibling success path
+  right after correctly uses `ui.OK(...)` — the null-result line should be `ui.Note` per the
+  "standalone result" tier, not the `coop:`-anchored voice. (2) commands.go's `cmdInit` fires 2 (3
+  for a monorepo) sequential `coop:`-prefixed `ui.Info` lines back to back ("monorepo: ...",
+  "scaffolded into ...", "per-agent dirs: .../no agents signed in...") instead of the rule's
+  prescribed single closing anchor. Both queued for the lead. Not flagged: the once-daily
+  update-notice (`startUpdateCheck` in updatecheck.go, deferred after every command by `cli.Main`)
+  also fires `ui.Info` after standalone commands — judged defensible, since it's a cross-cutting
+  aside orthogonal to the invoked command's own tiering, not a violation of this rule.
 - 2026-08-09 — fixed sweep: sign.go's nothing-to-sign line is now `ui.Note`, matching its sibling
   `ui.OK` on the success path. `cmdInit` now closes on exactly one `ui.Info` anchor
   ("already initialized at .../scaffolded into ..."): the monorepo member-count line and the

@@ -4,7 +4,7 @@ description: "agent-facing instructions name in-box capabilities, never host-sid
 scope: agent-workflow
 sources: [AGENTS.md, internal/scaffold/scaffold.go, .agent/skills/review-board/SKILL.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, internal/scaffold/templates/skills/review-board/SKILL.md, internal/scaffold/templates/skills/work/SKILL.md, internal/scaffold/templates/skills/sweep/SKILL.md]
 check: "none"
-updated: 2026-09-03
+updated: 2026-10-17
 ---
 
 # Agent-facing instructions use in-box capabilities only
@@ -36,6 +36,8 @@ human/operator layer; the boxed agent should use only its runtime's native tools
   falls back to the self-contained task-folder operation available in the box.
 
 ## Changelog
+- 2026-10-17 — the 2026-08-09 entry names AGENTS.md's "Hands-off destroyers" bullet instead of a
+  line number.
 - 2026-09-03 — swept `review-board`, `work`, and `sweep` plus their scaffold copies. Removed their
   unconditional host-command assumptions, added proposal/availability/folder routing, and added all
   six agent-facing files to `sources`.
@@ -46,13 +48,13 @@ human/operator layer; the boxed agent should use only its runtime's native tools
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: grepped every agent-facing scaffolded template
   (internal/scaffold/templates/AGENTS.md, templates/agent/tasks/README.md, templates/agent/
-  loop.yaml, every templates/skills/*/SKILL.md) for `coop fork`/`coop fleet` — 0 hits, all clean.
-  1 nuanced finding, not a clear violation: this repo's own dogfooded AGENTS.md:57 ("Hands-off
-  destroyers") names `coop fleet down`, `coop fork rm`/`coop fork merge --force`, `coop tasks rm`,
-  and `coop update` inside an agent-facing file — but to PROHIBIT them ("human-only, never run
-  unattended... must never invoke"), the opposite of recommending them as a capability, so it
-  doesn't trip the rule's actual "Why" (wasted turns from planning unavailable work). The card's
-  "How to apply" reads as an absolute no-mention rule and doesn't clearly carve out this
-  prohibit-by-naming exception, which looks like a deliberate, sensible safety guardrail already
-  in practice. Flagged for the lead to consider clarifying, not fixed here.
+  loop.yaml, every templates/skills/*/SKILL.md) for `coop fork`/`coop fleet` — 0 hits, all clean. 1
+  nuanced finding, not a clear violation: this repo's own dogfooded AGENTS.md (its "Hands-off
+  destroyers" bullet) names `coop fleet down`, `coop fork rm`/`coop fork merge --force`,
+  `coop tasks rm`, and `coop update` inside an agent-facing file — but to PROHIBIT them
+  ("human-only, never run unattended... must never invoke"), the opposite of recommending them as a
+  capability, so it doesn't trip the rule's actual "Why" (wasted turns from planning unavailable
+  work). The card's "How to apply" reads as an absolute no-mention rule and doesn't clearly carve
+  out this prohibit-by-naming exception, which looks like a deliberate, sensible safety guardrail
+  already in practice. Flagged for the lead to consider clarifying, not fixed here.
 - 2026-08-09 — drift repair from the backfill sweep's findings: prohibition carve-out recorded — naming a host command to BAN it is not a violation.

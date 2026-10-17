@@ -2,14 +2,20 @@
 name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
-sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/loop/loop.go, internal/box/taskchannel_live_test.go, Makefile]
+sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go]
 updated: 2026-10-17
 ---
 
-A loop work box changes task state through the `coop-tasks` MCP server (eight tools:
+A loop work box is told to change task state through the `coop-tasks` MCP server (eight tools:
 `tasks_list/get/update_state/append_log/set_subtasks/complete/block/propose`), not by moving folders
-or writing outbox JSON. The coop binary is still absent from the box (doctor still asserts it) — the
-server is the ONLY host control surface a box gets, and it exposes eight verbs, nothing shell/exec/file.
+or writing outbox JSON — its prompt says so (internal/loop/prompts.go). Nothing physically stops a
+move: a work box mounts the repository writable, `.agent/tasks` included, and only review stages
+remount the task queues read-only (`RepoReadOnlyPaths`, from `reviewReadOnlyPaths` in
+internal/loop/review.go). The host catches a hand move after the run instead: a task the iteration
+moved to done without holding its lease goes back to `10_in_progress/`
+(`rejectUnownedCompletions` in internal/tasks/audit.go). The coop binary is still absent from the
+box (doctor still asserts it) — the server is the ONLY host control surface a box gets, and it
+exposes eight verbs, nothing shell/exec/file.
 
 Helper stdout is a caller-owned os.Pipe, not Cmd.StdoutPipe: background Cmd.Wait may reap before
 the caller reads the final frames and must not close that reader. The parent closes its write
@@ -47,10 +53,11 @@ it is coop-created this run, holds only the socket, is mounted read-only, and it
 lives inside the daemon VM — not a host path an agent could redirect — so it is trusted like the
 run's generated files. Any OTHER named volume still goes through daemon exposure inspection.
 
-`mcp.BindTaskTools` (beside `BindResponderState`) merges the `coop-tasks` stdio server into the
-validated snapshot BEFORE the per-run artifact is written (`run.go` ~line 350), so all four provider
-projections carry it unchanged (see [[mcp-authority-projection]]). No bearer token: the socket is
-mounted only into this run's box, so the mount is the authority, not a secret.
+`mcp.BindTaskTools` (beside `BindControllerTools`) merges the `coop-tasks` stdio server into the
+validated snapshot BEFORE the per-run artifact is written (in `runWithCompositionArtifacts`,
+internal/box/run.go), so all four provider projections carry it unchanged (see
+[[mcp-authority-projection]]). No bearer token: the socket is mounted only into this run's box, so
+the mount is the authority, not a secret.
 
 **Authority is explicit, never ambient.** `taskmcp.Authority{Workspace, QueueRoots, Assigned, ProposalOutbox,
 Owner, ValidateAssignedCompletion}` is built host-side by the loop (`internal/loop/loop.go`, where the lease lives). Every tool
@@ -141,6 +148,14 @@ held one, finds no coop binary), which fails, never skips, without a runtime or 
 `coop-box:<definition>` image ([[box-base-image-tags]]).
 
 ## Changelog
+- 2026-10-17 — corrected the MCP-only claim: a work box mounts `.agent/tasks` writable (only review
+  stages get `RepoReadOnlyPaths`), so the tools are what its prompt allows, not the only thing that
+  can move a folder; the host's `rejectUnownedCompletions` undoes an unleased move. Renamed
+  `BindResponderState` to its successor `BindControllerTools` (0e7c5c45) and replaced the
+  approximate run.go line citation with `runWithCompositionArtifacts`. Verified against
+  internal/loop/review.go, internal/loop/iteration.go, internal/box/run.go,
+  internal/tasks/audit.go, internal/mcp/mcp.go and internal/loop/prompts.go (added
+  internal/loop/review.go to sources).
 - 2026-10-17 — `make task-channel-e2e` runs the real-box test, which no target had run since it was
   written; verified doctor's skip on the alpine stand-in against internal/cli/doctor.go. The test
   had rotted: it looked for an untagged `coop-box` (now resolved like a launch) and completed an

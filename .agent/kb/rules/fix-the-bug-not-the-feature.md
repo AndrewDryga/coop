@@ -4,7 +4,7 @@ description: "root-cause the misbehavior; deleting the feature is never the fix 
 scope: agent-workflow
 sources: [AGENTS.md]
 check: "none"
-updated: 2026-08-09
+updated: 2026-10-17
 ---
 
 # Never fix a bug by deleting the feature
@@ -37,10 +37,11 @@ code, too).
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: read AGENTS.md (its only source) in full. 1 finding:
   AGENTS.md never actually states "never fix a bug by deleting the feature" or an equivalent
-  principle — the closest text is "root-cause hypotheses" (delegation bullet, line 19) and a
-  one-line pointer to the `/investigate` skill (line 114); the concrete claim this card makes
-  lives only in the card's own body, not in the always-read boot file it cites as its source. Not
-  a code violation (nothing in AGENTS.md contradicts the rule), but a sources mismatch — flagged
-  for the lead: either add an explicit line to AGENTS.md, or point `sources:` at wherever this is
-  actually enforced (today: nowhere but review).
+  principle — the closest text is "root-cause hypotheses" (the "Delegate thinking, keep ownership"
+  bullet) and a one-line pointer to the `/investigate` skill (under "Skills"); the concrete claim
+  this card makes lives only in the card's own body, not in the always-read boot file it cites as
+  its source. Not a code violation (nothing in AGENTS.md contradicts the rule), but a sources
+  mismatch — flagged for the lead: either add an explicit line to AGENTS.md, or point `sources:` at
+  wherever this is actually enforced (today: nowhere but review).
 - 2026-08-09 — drift repair from the backfill sweep's findings: the cited AGENTS.md now really states the rule — one creed line added there, so the source matches the claim.
+- 2026-10-17 — the 2026-08-09 entry names the AGENTS.md bullet and section instead of line numbers.

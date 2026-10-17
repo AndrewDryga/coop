@@ -3,7 +3,7 @@ name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
 sources: [Makefile, internal/box/image.go, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/consult/capture_ownership_test.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/preset/wrapper.go, internal/preset/wrapper_test.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go, docs/agents.md]
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 `make provider-scripted-e2e` is the blocking consult contract. A strict external Coop binary mounts
@@ -118,7 +118,7 @@ evidence from the consult summary; deterministic controls alone are not live pro
 
 Triage `skipped` as a prerequisite first: `credential_refresh_required` needs trusted-source
 renewal before an access-only projection, not necessarily re-login (see
-[[credentials-expired-is-a-false-alarm]]);
+[[sign-in-again-is-actionable]]);
 `credential_not_portable` needs an env-backed key; `ring_prerequisite` means another edge was not
 ready and no paid call ran. `failed` after `attempted=true` is upstream compatibility or provider
 behavior. `repository_changed`, `source_changed`, `cleanup_failed`, and `harness_failed` are local
@@ -132,6 +132,7 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-10-17 — link follows the credentials card's rename to sign-in-again-is-actionable.
 - 2026-10-16 — the saved-report recorder that read each ring's summary line is gone; each suite
   still emits its own.
 - 2026-10-16 — the delegate wrapper's two FIFO captures re-deliver a lost EOF too (its own

@@ -4,7 +4,7 @@ description: a filtered child proves its network authority against the owner-pri
 scope: security
 sources: [internal/box/run.go, internal/box/network_session.go, internal/box/authority_mounts.go, internal/networkstate/authority.go, internal/networkstate/job.go, internal/networkstate/approval_review.go, internal/sessionsvc/network.go, internal/sessionsvc/review.go, internal/forkctl/merge.go, internal/cli/net_approve.go, internal/networkstate/approval_generation.go]
 check: "go test ./internal/box -run 'TestFilteredPublicLaunchRequiresCaptureAndRejectsExtraArgs|TestProjectFilteredLaunchRequiresCaptureBeforeRuntime|TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore|TestControllerJobChildReprovesItsOwnSnapshot'"
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 # Network authority is proven against the owner store, never accepted from its carrier
@@ -25,14 +25,16 @@ proves it.
 
 **How to apply:**
 - Fail CLOSED at the boundary. `box.Run` refuses a filtered posture that arrived without a host
-  capture (`internal/box/run.go:305`); it never launches open instead.
+  capture (`runWithCompositionArtifacts` in internal/box/run.go); it never launches open instead.
 - A child re-authenticates: `OpenExisting` + `LoadSnapshot` for a legacy project capture, or
   `LoadJobSnapshot` for the exact job digest and session ID. `OpenExisting`, never `Open` — a child
   must not create an owner key as a side effect of starting. A project snapshot nothing used for
   90 days may have been removed by retention: the child is refused and told to start the session
   again, which admits anew. A job snapshot is never removed.
-- Keep the carrier unforgeable by keeping it host-only. `COOP_NETWORK_CAPTURE` is set by the daemon
-  parent (`internal/sessionsvc/network.go:148`) and read in exactly ONE function; the daemon scrubs
+- Keep the carrier unforgeable by keeping it host-only. `COOP_NETWORK_CAPTURE` is set only by a
+  host parent — the session daemon (`networkChildEnvironment` in internal/sessionsvc/network.go) or
+  a `coop acp` supervisor for its own children (`acpChildCapture` in internal/cli/acp_cmd.go) — and
+  its value is read in exactly ONE function (`box.CapturedEgressFromEnvironment`); the daemon scrubs
   every `COOP_*` from the environment it builds, so no box can set it.
 - Keep the capture off every wire shape. `RunSpec.CapturedEgress` is `json:"-"`; a DTO, a worker
   command or a session request that could carry one is the bug.
@@ -54,6 +56,10 @@ Background: [[restricted-networking]] (where authority lives), [[network-consume
 reference).
 
 ## Changelog
+- 2026-10-17 — named `runWithCompositionArtifacts`, `networkChildEnvironment` and
+  `CapturedEgressFromEnvironment` instead of line numbers, and added the second host-side setter of
+  `COOP_NETWORK_CAPTURE`, a `coop acp` supervisor's `acpChildCapture` (verified in
+  internal/cli/acp_cmd.go).
 - 2026-10-16 — snapshot retention can remove a project snapshot an idle session's child later
   names; the child is refused, never launched open. Swept the child load paths
   (`CapturedEgressFromReference`, `prepareFilteredExecution`, `createExecution`): each fails closed.

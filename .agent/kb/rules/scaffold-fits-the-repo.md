@@ -4,7 +4,7 @@ description: "`coop init` generates for the detected stack and stays neutral whe
 scope: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go, internal/scaffold/projectfile.go]
 check: "none"
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 # coop init scaffolds what the repo uses — it never imposes a stack
@@ -56,6 +56,8 @@ blocks. Guessing wrong is worse than doing nothing.
   exception: preserve it and print chaining guidance.
 
 ## Changelog
+- 2026-10-17 — the 2026-08-09 entries name `installGitHooks` and the `gateSnippets` entries instead
+  of scaffold.go/gates.go/commands.go line numbers.
 - 2026-10-16 — pass-through for the skills-link handle: a link that already resolves to a
   directory is still kept (`linkSkillsIfAbsent`'s keep check, `TestInitSkillsSource`); only where
   the replacement happens changed, now through one parent handle. Swept internal/scaffold: no
@@ -84,23 +86,23 @@ blocks. Guessing wrong is worse than doing nothing.
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: read internal/scaffold/gates.go and scaffold.go in
   full. Confirmed clean: `DetectStacks`/`knownStacks` marker files (go.mod/mix.exs/Cargo.toml) +
-  `.tool-versions` + `*.tf` glob all current; `writeContentIfAbsent` (scaffold.go:249) guards
-  every gate write (pre-commit :355, prepare-commit-msg chain :367, Claude gate :377); the
-  interactive prompt lives in `cmdInit` gated on `ui.IsTerminal(os.Stdin)` (commands.go:1459-1465)
+  `.tool-versions` + `*.tf` glob all current; `writeContentIfAbsent` (scaffold.go) guards
+  every gate write in `installGitHooks` (pre-commit, prepare-commit-msg chain, Claude gate); the
+  interactive prompt lives in `cmdInit` gated on `ui.IsTerminal(os.Stdin)` (commands.go)
   and `internal/scaffold/*.go` never touches stdin. 1 violation found: `gateSnippets`' own comment
-  (gates.go:85-86) says "Go and Terraform are list-based so a tool error fails open" — true for
+  (gates.go) says "Go and Terraform are list-based so a tool error fails open" — true for
   those two (`gofmt -l`/`terraform fmt -list` build a `bad` list; a tool error yields an empty
-  list, not a block) — but elixir (:107-115) and rust (:116-123) gate directly on
+  list, not a block) — but its elixir and rust snippets gate directly on
   `mix format --check-formatted`/`cargo fmt --check`'s exit code, so an unrelated tool failure
   (broken toolchain, missing deps) blocks the commit exactly like a real formatting diff would,
   contradicting the rule's "only a real diff blocks the commit." Queued for the lead, not fixed
   here.
-- 2026-08-09 — fixed the violation above. Elixir (gates.go:108-122) now loops
+- 2026-08-09 — fixed the violation above. Elixir (`gateSnippets["elixir"]`) now loops
   `mix format --check-formatted` one staged file at a time and greps its stable "failed due to
   --check-formatted" text (unchanged across every installed Elixir from 1.14 through 1.20 —
   `Mix.Tasks.Format.check!/2` raises that exact message for a real diff and a different one,
   "mix format failed for file: …", for a crash) to tell the two apart; mix has no flag to list
-  many files at once. Rust (gates.go:123-141) dropped whole-crate `cargo fmt --check` (which
+  many files at once. Rust (`gateSnippets["rust"]`) dropped whole-crate `cargo fmt --check` (which
   can't be scoped to just the staged files — it only ever formats what the crate's module graph
   discovers) for `rustfmt --check -l` per staged file, rustfmt's own `-l`/`--files-with-diff`
   being the direct gofmt-`-l` equivalent (verified against installed rustfmt 1.9); the guard
@@ -110,7 +112,7 @@ blocks. Guessing wrong is worse than doing nothing.
   bare `rustfmt` does not), which would have silently fail-opened on most real async Rust — now
   read straight from the crate's `Cargo.toml` `edition` key before the check. Both snippets now
   name the offending files in the block message and use a `<files>` fix-hint placeholder, matching
-  go/terraform's existing style. Comment at gates.go:82-86 and this card's body updated to match.
+  go/terraform's existing style. `gateSnippets`' comment and this card's body updated to match.
   New behavioral coverage in `TestElixirRustGateListBased` (gates_test.go) runs the generated
   shell against stub mix/rustfmt binaries (no real toolchain in CI) proving: a real diff blocks
   and names only the dirty file; a crash on one file neither blocks nor swallows a real diff

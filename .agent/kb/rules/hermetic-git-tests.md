@@ -4,7 +4,7 @@ description: "a test that runs git pins GIT_CONFIG_GLOBAL *and* GIT_CONFIG_SYSTE
 scope: architecture
 sources: [internal/testutil/gitrepo/gitrepo.go, internal/testutil/procharness/harness.go, internal/hermeticgit_test.go]
 check: "go test ./internal -run TestHermeticGitTests"
-updated: 2026-08-10
+updated: 2026-10-17
 ---
 
 # A test that runs git answers to nothing outside itself
@@ -15,19 +15,20 @@ Any test that runs `git` against a temp repo must close BOTH config doors before
   both `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` pinned at empty files.
 - A helper that builds its own env — pin `GIT_CONFIG_GLOBAL` at an empty file AND either pin
   `GIT_CONFIG_SYSTEM` the same way or set `GIT_CONFIG_NOSYSTEM=1`
-  (`internal/testutil/procharness/harness.go:98` does the latter).
+  (`procharness.Environment` in internal/testutil/procharness/harness.go does the latter).
 
 `GIT_AUTHOR_NAME`/`GIT_COMMITTER_EMAIL` are NOT isolation. They pin who commits; every other setting
 still comes from the developer's machine.
 
 **Why:** ambient config silently changes what the test observes — `commit.gpgsign` makes a fixture
-commit block on pinentry, `core.hooksPath` runs the host's hooks inside the fixture, `commit.template`
-rewrites the message a test asserts on, and `core.excludesFile` changes which files `git ls-files`
-reports. Pinning only `GIT_CONFIG_GLOBAL` is the near miss this rule exists for: `7fd8150`
-(2026-07-14) had to add `GIT_CONFIG_SYSTEM` beside a `GIT_CONFIG_GLOBAL` pin that was already there
-(`internal/scaffold/scaffold_test.go:744-745`), and the lesson was written down as an inbox draft
-that then sat unread for a month. `internal/testutil/gitrepo` (created in `9eff655`) exists to make
-the hermetic form the easy one, and its package doc names the same hazards.
+commit block on pinentry, `core.hooksPath` runs the host's hooks inside the fixture,
+`commit.template` rewrites the message a test asserts on, and `core.excludesFile` changes which
+files `git ls-files` reports. Pinning only `GIT_CONFIG_GLOBAL` is the near miss this rule exists
+for: `7fd8150` (2026-07-14) had to add `GIT_CONFIG_SYSTEM` beside a `GIT_CONFIG_GLOBAL` pin that was
+already there (`TestInitGitHooks` in internal/scaffold/scaffold_test.go), and the lesson was written
+down as an inbox draft that then sat unread for a month. `internal/testutil/gitrepo` (created in
+`9eff655`) exists to make the hermetic form the easy one, and its package doc names the same
+hazards.
 
 **How to apply:**
 - New git-touching test? Call `gitrepo.New(t)`. Reach for a hand-rolled runner only when the test
@@ -48,6 +49,8 @@ the hermetic form the easy one, and its package doc names the same hazards.
 Related: [[internal-import-dag]] (`internal/testutil/gitrepo` is a leaf every test package may import).
 
 ## Changelog
+- 2026-10-17 — named `procharness.Environment`, `TestInitGitHooks` and the five 2026-08-10 violators
+  by function instead of line numbers (re-verified both pins in the first two at HEAD).
 - 2026-08-10 — created, promoting the `kb/inbox/environment-sensitive-test-evidence.md` draft that
   `7fd8150` left behind (the inbox itself was a retired protocol; see the same-commit sibling
   [[shell-guards-fail-closed]]). **Swept every Go file in `internal/` + `tools/` that runs a git
@@ -56,9 +59,10 @@ Related: [[internal-import-dag]] (`internal/testutil/gitrepo` is a leaf every te
   (`box/gitenv_test.go`, `tasks/audit_test.go`, `scaffold/scaffold_test.go`,
   `testutil/procharness/harness.go` — which covers the four `initProcessRepo` process-e2e callers —
   `cli/testdata/providerfixture/loop.go`, `testutil/liveprovider/contract.go`), and **5 violate**:
-  `acpproxy/e2e_test.go:112` (bare `exec.Command`, full ambient env), `box/image_test.go:60-68`,
-  `cli/fork_cmd_test.go:442-451`, `forkctl/testhelpers_test.go:42-51`, and
-  `preset/wrapper_test.go:90-101` (the middle three pin identity only). All five are reported for the
+  `prepareLiveRepo` in acpproxy/e2e_test.go (bare `exec.Command`, full ambient env),
+  `TestStageBuildContextOmitsIgnoredOutputButKeepsAuthoredInputs` in box/image_test.go, the `git`
+  helpers in cli/fork_cmd_test.go and forkctl/testhelpers_test.go, and `newDelegateHarness` in
+  preset/wrapper_test.go (the middle three pin identity only). All five are reported for the
   queue, not fixed here — the rule commit carries the rule ([[small-work-to-the-queue]]).
   `check:` stays `none` until they are converted: a scan test would land red, and a red check is a
   gate nobody can keep.

@@ -39,12 +39,13 @@ filtered editor session stranded each box's guard, controller and volumes until 
 launch settled them.
 
 **The loop** admits once, right after the review ladders are built, and every box it launches —
-pre-flight, work, review, verify, debug shell — attaches that same capture through one `runBox`
-seam (`loop/host.go:116`). The admission spec unions every rung of every stage's ladder plus the
-named peers (`loop/network.go:29`): a provider that rotates in mid-drain must already be in the
-frozen policy, or it would meet a denial instead of a refusal at launch. Refusals accumulate during
-an iteration and print between iterations, never over the live bar, plus one ranked closing summary
-(`loop/network.go:91`, `:158`).
+pre-flight, work, review, verify, debug shell — attaches that same capture through one `runBox` seam
+(`Control.runBox` in loop/host.go). The admission spec unions every rung of every stage's ladder
+plus the named peers (`networkAdmissionSpec` in loop/network.go): a provider that rotates in
+mid-drain must already be in the frozen policy, or it would meet a denial instead of a refusal at
+launch. Refusals accumulate during an iteration and print between iterations, never over the live
+bar, plus one ranked closing summary (`networkLog.finishIteration` and `networkLog.summary` in
+loop/network.go).
 
 **Remote sessions** receive one canonical controller-authored job at create. The job supplies
 network mode and explicit rules; no local policy registry, project requests or remembered operator
@@ -54,37 +55,38 @@ session row stores mode, fingerprint and qualification; cold turn, warm child, r
 reuse that exact snapshot. Repository settings cannot change its reach. Then:
 
 - The daemon is the child's HOST parent and scrubs every `COOP_*` from the environment it builds, so
-  `COOP_NETWORK_CAPTURE` (`box/network_session.go:22`) can only be set there
-  (`sessionsvc/network.go:129`). It carries a *reference* — project, fingerprint, qualification,
-  session, attempt — not authority.
+  `COOP_NETWORK_CAPTURE` (`box.SessionNetworkCaptureEnv`) can only be set there
+  (`networkChildEnvironment` in sessionsvc/network.go). It carries a *reference* — project,
+  fingerprint, qualification, session, attempt — not authority.
 - The child proves it: `OpenExisting` (never `Open`, so a child cannot create an owner key) plus
   `LoadJobSnapshot` of the exact job digest, session id and fingerprint. A forged or cross-job
   reference produces no snapshot and no launch. Local ACP continues to prove a project snapshot.
 - After the child exits the daemon checks every run registered against the session against the
-  immutable row's fingerprint and FAILS the turn on a mismatch (`sessionsvc/network.go:210`). An
-  inventory it could not read WHOLE fails the turn too (`sessionsvc/network.go:311`): the record it
-  skipped is exactly where a mismatching run would hide.
+  immutable row's fingerprint and FAILS the turn on a mismatch (`verifySessionNetworkRuns`). An
+  inventory it could not read WHOLE fails the turn too (`sessionTurnRunner.sessionNetworkOutcome`):
+  the record it skipped is exactly where a mismatching run would hide.
 - A filtered child owns a gateway, its volumes and its receipt, so it gets a 30 s stop window
-  instead of the ordinary 250 ms (`sessionsvc/acp.go:48`). Killing it fast leaves two running
-  containers and an open receipt until recovery settles them — the next filtered launch does,
-  child or not, through `runBox` (`cli/boxsweep.go`).
+  instead of the ordinary 250 ms (`sessionACPFilteredStopGrace` in sessionsvc/acp.go). Killing it
+  fast leaves two running containers and an open receipt until recovery settles them — the next
+  filtered launch does, child or not, through `runBox` (`cli/boxsweep.go`).
 
 The API adds four reads under `GET /v1/sessions/{id}/network`: the live summary, `/connections`
 (the newest run's bounded rows), `/explanations/{event}` (one retained refusal) and `/receipt`
-(aggregate, final once closed) (`sessionsvc/http.go:483`), a `network` event on the session stream
-whose payload is bounded by construction (refusals grouped and capped, alerts capped),
+(aggregate, final once closed) (`sessionHTTPHandler.serveSessionPath` in sessionsvc/http.go), a
+`network` event on the session stream whose payload is bounded by construction (refusals grouped and
+capped, alerts capped),
 `SessionDTO.network`, and the same reads through the generic worker `api_request` transport.
 There is no second worker command vocabulary. None of these reads grants authority: the saved job
 controls whether destination names are exported, and the daemon applies that projection.
 
-`coop net` is the host operator's read surface, grouped by the job a person arrives with
-(`cli/net_cmd.go:49`): ACCESS (what a new run may reach), RUNS (what recorded runs did), REPAIR
-(what coop normally does itself). Its verbs differ in what they read:
+`coop net` is the host operator's read surface, grouped by the job a person arrives with (the order
+of `netCommands` in cli/net_cmd.go): ACCESS (what a new run may reach), RUNS (what recorded runs
+did), REPAIR (what coop normally does itself). Its verbs differ in what they read:
 
 | verb | reads |
 | --- | --- |
 | bare `coop net` | this project's mode and its cause, the approved project rules, and — only when the file and the approval differ — the same access change `approve` would show; creates no owner key. Setup health and history cost no line: a launch sets the host up itself |
-| `approve` | TTY only, no flags; the exact snapshot of `.agent/project.yaml` (mode, rules, service digests) diffed against the remembered approval, digest-fenced. Nothing pending → `No approval needed — …`, nothing written |
+| `approve` (top-level `coop approve` since 2026-09-13; `coop net approve` only points there) | TTY only, no flags; the exact snapshot of `.agent/project.yaml` (mode, rules, service digests) diffed against the remembered approval, digest-fenced. Nothing pending → `No approval needed — …`, nothing written |
 | `check <url-or-host>` | with no `--run`, the approved project rules plus each agent's provider bundle (`cli/net_diagnostic.go`, `netCurrentCheck`); with `--run`, that run's captured policy evaluated hypothetically. Never sends a packet |
 | `forget` | one of three mutating verbs: writes a withdrawal marker, THEN removes one project's approval (`networkstate/approval_withdrawal.go`). While the marker stands every ordinary launch of that project is pending — the open default cannot be regained — and only `approve` clears it |
 | `runs` · `inspect` · `watch` · `export` | the keyless `Evidence` handle over retained execution records — no runtime, no DNS, no key. Any unique prefix of a run id resolves (`netResolveRun`); an ambiguous one is refused with the prefixes that settle it |
@@ -174,6 +176,12 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-10-17 — replaced the line-number citations with `Control.runBox`, `networkAdmissionSpec`,
+  `networkLog.finishIteration`/`summary`, `box.SessionNetworkCaptureEnv`, `networkChildEnvironment`,
+  `verifySessionNetworkRuns`, `sessionNetworkOutcome`, `sessionACPFilteredStopGrace`,
+  `serveSessionPath` and `netCommands`, each re-verified at HEAD; the `approve` row now says it is
+  the top-level `coop approve` (moved in 4ab701a2; `coop net approve` returns `approveMovedError`).
+  The 2026-09-26 entry now names the functions it removed, which older entries still mention.
 - 2026-10-17 — the read-only and bare launches (`restricted.go`) are gone, so the ordinary launch
   narrates every section.
 - 2026-10-17 — a `coop net setup` check's snapshot from before markers is marked by the check's
@@ -192,7 +200,9 @@ number — never Ctrl-C inferred from 130.
 - 2026-10-15 — a filtered `coop acp` session now re-admits after an approval change (the frozen
   startup spec, between turns or when a box starts anyway) and replaces its boxes; per-child
   references are unchanged. Fixed the "no consumer admits twice" claim and a stale line reference.
-- 2026-09-26 — removed the retired policy-resolution path and its unused box adapter; reverified
+- 2026-09-26 — removed the retired policy-resolution path (`sessionsvc.ResolvePolicyNetwork`,
+  `ResolvePolicyNetworkSnapshot`, `Service.PolicyNetworks`, `coop sessions policies`) and its unused
+  box adapter (`box.ResolveSessionNetworkSnapshot`); reverified
   controller admission, job-scoped snapshots, child proofs and generic API network reads. Local
   project/ACP/loop admission is unchanged.
 - 2026-09-25 — reverified local fork ACP after the live editor test: its new fixed-target supervisor

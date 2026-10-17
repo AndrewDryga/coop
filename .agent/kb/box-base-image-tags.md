@@ -126,6 +126,9 @@ record, so the 14 days start then), and an image any container still references 
 stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-10-17 — identifier check: `box.JobImage` is `box.SharedImage` since f90505e4, and the
+  launch-recording helper was always the unexported `markImageUsed` (internal/box/reclaim.go), never
+  `MarkImageUsed`.
 - 2026-10-17 — readonly and bare jobs are refused now, so `restrictedImage` and its image rule are gone.
 - 2026-10-16 — a same-tag rebuild of the managed base or a derived image removes the image it
   untagged when no container uses it right after the build (network setup never does: earlier
@@ -146,7 +149,8 @@ stopped, whoever owns it — is kept.
   the stale ordinary `JobGate` claim; review build output now enters the review log. The open and
   offline gate cases share one config without mutation, and filtered review reopens the job snapshot.
 - 2026-09-28 — Ryker's worker failed every emisar/ryker turn on the never-built
-  `coop-repository` tag: controller jobs now run the worker's base (`box.JobImage`) for turns and
+  `coop-repository` tag: controller jobs now run the worker's base (`box.JobImage`, renamed
+  `box.SharedImage` on 2026-09-30) for turns and
   the session review gate. Corrected the stale `resolveLaunchImage(true)` reference.
 - 2026-09-25 — rechecked image tagging against UID-aware base and locked-image builds and
   per-identity cache volumes for native Linux users.
@@ -155,7 +159,7 @@ stopped, whoever owns it — is kept.
 - 2026-09-20 — a project's own derived images join the reclaim, recognized by the `coop.derived`
   label their build now applies (never by the `-filtered` name alone).
 - 2026-09-20 — a build reclaims its family's superseded images (`box/reclaim.go`): 14 days without a
-  recorded use and no container referencing it. Every launch records its image (`MarkImageUsed`),
-  which is what keeps a second installed Coop's base alive; `:latest`, an operator's own image and
-  any non-definition tag are never candidates.
+  recorded use and no container referencing it. Every launch records its image (`markImageUsed`,
+  through `markLaunchImages`), which is what keeps a second installed Coop's base alive; `:latest`,
+  an operator's own image and any non-definition tag are never candidates.
 - 2026-09-19 — created with the per-definition base tag.

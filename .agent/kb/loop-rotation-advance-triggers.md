@@ -3,16 +3,15 @@ name: loop-rotation-advance-triggers
 description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); known-invalid credentials never become rungs
 subsystem: loop
 sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/ladder/acp.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/loop/streamjson_providers.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/agent/ratelimit.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/box/auth.go, internal/box/profiles.go, docs/agents.md, docs/loop.md]
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 A loop's rotation starts from credential presence and then applies
 `box.ProfileCredentialReady`. A native marker that its adapter classifies as
 `StoredCredentialReauthRequired` is omitted before the provider launches; ready or refreshable
 markers remain eligible. Env-backed credentials and markers whose adapter returns `Unknown` retain
 presence behavior because Coop cannot safely prove them dead. `coop credentials` uses the same
-predicate, so a credential shown as `re-login required` cannot simultaneously become a rotation
-rung. See [[credential-presence-is-adapter-declared]] and
-[[credentials-expired-is-a-false-alarm]].
+predicate, so a credential it flags `Sign in again` cannot simultaneously become a rotation rung.
+See [[credential-presence-is-adapter-declared]] and [[sign-in-again-is-actionable]].
 
 Two triggers advance the rotation, and their lifetimes differ — don't reach for one map to hold
 both:
@@ -70,6 +69,8 @@ the loop decoder says `authentication required`, the ACP auth check reads a stru
 `grok_errors`.
 
 ## Changelog
+- 2026-10-17 — the credentials listing's label is `Sign in again` now (`profileIssue` in
+  internal/cli/profiles.go), and the linked card is renamed sign-in-again-is-actionable.
 - 2026-10-15 — the wrappers' `grep -E` now renders from the Go pattern strings; its hand-kept copy
   lacked the single quote. The parity test holds shell and Go to one expected verdict per case.
 - 2026-10-01 — a real closed-native-login recovery test retried Codex's rejected first account.

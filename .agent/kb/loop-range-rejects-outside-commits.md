@@ -16,7 +16,7 @@ id names a task this iteration's authority consumption could actually touch: the
 the leased task id, the audit-reopen record's task, any task whose queue state this same completion
 window observed change (`windows.AuditDoneCandidates`/`windows.Departures()`), or any task ALREADY
 archived before the box ever ran (`windows.BaselineDoneIDs()`, the completion window's baseline
-snapshot — captured at the very start of `runIteration`, so it is queue state the box could not have
+snapshot — captured at the very start of `runIterationWithMode`, so it is queue state the box could not have
 influenced either). All of it is host-side knowledge the box cannot influence — never anything the box
 itself could write, like a commit author or timestamp. That is deliberate: it stops an iteration from
 smuggling in a binding it does not own — completing a second task, reopening an archived one while
@@ -134,6 +134,9 @@ See [[task-authority-model]] for the full four-authority map and the lock-orderi
 authority is acquired before lease authority, never the reverse) this ref-authority window is half of.
 
 ## Changelog
+- 2026-10-17 — the snapshot is taken in `runIterationWithMode`, which `runIteration` calls.
+- 2026-10-17 — the 2026-08-10 entry names the exported `LockRefAuthority`/`EnterRefAuthorityWindow`
+  the move produced (internal/tasks/refauthority.go).
 - 2026-10-17 — a new pending-review enrollment needs the trailer on one commit in the whole branch,
   so a planted commit cannot stand in for the human's own (second review of the same task).
 - 2026-10-17 — noted the host-receipted exception: a task committed before the run and completed by
@@ -150,7 +153,8 @@ authority is acquired before lease authority, never the reverse) this ref-author
 - 2026-08-10 — sources repointed: `controller.go` moved whole to `internal/tasks/audit.go`,
   `tasks.go` to `internal/tasks/queue.go`, `completionwindow.go` to `internal/tasks/completion.go`,
   and the `lockRefAuthority`/`enterRefAuthorityWindow` slice out of `fork_loop.go` (which otherwise
-  stays in `internal/cli`, `lockLoopCheckout` unmoved) into `internal/tasks/refauthority.go` — the
+  stays in `internal/cli`, `lockLoopCheckout` unmoved) into `internal/tasks/refauthority.go`
+  (exported there as `LockRefAuthority`/`EnterRefAuthorityWindow`) — the
   2026-08 tasks/lease/completion-audit extraction. Facts unchanged; added the [[task-authority-model]]
   cross-reference for the newly-documented lock-ordering invariant.
 - 2026-08-10 — sources repointed for the loop-engine extraction: `lockLoopCheckout` moved to
