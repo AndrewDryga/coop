@@ -435,6 +435,54 @@ func TestForkRmPrintsOneBlankLineBetweenSections(t *testing.T) {
 	}
 }
 
+// A service teardown that fails warns, and one blank line separates its warnings from the result:
+// in rm, and in merge, which prints its blank line after an answer before the teardown so the two
+// cannot stack.
+func TestForkTeardownWarningsEndWithOneBlankLine(t *testing.T) {
+	failing := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(failing, []byte("#!/bin/sh\necho 'daemon down' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	warnings := "fork a: services its stopped runs left behind were not all removed"
+	t.Run("rm", func(t *testing.T) {
+		repo := initRepo(t)
+		ws, err := forkspace.Setup(repo, "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: failing}}
+		var code int
+		stderr := captureStderr(t, func() { code, err = c.ForkRm([]string{"a", "--yes"}) })
+		if code != 0 || err != nil {
+			t.Fatalf("ForkRm = (%d, %v)\n%s", code, err, stderr)
+		}
+		got := strings.ReplaceAll(stderr, ws, "<ws>")
+		head := "Delete fork \"a\"\n\n  <ws>\n\nWill be permanently deleted:\n  - Service containers, Docker volumes, and their stored data.\n\n"
+		if !strings.HasPrefix(got, head+warnings) || !strings.HasSuffix(got, "or volumes\n\n✓ Deleted fork a\n") || strings.Contains(got, "\n\n\n") {
+			t.Errorf("coop fork rm with a failing teardown printed:\n%q", got)
+		}
+	})
+	t.Run("merge", func(t *testing.T) {
+		repo := initRepo(t)
+		ws, err := forkspace.Setup(repo, "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeTaskFile(t, filepath.Join(ws, "a.txt"), "a\n")
+		git(t, ws, "add", "-A")
+		git(t, ws, "commit", "-qm", "a")
+		c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: failing}}
+		var code int
+		stderr := captureStderr(t, func() { code, err = c.ForkMerge([]string{"a", "--yes"}) })
+		if code != 0 || err != nil {
+			t.Fatalf("ForkMerge = (%d, %v)\n%s", code, err, stderr)
+		}
+		if !strings.Contains(stderr, "✓ Merged fork a into main\n\n"+warnings) || !strings.HasSuffix(stderr, "or volumes\n\n✓ Deleted fork a\n") || strings.Contains(stderr, "\n\n\n") {
+			t.Errorf("coop fork merge with a failing teardown printed:\n%q", stderr)
+		}
+	})
+}
+
 func TestForkRmConfirmsBeforeForcedStop(t *testing.T) {
 	repo := initRepo(t)
 	ws, err := forkspace.Setup(repo, "perf")

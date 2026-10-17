@@ -1010,15 +1010,15 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		ui.Note("")
 	}
 	if ui.DestroyGate("Delete the merged fork", yes) == nil {
+		// --yes asked nothing, so there is no answered question to separate from what follows.
+		if !yes {
+			ui.Note("")
+		}
 		if err := destroyLandedFork(c.rt, repo, name, result.approval, box.ConfigExposureRoots(c.cfg)...); err != nil {
 			if isForkMergeLifecycleError(err) {
 				return 1, err
 			}
 			return -1, err
-		}
-		// --yes asked nothing, so there is no answered question to separate from the result.
-		if !yes {
-			ui.Note("")
 		}
 		ui.OK("Deleted fork %s", name)
 		return 0, nil
