@@ -10,6 +10,8 @@ LDFLAGS := -s -w -X github.com/AndrewDryga/coop/internal/cli.Version=$(VERSION)
 # This repository's .agent/Dockerfile installs both for the gate in its box: Staticcheck from
 # that module, the scanner at a pin mirrored there (agent_config_test.go holds them equal).
 STATICCHECK_MODFILE := tools/staticcheck.mod
+# VET_TAGS are the build tags vet and staticcheck add, so the tagged suites are linted too.
+VET_TAGS := acpe2e,boxruntimee2e,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e
 STATICCHECK_VERSION := $(shell awk '$$1 == "honnef.co/go/tools" {print $$2}' $(STATICCHECK_MODFILE))
 STATICCHECK_XTOOLS_VERSION := $(shell awk '$$1 == "golang.org/x/tools" {print $$2}' $(STATICCHECK_MODFILE))
 GOVULNCHECK_VERSION := v1.8.0
@@ -62,11 +64,14 @@ lint: ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet ./... || exit 1; done
 # The e2e/live files sit behind build tags, so the pass above never compiles them — a lost cancel
 # lived there unseen. Every tag in the tree in one pass.
-	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e ./... || exit 1; done
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags $(VET_TAGS) ./... || exit 1; done
 	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck is not installed — run: make install-staticcheck"; exit 1; }
 	@staticcheck -version | grep -qF "($(patsubst v%,%,$(STATICCHECK_VERSION)))" || { echo "$$(staticcheck -version) is not the pinned $(STATICCHECK_VERSION) — run: make install-staticcheck"; exit 1; }
 	@staticcheck -debug.version | awk '$$1 == "golang.org/x/tools@$(STATICCHECK_XTOOLS_VERSION)" {found=1} END {exit !found}' || { echo "staticcheck needs the pinned Go importer $(STATICCHECK_XTOOLS_VERSION) — run: make install-staticcheck"; exit 1; }
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os staticcheck ./... || exit 1; done
+	@# Again with go vet's tag set: the scripted and runtime suites live behind build tags, and two
+	@# files are only built without them, so neither pass covers everything alone.
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os staticcheck -tags $(VET_TAGS) ./... || exit 1; done
 
 # Plumbing for CI's install step, which reads the pin from here instead of repeating it.
 staticcheck-version:
@@ -238,7 +243,7 @@ check-local: require-git-lfs ## Scoped local checks; SCOPE=docs|rules|agent|runt
 	@echo 'Local checks: $(ITERATION_SCOPE) owner and reverse consumers; no race or live providers'
 	@files="$$(gofmt -l .)" || exit 1; [ -z "$$files" ] || { printf '%s\n' "$$files"; echo 'gofmt: files need formatting'; exit 1; }
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
-	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags $(VET_TAGS) $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
 	@go test -count=1 -p 4 -timeout 20m $(LOCAL_$(ITERATION_SCOPE))
 else ifeq ($(SCOPE),docs)
 check-local: docs-check align rules-check

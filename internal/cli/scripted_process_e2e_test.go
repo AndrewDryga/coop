@@ -484,20 +484,6 @@ func processSafeFlag(value string) bool {
 	return true
 }
 
-func assertProcessEnvironment(t *testing.T, env []processEnv, provider, credentialKey string) {
-	t.Helper()
-	values := map[string]processEnv{}
-	for _, item := range env {
-		values[item.Name] = item
-	}
-	if values["COOP_PRIMARY"].Value != provider || values["FIXTURE_SAFE"].Value != "visible" {
-		t.Fatalf("scoped environment = COOP_PRIMARY %#v FIXTURE_SAFE %#v", values["COOP_PRIMARY"], values["FIXTURE_SAFE"])
-	}
-	if _, ok := values[credentialKey]; ok {
-		t.Fatalf("marker-backed profile leaked host %s into the box environment", credentialKey)
-	}
-}
-
 func awaitProcessGone(t *testing.T, pid int) {
 	t.Helper()
 	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
