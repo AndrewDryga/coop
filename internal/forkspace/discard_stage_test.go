@@ -229,3 +229,55 @@ func TestStagedDiscardsRefusesToClaimForeignControlEntries(t *testing.T) {
 		t.Fatalf("purge deleted an entry it could not prove it owned: %v", err)
 	}
 }
+
+// The staging folder sits in the forks folder, which a box can write. With .discarding replaced by
+// a link to a folder elsewhere, staging refuses, and the workspace neither moves there nor leaves
+// the forks tree.
+func TestStageWorkspaceDiscardNeverMovesThroughALink(t *testing.T) {
+	repo, ws := stagedFixture(t, "session-1")
+	handle, info, err := Pin(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, StagedDiscardDir(repo)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := StageWorkspaceDiscardLocked(repo, "session-1", info); err == nil {
+		t.Fatal("staging moved the workspace through a .discarding link")
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Fatalf("the workspace went where the link points: %v, %v", entries, err)
+	}
+	if !SamePinned(ws, info) {
+		t.Fatal("the refused staging moved the workspace")
+	}
+}
+
+// A swap that comes after the staging folder is opened changes nothing either: the workspace moves
+// into the folder staging opened, by its descriptor, never where the new link points.
+func TestStageWorkspaceDiscardKeepsToTheFolderItOpened(t *testing.T) {
+	repo, ws := stagedFixture(t, "session-1")
+	handle, info, err := Pin(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	if err := os.MkdirAll(StagedDiscardDir(repo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	swapped := swapAtSync(t, Home(repo), 1, StagedDiscardDir(repo), outside)
+	_, _ = StageWorkspaceDiscardLocked(repo, "session-1", info)
+	if !*swapped {
+		t.Fatal("the swap never happened")
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Fatalf("the workspace went where the link points: %v, %v", entries, err)
+	}
+	entries, err := os.ReadDir(StagedDiscardDir(repo) + ".pinned")
+	if err != nil || len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "session-1.") {
+		t.Fatalf("the workspace is not in the folder staging opened: %v, %v", entries, err)
+	}
+}

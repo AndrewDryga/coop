@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
 const stagedDiscardCount = 4096
@@ -34,10 +36,27 @@ var syncStagedDiscardDirectory = func(dir *os.File) error { return dir.Sync() }
 func StagedDiscardDir(repo string) string { return filepath.Join(Home(repo), ".discarding") }
 
 func ensureStagedDiscardDir(repo string) error {
-	if err := ensureForkHome(repo); err != nil {
+	home, staging, err := openStagedDiscardDir(repo)
+	if err != nil {
 		return err
 	}
-	return ensurePrivateStateDir(StagedDiscardDir(repo))
+	return errors.Join(staging.Close(), home.Close())
+}
+
+// openStagedDiscardDir opens the forks folder, and the staging folder in it, by descriptor without
+// following a link (the staging folder made owner-only first, with its parent barrier), so a
+// workspace moved between the two never goes where a link a box swapped in points.
+func openStagedDiscardDir(repo string) (home, staging *os.File, err error) {
+	if err := ensureForkHome(repo); err != nil {
+		return nil, nil, err
+	}
+	if home, err = safefile.OpenRoot(Home(repo)); err != nil {
+		return nil, nil, err
+	}
+	if staging, err = openStateChild(home, StagedDiscardDir(repo), filepath.Base(StagedDiscardDir(repo)), true); err != nil {
+		return nil, nil, errors.Join(err, home.Close())
+	}
+	return home, staging, nil
 }
 
 func stagedDiscardName(name string) (string, error) {
@@ -78,16 +97,19 @@ func StageWorkspaceDiscardLocked(repo, name string, pinned os.FileInfo) (string,
 	if !SamePinned(workspace, pinned) {
 		return "", fmt.Errorf("refusing to stage %q: the workspace is missing or was replaced", workspace)
 	}
-	if err := ensureStagedDiscardDir(repo); err != nil {
+	home, staging, err := openStagedDiscardDir(repo)
+	if err != nil {
 		return "", err
 	}
+	defer home.Close()
+	defer staging.Close()
 	staged, err := stagedDiscardName(name)
 	if err != nil {
 		return "", err
 	}
 	target := filepath.Join(StagedDiscardDir(repo), staged)
-	if err := renameNoReplace(workspace, target); err != nil {
-		return "", fmt.Errorf("stage fork workspace %q for discard: %w", workspace, err)
+	if err := renameAtNoReplace(int(home.Fd()), name, int(staging.Fd()), staged); err != nil {
+		return "", fmt.Errorf("stage fork workspace %q for discard: %w", workspace, &os.LinkError{Op: "rename", Old: workspace, New: target, Err: err})
 	}
 	// The visible rename is not yet a durable ownership transition. Persist both rename parents
 	// (and the fork-home entry in its parent) before the caller retires generation authority; an

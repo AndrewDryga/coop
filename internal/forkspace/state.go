@@ -121,25 +121,6 @@ func ensureForkHome(repo string) error {
 	return confirmForkHomeEntry(home)
 }
 
-func ensurePrivateStateDir(path string) error {
-	if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return err
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("fork state path %q is not a real directory", path)
-	}
-	if err := os.Chmod(path, 0o700); err != nil {
-		return fmt.Errorf("make fork state path %q owner-only: %w", path, err)
-	}
-	// Repeat this barrier even when the directory was already visible. A previous creation may
-	// have returned an fsync error after mkdir; the idempotent retry is what confirms publication.
-	return confirmForkDirectoryEntry(path)
-}
-
 // confirmForkDirectoryEntry syncs the folder that holds path, in the forks tree.
 func confirmForkDirectoryEntry(path string) error {
 	return syncParentFolder(path, false)

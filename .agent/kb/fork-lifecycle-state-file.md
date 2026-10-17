@@ -191,9 +191,13 @@ through the root stays there even if a box swaps the name afterwards. `CreateTem
 through that root. Generation records, the reservation and execution registries, forkctl's land
 journal, isolated records and candidate folders, and tasks' assignment, proposal and candidate
 registries, discard intent and projection snapshots all use it (tasks' `openStateRoot` takes a
-path under `.coop`). `.discarding`, beside `.coop`, is still staged by path (queued).
+path under `.coop`). `.discarding`, beside `.coop`, is opened the same way from the forks folder's
+handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` moves the workspace with a
+no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-10-18 — staging a discard goes through the forks folder's and .discarding's descriptors (task
+  2026-10-18-stage-a-fork-discard-through-the-forks-folder-s).
 - 2026-10-18 — the remaining `.coop` writers go through `OpenStateRoot` (task
   2026-10-17-route-the-remaining-coop-writers-through-the-no).
 - 2026-10-18 — rm and --fresh keep a fork whose teardown failed or that gained work while its
