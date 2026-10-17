@@ -27,6 +27,12 @@ func gitOut(dir string, args ...string) string {
 // looks clean). The message carries git's own stderr — os/exec caps that capture at 32KB — because a
 // caller surfacing this to a human has nothing else to explain the failure with.
 func gitOutErr(dir string, args ...string) (string, error) {
+	out, err := gitRawOutErr(dir, args...)
+	return strings.TrimSpace(out), err
+}
+
+// gitRawOutErr is gitOutErr without the trim: NUL-delimited paths and other exact-byte output.
+func gitRawOutErr(dir string, args ...string) (string, error) {
 	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
 	if err != nil {
 		return "", err
@@ -41,5 +47,5 @@ func gitOutErr(dir string, args ...string) (string, error) {
 		}
 		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	return string(out), nil
 }

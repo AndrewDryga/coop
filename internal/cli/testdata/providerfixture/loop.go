@@ -98,7 +98,8 @@ func validateLoopResult(index int, stage, result string) error {
 			result == "background-drained" || result == "background-timeout" ||
 			result == "background-drained-complete" || result == "background-timeout-after-restored-completion" ||
 			result == "tool-wait" || result == "tool-gated-complete" || result == "forged-flood-wait" ||
-			result == "progress-gated-complete" || result == "uncommitted-complete" || result == "uncommitted-dirty-complete" || result == "decision-complete" {
+			result == "progress-gated-complete" || result == "uncommitted-complete" || result == "uncommitted-dirty-complete" || result == "decision-complete" ||
+			result == "complete-unlisted-range" {
 			return nil
 		}
 	case "between", "signoff", "verify":
@@ -196,9 +197,9 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 1, "", err
 		}
 		return waitLoopSignal(root, trace)
-	case "complete", "complete-tool-failure", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete", "uncommitted-complete", "uncommitted-dirty-complete", "decision-complete":
+	case "complete", "complete-tool-failure", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "complete-unlisted-range", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete", "uncommitted-complete", "uncommitted-dirty-complete", "decision-complete":
 		outcome := attempt.Result
-		if outcome == "complete" || outcome == "complete-tool-failure" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" || outcome == "background-drained-complete" {
+		if outcome == "complete" || outcome == "complete-tool-failure" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" || outcome == "complete-unlisted-range" || outcome == "background-drained-complete" {
 			outcome = ""
 		} else if outcome == "unbound-extra-finalized" {
 			outcome = "unbound"
@@ -241,6 +242,11 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		}
 		if attempt.Result == "complete-extra-finalized" || attempt.Result == "unbound-extra-finalized" {
 			if err := finalizeLoopExtraTask(root, plan.TaskID+"-extra"); err != nil {
+				return 1, "", err
+			}
+		}
+		if attempt.Result == "complete-unlisted-range" {
+			if err := hideLoopBaseTree(root); err != nil {
 				return 1, "", err
 			}
 		}
@@ -768,6 +774,26 @@ func waitLoopReleaseFile(root, name string) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return errors.New("timed out waiting for loop release")
+}
+
+// hideLoopBaseTree moves the root tree of the commit this attempt started from out of the object
+// store, as an agent that writes .git can. The new commit still logs and `git status` stays clean,
+// but no diff of the attempt's range can be read. The test puts the object back.
+func hideLoopBaseTree(root string) error {
+	repo, err := loopRepo(root)
+	if err != nil {
+		return err
+	}
+	out, err := loopGitOutput(repo, "rev-parse", "--verify", "HEAD~1^{tree}")
+	if err != nil {
+		return err
+	}
+	tree := strings.TrimSpace(out)
+	if len(tree) != 40 || strings.Trim(tree, "0123456789abcdef") != "" {
+		return fmt.Errorf("base tree id %q is not a SHA-1 object id", tree)
+	}
+	object := filepath.Join(repo, ".git", "objects", tree[:2], tree[2:])
+	return os.Rename(object, object+".hidden")
 }
 
 func moveLoopExtraTask(root, taskID string) error {

@@ -5404,6 +5404,14 @@ func TestProtectedGateChanges(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	gateChanges := func(base, head string, sources []string) []string {
+		t.Helper()
+		hits, err := ProtectedGateChanges(repo, base, head, sources)
+		if err != nil {
+			t.Fatalf("ProtectedGateChanges(%s..%s): %v", base, head, err)
+		}
+		return hits
+	}
 	git("init", "-q")
 	git("config", "user.email", "t@t")
 	git("config", "user.name", "T")
@@ -5417,10 +5425,10 @@ func TestProtectedGateChanges(t *testing.T) {
 	git("add", "-A")
 	git("commit", "-q", "-m", "code edit")
 	codeHead := gitOut(repo, "rev-parse", "HEAD")
-	if hits := ProtectedGateChanges(repo, base, codeHead, nil); len(hits) != 0 {
+	if hits := gateChanges(base, codeHead, nil); len(hits) != 0 {
 		t.Errorf("an ordinary code change is not protected: %v", hits)
 	}
-	if hits := ProtectedGateChanges(repo, base, codeHead, []string{"code.go"}); !slices.Equal(hits, []string{"code.go"}) {
+	if hits := gateChanges(base, codeHead, []string{"code.go"}); !slices.Equal(hits, []string{"code.go"}) {
 		t.Errorf("a project-declared gate source should be protected exactly: %v", hits)
 	}
 	// A commit that weakens the Makefile → flagged.
@@ -5428,14 +5436,14 @@ func TestProtectedGateChanges(t *testing.T) {
 	write("Makefile", "check:\n\ttrue\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "loosen the gate")
-	if hits := ProtectedGateChanges(repo, mid, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != "Makefile" {
+	if hits := gateChanges(mid, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != "Makefile" {
 		t.Errorf("a Makefile change should be flagged, got %v", hits)
 	}
 	// Renaming a guard away must report the deleted protected path, not only its new name.
 	renameBase := gitOut(repo, "rev-parse", "HEAD")
 	git("mv", ".claude/skills/workflow-sweep/queue-guard.sh", ".claude/skills/workflow-sweep/disabled.sh")
 	git("commit", "-q", "-m", "disable the adopted guard")
-	if hits := ProtectedGateChanges(repo, renameBase, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != ".claude/skills/workflow-sweep/queue-guard.sh" {
+	if hits := gateChanges(renameBase, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != ".claude/skills/workflow-sweep/queue-guard.sh" {
 		t.Errorf("renaming an adopted guard should flag its old path, got %v", hits)
 	}
 	// NUL-delimited names prevent Git from quoting paths before basename matching.
@@ -5444,8 +5452,62 @@ func TestProtectedGateChanges(t *testing.T) {
 	write(unicodeGuard, "#!/bin/sh\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "add guard below unicode directory")
-	if hits := ProtectedGateChanges(repo, unicodeBase, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != unicodeGuard {
+	if hits := gateChanges(unicodeBase, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != unicodeGuard {
 		t.Errorf("a protected basename below a unicode directory should be flagged, got %v", hits)
+	}
+}
+
+// A box can write the repository's objects and refs, so it can make the range read fail. That must
+// come back as an error: an empty list reads as "no gate files edited" and turns the protected
+// review off.
+func TestProtectedGateChangesRefusesAnUnreadableRange(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal")) // the reads under test run git too
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitRepo(t)
+	writeTaskFile(t, filepath.Join(repo, "code.go"), "package x\n")
+	git("add", "-A")
+	git("commit", "-qm", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	writeTaskFile(t, filepath.Join(repo, "Makefile"), "check:\n\ttrue\n")
+	git("add", "-A")
+	git("commit", "-qm", "loosen the gate")
+	head := gitOut(repo, "rev-parse", "HEAD")
+	gateChanges := func() ([]string, error) { return ProtectedGateChanges(repo, base, head, nil) }
+	if hits, err := gateChanges(); err != nil || !slices.Equal(hits, []string{"Makefile"}) {
+		t.Fatalf("readable range = %v, %v; want [Makefile]", hits, err)
+	}
+
+	t.Run("missing object", func(t *testing.T) {
+		// The base commit's tree: `git status` stays clean without it, only the range read fails.
+		tree := gitOut(repo, "rev-parse", base+"^{tree}")
+		object := filepath.Join(repo, ".git", "objects", tree[:2], tree[2:])
+		if err := os.Rename(object, object+".hidden"); err != nil {
+			t.Fatal(err)
+		}
+		hits, err := gateChanges()
+		if restoreErr := os.Rename(object+".hidden", object); restoreErr != nil {
+			t.Fatal(restoreErr)
+		}
+		if err == nil || hits != nil {
+			t.Fatalf("range with a missing tree = %v, %v; want an error, not an empty list", hits, err)
+		}
+		// Control: with the object back, the same read names the gate file again.
+		if hits, err := gateChanges(); err != nil || !slices.Equal(hits, []string{"Makefile"}) {
+			t.Fatalf("restored range = %v, %v; want [Makefile]", hits, err)
+		}
+	})
+
+	t.Run("bad ref", func(t *testing.T) {
+		gone := strings.Repeat("0", len(base)-1) + "1"
+		for _, ends := range [][2]string{{gone, head}, {base, gone}, {"", head}, {base, ""}} {
+			if hits, err := ProtectedGateChanges(repo, ends[0], ends[1], nil); err == nil || hits != nil {
+				t.Errorf("range %q..%q = %v, %v; want an error", ends[0], ends[1], hits, err)
+			}
+		}
+	})
+
+	if hits, err := ProtectedGateChanges(repo, head, head, nil); err != nil || hits != nil {
+		t.Fatalf("empty range = %v, %v; want no files and no error", hits, err)
 	}
 }
 

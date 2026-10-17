@@ -1,7 +1,6 @@
 package loop
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,7 +10,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
@@ -39,7 +37,7 @@ type loopChangeSet struct {
 	subsystems          []string      // distinct top-level areas of every changed file (internal/box, site, …)
 	stat                string        // `git diff --stat base..head` — the aggregate
 	gateSources         []string      // exact project-declared gate files frozen when the loop started
-	invalidTaskBindings bool          // Git read failed or a commit had an ambiguous/empty binding
+	invalidTaskBindings bool          // a commit had an ambiguous/empty binding
 }
 
 func (cs loopChangeSet) empty() bool { return len(cs.tasks) == 0 && len(cs.misc) == 0 }
@@ -358,25 +356,41 @@ func subsystemsOf(files []string) []string {
 
 // loopChanges computes what changed in base..head, grouped by the Coop-Task trailer. Empty set when
 // the range is empty. The git calls live here; the parsing (parseLoopCommits/subsystemsOf) is pure.
-func loopChanges(repo, base, head string, gateSources []string) loopChangeSet {
-	if base == "" || head == "" || base == head {
-		return loopChangeSet{gateSources: slices.Clone(gateSources)}
+// An error means Coop could not read the range. It is never a smaller change set: review scrutiny of
+// the gate is decided from these files, and a box can break the objects or refs the reads need.
+func loopChanges(repo, base, head string, gateSources []string) (loopChangeSet, error) {
+	if base == "" || head == "" {
+		return loopChangeSet{}, fmt.Errorf("read the changes in %q..%q: the range has no commit at one end", base, head)
+	}
+	if base == head {
+		return loopChangeSet{gateSources: slices.Clone(gateSources)}, nil
 	}
 	rng := base + ".." + head
 	records, err := tasks.TaskTrailerCommits(repo, rng, true)
+	if err != nil {
+		return loopChangeSet{}, err
+	}
+	files, err := rangeFiles(repo, rng)
+	if err != nil {
+		return loopChangeSet{}, err
+	}
 	order, byTask, misc, invalid := parseLoopCommits(records)
 	cs := loopChangeSet{
 		misc:                misc,
-		subsystems:          subsystemsOf(rangeFiles(repo, rng)),
+		subsystems:          subsystemsOf(files),
 		stat:                strings.TrimSpace(gitOut(repo, "diff", "--ignore-submodules=dirty", "--submodule=short", "--stat", rng)),
 		gateSources:         slices.Clone(gateSources),
-		invalidTaskBindings: err != nil || invalid,
+		invalidTaskBindings: invalid,
 	}
 	for _, id := range order {
 		commits := byTask[id]
-		cs.tasks = append(cs.tasks, taskChanges{id: id, commits: commits, files: commitFiles(repo, commits)})
+		files, err := commitFiles(repo, commits)
+		if err != nil {
+			return loopChangeSet{}, err
+		}
+		cs.tasks = append(cs.tasks, taskChanges{id: id, commits: commits, files: files})
 	}
-	return cs
+	return cs, nil
 }
 
 // withEarlierReviewCommits adds the commit of each subject anchored before the run, a task another
@@ -396,9 +410,17 @@ func withEarlierReviewCommits(repo string, cs loopChangeSet, subjects []tasks.Pe
 		if have[id] {
 			continue
 		}
-		short, subject, _ := strings.Cut(gitOut(repo, "show", "-s", "--format=%h %s", earlier[id]), " ")
+		line, err := gitOutErr(repo, "show", "-s", "--format=%h %s", earlier[id])
+		if err != nil {
+			return cs, err
+		}
+		short, subject, _ := strings.Cut(line, " ")
 		commits := []commitInfo{{sha: short, subject: subject}}
-		task := taskChanges{id: id, commits: commits, files: commitFiles(repo, commits)}
+		files, err := commitFiles(repo, commits)
+		if err != nil {
+			return cs, err
+		}
+		task := taskChanges{id: id, commits: commits, files: files}
 		cs.tasks = append(cs.tasks, task)
 		areas = append(areas, subsystemsOf(task.files)...)
 	}
@@ -414,43 +436,62 @@ func finalVerificationChanges(repo, base string, gateSources []string) (loopChan
 	if err != nil {
 		return loopChangeSet{}, fmt.Errorf("read final verification HEAD: %w", err)
 	}
-	cs := loopChanges(repo, base, head, gateSources)
+	cs, err := loopChanges(repo, base, head, gateSources)
+	if err != nil {
+		return loopChangeSet{}, err
+	}
 	if cs.invalidTaskBindings {
 		return loopChangeSet{}, errors.New("the run's commits do not have one readable task binding each")
 	}
 	return cs, nil
 }
 
+// signoffChanges is a final-review round's change context: the run's changes plus each subject's
+// commit from before the run. An error stops the round, because a reviewer that is not shown the
+// files cannot be told which tasks changed the project checks.
+func signoffChanges(repo, base string, gateSources []string, subjects []tasks.PendingReviewRecord) (loopChangeSet, error) {
+	head, err := gitOutErr(repo, "rev-parse", "HEAD")
+	if err != nil {
+		return loopChangeSet{}, fmt.Errorf("read final review HEAD: %w", err)
+	}
+	cs, err := loopChanges(repo, base, head, gateSources)
+	if err != nil {
+		return loopChangeSet{}, err
+	}
+	return withEarlierReviewCommits(repo, cs, subjects)
+}
+
 // rangeFiles lists every file changed across a commit range.
-func rangeFiles(repo, rng string) []string {
+func rangeFiles(repo, rng string) ([]string, error) {
 	return gitNULPaths(repo, "diff", "--ignore-submodules=dirty", "--submodule=short", "--name-only", "-z", rng)
 }
 
-// gitNULPaths reads exact paths from a hardened Git command, failing soft like gitOut.
-func gitNULPaths(repo string, args ...string) []string {
-	cmd, err := forkspace.GitCommand(context.Background(), repo, args...)
+// gitNULPaths reads exact paths from a hardened Git command. A failed read is an error, never an
+// empty list: which files changed decides how hard the review looks at the gate.
+func gitNULPaths(repo string, args ...string) ([]string, error) {
+	out, err := gitRawOutErr(repo, args...)
 	if err != nil {
-		return nil
-	}
-	out, err := cmd.Output()
-	if err != nil {
-		return nil
+		return nil, err
 	}
 	var paths []string
-	for _, path := range strings.Split(string(out), "\x00") {
+	for _, path := range strings.Split(out, "\x00") {
 		if path != "" {
 			paths = append(paths, path)
 		}
 	}
-	return paths
+	return paths, nil
 }
 
 // commitFiles is the union of files a set of commits touched (sorted, deduped) — each commit's tree
 // diff against its parent, so a merge-free loop range attributes files to the task that changed them.
-func commitFiles(repo string, commits []commitInfo) []string {
+func commitFiles(repo string, commits []commitInfo) ([]string, error) {
 	seen := map[string]bool{}
 	for _, c := range commits {
-		for _, f := range gitNULPaths(repo, "diff-tree", "--no-commit-id", "--name-only", "-z", "-r", c.sha) {
+		files, err := gitNULPaths(repo, "diff-tree", "--no-commit-id", "--name-only", "-z", "-r", c.sha)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
 			seen[f] = true
 		}
 	}
@@ -459,7 +500,7 @@ func commitFiles(repo string, commits []commitInfo) []string {
 		out = append(out, f)
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 // abbrev caps a list for a prompt/digest line — the first n, then "+k more".

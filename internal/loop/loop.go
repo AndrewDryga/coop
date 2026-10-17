@@ -1347,7 +1347,7 @@ reviewAgain:
 					ui.Note("") // what the run prints next is not part of the warning's advice
 				}
 			}
-			gateHits := tasks.ProtectedGateChanges(repo, iterHead, headAfter, gateSources)
+			gateHits, gateErr := tasks.ProtectedGateChanges(repo, iterHead, headAfter, gateSources)
 			health.noteIteration(finished, gateHits)
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop only after
 			// completion validation and finalization closed the crash boundary above. Record the actual
@@ -1376,7 +1376,23 @@ reviewAgain:
 				if assignedCompletion != nil && !noChangeAccepted {
 					finishedDirs := []string{assignedCompletion.Item.ID + " — " + assignedCompletion.Item.Dir}
 					finishedIDs := taskIDsOf(finishedDirs)
-					stepChanges := loopChanges(repo, loopStartHead, headAfter, gateSources).forTasks(finishedIDs)
+					runChanges, changesErr := loopChanges(repo, loopStartHead, headAfter, gateSources)
+					// A range Coop cannot read stops the run. A box can break the objects or refs the
+					// read needs, so the failure is no evidence the gate is untouched, and a reviewer
+					// reading the same repository can hit the same failure. The task keeps its
+					// final-review debt, which the continue command settles before it claims a task.
+					unlisted := gateErr
+					if unlisted == nil {
+						unlisted = changesErr // both usually fail on the same object; one names the cause
+					}
+					if unlisted != nil {
+						ui.Failure("Could not list the files this task changed",
+							fmt.Sprintf("%v\nCoop cannot tell whether “%s” changed the project checks, so it stopped before starting another task.\nRepair the repository, then continue: that run reviews this task before any other work.",
+								unlisted, cleanDiagnosticLine(assignedCompletion.Item.Title)),
+							[2]string{"Continue:", continueCmd})
+						return 1, ui.Reported(fmt.Errorf("list the files task %s changed: %w", assignedCompletion.Item.ID, unlisted))
+					}
+					stepChanges := runChanges.forTasks(finishedIDs)
 					auditGateFiles := tasks.ProtectedGateFiles(append(stepChanges.gateFiles(), gateHits...), gateSources)
 					setPrompt, auditAvailable := betweenAuditSetPrompt(betweenEnabled, lc.Between.Prompt, auditGateFiles)
 					protectedAudit := len(auditGateFiles) > 0
@@ -1607,18 +1623,21 @@ reviewAgain:
 		if err != nil {
 			return 1, err
 		}
+		// Hand the signoff the run's change context (per task, bound by the Coop-Task trailer) + health,
+		// so a prompt like "e2e the affected features" resolves against a concrete list. Rebuilt each
+		// round because the range (loopStartHead..HEAD) grows as reopened work lands. Changes Coop
+		// cannot read stop the round; the pending review stays recorded for the next run.
+		cs, err := signoffChanges(repo, loopStartHead, gateSources, roundRecords)
+		if err != nil {
+			ui.Failure("Could not read this run's changes",
+				fmt.Sprintf("%v\nThe final review did not run; the completed tasks still need it.", err),
+				[2]string{"Continue:", continueCmd})
+			return 1, ui.Reported(fmt.Errorf("read final-review round %d changes: %w", signoffRound, err))
+		}
 		printFinalReview(signoffRound, maxReviewRounds, signoffRot.Active().String(), len(subjects))
 		// The signoff runs on signoff.agent's OWN target — a stronger, usually different-vendor model
 		// reviews the work loop's output — and fails CLOSED: if it can't run after retries, stop loudly
 		// rather than let "nothing reopened" read as an accepting signoff.
-		// Hand the signoff the run's change context (per task, bound by the Coop-Task trailer) + health,
-		// so a prompt like "e2e the affected features" resolves against a concrete list. Rebuilt each
-		// round because the range (loopStartHead..HEAD) grows as reopened work lands.
-		soHead := gitOut(repo, "rev-parse", "HEAD")
-		cs, err := withEarlierReviewCommits(repo, loopChanges(repo, loopStartHead, soHead, gateSources), roundRecords)
-		if err != nil {
-			return 1, fmt.Errorf("read final-review round %d changes: %w", signoffRound, err)
-		}
 		projectPolicy, _ := project.Load(repo)
 		signoff := seedReviewPrompt(
 			loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects),

@@ -275,7 +275,10 @@ func TestLoopChangesFromGit(t *testing.T) {
 	commit(" affected/notes.md", "spaced notes\n", "spaced area\n\nCoop-Task: task-b")
 	commit("README.md", "changed\n", "docs tweak, no trailer")
 
-	cs := loopChanges(repo, base, gitOut(repo, "rev-parse", "HEAD"), nil)
+	cs, err := loopChanges(repo, base, gitOut(repo, "rev-parse", "HEAD"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(cs.tasks) != 2 || cs.tasks[0].id != "task-a" || cs.tasks[1].id != "task-b" {
 		t.Fatalf("tasks (want task-a then task-b) = %+v", cs.tasks)
 	}
@@ -291,7 +294,7 @@ func TestLoopChangesFromGit(t *testing.T) {
 	if !slices.Equal(cs.subsystems, []string{" affected", "(root)", "internal/box", "internal/cli", "révision"}) {
 		t.Errorf("subsystems = %v", cs.subsystems)
 	}
-	if head := gitOut(repo, "rev-parse", "HEAD"); !loopChanges(repo, head, head, nil).empty() {
+	if head := gitOut(repo, "rev-parse", "HEAD"); !mustLoopChanges(t, repo, head, head).empty() {
 		t.Error("an empty range must yield an empty change set")
 	}
 }
@@ -326,7 +329,7 @@ func TestWithEarlierReviewCommitsShowsAnAnchoredCommit(t *testing.T) {
 	}
 	subjects := []tasks.PendingReviewRecord{subject("early-host", anchor), subject("task-a", "")}
 
-	cs, err := withEarlierReviewCommits(repo, loopChanges(repo, base, head, nil), subjects)
+	cs, err := withEarlierReviewCommits(repo, mustLoopChanges(t, repo, base, head), subjects)
 	if err != nil || len(cs.tasks) != 2 || cs.tasks[0].id != "task-a" || cs.tasks[1].id != "early-host" {
 		t.Fatalf("change set = %+v, %v; want task-a, then the anchored early-host", cs.tasks, err)
 	}
@@ -344,7 +347,7 @@ func TestWithEarlierReviewCommitsShowsAnAnchoredCommit(t *testing.T) {
 		t.Fatalf("review diff does not show the anchored commit:\n%s", patch)
 	}
 
-	only, err := withEarlierReviewCommits(repo, loopChanges(repo, head, head, nil), subjects[:1])
+	only, err := withEarlierReviewCommits(repo, mustLoopChanges(t, repo, head, head), subjects[:1])
 	if err != nil || only.empty() {
 		t.Fatalf("an otherwise empty run range = %+v, %v; want the anchored commit kept", only, err)
 	}
@@ -370,6 +373,112 @@ func TestFinalVerificationChangesRejectsUnreadableOrAmbiguousContext(t *testing.
 	}
 }
 
+func mustLoopChanges(t *testing.T, repo, base, head string) loopChangeSet {
+	t.Helper()
+	cs, err := loopChanges(repo, base, head, nil)
+	if err != nil {
+		t.Fatalf("loopChanges(%s..%s): %v", base, head, err)
+	}
+	return cs
+}
+
+// What a run changed is read with git from a repository the box can write, so a box can make the
+// read fail. Every reader must say so: a smaller change set drops the task's "edited gate file(s)"
+// flag and its protected audit, and the final review would accept a gate it was never shown.
+func TestLoopChangesRefusesAnUnreadableRange(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal")) // the reads under test run git too
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "root")
+	anchor := gitOut(repo, "rev-parse", "HEAD")
+	writeTaskFile(t, filepath.Join(repo, "code.go"), "package x\n")
+	git("add", "-A")
+	git("commit", "-qm", "early host work\n\nCoop-Task: early-host")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	writeTaskFile(t, filepath.Join(repo, "Makefile"), "check:\n\ttrue\n")
+	git("add", "-A")
+	git("commit", "-qm", "loosen the gate\n\nCoop-Task: task-gate")
+	head := gitOut(repo, "rev-parse", "HEAD")
+	rng := base + ".." + head
+	gateCommit := []commitInfo{{sha: head}}
+	// A task committed before the run, anchored below the run base: the final review adds its files.
+	earlier := []tasks.PendingReviewRecord{{Task: tasks.TaskInstance{Ref: tasks.TaskRef{ID: "early-host"}}, Base: anchor, Plan: tasks.PendingReviewPlan{BaseHead: base}}}
+	readable := func(t *testing.T) {
+		t.Helper()
+		if files, err := rangeFiles(repo, rng); err != nil || !slices.Equal(files, []string{"Makefile"}) {
+			t.Fatalf("rangeFiles = %q, %v; want [Makefile]", files, err)
+		}
+		if files, err := commitFiles(repo, gateCommit); err != nil || !slices.Equal(files, []string{"Makefile"}) {
+			t.Fatalf("commitFiles = %q, %v; want [Makefile]", files, err)
+		}
+		cs, err := finalVerificationChanges(repo, base, nil)
+		if err != nil || !slices.Equal(cs.gateFiles(), []string{"Makefile"}) {
+			t.Fatalf("final verification gate files = %q, %v; want [Makefile]", cs.gateFiles(), err)
+		}
+		if cs, err = signoffChanges(repo, base, nil, earlier); err != nil || len(cs.tasks) != 2 ||
+			!slices.Equal(cs.gateFiles(), []string{"Makefile"}) || !slices.Equal(cs.tasks[1].files, []string{"code.go"}) {
+			t.Fatalf("final review changes = %+v, %v; want the gate commit and the anchored code.go", cs.tasks, err)
+		}
+	}
+	readable(t)
+
+	t.Run("missing object", func(t *testing.T) {
+		// The run base's tree, which the anchored commit made: `git status` stays clean without it,
+		// only the reads that diff against it fail.
+		tree := gitOut(repo, "rev-parse", base+"^{tree}")
+		object := filepath.Join(repo, ".git", "objects", tree[:2], tree[2:])
+		if err := os.Rename(object, object+".hidden"); err != nil {
+			t.Fatal(err)
+		}
+		restored := false
+		restore := func() {
+			if !restored {
+				restored = true
+				if err := os.Rename(object+".hidden", object); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		defer restore()
+		if files, err := rangeFiles(repo, rng); err == nil || files != nil {
+			t.Errorf("rangeFiles = %q, %v; want an error", files, err)
+		}
+		if files, err := commitFiles(repo, gateCommit); err == nil || files != nil {
+			t.Errorf("commitFiles = %q, %v; want an error", files, err)
+		}
+		if cs, err := loopChanges(repo, base, head, nil); err == nil || !cs.empty() || len(cs.subsystems) != 0 {
+			t.Errorf("loopChanges = %+v, %v; want an error, not a smaller change set", cs, err)
+		}
+		if _, err := finalVerificationChanges(repo, base, nil); err == nil {
+			t.Error("final verification read an unreadable range")
+		}
+		if _, err := signoffChanges(repo, base, nil, earlier); err == nil {
+			t.Error("the final review read an unreadable range")
+		}
+		if _, err := withEarlierReviewCommits(repo, loopChangeSet{}, earlier); err == nil {
+			t.Error("the final review read an anchored commit whose files it cannot list")
+		}
+		// Control: with the object back, every read names the gate file again.
+		restore()
+		readable(t)
+	})
+
+	t.Run("bad ref", func(t *testing.T) {
+		gone := strings.Repeat("0", len(base)-1) + "1"
+		if files, err := rangeFiles(repo, gone+".."+head); err == nil || files != nil {
+			t.Errorf("rangeFiles from a missing commit = %q, %v; want an error", files, err)
+		}
+		if files, err := commitFiles(repo, []commitInfo{{sha: gone}}); err == nil || files != nil {
+			t.Errorf("commitFiles of a missing commit = %q, %v; want an error", files, err)
+		}
+		for _, ends := range [][2]string{{gone, head}, {base, gone}, {"", head}, {base, ""}} {
+			if cs, err := loopChanges(repo, ends[0], ends[1], nil); err == nil || !cs.empty() {
+				t.Errorf("loopChanges(%q..%q) = %+v, %v; want an error", ends[0], ends[1], cs, err)
+			}
+		}
+	})
+}
+
 func TestCommitFilesPreservesUnicodeProtectedPath(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -387,9 +496,9 @@ func TestCommitFilesPreservesUnicodeProtectedPath(t *testing.T) {
 	}
 	run("add", "-A")
 	run("commit", "-qm", "add guard below unicode directory")
-	files := commitFiles(repo, []commitInfo{{sha: gitOut(repo, "rev-parse", "HEAD")}})
-	if !slices.Equal(files, []string{guard}) {
-		t.Fatalf("commitFiles = %q, want exact Git path %q", files, guard)
+	files, err := commitFiles(repo, []commitInfo{{sha: gitOut(repo, "rev-parse", "HEAD")}})
+	if err != nil || !slices.Equal(files, []string{guard}) {
+		t.Fatalf("commitFiles = %q, %v; want exact Git path %q", files, err, guard)
 	}
 	if got := tasks.ProtectedGateFiles(files, nil); !slices.Equal(got, []string{guard}) {
 		t.Fatalf("protected attribution = %q, want %q", got, guard)

@@ -52,8 +52,8 @@ func TestLoopGitNeverExecutesRepositoryDrivers(t *testing.T) {
 					t.Fatalf("review snapshot lost source state: %+v, %v", snapshot, err)
 				}
 			case "NUL paths":
-				if paths := gitNULPaths(repo, "diff", "--name-only", "-z"); !slices.Equal(paths, []string{name}) {
-					t.Fatalf("changed paths = %q, want exact path %q", paths, name)
+				if paths, err := gitNULPaths(repo, "diff", "--name-only", "-z"); err != nil || !slices.Equal(paths, []string{name}) {
+					t.Fatalf("changed paths = %q, %v; want exact path %q", paths, err, name)
 				}
 			}
 			if _, err := os.Stat(marker); !os.IsNotExist(err) {

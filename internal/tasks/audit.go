@@ -223,15 +223,24 @@ func ProtectedGateFiles(files, projectSources []string) []string {
 	return hits
 }
 
-// protectedGateChanges returns the gate-defining files a commit range (base..head) touched — the
+// ProtectedGateChanges returns the gate-defining files a commit range (base..head) touched — the
 // boring first step of the verifier trust boundary: detect (host-side, deterministic) when a task
 // edited its own checker, so the review can be told to scrutinize it rather than trust it blind.
-// Empty when the range is empty or touched none.
-func ProtectedGateChanges(repo, base, head string, projectSources []string) []string {
-	if base == "" || head == "" || base == head {
-		return nil
+// Empty when the range is empty or touched none. An error means the files could not be listed: a
+// box can break the objects or refs the read needs, so a caller treats the range as a possible
+// gate change, never as one that touched none.
+func ProtectedGateChanges(repo, base, head string, projectSources []string) ([]string, error) {
+	if base == "" || head == "" {
+		return nil, fmt.Errorf("list the files changed in %q..%q: the range has no commit at one end", base, head)
 	}
-	return ProtectedGateFiles(strings.Split(gitOut(repo, "diff", "--no-renames", "--name-only", "-z", base+".."+head), "\x00"), projectSources)
+	if base == head {
+		return nil, nil
+	}
+	out, err := gitRawOutErr(repo, "diff", "--no-renames", "--name-only", "-z", base+".."+head)
+	if err != nil {
+		return nil, err
+	}
+	return ProtectedGateFiles(strings.Split(out, "\x00"), projectSources), nil
 }
 
 // queueSnapshot maps task id → state across the hosts for UI and audit bookkeeping.

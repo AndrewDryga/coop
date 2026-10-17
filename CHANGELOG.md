@@ -47,6 +47,15 @@
   does not list. It now exits 1, like its other stops that leave a task in progress, and
   `coop eval` no longer reports such a loop trial as a loop that could not start.
 
+- **`coop loop` stops when it cannot read which files a task changed.** The loop lists the files
+  each completed task changed to see whether it edited the project's checks: the Makefile, CI,
+  hooks, Coop's own config or a `gate_sources:` path. When Git could not list them, for example
+  because the agent deleted an object or damaged a ref in the repository, Coop took that as "no
+  checks changed", skipped the protected audit and went on to the next task. Now it stops with
+  "Could not list the files this task changed" and the Git error. Continuing with the command it
+  prints reviews that task before any other work, and the final review stops instead of running
+  without the changes.
+
 - **Coop's home-folder checks also see your home folder through a second mount.** macOS reaches
   your home folder as `/System/Volumes/Data/Users/<you>` as well as `/Users/<you>`, also when it
   is on another disk, and a Linux bind mount, such as `/data/home` mounted at `/home`, reaches it

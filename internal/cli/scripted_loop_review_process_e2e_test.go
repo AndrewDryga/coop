@@ -730,6 +730,84 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
+	// A worker that hides a tree object can make every diff of its range fail while its commit still
+	// logs, so Coop cannot tell whether the task changed the project checks. The loop stops before it
+	// claims another task. The next run settles that task's final review first: while the range stays
+	// unreadable it stops again without starting anything, and once the object is back the review
+	// passes before the queue continues.
+	t.Run("unreadable change range stops before the next task", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "unlisted-change-range"
+		nextID := taskID + "-next"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		seedLoopProcessTask(t, suite.layout.Repo, nextID)
+		// A base commit only this scenario has, so hiding its tree breaks nothing another one reads.
+		base := commitUnbound(t, taskID, "base")
+		tree := loopProcessGit(t, suite, "rev-parse", base+"^{tree}")
+		object := filepath.Join(suite.layout.Repo, ".git", "objects", tree[:2], tree[2:])
+		restore := func() {
+			if err := os.Rename(object+".hidden", object); err != nil && !os.IsNotExist(err) {
+				t.Error(err)
+			}
+		}
+		t.Cleanup(restore)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, nil, 3)
+		next := filepath.Join(suite.layout.Repo, tasksRoot, stateTodo, nextID)
+
+		attempts := []loopProcessAttempt{{Target: work, Stage: "work", Result: "complete-unlisted-range"}}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		first := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
+		visible := visibleProcessText(first.Stderr)
+		if first.Err != nil || first.ExitCode != 1 || !strings.Contains(visible, "Could not list the files this task changed") ||
+			!strings.Contains(visible, tree) || !strings.Contains(visible, "Continue:") {
+			t.Fatalf("unreadable change range = exit %d err %v\nstdout:\n%s\nstderr:\n%s", first.ExitCode, first.Err, first.Stdout, first.Stderr)
+		}
+		if _, err := os.Stat(object + ".hidden"); err != nil {
+			t.Fatalf("the worker did not hide the base tree: %v", err)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) || !pathExists(next) {
+			t.Fatal("the stop did not keep the task done and the next task waiting")
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
+		assertProcessTraceGone(t, trace)
+		if records := readLoopStageRecords(t, suite); len(records) != 1 || records[0].Stage != "work" {
+			t.Fatalf("unreadable change range telemetry = %#v", records)
+		}
+
+		suite.reset(t, loopProcessScenario{Version: 6, Provider: "claude", ProviderHomes: agents.Names(), Loop: loopProcessPlan{TaskID: taskID}})
+		second := runLoopReview(t, suite, work, loopReviewBudget(1))
+		if second.Err != nil || second.ExitCode != 1 || !strings.Contains(second.Stderr, "Resuming final review for 1 task completed in an earlier loop") ||
+			!strings.Contains(visibleProcessText(second.Stderr), tree) {
+			t.Fatalf("restart while unreadable = exit %d err %v\nstdout:\n%s\nstderr:\n%s", second.ExitCode, second.Err, second.Stdout, second.Stderr)
+		}
+		trace = readProcessTrace(t, suite.layout.Trace)
+		if runs, starts := processEvents(trace, "runtime", "run"), processEvents(trace, "provider", "start"); len(runs)+len(starts) != 0 || !pathExists(next) {
+			t.Fatalf("the restart started a box before settling the review: runs %#v, starts %#v", runs, starts)
+		}
+
+		restore()
+		attempts = []loopProcessAttempt{
+			{TaskID: taskID, Target: signoff, Stage: "signoff", Result: "pass"},
+			{TaskID: nextID, Target: work, Stage: "work", Result: "decision-complete"}, // no second loop-claude.txt
+			{TaskID: nextID, Target: signoff, Stage: "signoff", Result: "pass"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		third := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
+		if third.Err != nil || third.ExitCode != 0 || !strings.Contains(third.Stderr, "The earlier final review is settled. Continuing with the current queue.") {
+			t.Fatalf("restart after repair = exit %d err %v\nstdout:\n%s\nstderr:\n%s", third.ExitCode, third.Err, third.Stdout, third.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, nextID)) {
+			t.Fatal("the repaired run did not continue with the next task")
+		}
+		trace = readProcessTrace(t, suite.layout.Trace)
+		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
+		assertProcessTraceGone(t, trace)
+	})
+
 	t.Run("older audit reopen replays an unchanged descendant exactly once", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		taskID := "older-audit-reopen"
@@ -1718,6 +1796,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 		}
 		wantExit := 0
 		if attempt.Result != "complete" && attempt.Result != "complete-delay" && attempt.Result != "complete-gated" &&
+			attempt.Result != "complete-unlisted-range" && attempt.Result != "decision-complete" &&
 			attempt.Result != "complete-forged-archive-binding" && attempt.Result != "repair-binding" &&
 			attempt.Result != "repair-review-binding" && attempt.Result != "repair-older-binding" &&
 			attempt.Result != "repair-older-binding-blocked" &&

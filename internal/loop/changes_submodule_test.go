@@ -49,10 +49,13 @@ func TestLoopReviewIncludesCommittedSubmoduleUpdates(t *testing.T) {
 	}
 	git("-C", path, "config", "diff.audit.command", driver)
 
-	if got := rangeFiles(repo, base+".."+head); !slices.Equal(got, []string{path}) {
-		t.Errorf("changed paths = %q, want submodule %q", got, path)
+	if got, err := rangeFiles(repo, base+".."+head); err != nil || !slices.Equal(got, []string{path}) {
+		t.Errorf("changed paths = %q, %v; want submodule %q", got, err, path)
 	}
-	changes := loopChanges(repo, base, head, nil)
+	changes, err := loopChanges(repo, base, head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(changes.stat, path) {
 		t.Errorf("review stat omitted submodule: %q", changes.stat)
 	}
