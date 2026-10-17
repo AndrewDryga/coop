@@ -23,7 +23,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-// killedSupervisorEnv hands TestKilledFilteredSupervisor its launch; only the test that kills it sets it.
+// killedSupervisorEnv hands TestKilledFilteredRunSupervisor its launch; only the test that kills it sets it.
 const killedSupervisorEnv = "COOP_TEST_KILLED_SUPERVISOR"
 
 type killedSupervisorLaunch struct {
@@ -119,7 +119,7 @@ func TestKilledFilteredRunIsSettledByTheNextLaunch(t *testing.T) {
 	}
 }
 
-// killFilteredSupervisor runs TestKilledFilteredSupervisor as a real process, waits for its workload
+// killFilteredSupervisor runs TestKilledFilteredRunSupervisor as a real process, waits for its workload
 // to start, and SIGKILLs it — at once, or after a SIGINT once teardown has removed the agent, when
 // the gateway is still standing. It returns the run the killed process owned.
 func killFilteredSupervisor(t *testing.T, store *networkstate.Store, candidate networkstate.CandidateSpec, midTeardown bool) string {
@@ -140,7 +140,7 @@ func killFilteredSupervisor(t *testing.T, store *networkstate.Store, candidate n
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestKilledFilteredSupervisor$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestKilledFilteredRunSupervisor$")
 	cmd.Env = append(os.Environ(), killedSupervisorEnv+"="+string(launch))
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -236,9 +236,10 @@ func dockerFields(t *testing.T, args ...string) []string {
 	return strings.Fields(string(out))
 }
 
-// TestKilledFilteredSupervisor is the process TestKilledFilteredRunIsSettledByTheNextLaunch kills: one
-// filtered run of a long sleep that records its run id and tears down on SIGINT.
-func TestKilledFilteredSupervisor(t *testing.T) {
+// TestKilledFilteredRunSupervisor is the process TestKilledFilteredRunIsSettledByTheNextLaunch kills: one
+// filtered run of a long sleep that records its run id and tears down on SIGINT. It shares its parent's
+// prefix because every tagged test must be one network-runtime-e2e selects; run alone, it skips.
+func TestKilledFilteredRunSupervisor(t *testing.T) {
 	raw := os.Getenv(killedSupervisorEnv)
 	if raw == "" {
 		t.Skip("run only by TestKilledFilteredRunIsSettledByTheNextLaunch")

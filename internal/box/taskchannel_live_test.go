@@ -19,15 +19,21 @@ import (
 // through the channel — lists the tools, completes its own task, and is refused on a held one —
 // under --network none, with no coop binary and no host socket. It needs a built coop-box image
 // and a container runtime, so it rides the boxruntimee2e tag like the other live box tests.
+// `make task-channel-e2e` runs only this test, so a missing runtime or image fails it: a skip
+// would let the target pass having run nothing.
 func TestTaskChannelLiveInARealBox(t *testing.T) {
 	t.Setenv(tasks.TestLeaseAuthorityRootEnv, t.TempDir())
+	// The Docker binding makes its client folder in Coop's runfiles; a config root of the test's own
+	// keeps it out of the developer's.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	rt, err := runtime.Detect(os.Getenv("COOP_RUNTIME"))
 	if err != nil {
-		t.Skipf("no runtime: %v", err)
+		t.Fatalf("no runtime: %v", err)
 	}
-	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none", BaseImage: "coop-box"}
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none", BaseImage: box.ManagedBaseRepository}
+	box.ResolveBaseImage(cfg) // coop-box:<definition>, as every launch names it
 	if !box.ImageExists(rt, cfg.BaseImage) {
-		t.Skipf("coop-box image %q not built (run: make build && ./coop build)", cfg.BaseImage)
+		t.Fatalf("the box image %s is not built (run make build, then ./coop build --egress open)", cfg.BaseImage)
 	}
 	image := cfg.BaseImage
 
@@ -41,7 +47,8 @@ func TestTaskChannelLiveInARealBox(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		body := "---\nid: " + id + "\ntitle: " + id + "\n---\n\n# " + id + "\n\n**Context:** c\n\n**Acceptance criteria:** a\n\n**Approach:** p\n\n## Subtasks\n- [ ] one\n"
+		// Completion takes a fully checked checklist.
+		body := "---\nid: " + id + "\ntitle: " + id + "\n---\n\n# " + id + "\n\n**Context:** c\n\n**Acceptance criteria:** a\n\n**Approach:** p\n\n## Subtasks\n- [x] one\n"
 		if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}

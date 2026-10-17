@@ -186,7 +186,7 @@ volumes:
 // A killed run's own project goes at the next sweep, containers, volume and network, while the
 // development project stays. The project's file plants a live supervisor; only coop's own override,
 // naming the dead one, can make the run's services removable.
-func TestRuntimeReapOrphanServicesRemovesAKilledRunsProject(t *testing.T) {
+func TestRuntimeComposeReapOrphanServicesRemovesAKilledRunsProject(t *testing.T) {
 	rt, err := runtime.Detect(os.Getenv("COOP_RUNTIME"))
 	if err != nil {
 		t.Fatal(err)

@@ -2,7 +2,7 @@
 name: local-development-checks
 description: explicit local check scopes, reverse-consumer guard and conservative broad fallback
 subsystem: development
-sources: [Makefile, internal/local_checks_test.go, release_test.go, AGENTS.md, CONTRIBUTING.md, .agent/project.yaml, internal/testutil/procharness/binaries.go, internal/testutil/procharness/stdio.go, internal/testutil/procharness/capture.go, internal/testutil/gitrepo/committed.go, .github/workflows/ci.yml]
+sources: [Makefile, internal/local_checks_test.go, release_test.go, runtime_selection_test.go, live_selection_test.go, AGENTS.md, CONTRIBUTING.md, .agent/project.yaml, internal/testutil/procharness/binaries.go, internal/testutil/procharness/stdio.go, internal/testutil/procharness/capture.go, internal/testutil/gitrepo/committed.go, .github/workflows/ci.yml]
 updated: 2026-10-17
 ---
 
@@ -28,6 +28,11 @@ process benchmarks or live models. A local scope pass is not the completed broad
 No scope and no `make check` owner needs a container runtime. CI's doctor job runs `make doctor`
 and `make box-runtime-e2e`, its review-writes job `make review-writes-e2e`; the filtered-network
 suite, `make network-runtime-e2e`, is never in `make check` and not yet in CI ([[restricted-networking]]).
+Runtime targets pick tests by -run pattern, so `runtime_selection_test.go` (in `make check`) fails
+on a boxruntimee2e, networkruntimee2e, reviewwritee2e or acpe2e test no target runs: none whose own
+-tags build its file, that lists its package and whose pattern matches it. A subprocess helper
+takes its parent's prefix. `live_selection_test.go` holds live-process-control the same way
+([[provider-live-e2e]]).
 
 CI runs the Make-owned broad owners (`CI_OWNERS`) on isolated runners ([[ci-free-checks]]).
 `make check` runs the static owner, then the others but `check-unit` four at a time, each into
@@ -54,6 +59,10 @@ owners still build their real inputs. Pure log cap/rune tests avoid full review 
 large-output pager, HTTP, session custody and failed-review owners remain.
 
 ## Changelog
+- 2026-10-17 — runtime_selection_test.go holds every runtime-tagged test to a target's -run pattern.
+  Its first run found three no target ran: two took an existing prefix, and the task-channel test,
+  which fits none, got `make task-channel-e2e`. A target counts only for files its own -tags build
+  (&&, && ! and || fixtures), and recipes read past blank and comment lines as GNU Make does.
 - 2026-10-17 — says which runtime suites CI's jobs run and that `make network-runtime-e2e` runs only
   by hand; checked against .github/workflows/ci.yml and the Makefile.
 - 2026-10-15 — the fixture-build cache note no longer names the retired cooplivetest tag.

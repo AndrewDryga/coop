@@ -1,9 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"errors"
+	"go/ast"
 	"go/build"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"io/fs"
 	"os"
 	"path"
@@ -34,18 +37,9 @@ func TestTaggedTestsRunUnderLiveProcessControl(t *testing.T) {
 
 func TestLiveSelectionProblemsFindWhatTheTargetMisses(t *testing.T) {
 	root := t.TempDir()
-	write := func(name, body string) {
-		t.Helper()
-		path := filepath.Join(root, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	write := fixtureWriter(t, root)
 	write("Makefile", "live-process-control: ## x\n"+
-		"\t@go test -race -tags providerlivee2e -run '^Test(LiveA|LiveB)' -count=1 ./internal/a/ ./internal/b/\n"+
+		"\t@go test -race -tags providerlivee2e,acpe2e -run '^Test(LiveA|LiveB)' -count=1 ./internal/a/ ./internal/b/\n"+
 		"provider-live-e2e: ## y\n\t@go test -run \"^TestLiveC\" ./internal/c/\n")
 	write("internal/a/a_live_test.go", "// A header comment above the build line.\n\n//go:build providerlivee2e && !windows\n\npackage a\n\n"+
 		"func TestLiveAWorks(t *testing.T)                  {}\n"+
@@ -54,6 +48,7 @@ func TestLiveSelectionProblemsFindWhatTheTargetMisses(t *testing.T) {
 		"func TestProviderLiveChild(t *testing.T)           {}\n"+
 		"func TestMain(m *testing.M)                        {}\n"+
 		"func TestRenamedDeterministic(t *testing.T)        {}\n")
+	write("internal/a/a_noacp_live_test.go", "//go:build providerlivee2e && !acpe2e\n\npackage a\n\nfunc TestLiveANotBuilt(t *testing.T) {}\n")
 	write("internal/a/a_default_test.go", "//go:build !providerlivee2e\n\npackage a\n\nfunc TestUntagged(t *testing.T) {}\n")
 	write("internal/b/b_test.go", "package b\n\nfunc TestLiveBPlain(t *testing.T) {}\n")
 	write("internal/b/b_live_test.go", "//go:build providerlivee2e\n\npackage b\n\nfunc TestLiveBHelperLiveChild(t *testing.T) {}\n")
@@ -66,6 +61,7 @@ func TestLiveSelectionProblemsFindWhatTheTargetMisses(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
+		"internal/a: TestLiveANotBuilt is in a_noacp_live_test.go, which live-process-control's -tags do not build",
 		"internal/a: TestLiveAWorksLiveCompatibility needs a real provider, but live-process-control selects it",
 		"internal/a: TestRenamedDeterministic matches no live-process-control prefix",
 		"internal/b: TestLiveBHelperLiveChild needs a real provider, but live-process-control selects it",
@@ -88,8 +84,11 @@ func TestLiveProcessControlSelectionRejectsAnUnreadableTarget(t *testing.T) {
 		"a skip":           "live-process-control:\n\t@go test " + liveTags + " -run '^TestX' -skip '^TestXY' ./internal/x/\n",
 		"a second run":     "live-process-control:\n\t@go test " + liveTags + " -run '^TestX' ./internal/x/\n\t@go test " + liveTags + " ./internal/y/\n",
 		"two run lines":    "live-process-control:\n\t@go test " + liveTags + " -run '^TestX' ./internal/x/\n\t@go test -run '^TestLive' ./internal/y/\n",
+		"a run past blank and comment lines": "live-process-control:\n\t@go test " + liveTags + " -run '^TestX' ./internal/x/\n\n# Make reads on\n" +
+			"\t@go test " + liveTags + " ./internal/y/\n",
+		"a subtest pattern": "live-process-control:\n\t@go test " + liveTags + " -run '^TestX/sub' ./internal/x/\n",
 	} {
-		if _, _, err := liveProcessControlSelection(makefile); err == nil {
+		if _, err := targetSelection(makefile, "live-process-control", "providerlivee2e"); err == nil {
 			t.Errorf("%s: selection was read from %q", name, makefile)
 		}
 	}
@@ -103,37 +102,41 @@ func liveSelectionProblems(root string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	pattern, pkgs, err := liveProcessControlSelection(string(data))
+	run, err := targetSelection(string(data), "live-process-control", "providerlivee2e")
 	if err != nil {
 		return nil, err
 	}
-	tests, err := liveTaggedTests(root)
+	files, err := taggedTestFiles(root, []string{"providerlivee2e"})
 	if err != nil {
 		return nil, err
-	}
-	listed := map[string]bool{}
-	for _, pkg := range pkgs {
-		listed[pkg] = true
 	}
 	selected := map[string]bool{}
 	var problems []string
-	for pkg, names := range tests {
-		for _, name := range names {
+	for _, f := range files {
+		built, err := run.builds(f)
+		if err != nil {
+			return nil, err
+		}
+		listed := slices.Contains(run.pkgs, f.pkg)
+		for _, name := range f.tests {
+			matched := run.pattern.MatchString(name)
 			switch {
 			case liveOnlyName.MatchString(name):
-				if pattern.MatchString(name) && listed[pkg] {
-					problems = append(problems, pkg+": "+name+" needs a real provider, but live-process-control selects it")
+				if matched && listed && built {
+					problems = append(problems, f.pkg+": "+name+" needs a real provider, but live-process-control selects it")
 				}
-			case !pattern.MatchString(name):
-				problems = append(problems, pkg+": "+name+" matches no live-process-control prefix")
-			case !listed[pkg]:
-				problems = append(problems, pkg+": "+name+" is in a package live-process-control does not list")
+			case !matched:
+				problems = append(problems, f.pkg+": "+name+" matches no live-process-control prefix")
+			case !listed:
+				problems = append(problems, f.pkg+": "+name+" is in a package live-process-control does not list")
+			case !built:
+				problems = append(problems, f.pkg+": "+name+" is in "+f.name+", which live-process-control's -tags do not build")
 			default:
-				selected[pkg] = true
+				selected[f.pkg] = true
 			}
 		}
 	}
-	for _, pkg := range pkgs {
+	for _, pkg := range run.pkgs {
 		if !selected[pkg] {
 			problems = append(problems, pkg+": listed by live-process-control but has no selected tagged test")
 		}
@@ -142,70 +145,122 @@ func liveSelectionProblems(root string) ([]string, error) {
 	return problems, nil
 }
 
-// liveProcessControlSelection reads the -run pattern and the packages of the target's go test line.
-// It refuses a line it cannot model: one without the live tag compiles fewer tagged files than the
-// scan assumes, and a -skip drops tests the -run pattern still matches.
-func liveProcessControlSelection(makefile string) (*regexp.Regexp, []string, error) {
-	_, recipe, ok := strings.Cut("\n"+makefile, "\nlive-process-control:")
+// goTestRun is what one target's go test line runs: the build tags it passes, its -run pattern and
+// the packages it lists.
+type goTestRun struct {
+	target  string
+	tags    []string
+	pattern *regexp.Regexp
+	pkgs    []string
+}
+
+// builds reports whether the line's go test compiles f, which only its -tags decide.
+func (run goTestRun) builds(f taggedFile) (bool, error) {
+	return buildsWith(run.tags, f.dir, f.name)
+}
+
+// targetSelection reads the go test line target's recipe runs. It refuses a line it cannot model:
+// one without tag compiles fewer tagged files than the scan assumes, a -skip drops tests the -run
+// pattern still matches, and go splits a pattern into subtest patterns at each /.
+func targetSelection(makefile, target, tag string) (goTestRun, error) {
+	recipe, ok := makeRecipes(makefile)[target]
 	if !ok {
-		return nil, nil, errors.New("the Makefile has no live-process-control target")
+		return goTestRun{}, errors.New("the Makefile has no " + target + " recipe")
 	}
 	run := regexp.MustCompile(`-run '([^']+)'`)
 	var line string
-	for _, next := range strings.Split(recipe, "\n")[1:] {
-		if !strings.HasPrefix(next, "\t") {
-			break // the recipe ends at its first line without a leading tab
-		}
-		if !strings.Contains(next, "go test") {
+	for _, next := range recipe {
+		if !runsGoTests(next) {
 			continue
 		}
-		// One line may run tests, the one read below; any other test run would go unread. A
-		// compile-only line (-c) runs nothing.
-		if line == "" && run.MatchString(next) {
-			line = next
-		} else if !slices.Contains(strings.Fields(next), "-c") {
-			return nil, nil, errors.New("live-process-control runs a go test line the check cannot read: " + next)
+		// One line may run tests, the one read below; any other test run would go unread.
+		if line != "" || !run.MatchString(next) {
+			return goTestRun{}, errors.New(target + " runs a go test line the check cannot read: " + next)
 		}
+		line = next
 	}
 	if line == "" {
-		return nil, nil, errors.New("live-process-control has no go test -run '…' line")
+		return goTestRun{}, errors.New(target + " has no go test -run '…' line")
 	}
 	if strings.Contains(line, "-skip") {
-		return nil, nil, errors.New("live-process-control's go test line uses -skip: " + line)
+		return goTestRun{}, errors.New(target + "'s go test line uses -skip: " + line)
 	}
-	pattern, err := regexp.Compile(strings.ReplaceAll(run.FindStringSubmatch(line)[1], "$$", "$"))
+	tags := goTestTags(line)
+	if !slices.Contains(tags, tag) {
+		return goTestRun{}, errors.New(target + "'s go test line lacks -tags " + tag + ": " + line)
+	}
+	expr := strings.ReplaceAll(run.FindStringSubmatch(line)[1], "$$", "$")
+	if strings.Contains(expr, "/") {
+		return goTestRun{}, errors.New(target + "'s -run pattern has a /, where go splits it into subtest patterns: " + line)
+	}
+	pattern, err := regexp.Compile(expr)
 	if err != nil {
-		return nil, nil, err
+		return goTestRun{}, err
 	}
 	var pkgs []string
-	tagged := map[string]bool{}
-	fields := strings.Fields(line)
-	for i, field := range fields {
-		if field == "-tags" && i+1 < len(fields) {
-			for _, tag := range strings.Split(fields[i+1], ",") {
-				tagged[tag] = true
-			}
-		}
+	for _, field := range strings.Fields(line) {
 		if strings.HasPrefix(field, "./") && field != "./..." {
 			pkgs = append(pkgs, path.Clean(field))
 		}
 	}
-	if !tagged["providerlivee2e"] {
-		return nil, nil, errors.New("live-process-control's go test line lacks -tags providerlivee2e: " + line)
-	}
 	if len(pkgs) == 0 {
-		return nil, nil, errors.New("live-process-control's go test line names no packages: " + line)
+		return goTestRun{}, errors.New(target + "'s go test line names no packages: " + line)
 	}
-	return pattern, pkgs, nil
+	return goTestRun{target: target, tags: tags, pattern: pattern, pkgs: pkgs}, nil
 }
 
-// liveTaggedTests maps each package under root to the tests of its files that build only with the
-// live tags, decided the way `go test` decides it on this platform.
-func liveTaggedTests(root string) (map[string][]string, error) {
-	live := build.Default
-	live.BuildTags = []string{"providerlivee2e"}
-	testFunc := regexp.MustCompile(`^func (Test\w*)\(\w+ \*testing\.T\)`)
-	tests := map[string][]string{}
+// makeRecipes maps each Makefile target to its recipe: the tab-indented lines after its rule. As in
+// GNU Make, blank and comment lines among them do not end it; any other line does.
+func makeRecipes(makefile string) map[string][]string {
+	rule := regexp.MustCompile(`^([a-z][a-z0-9-]*):`)
+	recipes := map[string][]string{}
+	target := ""
+	for _, line := range strings.Split(makefile, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch m := rule.FindStringSubmatch(line); {
+		case m != nil:
+			target = m[1]
+		case strings.HasPrefix(line, "\t"):
+			if target != "" {
+				recipes[target] = append(recipes[target], line)
+			}
+		case trimmed != "" && !strings.HasPrefix(trimmed, "#"):
+			target = ""
+		}
+	}
+	return recipes
+}
+
+// runsGoTests reports whether a recipe line runs go test; a compile-only one (-c) runs nothing.
+func runsGoTests(line string) bool {
+	return strings.Contains(line, "go test") && !slices.Contains(strings.Fields(line), "-c")
+}
+
+// goTestTags lists the build tags a go test line passes; as with go, the last -tags wins.
+func goTestTags(line string) []string {
+	var tags []string
+	fields := strings.Fields(line)
+	for i, field := range fields {
+		if field == "-tags" && i+1 < len(fields) {
+			tags = strings.Split(fields[i+1], ",")
+		}
+	}
+	return tags
+}
+
+// taggedFile is a test file that builds only with some of a guard's tags: where it is, its package
+// and the tests it declares.
+type taggedFile struct {
+	dir, name, pkg string
+	tests          []string
+}
+
+// taggedTestFiles lists the test files under root that build with some combination of tags but not
+// without any, decided the way go test decides it on this platform. The files are parsed, so a
+// test-shaped line inside a string, or a method named Test…, is not a test.
+func taggedTestFiles(root string, tags []string) ([]taggedFile, error) {
+	fset := token.NewFileSet()
+	var files []taggedFile
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -221,34 +276,64 @@ func liveTaggedTests(root string) (map[string][]string, error) {
 			return nil
 		}
 		dir, file := filepath.Split(path)
-		withTags, err := live.MatchFile(dir, file)
-		if err != nil {
-			return err
+		if plain, err := buildsWith(nil, dir, file); err != nil || plain {
+			return err // ordinary go test builds it
 		}
-		withoutTags, err := build.Default.MatchFile(dir, file)
-		if err != nil {
-			return err
+		tagged := false
+		for set := 1; set < 1<<len(tags) && !tagged; set++ { // each nonempty combination of tags
+			var with []string
+			for i, tag := range tags {
+				if set&(1<<i) != 0 {
+					with = append(with, tag)
+				}
+			}
+			if tagged, err = buildsWith(with, dir, file); err != nil {
+				return err
+			}
 		}
-		if !withTags || withoutTags {
-			return nil // it builds without the live tags, or never on this platform
+		if !tagged {
+			return nil // it needs another tag, or never builds on this platform
 		}
 		rel, err := filepath.Rel(root, dir)
 		if err != nil {
 			return err
 		}
-		pkg := filepath.ToSlash(rel) // clean already, like the path.Clean form of the target's list
-		f, err := os.Open(path)
+		pkg := filepath.ToSlash(rel) // clean already, like the path.Clean form of a target's list
+		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			if m := testFunc.FindStringSubmatch(scanner.Text()); m != nil {
-				tests[pkg] = append(tests[pkg], m[1])
+		tf := taggedFile{dir: dir, name: file, pkg: pkg}
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, "Test") && len(fn.Type.Params.List) == 1 &&
+				types.ExprString(fn.Type.Params.List[0].Type) == "*testing.T" {
+				tf.tests = append(tf.tests, fn.Name.Name)
 			}
 		}
-		return scanner.Err()
+		files = append(files, tf)
+		return nil
 	})
-	return tests, err
+	return files, err
+}
+
+// buildsWith reports whether go test, passed tags, compiles the file on this platform.
+func buildsWith(tags []string, dir, file string) (bool, error) {
+	ctx := build.Default
+	ctx.BuildTags = tags
+	return ctx.MatchFile(dir, file)
+}
+
+// fixtureWriter returns a function that writes a file under root, creating its folders.
+func fixtureWriter(t *testing.T, root string) func(name, body string) {
+	return func(name, body string) {
+		t.Helper()
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 }

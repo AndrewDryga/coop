@@ -2,7 +2,7 @@
 name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
-sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/loop/loop.go]
+sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/loop/loop.go, internal/box/taskchannel_live_test.go, Makefile]
 updated: 2026-10-17
 ---
 
@@ -134,7 +134,17 @@ observations from suspected causes and preserve failing behavior/denial assertio
 server validates structure and authority, not diagnostic truth or semantic duplication;
 an accepted proposal is not evidence that its diagnosis is correct.
 
+Two checks reach the channel from a real box, and both need a built image: `coop doctor`'s task
+section, skipped when doctor falls back to its alpine stand-in (CI's doctor job has no `coop build`),
+and `make task-channel-e2e` (`TestTaskChannelLiveInARealBox`: completes its own task, is refused a
+held one, finds no coop binary), which fails, never skips, without a runtime or this checkout's
+`coop-box:<definition>` image ([[box-base-image-tags]]).
+
 ## Changelog
+- 2026-10-17 — `make task-channel-e2e` runs the real-box test, which no target had run since it was
+  written; verified doctor's skip on the alpine stand-in against internal/cli/doctor.go. The test
+  had rotted: it looked for an untagged `coop-box` (now resolved like a launch) and completed an
+  unchecked checklist, which completion refuses; it now fails instead of skipping.
 - 2026-10-17 — the tools now walk to every queue from the workspace the box mounts
   (`Authority.Workspace`): before, a fork box that swapped its assignment folder or a folder above
   it, or any box that swapped `.agent`, a subproject or a todo/backlog folder, for a link had the
