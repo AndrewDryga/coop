@@ -2,6 +2,8 @@ package box
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -785,5 +787,34 @@ func TestLiveBoxesExcludesOwnExecution(t *testing.T) {
 	}
 	if live, err := LiveBoxes(repo, ""); err != nil || len(live) != 0 {
 		t.Fatalf("ended execution still live: %v, %v", live, err)
+	}
+}
+
+// The refusal names the folder Coop would not use, and points at TMPDIR only when TMPDIR chose it:
+// for a folder derived from the project, changing TMPDIR fixes nothing.
+func TestExposedTempDirNamesTheRefusedFolder(t *testing.T) {
+	workspace := t.TempDir()
+	inside := filepath.Join(workspace, "run")
+	if err := os.MkdirAll(inside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(inside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpdir := range []bool{true, false} {
+		t.Run(fmt.Sprintf("TMPDIR=%v", tmpdir), func(t *testing.T) {
+			if tmpdir {
+				t.Setenv("TMPDIR", inside)
+			}
+			_, err := privateTempDirUnder(inside, workspace, "coop-test-")
+			var exposed *ExposedTempDirError
+			if !errors.Is(err, ErrExposedTempDir) || !errors.As(err, &exposed) || exposed.Dir != resolved || exposed.FromTMPDIR != tmpdir {
+				t.Fatalf("err = %#v, want the refused folder %s", err, resolved)
+			}
+			if mentions := strings.Contains(err.Error(), "TMPDIR"); mentions != tmpdir || !strings.Contains(err.Error(), resolved) {
+				t.Errorf("message %q names TMPDIR=%v, want %v and the folder", err, mentions, tmpdir)
+			}
+		})
 	}
 }

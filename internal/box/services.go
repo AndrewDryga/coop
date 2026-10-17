@@ -286,6 +286,23 @@ var ErrNoComposeServices = errors.New("compose config --services returned no ser
 // coop is about to run would be writable by the very agent it is protecting the host from.
 var ErrExposedTempDir = errors.New("temporary directory must resolve outside agent-exposed directories — choose an external TMPDIR")
 
+// ExposedTempDirError is ErrExposedTempDir for one folder: the one Coop refused to allocate under,
+// and whether TMPDIR chose it. Only then is TMPDIR the setting to change; a run folder Coop derives
+// from the project is moved by moving the project or its state, not by TMPDIR.
+type ExposedTempDirError struct {
+	Dir        string
+	FromTMPDIR bool
+}
+
+func (e *ExposedTempDirError) Error() string {
+	if e.FromTMPDIR {
+		return fmt.Sprintf("temporary directory %s must resolve outside agent-exposed directories — choose an external TMPDIR", e.Dir)
+	}
+	return fmt.Sprintf("private folder %s must resolve outside agent-exposed directories", e.Dir)
+}
+
+func (e *ExposedTempDirError) Is(target error) bool { return target == ErrExposedTempDir }
+
 // CheckServiceTempDir reports whether the private snapshot area the service commands need can be
 // created outside every directory an agent can see. It is the same resolution the snapshot makes,
 // run BEFORE a caller announces that it is starting anything: a refusal that arrives under
@@ -327,7 +344,7 @@ func privateTempDirUnder(base, workspace, pattern string, exposedRoots ...string
 			return "", err
 		}
 		if inside {
-			return "", ErrExposedTempDir
+			return "", &ExposedTempDirError{Dir: parent, FromTMPDIR: filepath.Clean(base) == filepath.Clean(os.TempDir())}
 		}
 	}
 	// Resolve before allocating: a TMPDIR alias inside the repo must not remain in any

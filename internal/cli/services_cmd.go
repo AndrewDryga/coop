@@ -182,9 +182,13 @@ func composeRefusal(headline, rel string, err error, retry string) error {
 	if refused := reportUnreadableCoopignore(err, retry, ""); refused != nil {
 		return refused
 	}
-	if errors.Is(err, box.ErrExposedTempDir) {
-		return reported(headline, "The temporary directory is inside a folder exposed to an agent.",
-			"Set TMPDIR to a directory outside those folders, then run "+retry+" again.")
+	if exposed := (*box.ExposedTempDirError)(nil); errors.As(err, &exposed) {
+		if exposed.FromTMPDIR {
+			return reported(headline, fmt.Sprintf("The temporary directory %s is inside a folder exposed to an agent.", ui.SafeInline(exposed.Dir)),
+				"Set TMPDIR to a directory outside those folders, then run "+retry+" again.")
+		}
+		return reported(headline, fmt.Sprintf("Coop's private folder %s is inside a folder exposed to an agent.", ui.SafeInline(exposed.Dir)),
+			"Keep that folder outside the folders the agent can see, then run "+retry+" again.")
 	}
 	return reported(headline, sentence(firstLine(err)),
 		fmt.Sprintf("Fix %s, then run %s again.", rel, retry))
