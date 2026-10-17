@@ -3,7 +3,7 @@ name: session-companions-own-git-metadata
 description: companion boxes mount only the pinned workspace, so each snapshot must own usable Git metadata rather than point back to its source checkout
 subsystem: sessions
 sources: [internal/sessionsvc/companion.go, internal/sessionsvc/job_tree.go, internal/forkspace/git.go, internal/forkspace/lfs.go, internal/forkspace/lfs_status.go, internal/sessionsvc/service.go, internal/cli/fork_cmd.go, internal/box/run.go]
-updated: 2026-09-27
+updated: 2026-10-17
 ---
 
 # Session companions own their Git metadata
@@ -19,12 +19,25 @@ service passes its frozen job bindings in `COOP_SESSION_COMPANIONS`; `forkACP` m
 trusted value and copy it into `RunSpec.CompanionRepositories` before launch. Keeping the handoff at
 that host-only boundary prevents the ACP request surface from supplying mount paths.
 
-`createSessionCompanionContext` uses the same pinned, non-local clone primitive as primary and
-review workspaces. Its source is a trusted Git view of the already verified private job cache;
-no template, executable source configuration, hardlinked objects or lazy network fetch crosses
-that boundary. It detaches at the pin, removes clone refs/remotes/reflogs, records ownership and
-full-history markers, verifies, and atomically publishes the identity-pinned staging directory.
-Missing objects fail closed. The former 1 GiB pack planner and shallow-creation fallback are gone;
+`createSessionCompanionContext` copies the pinned commit's whole history with
+`GitCopyPinnedHistoryContext`, as session submodule clones do. Its source is a trusted Git view of
+the already verified private job cache. A fresh `git init --template=` repository runs
+`pack-objects --revs --window=0` itself, reading the cache's objects through a one-command
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, and keeps each object's stored form in one pack of its own;
+`rev-list --objects` then proves the history whole without the source. Only the pin's history
+crosses: no other branch, unreachable object, template, executable source configuration,
+hardlinked object, persistent alternate or lazy network fetch. A shallow source, or one whose
+object directory path holds the path separator that splits an alternate list, is cloned as
+primary and review workspaces are (they keep the non-local clone for its remote-tracking refs),
+then loses the clone's refs and remote. Creation detaches at the pin, removes reflogs, records
+ownership and full-history markers, verifies, and atomically publishes the identity-pinned
+staging directory. Missing objects fail closed.
+
+The non-local clone it replaced searched objects for deltas again across the cache's packs and
+re-hashed every object on receipt. On a tenant worker one 6.2 GB, two-pack history took 293 s of a
+337 s companion preparation (`pack-objects` alone 167 s, `index-pack` alone 134 s); the copy
+takes 34 s there, checkout 4.5 s. Git never retries a delta between two objects stored whole in
+the same pack, so the regression fixture puts near-identical blobs in two packs. The former 1 GiB pack planner and shallow-creation fallback are gone;
 historical bounded/shallow markers remain readable for safe inspection and discard.
 
 Checkout and verification ignore host attribute files and executable Git drivers. Recursive
@@ -58,6 +71,10 @@ index: an inspection's `read-tree` would then overwrite staged work. Regression 
 model's index bytes before and after inspection, including staged edits and hidden index flags.
 
 ## Changelog
+- 2026-10-17 — replaced the companion's and session submodules' non-local clone with a pinned
+  history copy after a tenant's Work sessions waited six minutes for one 6.2 GB companion. Tests
+  cover the two-pack delta regression, pin-only ownership with no file written into the source,
+  the shallow boundary, a source path holding the separator, and refusal of a missing object.
 - 2026-09-27 — added verified offline LFS hydration and clean replay, shared streaming status,
   and private-index non-mutation proof. Full binaries, zero-size files, hostile filters and nested
   companion/review trees are covered; unsupported pointer forms fail explicitly, not silently.

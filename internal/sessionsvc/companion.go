@@ -1,7 +1,6 @@
 package sessionsvc
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -202,26 +201,14 @@ func createSessionCompanionContext(ctx context.Context, binding session.Companio
 		}
 	}()
 
-	// The worker has already fetched a self-contained object closure. Use the
-	// same credential-free pinned clone as primary workspaces, without a second
-	// pack builder or a history budget that rejects large working trees.
-	if err := forkspace.GitClonePinnedContext(ctx, binding.Repository, stage, binding.BaseCommit); err != nil {
-		return fmt.Errorf("clone companion source: %w", err)
-	}
-	if err := forkspace.GitRefCommand(ctx, stage, "remote", "remove", "origin").Run(); err != nil {
-		return fmt.Errorf("remove companion transport: %w", err)
+	// The worker has already fetched a self-contained object closure. Copy the
+	// pinned commit's whole history out of it, with no refs or remote to remove,
+	// and no history budget that rejects large working trees.
+	if err := forkspace.GitCopyPinnedHistoryContext(ctx, binding.Repository, stage, binding.BaseCommit); err != nil {
+		return fmt.Errorf("copy companion history: %w", err)
 	}
 	if err := forkspace.GitRefCommand(ctx, stage, "update-ref", "--no-deref", "HEAD", binding.BaseCommit).Run(); err != nil {
 		return fmt.Errorf("pin companion commit: %w", err)
-	}
-	refs, err := forkspace.GitRefCommand(ctx, stage, "for-each-ref", "--format=delete %(refname)").Output()
-	if err != nil {
-		return fmt.Errorf("enumerate companion clone refs: %w", err)
-	}
-	prune := forkspace.GitRefCommand(ctx, stage, "update-ref", "--stdin")
-	prune.Stdin = bytes.NewReader(refs)
-	if err := prune.Run(); err != nil {
-		return fmt.Errorf("remove companion clone refs: %w", err)
 	}
 	if _, _, err := runSessionWorkspaceGitWithEnvContext(ctx, stage, sessionWorkspaceGitOutputLimit,
 		sessionCompanionCheckoutGitEnv(), "reset", "--hard", "--quiet", binding.BaseCommit); err != nil {

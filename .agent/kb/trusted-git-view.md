@@ -3,7 +3,7 @@ name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
 sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go]
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
@@ -78,7 +78,11 @@ the project.
 
 Session workspace clones use the view itself as their local transport source. A non-local,
 no-checkout clone plus an exact fetch of the validated commit avoids racing mutable loose-object
-files without exposing the source repository's executable Git configuration.
+files without exposing the source repository's executable Git configuration. Companions and
+session submodules need no refs or remote, so they copy one commit's history instead
+(`GitCopyPinnedHistoryContext`): `pack-objects` runs in the new repository with its own fresh
+config, reads the source's objects through `GIT_ALTERNATE_OBJECT_DIRECTORIES` for that one
+command, and writes its temporary and final pack there, never into the source.
 
 Session integrity checks use `RunGitFsck` instead: modern Git's reference verifier
 refuses the operational view's symlinked refs root. A per-call private view copies
@@ -121,4 +125,6 @@ keep their existing restrictions.
   Swept remaining raw production runners: metadata-only queries, fresh isolated eval setup and
   trusted fixtures do not expose another repository-content driver path.
 - 2026-09-13 — documented the trusted view as the source of session pinned clones.
+- 2026-10-17 — companions and session submodules copy the pinned history in the new repository;
+  `pack-objects` run in the source would write its temporary pack into the source.
 - 2026-09-06 — created with the trusted view (task close-host-git-driver-execution-paths), after the release audit reproduced host driver execution through includes and the enumerate-then-execute race; design reviewed read-only against git 2.39.5 (HEAD copy, auto-gc, ref-store runner, linked worktrees).

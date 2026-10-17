@@ -3218,7 +3218,7 @@ func TestEnsureSessionCompanionDoesNotLazyFetchPinnedTree(t *testing.T) {
 	_, err = ensureSessionCompanion(
 		stateRoot, "remote_00000000000000000000000000000000", binding,
 	)
-	if err == nil || !strings.Contains(err.Error(), "clone companion source") {
+	if err == nil || !strings.Contains(err.Error(), "copy companion history") {
 		t.Fatalf("create with unavailable pinned tree error = %v", err)
 	}
 	missingCmd = exec.Command("git", "-C", partial, "cat-file", "-e", assetBlob)

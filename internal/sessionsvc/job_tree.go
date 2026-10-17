@@ -100,21 +100,16 @@ func cloneSessionSubmodule(ctx context.Context, source, destination, commit stri
 		return err
 	}
 	defer os.RemoveAll(stage)
-	if err := forkspace.GitClonePinnedContext(ctx, source, stage, commit); err != nil {
+	if err := forkspace.GitCopyPinnedHistoryContext(ctx, source, stage, commit); err != nil {
 		return err
 	}
 	if err := forkspace.PropagateGitIdentityContext(ctx, source, stage); err != nil {
 		return err
 	}
-	for _, args := range [][]string{
-		{"remote", "remove", "origin"},
-		{"update-ref", "--no-deref", "HEAD", commit},
-	} {
-		command := forkspace.GitRefCommand(ctx, stage, args...)
-		command.Env = sessionCompanionGitEnv()
-		if err := command.Run(); err != nil {
-			return err
-		}
+	pin := forkspace.GitRefCommand(ctx, stage, "update-ref", "--no-deref", "HEAD", commit)
+	pin.Env = sessionCompanionGitEnv()
+	if err := pin.Run(); err != nil {
+		return err
 	}
 	if _, _, err := runSessionWorkspaceGitWithEnvContext(ctx, stage, sessionWorkspaceGitOutputLimit,
 		sessionCompanionCheckoutGitEnv(), "reset", "--hard", "--quiet", commit); err != nil {
