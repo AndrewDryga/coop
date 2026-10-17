@@ -357,6 +357,7 @@ func (c *Control) advanceIsolatedLand(repo string, intent isolatedLandIntent) (b
 				return true, fmt.Errorf("isolated Git landed; task finalization remains journaled: %w", err)
 			}
 		}
+		warnLandedTaskBulk(*intent.Candidate)
 		if err := tasks.MarkForkCandidateLandedLocked(repo, *intent.Candidate); err != nil {
 			return true, err
 		}

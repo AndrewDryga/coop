@@ -2,7 +2,7 @@
 name: task-folders-keep-evidence-not-bulk
 description: "a task folder keeps evidence, never rebuildable bulk (record commit, sha256 and build command); scratch goes in tmp/; only the layout sits at the queue root"
 scope: agent-workflow
-sources: [internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/loop/loop.go, internal/loop/prompts.go, internal/taskmcp/tools.go, internal/scaffold/templates/agent/tasks/README.md, .agent/tasks/README.md]
+sources: [internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/loop/loop.go, internal/loop/prompts.go, internal/forkctl/land.go, internal/forkctl/isolated_land.go, internal/taskmcp/tools.go, internal/scaffold/templates/agent/tasks/README.md, .agent/tasks/README.md]
 check: "go test ./internal/tasks -run 'TestDoneWarnsAboutRebuildableBulk|TestTaskBulkWarningSkipsScratch|TestTaskBulkWarningStopsAtItsLimits|TestListWarnsAboutQueueRootStrays'"
 updated: 2026-10-16
 ---
@@ -20,13 +20,14 @@ task's folder or outside `.agent/tasks`.
 Coop warns and never deletes; what to keep is the owner's call:
 - Completing a task warns, without refusing, when its folder holds a compiled program (an
   executable ELF or Mach-O file; a script is readable evidence) or more than 25 MB: `coop tasks
-  done` and `coop loop` under its completion line, and the in-box `tasks_complete` result for the
-  agent. The agent's version asks it to leave the folder and say what the files are in its final reply,
-  since it was just told to write nothing more there. The check measures the whole folder except
-  its top-level `tmp/`, which done removes, since agents also leave builds at its top level and in folders of
-  their own naming. Past 64 folder levels or 10,000 entries it stops and says the folder could
-  not be measured fully: a box can build such a tree, and the in-box tool measures while the box
-  waits.
+  done` and `coop loop` under its completion line, `coop fork merge` for each task a landing
+  archives, led by that task's folder since no line above names it, and the in-box
+  `tasks_complete` result for the agent. The agent's version asks it to leave the folder and say
+  what the files are in its final reply, since it was just told to write nothing more there. The
+  check measures the whole folder except its top-level `tmp/`, which done removes, since agents
+  also leave builds at its top level and in folders of their own naming. Past 64 folder levels or
+  10,000 entries it stops and says the folder could not be measured fully: a box can build such a
+  tree, and the in-box tool measures while the box waits.
 - `coop tasks` and `coop tasks ls` end with a warning about any other file or folder at the queue
   root. Hidden entries never count: Coop keeps `.coop-queue.json` there, and tools keep their own
   (`.conflux/`, `.DS_Store`).
@@ -46,6 +47,12 @@ agents did, and `coop tasks done` only ever removed `tmp/`.
   `coop tasks rm` and a person's call.
 
 ## Changelog
+- 2026-10-16 — `coop fork merge` warns too, for each task a plain or isolated landing archives,
+  naming the task's folder (`WarnTaskBulkWithFolder`), since a landing can archive several
+  (`TestMergeWarnsAboutBulkInALandedTask` in `internal/forkctl`; `check:` names one package, so
+  it stays on `internal/tasks`). Swept every move to done: `coop tasks done`, the loop's
+  `FinalizeQueuedCompletion`, `tasks_complete` (trusted and no-change closure) and both fork
+  landings now warn; no other code completes a task.
 - 2026-10-16 — the loop prompt and the `tasks_complete` description now state the rule before completion
   (programs and rebuildable bulk go in tmp/; a binary is recorded by commit, sha256 and build command).
 - 2026-10-16 — the loop's finalize step and the in-box `tasks_complete` result warn too: they are

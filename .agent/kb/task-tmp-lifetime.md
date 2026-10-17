@@ -2,7 +2,7 @@
 name: task-tmp-lifetime
 description: task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist
 subsystem: tasks
-sources: [internal/tasks/cmd.go, internal/tasks/clutter.go, internal/tasks/lease.go, internal/tasks/audit.go, internal/loop/loop.go, internal/taskmcp/tools.go, internal/taskmcp/evidence_handoff_test.go, internal/scaffold/templates/agent/tasks/README.md]
+sources: [internal/tasks/cmd.go, internal/tasks/clutter.go, internal/tasks/lease.go, internal/tasks/audit.go, internal/loop/loop.go, internal/forkctl/land.go, internal/forkctl/isolated_land.go, internal/taskmcp/tools.go, internal/taskmcp/evidence_handoff_test.go, internal/scaffold/templates/agent/tasks/README.md]
 updated: 2026-10-16
 ---
 A task's `tmp/` is disposable but resumable: because it sits inside the task folder, ordinary
@@ -20,7 +20,9 @@ Nothing else in the folder is ever removed. Every completion path only warns whe
 an executable ELF/Mach-O file or more than 25 MB, or is too deep or too full to measure
 (`TaskBulkWarning`, `internal/tasks/clutter.go`):
 a host `coop tasks done` (including an already-done retry) and the loop after its finalize step
-print it, and a successful or already-done `tasks_complete` result ends with it when it applies.
+print it, `coop fork merge` prints it for each task, led by that task's folder, once a plain or
+isolated landing has archived them all (`warnLandedTaskBulk`, `internal/forkctl/land.go`), and a
+successful or already-done `tasks_complete` result ends with it when it applies.
 The task's top-level `tmp/` never counts, because assigned MCP completion measures the folder
 before the host has removed it; a `tmp/` further down does. The walk starts at the project folder
 holding the queue and follows no link on the way down to the task, so a box that swaps a folder
@@ -43,6 +45,9 @@ Task authority does not live in `tmp/`. The host-only registry under
 scratch is never lease evidence and task-folder moves do not relocate authority.
 
 ## Changelog
+- 2026-10-16 — `coop fork merge` warns too, naming each task's folder, after
+  `FinalizeForkCandidateTask` has archived every task of the landing, plain or isolated;
+  re-verified that landing still removes only `tmp/` (`finalizeCompletedTask`).
 - 2026-10-16 — the loop's finalize step and the `tasks_complete` result now warn too, and `tmp/` no
   longer counts; re-verified that no completion path removes anything but `tmp/`.
 - 2026-10-15 — added the done-time bulk warning; re-verified against `tasksFolderMoveWith` and

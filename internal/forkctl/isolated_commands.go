@@ -66,6 +66,7 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 	if !result.landed {
 		return 1, errors.New("isolated publication did not land")
 	}
+	ui.Note("") // a section of its own, after the landing's gate output and any warning
 	ui.OK("Published isolated fork %s", name)
 	if err := result.approval.validateRemoval(repo, name); err != nil {
 		ui.Note("Kept fork %s — %v", name, err)

@@ -366,22 +366,24 @@ func TestMergeOneDoesNotInferTaskCompletionFromTrailer(t *testing.T) {
 }
 
 func prepareForkTaskCandidate(t *testing.T, name string) (string, string, string, forkspace.Identity, *Control) {
-	return prepareForkTaskCandidateMode(t, name, false, true)
+	return prepareForkTaskCandidateMode(t, name, false, true, nil)
 }
 
-func prepareForkTaskCandidateMode(t *testing.T, name string, isolated, makeCommit bool) (string, string, string, forkspace.Identity, *Control) {
+// prepareForkTaskCandidateMode readies a fork for landing: its tasks (ids, or canonical-task when
+// none are given) are done and its candidate is reviewed. fill, when set, writes what the fork's
+// agent leaves in each projected task folder before the host accepts the projection.
+func prepareForkTaskCandidateMode(t *testing.T, name string, isolated, makeCommit bool, fill func(t *testing.T, dir string), ids ...string) (string, string, string, forkspace.Identity, *Control) {
 	t.Helper()
+	if len(ids) == 0 {
+		ids = []string{"canonical-task"}
+	}
 	repo := initRepo(t)
 	root := filepath.Join(repo, tasks.TasksRoot)
 	if err := tasks.ScaffoldStateDirs(root); err != nil {
 		t.Fatal(err)
 	}
-	taskDir := filepath.Join(root, tasks.StateTodo, "canonical-task")
-	if err := os.MkdirAll(taskDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte("# Canonical task\n- [x] required checks passed\n"), 0o644); err != nil {
-		t.Fatal(err)
+	for _, id := range ids {
+		writeTaskFile(t, filepath.Join(root, tasks.StateTodo, id, "task.md"), "# Canonical task\n- [x] required checks passed\n")
 	}
 	var ws string
 	var err error
@@ -411,33 +413,41 @@ func prepareForkTaskCandidateMode(t *testing.T, name string, isolated, makeCommi
 	if err != nil {
 		t.Fatal(err)
 	}
-	assignment, err := tasks.AssignForkTask([]string{root}, tasks.ForkAssignmentRequest{
-		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws,
-		BaselineHead: gitOut(ws, "rev-parse", "HEAD"),
-		LeaseOwner:   tasks.TaskLeaseOwner{RunID: "test", PID: os.Getpid(), Provider: "codex", Target: "codex"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := assignment.Lease.Release(); err != nil {
-		t.Fatal(err)
-	}
-	if makeCommit {
-		if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("landed\n"), 0o644); err != nil {
+	// The fork takes its tasks one at a time, as its loop does: each is assigned, done and accepted
+	// before the next one is assigned.
+	for i := range ids {
+		assignment, err := tasks.AssignForkTask([]string{root}, tasks.ForkAssignmentRequest{
+			AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws,
+			BaselineHead: gitOut(ws, "rev-parse", "HEAD"),
+			LeaseOwner:   tasks.TaskLeaseOwner{RunID: "test", PID: os.Getpid(), Provider: "codex", Target: "codex"},
+		})
+		if err != nil {
 			t.Fatal(err)
 		}
-		git(t, ws, "add", "feature.txt")
-		git(t, ws, "commit", "-qm", "implement canonical task\n\nCoop-Task: canonical-task")
-	}
-	projected, ok := mustCurrentTask(t, assignment.Owner.Projection, "canonical-task")
-	if !ok {
-		t.Fatal("projected task missing")
-	}
-	if err := tasks.MoveTaskDir(assignment.Owner.Projection, projected, tasks.StateDone); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tasks.AcceptForkProjection(repo, root, "canonical-task", assignment.Owner); err != nil {
-		t.Fatal(err)
+		if err := assignment.Lease.Release(); err != nil {
+			t.Fatal(err)
+		}
+		id := assignment.Task.Item.ID
+		if makeCommit && i == 0 { // one commit lands the whole candidate
+			if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("landed\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			git(t, ws, "add", "feature.txt")
+			git(t, ws, "commit", "-qm", "implement canonical task\n\nCoop-Task: "+id)
+		}
+		projected, ok := mustCurrentTask(t, assignment.Owner.Projection, id)
+		if !ok {
+			t.Fatal("projected task missing")
+		}
+		if fill != nil {
+			fill(t, projected.Dir)
+		}
+		if err := tasks.MoveTaskDir(assignment.Owner.Projection, projected, tasks.StateDone); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tasks.AcceptForkProjection(repo, root, id, assignment.Owner); err != nil {
+			t.Fatal(err)
+		}
 	}
 	head, tree := gitOut(ws, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD^{tree}")
 	review, exists, err := tasks.BeginForkCandidateReview(repo, identity, head, tree)
@@ -472,6 +482,92 @@ func TestMergeOneLandsExactCandidateAndCanonicalTask(t *testing.T) {
 	}
 	if _, ok, err := readLandIntent(repo, identity); err != nil || ok {
 		t.Fatalf("land intent after completion = ok %v err %v", ok, err)
+	}
+}
+
+// Landing a fork completes its tasks, so both the plain and the isolated landing warn as `coop
+// tasks done` does when a folder they archive keeps a compiled program: once per task, in the same
+// words, and led by the task's folder, since no line above the warning names the task. The warning
+// is advice: the fork still lands, the archived folders keep their files, and the merge's result
+// follows as a section of its own. A folder of evidence stays quiet.
+func TestMergeWarnsAboutBulkInALandedTask(t *testing.T) {
+	const elf = "\x7fELF\x02\x01\x01\x00"
+	const advice = "  For a file a build can recreate, record its commit, sha256 and build command in log.md instead.\n"
+	warning := func(id string) string {
+		return "\n⚠ The task folder holds 1 compiled program\n\n" +
+			"      Folder: .agent/tasks/99_done/" + id + "\n" +
+			"      Programs: artifacts/coop\n" +
+			"      Archived tasks keep their files until someone deletes them.\n\n" + advice
+	}
+	for _, tc := range []struct {
+		name          string
+		isolated      bool
+		ids           []string // the fork's tasks; canonical-task when none
+		file, content string   // the one file the fork's agent leaves in each task's artifacts/
+		mode          os.FileMode
+		warns         bool
+	}{
+		{name: "program", file: "coop", content: elf, mode: 0o755, warns: true},
+		{name: "isolated program", isolated: true, file: "coop", content: elf, mode: 0o755, warns: true},
+		{name: "two tasks", ids: []string{"first-task", "second-task"}, file: "coop", content: elf, mode: 0o755, warns: true},
+		{name: "evidence", file: "gate.log", content: "ok\n", mode: 0o644},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, _, root, identity, c := prepareForkTaskCandidateMode(t, "bulk", tc.isolated, true, func(t *testing.T, dir string) {
+				path := filepath.Join(dir, "artifacts", tc.file)
+				writeTaskFile(t, path, tc.content)
+				if err := os.Chmod(path, tc.mode); err != nil {
+					t.Fatal(err)
+				}
+			}, tc.ids...)
+			t.Chdir(repo) // a person merges from the project root, so the folder prints relative to it
+			// The merge commands, not mergeOne: only they print the result line after the warnings.
+			var code int
+			var err error
+			stderr := captureStderr(t, func() {
+				if tc.isolated {
+					code, err = c.forkMergeIsolatedCommand(repo, identity.Name, identity, false, true, false)
+				} else {
+					code, err = c.forkMergeAll(repo, []string{identity.Name}, "", false, true)
+				}
+			})
+			if code != 0 || err != nil {
+				t.Fatalf("merge = (%d, %v), want a landing despite the warning\n%s", code, err, stderr)
+			}
+			result := "✓ Merged fork bulk into main\n"
+			if tc.isolated {
+				result = "✓ Published isolated fork bulk\n"
+			}
+			ids := tc.ids
+			if len(ids) == 0 {
+				ids = []string{"canonical-task"}
+			}
+			want, before := 0, "\n\n"
+			if tc.warns {
+				want, before = len(ids), advice+"\n"
+			}
+			if n := strings.Count(stderr, "The task folder "); n != want {
+				t.Errorf("the merge warned %d times, want %d:\n%s", n, want, stderr)
+			}
+			if !strings.Contains(stderr, before+result) {
+				t.Errorf("the merge's result does not follow one blank line:\n%s", stderr)
+			}
+			for _, id := range ids {
+				if tc.warns && !strings.Contains(stderr, warning(id)) {
+					t.Errorf("the warning about %s is not the one `coop tasks done` prints, led by its folder:\n%s", id, stderr)
+				}
+				if item, ok := mustCurrentTask(t, root, id); !ok || item.State != tasks.StateDone {
+					t.Fatalf("task %s after land = %+v, ok=%v", id, item, ok)
+				}
+				data, err := os.ReadFile(filepath.Join(root, tasks.StateDone, id, "artifacts", tc.file))
+				if err != nil || string(data) != tc.content {
+					t.Errorf("the archived task %s lost its file: %q, %v", id, data, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(repo, "feature.txt")); err != nil {
+				t.Errorf("the fork's commit did not land: %v", err)
+			}
+		})
 	}
 }
 

@@ -40,7 +40,8 @@ const (
 // than bulkWarnBytes, or is too deep or too full to measure. ok is false otherwise, which is most of
 // the time. It looks at the whole folder, not only artifacts/: agents also leave builds at the
 // task's top level and in folders of their own naming. `coop tasks done` and the loop print it with
-// WarnTaskBulk; the in-box task tool returns it to the agent that completed the task.
+// WarnTaskBulk, a fork landing with WarnTaskBulkWithFolder; the in-box task tool returns it to the
+// agent that completed the task.
 func TaskBulkWarning(queueRoot, taskDir string) (headline string, facts []string, ok bool) {
 	m := taskFolderBulk(queueRoot, taskDir)
 	big := m.size > bulkWarnBytes
@@ -76,9 +77,25 @@ func TaskBulkWarning(queueRoot, taskDir string) (headline string, facts []string
 
 // WarnTaskBulk prints TaskBulkWarning under a completion a person reads, and reports whether it did.
 func WarnTaskBulk(queueRoot, taskDir string) bool {
+	return warnTaskBulk(queueRoot, taskDir, false)
+}
+
+// WarnTaskBulkWithFolder is WarnTaskBulk for output with no completion line that names the task:
+// a fork landing prints none and can archive several tasks at once, so the task's folder is the
+// warning's first fact.
+func WarnTaskBulkWithFolder(queueRoot, taskDir string) bool {
+	return warnTaskBulk(queueRoot, taskDir, true)
+}
+
+// warnTaskBulk prints TaskBulkWarning, led by the task's folder when withFolder is set. Agents name
+// task folders too, so the folder is escaped like the names after it.
+func warnTaskBulk(queueRoot, taskDir string, withFolder bool) bool {
 	headline, facts, ok := TaskBulkWarning(queueRoot, taskDir)
 	if !ok {
 		return false
+	}
+	if withFolder {
+		facts = slices.Insert(facts, 0, "Folder: "+ui.SafeInline(displayPath(taskDir)))
 	}
 	ui.Note("")
 	ui.Warning(headline, strings.Join(facts, "\n"),

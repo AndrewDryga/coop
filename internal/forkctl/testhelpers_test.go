@@ -126,6 +126,16 @@ func captureStdout(t *testing.T, fn func()) string {
 	return out
 }
 
+// captureStderr returns whatever fn writes to os.Stderr, where ui.Note and ui.Warning print.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	out, err := procharness.CaptureOutput(fn, &os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 type forkCommandResult struct {
 	code int
 	err  error

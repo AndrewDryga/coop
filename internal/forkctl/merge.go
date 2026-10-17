@@ -1166,6 +1166,7 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 			continue
 		}
 		if result.landed {
+			ui.Note("") // a section of its own, after the landing's gate output and any warning
 			ui.OK("Merged fork %s into %s", n, gitBranch(repo))
 			// Keep the fork when its worktree still holds uncommitted work (an interrupted iteration),
 			// and when its queue reconciliation failed — deleting a workspace right after an

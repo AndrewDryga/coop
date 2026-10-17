@@ -176,7 +176,7 @@ func TestIsolatedPublicationDeniesAutomaticFilesystemAliases(t *testing.T) {
 }
 
 func TestIsolatedZeroChangeCandidateFinalizesOriginalTaskAuthority(t *testing.T) {
-	repo, ws, root, identity, c := prepareForkTaskCandidateMode(t, "isolated-zero-change", true, false)
+	repo, ws, root, identity, c := prepareForkTaskCandidateMode(t, "isolated-zero-change", true, false, nil)
 	result, err := c.mergeOneMode(repo, "", identity.Name, false, true)
 	defer result.approval.close()
 	if err != nil || !result.landed || result.skipped {
@@ -194,7 +194,7 @@ func TestIsolatedZeroChangeCandidateFinalizesOriginalTaskAuthority(t *testing.T)
 }
 
 func TestIsolatedReviewKeepsCanonicalAgentNotes(t *testing.T) {
-	repo, ws, _, identity, c := prepareForkTaskCandidateMode(t, "isolated-notes", true, true)
+	repo, ws, _, identity, c := prepareForkTaskCandidateMode(t, "isolated-notes", true, true, nil)
 	assignments, err := tasks.ForkAssignments(repo, identity)
 	if err != nil || len(assignments) != 1 {
 		t.Fatal("fixture assignment", err)

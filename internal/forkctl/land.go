@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -339,6 +340,7 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 				return intent, true, fmt.Errorf("finalize canonical task %s after land: %w", assignment.Index.Task.Ref.ID, err)
 			}
 		}
+		warnLandedTaskBulk(intent.Candidate)
 		if err := tasks.MarkForkCandidateLandedLocked(repo, intent.Candidate); err != nil {
 			return intent, true, err
 		}
@@ -348,4 +350,18 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 		return intent, true, nil
 	}
 	return intent, false, errors.New("unsupported fork land recovery state")
+}
+
+// warnLandedTaskBulk warns about a compiled program or more than 25 MB in each task folder a
+// landing has just archived, as `coop tasks done` and the loop do for the tasks they complete:
+// the fork's agent filled these folders, and the archive keeps everything in them until someone
+// deletes it. Each warning names its folder, since a landing prints no line per task and can
+// archive several. It runs once all of the landing's tasks are archived, so a landing interrupted
+// between two tasks warns about neither until the merge that finishes it. It never stops or
+// changes the landing; what to keep is the owner's call.
+func warnLandedTaskBulk(candidate tasks.ForkCandidate) {
+	for _, assignment := range candidate.Assignments {
+		root := assignment.Index.CanonicalRoot
+		tasks.WarnTaskBulkWithFolder(root, filepath.Join(root, tasks.StateDone, assignment.Index.Task.Ref.ID))
+	}
 }
