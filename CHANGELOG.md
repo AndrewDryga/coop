@@ -80,8 +80,8 @@
   stopped: `coop fork stop` removed the fork's boxes and its record while the loop could still be
   running, `coop loop --preflight` released the claim, and network cleanup removed the run's
   containers and volumes. The same happened the other way round. Coop now keeps these records:
-  `coop fork stop` says which system started the loop and to stop it there, and `coop tasks ls`
-  shows a claim's pid as "PID 4242 on Linux".
+  `coop fork stop` says which system started the loop and to stop it there, or which file to
+  remove once that system is gone, and `coop tasks ls` shows a claim's pid as "PID 4242 on Linux".
 
 - **Breaking: read-only and bare runs are removed.** `--readonly` and `--bare` no longer run
   anything. `coop <agent>`, `coop <preset>`, `coop run`, `coop shell`, `coop acp` and

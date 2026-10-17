@@ -103,6 +103,13 @@ type ExecutionObservation struct {
 	Running bool
 	Stale   bool
 	Active  bool
+	// Foreign is a record another operating system wrote: a pid this kernel cannot check.
+	Foreign bool
+}
+
+// Path is the file the record was read from, for a refusal that tells a person which file to remove.
+func (o ExecutionObservation) Path() string {
+	return filepath.Join(o.Record.registry, o.Record.ID+".json")
 }
 
 func executionDir(repo string) string { return filepath.Join(StateDir(repo), "executions") }
@@ -612,6 +619,7 @@ func executionsInRegistry(registry string) ([]ExecutionObservation, []error) {
 		observations = append(observations, ExecutionObservation{
 			Record: record, Running: identity == ProcessIdentityMatch,
 			Stale: OwnerProvablyDead(identity), Active: identity == ProcessIdentityMatch && executionRoleActive(record.Role),
+			Foreign: identity == ProcessIdentityForeign,
 		})
 	}
 	return observations, problems

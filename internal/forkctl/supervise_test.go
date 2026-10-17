@@ -279,6 +279,72 @@ func TestForkStopRejectsInvalidStateWithoutSideEffects(t *testing.T) {
 	}
 }
 
+// A detached worker's activity record that another operating system wrote names a pid this kernel
+// cannot check, so stop keeps it, as it keeps such a worker record, and says which system started
+// the loop and which file to remove once that system is gone.
+func TestForkStopNamesAnActivityRecordAnotherSystemWrote(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	workspace := forkspace.Workspace(repo, "perf")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "perf")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{
+		Kind: forkspace.ExecutionForkLoop, Role: forkspace.ExecutionRoleDetachedWorker,
+		Workspace: workspace, Fork: &identity, SourceID: "foreign-worker",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = forkspace.EndExecution(repo, worker) })
+	observations, problems := forkspace.Executions(repo)
+	if len(problems) != 0 || len(observations) != 1 {
+		t.Fatalf("executions = %v, %v", observations, problems)
+	}
+	// The same record as a coop on the other operating system writes it.
+	path := observations[0].Path()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	record["token"] = starttoken.Foreign()
+	if data, err = json.Marshal(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{
+		cfg: &config.Config{RepoOverride: repo},
+		host: Host{EnsureRuntime: func() (containerruntime.Runtime, error) {
+			t.Error("stop consulted the runtime for another system's worker")
+			return containerruntime.Runtime{}, errors.New("runtime must not be consulted")
+		}},
+	}
+	system := forkspace.ProcTokenSystem(starttoken.Foreign())
+	code, err := c.ForkStop([]string{"perf"})
+	for _, want := range []string{"was started on " + system, "keeps its activity record", "remove the record: " + removeCommand(path)} {
+		if code != 1 || err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("ForkStop over another system's activity record = (%d, %v); want %q", code, err, want)
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the refused stop removed the record: %v", err)
+	}
+}
+
 // A Coop 11.3.0 cleanup record can name a worker that still runs. If someone removes the file
 // without the check the refusal prints, the worker's own activity record still keeps stop from
 // reaping its box and keeps a second loop controller from starting on the same fork.

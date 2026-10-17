@@ -123,6 +123,15 @@ func forkForeignWorker(repo, name string, state forkspace.WorkerState) error {
 		name, state.Pid, system, system, name, system, removeCommand(forkspace.PidPath(repo, name)), name)
 }
 
+// forkForeignActivity refuses a detached worker's activity record that another operating system
+// wrote, the way forkForeignWorker refuses its worker record: it names the system and, for when that
+// system is gone, the guarded removal of the record's own file.
+func forkForeignActivity(name string, observation forkspace.ExecutionObservation) error {
+	system := forkspace.ProcTokenSystem(observation.Record.Token)
+	return fmt.Errorf("fork %s's background loop (pid %d) was started on %s, so Coop cannot tell from here whether it is still running and keeps its activity record — stop it on %s: coop fork stop %s. If no coop on %s can reach this folder any more, check that no box of this fork is running, then remove the record: %s; then run: coop fork stop %s",
+		name, observation.Record.PID, system, system, name, system, removeCommand(observation.Path()), name)
+}
+
 // runningForkNames returns the subset that still needs stop, in order — a live worker, or a leftover
 // record whose exact-label cleanup has not run. Merge/rm share this guard so they strand neither.
 func runningForkNames(repo string, names []string) []string {
@@ -454,6 +463,9 @@ func (c *Control) ForkStop(args []string) (int, error) {
 					continue
 				}
 				if observation.Record.Role == forkspace.ExecutionRoleDetachedWorker && !observation.Stale {
+					if observation.Foreign {
+						return 1, forkForeignActivity(name, observation)
+					}
 					return 1, fmt.Errorf("fork %s has detached-worker activity %s without worker state; its process identity is still live or unverified", name, observation.Record.ID)
 				}
 				if observation.Stale {
