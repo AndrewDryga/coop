@@ -473,7 +473,9 @@ func TestGitCommandOutsideARepositoryNeverFindsALaterGit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+	plant := exec.Command("git", "init", "-q", dir)
+	plant.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := plant.CombinedOutput(); err != nil {
 		t.Fatalf("plant a repository: %v\n%s", err, out)
 	}
 	config := "[coop]\n\tplanted = yes\n[filter \"evil\"]\n\tclean = touch " + marker + "\n"
