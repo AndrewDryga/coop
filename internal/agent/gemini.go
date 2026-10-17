@@ -1488,20 +1488,15 @@ const geminiOAuthTokenURL = "https://oauth2.googleapis.com/token"
 
 // renewGeminiAuthority renews only plain native OAuth; it never initializes a global keychain or
 // encrypted fallback, and does not let native asynchronous writes replace the caller's canonical
-// transaction. It returns the credential to publish, if any, even beside a readiness error.
+// transaction. It returns the credential to publish, if any, even beside a readiness error. It renews
+// whenever asked, even an access that still covers the deadline: the caller decides when renewal is
+// due, and a running box renews well before that.
 func renewGeminiAuthority(ctx context.Context, original []byte, deadline time.Time, retain func([]byte) error) ([]byte, error) {
 	var document map[string]json.RawMessage
 	if len(original) == 0 || len(original) > 1<<20 || json.Unmarshal(original, &document) != nil || document == nil {
 		return nil, errors.New("invalid Gemini OAuth authority")
 	}
-	var access, refresh string
-	var expiry int64
-	if json.Unmarshal(document["access_token"], &access) != nil || json.Unmarshal(document["expiry_date"], &expiry) != nil {
-		return nil, errors.New("invalid Gemini OAuth access state")
-	}
-	if validGeminiGrant(access) && expiry > deadline.UnixMilli() {
-		return bytes.Clone(original), nil
-	}
+	var refresh string
 	if json.Unmarshal(document["refresh_token"], &refresh) != nil || !validGeminiGrant(refresh) {
 		return nil, errors.New("native Gemini OAuth authority needs host sign-in")
 	}

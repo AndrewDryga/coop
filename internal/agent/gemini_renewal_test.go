@@ -152,15 +152,21 @@ func TestGeminiAuthorityRenewalPublishesPastCustodyFailureAndRefusesRedirect(t *
 	})
 }
 
-func TestGeminiAuthorityRenewalCurrentGrantDoesNotRefresh(t *testing.T) {
+// A running box renews an access well before it stops covering the deadline, so a grant that still
+// covers it is renewed when asked, not handed back unchanged.
+func TestGeminiAuthorityRenewalRenewsAGrantThatStillCoversTheDeadline(t *testing.T) {
 	var doc map[string]any
 	_ = json.Unmarshal(geminiTestAuthority(), &doc)
-	doc["expiry_date"] = time.Now().Add(time.Hour).UnixMilli()
+	doc["expiry_date"] = time.Now().Add(5 * time.Minute).UnixMilli()
 	raw, _ := json.Marshal(doc)
-	geminiTestClient(t, func(*http.Request) (*http.Response, error) { t.Fatal("unnecessary native refresh"); return nil, nil })
-	credential, err := renewGeminiAuthority(context.Background(), raw, time.Now().Add(time.Minute), nil)
-	if err != nil || string(credential) != string(raw) {
-		t.Fatal("current authority changed")
+	calls := 0
+	geminiTestClient(t, func(*http.Request) (*http.Response, error) {
+		calls++
+		return geminiTestResponse(200, `{"access_token":"inert-new-access","expires_in":3600}`), nil
+	})
+	credential, err := renewGeminiAuthority(context.Background(), raw, time.Now().Add(2*time.Minute), func([]byte) error { return nil })
+	if err != nil || calls != 1 || !strings.Contains(string(credential), "inert-new-access") {
+		t.Fatalf("renewing a grant that still covers the deadline: %d provider calls, %v; want it renewed", calls, err)
 	}
 }
 

@@ -18,9 +18,23 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const accountRenewalName = "renewal.json"
+const (
+	accountRenewalName = "renewal.json"
+	accountRetryName   = "retry.json"
+)
 
 var errAccountRenewalUncertain = errors.New("an interrupted credential renewal could not be finished; run coop login")
+
+// accountRetry is the last renewal exchange that failed for a passing reason, At in Unix milliseconds.
+// Every run on the account waits Delay milliseconds after it, so the runs take turns asking the
+// provider instead of each holding the account's lock through an exchange that may hang. It names the
+// record it was written for, so any publication ends it.
+type accountRetry struct {
+	Epoch    uint64 `json:"epoch"`
+	Revision uint64 `json:"revision"`
+	At       int64  `json:"at"`
+	Delay    int64  `json:"delay"`
+}
 
 // The intent precedes provider I/O. Received is the provider's 200 answer, kept before anything
 // parses it, and ReceivedAt (Unix milliseconds) when it arrived; settleRenewal finishes from them.
@@ -35,8 +49,11 @@ type accountRenewal struct {
 	ReceivedAt int64  `json:"received_at,omitempty"`
 }
 
+// renewAccountAuthority renews the account under its lock. needed decides whether to renew now; it is
+// given the time before which no exchange should follow one that failed for a passing reason, zero
+// when there was none.
 func renewAccountAuthority(ctx context.Context, cfg *config.Config, spec accountAuthoritySpec, account string,
-	needed func(*accountAuthority) (bool, error),
+	needed func(current *accountAuthority, retryAt time.Time) (bool, error),
 	renew func(*accountAuthority, func([]byte) error) (*accountAuthority, error)) (*accountAuthority, bool, error) {
 	root, lock, current, err := lockAccountAuthority(ctx, cfg, spec, account)
 	if err != nil {
@@ -51,7 +68,11 @@ func renewAccountAuthority(ctx context.Context, cfg *config.Config, spec account
 		return current, false, err
 	}
 	if needed != nil {
-		shouldRenew, err := needed(cloneAccountAuthority(current))
+		var retryAt time.Time
+		if retry := root.retry(current, time.Now()); retry != nil {
+			retryAt = time.UnixMilli(retry.At + retry.Delay)
+		}
+		shouldRenew, err := needed(cloneAccountAuthority(current), retryAt)
 		if err != nil || !shouldRenew {
 			return current, false, err
 		}
@@ -85,7 +106,11 @@ func renewAccountAuthority(ctx context.Context, cfg *config.Config, spec account
 		// Nothing to publish: settle whatever the attempt left, as a later read would, so a
 		// failed exchange never leaves the account waiting for a sign-in it does not need.
 		settled, err := root.settleRenewal(lock, spec, account, current)
-		return settled, settled != current, errors.Join(err, readinessErr)
+		err = errors.Join(err, readinessErr)
+		if settled == current && renewalRetryable(err) {
+			root.waitAfterFailure(lock, current)
+		}
+		return settled, settled != current, err
 	}
 	if next.Epoch != current.Epoch || next.Revoked {
 		return current, false, errors.Join(errAccountRenewalUncertain, errors.New("renewal changed the account's generation"), readinessErr)
@@ -101,6 +126,36 @@ func renewAccountAuthority(ctx context.Context, cfg *config.Config, spec account
 		return published, true, errors.Join(err, readinessErr)
 	}
 	return published, true, readinessErr
+}
+
+// retry returns the wait a failed exchange left for current, or nil. The wait only paces renewals, so
+// one that cannot be read, or that Coop would not have written, paces nothing rather than hold one
+// off. Coop writes waits of at most a minute, so one that ends more than a minute after now was
+// written before the host clock stepped back (NTP, a resumed VM) and would hold renewals off far
+// longer than its own wait.
+func (root *accountAuthorityRoot) retry(current *accountAuthority, now time.Time) *accountRetry {
+	data, err := safefile.ReadRegular(root.dir(), accountRetryName, 4096)
+	var retry accountRetry
+	if err != nil || json.Unmarshal(data, &retry) != nil || retry.Epoch != current.Epoch || retry.Revision != current.Revision ||
+		retry.Delay <= 0 || retry.Delay > time.Minute.Milliseconds() || time.UnixMilli(retry.At+retry.Delay).After(now.Add(time.Minute)) {
+		return nil
+	}
+	return &retry
+}
+
+// waitAfterFailure records that an exchange for current just failed for a passing reason: the next may
+// follow 5 s later, a wait that doubles up to a minute while the failures go on. Like retry, it only
+// paces: a wait that cannot be written leaves each run to its own backoff.
+func (root *accountAuthorityRoot) waitAfterFailure(lock *os.File, current *accountAuthority) {
+	now := time.Now()
+	delay := 5 * time.Second
+	if previous := root.retry(current, now); previous != nil {
+		delay = min(2*time.Duration(previous.Delay)*time.Millisecond, time.Minute)
+	}
+	data, err := json.Marshal(accountRetry{Epoch: current.Epoch, Revision: current.Revision, At: now.UnixMilli(), Delay: delay.Milliseconds()})
+	if err == nil {
+		_ = writeAccountPrivate(root, lock, accountRetryName, data)
+	}
 }
 
 func (root *accountAuthorityRoot) readRenewal() (*accountRenewal, error) {

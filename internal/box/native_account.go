@@ -293,7 +293,7 @@ func removeNativeAuthority(ctx context.Context, cfg *config.Config, provider, ac
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if name != accountRenewalName && name != "cutover.json" && !strings.HasPrefix(name, "recovery-") && !strings.HasPrefix(name, ".private-") && !strings.HasPrefix(name, ".authority-") && !strings.HasPrefix(name, ".renewal-") {
+		if name != accountRenewalName && name != accountRetryName && name != "cutover.json" && !strings.HasPrefix(name, "recovery-") && !strings.HasPrefix(name, ".private-") && !strings.HasPrefix(name, ".authority-") && !strings.HasPrefix(name, ".renewal-") {
 			continue
 		}
 		file, err := safefile.OpenRegular(root.dir(), name)
@@ -328,22 +328,41 @@ func NativeAccountRemoved(cfg *config.Config, provider, account string) bool {
 	return err == nil && exists && record != nil && record.Revoked
 }
 
-func renewNativeAccount(ctx context.Context, cfg *config.Config, ag agents.Agent, account string, deadline time.Time) (*accountAuthority, error) {
+// errRenewalDeferred is a renewal ahead of the deadline that waits out an exchange that failed for a
+// passing reason moments ago, whichever run made it, instead of asking the provider again.
+var errRenewalDeferred = errors.New("native renewal waits for the account's next retry")
+
+// renewNativeAccount returns the account's current record, renewing its access first when that
+// expires before renewBy. The renewed access only has to outlast deadline, which is never later than
+// renewBy; an access that cannot be renewed stays in use until it no longer outlasts the deadline. A
+// renewal while the access still outlasts nativeRenewalDeadline waits its turn after a failed
+// exchange (errRenewalDeferred). No caller's deadline is further off than that, so a renewal a
+// deadline needs never waits.
+func renewNativeAccount(ctx context.Context, cfg *config.Config, ag agents.Agent, account string, renewBy, deadline time.Time) (*accountAuthority, error) {
 	cfg = cfg.NativeAuthorityConfig()
 	native := ag.NativeCredentials()
-	needed := func(current *accountAuthority) (bool, error) {
-		state, err := native.Inspect(current.Artifacts, time.Now())
+	needed := func(current *accountAuthority, retryAt time.Time) (bool, error) {
+		now := time.Now()
+		state, err := native.Inspect(current.Artifacts, now)
 		if err != nil {
 			return false, err
 		}
 		if !state.Ready {
 			return false, errors.New("account needs host sign-in")
 		}
-		if state.AccessToken != "" && (state.ExpiresAt.IsZero() || state.ExpiresAt.After(deadline)) {
+		lasts := func(t time.Time) bool {
+			return state.AccessToken != "" && (state.ExpiresAt.IsZero() || state.ExpiresAt.After(t))
+		}
+		renewable := state.Refreshable && native.Renew != nil
+		if lasts(renewBy) || lasts(deadline) && !renewable {
 			return false, nil
 		}
-		if !state.Refreshable || native.Renew == nil {
+		if !renewable {
 			return false, errors.New("account needs host sign-in")
+		}
+		// Judge from now, under the lock: getting it may have taken 30 s since the caller set deadline.
+		if lasts(now.Add(nativeRenewalDeadline)) && now.Before(retryAt) {
+			return false, errRenewalDeferred
 		}
 		return true, nil
 	}
@@ -374,6 +393,6 @@ func PrepareNativeAccount(ctx context.Context, cfg *config.Config, rt runtime.Ru
 		_, selected, err := previewNativeAuthority(ctx, cfg, ag, account)
 		return selected, err
 	}
-	_, err = renewNativeAccount(ctx, cfg.NativeAuthorityConfig(), ag, account, deadline)
+	_, err = renewNativeAccount(ctx, cfg.NativeAuthorityConfig(), ag, account, deadline, deadline)
 	return true, err
 }

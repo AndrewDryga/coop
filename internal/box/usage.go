@@ -35,7 +35,7 @@ func UsageQuotaAuthority(cfg *config.Config, provider, account string) (agents.U
 		input := agents.UsageQuotaInput{APIKey: selected.state.APIKey}
 		if selected.canonical {
 			input.Current = func(ctx context.Context, deadline time.Time) (agents.NativeCredentialState, map[string][]byte, error) {
-				record, err := renewNativeAccount(ctx, cfg, ag, account, deadline)
+				record, err := renewNativeAccount(ctx, cfg, ag, account, deadline, deadline)
 				if err != nil {
 					return agents.NativeCredentialState{}, nil, err
 				}

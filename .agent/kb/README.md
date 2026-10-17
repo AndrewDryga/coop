@@ -92,7 +92,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [native-credential-cutover](native-credential-cutover.md) — existing native writer locks keep their inode during private normalization; uncertain legacy grants remain in custody
 - [native-broker-account-discovery](native-broker-account-discovery.md) — guard-selected public account aliases must match native discovery without changing workspace routing
 - [native-broker-managed-policy](native-broker-managed-policy.md) — Claude policy retrieval needs its exact native settings route and must retain genuine upstream policy and errors
-- [native-broker-lease-reads](native-broker-lease-reads.md) — the host keeps leasing the held access through a passing renewal failure; VM lease reads use fresh descriptors and the existing load deadline, never a cached grant
+- [native-broker-lease-reads](native-broker-lease-reads.md) — the host renews up to 10 minutes ahead, runs on one account take turns retrying, and the held access stays leased through a passing failure; VM lease reads use fresh descriptors and the existing load deadline, never a cached grant
 - [native-helper-file-modes](native-helper-file-modes.md) — native helper read mounts keep their intended modes under a private umask while outer custody remains owner-only
 - [mcp-authority-projection](mcp-authority-projection.md) — one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 - [provider-scripted-e2e](provider-scripted-e2e.md) — drive the external Coop CLI through strict runtime/provider fixtures without ambient state

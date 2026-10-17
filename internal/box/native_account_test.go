@@ -35,7 +35,7 @@ func TestNativeAccountSignInRenewalReadinessAndRemoval(t *testing.T) {
 	if !ProfileCredentialReady(cfg, ag.Name(), "work", time.Now()) {
 		t.Fatal("canonical sign-in is not ready")
 	}
-	next, err := renewNativeAccount(context.Background(), cfg, ag, "work", time.Now().Add(time.Minute))
+	next, err := renewNativeAccount(context.Background(), cfg, ag, "work", time.Now().Add(nativeRenewalLead), time.Now().Add(time.Minute))
 	if err != nil || next.Revision != first.Revision {
 		t.Fatalf("static key unnecessarily renewed: %+v %v", next, err)
 	}
@@ -173,13 +173,29 @@ func TestNativeRenewalRecoversMissingAccessDespiteFutureExpiry(t *testing.T) {
 	if _, _, err := replaceAccountAuthority(ctx, cfg, nativeAccountSpec(ag), "work", record); err != nil {
 		t.Fatal(err)
 	}
-	renewed, err := renewNativeAccount(ctx, cfg, ag, "work", deadline)
+	renewed, err := renewNativeAccount(ctx, cfg, ag, "work", deadline, deadline)
 	if err != nil || !called {
 		t.Fatal("recoverable account was not renewed", err)
 	}
 	state, err := native.Inspect(renewed.Artifacts, time.Now())
 	if err != nil || state.AccessToken != "inert-recovered-access" {
 		t.Fatal("missing recovered access", err)
+	}
+}
+
+// An access the account cannot renew stays in use until it no longer covers the deadline; coming within
+// a running box's renewal lead does not end it early.
+func TestNativeRenewalKeepsAnAccessItCannotRenewUntilTheDeadline(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	ag, _ := agents.Get("gemini")
+	signInInertGemini(t, cfg, ag, "inert-access-only", 5*time.Minute, false)
+	now := time.Now()
+	if _, err := renewNativeAccount(t.Context(), cfg, ag, "work", now.Add(nativeRenewalLead), now.Add(nativeRenewalDeadline)); err != nil {
+		t.Fatalf("an access with 5 minutes left that cannot be renewed: %v; want it kept in use", err)
+	}
+	later := now.Add(4 * time.Minute)
+	if _, err := renewNativeAccount(t.Context(), cfg, ag, "work", later.Add(nativeRenewalLead), later.Add(nativeRenewalDeadline)); err == nil {
+		t.Fatal("an access that cannot be renewed was kept in use after it stopped covering the deadline")
 	}
 }
 

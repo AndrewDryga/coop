@@ -1,9 +1,9 @@
 ---
 name: native-broker-lease-reads
-description: the host keeps leasing the held access through a passing renewal failure; VM lease reads use fresh descriptors and the existing load deadline, never a cached grant
+description: the host renews up to 10 minutes ahead, runs on one account take turns retrying, and the held access stays leased through a passing failure; VM lease reads use fresh descriptors and the existing load deadline, never a cached grant
 subsystem: box
-sources: [internal/box/native_broker.go, internal/networkgateway/native_runtime.go, internal/networkgateway/native_document_test.go, internal/networkgateway/native_broker.go, internal/networkgateway/native_broker_test.go, internal/networkgateway/native_broker_diagnostic_test.go, internal/safefile/safefile.go]
-updated: 2026-10-16
+sources: [internal/box/native_broker.go, internal/box/native_account.go, internal/box/account_renewal.go, internal/networkgateway/native_runtime.go, internal/networkgateway/native_document_test.go, internal/networkgateway/native_broker.go, internal/networkgateway/native_broker_test.go, internal/networkgateway/native_broker_diagnostic_test.go, internal/safefile/safefile.go]
+updated: 2026-10-17
 ---
 
 The host atomically publishes private access snapshots, but a Docker VM bind mount can briefly
@@ -24,13 +24,34 @@ protected traffic and active streams. The previous credential is never forwarded
 a stopped broker cannot revive. Partial fields are never decoded or inherited between attempts.
 
 The host publisher (`nativeRun.serve`) writes a lease every 5 s, at most a minute and never past
-the access's own expiry. It renews only once the access has under 2 minutes left, so a renewal
-outage gets about 2 minutes before the access expires and `publish` revokes it. The per-run backoff
-tries again 5, 10, 20 and 40 s apart; its 1-minute cap never binds before the access expires. A
-passing failure keeps the held access. The ticks between attempts read the account under its lock,
-so a host sign-in or removal revokes at the next tick that reads, without a provider call. Only a
-busy account lock leaves no fresh record: `served` is published again, but for at most 2 minutes
-after the last locked read, because a tick that cannot read cannot see a sign-in or removal.
+the access's own expiry. It renews the access planning read once under 10 minutes of it are left
+(`nativeRenewalLead`, well under Gemini's hour, the shortest access a provider issues), and each
+later access from half the lifetime it had when the run first saw it, between 2 and 10 minutes
+(`renewalLead`), so one issued for little more than the lead is not renewed at every tick. A box
+rides out an outage of about 9 minutes: its last retry comes 40 to 60 s before expiry, after which
+`publish` revokes. The renewed access only has to outlast 2 minutes (`nativeRenewalDeadline`, the
+coverage check in every adapter's `Renew`); passing the lead as that deadline would refuse, and so
+revoke, an access issued for less than the lead. The per-run backoff tries again 5, 10, 20 and 40 s
+apart, then every minute. A passing failure keeps the held access. The ticks between attempts read
+the account under its lock, so a host sign-in or removal revokes at the next tick that reads,
+without a provider call. Only a busy account lock leaves no fresh record: `served` is published
+again, but for at most 2 minutes after the last locked read, because a tick that cannot read cannot
+see a sign-in or removal.
+
+Runs on one account take turns (`retry.json`, account_renewal.go). An exchange that fails for a
+passing reason records, under the lock and for that exact record, when it ended and a wait of 5 s
+doubling to a minute; any publication ends it and removal deletes it. A renewal while the access
+still covers the deadline waits it out (`errRenewalDeferred`, retryable) and holds the lock only to
+read; one the deadline needs never waits. Both are judged once the lock is held, since getting it
+can take 30 s; a wait that ends more than a minute from then was written before the host clock
+stepped back and is ignored, as is one that cannot be read. Before this, every run retried on its
+own schedule and held the lock through exchanges that can hang 20 s, so with several boxes the
+others could not read for over 2 minutes and lost valid access.
+
+Traps. A launch (`planNativeAccounts`, `prepare`) renews only short of the deadline, because a
+failed renewal there fails the launch. An access that cannot be renewed stays in use until it stops
+covering the deadline. Gemini's renewal once handed back an access that still covered the deadline
+unchanged, which made every renewal ahead a no-op.
 
 The protected account broker can stop while the outer gateway and host publisher remain healthy.
 A local CONNECT then returns403 `native account unavailable` before any upstream dial; zero
@@ -41,6 +62,16 @@ mutex; a blocked log sink cannot delay revocation. Credentials, accounts, raw do
 arbitrary I/O/parser errors are never logged. Document callers still receive the generic error.
 
 ## Changelog
+- 2026-10-17 — renewal starts with a 10-minute lead, separate from the 2-minute deadline the adapters
+  check, and later accesses renew at half their lifetime (task
+  2026-10-16-start-native-credential-renewal-well-before-the). Review found the lead let several
+  boxes on one account starve each other of the lock (6 boxes, 2 revoked); added the shared retry
+  wait. Recorded the launch exception, the unrenewable access and the old Gemini no-op; verified
+  with the `TestNativeBroker` synctest family (outage inside and past the lead, refusal inside it,
+  issued lifetimes, six boxes on one hung provider) and mutation runs of each guard. Re-review: the
+  wait is ignored when it ends over a minute ahead (clock stepped back) and judged once the lock is
+  held; cases for a wait inside the deadline, after a lock wait, from a clock step, corrupt, after
+  removal and after a new sign-in.
 - 2026-10-16 — the host publisher keeps leasing the held access through a passing renewal failure
   and retries on backoff instead of revoking (task
   2026-10-16-let-the-native-broker-retry-a-failed-renewal-wit). Recorded the 2-minute renewal

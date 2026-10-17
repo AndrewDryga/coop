@@ -101,7 +101,7 @@ func TestNativeEnvironmentOnlyRunsKeepKeysOutOfPublicSeeds(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, renew := range []bool{true, false} {
-				if _, err := run.refresh(ctx, run.accounts[0], renew); err == nil {
+				if _, err := run.refresh(ctx, run.accounts[0], time.Now(), renew, nativeRenewalLead); err == nil {
 					t.Fatal("env-only run ignored account revocation")
 				}
 			}
@@ -115,7 +115,7 @@ func TestNativePreviewAcceptsCommittedRenewalReceipt(t *testing.T) {
 	if _, _, err := migrateNativeAccount(ctx, cfg, ag, "work", func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	renewed, effect, err := renewAccountAuthority(ctx, cfg, nativeAccountSpec(ag), "work", func(*accountAuthority) (bool, error) { return true, nil }, func(current *accountAuthority, retain func([]byte) error) (*accountAuthority, error) {
+	renewed, effect, err := renewAccountAuthority(ctx, cfg, nativeAccountSpec(ag), "work", func(*accountAuthority, time.Time) (bool, error) { return true, nil }, func(current *accountAuthority, retain func([]byte) error) (*accountAuthority, error) {
 		if err := retain([]byte(`{"access_token":"inert-rotated"}`)); err != nil {
 			return nil, err
 		}

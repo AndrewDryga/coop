@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -341,16 +342,29 @@ func TestNativeRunRejectsCanonicalRollbackAndSameRevisionMutation(t *testing.T) 
 }
 
 // nativeRenewalRun is a run serving one Gemini account whose access expires after the given time, as
-// prepare leaves it: the access published and the account's worker started. Each renewal asks answer
-// instead of the provider: it returns how long the access it issues lasts, or the error the renewal
-// fails with. Call it inside a synctest bubble, so the worker's ticks and waits run on the bubble's
-// clock. It returns the run and a reader for the guard's snapshot.
+// prepare leaves it: the access published and the account's worker started. It returns the run and a
+// reader for the guard's snapshot; answer is as for nativeRenewalAccount.
 func nativeRenewalRun(t *testing.T, expires time.Duration, answer func() (time.Duration, error)) (*nativeRun, func() networkgateway.NativeAccessSnapshot) {
+	t.Helper()
+	run, snapshot := nativeRenewalAccount(t, expires, answer)(0)
+	synctest.Wait()
+	return run, snapshot
+}
+
+// nativeRenewalAccount signs the Gemini account "work" in with an access that expires after the given
+// time. Each renewal asks answer instead of the provider: it returns how long the access it issues
+// lasts, or the error the renewal fails with. Like every adapter, a renewal refuses an issued access
+// that does not outlast its deadline. A nil answer signs the account in without a refresh grant, so it
+// cannot be renewed. Call it inside a synctest bubble, so the runs' ticks and waits run on the
+// bubble's clock. It returns a function that starts another run serving the account, as prepare
+// leaves one, whose worker starts the given time later; that function returns the run and a reader
+// for its guard's snapshot.
+func nativeRenewalAccount(t *testing.T, expires time.Duration, answer func() (time.Duration, error)) func(time.Duration) (*nativeRun, func() networkgateway.NativeAccessSnapshot) {
 	t.Helper()
 	base, _ := agents.Get("gemini")
 	native := base.NativeCredentials()
 	complete := native.Complete
-	native.Renew = func(_ context.Context, files map[string][]byte, _ time.Time, retain func([]byte) error) (map[string][]byte, error) {
+	native.Renew = func(_ context.Context, files map[string][]byte, deadline time.Time, retain func([]byte) error) (map[string][]byte, error) {
 		lifetime, err := answer()
 		if err != nil {
 			return nil, err
@@ -359,40 +373,56 @@ func nativeRenewalRun(t *testing.T, expires time.Duration, answer func() (time.D
 		if err := retain(issued); err != nil {
 			return nil, err
 		}
-		return complete(files, issued, time.Now())
+		next, err := complete(files, issued, time.Now())
+		if err == nil && !time.Now().Add(lifetime).After(deadline) {
+			err = errors.New("inert renewal: access does not cover the requested deadline")
+		}
+		return next, err
 	}
 	ag := nativeRenewalFixtureAgent{Agent: base, native: native}
 	cfg := &config.Config{ConfigDir: t.TempDir()}
-	record := signInInertGemini(t, cfg, ag, "inert-first-access", expires)
-	account := &nativeRunAccount{agent: ag, account: "work", record: record}
-	run := &nativeRun{cfg: cfg, runID: strings.Repeat("a", 32), dir: t.TempDir(), accounts: []*nativeRunAccount{account}}
-	if err := run.publish(account, record, nil); err != nil {
-		t.Fatal(err)
-	}
-	lifetime, cancel := context.WithCancel(t.Context())
-	run.cancel = cancel
-	run.workers.Go(func() { run.serve(lifetime, account) })
-	t.Cleanup(func() { _ = run.close() })
-	synctest.Wait()
-	return run, func() networkgateway.NativeAccessSnapshot {
+	record := signInInertGemini(t, cfg, ag, "inert-first-access", expires, answer != nil)
+	runs := 0
+	return func(start time.Duration) (*nativeRun, func() networkgateway.NativeAccessSnapshot) {
 		t.Helper()
-		var snapshot networkgateway.NativeAccessSnapshot
-		if err := json.Unmarshal(mustReadFile(t, filepath.Join(run.dir, "gemini.json")), &snapshot); err != nil {
+		account := &nativeRunAccount{agent: ag, account: "work", record: record}
+		run := &nativeRun{cfg: cfg, runID: fmt.Sprintf("%032x", runs), dir: t.TempDir(), accounts: []*nativeRunAccount{account}}
+		runs++
+		if err := run.publish(account, record, nil); err != nil {
 			t.Fatal(err)
 		}
-		return snapshot
+		lifetime, cancel := context.WithCancel(t.Context())
+		run.cancel = cancel
+		run.workers.Go(func() {
+			time.Sleep(start)
+			run.serve(lifetime, account)
+		})
+		t.Cleanup(func() { _ = run.close() })
+		return run, func() networkgateway.NativeAccessSnapshot {
+			t.Helper()
+			var snapshot networkgateway.NativeAccessSnapshot
+			if err := json.Unmarshal(mustReadFile(t, filepath.Join(run.dir, "gemini.json")), &snapshot); err != nil {
+				t.Fatal(err)
+			}
+			return snapshot
+		}
 	}
 }
 
 // signInInertGemini signs the Gemini account "work" in on the host, as a completed coop login does,
-// with an access that expires after the given time. Each sign-in starts a new epoch of the account.
-func signInInertGemini(t *testing.T, cfg *config.Config, ag agents.Agent, access string, expires time.Duration) *accountAuthority {
+// with an access that expires after the given time and, when renewable, a refresh grant. Each sign-in
+// starts a new epoch of the account.
+func signInInertGemini(t *testing.T, cfg *config.Config, ag agents.Agent, access string, expires time.Duration, renewable bool) *accountAuthority {
 	t.Helper()
+	refresh := ""
+	if renewable {
+		refresh = `"refresh_token":"inert-refresh-grant",`
+	}
 	record, err := normalizeNativeAccount(ag, map[string][]byte{
 		"settings.json":        []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`),
 		"google_accounts.json": []byte(`{"active":"inert@example.invalid","old":[]}`),
-		"oauth_creds.json": fmt.Appendf(nil, `{"access_token":"%s","refresh_token":"inert-refresh-grant","expiry_date":%d,"token_type":"Bearer"}`,
-			access, time.Now().Add(expires).UnixMilli()),
+		"oauth_creds.json": fmt.Appendf(nil, `{"access_token":"%s",%s"expiry_date":%d,"token_type":"Bearer"}`,
+			access, refresh, time.Now().Add(expires).UnixMilli()),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -458,7 +488,7 @@ func TestNativeBrokerResetsTheBackoffAfterARenewal(t *testing.T) {
 		var calls atomic.Int32
 		_, snapshot := nativeRenewalRun(t, 90*time.Second, func() (time.Duration, error) {
 			if calls.Add(1) == 3 {
-				// Renewal is due with under 2 minutes left, so this access is due by the next tick, not at once.
+				// Just outlasts the 2-minute deadline a renewal must cover, so it is due again by the next tick.
 				return 2*time.Minute + time.Second, nil
 			}
 			return 0, fmt.Errorf("inert outage: %w", agents.ErrRenewalUnavailable)
@@ -486,19 +516,63 @@ func TestNativeBrokerResetsTheBackoffAfterARenewal(t *testing.T) {
 	})
 }
 
-// An outage that outlasts the access ends the run's access when the access expires, not before, and
-// asks the provider only on the backoff schedule, never on every tick.
+// Renewal starts 10 minutes before the access expires, so an outage of several minutes inside that lead
+// passes: the box keeps the access it holds, the renewal is tried again at most a minute apart, and the
+// first attempt after the outage gets the box a renewed access.
+func TestNativeBrokerRidesOutAnOutageInsideTheLead(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		var calls atomic.Int32
+		_, snapshot := nativeRenewalRun(t, 12*time.Minute, func() (time.Duration, error) {
+			calls.Add(1)
+			if time.Since(start) < 8*time.Minute {
+				return 0, fmt.Errorf("inert outage: %w", agents.ErrRenewalUnavailable)
+			}
+			return time.Hour, nil
+		})
+		// Nothing is due for 2 minutes. Then the provider stays down for 6: the renewal is tried at 120 s,
+		// again 5, 10, 20 and 40 s apart, then every minute, until the attempt at 495 s gets through.
+		attempts := map[int]bool{120: true, 125: true, 135: true, 155: true}
+		for at := 195; at <= 495; at += 60 {
+			attempts[at] = true
+		}
+		var want int32
+		for elapsed := 5; elapsed <= 540; elapsed += 5 {
+			time.Sleep(5 * time.Second)
+			synctest.Wait()
+			if attempts[elapsed] {
+				want++
+			}
+			access := "inert-first-access"
+			if elapsed >= 495 {
+				access = "inert-renewed-access"
+			}
+			if got := snapshot(); calls.Load() != want || got.Revoked || got.Credential != access {
+				t.Fatalf("after %d s: %d provider calls (want %d), snapshot revoked %v serving %q; want %q",
+					elapsed, calls.Load(), want, got.Revoked, got.Credential, access)
+			}
+		}
+	})
+}
+
+// An outage that outlasts the lead ends the run's access when the access expires, not before, and asks
+// the provider only on the backoff schedule, at most once a minute, never on every tick.
 func TestNativeBrokerRevokesAnAccessThatExpiresDuringAnOutage(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var calls atomic.Int32
-		expiry := time.Now().Add(90 * time.Second)
-		_, snapshot := nativeRenewalRun(t, 90*time.Second, func() (time.Duration, error) {
+		expiry := time.Now().Add(10 * time.Minute)
+		_, snapshot := nativeRenewalRun(t, 10*time.Minute, func() (time.Duration, error) {
 			calls.Add(1)
 			return 0, fmt.Errorf("inert outage: %w", agents.ErrRenewalUnavailable)
 		})
-		attempts := map[int]bool{5: true, 10: true, 20: true, 40: true, 80: true} // 5, 10, 20 and 40 s apart; the next would be past the expiry
+		// Due at the first tick, then tried again 5, 10, 20 and 40 s apart, then every minute; the attempt
+		// after the one at 560 s would be past the expiry.
+		attempts := map[int]bool{5: true, 10: true, 20: true, 40: true, 80: true}
+		for at := 140; at <= 560; at += 60 {
+			attempts[at] = true
+		}
 		var want int32
-		for elapsed := 5; elapsed < 90; elapsed += 5 {
+		for elapsed := 5; elapsed < 600; elapsed += 5 {
 			time.Sleep(5 * time.Second)
 			synctest.Wait()
 			if attempts[elapsed] {
@@ -518,21 +592,22 @@ func TestNativeBrokerRevokesAnAccessThatExpiresDuringAnOutage(t *testing.T) {
 		}
 		time.Sleep(3 * time.Minute)
 		synctest.Wait()
-		if calls.Load() != 5 || snapshot().Revision != expired.Revision {
-			t.Fatalf("the run kept working after its access expired: %d provider calls", calls.Load())
+		if calls.Load() != want || snapshot().Revision != expired.Revision {
+			t.Fatalf("the run kept working after its access expired: %d provider calls, want %d", calls.Load(), want)
 		}
 	})
 }
 
-// A refused grant ends the run's access at once and is never sent again.
+// A refused grant ends the run's access at once, although the access it holds has minutes left, and is
+// never sent again.
 func TestNativeBrokerRevokesARefusedGrantWithoutRetrying(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var calls atomic.Int32
-		_, snapshot := nativeRenewalRun(t, 90*time.Second, func() (time.Duration, error) {
+		_, snapshot := nativeRenewalRun(t, 9*time.Minute, func() (time.Duration, error) {
 			calls.Add(1)
 			return 0, agents.ErrRenewalRefused
 		})
-		time.Sleep(5 * time.Second)
+		time.Sleep(5 * time.Second) // inside the lead, so the first tick renews
 		synctest.Wait()
 		refused := snapshot()
 		if calls.Load() != 1 || !refused.Revoked || refused.Credential != "" {
@@ -542,6 +617,62 @@ func TestNativeBrokerRevokesARefusedGrantWithoutRetrying(t *testing.T) {
 		synctest.Wait()
 		if calls.Load() != 1 || snapshot().Revision != refused.Revision {
 			t.Fatalf("a refused grant was retried: %d provider calls", calls.Load())
+		}
+	})
+}
+
+// A renewed access is renewed again halfway through the lifetime it was issued with, never more than
+// 10 minutes or less than the 2-minute deadline before it expires. One issued for little more than the
+// lead is not renewed at every tick, and one shorter than the lead is served, since a renewal only has
+// to outlast the deadline.
+func TestNativeBrokerRenewsAnAccessHalfwayThroughItsLifetime(t *testing.T) {
+	for _, tc := range []struct {
+		lifetime time.Duration
+		attempts []int // seconds; the first renews the 9-minute access the run starts with
+	}{
+		{5 * time.Minute, []int{5, 155, 305, 455}},
+		{10*time.Minute + 3*time.Second, []int{5, 310}},
+		{11 * time.Minute, []int{5, 335}},
+		{time.Hour, []int{5}},
+	} {
+		t.Run(tc.lifetime.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var calls atomic.Int32
+				_, snapshot := nativeRenewalRun(t, 9*time.Minute, func() (time.Duration, error) {
+					calls.Add(1)
+					return tc.lifetime, nil
+				})
+				var want int32
+				for elapsed := 5; elapsed <= 600; elapsed += 5 {
+					time.Sleep(5 * time.Second)
+					synctest.Wait()
+					if slices.Contains(tc.attempts, elapsed) {
+						want++
+					}
+					if got := snapshot(); calls.Load() != want || got.Revoked || got.Credential != "inert-renewed-access" {
+						t.Fatalf("after %d s: %d provider calls (want %d), snapshot revoked %v serving %q; want the renewed access",
+							elapsed, calls.Load(), want, got.Revoked, got.Credential)
+					}
+				}
+			})
+		})
+	}
+}
+
+// An access the account cannot renew is served past the lead without asking the provider, and ends
+// once it no longer covers the 2-minute deadline.
+func TestNativeBrokerServesAnAccessItCannotRenewUntilTheDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, snapshot := nativeRenewalRun(t, 9*time.Minute, nil)
+		time.Sleep(415 * time.Second)
+		synctest.Wait()
+		if got := snapshot(); got.Revoked || got.Credential != "inert-first-access" {
+			t.Fatalf("with 2 minutes 5 s left: snapshot revoked %v serving %q; want the access served", got.Revoked, got.Credential)
+		}
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if got := snapshot(); !got.Revoked || got.Credential != "" {
+			t.Fatalf("with 2 minutes left: snapshot revoked %v serving %q; want it revoked", got.Revoked, got.Credential)
 		}
 	})
 }
@@ -581,7 +712,7 @@ func TestNativeBrokerRevokesANewSignInWhileARenewalWaits(t *testing.T) {
 		})
 		time.Sleep(10 * time.Second) // renewals fail at 5 s and 10 s; the next waits until 20 s
 		synctest.Wait()
-		if signedIn := signInInertGemini(t, run.cfg, run.accounts[0].agent, "inert-second-access", time.Hour); signedIn.Epoch == run.accounts[0].record.Epoch {
+		if signedIn := signInInertGemini(t, run.cfg, run.accounts[0].agent, "inert-second-access", time.Hour, true); signedIn.Epoch == run.accounts[0].record.Epoch {
 			t.Fatalf("the host sign-in kept epoch %d", signedIn.Epoch)
 		}
 		time.Sleep(5 * time.Second)
@@ -656,6 +787,173 @@ func TestNativeBrokerRevokesAnAccountThatStaysBusy(t *testing.T) {
 	})
 }
 
+// Boxes that share an account take turns retrying. While the provider hangs, an attempt holds the
+// account's lock for the whole exchange; if each box retried on its own schedule, the others could not
+// read the account for over 2 minutes and would lose an access that is still valid.
+func TestNativeBrokerBoxesOnOneAccountTakeTurnsRetrying(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		var calls atomic.Int32
+		serve := nativeRenewalAccount(t, 12*time.Minute, func() (time.Duration, error) {
+			calls.Add(1)
+			if elapsed := time.Since(start); elapsed >= 2*time.Minute && elapsed < 6*time.Minute {
+				time.Sleep(20 * time.Second) // the exchange hangs until the request times out
+				return 0, fmt.Errorf("inert hang: %w", agents.ErrRenewalUnavailable)
+			}
+			return time.Hour, nil
+		})
+		const boxes = 6
+		var snapshots []func() networkgateway.NativeAccessSnapshot
+		for box := range boxes {
+			_, snapshot := serve(time.Duration(box) * 5 * time.Second / boxes) // separate processes tick at different moments
+			snapshots = append(snapshots, snapshot)
+		}
+		time.Sleep(9 * time.Minute)
+		synctest.Wait()
+		for box, snapshot := range snapshots {
+			if got := snapshot(); got.Revoked || got.Credential != "inert-renewed-access" {
+				t.Errorf("box %d at 9:00: snapshot revoked %v serving %q; want the renewed access", box, got.Revoked, got.Credential)
+			}
+		}
+		// One exchange per retry, each waiting after the last one ended: those from 2:00, 2:25, 2:55,
+		// 3:35, 4:35 and 5:55 hang, the one at 7:15 gets through.
+		if got := calls.Load(); got != 7 {
+			t.Errorf("%d provider calls; want 7, one per retry rather than one per box", got)
+		}
+	})
+}
+
+// nativeRetryWait is the retry wait a failed exchange at the given time leaves for the record.
+func nativeRetryWait(record *accountAuthority, at time.Time, delay time.Duration) []byte {
+	data, _ := json.Marshal(accountRetry{Epoch: record.Epoch, Revision: record.Revision, At: at.UnixMilli(), Delay: delay.Milliseconds()})
+	return data
+}
+
+// writeNativeRetry puts data where the run's account keeps its retry wait.
+func writeNativeRetry(t *testing.T, run *nativeRun, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(run.cfg.ConfigDir, "gemini", "credentials", "work", accountRetryName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A retry wait never holds off a renewal the 2-minute deadline needs: with the access inside it, the
+// exchange is made although another run's failure asked the account to wait a minute.
+func TestNativeBrokerRenewsInsideTheDeadlineDespiteARetryWait(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		run, snapshot := nativeRenewalRun(t, 90*time.Second, func() (time.Duration, error) {
+			calls.Add(1)
+			return time.Hour, nil
+		})
+		writeNativeRetry(t, run, nativeRetryWait(run.accounts[0].record, time.Now(), time.Minute))
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if got := snapshot(); calls.Load() != 1 || got.Revoked || got.Credential != "inert-renewed-access" {
+			t.Fatalf("with 85 s left and a minute's wait: %d provider calls, snapshot revoked %v serving %q; want the access renewed",
+				calls.Load(), got.Revoked, got.Credential)
+		}
+	})
+}
+
+// Whether a renewal can wait is judged once the account's lock is held: an access that slipped inside
+// the deadline while the run waited 20 s for the lock is renewed, although the account asked to wait.
+func TestNativeBrokerJudgesARetryWaitOnceTheLockIsHeld(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		run, snapshot := nativeRenewalRun(t, 2*time.Minute+20*time.Second, func() (time.Duration, error) {
+			calls.Add(1)
+			return time.Hour, nil
+		})
+		writeNativeRetry(t, run, nativeRetryWait(run.accounts[0].record, time.Now(), time.Minute))
+		holder := holdNativeAccount(t, run)
+		time.Sleep(25 * time.Second) // the renewal due at 5 s, with 2:15 left, waits for the lock
+		if err := holder.Close(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second) // past the run's next try for the lock, which comes every 20 ms
+		synctest.Wait()
+		if got := snapshot(); calls.Load() != 1 || got.Revoked || got.Credential != "inert-renewed-access" {
+			t.Fatalf("with under 2 minutes left once the lock was held: %d provider calls, snapshot revoked %v serving %q; want the access renewed",
+				calls.Load(), got.Revoked, got.Credential)
+		}
+	})
+}
+
+// A retry wait Coop could not have written paces nothing: one that ends more than a minute from now
+// was written before the host clock stepped back, and one that cannot be read is no reason to wait.
+func TestNativeBrokerIgnoresARetryWaitItCannotTrust(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		wait func(*accountAuthority) []byte
+	}{
+		{"written before a clock step back", func(record *accountAuthority) []byte {
+			return nativeRetryWait(record, time.Now().Add(10*time.Minute), time.Minute)
+		}},
+		{"corrupt", func(*accountAuthority) []byte { return []byte(`{"epoch":`) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var calls atomic.Int32
+				run, snapshot := nativeRenewalRun(t, 9*time.Minute, func() (time.Duration, error) {
+					calls.Add(1)
+					return time.Hour, nil
+				})
+				writeNativeRetry(t, run, tc.wait(run.accounts[0].record))
+				time.Sleep(5 * time.Second)
+				synctest.Wait()
+				if got := snapshot(); calls.Load() != 1 || got.Revoked || got.Credential != "inert-renewed-access" {
+					t.Fatalf("%d provider calls, snapshot revoked %v serving %q; want the access renewed at the first tick",
+						calls.Load(), got.Revoked, got.Credential)
+				}
+			})
+		})
+	}
+}
+
+// Removing the account deletes its retry wait along with the rest of its renewal state.
+func TestNativeBrokerRemovalDeletesTheRetryWait(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		run, _ := nativeRenewalRun(t, 9*time.Minute, func() (time.Duration, error) {
+			return 0, fmt.Errorf("inert outage: %w", agents.ErrRenewalUnavailable)
+		})
+		time.Sleep(5 * time.Second) // the first renewal fails and leaves a wait
+		synctest.Wait()
+		wait := filepath.Join(run.cfg.ConfigDir, "gemini", "credentials", "work", accountRetryName)
+		if _, err := os.Stat(wait); err != nil {
+			t.Fatalf("a failed exchange left no retry wait: %v", err)
+		}
+		if err := RemoveNativeAccount(t.Context(), run.cfg, "gemini", "work"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(wait); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("removal left the retry wait: %v", err)
+		}
+	})
+}
+
+// A wait left before a new sign-in does not hold off renewing the new one: it names the record that
+// failed, and a sign-in starts a new epoch.
+func TestNativeBrokerANewSignInIgnoresTheLastRetryWait(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		run, _ := nativeRenewalRun(t, 9*time.Minute, func() (time.Duration, error) {
+			if calls.Add(1) == 1 {
+				return 0, fmt.Errorf("inert outage: %w", agents.ErrRenewalUnavailable)
+			}
+			return time.Hour, nil
+		})
+		time.Sleep(5 * time.Second) // the first renewal fails and asks the account to wait until 10 s
+		synctest.Wait()
+		ag := run.accounts[0].agent
+		signInInertGemini(t, run.cfg, ag, "inert-second-access", 9*time.Minute, true)
+		now := time.Now()
+		if _, err := renewNativeAccount(t.Context(), run.cfg, ag, "work", now.Add(nativeRenewalLead), now.Add(nativeRenewalDeadline)); err != nil || calls.Load() != 2 {
+			t.Fatalf("renewing the new sign-in at 5 s: %v after %d provider calls; want it renewed, not waiting on the old failure", err, calls.Load())
+		}
+	})
+}
+
 // Only a failure that may pass is retried, and every error a failure joins must pass: a refused grant,
 // an unusable kept answer or a custody failure that comes with an outage is not retried.
 func TestNativeBrokerRetriesOnlyPassingRenewalFailures(t *testing.T) {
@@ -668,6 +966,7 @@ func TestNativeBrokerRetriesOnlyPassingRenewalFailures(t *testing.T) {
 		{"server error", fmt.Errorf("%w (HTTP 503)", agents.ErrRenewalUnavailable), true},
 		{"server error settled with nothing left", errors.Join(nil, fmt.Errorf("%w (HTTP 503)", agents.ErrRenewalUnavailable)), true},
 		{"busy account", errAccountAuthorityBusy, true},
+		{"waiting out an exchange that just failed", errRenewalDeferred, true},
 		{"attempt timed out", context.DeadlineExceeded, true},
 		{"attempt timed out with its intent cleared", errors.Join(context.DeadlineExceeded, nil), true},
 		{"refused grant", agents.ErrRenewalRefused, false},

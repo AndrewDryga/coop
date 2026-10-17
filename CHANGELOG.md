@@ -202,14 +202,17 @@
   way to one of these files is a link, a folder, unreadable or over 1 MiB. The box skips one that
   is a link or a folder, so it hides nothing.
 
-- **A running box keeps working when a sign-in renewal fails for a moment.** Coop renews an agent's
-  sign-in during a run, shortly before its access expires. When the provider did not answer,
-  answered with a server error or a rate limit, or another Coop command was using the account, the
-  box lost access to the provider until it restarted. Now the box keeps the access it has while that
-  access is still valid, and Coop tries the renewal again a few times while that access lasts. The
-  box still loses access when the provider refuses the saved sign-in, when you sign in again or
-  remove the account, when its access expires before a renewal gets through, or when another command
-  keeps the account busy for more than about two minutes.
+- **A running box keeps working when a sign-in renewal fails for a few minutes.** Coop renewed an
+  agent's sign-in during a run only two minutes before its access expired. When the provider did not
+  answer, answered with a server error or a rate limit, or another Coop command was using the
+  account, the box lost access to the provider until it restarted. Now Coop starts renewing ten
+  minutes before the access expires, so a box rides out a provider outage of up to about nine
+  minutes. When a renewal fails that way, the box keeps the access it has, and Coop tries again, at
+  most a minute apart, while that access lasts. Boxes that share an account take turns, so the
+  provider is asked once per try rather than once per box. The box still loses access when the
+  provider refuses the saved sign-in, when you sign in again or remove the account, when its access
+  expires before a renewal gets through, or when another command keeps the account busy for more
+  than about two minutes.
 
 - **The daily cleanup no longer removes files that boxes on another Docker daemon use.** It asks
   Docker which files boxes use, but only the current daemon answers. After `docker context use`, or
