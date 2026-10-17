@@ -88,12 +88,16 @@ func Isolate(tests func() int) int {
 	// up to the home folder. A test's project lives in the temporary folder, outside the developer's
 	// home, so the walk climbed to / and a stray .coopignore anywhere above the temporary folder, as
 	// in /tmp on a CI runner, changed what the tests saw. A home inside this folder puts the
-	// temporary folder above it, where the walk stops.
-	if !live {
+	// temporary folder above it, where the walk stops. A home that holds the temporary folder, or
+	// lies inside it, bounds the walk by itself: that is a home a test chose, as for a process it
+	// starts as a fixture (a fake docker running this binary again), which checks it keeps it.
+	if !live && !nestsWithTemp(os.Getenv(homeEnv)) {
 		env[homeEnv] = filepath.Join(root, "home")
 	}
-	// The go command and Docker find their settings and caches under the home folder and, on Linux,
-	// XDG_CONFIG_HOME. Tests build fixture binaries and run Docker, so both keep the developer's.
+	// The go command finds its settings and caches under the home folder and, on Linux,
+	// XDG_CONFIG_HOME. Tests build fixture binaries with it, so it keeps the developer's. Docker is
+	// left alone: Coop's own Docker code must see the environment a person's coop sees, and with no
+	// config folder of its own the docker CLI reaches the default socket.
 	for key, dir := range toolFolders() {
 		if os.Getenv(key) == "" {
 			env[key] = dir
@@ -154,11 +158,38 @@ func developerHome(env, fallback string) string {
 	return filepath.Join(home, fallback)
 }
 
-// toolFolderEnvs are the variables that name the go command's and Docker's folders.
-var toolFolderEnvs = map[string]bool{"GOENV": true, "GOCACHE": true, "GOPATH": true, "DOCKER_CONFIG": true}
+// nestsWithTemp reports whether home holds the temporary folder or lies inside it, however either
+// is spelled through links.
+func nestsWithTemp(home string) bool {
+	if home == "" || !filepath.IsAbs(home) {
+		return false
+	}
+	spellings := func(path string) []string {
+		out := []string{filepath.Clean(path)}
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			out = append(out, resolved)
+		}
+		return out
+	}
+	within := func(dir, path string) bool {
+		rel, err := filepath.Rel(dir, path)
+		return err == nil && (rel == "." || filepath.IsLocal(rel))
+	}
+	for _, h := range spellings(home) {
+		for _, tmp := range spellings(os.TempDir()) {
+			if within(h, tmp) || within(tmp, h) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
-// toolFolders are the folders those tools use by default, worked out before Isolate moves HOME and
-// XDG_CONFIG_HOME, as each tool works them out.
+// toolFolderEnvs are the variables that name the go command's folders.
+var toolFolderEnvs = map[string]bool{"GOENV": true, "GOCACHE": true, "GOPATH": true}
+
+// toolFolders are the folders the go command uses by default, worked out before Isolate moves HOME
+// and XDG_CONFIG_HOME, as the go command works them out.
 func toolFolders() map[string]string {
 	folders := map[string]string{}
 	if dir, err := os.UserConfigDir(); err == nil {
@@ -169,7 +200,6 @@ func toolFolders() map[string]string {
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		folders["GOPATH"] = filepath.Join(home, "go")
-		folders["DOCKER_CONFIG"] = filepath.Join(home, ".docker")
 	}
 	return folders
 }

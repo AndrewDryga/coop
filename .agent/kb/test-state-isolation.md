@@ -54,9 +54,12 @@ It moves HOME too, into the state folder (`<root>/home`), except for a live chil
 the temporary folder, outside the developer's home, so the walk climbed to `/` and a stray
 `.coopignore` anywhere above TMPDIR changed what the tests saw (dozens of cli, forkctl and preset
 tests with one holding `*`). With home inside the state folder, TMPDIR lies above it and the walk
-stops there. Before moving anything it pins `GOENV`, `GOCACHE`, `GOPATH` and `DOCKER_CONFIG`, when
-unset, to where those tools would have looked, so fixture builds and Docker keep the developer's
-settings; `teststate.DeveloperHome()` is the home the binary started with, for a test that checks
+stops there. A HOME that holds TMPDIR or lies inside it already bounds the walk and stays: that
+is a home a test chose, as for the runtime package's fake docker, which runs the test binary again
+with its own HOME and TMPDIR and checks it keeps them. Before moving anything it pins `GOENV`, `GOCACHE` and `GOPATH`, when unset, to where
+the go command would have looked, so fixture builds keep the developer's settings. It leaves
+`DOCKER_CONFIG` unset: the runtime package's build tests require a docker environment without it,
+and the docker CLI then reaches the default socket; `teststate.DeveloperHome()` is the home the binary started with, for a test that checks
 Coop stays out of the real one. To check a package: `mkdir -p /tmp/stray/tmp && echo '*' >
 /tmp/stray/.coopignore && TMPDIR=/tmp/stray/tmp go test ./internal/<pkg>`.
 

@@ -35,7 +35,7 @@ func freshBinary(t *testing.T) {
 	t.Cleanup(func() { developerHomes = saved })
 	t.Setenv(rootEnv, "")
 	t.Setenv(LiveEnv, "")
-	t.Setenv(homeEnv, os.Getenv(homeEnv))
+	t.Setenv(homeEnv, DeveloperHome()) // a fresh binary starts with the developer's home
 	for key := range toolFolderEnvs {
 		t.Setenv(key, "")
 	}
@@ -45,6 +45,21 @@ func freshBinary(t *testing.T) {
 	for _, x := range xdgHomes {
 		t.Setenv(x.env, "")
 	}
+}
+
+// A home that lies inside the temporary folder already bounds the .coopignore walk, and a fixture
+// process (a fake docker running this binary again with the home it was given) checks it keeps it,
+// so Isolate leaves such a home as it is.
+func TestIsolateKeepsAHomeInsideTheTemporaryFolder(t *testing.T) {
+	freshBinary(t)
+	home := t.TempDir()
+	t.Setenv(homeEnv, home)
+	Isolate(func() int {
+		if got := os.Getenv(homeEnv); got != home {
+			t.Errorf("HOME = %s, want the home inside the temporary folder kept: %s", got, home)
+		}
+		return 0
+	})
 }
 
 // A fresh binary gets every root inside one new folder, gone once the tests return.
