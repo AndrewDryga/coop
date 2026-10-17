@@ -23,6 +23,9 @@ import (
 
 const accountAuthorityLimit = 12 << 20
 
+// errAccountAuthorityBusy is another process holding the account's lock for longer than this one waits.
+var errAccountAuthorityBusy = errors.New("canonical credential transaction is busy — retry")
+
 type accountAuthority struct {
 	Version   int               `json:"version"`
 	Provider  string            `json:"provider"`
@@ -233,7 +236,7 @@ func (r *accountAuthorityRoot) lock(ctx context.Context) (*os.File, error) {
 		}
 		if !time.Now().Before(until) {
 			_ = lock.Close()
-			return nil, errors.New("canonical credential transaction is busy — retry")
+			return nil, errAccountAuthorityBusy
 		}
 		err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		if err == nil {

@@ -3,7 +3,7 @@ name: renew-before-access-only-projection
 description: refreshable credentials renew in one canonical host authority before and during brokered runs
 scope: security
 sources: [internal/agent/agent.go, internal/agent/native_credentials.go, internal/agent/codex.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/account_renewal.go, internal/box/native_broker.go, internal/sessionsvc/acp.go]
-check: "go test ./internal/box -run 'TestAccountRenewalPersistsIntentResponseAndShortGrant|TestAccountRenewalCompletesAKeptAnswerWithoutTheProvider|TestAccountRenewalRetriesAfterAnExchangeThatKeptNothing|TestAccountRenewalUnusableKeptAnswerRefuses|TestNativeRunPublishesGuardOnlyExpiringAccess|TestNativeHostSignInRecoversUncertainRenewal'"
+check: "go test ./internal/box -run 'TestAccountRenewalPersistsIntentResponseAndShortGrant|TestAccountRenewalCompletesAKeptAnswerWithoutTheProvider|TestAccountRenewalRetriesAfterAnExchangeThatKeptNothing|TestAccountRenewalUnusableKeptAnswerRefuses|TestNativeRunPublishesGuardOnlyExpiringAccess|TestNativeHostSignInRecoversUncertainRenewal|TestNativeBroker'"
 updated: 2026-10-16
 ---
 
@@ -26,11 +26,31 @@ is completed, never replaced by a retry with the grant it spent. An exchange tha
 retried: its grant is either unspent or lost either way. Only a refused grant (a 400/401
 invalid_grant family answer) or a kept answer that cannot be used asks for a host sign-in.
 
+During a run, a renewal that fails only for passing reasons (`ErrRenewalUnavailable`: no answer, a
+5xx or 429, a cut-off answer that kept nothing; or the account lock staying busy) keeps serving the
+held access while it is valid and retries on a per-run backoff, 5 s doubling to 1 min. Renewal
+starts with under 2 minutes left, so the 1-minute cap never binds before the access expires. Every
+error a failure joins must be one of these: a passing error joined to a custody failure is not
+retried. The ticks in between only read the account, so they never ask the provider. A lock that
+stays busy revokes about 2 minutes after the last locked read, since only a read sees a sign-in or
+removal. A refused grant, an unusable kept answer, an epoch change, an expired access and any
+unclassified error revoke at once. Never retry a refused grant, and never serve an expired access
+just because it is still `Ready`.
+
 Pre-cutover quota inspection may still renew the original legacy store under the same writer
 fences as cutover. It must never fork that authority, overlap canonical service, or fall back from
 a revoked canonical account. This narrow maintenance path is not a coding-home projection.
 
 ## Changelog
+- 2026-10-16 — the native broker retries a renewal that failed for a passing reason instead of
+  revoking the box (native_broker.go `serve`, `renewalRetryable`). Classification is an allowlist
+  that every error a failure joins must pass: `ErrRenewalUnavailable` (no answer, 5xx, 429),
+  `errAccountAuthorityBusy` and the attempt deadline. A refused grant, an unusable kept answer or a
+  custody failure joined to one of them still revokes. A busy lock re-serves the held access for at
+  most 2 minutes after the last locked read. `publish` now refuses an access past its expiry even
+  when `Ready`. Swept the broker loop, prepare, the four adapters' renewal errors,
+  `renewAccountAuthority`'s joined errors and the remote-session path (launch-time only,
+  unchanged); check now includes the `TestNativeBroker` family.
 - 2026-10-16 — interrupted renewals settle instead of wedging (account_renewal.go settleRenewal): only
   200 answers are kept, with their arrival time; a kept answer completes through the adapter's
   `Complete` at the next locked read; nothing kept clears for a retry; the exchange outlives its

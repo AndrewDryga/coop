@@ -100,8 +100,10 @@ func TestNativeEnvironmentOnlyRunsKeepKeysOutOfPublicSeeds(t *testing.T) {
 			if err := RemoveNativeAccount(ctx, cfg, tc.provider, "default"); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := run.refresh(ctx, run.accounts[0]); err == nil {
-				t.Fatal("env-only run ignored account revocation")
+			for _, renew := range []bool{true, false} {
+				if _, err := run.refresh(ctx, run.accounts[0], renew); err == nil {
+					t.Fatal("env-only run ignored account revocation")
+				}
 			}
 		})
 	}

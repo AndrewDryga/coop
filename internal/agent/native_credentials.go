@@ -218,6 +218,13 @@ var nativeRefreshClient = &http.Client{Timeout: 20 * time.Second,
 // refresh_token_expired, _reused or _invalidated): only a fresh sign-in helps.
 var ErrRenewalRefused = errors.New("the provider no longer accepts this account's saved sign-in; run coop login")
 
+// ErrRenewalUnavailable is a renewal the provider did not answer, answered with a server error or a
+// rate limit, or whose answer was cut off: nothing usable came back, so a later renewal may ask again.
+// When part of a cut-off 200 answer arrived, that part was kept, and the kept answer decides instead:
+// the renewal completes from it, or, when it cannot be used, the account refuses until a host sign-in
+// (errAccountRenewalUncertain in package box), which also ends a running box's access.
+var ErrRenewalUnavailable = errors.New("native renewal request failed")
+
 // renewalRefusal is ErrRenewalRefused for a 400 or 401 answer that names a refused grant: in the
 // OAuth "error" string, a nested "error.code" (OpenAI) or "error.type" (Claude), or a top-level
 // "code". Any other answer is nil: it refused this request, not the grant.
@@ -271,7 +278,7 @@ func requestNativeRefresh(ctx context.Context, endpoint, contentType string, bod
 	request.Header.Set("Content-Type", contentType)
 	response, err := nativeRefreshClient.Do(request)
 	if err != nil {
-		return nil, errors.New("native renewal request failed")
+		return nil, ErrRenewalUnavailable
 	}
 	defer response.Body.Close()
 	raw, readErr := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
@@ -279,13 +286,18 @@ func requestNativeRefresh(ctx context.Context, endpoint, contentType string, bod
 		if refusal := renewalRefusal(response.StatusCode, raw); refusal != nil {
 			return nil, refusal
 		}
+		if response.StatusCode >= 500 || response.StatusCode == http.StatusTooManyRequests {
+			return nil, fmt.Errorf("%w (HTTP %d)", ErrRenewalUnavailable, response.StatusCode)
+		}
 		return nil, fmt.Errorf("native renewal refused (HTTP %d)", response.StatusCode)
 	}
 	if len(raw) != 0 {
 		_ = retain(bytes.Clone(raw[:min(len(raw), 1<<20)]))
 	}
 	if readErr != nil || len(raw) == 0 || len(raw) > 1<<20 {
-		return nil, errors.New("native renewal response incomplete")
+		// Whatever part of the answer arrived was kept; that kept answer, not this error, decides
+		// whether the account can be renewed again.
+		return nil, fmt.Errorf("%w: response incomplete", ErrRenewalUnavailable)
 	}
 	return raw, nil
 }

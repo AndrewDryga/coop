@@ -95,6 +95,47 @@ func TestNativeRefreshNamesARefusedGrant(t *testing.T) {
 	}
 }
 
+// A renewal the provider did not answer, answered with a server error or a rate limit, or whose answer
+// was cut off may be asked again later. Any other refusal is not marked retryable.
+func TestNativeRefreshNamesAnUnavailableProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		handler     http.HandlerFunc
+		unavailable bool
+	}{
+		{"server error", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }, true},
+		{"gateway page", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }, true},
+		{"rate limited", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTooManyRequests) }, true},
+		{"answer cut off", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Length", "64")
+			_, _ = io.WriteString(w, `{"access_token":`)
+		}, true},
+		{"refused grant", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+		}, false},
+		{"other request error", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"invalid_request"}`)
+		}, false},
+		{"forbidden", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := requestNativeRefresh(context.Background(), nativeRefreshAnswer(t, tc.handler), "application/json", []byte(`{}`), func([]byte) error { return nil })
+			if err == nil || errors.Is(err, ErrRenewalUnavailable) != tc.unavailable {
+				t.Fatalf("requestNativeRefresh error = %v, want unavailable=%v", err, tc.unavailable)
+			}
+		})
+	}
+	t.Run("no answer", func(t *testing.T) {
+		server := httptest.NewServer(http.NotFoundHandler())
+		server.Close()
+		if _, err := requestNativeRefresh(context.Background(), server.URL, "application/json", []byte(`{}`), func([]byte) error { return nil }); !errors.Is(err, ErrRenewalUnavailable) {
+			t.Fatalf("an unreachable provider = %v, want ErrRenewalUnavailable", err)
+		}
+	})
+}
+
 // A caller cancelled after the request left must still get the answer: the provider may already
 // have spent the grant it was sent.
 func TestNativeRefreshOutlivesItsCallersCancellation(t *testing.T) {

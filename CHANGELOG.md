@@ -104,13 +104,21 @@
   way to one of these files is a link, a folder, unreadable or over 1 MiB. The box skips one that
   is a link or a folder, so it hides nothing.
 
+- **A running box keeps working when a sign-in renewal fails for a moment.** Coop renews an agent's
+  sign-in during a run, shortly before its access expires. When the provider did not answer,
+  answered with a server error or a rate limit, or another Coop command was using the account, the
+  box lost access to the provider until it restarted. Now the box keeps the access it has while that
+  access is still valid, and Coop tries the renewal again a few times while that access lasts. The
+  box still loses access when the provider refuses the saved sign-in, when you sign in again or
+  remove the account, when its access expires before a renewal gets through, or when another command
+  keeps the account busy for more than about two minutes.
+
 - **An interrupted credential renewal no longer locks the account.** When a renewal of an agent's
   sign-in was cut short by Ctrl-C, a lost connection or a provider error, Coop refused that account
   until `coop login`. Now it finishes the renewal from the provider's answer when it got one, and
-  otherwise renews again on the next run; a box running at the time still loses access until it
-  restarts. Only an answer that refuses the saved sign-in, or one Coop kept but cannot use, asks for
-  `coop login`. An account or agent home whose first setup was interrupted is set up again instead of
-  asking you to restore a backup.
+  otherwise tries the renewal again. Only an answer that refuses the saved sign-in, or one Coop kept
+  but cannot use, asks for `coop login`. An account or agent home whose first setup was interrupted
+  is set up again instead of asking you to restore a backup.
 
 - **`coop init` no longer edits a `.gitignore` link.** An agent in a box can change files in your
   repository, so it could replace `.gitignore` with a link to a file such as `~/.zshrc`, and the

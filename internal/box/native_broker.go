@@ -41,6 +41,7 @@ type nativeRunAccount struct {
 	canonicalAccess   string
 	canonicalExpiry   time.Time
 	invalid           bool
+	served            *accountAuthority             // last record published as usable; published again, within 2 minutes of the last read, while the account is too busy to read
 	accessOverride    string                        // explicit default host-key selection, frozen for this run
 	ephemeral         *agents.NativeCredentialState // env-only authority never published as an account
 }
@@ -155,7 +156,9 @@ func (a *nativeRunAccount) inspect(record *accountAuthority) (agents.NativeCrede
 	return a.agent.NativeCredentials().Inspect(record.Artifacts, time.Now())
 }
 
-func (r *nativeRun) refresh(ctx context.Context, account *nativeRunAccount) (*accountAuthority, error) {
+// refresh reads the account's current record. With renew it also renews an access that expires within
+// two minutes, which is the only step that contacts the provider.
+func (r *nativeRun) refresh(ctx context.Context, account *nativeRunAccount, renew bool) (*accountAuthority, error) {
 	if account.ephemeral != nil {
 		_, exists, err := readNativeAccount(ctx, r.cfg, account.agent, account.account)
 		if err != nil || exists {
@@ -163,7 +166,39 @@ func (r *nativeRun) refresh(ctx context.Context, account *nativeRunAccount) (*ac
 		}
 		return account.record, nil
 	}
+	if !renew {
+		record, _, err := readNativeAccount(ctx, r.cfg, account.agent, account.account)
+		return record, err
+	}
 	return renewNativeAccount(ctx, r.cfg, account.agent, account.account, time.Now().Add(2*time.Minute))
+}
+
+// renewalRetryable reports a renewal that failed only for passing reasons: the provider did not answer,
+// it answered with a server error or a rate limit, or another process held the account until this
+// attempt ran out of time. A retry cannot replay a spent grant, because every renewal first settles
+// what the last one kept. Every error a failure joins must pass, not just one: an outage joined to a
+// custody failure, a refused grant or a kept answer Coop cannot use still ends the run's access, as
+// does anything unclassified, since retrying only what is known to pass keeps the rest closed.
+func renewalRetryable(err error) bool {
+	switch err {
+	case nil:
+		return false
+	case agents.ErrRenewalUnavailable, errAccountAuthorityBusy, context.DeadlineExceeded:
+		return true
+	}
+	switch err := err.(type) {
+	case interface{ Unwrap() []error }:
+		joined := err.Unwrap()
+		for _, err := range joined {
+			if !renewalRetryable(err) {
+				return false
+			}
+		}
+		return len(joined) > 0
+	case interface{ Unwrap() error }:
+		return renewalRetryable(err.Unwrap())
+	}
+	return false
 }
 
 // The receipt is outside the writable home. Native sign-in/out is not allowed
@@ -635,7 +670,7 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 				AccountHeaders: realHeaders, ClientAccountHeaders: publicHeaders})
 		}
 		plan.Accounts = append(plan.Accounts, selected)
-		current, err := r.refresh(ctx, account)
+		current, err := r.refresh(ctx, account, true)
 		if err != nil {
 			return err
 		}
@@ -656,26 +691,58 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 	lifetime, cancel := context.WithCancel(ctx)
 	r.cancel = cancel
 	for _, account := range r.accounts {
-		r.workers.Go(func() {
-			ticker := time.NewTicker(5 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-lifetime.Done():
-					return
-				case <-ticker.C:
-				}
-				renewal, done := context.WithTimeout(lifetime, 30*time.Second)
-				record, err := r.refresh(renewal, account)
-				done()
-				publishErr := r.publish(account, record, err)
-				if err != nil || publishErr != nil {
-					return
-				}
-			}
-		})
+		r.workers.Go(func() { r.serve(lifetime, account) })
 	}
 	return nil
+}
+
+// serve publishes the account's access for the guard every 5 s and renews it before it expires, until
+// the run ends or the account can no longer be served. When a renewal fails for a passing reason, the
+// access the account holds stays in service while it is still valid, and the renewal is tried again
+// after 5 s, then 10, 20 and 40 s, at most a minute apart: an outage asks the provider once per
+// attempt, not once per tick. The ticks in between read the account without renewing it, so a host
+// sign-in or removal still ends this run's access at the next tick that reads it. A tick reads nothing
+// while another process holds the account's lock; the access last served is then published again only
+// within 2 minutes of the last read, since only a read would notice a sign-in or removal.
+func (r *nativeRun) serve(ctx context.Context, account *nativeRunAccount) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	read := time.Now() // when the account was last read; prepare has just read it
+	var delay time.Duration
+	var retry <-chan time.Time // set while a failed renewal waits; it fires when the renewal may be tried again
+	for {
+		var renew bool
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			renew = retry == nil
+		case <-retry:
+			renew, retry = true, nil
+		}
+		attempt, done := context.WithTimeout(ctx, 30*time.Second)
+		record, err := r.refresh(attempt, account, renew)
+		done()
+		if record != nil {
+			read = time.Now()
+		}
+		switch {
+		case err != nil && renewalRetryable(err):
+			if renew {
+				delay = min(max(2*delay, 5*time.Second), time.Minute)
+				retry = time.After(delay)
+			}
+			if record == nil && time.Since(read) < 2*time.Minute {
+				record = account.served
+			}
+			err = nil
+		case err == nil && renew:
+			delay = 0
+		}
+		if r.publish(account, record, err) != nil || account.invalid {
+			return
+		}
+	}
 }
 
 func (r *nativeRun) publish(account *nativeRunAccount, record *accountAuthority, cause error) error {
@@ -687,10 +754,14 @@ func (r *nativeRun) publish(account *nativeRunAccount, record *accountAuthority,
 	if !account.invalid && cause == nil && record != nil && !record.Revoked && record.Epoch == account.record.Epoch &&
 		record.Principal == account.record.Principal && record.Selection == account.record.Selection {
 		state, err := account.inspect(record)
-		if err == nil && state.Ready && record.Revision >= account.canonicalRevision &&
+		now := time.Now()
+		// Ready includes an expired access that could still be renewed. Serve only one the provider
+		// still takes: an access that expires while renewals keep failing ends the run's access here.
+		usable := state.AccessToken != "" && (state.ExpiresAt.IsZero() || state.ExpiresAt.After(now))
+		if err == nil && state.Ready && usable && record.Revision >= account.canonicalRevision &&
 			(record.Revision != account.canonicalRevision || state.AccessToken == account.canonicalAccess && state.ExpiresAt.Equal(account.canonicalExpiry)) {
 			canonicalState = state
-			snapshot.Expires = time.Now().Add(time.Minute)
+			snapshot.Expires = now.Add(time.Minute)
 			if !state.ExpiresAt.IsZero() && state.ExpiresAt.Before(snapshot.Expires) {
 				snapshot.Expires = state.ExpiresAt
 			}
@@ -712,6 +783,7 @@ func (r *nativeRun) publish(account *nativeRunAccount, record *accountAuthority,
 	if err == nil {
 		account.invalid = snapshot.Revoked
 		if !snapshot.Revoked {
+			account.served = record
 			account.canonicalRevision = record.Revision
 			account.canonicalAccess = canonicalState.AccessToken
 			account.canonicalExpiry = canonicalState.ExpiresAt
