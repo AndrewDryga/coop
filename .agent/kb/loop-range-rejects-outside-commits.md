@@ -2,8 +2,8 @@
 name: loop-range-rejects-outside-commits
 description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/loop/loop.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go]
-updated: 2026-08-25
+sources: [internal/tasks/audit.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/tasks/pending_review.go, internal/loop/loop.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go]
+updated: 2026-10-17
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the
 proposed HEAD. That range is a *time* window on one branch, not a set of commits the agent authored
@@ -44,6 +44,19 @@ task's binding is a narrower exception that still rejects — proven end to end 
 `TestProviderScriptedLoopReviewProcess/worker_cannot_forge_review_authority_for_an_archived_task`
 (`scripted_loop_review_process_e2e_test.go`), which caught a first cut of this fix that forgot
 `baselineDoneIDs` and tolerated a forged archived-task binding it should have rejected.
+
+Pending final review reads trailers under the same rule: it finds a subject's commit only between
+the run base the host recorded and HEAD, and needs exactly one there, so a trailer in older history
+never counts and a forged second one in range keeps the review from starting
+([[signoff-scope-is-run-anchored]]). The one exception is a host-receipted completion, never box
+work, whose task was committed before the run: it is anchored just before its single commit in the
+whole branch. Any new enrollment needs the trailer on exactly one commit in the whole branch, like
+the box completion check's reachable count: a commit a box planted for a task it does not hold is
+tolerated here with a warning, and binding it would leave the human's own commit unreviewed. An
+iteration that forges one and completes its own task is already rejected by the check above,
+because the pending subject was archived before it ran.
+`TestProviderScriptedLoopPendingReviewRejectsAForgedSubjectCommit` proves both halves end to end:
+the forging iteration is rejected, and the next loop counts two commits and starts no reviewer.
 
 The single-writer rule for a loop's checkout still covers **commits**, not just file edits — for two
 narrower reasons now instead of one. A commit that touches a task this iteration also leases,
@@ -121,6 +134,13 @@ See [[task-authority-model]] for the full four-authority map and the lock-orderi
 authority is acquired before lease authority, never the reverse) this ref-authority window is half of.
 
 ## Changelog
+- 2026-10-17 — a new pending-review enrollment needs the trailer on one commit in the whole branch,
+  so a planted commit cannot stand in for the human's own (second review of the same task).
+- 2026-10-17 — noted the host-receipted exception: a task committed before the run and completed by
+  another session is anchored at its one commit in the branch (review fix for the same task).
+- 2026-10-16 — pending final review now finds commits by trailer too, only in its host-recorded
+  range; noted it beside the foreign-binding check, which is unchanged, and named the e2e that
+  forges a pending subject's trailer.
 - 2026-08-25 — replaced Fleet terminology in the current concurrency contract with direct parallel
   forks; the per-worktree lock scope and ordering are unchanged.
 - 2026-08-01 — created: a host commit made during an iteration rejected that iteration's completed task; documents that the range is a time window and that single-writer covers commits.

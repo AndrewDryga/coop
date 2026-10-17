@@ -33,7 +33,13 @@ A cron job or CI can branch on the loop's exit code without parsing its output:
 
 `--max-tasks` pauses the loop; it does not certify the queue as done. A successful pause exits `0`
 and leaves final review pending. Run the same command without the limit to resume that review
-before treating the work as verified complete.
+before treating the work as verified complete. The resumed review finds each task's commit by its
+`Coop-Task: <id>` trailer among the commits made since the run started, so signing them in between
+is fine. A task is reviewed again if a commit its review saw changed after the review passed,
+including a repair commit that was on top when it was reviewed. If a task has no such commit or
+more than one, the loop stops, names it and lists the commits, instead of starting the review. A task another session committed before the run started and
+completes during it is reviewed at its one commit in the branch, and the reviewer is shown that
+commit.
 
 Each controller leases its exact task with a host-only lock under `~/.local/state/coop/task-leases/` while the agent runs. A second loop skips a held task and can take independent todo work. `coop tasks watch` shows a short `busy`, `stalled` or `unleased` state from metadata beside that lock, without exposing run IDs or PIDs. A stale heartbeat is only a diagnostic. The loop adopts a task only once its kernel lock is available, and then right away. It never adopts one by timeout. An unleased in-progress folder is adopted through that same lock.
 

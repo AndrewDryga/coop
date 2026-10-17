@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -376,6 +377,33 @@ func loopChanges(repo, base, head string, gateSources []string) loopChangeSet {
 		cs.tasks = append(cs.tasks, taskChanges{id: id, commits: commits, files: commitFiles(repo, commits)})
 	}
 	return cs
+}
+
+// withEarlierReviewCommits adds the commit of each subject anchored before the run, a task another
+// session committed before the loop started, so the review's change block and diff show what its
+// verdict accepts. A task already in the set keeps its entry.
+func withEarlierReviewCommits(repo string, cs loopChangeSet, subjects []tasks.PendingReviewRecord) (loopChangeSet, error) {
+	earlier, err := tasks.PendingReviewEarlierCommits(repo, subjects)
+	if err != nil || len(earlier) == 0 {
+		return cs, err
+	}
+	have := map[string]bool{}
+	for _, task := range cs.tasks {
+		have[task.id] = true
+	}
+	areas := slices.Clone(cs.subsystems)
+	for _, id := range slices.Sorted(maps.Keys(earlier)) {
+		if have[id] {
+			continue
+		}
+		short, subject, _ := strings.Cut(gitOut(repo, "show", "-s", "--format=%h %s", earlier[id]), " ")
+		commits := []commitInfo{{sha: short, subject: subject}}
+		task := taskChanges{id: id, commits: commits, files: commitFiles(repo, commits)}
+		cs.tasks = append(cs.tasks, task)
+		areas = append(areas, subsystemsOf(task.files)...)
+	}
+	cs.subsystems = slices.Compact(slices.Sorted(slices.Values(areas)))
+	return cs, nil
 }
 
 // finalVerificationChanges distinguishes a genuinely empty run range from commit context Coop

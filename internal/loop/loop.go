@@ -1281,25 +1281,12 @@ reviewAgain:
 				return 1, errors.Join(tasks.UnownedCompletionError(unowned, restoreErr), releaseErr)
 			}
 			if lease.Reopen != nil && iterHead != headAfter {
-				var rebindErr error
-				for _, subject := range pendingReview.Subjects {
-					if subject.Task.Ref.ID == assigned.Item.ID {
-						continue
-					}
-					root := pendingReviewSubjectRoot(pendingReview.Plan, subject)
-					if root == "" {
-						rebindErr = fmt.Errorf("pending final-review task %s has no recorded queue", subject.Task.Ref.ID)
-						break
-					}
-					if err := tasks.RebindPendingReviewAfterAuditRewrite(repo, root, subject.Task.Ref.ID, iterHead, headAfter, assigned.Item.ID, *lease.Reopen); err != nil {
-						rebindErr = fmt.Errorf("rebind pending final-review task %s after audit rewrite: %w", subject.Task.Ref.ID, err)
-						break
-					}
-				}
-				if rebindErr != nil {
+				// Accepted rework replays the commits after its own, which other reopened tasks' audit
+				// authority records by commit ID.
+				if err := tasks.CarryReopenedReviews(repo, hosts, pendingReviewIDs(pendingReview), iterHead, lease.Reopen); err != nil {
 					releaseErr := errors.Join(lease.Release(), windows.Close())
 					refRelease()
-					return 1, errors.Join(rebindErr, releaseErr)
+					return 1, errors.Join(fmt.Errorf("keep final-review authority across the rework of task %s: %w", assigned.Item.ID, err), releaseErr)
 				}
 			}
 			if err := lease.PreserveBlockedAuditReopen(repo, iterHead, headAfter); err != nil {
@@ -1369,18 +1356,6 @@ reviewAgain:
 				if signed, serr := c.host.signUnpushed(repo, iterHead); serr != nil {
 					printSigningFailure(0, serr)
 				} else if signed > 0 {
-					signedHead := gitOut(repo, "rev-parse", "HEAD")
-					if assignedCompletion != nil && len(custom) == 0 {
-						for _, subject := range pendingReview.Subjects {
-							root := pendingReviewSubjectRoot(pendingReview.Plan, subject)
-							if root == "" {
-								return 1, fmt.Errorf("pending final-review task %s has no recorded queue", subject.Task.Ref.ID)
-							}
-							if rebindErr := tasks.RebindPendingReviewAfterSigning(repo, root, subject.Task.Ref.ID, headAfter, signedHead); rebindErr != nil {
-								return 1, fmt.Errorf("rebind task %s final-review evidence after signing: %w", subject.Task.Ref.ID, rebindErr)
-							}
-						}
-					}
 					ui.Note("Signed %s with your host key.", ui.Count(signed, "commit"))
 				}
 				headAfter = gitOut(repo, "rev-parse", "HEAD")
@@ -1633,7 +1608,10 @@ reviewAgain:
 		// so a prompt like "e2e the affected features" resolves against a concrete list. Rebuilt each
 		// round because the range (loopStartHead..HEAD) grows as reopened work lands.
 		soHead := gitOut(repo, "rev-parse", "HEAD")
-		cs := loopChanges(repo, loopStartHead, soHead, gateSources)
+		cs, err := withEarlierReviewCommits(repo, loopChanges(repo, loopStartHead, soHead, gateSources), roundRecords)
+		if err != nil {
+			return 1, fmt.Errorf("read final-review round %d changes: %w", signoffRound, err)
+		}
 		projectPolicy, _ := project.Load(repo)
 		signoff := seedReviewPrompt(
 			loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects),
@@ -1730,6 +1708,7 @@ reviewAgain:
 		// outside the baseline and enters the next round's subject diff. The lost-verdict path above
 		// deliberately keeps the old baseline so the whole untrusted subject set is reviewed again.
 		reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, subjects, reopenedIDs, soRun.concurrent)
+		requeued := requeueChangedReviews(reviewBaseline, pendingReview)
 		switch signoffRoundOutcome(signoffRound, maxReviewRounds, len(reopenedIDs) > 0) {
 		case signoffContinue:
 			printReopened("Final review", reopenedIDs, titlesOf(hosts, reopenedIDs))
@@ -1740,9 +1719,9 @@ reviewAgain:
 				return 1, err
 			}
 			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
-				ui.Note("Another session completed %s during this review. Reviewing it before finishing.", ui.Count(len(pending), "task"))
-				signoffRound = 0
-				continue
+				noteConcurrentCompletions(pending, requeued)
+				signoffRound = nextRoundAfterPending(signoffRound, pending, requeued)
+				goto reviewAgain
 			}
 		case signoffCapReached:
 			// The work loop couldn't get these tasks to a state the signoff accepts within the cap —
@@ -1759,9 +1738,9 @@ reviewAgain:
 				return 1, err
 			}
 			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
-				ui.Note("Another session completed %s during this review. Reviewing it before finishing.", ui.Count(len(pending), "task"))
-				signoffRound = 0
-				continue
+				noteConcurrentCompletions(pending, requeued)
+				signoffRound = nextRoundAfterPending(signoffRound, pending, requeued)
+				goto reviewAgain
 			}
 			reviewCapped = true
 		}
@@ -1775,40 +1754,47 @@ reviewAgain:
 	// work.command or a requested stop. Ordinary process failures preserve completed work but make
 	// the final verdict unverified and nonzero; completion ownership setup/audit failures stop here.
 	if verifyEnabled && !reviewCapped && !softStop.Load() && iterCtx.Err() == nil {
+		pendingVerify, pendingErr := tasks.LoadPendingReviews(repo, hosts)
+		if pendingErr != nil {
+			return 1, fmt.Errorf("capture final-verification subjects: %w", pendingErr)
+		}
+		// Loading sent an accepted task whose commits changed back to signoff: review it first.
+		if requeued := requeueChangedReviews(reviewBaseline, pendingVerify); requeued != nil {
+			signoffRound = nextRoundAfterPending(signoffRound, requeued, requeued)
+			goto reviewAgain
+		}
+		verifyIDs := pendingReviewIDs(pendingVerify, tasks.PendingReviewVerify)
+		verifyRecords, selectErr := pendingReviewRecordsForIDs(pendingVerify, verifyIDs)
+		if selectErr != nil {
+			return 1, selectErr
+		}
 		cs, changeErr := finalVerificationChanges(repo, loopStartHead, gateSources)
+		if changeErr == nil {
+			cs, changeErr = withEarlierReviewCommits(repo, cs, verifyRecords)
+		}
 		if changeErr != nil {
 			verificationFailed = true
 			ui.Alert("The final checks could not run",
 				fmt.Sprintf("The run's changes could not be verified: %v\nThe affected work remains unverified.", changeErr))
 		} else if cs.empty() {
 			// Nothing changed: a check with nothing to check is omitted, not reported as skipped.
-			pendingVerify, pendingErr := tasks.LoadPendingReviews(repo, hosts)
-			if pendingErr != nil {
-				return 1, fmt.Errorf("validate no-op final verification subjects: %w", pendingErr)
-			}
-			verifyIDs := pendingReviewIDs(pendingVerify, tasks.PendingReviewVerify)
-			expected, selectErr := pendingReviewRecordsForIDs(pendingVerify, verifyIDs)
-			if selectErr != nil {
-				return 1, selectErr
-			}
-			if err := tasks.ClearPendingReviews(hosts, expected); err != nil {
+			if err := tasks.ClearPendingReviews(hosts, verifyRecords); err != nil {
 				return 1, fmt.Errorf("clear no-op final-verification subjects: %w", err)
 			}
-		} else {
-			pendingVerify, pendingErr := tasks.LoadPendingReviews(repo, hosts)
-			if pendingErr != nil {
-				return 1, fmt.Errorf("capture final-verification subjects: %w", pendingErr)
+			pendingReview, err = tasks.LoadPendingReviews(repo, hosts)
+			if err != nil {
+				return 1, fmt.Errorf("reload no-op final-verification subjects: %w", err)
 			}
-			verifyIDs := pendingReviewIDs(pendingVerify, tasks.PendingReviewVerify)
+			if requeued := requeueChangedReviews(reviewBaseline, pendingReview); requeued != nil {
+				signoffRound = nextRoundAfterPending(signoffRound, requeued, requeued)
+				goto reviewAgain
+			}
+		} else {
 			projectPolicy, _ := project.Load(repo)
 			vPrompt := seedReviewPrompt(
 				substituteLoopVars(lc.Verify.Prompt, cs, health)+"\n\n"+auditEvidencePrompt(verifyIDs)+"\n\n"+reviewContextFooter(repo, queues),
 				cs.reviewBlock(health), reviewPacket(repo, projectPolicy, nil, cs),
 			)
-			verifyRecords, selectErr := pendingReviewRecordsForIDs(pendingVerify, verifyIDs)
-			if selectErr != nil {
-				return 1, selectErr
-			}
 			printVerification(verifyRot.Active().String(), len(verifyIDs))
 			if len(cs.subsystems) > 0 {
 				ui.Note("Affected areas: %s", strings.Join(cs.subsystems, ", "))
@@ -1862,6 +1848,7 @@ reviewAgain:
 				ui.Alert("The final checks could not run",
 					fmt.Sprintf("%v\nThe affected work remains unverified.", verr))
 			}
+			var requeued []string
 			if verr == nil {
 				expected, selectErr := pendingReviewRecordsForIDs(tasks.PendingReviewCohort{Subjects: verifyRecords}, withoutReviewIDs(verifyIDs, reopenedIDs))
 				if selectErr != nil {
@@ -1876,6 +1863,7 @@ reviewAgain:
 				}
 				audits.drop(reopenedIDs)
 				reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, reopenedIDs, vRun.concurrent)
+				requeued = requeueChangedReviews(reviewBaseline, pendingReview)
 				if len(reopenedIDs) > 0 {
 					switch signoffRoundOutcome(signoffRound, maxReviewRounds, true) {
 					case signoffContinue:
@@ -1902,8 +1890,8 @@ reviewAgain:
 				return 1, err
 			}
 			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
-				ui.Note("Another session completed %s during this review. Reviewing it before finishing.", ui.Count(len(pending), "task"))
-				signoffRound = 1
+				noteConcurrentCompletions(pending, requeued)
+				signoffRound = nextRoundAfterPending(signoffRound, pending, requeued)
 				goto reviewAgain
 			}
 			if verr == nil {
@@ -1981,24 +1969,9 @@ reviewAgain:
 	// previously interrupted run, or a preflight commit — so the whole run's range is signed before
 	// you push. Best-effort.
 	if forkspace.WantsSigning() && len(custom) == 0 {
-		unsignedHead := gitOut(repo, "rev-parse", "HEAD")
-		pendingBeforeSigning, pendingErr := tasks.LoadPendingReviews(repo, hosts)
-		if pendingErr != nil {
-			return 1, fmt.Errorf("validate pending final-review evidence before signing: %w", pendingErr)
-		}
 		if signed, serr := c.host.signUnpushed(repo, loopStartHead); serr != nil {
 			printSigningFailure(0, serr)
 		} else if signed > 0 {
-			signedHead := gitOut(repo, "rev-parse", "HEAD")
-			for _, subject := range pendingBeforeSigning.Subjects {
-				root := pendingReviewSubjectRoot(pendingBeforeSigning.Plan, subject)
-				if root == "" {
-					return 1, fmt.Errorf("pending final-review task %s has no recorded queue", subject.Task.Ref.ID)
-				}
-				if err := tasks.RebindPendingReviewAfterSigning(repo, root, subject.Task.Ref.ID, unsignedHead, signedHead); err != nil {
-					return 1, fmt.Errorf("rebind pending final-review evidence after signing: %w", err)
-				}
-			}
 			ui.Note("Signed %s with your host key.", ui.Count(signed, "commit"))
 		}
 	}

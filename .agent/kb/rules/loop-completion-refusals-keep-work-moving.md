@@ -3,8 +3,8 @@ name: loop-completion-refusals-keep-work-moving
 description: ordinary completion mistakes get immediate feedback and bounded safe repair without weakening task acceptance
 scope: loop
 sources: [internal/loop/loop.go, internal/loop/completion.go, internal/loop/prompts.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_checklist.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/pending_review.go, internal/tasks/pending_review_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go]
-check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding|TestPendingReviewRebindAllowsAuthorizedRewriteOfLaterCohortTask|TestPendingReviewRecoversAuthorizedRewriteOfLaterCohortTask'"
-updated: 2026-09-22
+check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding|TestPendingReviewKeepsEarlierDebtAcrossLaterTaskRework|TestCarryReopenedReviewsAcrossSiblingRework|TestPendingReviewResumesInterruptedReworkForItsSiblings'"
+updated: 2026-10-16
 ---
 
 # Recover ordinary completion mistakes without losing work or acceptance
@@ -37,10 +37,11 @@ must not disappear after provider exit. A safe stop for unfinished committed wor
 current checklist count and required-check action, without claiming the task completed.
 
 Final-review repair is cohort-aware. Rewriting one reopened subject must retain every sibling's
-review debt. When the repaired subject is a descendant in an earlier sibling's recorded history,
-rebind that one entry to the host-authorized replacement and require every other recorded semantic
-entry to remain unchanged. Do not reject the valid repair merely because that authorized entry
-changed, and do not reset or silently clear the sibling's pending review.
+review debt; pending debt names tasks, not commits, so it survives the rewrite as is. A reopened
+sibling's audit authority does record commits: carry it to the host-authorized replacement, letting
+only the repaired task's own entry change and requiring every other recorded semantic entry to
+remain unchanged. Do not reject the valid repair merely because that authorized entry changed, and
+do not reset or silently clear the sibling's pending review.
 
 On restart, explicit review-model selections in the current loop configuration replace the
 stored models. Preserve the saved acceptance prompts, permissions, verification requirement,
@@ -58,6 +59,11 @@ code. The check above pins the conservative recovery boundary; the tagged script
 also runs in `make check` and proves continuation and both terminal modes.
 
 ## Changelog
+- 2026-10-16 — pending review finds commits by trailer and keeps no commit IDs (task
+  2026-10-15-find-a-task-s-commits-by-its-coop-task-trailer-i), so the sibling-debt half holds by
+  construction; the audit-authority half moved to `tasks.CarryReopenedReviews`, which also runs when
+  a load recovers rework a stopped controller left. The check names the replacement tests. Swept
+  loop.go's rework and signing call sites: one rework carry, signing carries inside `signUnpushed`.
 - 2026-09-22 — swept every no-change precheck/post-exit call and repair predicate. Automatic
   retries formerly adopted earlier edits, including hidden-index changes after a successful MCP
   call. Retained first-task evidence and one canonical content/history proof; unchanged inherited

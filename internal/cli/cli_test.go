@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func useEmptyMainConfig(t *testing.T) {
@@ -267,6 +270,35 @@ func TestExitCodeContract(t *testing.T) {
 	_, _ = io.ReadAll(r)
 	if code != 0 {
 		t.Errorf("ok command exit = %d, want 0", code)
+	}
+}
+
+// A final review that cannot find a task's one commit refuses in the shared failure block: the count
+// it found, where it looked, and how to repair the history, never a bare error line.
+func TestPendingReviewCommitsRefusalIsAFailureBlock(t *testing.T) {
+	base := strings.Repeat("ab", 20)
+	for _, tc := range []struct {
+		found   int
+		commits []string
+		cause   string
+		remedy  string
+	}{
+		{0, nil, "found 0", "Restore one commit with that trailer, then run the loop again."},
+		{2, []string{"1a2b3c4 by Worker <w@x>", "5d6e7f8 by Andrew <a@x>"}, "found 2: 1a2b3c4 by Worker <w@x>, 5d6e7f8 by Andrew <a@x>",
+			"Drop the extra commit or squash them, then run the loop again."},
+	} {
+		err := fmt.Errorf("recover pending final review: %w", &tasks.PendingReviewCommitsError{TaskID: "fix-login", Base: base, Found: tc.found, Commits: tc.commits})
+		got := usageBlock(t, err)
+		want := "\n✗ Final review cannot continue\n\n" +
+			"      Task fix-login needs exactly one commit with \"Coop-Task: fix-login\" after " + base[:12] +
+			", where this run started; " + tc.cause + ".\n\n" +
+			"  " + tc.remedy + "\n"
+		if got != want {
+			t.Errorf("found %d:\n--- got ---\n%s\n--- want ---\n%s", tc.found, got, want)
+		}
+		if asUsage(ui.Reported(err)) != nil {
+			t.Error("a refusal the loop already drew would be drawn again")
+		}
 	}
 }
 

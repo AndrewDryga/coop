@@ -63,13 +63,39 @@ func pendingReviewAdditionalImports(cohort tasks.PendingReviewCohort, requested 
 	return additional
 }
 
-func pendingReviewSubjectRoot(plan tasks.PendingReviewPlan, subject tasks.PendingReviewRecord) string {
-	for _, queue := range plan.Queues {
-		if queue.ID == subject.Task.Ref.QueueID {
-			return queue.Root
+// requeueChangedReviews finds the accepted tasks the host sent back to signoff because their commit
+// changed after the review that accepted them, and drops them from baseline so the next round
+// reviews them again. An accepted task is in baseline; every other task waiting for signoff is not.
+func requeueChangedReviews(baseline map[string]string, cohort tasks.PendingReviewCohort) []string {
+	var changed []string
+	for _, id := range pendingReviewIDs(cohort, tasks.PendingReviewSignoff) {
+		if _, accepted := baseline[id]; accepted {
+			delete(baseline, id)
+			changed = append(changed, id)
 		}
 	}
-	return ""
+	if len(changed) > 0 {
+		ui.Note("%s changed after review. Reviewing again before finishing.", ui.Count(len(changed), "accepted task"))
+	}
+	return changed
+}
+
+// nextRoundAfterPending is the signoff round that reviews tasks still pending after a review. A
+// completion another session landed starts a new count at round 1. A task only sent back because
+// its commits changed keeps counting, so a rework that keeps changing what was accepted reaches the
+// round cap instead of looping forever.
+func nextRoundAfterPending(round int, pending, requeued []string) int {
+	if len(withoutReviewIDs(pending, requeued)) > 0 {
+		return 1
+	}
+	return round + 1
+}
+
+// noteConcurrentCompletions says another session completed the pending tasks that are not requeued.
+func noteConcurrentCompletions(pending, requeued []string) {
+	if others := withoutReviewIDs(pending, requeued); len(others) > 0 {
+		ui.Note("Another session completed %s during this review. Reviewing it before finishing.", ui.Count(len(others), "task"))
+	}
 }
 
 func pendingSignoffStartRound(cohort tasks.PendingReviewCohort) int {

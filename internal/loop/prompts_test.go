@@ -421,3 +421,12 @@ func TestReviewPromptForbidsTestExecution(t *testing.T) {
 		}
 	}
 }
+
+// Host signing rewrites a commit's ID after its worker noted it, so every review stage finds a
+// task's commits by trailer, not by a SHA from the task's notes.
+func TestReviewPromptFindsCommitsByTrailer(t *testing.T) {
+	footer := reviewContextFooter("/repo", []string{".agent/tasks"})
+	if !strings.Contains(footer, "`Coop-Task: <task-id>` trailer, never by a SHA quoted in task notes") {
+		t.Fatalf("review footer does not say how to find a task's commits:\n%s", footer)
+	}
+}

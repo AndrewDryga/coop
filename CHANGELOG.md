@@ -186,6 +186,17 @@
   started for the project, with the commands to remove them once that Coop is gone, and says how to
   fix the id file when Coop cannot read it.
 
+- **A paused final review finds each task's commit by its `Coop-Task` line.** A loop stopped before
+  its final review remembered the commit IDs of the tasks still waiting for it, so any rewrite Coop
+  had not recorded itself, such as signing the commits yourself or amending one, stopped the next
+  loop with a history-changed error. Now the review looks for each task's commit after the commit
+  its run started from, and stops, naming the task, when that commit is missing or appears twice.
+  A task another session committed before the loop started and completes during it is still
+  reviewed, at its one commit in the branch. A task whose commits change after its review passed
+  is reviewed again. Review prompts now tell agents to find a task's commits by that line rather
+  than by a commit ID from its notes, which signing makes stale. `coop loop --review-task <id>` on
+  a task that already passed final review now reviews it again instead of refusing.
+
 - **Coop no longer lets a box's Git settings choose the project folder.** Coop asked Git where your
   repository starts, and Git follows a setting in `.git/config` that an agent in a box can change. A
   box could point it at another folder, such as your home folder, and the next Coop command used that

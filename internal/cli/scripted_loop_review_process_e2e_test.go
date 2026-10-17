@@ -470,7 +470,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), loopReviewBudget(len(attempts)))
 		result := process.Wait(ctx)
 		cancel()
 		combined := result.Stdout + result.Stderr
@@ -770,7 +770,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel = context.WithTimeout(context.Background(), loopReviewBudget(len(attempts)))
 		result := process.Wait(ctx)
 		cancel()
 		if result.Err != nil || result.ExitCode != 0 {
@@ -835,7 +835,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel = context.WithTimeout(context.Background(), loopReviewBudget(len(blockAttempts)))
 		blockedResult := process.Wait(ctx)
 		cancel()
 		if blockedResult.Err != nil || blockedResult.ExitCode != 0 {
@@ -1004,7 +1004,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel = context.WithTimeout(context.Background(), loopReviewBudget(len(attempts)))
 		result := process.Wait(ctx)
 		cancel()
 		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "completion rejected") {
@@ -1178,7 +1178,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		traceBeforeRetry := readProcessTrace(t, suite.layout.Trace)
 		retry := runLoopReview(t, suite, work, 5*time.Second)
 		if retry.Err != nil || retry.ExitCode != 1 ||
-			!strings.Contains(retry.Stderr, "needs exactly one reachable Coop-Task binding before reopen") {
+			!strings.Contains(retry.Stderr, "needs exactly one commit with \"Coop-Task: "+taskID+"\"") ||
+			!strings.Contains(retry.Stderr, "found 2") {
 			t.Fatalf("second binding retry = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
 				retry.ExitCode, retry.Err, retry.Stdout, retry.Stderr)
 		}

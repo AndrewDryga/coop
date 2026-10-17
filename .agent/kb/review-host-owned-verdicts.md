@@ -3,7 +3,7 @@ name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
 sources: [internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/loop/pending_review.go, internal/tasks/audit.go, internal/tasks/pending_review.go, internal/loop/changes.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
-updated: 2026-09-14
+updated: 2026-10-17
 ---
 
 `between`, `signoff`, and `verify` default to `writes: tasks`. The name is retained for
@@ -91,11 +91,22 @@ root-owned nested bind destination in the host checkout.
 Commit trailers describe task changes but do not authorize review. A work iteration is rejected if
 it introduces a binding for any task other than its assigned task. Final signoff and verify can act
 only on archived generations this controller accepted or exact host-private pending-review records
-that revalidate their completion receipt, task/queue identity and raw unique binding. They never
-derive authority by scanning historical archives.
+that revalidate their completion receipt and task/queue identity and still find the task's one
+commit by trailer after the host-recorded run base (or after its own anchor, for a host completion
+committed before the run), and show that anchored commit to the reviewer. A verdict covers the
+content its round recorded, every commit in the subject's review range up to HEAD, so verification
+never clears a commit that changed after signoff, an untrailered repair included; that task goes
+back to signoff. They never derive authority by scanning historical archives.
 
 ## Changelog
 
+- 2026-10-17 — the recorded content now covers the whole review range up to HEAD (third review).
+- 2026-10-17 — the recorded content covers the commits after the subject's too (an untrailered
+  audit repair), and an anchored commit joins the reviewer's change block and diff.
+- 2026-10-17 — a round records the reviewed commit content; a changed commit goes back to signoff,
+  and a host completion from before the run is anchored at its one commit in the branch.
+- 2026-10-16 — pending-review records no longer pin a raw binding; they find the task's commit by
+  trailer after the host-recorded run base (see [[signoff-scope-is-run-anchored]]).
 - 2026-09-14 — replaced the obsolete fresh-review recovery description with the same-session,
   format-only correction boundary and its frozen-state/no-repeated-setup constraints.
 - 2026-09-13 — final review authority now persists exact accepted generations across process stops;

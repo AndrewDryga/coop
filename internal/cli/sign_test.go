@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
@@ -507,6 +508,82 @@ func TestSignUnpushedSignsAroundASignedMerge(t *testing.T) {
 	}
 	if got := gitOut(repo, "rev-parse", "HEAD"); got != head {
 		t.Fatalf("a refused pass moved HEAD from %s to %s", head, got)
+	}
+}
+
+// A task the final review reopened records the commits its rework must keep by ID. A signing pass
+// replaces them with signed copies and carries that authority along, so the loop does not park the
+// task as stale, and the pending review still finds the task's commit by its trailer.
+func TestSignUnpushedCarriesAReopenedTaskAuthority(t *testing.T) {
+	repo, git := signingRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	root := filepath.Join(repo, ".agent", "tasks")
+	id := "reopened-task"
+	dir := filepath.Join(root, tasks.StateTodo, id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte("# "+id+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.RewriteSubtasks(dir, []tasks.Subtask{{Text: "work verified", Done: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "work.txt"), []byte("work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "work.txt")
+	git("commit", "-q", "-m", "box work\n\nCoop-Task: "+id)
+	hosts := []string{root}
+	item, ok, err := tasks.CurrentTask(root, id)
+	if err != nil || !ok {
+		t.Fatalf("task = %+v, %v, %v", item, ok, err)
+	}
+	if err := tasks.CompleteTrustedTask(root, item); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := tasks.NewPendingReviewPlan(repo, hosts, base, "digest", "coop loop",
+		tasks.PendingReviewStage{Targets: []string{"codex:test@personal"}, Writes: "tasks"}, 3, false, tasks.PendingReviewStage{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.EnrollExistingPendingReviews(repo, hosts, []string{id}, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.MarkPendingReviewReopened(hosts, []string{id}); err != nil {
+		t.Fatal(err)
+	}
+	reopen, err := tasks.CaptureAuditReopen(repo, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.WriteAuditReopenRecord(root, reopen); err != nil {
+		t.Fatal(err)
+	}
+	done, _, err := tasks.CurrentTask(root, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.MoveTaskDir(root, done, tasks.StateTodo); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	if n, err := a.signUnpushed(repo, base); err != nil || n != 1 {
+		t.Fatalf("signUnpushed = %d, %v; want the task commit signed", n, err)
+	}
+	head := gitOut(repo, "rev-parse", "HEAD")
+	if head == reopen.BaselineHead || !hasSignature(repo, head) {
+		t.Fatalf("signing did not replace the task commit %s", reopen.BaselineHead)
+	}
+	got, ok, err := tasks.ReadAuditReopenRecord(root, id)
+	if err != nil || !ok || got.Generation != reopen.Generation || got.BaselineHead != head ||
+		!tasks.AuditReopenCurrentValid(repo, head, id, got) {
+		t.Fatalf("authority after signing = %+v, ok=%v, err=%v", got, ok, err)
+	}
+	if cohort, err := tasks.LoadPendingReviews(repo, hosts); err != nil || len(cohort.Subjects) != 1 {
+		t.Fatalf("pending review after signing = %+v, %v", cohort, err)
 	}
 }
 

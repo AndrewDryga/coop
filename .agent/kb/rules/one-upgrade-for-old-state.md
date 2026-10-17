@@ -2,7 +2,7 @@
 name: one-upgrade-for-old-state
 description: an old on-disk format is read for one upgrade step, then refused with the state version that converts it; check a worker with the new build before swapping it
 scope: architecture
-sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md]
+sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go]
 check: "go test ./internal -run TestOneUpgradeWaypoints"
 updated: 2026-10-17
 ---
@@ -72,6 +72,7 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 | Fork reservation | `<repo>-forks/.coop/reservations/` | 2 | 1 | held: keeps the fork name blocked until recovered offline | none |
 | Fork review candidate | `<repo>-forks/.coop/<name>.<generation>.candidate.json` | 2 | 1 | read; adopted into round history at the next change | v10.1.2 and later |
 | Task owner record | `~/.local/state/coop/task-leases/v1/<key>.owner.json` | 2 | 1 | read in place, never rewritten | none needed |
+| Pending final review | `~/.local/state/coop/task-leases/v1/<queue>-<key>.pending-review.json` | 2 | 1 | read without its commit IDs (one awaiting verification returns to signoff once; one whose commit predates its run base is anchored on load); the next write stores 2 | builds after v11.3.0 |
 | Network approval | `~/.local/state/coop/network/approval-<id>.json` | 3 | 1 | read, but grants nothing | `coop approve` (v10.1.2 and later) |
 | Isolated fork generation | `<repo>-forks/.coop/<name>.generation.json` | 4 | 4 | none exist | none |
 | Service approval | `~/.local/state/coop/service-approvals/` | 5 | 4 | read; a new approval writes 5 | `coop up` re-approves |
@@ -88,6 +89,13 @@ retire v1 once those all write v2. Retiring it also removes `legacyLabelsAreLoca
 label then reads as unknown: reported, never removed.
 
 ## Changelog
+- 2026-10-17 — the pending final-review row also notes that a version 1 record whose commit
+  predates its run base is anchored on load, as version 2 enrollment anchors one.
+- 2026-10-17 — the pending final-review row: a version 1 record awaiting verification has no
+  reviewed-content identity, so it returns to signoff once instead of being verified.
+- 2026-10-16 — added the pending final-review record: version 2 drops the commit IDs version 1
+  pinned, and version 1 is still read (task 2026-10-15-find-a-task-s-commits-by-its-coop-task-trailer-i).
+  `coop sessions check` does not read task-lease records, so it has nothing to report for it.
 - 2026-10-17 — row for the box supervisor label (v2, still reads v1; task
   2026-10-16-name-the-host-in-the-supervisor-label-so-a-share). Its versions are string prefixes,
   so `waypointConstants` lists it with empty pins; swept the table with TestOneUpgradeWaypoints.

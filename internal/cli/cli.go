@@ -232,6 +232,12 @@ func asUsage(err error) *ui.UsageError {
 	if errors.As(err, &projectFile) {
 		return ui.CommandFailed("Could not read "+project.File, projectFile.Cause)
 	}
+	// Only the loop's final review looks for a task's commits; `coop tasks done` draws its own retry.
+	var commits *tasks.PendingReviewCommitsError
+	if errors.As(err, &commits) && !errors.Is(err, ui.ErrReported) {
+		return ui.CommandFailed("Final review cannot continue", commits.Cause(),
+			[2]string{"", commits.Remedy() + ", then run the loop again."})
+	}
 	return nil
 }
 

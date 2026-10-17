@@ -2,8 +2,8 @@
 name: host-signing-starts-at-first-unsigned
 description: every host signing pass (loop cycle, end-of-run sweep, run-box exit, coop sign) rewrites only from the first unsigned commit and refuses to rewrite a commit the branch's upstream already has; -f stays, and "signed" means a signature header
 subsystem: loop
-sources: [internal/cli/sign.go, internal/loop/loop.go, internal/loop/host.go, internal/cli/commands.go]
-updated: 2026-10-15
+sources: [internal/cli/sign.go, internal/loop/loop.go, internal/loop/host.go, internal/cli/commands.go, internal/tasks/pending_review.go]
+updated: 2026-10-17
 ---
 
 Box commits are unsigned (no key enters a box), so the host signs them through `signUnpushed` in
@@ -44,9 +44,12 @@ Traps:
   `--topo-order`, so a signed merge among the leading signed commits (a mid-run `git pull`) stays
   below the start and the pass signs what is above it. A merge at or above the first unsigned commit
   would be linearized by the rebase, so that pass is refused as before (`signBase` no longer checks).
-- The tree-equality check and the old-SHA compare-and-swap guard the rewritten tail unchanged, and
-  the signing journal (`RecordPendingReviewSigning`) maps only those commits: review evidence bound
-  to an untouched signed commit keeps its SHA. See [[signoff-scope-is-run-anchored]], and
+- The tree-equality check and the old-SHA compare-and-swap guard the rewritten tail unchanged.
+  Pending final review records no commit IDs (it finds each task's commit by trailer), and the
+  reviewed content a round records (each covered commit's change, author and message) survives
+  re-signing, so an accepted task is not reviewed again. After the swap the pass only carries a
+  reopened task's audit authority to the signed copies (`CarryReopenedReviewsAfterSigning`; a
+  failure is a warning, the signing stands). See [[signoff-scope-is-run-anchored]], and
   [[loop-range-rejects-outside-commits]] for the ref-authority lock the compare-and-swap takes.
 
 Regressions: `TestSignUnpushedStartsAtTheFirstUnsignedCommit`, `TestSignUnpushedSignsAroundASignedMerge`,
@@ -55,6 +58,12 @@ Regressions: `TestSignUnpushedStartsAtTheFirstUnsignedCommit`, `TestSignUnpushed
 `TestCommitSigned`, all in `internal/cli`.
 
 ## Changelog
+- 2026-10-17 — a final-review round now records the reviewed commit content; noted that re-signing
+  keeps it, so signing never sends an accepted task back to review.
+- 2026-10-16 — the signing journal is gone: pending review finds commits by trailer, and the pass
+  carries a reopened task's audit authority after the swap instead (task
+  2026-10-15-find-a-task-s-commits-by-its-coop-task-trailer-i). Regression:
+  `TestSignUnpushedCarriesAReopenedTaskAuthority`.
 - 2026-10-15 — merges are refused only where the pass rewrites; a signed merge below the first
   unsigned commit no longer stops it (task 2026-10-15-sign-around-a-signed-merge-instead-of-refusing-t).
 - 2026-10-15 — created with the fix for task 2026-10-15-stop-signing-passes-from-rewriting-signed-and-pu.

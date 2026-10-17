@@ -296,6 +296,60 @@ func TestLoopChangesFromGit(t *testing.T) {
 	}
 }
 
+// A task another session committed before the loop started is reviewed at that commit. The run's
+// range does not hold it, so the review's change block and diff must add it, and a run that changed
+// nothing else must still run its final check instead of clearing the task as a no-op.
+func TestWithEarlierReviewCommitsShowsAnAnchoredCommit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo, run := gitrepo.New(t)
+	commit := func(path, body, msg string) {
+		full := filepath.Join(repo, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run("add", "-A")
+		run("commit", "-qm", msg)
+	}
+	run("commit", "-q", "--allow-empty", "-m", "root")
+	anchor := gitOut(repo, "rev-parse", "HEAD")
+	commit("site/early.md", "early\n", "early host work\n\nCoop-Task: early-host")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	commit("internal/box/run.go", "package box\n", "box: a\n\nCoop-Task: task-a")
+	head := gitOut(repo, "rev-parse", "HEAD")
+	subject := func(id, own string) tasks.PendingReviewRecord {
+		return tasks.PendingReviewRecord{Task: tasks.TaskInstance{Ref: tasks.TaskRef{ID: id}}, Base: own, Plan: tasks.PendingReviewPlan{BaseHead: base}}
+	}
+	subjects := []tasks.PendingReviewRecord{subject("early-host", anchor), subject("task-a", "")}
+
+	cs, err := withEarlierReviewCommits(repo, loopChanges(repo, base, head, nil), subjects)
+	if err != nil || len(cs.tasks) != 2 || cs.tasks[0].id != "task-a" || cs.tasks[1].id != "early-host" {
+		t.Fatalf("change set = %+v, %v; want task-a, then the anchored early-host", cs.tasks, err)
+	}
+	if early := cs.tasks[1]; len(early.commits) != 1 || early.commits[0].subject != "early host work" ||
+		!slices.Equal(early.files, []string{"site/early.md"}) {
+		t.Fatalf("anchored task entry = %+v", early)
+	}
+	if !slices.Equal(cs.subsystems, []string{"internal/box", "site"}) {
+		t.Fatalf("subsystems = %v", cs.subsystems)
+	}
+	if block := cs.reviewBlock(newLoopHealth()); !strings.Contains(block, "- early-host — early host work") {
+		t.Fatalf("review block does not show the anchored commit:\n%s", block)
+	}
+	if patch := reviewPatch(repo, cs); !strings.Contains(patch, "site/early.md") {
+		t.Fatalf("review diff does not show the anchored commit:\n%s", patch)
+	}
+
+	only, err := withEarlierReviewCommits(repo, loopChanges(repo, head, head, nil), subjects[:1])
+	if err != nil || only.empty() {
+		t.Fatalf("an otherwise empty run range = %+v, %v; want the anchored commit kept", only, err)
+	}
+}
+
 func TestFinalVerificationChangesRejectsUnreadableOrAmbiguousContext(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

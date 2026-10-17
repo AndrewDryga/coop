@@ -217,9 +217,8 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 		return 0, errors.New("re-signing changed one or more committed trees; refusing to update the branch")
 	}
 	oldCommits := strings.Fields(gitOut(repo, "log", "--reverse", "--format=%H", base+".."+oldHead))
-	newCommits := strings.Fields(gitOut(worktree, "log", "--reverse", "--format=%H", base+".."+newHead))
-	if len(oldCommits) != n || len(newCommits) != n {
-		return 0, errors.New("could not map every re-signed commit; refusing to update the branch")
+	if len(oldCommits) != n {
+		return 0, errors.New("could not list the commits to sign; refusing to update the branch")
 	}
 	if err := forkspace.GitRefCommand(context.Background(), repo, "worktree", "remove", "--force", worktree).Run(); err != nil {
 		return 0, fmt.Errorf("remove signing worktree before updating the branch: %w", err)
@@ -249,12 +248,14 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	if err := refusePushedRewrite(repo, branchRef, oldCommits[0]); err != nil {
 		return 0, err
 	}
-	if err := tasks.RecordPendingReviewSigning(repo, branchRef, oldHead, newHead, oldCommits, newCommits); err != nil {
-		return 0, fmt.Errorf("record pending final-review signing transition: %w", err)
-	}
 	if err := forkspace.GitRefCommand(context.Background(), repo, "update-ref", "-m", "coop: re-sign commits", branchRef, newHead, oldHead).Run(); err != nil {
 		return 0, ui.CommandFailed("Could not apply the signed commits", "The branch changed while Coop was signing.\n"+err.Error(),
 			[2]string{"", "Review the current branch before running coop sign again."})
+	}
+	// A task the final review reopened records by ID the commits its rework must keep, and this pass
+	// may have replaced them with signed copies.
+	if err := tasks.CarryReopenedReviewsAfterSigning(repo, oldHead); err != nil {
+		ui.Warn("signed the commits, but could not move a reopened task's review authority to them: %v", err)
 	}
 	return n, nil
 }

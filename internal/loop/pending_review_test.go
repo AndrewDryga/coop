@@ -74,3 +74,46 @@ func TestPendingReviewAdditionalImportsKeepCohortContextImmutable(t *testing.T) 
 		t.Fatalf("additional imports = %v, want [older-task]", got)
 	}
 }
+
+// An accepted task sits in the review baseline. When the host sends it back to signoff because its
+// commit changed after the review, the next round must review it again; a task that simply waits
+// for its first signoff is not in the baseline and is left alone.
+func TestRequeueChangedReviewsReturnsOnlyAcceptedTasks(t *testing.T) {
+	subject := func(id string, phase tasks.PendingReviewPhase) tasks.PendingReviewRecord {
+		return tasks.PendingReviewRecord{Task: tasks.TaskInstance{Ref: tasks.TaskRef{ID: id}}, Phase: phase}
+	}
+	baseline := map[string]string{"changed": "/done/changed", "verified": "/done/verified", "older": "/done/older"}
+	cohort := tasks.PendingReviewCohort{Subjects: []tasks.PendingReviewRecord{
+		subject("changed", tasks.PendingReviewSignoff),
+		subject("verified", tasks.PendingReviewVerify),
+		subject("fresh", tasks.PendingReviewSignoff),
+	}}
+	got := requeueChangedReviews(baseline, cohort)
+	if !reflect.DeepEqual(got, []string{"changed"}) {
+		t.Fatalf("requeued = %v, want [changed]", got)
+	}
+	if _, ok := baseline["changed"]; ok || len(baseline) != 2 {
+		t.Fatalf("baseline after requeue = %v, want only the changed task removed", baseline)
+	}
+	if again := requeueChangedReviews(baseline, cohort); again != nil {
+		t.Fatalf("a second requeue = %v, want nothing", again)
+	}
+}
+
+// Each cycle of a ping-pong: verification reopens T2, its accepted rework amends its commit, and that
+// change sends the accepted T3 back to signoff. Restarting the round count for T3 every cycle would
+// keep T2 below the round cap forever; a completion another session landed still restarts it.
+func TestRequeuedTasksKeepCountingTowardTheRoundCap(t *testing.T) {
+	const roundCap = 3
+	round := 1
+	for cycle := 0; signoffRoundOutcome(round, roundCap, true) != signoffCapReached; cycle++ {
+		if cycle == 10 {
+			t.Fatalf("the ping-pong never reached the round cap of %d", roundCap)
+		}
+		round++ // the next round reviews T2's rework
+		round = nextRoundAfterPending(round, []string{"t3"}, []string{"t3"})
+	}
+	if got := nextRoundAfterPending(5, []string{"host", "t3"}, []string{"t3"}); got != 1 {
+		t.Fatalf("round after another session's completion = %d, want a new count at 1", got)
+	}
+}

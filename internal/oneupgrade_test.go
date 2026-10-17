@@ -30,6 +30,7 @@ var waypointConstants = map[string]struct{ current, oldest string }{
 	"Fork reservation":            {"forkspace/reservation.go:workspaceReservationVersion", ""},
 	"Fork review candidate":       {"tasks/candidate_rounds.go:forkCandidateManifestVersion", "tasks/candidate.go:forkCandidateVersion"},
 	"Task owner record":           {"tasks/owner.go:taskOwnershipRecordVersion", "tasks/owner.go:taskOwnerRecordVersion"},
+	"Pending final review":        {"tasks/pending_review.go:pendingReviewVersion", "tasks/pending_review.go:pendingReviewLegacyVersion"},
 	"Network approval":            {"networkstate/authority.go:networkApprovalVersion", "networkstate/authority.go:networkApprovalLegacyVersion"},
 	"Isolated fork generation":    {"forkspace/generation.go:forkGenerationIsolatedVersion", ""},
 	"Service approval":            {"box/serviceapproval.go:serviceApprovalVersion", "box/serviceapproval.go:serviceApprovalLegacyVersion"},

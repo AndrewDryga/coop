@@ -3,6 +3,7 @@ package tasks
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,19 +15,19 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
-	pendingReviewVersion      = 1
-	pendingReviewFileSuffix   = ".pending-review.json"
-	pendingReviewDoneSuffix   = ".pending-review-reviewed.json"
-	pendingReviewMarkerID     = "pending-review-workspace"
-	pendingReviewMarkerFile   = ".pending-review-workspace"
-	pendingReviewSigningID    = "pending-review-signing"
-	pendingReviewSigningFile  = ".pending-review-signing.json"
-	pendingReviewFileLimit    = 256 << 10
-	pendingReviewScanLimit    = 4096
-	pendingReviewSigningLimit = 1024
+	// A version 1 record also pinned its subject's commit IDs. Version 2 finds the subject's commit by
+	// its Coop-Task trailer instead, so a signing pass leaves the record valid.
+	pendingReviewVersion       = 2
+	pendingReviewLegacyVersion = 1
+	pendingReviewPlanVersion   = 1
+	pendingReviewFileSuffix    = ".pending-review.json"
+	pendingReviewFileLimit     = 256 << 10
+	pendingReviewScanLimit     = 4096
 )
 
 type PendingReviewPhase string
@@ -53,6 +54,7 @@ type PendingReviewQueue struct {
 
 // PendingReviewPlan is immutable cohort context. A resumed review uses this plan rather than
 // silently applying a later loop.yaml to work accepted under a different reviewer contract.
+// BaseHead is the host-recorded start of the commit range the review searches for its subjects.
 type PendingReviewPlan struct {
 	Version       int                  `json:"version"`
 	CohortID      string               `json:"cohort_id"`
@@ -70,22 +72,19 @@ type PendingReviewPlan struct {
 	CreatedAt     time.Time            `json:"created_at"`
 }
 
-// PendingReviewBinding retains exact raw and signature-independent history evidence. Binding is
-// the same bounded semantic shape used by audit-reopen authority; a signing rewrite may replace
-// Head only when Subject and every descendant remain identical.
-type PendingReviewBinding struct {
-	Head    string              `json:"head"`
-	Raw     []string            `json:"raw"`
-	Subject AuditReopenCommit   `json:"subject"`
-	History []AuditReopenCommit `json:"history"`
-}
-
+// PendingReviewRecord names its subject by queue, task id and archive generation, never by commit
+// ID: the review finds the subject's commit by its Coop-Task trailer after Plan.BaseHead, or after
+// Base for a task another session completed with a commit from before the run.
+//
+// Reviewed is what its latest signoff round started on. A verdict covers only that content, so a
+// subject whose commits changed since goes back to signoff instead of being cleared.
 type PendingReviewRecord struct {
 	Version      int                    `json:"version"`
 	Plan         PendingReviewPlan      `json:"plan"`
 	Task         TaskInstance           `json:"task"`
 	Fingerprint  CompletionFingerprint  `json:"fingerprint"`
-	Binding      PendingReviewBinding   `json:"binding"`
+	Base         string                 `json:"base,omitempty"`
+	Reviewed     *PendingReviewContent  `json:"reviewed,omitempty"`
 	Phase        PendingReviewPhase     `json:"phase"`
 	Round        int                    `json:"round"`
 	RoundStarted bool                   `json:"round_started,omitempty"`
@@ -100,7 +99,6 @@ type PendingReviewRecord struct {
 type PendingReviewPrevious struct {
 	Task         TaskInstance          `json:"task"`
 	Fingerprint  CompletionFingerprint `json:"fingerprint"`
-	Binding      PendingReviewBinding  `json:"binding"`
 	Phase        PendingReviewPhase    `json:"phase"`
 	Round        int                   `json:"round"`
 	RoundStarted bool                  `json:"round_started,omitempty"`
@@ -111,35 +109,27 @@ type PendingReviewCohort struct {
 	Subjects []PendingReviewRecord
 }
 
-type pendingReviewReviewed struct {
-	Version     int                   `json:"version"`
-	CohortID    string                `json:"cohort_id"`
-	Task        TaskInstance          `json:"task"`
-	Fingerprint CompletionFingerprint `json:"fingerprint"`
-	Binding     PendingReviewBinding  `json:"binding"`
-	ReviewedAt  time.Time             `json:"reviewed_at"`
+// PendingReviewContent fingerprints what a signoff round reviewed: every commit in the subject's
+// review range (after its Base, or the run's) up to HEAD when the round started. Audit rework adds
+// its repair as a commit with no trailer, and a reviewer of the run sees the commits around the
+// subject's own too. A commit counts by its change, author and message, which signing keeps;
+// commits added later are not covered.
+type PendingReviewContent struct {
+	Commits int    `json:"commits"`
+	Digest  string `json:"digest"`
 }
 
-type pendingReviewSigningStep struct {
-	Branch     string    `json:"branch"`
-	OldHead    string    `json:"old_head"`
-	NewHead    string    `json:"new_head"`
-	OldCommits []string  `json:"old_commits"`
-	NewCommits []string  `json:"new_commits"`
-	CreatedAt  time.Time `json:"created_at"`
+// pendingReviewRecordV1 reads a version 1 record. Its bindings named commit IDs that a signing pass
+// replaces, so reading drops them: the subject's commit is found by trailer like a version 2 one.
+type pendingReviewRecordV1 struct {
+	PendingReviewRecord
+	Binding  json.RawMessage          `json:"binding"`
+	Previous *pendingReviewPreviousV1 `json:"previous,omitempty"`
 }
 
-type pendingReviewSigningJournal struct {
-	Version   int                        `json:"version"`
-	Workspace string                     `json:"workspace"`
-	Steps     []pendingReviewSigningStep `json:"steps"`
-	UpdatedAt time.Time                  `json:"updated_at"`
-}
-
-type pendingReviewWorkspaceMarker struct {
-	Version   int       `json:"version"`
-	Workspace string    `json:"workspace"`
-	UpdatedAt time.Time `json:"updated_at"`
+type pendingReviewPreviousV1 struct {
+	PendingReviewPrevious
+	Binding json.RawMessage `json:"binding"`
 }
 
 func canonicalPendingReviewWorkspace(repo string) (string, error) {
@@ -185,7 +175,7 @@ func NewPendingReviewPlan(repo string, hosts []string, baseHead, configDigest, c
 		return PendingReviewPlan{}, errors.New("pending-review workspace has no checked-out branch")
 	}
 	plan := PendingReviewPlan{
-		Version: pendingReviewVersion, CohortID: hex.EncodeToString(cohortRaw), Workspace: workspace,
+		Version: pendingReviewPlanVersion, CohortID: hex.EncodeToString(cohortRaw), Workspace: workspace,
 		Branch: branch, BaseHead: baseHead, ConfigDigest: configDigest, Continue: continueCommand,
 		Signoff: clonePendingReviewStage(signoff), SignoffRounds: signoffRounds,
 		VerifyEnabled: verifyEnabled, Verify: clonePendingReviewStage(verify), MCPDisabled: mcpDisabled,
@@ -234,372 +224,349 @@ func pendingReviewRecordName(root, id string) (string, error) {
 	return prefix + key + pendingReviewFileSuffix, err
 }
 
-func pendingReviewReviewedName(root, id string) (string, error) {
-	prefix, err := pendingReviewRecordPrefix(root)
-	if err != nil {
-		return "", err
-	}
-	key, err := LeaseAuthorityKey(root, id)
-	return prefix + key + pendingReviewDoneSuffix, err
-}
-
 func pendingReviewRecordPrefix(root string) (string, error) {
 	key, err := LeaseAuthorityKey(root, "pending-review-queue")
 	return key + "-", err
 }
 
-func pendingReviewWorkspaceFile(repo, id, suffix string) (string, error) {
-	workspace, err := canonicalPendingReviewWorkspace(repo)
-	if err != nil {
-		return "", err
-	}
-	key, err := LeaseAuthorityKey(workspace, id)
-	if err != nil {
-		return "", err
-	}
-	return key + suffix, nil
+// PendingReviewCommitsError is a final-review task without exactly one commit carrying its
+// Coop-Task trailer where the review looks for it. It keeps the debt and starts no reviewer; the CLI
+// draws Cause and Remedy.
+type PendingReviewCommitsError struct {
+	TaskID string
+	// Base is the commit the search started after: where the run started, or, with OwnBase, the
+	// parent of the commit another session completed the task with. Empty means the whole branch.
+	Base    string
+	OwnBase bool
+	Found   int
+	// Commits names the commits carrying the trailer, "<short id> by <author>", when more than one
+	// does: a planted one can sit anywhere, and only the person can tell which to drop.
+	Commits []string
 }
 
-func markPendingReviewWorkspace(repo string) error {
-	workspace, err := canonicalPendingReviewWorkspace(repo)
-	if err != nil {
-		return err
-	}
-	name, err := pendingReviewWorkspaceFile(workspace, pendingReviewMarkerID, pendingReviewMarkerFile)
-	if err != nil {
-		return err
-	}
-	marker := pendingReviewWorkspaceMarker{Version: pendingReviewVersion, Workspace: workspace, UpdatedAt: time.Now().UTC()}
-	data, err := json.Marshal(marker)
-	if err != nil {
-		return err
-	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return err
-	}
-	defer registry.Close()
-	return AtomicWriteTaskFile(registry, name, append(data, '\n'))
-}
-
-func pendingReviewWorkspaceMarked(repo string) (bool, error) {
-	workspace, err := canonicalPendingReviewWorkspace(repo)
-	if err != nil {
-		return false, err
-	}
-	name, err := pendingReviewWorkspaceFile(workspace, pendingReviewMarkerID, pendingReviewMarkerFile)
-	if err != nil {
-		return false, err
-	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return false, err
-	}
-	defer registry.Close()
-	data, err := ReadTaskMetadataFile(registry, name)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if len(data) > pendingReviewFileLimit {
-		return false, fmt.Errorf("pending-review workspace marker exceeds %d bytes", pendingReviewFileLimit)
-	}
-	var marker pendingReviewWorkspaceMarker
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&marker); err != nil {
-		return false, fmt.Errorf("decode pending-review workspace marker: %w", err)
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return false, errors.New("pending-review workspace marker contains multiple JSON values")
+func (e *PendingReviewCommitsError) needs() string {
+	where := "in this branch"
+	if e.Base != "" {
+		short := e.Base[:min(12, len(e.Base))]
+		where = "after " + short + ", where this run started"
+		if e.OwnBase {
+			where = "after " + short + ", just before the commit it was completed with"
 		}
-		return false, err
 	}
-	if marker.Version != pendingReviewVersion || marker.Workspace != workspace || marker.UpdatedAt.IsZero() {
-		return false, errors.New("invalid pending-review workspace marker")
+	found := fmt.Sprintf("found %d", e.Found)
+	if len(e.Commits) > 0 {
+		found += ": " + strings.Join(e.Commits, ", ")
 	}
-	return true, nil
+	return fmt.Sprintf("needs exactly one commit with %q %s; %s", CoopTaskTrailer+": "+e.TaskID, where, found)
 }
 
-func pendingReviewSigningJournalName(repo string) (string, error) {
-	return pendingReviewWorkspaceFile(repo, pendingReviewSigningID, pendingReviewSigningFile)
+// describeTaskCommits names commits as "<short id> by <author>" when there are several, the first
+// five and how many more: a box can plant any number. A box sets its own author, so anything a
+// terminal would act on, such as an escape sequence, becomes '?'.
+func describeTaskCommits(repo string, shas []string) []string {
+	if len(shas) < 2 {
+		return nil
+	}
+	const shown = 5
+	more := 0
+	if len(shas) > shown {
+		shas, more = shas[:shown], len(shas)-shown
+	}
+	described := make([]string, len(shas), len(shas)+1)
+	for i, sha := range shas {
+		line := gitOut(repo, "show", "-s", "--format=%h by %an <%ae>", sha)
+		if line == "" {
+			line = sha[:min(12, len(sha))]
+		}
+		described[i] = strings.Map(func(r rune) rune {
+			if r == utf8.RuneError || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+				return '?'
+			}
+			return r
+		}, line)
+	}
+	if more > 0 {
+		described = append(described, fmt.Sprintf("and %d more", more))
+	}
+	return described
 }
 
-func readPendingReviewSigningJournal(repo string) (pendingReviewSigningJournal, bool, error) {
-	workspace, err := canonicalPendingReviewWorkspace(repo)
+func (e *PendingReviewCommitsError) Error() string { return "task " + e.TaskID + " " + e.needs() }
+
+// Cause is the refusal as a sentence.
+func (e *PendingReviewCommitsError) Cause() string { return "Task " + e.TaskID + " " + e.needs() + "." }
+
+// Remedy is how to repair the history before trying again. A box writes commit messages, so an
+// extra commit may be forged: dropping it is as likely right as squashing.
+func (e *PendingReviewCommitsError) Remedy() string {
+	switch {
+	case e.Found == 0:
+		return "Restore one commit with that trailer"
+	case e.Found == 2:
+		return "Drop the extra commit or squash them"
+	default:
+		return "Drop the extra commits or squash them"
+	}
+}
+
+// pendingReviewSubjectBase is where a subject's review range starts.
+func pendingReviewSubjectBase(subject PendingReviewRecord) string {
+	if subject.Base != "" {
+		return subject.Base
+	}
+	return subject.Plan.BaseHead
+}
+
+// pendingReviewSubjectCommits finds each subject's one commit: the commit in its review range whose
+// sole Coop-Task trailer names it. A box writes commit messages, so the search never looks at
+// history the host-recorded base already had. The range is read the way git reads it, as the
+// commits reachable from HEAD and not from the base, so a start commit the run amended (the recovery
+// recipe for a commit that lost its folder move) or re-signed still bounds it. Signing rewrites
+// commit IDs but keeps every trailer, so a signed run still finds its commits. A dropped or
+// duplicated commit is a *PendingReviewCommitsError.
+func pendingReviewSubjectCommits(repo string, subjects []PendingReviewRecord) (map[string]string, error) {
+	after, err := rawReachableAuditCommits(repo, "HEAD")
 	if err != nil {
-		return pendingReviewSigningJournal{}, false, err
+		return nil, fmt.Errorf("read the history final review covers: %w", err)
 	}
-	name, err := pendingReviewSigningJournalName(workspace)
-	if err != nil {
-		return pendingReviewSigningJournal{}, false, err
-	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return pendingReviewSigningJournal{}, false, err
-	}
-	defer registry.Close()
-	data, err := ReadTaskMetadataFile(registry, name)
-	if errors.Is(err, os.ErrNotExist) {
-		return pendingReviewSigningJournal{}, false, nil
-	}
-	if err != nil {
-		return pendingReviewSigningJournal{}, false, err
-	}
-	if len(data) > pendingReviewFileLimit {
-		return pendingReviewSigningJournal{}, false, fmt.Errorf("pending-review signing journal exceeds %d bytes", pendingReviewFileLimit)
-	}
-	var journal pendingReviewSigningJournal
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&journal); err != nil {
-		return pendingReviewSigningJournal{}, false, fmt.Errorf("decode pending-review signing journal: %w", err)
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return pendingReviewSigningJournal{}, false, errors.New("pending-review signing journal contains multiple JSON values")
+	earlier := map[string]map[string]bool{}
+	found := make(map[string]string, len(subjects))
+	for _, subject := range subjects {
+		id, base := subject.Task.Ref.ID, pendingReviewSubjectBase(subject)
+		before, ok := earlier[base]
+		if !ok {
+			commits, err := rawReachableAuditCommits(repo, base)
+			if err != nil {
+				return nil, fmt.Errorf("read commit %s, where the final review of %s starts: %w", base, id, err)
+			}
+			before = make(map[string]bool, len(commits))
+			for _, commit := range commits {
+				before[commit.sha] = true
+			}
+			earlier[base] = before
 		}
-		return pendingReviewSigningJournal{}, false, err
-	}
-	if journal.Version != pendingReviewVersion || journal.Workspace != workspace || journal.UpdatedAt.IsZero() || len(journal.Steps) > pendingReviewSigningLimit {
-		return pendingReviewSigningJournal{}, false, errors.New("invalid pending-review signing journal")
-	}
-	for _, step := range journal.Steps {
-		if !strings.HasPrefix(step.Branch, "refs/heads/") || !validAuditReopenHead(step.OldHead) ||
-			!validAuditReopenHead(step.NewHead) || step.OldHead == step.NewHead || step.CreatedAt.IsZero() ||
-			len(step.OldCommits) == 0 || len(step.OldCommits) != len(step.NewCommits) ||
-			step.OldCommits[len(step.OldCommits)-1] != step.OldHead || step.NewCommits[len(step.NewCommits)-1] != step.NewHead {
-			return pendingReviewSigningJournal{}, false, errors.New("invalid pending-review signing journal step")
-		}
-		for i := range step.OldCommits {
-			if !validAuditReopenHead(step.OldCommits[i]) || !validAuditReopenHead(step.NewCommits[i]) {
-				return pendingReviewSigningJournal{}, false, errors.New("invalid pending-review signing commit mapping")
+		var shas []string
+		for _, commit := range after {
+			if !before[commit.sha] && !commit.taskBindingInvalid && len(commit.taskValues) == 1 && commit.taskValues[0] == id {
+				shas = append(shas, commit.sha)
 			}
 		}
+		if len(shas) != 1 {
+			return nil, &PendingReviewCommitsError{TaskID: id, Base: base, OwnBase: subject.Base != "", Found: len(shas),
+				Commits: describeTaskCommits(repo, shas)}
+		}
+		found[id] = shas[0]
 	}
-	return journal, true, nil
+	return found, nil
 }
 
-func writePendingReviewSigningJournal(repo string, journal pendingReviewSigningJournal) error {
-	data, err := json.Marshal(journal)
-	if err != nil {
-		return err
+// pendingReviewNewBase is the Base a subject entering review needs. Its trailer must name exactly
+// one commit in the whole branch, as a box's own completion check already requires: a box can plant
+// a commit naming a task it does not hold (tolerated with a warning), and a host completion must not
+// bind that commit while the human's own commit goes unreviewed. That commit after the run's base
+// needs no Base. One from before the run, such as a task another session committed before the loop
+// started and completes during it, is anchored the way --review-task anchors an import: after its
+// parent. A recompletion keeps the Base it has.
+func pendingReviewNewBase(repo string, subject PendingReviewRecord) (string, error) {
+	_, err := pendingReviewSubjectCommits(repo, []PendingReviewRecord{subject})
+	var missing *PendingReviewCommitsError
+	if subject.Base != "" || (err != nil && (!errors.As(err, &missing) || missing.Found != 0)) {
+		return subject.Base, err
 	}
-	if len(data)+1 > pendingReviewFileLimit {
-		return fmt.Errorf("pending-review signing journal exceeds %d bytes", pendingReviewFileLimit)
-	}
-	name, err := pendingReviewSigningJournalName(repo)
-	if err != nil {
-		return err
-	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return err
-	}
-	defer registry.Close()
-	return AtomicWriteTaskFile(registry, name, append(data, '\n'))
-}
-
-func removePendingReviewWorkspaceFiles(repo string) error {
-	marker, err := pendingReviewWorkspaceFile(repo, pendingReviewMarkerID, pendingReviewMarkerFile)
-	if err != nil {
-		return err
-	}
-	journal, err := pendingReviewSigningJournalName(repo)
-	if err != nil {
-		return err
-	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return err
-	}
-	defer registry.Close()
-	var result error
-	for _, name := range []string{journal, marker} {
-		if removeErr := registry.Remove(name); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			result = errors.Join(result, removeErr)
-		}
-	}
-	return result
-}
-
-// RecordPendingReviewSigning writes the exact old-to-new commit map before Coop advances the
-// branch. It is a no-op unless this workspace has pending review debt. A restart can therefore
-// distinguish Coop's own signing rewrite from an arbitrary history edit without trusting tree
-// equality alone.
-func RecordPendingReviewSigning(repo, branch, oldHead, newHead string, oldCommits, newCommits []string) error {
-	marked, err := pendingReviewWorkspaceMarked(repo)
-	if err != nil || !marked {
-		return err
-	}
-	workspace, err := canonicalPendingReviewWorkspace(repo)
-	if err != nil {
-		return err
-	}
-	if !strings.HasPrefix(branch, "refs/heads/") || gitOut(repo, "symbolic-ref", "--quiet", "HEAD") != branch ||
-		!validAuditReopenHead(oldHead) || !validAuditReopenHead(newHead) || oldHead == newHead ||
-		gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}") != oldHead || len(oldCommits) == 0 ||
-		len(oldCommits) != len(newCommits) || oldCommits[len(oldCommits)-1] != oldHead ||
-		newCommits[len(newCommits)-1] != newHead {
-		return errors.New("invalid pending-review signing transition")
-	}
-	for i := range oldCommits {
-		if !validAuditReopenHead(oldCommits[i]) || !validAuditReopenHead(newCommits[i]) {
-			return errors.New("invalid pending-review signing commit mapping")
-		}
-		oldTree := gitOut(repo, "show", "-s", "--format=%T", oldCommits[i])
-		newTree := gitOut(repo, "show", "-s", "--format=%T", newCommits[i])
-		if oldTree == "" || oldTree != newTree {
-			return fmt.Errorf("pending-review signing changed commit %d's tree", i+1)
-		}
-	}
-	journal, ok, err := readPendingReviewSigningJournal(workspace)
-	if err != nil {
-		return err
-	}
+	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	bindings, ok := rawTaskBindings(repo, head)
 	if !ok {
-		journal = pendingReviewSigningJournal{Version: pendingReviewVersion, Workspace: workspace}
+		return "", errors.New("read reachable task bindings for final review")
 	}
-	if len(journal.Steps) >= pendingReviewSigningLimit {
-		return fmt.Errorf("pending-review signing journal reached %d transitions; finish final review before signing more history", pendingReviewSigningLimit)
+	if shas := bindings[subject.Task.Ref.ID]; len(shas) != 1 {
+		return "", &PendingReviewCommitsError{TaskID: subject.Task.Ref.ID, Found: len(shas), Commits: describeTaskCommits(repo, shas)}
 	}
-	journal.Steps = append(journal.Steps, pendingReviewSigningStep{
-		Branch: branch, OldHead: oldHead, NewHead: newHead,
-		OldCommits: slices.Clone(oldCommits), NewCommits: slices.Clone(newCommits), CreatedAt: time.Now().UTC(),
-	})
-	journal.UpdatedAt = time.Now().UTC()
-	return writePendingReviewSigningJournal(workspace, journal)
+	if err == nil {
+		return "", nil
+	}
+	anchor, _, err := pendingReviewAnchor(repo, head, bindings, subject.Task.Ref.ID)
+	return anchor, err
 }
 
-func pendingReviewIsAncestor(repo, ancestor, head string) bool {
-	return ancestor == head || gitOut(repo, "merge-base", ancestor, head) == ancestor
+// PendingReviewEarlierCommits returns the commit of each subject anchored before the run's base, a
+// task another session committed before the loop started: the run's own range does not show it, and
+// a reviewer must see what its verdict accepts.
+func PendingReviewEarlierCommits(repo string, subjects []PendingReviewRecord) (map[string]string, error) {
+	var anchored []PendingReviewRecord
+	for _, subject := range subjects {
+		if subject.Base != "" {
+			anchored = append(anchored, subject)
+		}
+	}
+	if len(anchored) == 0 {
+		return nil, nil
+	}
+	return pendingReviewSubjectCommits(repo, anchored)
 }
 
-func rebindPendingReviewFromSigningJournal(repo string, record PendingReviewRecord) (PendingReviewRecord, bool, error) {
-	journal, ok, err := readPendingReviewSigningJournal(repo)
-	if err != nil || !ok {
-		return record, false, err
+// pendingReviewAnchor returns the parent of id's one reachable commit, where a review range that
+// must include that commit starts, and how many commits lead from it to head.
+func pendingReviewAnchor(repo, head string, bindings map[string][]string, id string) (string, int, error) {
+	if shas := bindings[id]; len(shas) != 1 {
+		return "", 0, &PendingReviewCommitsError{TaskID: id, Found: len(shas), Commits: describeTaskCommits(repo, shas)}
 	}
-	currentHead := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
-	binding := record.Binding
-	binding.Raw = slices.Clone(binding.Raw)
-	rebound := false
-	for _, step := range journal.Steps {
-		if step.Branch != record.Plan.Branch || !pendingReviewIsAncestor(repo, step.NewHead, currentHead) {
+	subject := bindings[id][0]
+	history, err := rawAuditHistoryUntil(repo, head, auditReopenHistoryLimit+1,
+		func(commit rawAuditCommit) bool { return commit.sha == subject })
+	if err != nil {
+		return "", 0, fmt.Errorf("read review subject %s history: %w", id, err)
+	}
+	if history[0].parent == "" {
+		return "", 0, fmt.Errorf("review subject %s has no parent commit to anchor final verification", id)
+	}
+	return history[0].parent, len(history), nil
+}
+
+// pendingReviewHistory is a review window: the linear history in base..HEAD as git reads it, with
+// each commit's change and the tree the first change applies to. A review of the run saw all of it,
+// not just the subject's own commit: an attempt that exits before any range check can rewrite an
+// untrailered commit on either side, or drop the commit the window starts from.
+type pendingReviewHistory struct {
+	start   string
+	commits []rawAuditCommit
+	changes []string
+}
+
+// readPendingReviewHistory reads the window after base. It must be linear, as audit authority
+// already requires.
+func readPendingReviewHistory(repo, base string) (pendingReviewHistory, error) {
+	var history pendingReviewHistory
+	before, err := rawReachableAuditCommits(repo, base)
+	if err != nil {
+		return history, fmt.Errorf("read commit %s, where final review starts: %w", base, err)
+	}
+	earlier := make(map[string]bool, len(before))
+	for _, commit := range before {
+		earlier[commit.sha] = true
+	}
+	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	if !validAuditReopenHead(head) {
+		return history, errors.New("resolve the HEAD final review covers")
+	}
+	if earlier[head] {
+		return history, nil
+	}
+	raw, err := rawAuditHistoryUntil(repo, head, auditReopenHistoryLimit+1,
+		func(commit rawAuditCommit) bool { return commit.parent == "" || earlier[commit.parent] })
+	if err != nil {
+		return history, fmt.Errorf("read the commits final review covers: %w", err)
+	}
+	changes, err := semanticRawHistoryChangeTrees(repo, raw)
+	if err != nil {
+		return history, fmt.Errorf("read what the final-review commits change: %w", err)
+	}
+	// Each change is a diff against its parent, so the window also records the tree the first one
+	// applies to: dropping the commit the window starts from changes HEAD's tree but no diff.
+	start := auditObjectID("tree", nil, len(raw[0].tree))
+	if raw[0].parent != "" {
+		if start, err = auditCommitTree(repo, raw[0].parent); err != nil {
+			return history, fmt.Errorf("read the tree final review starts from: %w", err)
+		}
+	}
+	history.start, history.commits, history.changes = start, raw, changes
+	return history, nil
+}
+
+// readPendingReviewWindows reads the window of each distinct base among subjects.
+func readPendingReviewWindows(repo string, subjects []PendingReviewRecord) (map[string]pendingReviewHistory, error) {
+	windows := map[string]pendingReviewHistory{}
+	for _, subject := range subjects {
+		base := pendingReviewSubjectBase(subject)
+		if _, ok := windows[base]; ok {
 			continue
 		}
-		headIndex := slices.Index(step.OldCommits, binding.Head)
-		if headIndex < 0 {
-			continue
+		window, err := readPendingReviewHistory(repo, base)
+		if err != nil {
+			return nil, err
 		}
-		mapped := slices.Clone(binding.Raw)
-		for i, raw := range binding.Raw {
-			index := slices.Index(step.OldCommits, raw)
-			if index >= 0 {
-				mapped[i] = step.NewCommits[index]
-			}
-		}
-		binding.Head = step.NewCommits[headIndex]
-		binding.Raw = mapped
-		rebound = true
+		windows[base] = window
 	}
-	if !rebound {
-		return record, false, nil
-	}
-	if !pendingReviewRawBindingValid(repo, binding) ||
-		!AuditReopenCurrentValid(repo, currentHead, record.Task.Ref.ID, bindingAsAuditRecord(record.Task.Ref.ID, binding)) {
-		return record, false, fmt.Errorf("pending-review signing journal does not validate current history for task %s", record.Task.Ref.ID)
-	}
-	record.Binding = binding
-	record.UpdatedAt = time.Now().UTC()
-	return record, true, nil
+	return windows, nil
 }
 
-func pendingReviewWorkspaceHasRecords(repo string, queueRoots []string) (bool, error) {
-	workspace, err := canonicalPendingReviewWorkspace(repo)
-	if err != nil {
-		return false, err
-	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return false, err
-	}
-	defer registry.Close()
-	directory, err := registry.Open(".")
-	if err != nil {
-		return false, err
-	}
-	defer directory.Close()
-	prefixes := make([]string, 0, len(queueRoots))
-	for _, root := range queueRoots {
-		prefix, prefixErr := pendingReviewRecordPrefix(root)
-		if prefixErr != nil {
-			return false, prefixErr
-		}
-		prefixes = append(prefixes, prefix)
-	}
-	for {
-		entries, readErr := directory.ReadDir(256)
-		for _, entry := range entries {
-			if !strings.HasSuffix(entry.Name(), pendingReviewFileSuffix) {
-				continue
-			}
-			data, fileErr := ReadTaskMetadataFile(registry, entry.Name())
-			if fileErr != nil {
-				if slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(entry.Name(), prefix) }) {
-					return true, nil // retain the marker until selected-queue evidence is repaired
-				}
-				continue
-			}
-			record, decodeErr := decodePendingReviewRecord(data)
-			if decodeErr != nil {
-				if slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(entry.Name(), prefix) }) {
-					return true, nil
-				}
-				continue
-			}
-			if record.Plan.Workspace == workspace {
-				return true, nil
-			}
-		}
-		if errors.Is(readErr, io.EOF) {
-			return false, nil
-		}
-		if readErr != nil {
-			return false, readErr
-		}
-	}
+// content is what a signoff round starting now reviews.
+func (h pendingReviewHistory) content() PendingReviewContent {
+	return PendingReviewContent{Commits: len(h.commits), Digest: h.digest(len(h.commits))}
 }
 
-func clearPendingReviewWorkspaceIfEmpty(repo string, queueRoots []string) error {
-	hasRecords, err := pendingReviewWorkspaceHasRecords(repo, queueRoots)
-	if err != nil || hasRecords {
-		return err
-	}
-	return removePendingReviewWorkspaceFiles(repo)
+// covers reports whether every commit a round reviewed is still there, unchanged and in order. A
+// commit added after the round does not count.
+func (h pendingReviewHistory) covers(reviewed *PendingReviewContent) bool {
+	return reviewed != nil && reviewed.Commits >= 1 && reviewed.Commits <= len(h.commits) &&
+		h.digest(reviewed.Commits) == reviewed.Digest
 }
 
-func decodePendingReviewRecord(data []byte) (PendingReviewRecord, error) {
-	var record PendingReviewRecord
+// digest fingerprints the tree the window starts from and its first n commits by change, author and
+// message, none of which signing changes. Every field carries its length, so no bytes inside one can
+// pass for a boundary.
+func (h pendingReviewHistory) digest(n int) string {
+	sum := sha256.New()
+	fmt.Fprintf(sum, "%d:%s", len(h.start), h.start)
+	for i := range n {
+		commit := h.commits[i]
+		for _, field := range []string{h.changes[i], commit.authorName, commit.authorEmail, commit.authorDate, commit.commitMessage} {
+			fmt.Fprintf(sum, "%d:%s", len(field), field)
+		}
+	}
+	return hex.EncodeToString(sum.Sum(nil))
+}
+
+// backToSignoff makes a subject wait for signoff again, with no verdict covering it.
+func backToSignoff(record *PendingReviewRecord) {
+	record.Phase = PendingReviewSignoff
+	record.RoundStarted = false
+	record.Reviewed = nil
+}
+
+func decodePendingReviewJSON(data []byte, value any) error {
 	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(data), pendingReviewFileLimit+1))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&record); err != nil {
-		return PendingReviewRecord{}, err
+	if err := dec.Decode(value); err != nil {
+		return err
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return PendingReviewRecord{}, errors.New("pending-review record contains multiple JSON values")
+			return errors.New("pending-review record contains multiple JSON values")
 		}
-		return PendingReviewRecord{}, err
+		return err
 	}
-	return record, nil
+	return nil
+}
+
+// decodePendingReviewRecord reads a record, converting a version 1 one (legacy) to version 2.
+func decodePendingReviewRecord(data []byte) (record PendingReviewRecord, legacy bool, err error) {
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return PendingReviewRecord{}, false, err
+	}
+	if header.Version == pendingReviewLegacyVersion {
+		var old pendingReviewRecordV1
+		if err := decodePendingReviewJSON(data, &old); err != nil {
+			return PendingReviewRecord{}, false, err
+		}
+		record = old.PendingReviewRecord
+		record.Version = pendingReviewVersion
+		if old.Previous != nil {
+			previous := old.Previous.PendingReviewPrevious
+			record.Previous = &previous
+		}
+		return record, true, nil
+	}
+	if err := decodePendingReviewJSON(data, &record); err != nil {
+		return PendingReviewRecord{}, false, err
+	}
+	return record, false, nil
 }
 
 func validatePendingReviewPlan(plan PendingReviewPlan) error {
-	if plan.Version != pendingReviewVersion || !durableIdentityRE.MatchString(plan.CohortID) ||
+	if plan.Version != pendingReviewPlanVersion || !durableIdentityRE.MatchString(plan.CohortID) ||
 		plan.Workspace == "" || !filepath.IsAbs(plan.Workspace) || filepath.Clean(plan.Workspace) != plan.Workspace ||
 		!strings.HasPrefix(plan.Branch, "refs/heads/") || len(plan.Queues) == 0 || strings.TrimSpace(plan.Continue) == "" ||
 		!validAuditReopenHead(plan.BaseHead) || plan.SignoffRounds < 1 || len(plan.Signoff.Targets) == 0 ||
@@ -632,8 +599,12 @@ func validatePendingReviewRecord(record PendingReviewRecord) error {
 	if err := validatePendingReviewPlan(record.Plan); err != nil {
 		return err
 	}
-	if err := validatePendingReviewSubject(record.Task, record.Fingerprint, record.Binding); err != nil {
+	if err := validatePendingReviewSubject(record.Task, record.Fingerprint); err != nil {
 		return err
+	}
+	if (record.Base != "" && !validAuditReopenHead(record.Base)) ||
+		(record.Reviewed != nil && (record.Reviewed.Commits < 1 || !validAuditReopenHead(record.Reviewed.Digest))) {
+		return errors.New("invalid pending-review commit context")
 	}
 	switch record.Phase {
 	case PendingReviewSignoff, PendingReviewVerify, PendingReviewReopened:
@@ -654,7 +625,7 @@ func validatePendingReviewRecord(record PendingReviewRecord) error {
 		if !record.Prepared || previous.Task.Ref != record.Task.Ref || previous.Round < 0 {
 			return errors.New("invalid previous pending-review state")
 		}
-		if err := validatePendingReviewSubject(previous.Task, previous.Fingerprint, previous.Binding); err != nil {
+		if err := validatePendingReviewSubject(previous.Task, previous.Fingerprint); err != nil {
 			return fmt.Errorf("invalid previous pending-review state: %w", err)
 		}
 		switch previous.Phase {
@@ -672,23 +643,13 @@ func validatePendingReviewRecord(record PendingReviewRecord) error {
 	return nil
 }
 
-func validatePendingReviewSubject(task TaskInstance, fingerprint CompletionFingerprint, binding PendingReviewBinding) error {
+func validatePendingReviewSubject(task TaskInstance, fingerprint CompletionFingerprint) error {
 	if task.Ref.ID == "" || !durableIdentityRE.MatchString(task.Ref.QueueID) ||
 		!durableIdentityRE.MatchString(task.Ref.TaskID) || task.Generation.Device == 0 ||
 		task.Generation.Inode == 0 || fingerprint.Device != task.Generation.Device ||
 		fingerprint.Inode != task.Generation.Inode || !durableIdentityRE.MatchString(fingerprint.Receipt) ||
-		fingerprint.ReceiptBusy || !validAuditReopenHead(fingerprint.Tree) ||
-		!validAuditReopenHead(binding.Head) || len(binding.Raw) != len(binding.History)+1 ||
-		len(binding.Raw) == 0 || binding.Raw[len(binding.Raw)-1] != binding.Head {
+		fingerprint.ReceiptBusy || !validAuditReopenHead(fingerprint.Tree) {
 		return errors.New("invalid pending-review subject")
-	}
-	for _, commit := range binding.Raw {
-		if !validAuditReopenHead(commit) {
-			return errors.New("invalid raw pending-review binding")
-		}
-	}
-	if err := validateAuditReopenRecord(bindingAsAuditRecord(task.Ref.ID, binding), task.Ref.ID); err != nil {
-		return fmt.Errorf("invalid semantic pending-review binding: %w", err)
 	}
 	return nil
 }
@@ -733,7 +694,7 @@ func readPendingReviewRecord(root, id string) (PendingReviewRecord, bool, error)
 	if len(data) > pendingReviewFileLimit {
 		return PendingReviewRecord{}, false, fmt.Errorf("pending-review record %q exceeds %d bytes", name, pendingReviewFileLimit)
 	}
-	record, err := decodePendingReviewRecord(data)
+	record, _, err := decodePendingReviewRecord(data)
 	if err != nil {
 		return PendingReviewRecord{}, false, fmt.Errorf("decode pending-review record %q: %w", name, err)
 	}
@@ -783,167 +744,13 @@ func removePendingReviewRecord(root, id string) error {
 	return err
 }
 
-func readPendingReviewReviewed(root, id string) (pendingReviewReviewed, bool, error) {
-	name, err := pendingReviewReviewedName(root, id)
-	if err != nil {
-		return pendingReviewReviewed{}, false, err
-	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return pendingReviewReviewed{}, false, err
-	}
-	defer registry.Close()
-	data, err := ReadTaskMetadataFile(registry, name)
-	if errors.Is(err, os.ErrNotExist) {
-		return pendingReviewReviewed{}, false, nil
-	}
-	if err != nil {
-		return pendingReviewReviewed{}, false, err
-	}
-	if len(data) > pendingReviewFileLimit {
-		return pendingReviewReviewed{}, false, fmt.Errorf("pending-review reviewed receipt exceeds %d bytes", pendingReviewFileLimit)
-	}
-	var reviewed pendingReviewReviewed
-	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(data), pendingReviewFileLimit+1))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&reviewed); err != nil {
-		return pendingReviewReviewed{}, false, err
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return pendingReviewReviewed{}, false, errors.New("pending-review reviewed receipt contains multiple JSON values")
-		}
-		return pendingReviewReviewed{}, false, err
-	}
-	if reviewed.Version != pendingReviewVersion || !durableIdentityRE.MatchString(reviewed.CohortID) ||
-		reviewed.Task.Ref.ID != id || reviewed.ReviewedAt.IsZero() {
-		return pendingReviewReviewed{}, false, errors.New("invalid pending-review reviewed receipt")
-	}
-	if err := validatePendingReviewSubject(reviewed.Task, reviewed.Fingerprint, reviewed.Binding); err != nil {
-		return pendingReviewReviewed{}, false, fmt.Errorf("invalid pending-review reviewed receipt: %w", err)
-	}
-	return reviewed, true, nil
-}
-
-func writePendingReviewReviewed(root string, record PendingReviewRecord) error {
-	reviewed := pendingReviewReviewed{
-		Version: pendingReviewVersion, CohortID: record.Plan.CohortID, Task: record.Task,
-		Fingerprint: record.Fingerprint, Binding: record.Binding, ReviewedAt: time.Now().UTC(),
-	}
-	data, err := json.Marshal(reviewed)
-	if err != nil {
-		return err
-	}
-	name, err := pendingReviewReviewedName(root, record.Task.Ref.ID)
-	if err != nil {
-		return err
-	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return err
-	}
-	defer registry.Close()
-	return AtomicWriteTaskFile(registry, name, append(data, '\n'))
-}
-
-func removePendingReviewReviewed(root, id string) error {
-	name, err := pendingReviewReviewedName(root, id)
-	if err != nil {
-		return err
-	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return err
-	}
-	defer registry.Close()
-	err = registry.Remove(name)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
-}
-
-func capturePendingReviewBinding(repo, id string) (PendingReviewBinding, error) {
-	record, err := CaptureAuditReopen(repo, id)
-	if err != nil {
-		return PendingReviewBinding{}, err
-	}
-	raw, err := rawAuditHistoryCount(repo, record.BaselineHead, len(record.History)+1)
-	if err != nil {
-		return PendingReviewBinding{}, err
-	}
-	commits := make([]string, len(raw))
-	for i := range raw {
-		commits[i] = raw[i].sha
-	}
-	return PendingReviewBinding{Head: record.BaselineHead, Raw: commits, Subject: record.Subject, History: slices.Clone(record.History)}, nil
-}
-
-func bindingAsAuditRecord(id string, binding PendingReviewBinding) AuditReopenRecord {
-	return AuditReopenRecord{
-		Version: auditReopenVersion, Generation: strings.Repeat("0", 32), TaskID: id,
-		BaselineHead: binding.Head, Subject: binding.Subject, History: slices.Clone(binding.History),
-	}
-}
-
-func pendingReviewBindingExtendsSemantics(prior, current PendingReviewBinding) bool {
-	return prior.Subject == current.Subject && len(current.History) >= len(prior.History) &&
-		slices.Equal(prior.History, current.History[:len(prior.History)])
-}
-
-func pendingReviewBindingEqual(a, b PendingReviewBinding) bool {
-	return a.Head == b.Head && a.Subject == b.Subject && slices.Equal(a.Raw, b.Raw) && slices.Equal(a.History, b.History)
-}
-
 func pendingReviewRecordMatchesExpected(current, expected PendingReviewRecord) bool {
 	return current.Version == expected.Version && pendingReviewPlanEqual(current.Plan, expected.Plan) &&
 		sameTaskInstance(current.Task, expected.Task) && current.Fingerprint.Matches(expected.Fingerprint) &&
-		pendingReviewBindingEqual(current.Binding, expected.Binding) && current.Phase == expected.Phase &&
-		current.Round == expected.Round && current.RoundStarted == expected.RoundStarted &&
-		current.Prepared == expected.Prepared
-}
-
-// reconcileReviewedPendingReview completes the crash-idempotent half of clear: the reviewed
-// generation receipt is published first, so a process death before active-record removal must not
-// launch the same reviewer again. Exact generation/fingerprint/binding equality is required under
-// the task lock; an older tombstone beside a later authorized generation is left alone.
-func reconcileReviewedPendingReview(root, id string) (bool, error) {
-	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
-	if err != nil {
-		return false, err
-	}
-	finish := func(reconciled bool, operationErr error) (bool, error) {
-		return reconciled, errors.Join(operationErr, unlockLeaseFile(authority))
-	}
-	record, active, err := readPendingReviewRecord(root, id)
-	if err != nil || !active {
-		return finish(false, err)
-	}
-	reviewed, ok, err := readPendingReviewReviewed(root, id)
-	if err != nil || !ok {
-		return finish(false, err)
-	}
-	if reviewed.CohortID != record.Plan.CohortID || !sameTaskInstance(reviewed.Task, record.Task) || !record.Fingerprint.Matches(reviewed.Fingerprint) ||
-		!pendingReviewBindingEqual(reviewed.Binding, record.Binding) {
-		return finish(false, nil)
-	}
-	if err := removePendingReviewRecord(root, id); err != nil {
-		return finish(false, err)
-	}
-	return finish(true, nil)
-}
-
-func pendingReviewRawBindingValid(repo string, binding PendingReviewBinding) bool {
-	raw, err := rawAuditHistoryCount(repo, binding.Head, len(binding.Raw))
-	if err != nil || len(raw) != len(binding.Raw) {
-		return false
-	}
-	for i := range raw {
-		if raw[i].sha != binding.Raw[i] {
-			return false
-		}
-	}
-	return true
+		current.Base == expected.Base && (current.Reviewed == nil) == (expected.Reviewed == nil) &&
+		(current.Reviewed == nil || *current.Reviewed == *expected.Reviewed) &&
+		current.Phase == expected.Phase && current.Round == expected.Round &&
+		current.RoundStarted == expected.RoundStarted && current.Prepared == expected.Prepared
 }
 
 // MarkCompletedForReview publishes pending debt and the ordinary completion receipt under the
@@ -971,9 +778,13 @@ func (l *TaskLease) MarkCompletedForReview(repo string, task Item, plan PendingR
 	} else if hadPrior && !sameTaskInstance(prior.Task, instance) {
 		return fmt.Errorf("task %s pending-review identity changed", task.ID)
 	}
-	binding, err := capturePendingReviewBinding(repo, task.ID)
+	subject := PendingReviewRecord{Plan: plan, Task: instance}
+	if hadPrior {
+		subject.Plan, subject.Base = prior.Plan, prior.Base
+	}
+	base, err := pendingReviewNewBase(repo, subject)
 	if err != nil {
-		return fmt.Errorf("capture pending-review task binding: %w", err)
+		return err
 	}
 	receipt, err := completionReceiptFor(task.Dir)
 	if err != nil {
@@ -992,22 +803,18 @@ func (l *TaskLease) MarkCompletedForReview(repo string, task Item, plan PendingR
 		return err
 	}
 	record := PendingReviewRecord{
-		Version: pendingReviewVersion, Plan: plan, Task: instance, Fingerprint: fingerprint,
-		Binding: binding, Phase: PendingReviewSignoff, Prepared: true, UpdatedAt: time.Now().UTC(),
+		Version: pendingReviewVersion, Plan: subject.Plan, Task: instance, Fingerprint: fingerprint, Base: base,
+		Phase: PendingReviewSignoff, Prepared: true, UpdatedAt: time.Now().UTC(),
 	}
 	if hadPrior {
-		record.Plan = prior.Plan
 		record.Round = prior.Round
 		record.Previous = &PendingReviewPrevious{
-			Task: prior.Task, Fingerprint: prior.Fingerprint, Binding: prior.Binding,
+			Task: prior.Task, Fingerprint: prior.Fingerprint,
 			Phase: prior.Phase, Round: prior.Round, RoundStarted: prior.RoundStarted,
 		}
 	}
 	if err := writePendingReviewRecord(l.root, record); err != nil {
 		return err
-	}
-	if err := markPendingReviewWorkspace(repo); err != nil {
-		return errors.Join(err, rollbackPreparedPendingReview(l.root, record))
 	}
 	if err := writeLeaseCompletionReceiptValue(l.authority, receipt); err != nil {
 		return errors.Join(err, rollbackPreparedPendingReview(l.root, record))
@@ -1033,13 +840,17 @@ func rollbackPreparedPendingReview(root string, record PendingReviewRecord) erro
 	if record.Previous == nil {
 		return removePendingReviewRecord(root, record.Task.Ref.ID)
 	}
+	return writePendingReviewRecord(root, previousPendingReview(record))
+}
+
+// previousPendingReview is the debt a prepared recompletion displaced. It keeps the subject's Base,
+// which the same task's commit still needs.
+func previousPendingReview(record PendingReviewRecord) PendingReviewRecord {
 	previous := record.Previous
-	restored := PendingReviewRecord{
-		Version: record.Version, Plan: record.Plan, Task: previous.Task, Fingerprint: previous.Fingerprint,
-		Binding: previous.Binding, Phase: previous.Phase, Round: previous.Round,
-		RoundStarted: previous.RoundStarted, UpdatedAt: time.Now().UTC(),
+	return PendingReviewRecord{
+		Version: record.Version, Plan: record.Plan, Task: previous.Task, Fingerprint: previous.Fingerprint, Base: record.Base,
+		Phase: previous.Phase, Round: previous.Round, RoundStarted: previous.RoundStarted, UpdatedAt: time.Now().UTC(),
 	}
-	return writePendingReviewRecord(root, restored)
 }
 
 func pendingReviewPlanEqual(a, b PendingReviewPlan) bool {
@@ -1166,6 +977,8 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 	directory.Close()
 	registry.Close()
 	var cohort PendingReviewCohort
+	var reworked []AuditReopenRecord
+	roots := map[string]string{}
 	for _, entry := range entries {
 		// The root and task id are inside the strict record. Records for other workspaces are
 		// ignored; records claiming this workspace must validate against this invocation.
@@ -1178,7 +991,7 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 		if readErr != nil {
 			return PendingReviewCohort{}, readErr
 		}
-		record, decodeErr := decodePendingReviewRecord(data)
+		record, legacy, decodeErr := decodePendingReviewRecord(data)
 		if decodeErr != nil {
 			return PendingReviewCohort{}, fmt.Errorf("decode pending-review record %q: %w", entry.Name(), decodeErr)
 		}
@@ -1202,13 +1015,22 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 		if err != nil || wantName != entry.Name() {
 			return PendingReviewCohort{}, fmt.Errorf("pending-review record %q has the wrong authority key", entry.Name())
 		}
-		if reconciled, err := reconcileReviewedPendingReview(root, record.Task.Ref.ID); err != nil {
-			return PendingReviewCohort{}, fmt.Errorf("reconcile reviewed pending task %s: %w", record.Task.Ref.ID, err)
-		} else if reconciled {
-			continue
-		}
 		if err := pendingReviewPlanMatches(repo, hosts, record.Plan); err != nil {
 			return PendingReviewCohort{}, err
+		}
+		if legacy {
+			// Version 1 pinned the commit wherever it was, so one from before the run base gets the
+			// anchor a new enrollment would give it, once.
+			base, err := pendingReviewNewBase(repo, record)
+			if err != nil {
+				return PendingReviewCohort{}, err
+			}
+			if base != record.Base {
+				record.Base = base
+				if err := writePendingReviewRecord(root, record); err != nil {
+					return PendingReviewCohort{}, err
+				}
+			}
 		}
 		if len(cohort.Subjects) > 0 && !pendingReviewPlanEqual(cohort.Plan, record.Plan) {
 			return PendingReviewCohort{}, errors.New("pending final reviews have different stored review plans; finish the oldest cohort explicitly")
@@ -1239,66 +1061,41 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 				if record.Previous == nil {
 					continue
 				}
-				previous := record.Previous
-				record = PendingReviewRecord{
-					Version: record.Version, Plan: record.Plan, Task: previous.Task, Fingerprint: previous.Fingerprint,
-					Binding: previous.Binding, Phase: previous.Phase, Round: previous.Round,
-					RoundStarted: previous.RoundStarted, UpdatedAt: time.Now().UTC(),
-				}
+				record = previousPendingReview(record)
 			}
 		}
 		instance, instanceErr := ReadTaskInstance(root, current)
 		if instanceErr != nil || !sameTaskInstance(instance, record.Task) {
 			return PendingReviewCohort{}, errors.Join(instanceErr, fmt.Errorf("pending-review task %s changed generation", current.ID))
 		}
-		head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
-		bindingRecord := bindingAsAuditRecord(current.ID, record.Binding)
-		if !pendingReviewRawBindingValid(repo, record.Binding) || !AuditReopenCurrentValid(repo, head, current.ID, bindingRecord) {
-			rebound, changed, rebindErr := rebindPendingReviewFromSigningJournal(repo, record)
-			if rebindErr != nil {
-				return PendingReviewCohort{}, rebindErr
-			}
-			if !changed {
-				rebound, changed, rebindErr = rebindPendingReviewFromCohortAuditRewrite(repo, record)
-				if rebindErr != nil {
-					return PendingReviewCohort{}, rebindErr
-				}
-			}
-			if !changed && current.State != StateDone {
-				rebound, changed, rebindErr = rebindPendingReviewFromAuditReopen(repo, root, record)
-				if rebindErr != nil {
-					return PendingReviewCohort{}, rebindErr
-				}
-			}
-			if !changed {
-				return PendingReviewCohort{}, fmt.Errorf("pending-review task %s Git history changed outside an acknowledged host signing rewrite", current.ID)
-			}
-			record = rebound
-			if err := writePendingReviewRecord(root, record); err != nil {
-				return PendingReviewCohort{}, err
-			}
-		}
 		if current.State != StateDone {
+			// A reopened subject keeps its debt only under host review authority. Whether that
+			// authority still matches HEAD is the lease's question: a stale one parks the task with
+			// recovery guidance instead of stopping every later loop here.
 			audit, active, auditErr := ReadAuditReopenRecord(root, current.ID)
 			if auditErr != nil {
 				return PendingReviewCohort{}, auditErr
 			}
 			if !active || !auditReopenRecordActive(audit) {
-				return PendingReviewCohort{}, errors.Join(auditErr, fmt.Errorf("pending-review task %s left the archive without host review authority", current.ID))
+				return PendingReviewCohort{}, fmt.Errorf("pending-review task %s left the archive without host review authority", current.ID)
 			}
-			if !AuditReopenCurrentValid(repo, head, current.ID, audit) {
-				if err := rebindAuditReopenToPendingBinding(repo, root, current.ID, record.Binding); err != nil {
-					return PendingReviewCohort{}, fmt.Errorf("recover pending-review task %s audit authority: %w", current.ID, err)
-				}
+			replaced, err := recoverInterruptedRework(repo, root, current.ID)
+			if err != nil {
+				return PendingReviewCohort{}, fmt.Errorf("recover task %s's interrupted rework: %w", current.ID, err)
+			}
+			if replaced != nil {
+				reworked = append(reworked, *replaced)
 			}
 			record.Phase = PendingReviewReopened
 			record.Prepared = false
+			record.Reviewed = nil
 			record.UpdatedAt = time.Now().UTC()
 			if err := writePendingReviewRecord(root, record); err != nil {
 				return PendingReviewCohort{}, err
 			}
 			cohort.Plan = record.Plan
 			cohort.Subjects = append(cohort.Subjects, record)
+			roots[record.Task.Ref.ID] = root
 			continue
 		}
 		fingerprint, err := CompletionFingerprintFor(root, current)
@@ -1307,264 +1104,220 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 		}
 		cohort.Plan = record.Plan
 		cohort.Subjects = append(cohort.Subjects, record)
+		roots[record.Task.Ref.ID] = root
 	}
 	slices.SortFunc(cohort.Subjects, func(a, b PendingReviewRecord) int {
 		return strings.Compare(a.Task.Ref.ID, b.Task.Ref.ID)
 	})
 	if len(cohort.Subjects) > 0 {
-		if err := markPendingReviewWorkspace(repo); err != nil {
+		ids := make([]string, len(cohort.Subjects))
+		for i, subject := range cohort.Subjects {
+			ids[i] = subject.Task.Ref.ID
+		}
+		// Carry the other reopened tasks across a recovered rework now: once its authority moved, a
+		// later load no longer sees the rework, and those tasks would be parked as stale.
+		for _, record := range reworked {
+			if err := CarryReopenedReviews(repo, hosts, ids, record.BaselineHead, &record); err != nil {
+				return PendingReviewCohort{}, fmt.Errorf("keep final-review authority across task %s's interrupted rework: %w", record.TaskID, err)
+			}
+		}
+		if _, err := pendingReviewSubjectCommits(repo, cohort.Subjects); err != nil {
 			return PendingReviewCohort{}, err
 		}
-	} else if err := clearPendingReviewWorkspaceIfEmpty(repo, hosts); err != nil {
-		return PendingReviewCohort{}, err
+		if err := returnChangedToSignoff(repo, roots, cohort.Subjects); err != nil {
+			return PendingReviewCohort{}, err
+		}
 	}
 	return cohort, nil
 }
 
-func rebindPendingReviewFromAuditReopen(repo, root string, record PendingReviewRecord) (PendingReviewRecord, bool, error) {
-	id := record.Task.Ref.ID
-	reopen, ok, err := ReadAuditReopenRecord(root, id)
-	if err != nil || !ok || !auditReopenRecordActive(reopen) {
-		return record, false, err
-	}
-	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
-	binding, err := capturePendingReviewBinding(repo, id)
-	if err != nil {
-		return record, false, err
-	}
-	expected := bindingAsAuditRecord(id, binding)
-	expected.Generation = reopen.Generation
-	if AuditReopenCurrentValid(repo, head, id, reopen) {
-		if !AuditReopenRecordsEqual(reopen, expected) {
-			return record, false, fmt.Errorf("current audit authority does not match pending-review history for task %s", id)
-		}
-		record.Binding = binding
-		record.UpdatedAt = time.Now().UTC()
-		return record, true, nil
-	}
-	if reopen.BaselineHead != record.Binding.Head || !pendingReviewRawBindingValid(repo, record.Binding) ||
-		!AuditReopenCurrentValid(repo, record.Binding.Head, id, bindingAsAuditRecord(id, record.Binding)) {
-		return record, false, nil
-	}
-	rebased, err := rebasedAuditReopenRecord(repo, reopen.BaselineHead, head, id, reopen)
-	if err != nil {
-		return record, false, fmt.Errorf("pending-review audit rewrite does not validate for task %s: %w", id, err)
-	}
-	if !AuditReopenRecordsEqual(rebased, expected) {
-		return record, false, fmt.Errorf("pending-review audit rewrite does not match current history for task %s", id)
-	}
-	if err := replaceAuditReopenRecordIfMatches(root, reopen, rebased); err != nil {
-		return record, false, err
-	}
-	record.Binding = binding
-	record.UpdatedAt = time.Now().UTC()
-	return record, true, nil
-}
-
-func rebindPendingReviewFromCohortAuditRewrite(repo string, record PendingReviewRecord) (PendingReviewRecord, bool, error) {
-	current, err := capturePendingReviewBinding(repo, record.Task.Ref.ID)
-	if err != nil {
-		return record, false, err
-	}
-	auditID, changed := pendingReviewAuditRewriteID(record.Binding, current)
-	if !changed {
-		return record, false, nil
-	}
-	roots := make([]string, 0, len(record.Plan.Queues))
-	for _, queue := range record.Plan.Queues {
-		roots = append(roots, queue.Root)
-	}
-	auditTask, err := uniqueTaskAcrossRoots(roots, auditID)
-	if err != nil {
-		return record, false, nil
-	}
-	authority, ok, err := ReadAuditReopenRecord(auditTask.Root, auditID)
-	if err != nil || !ok || !auditReopenRecordActive(authority) {
-		return record, false, err
-	}
-	oldAudit, ok := pendingReviewBindingTask(record.Binding, auditID)
-	if !ok {
-		return record, false, nil
-	}
-	rebased := authority
-	if authority.BaselineHead == record.Binding.Head {
-		rebased, err = rebasedAuditReopenRecord(repo, record.Binding.Head, current.Head, auditID, authority)
-	} else if authority.BaselineHead != current.Head || !AuditReopenCurrentValid(repo, current.Head, auditID, authority) {
-		return record, false, nil
-	}
-	if err != nil || !pendingReviewBindingExtendsAuditRewrite(record.Binding, current, auditID, oldAudit, rebased.Subject) {
-		return record, false, errors.Join(err, fmt.Errorf("pending-review audit rewrite changed cohort semantics for task %s", record.Task.Ref.ID))
-	}
-	if record.Task.Ref.ID == auditID && !AuditReopenRecordsEqual(authority, rebased) {
-		if err := replaceAuditReopenRecordIfMatches(auditTask.Root, authority, rebased); err != nil {
-			return record, false, err
+// returnChangedToSignoff sends back to signoff each subject awaiting verification whose reviewed
+// commits changed or disappeared: a later attempt amended one of them, such as its commit or the
+// repair after it, or someone rewrote them while the loop was stopped. Verification then cannot
+// clear content no reviewer saw.
+func returnChangedToSignoff(repo string, roots map[string]string, subjects []PendingReviewRecord) error {
+	var accepted []PendingReviewRecord
+	for _, subject := range subjects {
+		if subject.Phase == PendingReviewVerify {
+			accepted = append(accepted, subject)
 		}
 	}
-	record.Binding = current
-	record.UpdatedAt = time.Now().UTC()
-	return record, true, nil
-}
-
-func pendingReviewAuditRewriteID(prior, current PendingReviewBinding) (string, bool) {
-	if len(current.History) < len(prior.History) {
-		return "", false
+	windows, err := readPendingReviewWindows(repo, accepted)
+	if err != nil {
+		return err
 	}
-	changed := ""
-	if prior.Subject != current.Subject {
-		if prior.Subject.TaskID == "" || prior.Subject.TaskID != current.Subject.TaskID {
-			return "", false
-		}
-		changed = prior.Subject.TaskID
-	}
-	for i, commit := range prior.History {
-		if commit == current.History[i] {
+	for i, subject := range subjects {
+		id := subject.Task.Ref.ID
+		if subject.Phase != PendingReviewVerify || windows[pendingReviewSubjectBase(subject)].covers(subject.Reviewed) {
 			continue
 		}
-		if commit.TaskID == "" || commit.TaskID != current.History[i].TaskID || changed != "" {
-			return "", false
+		backToSignoff(&subject)
+		subject.UpdatedAt = time.Now().UTC()
+		if err := writePendingReviewRecord(roots[id], subject); err != nil {
+			return err
 		}
-		changed = commit.TaskID
+		subjects[i] = subject
 	}
-	return changed, changed != ""
+	return nil
 }
 
-func pendingReviewBindingTask(binding PendingReviewBinding, id string) (AuditReopenCommit, bool) {
-	if binding.Subject.TaskID == id {
-		return binding.Subject, true
+// recoverInterruptedRework accepts the rework a stopped controller left uncompleted: when the task's
+// commit was rewritten after its audit authority was recorded, the rewrite must pass the same check
+// completion applies, and the authority moves to it without spending its generation. It returns the
+// authority it replaced, because that rework also replayed commits other reopened tasks record.
+func recoverInterruptedRework(repo, root, id string) (replaced *AuditReopenRecord, err error) {
+	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+		return nil, nil // no authority file, or a controller holds the task and checks it before working it
 	}
-	for _, commit := range binding.History {
-		if commit.TaskID == id {
-			return commit, true
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, unlockLeaseFile(authority)) }()
+	record, ok, err := ReadAuditReopenRecord(root, id)
+	if err != nil || !ok || !auditReopenRecordActive(record) {
+		return nil, err
+	}
+	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	if AuditReopenCurrentValid(repo, head, id, record) {
+		return nil, nil
+	}
+	rebased, err := rebasedAuditReopenRecord(repo, record.BaselineHead, head, id, record)
+	if err != nil {
+		return nil, nil // not a rework this authority accepts; the lease parks the task
+	}
+	if err := replaceAuditReopenRecordIfMatches(root, record, rebased); err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+// CarryReopenedReviews keeps the audit authority of the tasks in ids that a final review reopened
+// valid after the host itself rewrote the history that authority records: a signing pass (reworked
+// is nil), or reworked's accepted audit rework, which replays every commit after its own. Each
+// record must have held at oldHead. Its task's commits are found again by trailer at HEAD and must
+// still mean exactly what was reviewed, except that the reworked task's commit becomes its
+// replacement. Anything else leaves the record as it was, and the loop parks that task with
+// recovery guidance when it next leases it.
+func CarryReopenedReviews(repo string, hosts, ids []string, oldHead string, reworked *AuditReopenRecord) error {
+	if reworked != nil {
+		ids = slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return id == reworked.TaskID })
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var rework map[AuditReopenCommit]AuditReopenCommit
+	if reworked != nil {
+		head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+		rebased, err := rebasedAuditReopenRecord(repo, oldHead, head, reworked.TaskID, *reworked)
+		if err != nil {
+			return err
+		}
+		rework = map[AuditReopenCommit]AuditReopenCommit{reworked.Subject: rebased.Subject}
+	}
+	for _, id := range ids {
+		task, err := uniqueTaskAcrossRoots(hosts, id)
+		if err != nil {
+			return err
+		}
+		if err := carryAuditReopen(repo, task.Root, id, oldHead, rework); err != nil {
+			return fmt.Errorf("carry task %s's review authority: %w", id, err)
 		}
 	}
-	return AuditReopenCommit{}, false
+	return nil
 }
 
-// RebindPendingReviewAfterSigning is the explicit post-signing authority transition. The old raw
-// binding must still validate at oldHead, the signed result must be the current newHead, and the
-// complete semantic prefix must be preserved. Ordinary startup never infers this transition from
-// tree equality, so an unrelated rewrite cannot silently acquire review authority.
-func RebindPendingReviewAfterSigning(repo, root, id, oldHead, newHead string) error {
-	if err := rebindPendingReviewAfterAuthorizedRewrite(repo, root, id, oldHead, newHead); err != nil {
-		return err
-	}
-	record, ok, err := readPendingReviewRecord(root, id)
-	if err != nil || !ok {
-		return errors.Join(err, fmt.Errorf("pending-review record for %s is missing after signing", id))
-	}
-	return rebindAuditReopenToPendingBinding(repo, root, id, record.Binding)
-}
-
-// RebindPendingReviewAfterAuditRewrite preserves another completed task's review debt when a
-// host-authorized audit repair rewrites an older commit and faithfully replays its descendants.
-func RebindPendingReviewAfterAuditRewrite(repo, root, id, oldHead, newHead, auditID string, authority AuditReopenRecord) error {
-	rebased, err := rebasedAuditReopenRecord(repo, oldHead, newHead, auditID, authority)
+// CarryReopenedReviewsAfterSigning is CarryReopenedReviews for every subject of this workspace's
+// pending final review; one without audit authority is skipped. Every host signing pass calls it,
+// the loop's and `coop sign`'s alike.
+func CarryReopenedReviewsAfterSigning(repo, oldHead string) error {
+	workspace, err := canonicalPendingReviewWorkspace(repo)
 	if err != nil {
 		return err
 	}
-	if err := rebindPendingReviewAfterAuthorizedRewriteWith(repo, root, id, oldHead, newHead,
-		func(prior, current PendingReviewBinding) bool {
-			return pendingReviewBindingExtendsAuditRewrite(prior, current, auditID, authority.Subject, rebased.Subject)
-		}); err != nil {
+	records, err := workspacePendingReviews(workspace)
+	if err != nil {
 		return err
 	}
-	record, ok, err := readPendingReviewRecord(root, id)
-	if err != nil || !ok {
-		return errors.Join(err, fmt.Errorf("pending-review record for %s is missing after audit rewrite", id))
+	var errs []error
+	for _, record := range records {
+		for _, queue := range record.Plan.Queues {
+			if queue.ID == record.Task.Ref.QueueID {
+				errs = append(errs, carryAuditReopen(repo, queue.Root, record.Task.Ref.ID, oldHead, nil))
+			}
+		}
 	}
-	return rebindAuditReopenToPendingBinding(repo, root, id, record.Binding)
+	return errors.Join(errs...)
 }
 
-func rebindAuditReopenToPendingBinding(repo, root, id string, binding PendingReviewBinding) (err error) {
+func carryAuditReopen(repo, root, id, oldHead string, rework map[AuditReopenCommit]AuditReopenCommit) (err error) {
 	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+		return nil // no authority to carry, or a controller holds the task and checks it before working it
+	}
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, unlockLeaseFile(authority)) }()
-	reopen, ok, err := ReadAuditReopenRecord(root, id)
-	if err != nil || !ok {
+	record, ok, err := ReadAuditReopenRecord(root, id)
+	if err != nil || !ok || !auditReopenRecordActive(record) {
 		return err
 	}
-	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
-	if AuditReopenCurrentValid(repo, head, id, reopen) {
+	if AuditReopenCurrentValid(repo, "HEAD", id, record) || !AuditReopenCurrentValid(repo, oldHead, id, record) {
 		return nil
 	}
-	if !auditReopenRecordActive(reopen) || !AuditReopenCurrentValid(repo, reopen.BaselineHead, id, reopen) ||
-		!pendingReviewRawBindingValid(repo, binding) || binding.Subject != reopen.Subject {
-		return fmt.Errorf("pending-review binding does not authorize rebasing task %s", id)
+	current, err := CaptureAuditReopen(repo, id)
+	if err != nil || current.Subject != record.Subject || len(current.History) < len(record.History) {
+		return nil
 	}
-	replacement := bindingAsAuditRecord(id, binding)
-	replacement.Generation = reopen.Generation
-	if !AuditReopenCurrentValid(repo, head, id, replacement) {
-		return fmt.Errorf("rebound pending-review history does not match task %s", id)
+	for i, commit := range record.History {
+		if replacement, ok := rework[commit]; ok {
+			commit = replacement
+		}
+		if current.History[i] != commit {
+			return nil
+		}
 	}
-	return replaceAuditReopenRecordIfMatches(root, reopen, replacement)
+	current.Generation = record.Generation
+	return replaceAuditReopenRecordIfMatches(root, record, current)
 }
 
-func rebindPendingReviewAfterAuthorizedRewrite(repo, root, id, oldHead, newHead string) error {
-	return rebindPendingReviewAfterAuthorizedRewriteWith(repo, root, id, oldHead, newHead, pendingReviewBindingExtendsSemantics)
-}
-
-func rebindPendingReviewAfterAuthorizedRewriteWith(
-	repo, root, id, oldHead, newHead string,
-	preservesSemantics func(PendingReviewBinding, PendingReviewBinding) bool,
-) error {
-	record, ok, err := readPendingReviewRecord(root, id)
-	if err != nil || !ok {
-		return errors.Join(err, fmt.Errorf("pending-review record for %s is missing after history rewrite", id))
-	}
-	if !validAuditReopenHead(oldHead) || !validAuditReopenHead(newHead) || oldHead == newHead ||
-		gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}") != newHead ||
-		!pendingReviewRawBindingValid(repo, record.Binding) ||
-		!AuditReopenCurrentValid(repo, oldHead, id, bindingAsAuditRecord(id, record.Binding)) {
-		return fmt.Errorf("history transition for task %s does not start at its recorded raw binding", id)
-	}
-	current, err := capturePendingReviewBinding(repo, id)
+// workspacePendingReviews reads every pending final-review record that names workspace. The
+// registry is host-wide, so a record for another workspace, or one that does not read, is skipped.
+func workspacePendingReviews(workspace string) ([]PendingReviewRecord, error) {
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if !preservesSemantics(record.Binding, current) {
-		return fmt.Errorf("history rewrite changed pending-review semantics for task %s", id)
+	defer registry.Close()
+	directory, err := registry.Open(".")
+	if err != nil {
+		return nil, err
 	}
-	record.Binding = current
-	record.UpdatedAt = time.Now().UTC()
-	return writePendingReviewRecord(root, record)
-}
-
-func pendingReviewBindingExtendsAuditRewrite(
-	prior, current PendingReviewBinding,
-	auditID string,
-	oldAudit, newAudit AuditReopenCommit,
-) bool {
-	if len(current.History) < len(prior.History) {
-		return false
-	}
-	foundAudit := false
-	expectedSubject := prior.Subject
-	if prior.Subject.TaskID == auditID {
-		if prior.Subject != oldAudit {
-			return false
-		}
-		expectedSubject = newAudit
-		foundAudit = true
-	}
-	if current.Subject != expectedSubject {
-		return false
-	}
-	for i, commit := range prior.History {
-		expected := commit
-		if commit.TaskID == auditID {
-			if foundAudit || commit != oldAudit {
-				return false
+	defer directory.Close()
+	var records []PendingReviewRecord
+	for {
+		entries, readErr := directory.ReadDir(256)
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), pendingReviewFileSuffix) {
+				continue
 			}
-			expected = newAudit
-			foundAudit = true
+			data, err := ReadTaskMetadataFile(registry, entry.Name())
+			if err != nil {
+				continue
+			}
+			record, _, err := decodePendingReviewRecord(data)
+			if err == nil && record.Plan.Workspace == workspace && validatePendingReviewRecord(record) == nil {
+				records = append(records, record)
+			}
 		}
-		if current.History[i] != expected {
-			return false
+		if errors.Is(readErr, io.EOF) {
+			return records, nil
+		}
+		if readErr != nil {
+			return nil, readErr
 		}
 	}
-	return true
 }
 
 // EnrollExistingPendingReviews binds receipt-valid host completions discovered by
@@ -1599,11 +1352,15 @@ func EnrollExistingPendingReviews(repo string, hosts, ids []string, plan Pending
 	return nil
 }
 
-// PendingReviewImportBase returns the parent of the oldest explicitly imported review subject.
-// CaptureAuditReopen already proves a bounded, linear subject-to-HEAD history; the longest such
-// history is therefore the earliest subject in the requested set. Anchoring before it keeps final
+// PendingReviewImportBase returns the parent of the oldest explicitly imported review subject's
+// commit, found by its Coop-Task trailer. Anchoring the review range before it keeps final
 // verification meaningful even when the import itself creates no new commits.
 func PendingReviewImportBase(repo string, hosts, ids []string) (string, error) {
+	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	bindings, ok := rawTaskBindings(repo, head)
+	if !ok {
+		return "", errors.New("read reachable task bindings for the review import")
+	}
 	base, depth := "", -1
 	for _, id := range slices.Compact(slices.Sorted(slices.Values(ids))) {
 		task, err := uniqueTaskAcrossRoots(hosts, id)
@@ -1613,18 +1370,13 @@ func PendingReviewImportBase(repo string, hosts, ids []string) (string, error) {
 		if task.Item.State != StateDone {
 			return "", fmt.Errorf("task %s is not archived and cannot enter pending final review", id)
 		}
-		binding, err := capturePendingReviewBinding(repo, id)
+		anchor, length, err := pendingReviewAnchor(repo, head, bindings, id)
 		if err != nil {
 			return "", err
 		}
-		if len(binding.Raw) <= depth {
-			continue
+		if length > depth {
+			base, depth = anchor, length
 		}
-		parent, err := gitOutErr(repo, "rev-parse", "--verify", binding.Raw[0]+"^")
-		if err != nil {
-			return "", fmt.Errorf("review subject %s has no parent commit to anchor final verification: %w", id, err)
-		}
-		base, depth = parent, len(binding.Raw)
 	}
 	if base == "" {
 		return "", errors.New("no archived tasks were selected for final review")
@@ -1649,35 +1401,16 @@ func enrollExistingPendingReviewLocked(repo string, task QueuedTask, authority *
 		}
 		return fmt.Errorf("task %s already has pending review for a different generation", task.Item.ID)
 	}
-	if reviewed, ok, readErr := readPendingReviewReviewed(task.Root, task.Item.ID); readErr != nil {
-		return readErr
-	} else if ok && sameTaskInstance(reviewed.Task, instance) {
-		if reviewed.Fingerprint.Matches(fingerprint) {
-			return fmt.Errorf("task %s already passed final review for this accepted generation", task.Item.ID)
-		}
-		receipt, accepted := readLeaseCompletionReceipt(authority, task.Item.Dir)
-		if !accepted || receipt.AuditReopenGeneration == "" {
-			return fmt.Errorf("task %s archive changed after its recorded final review", task.Item.ID)
-		}
-		// A later host-authorized audit reopen is a new accepted review generation even though
-		// lifecycle moves preserve the task directory inode. Its receipt generation, not changed
-		// provider-writable archive bytes alone, is the authority that permits reenrollment.
+	record := PendingReviewRecord{
+		Version: pendingReviewVersion, Plan: clonePendingReviewPlan(plan), Task: instance, Fingerprint: fingerprint,
+		Phase: PendingReviewSignoff, UpdatedAt: time.Now().UTC(),
 	}
-	binding, err := capturePendingReviewBinding(repo, task.Item.ID)
+	base, err := pendingReviewNewBase(repo, record)
 	if err != nil {
 		return err
 	}
-	record := PendingReviewRecord{
-		Version: pendingReviewVersion, Plan: clonePendingReviewPlan(plan), Task: instance, Fingerprint: fingerprint,
-		Binding: binding, Phase: PendingReviewSignoff, UpdatedAt: time.Now().UTC(),
-	}
-	if err := writePendingReviewRecord(task.Root, record); err != nil {
-		return err
-	}
-	if err := markPendingReviewWorkspace(repo); err != nil {
-		return errors.Join(err, removePendingReviewRecord(task.Root, task.Item.ID))
-	}
-	return nil
+	record.Base = base
+	return writePendingReviewRecord(task.Root, record)
 }
 
 func updatePendingReviewRecords(hosts, ids []string, update func(*PendingReviewRecord)) error {
@@ -1757,13 +1490,43 @@ func uniqueTaskAcrossRoots(hosts []string, id string) (QueuedTask, error) {
 	return found[0], nil
 }
 
+// BeginPendingReviewRound records that a signoff round starts for ids, with what each subject's
+// commits do now: the content that round's verdict covers.
 func BeginPendingReviewRound(hosts, ids []string, round int) error {
+	var subjects []PendingReviewRecord
+	for _, id := range slices.Compact(slices.Sorted(slices.Values(ids))) {
+		task, err := uniqueTaskAcrossRoots(hosts, id)
+		if err != nil {
+			return err
+		}
+		record, ok, err := readPendingReviewRecord(task.Root, id)
+		if err == nil && !ok {
+			err = fmt.Errorf("pending-review record for %s is missing", id)
+		}
+		if err != nil {
+			return err
+		}
+		subjects = append(subjects, record)
+	}
+	if len(subjects) == 0 {
+		return nil
+	}
+	repo := subjects[0].Plan.Workspace
+	if _, err := pendingReviewSubjectCommits(repo, subjects); err != nil {
+		return err
+	}
+	windows, err := readPendingReviewWindows(repo, subjects)
+	if err != nil {
+		return err
+	}
 	return updatePendingReviewRecords(hosts, ids, func(record *PendingReviewRecord) {
 		record.Phase = PendingReviewSignoff
 		if round > record.Round {
 			record.Round = round
 		}
 		record.RoundStarted = true
+		content := windows[pendingReviewSubjectBase(*record)].content()
+		record.Reviewed = &content
 	})
 }
 
@@ -1771,6 +1534,7 @@ func MarkPendingReviewReopened(hosts, ids []string) error {
 	return updatePendingReviewRecords(hosts, ids, func(record *PendingReviewRecord) {
 		record.Phase = PendingReviewReopened
 		record.RoundStarted = false
+		record.Reviewed = nil
 	})
 }
 
@@ -1778,6 +1542,7 @@ func MarkExpectedPendingReviewsReopened(hosts []string, expected []PendingReview
 	return updateExpectedPendingReviewRecords(hosts, expected, func(record *PendingReviewRecord) {
 		record.Phase = PendingReviewReopened
 		record.RoundStarted = false
+		record.Reviewed = nil
 	})
 }
 
@@ -1795,12 +1560,32 @@ func MarkExpectedPendingReviewsVerify(hosts []string, expected []PendingReviewRe
 	})
 }
 
+// ClearPendingReviews retires the debt of subjects a receipt-consistent review accepted. Each
+// subject must still be the archived generation with exactly one commit in its review range; a
+// crash before the last removal only means those subjects are reviewed again. A subject whose
+// commits no longer do what its signoff reviewed goes back to signoff instead: the verdict covered
+// other content.
 func ClearPendingReviews(hosts []string, expected []PendingReviewRecord) error {
-	workspace := ""
+	if len(expected) == 0 {
+		return nil
+	}
 	wanted := slices.Clone(expected)
 	slices.SortFunc(wanted, func(a, b PendingReviewRecord) int {
 		return strings.Compare(a.Task.Ref.ID, b.Task.Ref.ID)
 	})
+	plan := wanted[0].Plan
+	for _, want := range wanted {
+		if !pendingReviewPlanEqual(want.Plan, plan) {
+			return errors.New("pending-review subjects belong to different review cohorts")
+		}
+	}
+	if _, err := pendingReviewSubjectCommits(plan.Workspace, wanted); err != nil {
+		return fmt.Errorf("history changed after the review verdict: %w", err)
+	}
+	windows, err := readPendingReviewWindows(plan.Workspace, wanted)
+	if err != nil {
+		return err
+	}
 	for _, want := range wanted {
 		id := want.Task.Ref.ID
 		task, err := uniqueTaskAcrossRoots(hosts, id)
@@ -1829,31 +1614,18 @@ func ClearPendingReviews(hosts []string, expected []PendingReviewRecord) error {
 				readErr = fingerprintErr
 			} else if !record.Fingerprint.Matches(fingerprint) {
 				readErr = fmt.Errorf("pending-review task %s completion receipt or archive changed after the review verdict", id)
-			} else if head := gitOut(record.Plan.Workspace, "rev-parse", "--verify", "HEAD^{commit}"); !pendingReviewRawBindingValid(record.Plan.Workspace, record.Binding) ||
-				!AuditReopenCurrentValid(record.Plan.Workspace, head, id, bindingAsAuditRecord(id, record.Binding)) {
-				readErr = fmt.Errorf("pending-review task %s Git history changed after the review verdict", id)
 			}
 		}
-		if readErr == nil {
-			if workspace == "" {
-				workspace = record.Plan.Workspace
-			} else if workspace != record.Plan.Workspace {
-				readErr = errors.New("pending-review subjects belong to different workspaces")
-			}
-		}
-		if readErr == nil {
-			readErr = writePendingReviewReviewed(task.Root, record)
-		}
-		if readErr == nil {
+		if readErr == nil && windows[pendingReviewSubjectBase(record)].covers(record.Reviewed) {
 			readErr = removePendingReviewRecord(task.Root, id)
+		} else if readErr == nil {
+			backToSignoff(&record)
+			record.UpdatedAt = time.Now().UTC()
+			readErr = writePendingReviewRecord(task.Root, record)
 		}
-		err = errors.Join(readErr, unlockLeaseFile(authority))
-		if err != nil {
+		if err := errors.Join(readErr, unlockLeaseFile(authority)); err != nil {
 			return err
 		}
-	}
-	if workspace != "" {
-		return clearPendingReviewWorkspaceIfEmpty(workspace, hosts)
 	}
 	return nil
 }

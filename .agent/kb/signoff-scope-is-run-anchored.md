@@ -2,8 +2,8 @@
 name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
-sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/loop/pending_review.go, internal/tasks/pending_review.go, internal/tasks/completion.go, internal/cli/sign.go, internal/loop/changes.go, internal/tasks/cmd.go]
-updated: 2026-10-15
+sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/loop/pending_review.go, internal/tasks/pending_review.go, internal/tasks/completion.go, internal/cli/sign.go, internal/cli/cli.go, internal/loop/changes.go, internal/tasks/cmd.go]
+updated: 2026-10-17
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -31,35 +31,91 @@ re-enters it they show up in the next round's diff). Two wrong placements that f
 
 Accepted tasks now remain review debt across a graceful pause, hard process death, task limit, or
 interrupted signoff/verification. The host writes a versioned pending record under task authority
-before publishing the completion receipt. That record pins the exact task generation and receipt,
-raw unique commit binding, workspace/branch/queue identities, run base, review ladder/prompts/write
-policy, round and verification phase. Startup validates this bounded cohort before unrelated work,
-resumes only those subjects, then continues the current queue under a fresh cohort after the older
-debt settles. It never scans historical `99_done/` entries to guess what needs review.
+before publishing the completion receipt. The record names its subject by queue, task id and archive
+generation with its receipt, and keeps the workspace, branch, host-recorded run base, review
+ladder/prompts/write policy, round and verification phase. It holds no commit ID. Startup validates
+this bounded cohort before unrelated work, resumes only those subjects, then continues the current
+queue under a fresh cohort after the older debt settles. It never scans historical `99_done/`
+entries to guess what needs review.
 
-Signing is a second write-ahead boundary: while the ref-authority lock is held, Coop records the
-exact old-to-new commit map before the branch compare-and-swap. A crash after the ref update may
-rebind pending evidence only through that host-private map. Tree-equivalent arbitrary rewrites,
-wrong branches, changed queue/task generations, archive mutations and malformed records retain the
-debt and fail closed. Receipt-consistent acceptance writes a reviewed-generation tombstone before
-clearing the active record, so an explicit historical import cannot repeatedly review and bless the
-same generation. Pre-ledger archives remain unknown unless the operator names an exact receipt-valid
-task with `coop loop --review-task <id>`.
+A review finds each subject's commit by its `Coop-Task` trailer, only in base..HEAD as git reads it:
+the commits reachable from HEAD and not from the host-recorded run base. A box writes commit
+messages, so a trailer the base already had never counts. The base need not stay an ancestor: the
+recovery recipe for a commit that lost its folder move amends the run's start commit, and a signing
+pass may re-sign it (requiring ancestry broke both in the scripted loop suite). Loading, enrolling,
+starting a round and clearing a subject each require exactly one such commit. A dropped or
+duplicated commit, a wrong branch, a changed queue or task generation, an archive mutation or a
+malformed record keeps the debt and starts no reviewer. A missing or duplicated commit is a
+`PendingReviewCommitsError`, which the CLI draws as a failure block naming the repair (restore one
+commit, or drop the extra one or squash them, since it may be forged) and the command to run next;
+for several it lists each one's short ID and author (control characters shown as `?`), because only
+the person can tell a planted commit from their own.
+After a rebase onto pulled work, those commits fall in the range too. Signing rewrites commit IDs
+but keeps every trailer, so no signing pass has to report what it replaced.
 
-A batch review may reopen several tasks whose commits depend on one another. Repairing an older
-task replays a later sibling commit under a new SHA even when that sibling's reviewed change is
-identical. Coop rebinds both the sibling's pending-review binding and its active audit-reopen record
-from the same host-validated rewrite. Host signing does the same for every subject in the cohort,
-and startup can finish both updates from the signing journal. After a review or verification phase
-transition, the loop reloads the cohort before more work; otherwise an accepted task whose record
-was cleared remains a stale rebind target. Updating only one authority—or only the persisted state
-without its in-memory view—leaves valid sibling work unable to resume.
+One exception widens the search, and never for box work: a host-receipted completion whose trailer
+is not in base..HEAD because the task was committed before the run, such as another session's
+`coop tasks done` during a review or between boxes, or one the startup window replay finds.
+Enrollment then takes the task's one commit in the whole branch and stores that commit's parent as
+the subject's own `Base`, anchored the way `--review-task` anchors an import; zero or several such
+commits refuse it. A box's own completion already passed the range check, so its commit is always in
+range. Refusing this case failed the human's command and stopped the run, and after a controller
+death the window replay failed at every start
+(`TestProviderScriptedLoopPendingReviewTakesAHostCompletionFromBeforeTheRun`). Every new enrollment
+needs its trailer on exactly one commit in the whole branch, as the box completion check already
+demands: a box may plant a commit naming a task it does not hold (tolerated with a warning), and
+binding that one would leave the human's own commit unreviewed
+(`TestPendingReviewRefusesAHostCompletionBesideAPlantedCommit`). The signoff and verification change
+block and diff add each anchored commit (`withEarlierReviewCommits`), so the reviewer sees what its
+verdict accepts and a run that changed nothing else still verifies it instead of skipping a no-op.
 
-If the controller stops after an audit-reopened task rewrites its commit but before completion
-bookkeeping refreshes that task's pending binding, startup may recover only when the still-active
-audit generation validates the exact changed subject and complete descendant replay. It advances
-the audit record first; a second startup can then repair a still-old pending binding from that
-host-owned current authority.
+A signoff verdict covers the content it reviewed, not just the trailer. Each round start stores as
+`Reviewed` a count and SHA-256 digest of the identities (change tree, author, message; signing keeps
+all three) of every commit in the subject's review range up to HEAD, the window a reviewer of the
+run saw: audit rework adds its repair as a commit with no trailer, and an attempt that exits before
+any range check can rewrite an untrailered commit on either side of the subject's own. Loading
+sends a subject awaiting verification back to signoff when any of those commits changed,
+disappeared or moved, and clearing does the same for any subject, instead of refusing; commits
+added after the round are not covered. The loop's `requeueChangedReviews` then drops the task from
+the review baseline so the next round reviews it again
+(`TestPendingReviewVerdictCoversTheCommitsAfterTheTasksOwn`, `...TheRunBeforeTheTasksCommit`), and
+that round keeps counting toward the round cap (`nextRoundAfterPending`): only a completion another
+session landed restarts the count, or a rework that keeps changing an accepted task's window would
+ping-pong forever. Each change is a diff against its parent, so the digest starts with the tree the
+window's first commit applies to; without it, `git rebase --onto base~1 base` dropped the run's
+start commit, changed HEAD's tree and still matched (`...TheTreeTheRunStartsFrom`). Every field is
+length-prefixed: NUL separators once let two different histories share a fingerprint, since git
+stores NUL in an author line (`TestPendingReviewDigestKeepsFieldsApart`); with the prefixes, unusual
+author lines read like any other. The window must be linear, as audit authority already requires.
+Without this, a later attempt that amended an accepted commit and exited nonzero (so no range check
+ran), a rewrite across a Ctrl-C, or a host completion during a review let verification clear code
+no reviewer saw (`TestPendingReviewRejectsArchiveAndHistoryMutation/history`, and end to end
+`TestProviderScriptedLoopPendingReviewReviewsAChangedAcceptedCommitAgain`).
+Version 1 records also pinned commit IDs; they are still read, and the next write stores version 2.
+A version 1 record awaiting verification has no `Reviewed`, so it goes back to signoff once, and
+one whose commit predates its run base is anchored on load, once, as a new enrollment would be.
+Clearing only removes the record: a crash before that reviews the subject again, and
+`coop loop --review-task <id>` on an already reviewed task asks for another review. Pre-ledger
+archives remain unknown unless the operator names an exact receipt-valid task with `--review-task`.
+Older builds also left `*.pending-review-reviewed.json`, `*.pending-review-signing.json` and
+`*.pending-review-workspace` files in the registry; nothing reads them now.
+
+A batch review may reopen several tasks whose commits depend on one another. Pending debt names
+tasks, so one task's rework cannot invalidate a sibling's. Audit-reopen authority does record commit
+IDs: accepted rework of one reopened task replays every commit after its own, and a signing pass
+replaces unsigned ones. `CarryReopenedReviews` moves a sibling's authority to current history only
+when it held at the old head and the sibling's commits, found again by trailer, still mean exactly
+what was reviewed, the reworked task's own entry being the one allowed change. The loop calls it
+after accepted rework, and every host signing pass calls `CarryReopenedReviewsAfterSigning` after
+its compare-and-swap. Nothing is journaled: a stop between a signing swap and its carry leaves the
+authority stale, and the next lease parks that task with recovery guidance. After a review or
+verification phase transition, the loop reloads the cohort before more work.
+
+If the controller stops after a reopened task's rework rewrote its commit but before completion, the
+next load accepts that rework the way completion would (exact changed subject, complete descendant
+replay, same raw parent) and moves the authority to it without spending the generation. It then
+carries the other reopened tasks across that rework in the same load, because afterwards nothing
+shows the rework any more.
 
 When the review round cap parks a task, its `decision.md` describes that current cap. A resolved
 decision from an earlier block is replaced rather than shown as the action for a different block;
@@ -111,6 +167,28 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-10-17 — fourth review: the digest starts with the tree the window starts from, a requeued
+  task keeps counting toward the round cap, and the control-character refusal is gone (length
+  prefixes suffice; the refusal's listing still escapes authors).
+- 2026-10-17 — third review: the verdict window starts at the subject's review base (the whole run,
+  not just from its commit), its digest length-prefixes every field and refuses control characters
+  in author lines, and a several-commit refusal lists each commit's short ID and author.
+- 2026-10-17 — second review: a verdict covers every commit from the subject's to HEAD at round
+  start (untrailered audit repairs included); new enrollment needs the trailer on one commit in the
+  whole branch; version 1 records from before their run base are anchored on load; anchored commits
+  join the review's change block and diff.
+- 2026-10-17 — review fixes: a host-receipted completion committed before the run is anchored at
+  its one commit in the branch (the human's `coop tasks done` and window replay no longer fail),
+  and a round stores the reviewed content identity so verification never clears a commit that
+  changed after signoff; the found-N refusal is a drawn failure block. Verified against
+  pending_review.go, loop.go, cli.go and their unit and scripted tests.
+- 2026-10-16 — pending records hold no commit IDs (version 2, version 1 still read): a review finds
+  each subject's commit by trailer between the host-recorded base and HEAD and needs exactly one.
+  Deleted the signing journal, workspace marker, reviewed-generation tombstones and pending-binding
+  rebinds; a reopened sibling's audit authority is carried after accepted rework, after rework a
+  stopped controller left, and after every signing pass (task
+  2026-10-15-find-a-task-s-commits-by-its-coop-task-trailer-i). Verified against pending_review.go,
+  loop.go, sign.go and their tests.
 - 2026-10-15 — signoff never runs the gate itself: it inspects worker-reported results and reopens a
   task to request a check (corrected while making loop.yaml request `make check` once per run).
 - 2026-09-14 — documented cohort-wide pending and audit-authority rebinding across an older task

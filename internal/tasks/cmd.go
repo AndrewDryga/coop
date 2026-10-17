@@ -960,6 +960,11 @@ func trustedCompletionError(err error, id string) error {
 	if errors.As(err, &recovery) {
 		return err
 	}
+	var commits *PendingReviewCommitsError
+	if errors.As(err, &commits) {
+		return ui.CommandFailed("Could not complete "+id, commits.Cause(),
+			[2]string{"", commits.Remedy() + ", then retry: coop tasks done " + id})
+	}
 	return fmt.Errorf("%w — fix the obstruction, then retry: coop tasks done %s", err, id)
 }
 
@@ -2180,7 +2185,6 @@ func removeTaskFolderAndRecords(root string, task Item) (removed bool, err error
 	if err := errors.Join(
 		clearLeaseCompletionReceipt(authority),
 		removePendingReviewRecord(root, task.ID),
-		removePendingReviewReviewed(root, task.ID),
 		removeLeaseAuthorityMetadata(root, task.ID),
 		removeAuditReopenRecord(root, task.ID),
 		removeTrustedDoneDeparture(root, task.ID),
