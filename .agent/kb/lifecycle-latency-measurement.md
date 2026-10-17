@@ -3,7 +3,7 @@ name: lifecycle-latency-measurement
 description: how to measure a box/editor start or stop change without fooling yourself — pair the two builds and alternate them, never bisect a noisy metric single-shot, build the comparison binary where its version stamp is honest, and know why an old binary cannot run in an approved project
 subsystem: testing
 sources: [tools/lifecyclebench, tools/servicesbench, Makefile, internal/box/run.go, internal/cli/acp_cmd.go, internal/cli/cli.go, internal/runtime/docker_lifecycle.go]
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 `make lifecycle-bench` (`go run ./tools/lifecyclebench`) is the instrument for every start/stop
@@ -44,6 +44,10 @@ that appeared during a sample, so a loop or editor session starting meanwhile wo
 and its service volumes. `TestOwnershipClaimsOnlyWhatItsLaunchMade` pins the rules;
 `TestEveryCaseCleansUpOnlyWhatItsLaunchMade` drives every case in the table with a stand-in coop
 and another run's resources appearing mid-sample.
+Those cases run in parallel, so the stand-in is written once per bench through `writeExecutable`,
+under `syscall.ForkLock`'s read side, and the slow-start case passes `STAND_IN_DELAY` instead of
+rewriting it: a sibling's fork that inherits the open write descriptor makes the exec fail with
+"text file busy" on Linux (golang/go#22315), and macOS never shows it.
 
 ## A start with services: tools/servicesbench
 
@@ -151,6 +155,8 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 until 2026-09-20's paired A/B put a number against it. Both now state the number.
 
 ## Changelog
+- 2026-10-17 — stand-ins are written under syscall.ForkLock and never rewritten, after CI failed on
+  "text file busy" (task 2026-10-17-stop-lifecyclebench-s-timeout-cases-failing-on-t).
 - 2026-10-16 — `make tools-test` is gone (the site tests moved to Go, in `make docs-check`), so the bench
   paragraph no longer names it; nothing else in the card was rechecked.
 - 2026-10-16 — both benches are Go now (`tools/lifecyclebench`, `tools/servicesbench`; task

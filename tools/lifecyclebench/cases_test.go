@@ -23,8 +23,10 @@ import (
 // standIn is a stand-in coop: it records the COOP_RUN_ARGS it was given, names its network run the
 // way a filtered launch does, and behaves just enough like `coop run` and `coop acp` for each case.
 // With STAND_IN_HANG its run outlasts any case's limit (two minutes, so a broken test cannot leave it
-// behind for longer), and leaves on INT or TERM.
+// behind for longer), and leaves on INT or TERM. STAND_IN_DELAY makes it slow to start, from the
+// environment, so no test rewrites the script it runs.
 const standIn = `#!/bin/sh
+[ -n "$STAND_IN_DELAY" ] && sleep "$STAND_IN_DELAY"
 echo $$ > "@LAUNCHED@.pid"
 printf '%s' "$COOP_RUN_ARGS" > "@LAUNCHED@.tmp" && mv "@LAUNCHED@.tmp" "@LAUNCHED@"
 echo "Full details: coop net inspect 8b --json" >&2
@@ -78,10 +80,22 @@ func standInBench(t *testing.T) (*bench, *fakeRuntime, string) {
 	if err := os.Mkdir(b.repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(b.coop, []byte(strings.ReplaceAll(standIn, "@LAUNCHED@", launched)), 0o755); err != nil {
+	writeExecutable(t, b.coop, strings.ReplaceAll(standIn, "@LAUNCHED@", launched))
+	return b, fake, launched
+}
+
+// writeExecutable writes a script this process runs while parallel subtests fork children of their
+// own. A child forked while the file is open for writing keeps that descriptor until it execs, and
+// running the script then fails with "text file busy" on Linux (golang/go#22315). os/exec forks
+// while holding syscall.ForkLock, so holding its read side while the file is open keeps every fork
+// out of that window.
+func writeExecutable(t *testing.T, path, script string) {
+	t.Helper()
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return b, fake, launched
 }
 
 var ownLaunch = items("our-box", "our-ipc", "printed-ipc")
@@ -121,10 +135,7 @@ func TestALaunchThatOutlivesItsCaseIsStoppedAndCleaned(t *testing.T) {
 			t.Parallel()
 			b, fake, launched := standInBench(t)
 			if tc.delay {
-				script := strings.Replace(read(t, b.coop), "#!/bin/sh\n", "#!/bin/sh\nsleep 0.75\n", 1)
-				if err := os.WriteFile(b.coop, []byte(script), 0o755); err != nil {
-					t.Fatal(err)
-				}
+				b.env = append(b.env, "STAND_IN_DELAY=0.75")
 			}
 			b.env = append(b.env, "STAND_IN_HANG=1")
 			b.caseTimeout = 500 * time.Millisecond
