@@ -351,13 +351,23 @@ func openRepoParent(repo, path string) (*os.Root, string, error) {
 			return nil, "", fmt.Errorf("create scaffold parent for %s: %w", path, err)
 		}
 	}
-	// "<dir>/." makes os.Root open every folder on the way with O_DIRECTORY. Opening the folder
-	// itself would block on a FIFO a box swapped in after MkdirAll until something wrote to it.
-	parent, err := root.OpenRoot(dir + string(filepath.Separator) + ".")
+	parent, err := openDir(root, dir)
 	if err != nil {
-		return nil, "", fmt.Errorf("open scaffold parent for %s: %w", path, repoPath(err, dir))
+		return nil, "", fmt.Errorf("open scaffold parent for %s: %w", path, err)
 	}
 	return parent, rel, nil
+}
+
+// openDir opens the existing folder dir inside root as "<dir>/.", which makes os.Root open every
+// folder on the way with O_DIRECTORY. os.Root opens the last part of a path without it, so opening
+// the folder by its own name would block on a FIFO a box swapped in until something wrote to it.
+// An error names dir.
+func openDir(root *os.Root, dir string) (*os.Root, error) {
+	opened, err := root.OpenRoot(dir + string(filepath.Separator) + ".")
+	if err != nil {
+		return nil, repoPath(err, dir)
+	}
+	return opened, nil
 }
 
 // repoPath puts the path a person knows on an error from a parent handle. The handle reports a

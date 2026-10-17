@@ -196,12 +196,12 @@ func readProjectFile(root *os.Root, rel, display string) (snap projectFileSnapsh
 		} else if statErr == nil && !info.Mode().IsRegular() {
 			return snap, false, notRegular{display}
 		}
-		return snap, false, fmt.Errorf("open %s: %w", display, err)
+		return snap, false, fmt.Errorf("open %s: %w", display, repoPath(err, display))
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return snap, false, fmt.Errorf("inspect %s: %w", display, err)
+		return snap, false, fmt.Errorf("inspect %s: %w", display, repoPath(err, display))
 	}
 	// os.Root follows a link that stays inside it, even with O_NOFOLLOW, so only comparing the
 	// opened file with the named entry refuses a link at the file itself.
@@ -210,7 +210,7 @@ func readProjectFile(root *os.Root, rel, display string) (snap projectFileSnapsh
 	}
 	data, err := io.ReadAll(file)
 	if err != nil {
-		return snap, false, fmt.Errorf("read %s: %w", display, err)
+		return snap, false, fmt.Errorf("read %s: %w", display, repoPath(err, display))
 	}
 	return projectFileSnapshot{dir: dir, name: name, info: info, data: data}, true, nil
 }
@@ -379,17 +379,18 @@ func unreadableCoopignore(dir *os.Root, dirRel string, err error) error {
 }
 
 // openRealDir opens the real directory Lstat finds at name inside dir and returns the name dir
-// stores for it. os.Root follows a link that stays inside the repository, so a link a box swaps in
-// after the Lstat is opened too; the directory opened must then be the one Lstat found, which refuses
-// a link to any other directory. A link back to that same directory gets through, and the edit still
-// reads the rules and the file from the directory Lstat found.
+// stores for it. The open goes through openDir, so a FIFO a box swaps in after the Lstat fails at
+// once instead of freezing coop init. os.Root follows a link that stays inside the repository, so a
+// link a box swaps in after the Lstat is opened too; the directory opened must then be the one Lstat
+// found, which refuses a link to any other directory. A link back to that same directory gets
+// through, and the edit still reads the rules and the file from the directory Lstat found.
 func openRealDir(dir *os.Root, name string) (*os.Root, string, error) {
 	stored, named, err := storedName(dir, name)
 	if err != nil {
 		return nil, "", err
 	}
 	if named.IsDir() {
-		child, err := dir.OpenRoot(stored)
+		child, err := openDir(dir, stored)
 		if err != nil {
 			return nil, "", err
 		}
@@ -447,27 +448,28 @@ func stageProjectFile(before projectFileSnapshot, display string, data []byte, w
 	perm := before.info.Mode().Perm()
 	for attempt := 0; attempt < 100; attempt++ {
 		name := fmt.Sprintf(".%s.coop-%d-%d.tmp", before.name, os.Getpid(), attempt)
+		shown := filepath.Join(filepath.Dir(display), name) // the copy's path, for repoPath
 		file, err := before.dir.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 		if os.IsExist(err) {
 			continue
 		}
 		if err != nil {
-			return "", fmt.Errorf("create temporary %s: %w", display, err)
+			return "", fmt.Errorf("create temporary %s: %w", display, repoPath(err, shown))
 		}
 		// Creation applies umask; replacement must retain the original file's permissions.
 		if err := file.Chmod(perm); err != nil {
 			_ = file.Close()
 			_ = before.dir.Remove(name)
-			return "", fmt.Errorf("preserve permissions for %s: %w", display, err)
+			return "", fmt.Errorf("preserve permissions for %s: %w", display, repoPath(err, shown))
 		}
 		if err := write(file, data); err != nil {
 			_ = file.Close()
 			_ = before.dir.Remove(name)
-			return "", fmt.Errorf("write temporary %s: %w", display, err)
+			return "", fmt.Errorf("write temporary %s: %w", display, repoPath(err, shown))
 		}
 		if err := file.Close(); err != nil {
 			_ = before.dir.Remove(name)
-			return "", fmt.Errorf("close temporary %s: %w", display, err)
+			return "", fmt.Errorf("close temporary %s: %w", display, repoPath(err, shown))
 		}
 		return name, nil
 	}

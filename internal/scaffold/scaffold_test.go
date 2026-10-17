@@ -1014,22 +1014,12 @@ func TestWriteNewRepoFileCleanupIgnoresSwappedParent(t *testing.T) {
 
 // A box can swap a scaffold file's parent for a FIFO between init creating the folder and opening
 // it. Opening a FIFO waits for a writer, so the open must refuse it instead of freezing coop init.
-// The swap races the open: a child process repeats the write against a swapper, and a hang shows
-// up as the child missing the deadline.
+// The swap races the open: a child process repeats the write against a swapper.
 func TestWriteNewRepoFileFailsFastOnAFIFOParent(t *testing.T) {
 	if repo := os.Getenv("COOP_SCAFFOLD_FIFO_REPO"); repo != "" {
 		parent := filepath.Join(repo, ".agent", "tasks")
-		var stop atomic.Bool
-		swapper := make(chan struct{})
-		go func() {
-			defer close(swapper)
-			for !stop.Load() {
-				_ = os.Remove(parent)
-				_ = syscall.Mkfifo(parent, 0o600)
-				_ = os.Remove(parent)
-				_ = os.Mkdir(parent, 0o755)
-			}
-		}()
+		stop := swapInFIFOs(parent)
+		defer stop()
 		dest := filepath.Join(parent, "README.md")
 		write := func(file *os.File, data []byte) error {
 			_, err := file.Write(data)
@@ -1040,24 +1030,105 @@ func TestWriteNewRepoFileFailsFastOnAFIFOParent(t *testing.T) {
 				_ = os.Remove(dest)
 			}
 		}
-		stop.Store(true)
-		<-swapper
 		return
 	}
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	runFIFOChild(t, repo, "writes racing a FIFO parent")
+}
+
+// The in-place edits (init --services, subproject registration) open their file's folder one real
+// folder at a time. A box can leave a FIFO where that folder should be, or swap one in after the
+// edit looked at the folder and before it opened it. Opening a FIFO waits for a writer, so each
+// edit must refuse it at once instead of freezing coop init, and name the folder rather than the
+// "<dir>/." the open uses.
+func TestInPlaceEditsFailFastOnAFIFOFolder(t *testing.T) {
+	if repo := os.Getenv("COOP_SCAFFOLD_FIFO_REPO"); repo != "" {
+		agent := filepath.Join(repo, ".agent")
+		edit := func() []error {
+			_, registerErr := RegisterSubprojects(repo, []string{"infra"})
+			added, composeErr := AddComposeServices(repo, ".agent/compose.yml", []string{"postgres"})
+			if added.Created {
+				_ = os.Remove(filepath.Join(agent, "compose.yml"))
+			}
+			return []error{registerErr, composeErr}
+		}
+		t.Log("a FIFO already at .agent")
+		if err := syscall.Mkfifo(agent, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, err := range edit() {
+			if err == nil || strings.Contains(err.Error(), "/./") {
+				t.Errorf("edit with a FIFO at .agent = %v, want a refusal", err)
+			}
+		}
+		root, err := os.OpenRoot(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+		dir, err := openDir(root, ".agent")
+		if err == nil {
+			_ = dir.Close()
+		}
+		if !errors.Is(err, syscall.ENOTDIR) || err.Error() != "openat .agent: not a directory" {
+			t.Errorf("opening a FIFO as a folder = %v, want ENOTDIR naming .agent", err)
+		}
+		t.Log("a FIFO swapped in while the edits open .agent")
+		if err := os.Remove(agent); err != nil {
+			t.Fatal(err)
+		}
+		stop := swapInFIFOs(agent)
+		defer stop()
+		for range 1000 {
+			for _, err := range edit() {
+				if err != nil && strings.Contains(err.Error(), "/./") {
+					t.Fatalf("edit error names the folder handle: %v", err)
+				}
+			}
+		}
+		return
+	}
+	runFIFOChild(t, t.TempDir(), "edits with a FIFO for their folder")
+}
+
+// swapInFIFOs keeps replacing the empty folder dir with a FIFO and back until the returned stop is
+// called.
+func swapInFIFOs(dir string) (stop func()) {
+	var stopped atomic.Bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for !stopped.Load() {
+			_ = os.Remove(dir)
+			_ = syscall.Mkfifo(dir, 0o600)
+			_ = os.Remove(dir)
+			_ = os.Mkdir(dir, 0o755)
+		}
+	}()
+	return func() {
+		stopped.Store(true)
+		<-done
+	}
+}
+
+// runFIFOChild runs the calling test again in a child process with COOP_SCAFFOLD_FIFO_REPO set to
+// repo, and fails unless the child passes within wait.Deadline. An open waiting on a FIFO cannot be
+// cancelled in-process, so a hang shows up as the child missing the deadline.
+func runFIFOChild(t *testing.T, repo, what string) {
+	t.Helper()
 	binary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, "-test.run=^TestWriteNewRepoFileFailsFastOnAFIFOParent$", "-test.v")
+	cmd := exec.CommandContext(ctx, binary, "-test.run=^"+t.Name()+"$", "-test.v")
 	cmd.Env = append(os.Environ(), "COOP_SCAFFOLD_FIFO_REPO="+repo)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("writes racing a FIFO parent: %v (deadline: %v)\n%s", err, ctx.Err(), output)
+		t.Fatalf("%s: %v (deadline: %v)\n%s", what, err, ctx.Err(), output)
 	}
 }
 
@@ -1092,6 +1163,26 @@ func TestWriteNewRepoFileErrorsNameTheRepoPath(t *testing.T) {
 	})
 	if err == nil || strings.Contains(err.Error(), "/./") || !strings.Contains(err.Error(), "write "+dest+":") {
 		t.Fatalf("write error = %v, want it to name %s", err, dest)
+	}
+}
+
+// An in-place edit stages its copy through the folder handle too, so a failed write names the copy
+// beside the file, not the "<dir>/./<name>" the handle reports.
+func TestInPlaceEditErrorsNameTheRepoPath(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := WriteProject(repo, []string{"portal"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := registerSubprojects(repo, []string{"portal", "infra"}, func(file *os.File, data []byte) error {
+		if err := file.Close(); err != nil {
+			return err
+		}
+		_, err := file.Write(data) // fails naming the file, as a full disk would
+		return err
+	})
+	want := "write " + filepath.Join(".agent", ".project.yaml.coop-")
+	if err == nil || strings.Contains(err.Error(), "/./") || !strings.Contains(err.Error(), want) {
+		t.Fatalf("write error = %v, want it to name %s…", err, want)
 	}
 }
 

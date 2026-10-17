@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
+  `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a
+  file in place. An agent in a box could swap that file's folder for a named pipe just as
+  `coop init` opened it, and `coop init` waited forever. Now it stops at once and names the folder.
+
 - **A session whose box image is missing says so even when it fails fast.** When the model process
   of a session exited before Coop sent it anything, the turn failed with "ACP frame could not be
   written" instead of the advice to run `coop build`. Coop now reports such a failure the same way

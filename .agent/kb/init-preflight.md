@@ -42,8 +42,9 @@ copy and the renamed result land where the box may look, and a box can write `bo
 real directory at a time (`openRealDir`: Lstat must find a real directory and the directory opened
 must be that one; os.Root follows a link that stays inside the repository, so a link swapped in
 after the Lstat is refused only when it leads to another directory, and one leading back to the
-same directory still reads the directory that was judged); every name judged is the one the volume
-stores (`storedName`), since a case-insensitive Mac volume opens `config/prod.yml` as
+same directory still reads the directory that was judged; each is opened with `openDir`, below, so
+a FIFO swapped in after the Lstat fails at once with ENOTDIR); every name judged is the one the
+volume stores (`storedName`), since a case-insensitive Mac volume opens `config/prod.yml` as
 `CONFIG/prod.yml` while `.coopignore` rules match case-sensitively. Each directory's `.coopignore`
 is read through the handle the edit holds (`heldPolicy`: `shadowpath.OpenTree`, then
 `Snapshot.Extend`, judged by `Snapshot.Shadowed`), never by path: a box that swaps a held directory
@@ -71,13 +72,13 @@ New files take the same discipline in `writeNewRepoFile`: it opens the file's pa
 it by name through that handle. An `os.Root` call on a nested path walks every parent again, so a
 check and a removal by that path are two walks: a box that fails the write (say by filling the
 disk) and swaps a parent for a link between them could have the removal take a same-named file the
-link reaches, such as one `.coopignore` hides. The parent is opened as `<dir>/.`: os.Root opens
-the last component of a path without `O_DIRECTORY`, so opening the folder itself blocked init on a
-FIFO a box swapped in after `MkdirAll`, while `<dir>/.` makes every folder on the way a directory
-open and still follows in-repo parent links. The handle reports a bare name when a create fails
-and spells its open files `<dir>/./<name>`, so `repoPath` puts the path `coop init` prints back
-on those errors. The in-place reader above still opens its folder by name, so a FIFO swapped in
-for that folder blocks it the same way.
+link reaches, such as one `.coopignore` hides. The parent is opened with `openDir`, as `<dir>/.`:
+os.Root opens the last component of a path without `O_DIRECTORY`, so opening the folder itself
+blocked init on a FIFO a box swapped in after `MkdirAll`, while `<dir>/.` makes every folder on the
+way a directory open and still follows in-repo parent links. The in-place reader above opens each
+of its folders through the same `openDir`, which never creates one. A handle reports a bare name
+when a create fails and spells its open files `<dir>/./<name>`, so `repoPath` puts the path
+`coop init` prints back on those errors, the reader's and its staged copy's included.
 
 Agent links use the same helper. `linkIfAbsent` (CLAUDE.md and GEMINI.md to AGENTS.md) and
 `linkSkillsIfAbsent` (each selected agent's `skills` to the shared source) replace a link, never a
@@ -90,6 +91,14 @@ The handle reports a failed link by its bare name, so the link is returned as a 
 `*fs.PathError` on its path and init prints "Could not create .claude/skills: …" as for a file.
 
 ## Changelog
+- 2026-10-17 — the in-place reader opened each folder by name after `openRealDir`'s Lstat, so a
+  FIFO a box swapped in between them froze `coop init --services` and registration (a FIFO already
+  in place was refused by that Lstat). It now opens them with `openDir`, split out of
+  `openRepoParent` without its folder creation, so the swap fails at once with ENOTDIR; its read and
+  staged-copy errors name the repo path, not `<repo>/./.agent/./…`. Pinned by
+  TestInPlaceEditsFailFastOnAFIFOFolder (with the old open it hung in `openRealDir` 3 of 3 bounded
+  runs and missed its 60 s deadline) and TestInPlaceEditErrorsNameTheRepoPath (fails without
+  `repoPath`).
 - 2026-10-17 — agent links went by absolute path, so a box that swapped `.claude` for a link
   between the check and the removal could have the host delete a `skills` entry wherever the link
   pointed; they now go through one parent handle.
