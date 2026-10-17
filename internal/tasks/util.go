@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/safetext"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -51,15 +52,20 @@ func readFileString(path string) string {
 	return string(data)
 }
 
-// sanitizeCell strips control characters (notably ESC, 0x1b) from a one-line display string so a
-// task title or decision text — which can come from an untrusted agent's task.md — can't inject
-// ANSI escapes into coop's output: corrupting a redirect/pipe, or spoofing the colored UI on a
-// terminal. Single-line cells carry no legitimate control chars, so all of them are dropped.
+// sanitizeCell drops the characters safetext.Hidden names from a one-line display string, so a task
+// title or decision text — which can come from an untrusted agent's task.md — can't inject ANSI
+// escapes into coop's output (corrupting a redirect/pipe, or spoofing the colored UI on a
+// terminal), reorder the row with a direction override, split it with a line separator, or hide
+// characters in it. A cell loses little without them: a family emoji shows as its members. A
+// variation selector is judged by the character it would follow once the others are gone, so
+// dropping a zero-width space can't leave one hidden after a letter.
 func sanitizeCell(s string) string {
+	kept := rune(-1)
 	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
+		if safetext.Hidden(kept, r) {
 			return -1
 		}
+		kept = r
 		return r
 	}, s)
 }

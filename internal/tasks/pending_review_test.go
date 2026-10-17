@@ -1114,18 +1114,41 @@ func TestDescribeTaskCommitsListsFiveAndCountsTheRest(t *testing.T) {
 }
 
 // A box sets its own author name, so the commits a refusal lists show anything a terminal would act
-// on as '?'.
+// on or a reader could not see as '?'.
 func TestDescribeTaskCommitsEscapesAuthors(t *testing.T) {
 	repo := initRepo(t)
 	git(t, repo, "commit", "-q", "--allow-empty", "-m", "own work")
 	escaped := exec.Command("git", "-C", repo, "commit", "-q", "--allow-empty", "-m", "box work")
-	escaped.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Bo\x1b[31mx", "GIT_AUTHOR_EMAIL=b@x", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	escaped.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Bo\x1b[31mx\u202Ey\u2028z", "GIT_AUTHOR_EMAIL=b@x", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 	if out, err := escaped.CombinedOutput(); err != nil {
 		t.Fatalf("commit with an escape in its author: %v\n%s", err, out)
 	}
 	got := describeTaskCommits(repo, []string{gitOut(repo, "rev-parse", "HEAD~1"), gitOut(repo, "rev-parse", "HEAD")})
-	if len(got) != 2 || !strings.HasSuffix(got[0], " by t <t@t>") || !strings.HasSuffix(got[1], " by Bo?[31mx <b@x>") {
-		t.Fatalf("described commits = %q, want the escape shown as ?", got)
+	if len(got) != 2 || !strings.HasSuffix(got[0], " by t <t@t>") || !strings.HasSuffix(got[1], " by Bo?[31mx?y?z <b@x>") {
+		t.Fatalf("described commits = %q, want the escape, the override and the line separator shown as ?", got)
+	}
+}
+
+// markHidden shows each character a terminal would act on or a reader could not see, and invalid
+// UTF-8, as '?', and leaves an ordinary author line as it is.
+func TestMarkHidden(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"ordinary author line", "1a2b3c4 by Zoë Ngô 日本 한국 🙂 👍🏽 <z@x>", "1a2b3c4 by Zoë Ngô 日本 한국 🙂 👍🏽 <z@x>"},
+		{"escape, new line and tab", "a\x1b[31mb\nc\td", "a?[31mb?c?d"},
+		{"C1 controls and DEL", "a\u009Bb\u0085c\x7f", "a?b?c?"},
+		{"direction marks, overrides and isolates", "a\u061Cb\u200Fc\u202Ed\u2066e", "a?b?c?d?e"},
+		{"zero-width space and joiner", "w\u200Be\u200Db", "w?e?b"},
+		{"byte-order mark and soft hyphen", "\uFEFFa\u00ADb", "?a?b"},
+		{"tag characters", "a\U000E0041b\U000E0000", "a?b?"},
+		{"line and paragraph separators", "a\u2028b\u2029c", "a?b?c"},
+		{"Hangul filler and grapheme joiner", "a\u1160b\u034Fc", "a?b?c"},
+		{"variation selector at the start and after an ASCII letter", "\uFE0Ea\uFE0Fb", "?a?b"},
+		{"emoji and ideograph variation selectors", "❤\uFE0F 葛\U000E0100", "❤\uFE0F 葛\U000E0100"},
+		{"invalid UTF-8 and the replacement character", "a\xffb\uFFFD", "a?b?"},
+	} {
+		if got := markHidden(tc.in); got != tc.want {
+			t.Errorf("%s: markHidden(%+q) = %+q, want %+q", tc.name, tc.in, got, tc.want)
+		}
 	}
 }
 

@@ -57,7 +57,7 @@ func GoBase() string {
 
 // sourceDirs hold the packages coop-net builds from: Pack takes their non-test Go
 // files, and Context admits nothing else.
-var sourceDirs = []string{"cmd/coop-net", "internal/egress", "internal/networkgateway", "internal/networkview", "internal/safefile"}
+var sourceDirs = []string{"cmd/coop-net", "internal/egress", "internal/networkgateway", "internal/networkview", "internal/safefile", "internal/safetext"}
 
 // sourceModules are the modules those packages load. Pack gives the image its own
 // go.mod and go.sum naming only these, so bumping any other dependency of Coop

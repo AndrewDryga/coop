@@ -46,6 +46,12 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-17 — added the `safetext` leaf (`Hidden`: the characters that cannot be shown as they
+  are), imported by ui, tasks and egress so `ui.SafeInline` (escapes them), the task views (drop
+  them) and network provenance (refuses them) share one definition (task
+  2026-10-17-escape-c1-bidi-invisible-and-line-separator-char). egress may not import ui, which is
+  presentation, so the classification left ui instead; ui and egress are no longer leaves, and
+  safetext imports nothing, so no cycle. egress is gateway source, so safetext is too.
 - 2026-10-17 — added the test-only `testutil/starttoken` package, which imports the
   `processidentity` leaf: forkspace, forkctl, cli, sessionsvc, box and tasks tests need a start
   token of this platform's shape that no process has, and one of the other platform's, now that

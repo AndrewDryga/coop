@@ -362,3 +362,38 @@ func FuzzRulesFailClosed(f *testing.F) {
 		}
 	})
 }
+
+// Coop prints provenance in its own sentences, so text holding anything a terminal would act on or
+// a reader could not see is refused, and ordinary text is not.
+func TestSafeProvenanceTextRefusesHiddenCharacters(t *testing.T) {
+	for _, value := range []string{"", "rules-file", "https://example.com/docs?q=1#a", "Zoë 日本語 ❤\uFE0F 👍🏽 1\uFE0F\u20E3"} {
+		if !safeProvenanceText(value) {
+			t.Errorf("safeProvenanceText(%+q) = false, want true", value)
+		}
+	}
+	for name, value := range map[string]string{
+		"escape":                          "name\x1b[31m",
+		"new line":                        "name\n",
+		"DEL":                             "name\x7f",
+		"C1 control":                      "name\u009B",
+		"right-to-left override":          "name\u202E",
+		"left-to-right isolate":           "name\u2066",
+		"zero-width space":                "na\u200Bme",
+		"zero-width joiner":               "👨\u200D👩",
+		"byte-order mark":                 "\uFEFFname",
+		"soft hyphen":                     "na\u00ADme",
+		"tag character":                   "name\U000E0041",
+		"line separator":                  "name\u2028",
+		"paragraph separator":             "name\u2029",
+		"Hangul filler":                   "na\u3164me",
+		"combining grapheme joiner":       "na\u034Fme",
+		"unassigned tag-block code point": "name\U000E0000",
+		"variation selector at the start": "\uFE0Ename",
+		"variation selector after an ASCII letter": "name\uFE0F",
+		"invalid UTF-8": "name\xff",
+	} {
+		if safeProvenanceText(value) {
+			t.Errorf("%s: safeProvenanceText(%+q) = true, want false", name, value)
+		}
+	}
+}

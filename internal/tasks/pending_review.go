@@ -15,8 +15,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode"
 	"unicode/utf8"
+
+	"github.com/AndrewDryga/coop/internal/safetext"
 )
 
 const (
@@ -262,7 +263,8 @@ func (e *PendingReviewCommitsError) needs() string {
 
 // describeTaskCommits names commits as "<short id> by <author>" when there are several, the first
 // five and how many more: a box can plant any number. A box sets its own author, so anything a
-// terminal would act on, such as an escape sequence, becomes '?'.
+// terminal would act on or a reader could not see, such as an escape sequence, a direction override
+// or a line separator, becomes '?' (markHidden).
 func describeTaskCommits(repo string, shas []string) []string {
 	if len(shas) < 2 {
 		return nil
@@ -278,17 +280,26 @@ func describeTaskCommits(repo string, shas []string) []string {
 		if line == "" {
 			line = sha[:min(12, len(sha))]
 		}
-		described[i] = strings.Map(func(r rune) rune {
-			if r == utf8.RuneError || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-				return '?'
-			}
-			return r
-		}, line)
+		described[i] = markHidden(line)
 	}
 	if more > 0 {
 		described = append(described, fmt.Sprintf("and %d more", more))
 	}
 	return described
+}
+
+// markHidden writes '?' for invalid UTF-8 and for each character safetext.Hidden names, so the
+// person still sees that something was there.
+func markHidden(line string) string {
+	previous := rune(-1)
+	return strings.Map(func(r rune) rune {
+		hidden := r == utf8.RuneError || safetext.Hidden(previous, r)
+		previous = r
+		if hidden {
+			return '?'
+		}
+		return r
+	}, line)
 }
 
 func (e *PendingReviewCommitsError) Error() string { return "task " + e.TaskID + " " + e.needs() }

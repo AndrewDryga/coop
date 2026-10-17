@@ -56,7 +56,7 @@ func TestEmbeddedGatewayModuleLoadsOnItsOwn(t *testing.T) {
 	list.Dir = dir
 	list.Env = append(os.Environ(), "GOOS=linux", "CGO_ENABLED=0", "GOFLAGS=-mod=readonly", "GOWORK=off")
 	if out, err := list.CombinedOutput(); err != nil {
-		t.Fatalf("the embedded gateway module does not load on its own; add any module coop-net now loads to sourceModules, then run go generate ./internal/gatewayimage: %v\n%s", err, out)
+		t.Fatalf("the embedded gateway module does not load on its own; add any internal package coop-net now imports to sourceDirs and any module it loads to sourceModules, then run go generate ./internal/gatewayimage: %v\n%s", err, out)
 	}
 }
 

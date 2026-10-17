@@ -15,11 +15,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/net/publicsuffix"
+
+	"github.com/AndrewDryga/coop/internal/safetext"
 )
 
 const (
@@ -460,10 +461,21 @@ func canonicalDomain(value string, wildcard bool) (string, error) {
 	return value, nil
 }
 
+// safeProvenanceText refuses text that is not valid UTF-8 or holds a character safetext.Hidden
+// names: Coop prints a grant's origin in its own sentences, such as "the MCP server <name> coop set
+// up for that box".
 func safeProvenanceText(value string) bool {
-	return utf8.ValidString(value) && strings.IndexFunc(value, func(r rune) bool {
-		return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
-	}) < 0
+	if !utf8.ValidString(value) {
+		return false
+	}
+	previous := rune(-1)
+	for _, r := range value {
+		if safetext.Hidden(previous, r) {
+			return false
+		}
+		previous = r
+	}
+	return true
 }
 
 func MatchesDomain(pattern, name string) bool {

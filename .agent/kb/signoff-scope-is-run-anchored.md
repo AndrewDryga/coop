@@ -48,8 +48,8 @@ duplicated commit, a wrong branch, a changed queue or task generation, an archiv
 malformed record keeps the debt and starts no reviewer. A missing or duplicated commit is a
 `PendingReviewCommitsError`, which the CLI draws as a failure block naming the repair (restore one
 commit, or drop the extra one or squash them, since it may be forged) and the command to run next;
-for several it lists each one's short ID and author (control characters shown as `?`), because only
-the person can tell a planted commit from their own.
+for several it lists each one's short ID and author (control, direction, line-separator and invisible
+characters shown as `?`), because only the person can tell a planted commit from their own.
 After a rebase onto pulled work, those commits fall in the range too. Signing rewrites commit IDs
 but keeps every trailer, so no signing pass has to report what it replaced.
 
@@ -167,6 +167,8 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-10-17 — the several-commit listing shows every character `safetext.Hidden` names as `?`
+  (direction overrides, line separators and invisible characters too, not only controls).
 - 2026-10-17 — fourth review: the digest starts with the tree the window starts from, a requeued
   task keeps counting toward the round cap, and the control-character refusal is gone (length
   prefixes suffice; the refusal's listing still escapes authors).

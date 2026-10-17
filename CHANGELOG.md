@@ -32,6 +32,15 @@
   like `web`. Now Coop shows them as codes too. An emoji joined from several, such as a family,
   shows its parts with `\u200D` between them.
 
+- **Task titles an agent wrote can no longer hide characters or turn a row around.** An agent in a
+  box can write a task's title and its decision. Coop dropped control characters such as an escape
+  from them before showing them, but kept the others that act on a terminal or show as nothing:
+  the controls above the ASCII range, a right-to-left override that reverses the text after it,
+  the Unicode line and paragraph separators, and invisible characters such as a zero-width space.
+  Now it drops those too. When Coop lists several commits that claim one task, their authors show
+  the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
+  as it already refused one holding an escape.
+
 - **`coop loop` exits 1, not 190 or 191, when an agent keeps leaving background work running.**
   After an agent ended three times while work it had started in the background was still running,
   `coop loop` stopped and exited 190 or 191, a status from inside the box that `coop help loop`

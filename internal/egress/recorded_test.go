@@ -27,6 +27,7 @@ func TestRecordedPolicyValidationDoesNotAuthenticateAuthority(t *testing.T) {
 		"duplicate-id":      func(s *Snapshot) { s.Grants[1].ID = s.Grants[0].ID },
 		"noncanonical":      func(s *Snapshot) { s.Grants[0].Rule.Ports = []int{443, 443} },
 		"provenance":        func(s *Snapshot) { s.Grants[0].Origins[0].Name = "unsafe\x1b[31m" },
+		"provenance-hidden": func(s *Snapshot) { s.Grants[0].Origins[0].Name = "unsafe\u2028name" },
 		"origin-duplicate":  func(s *Snapshot) { s.Grants[0].Origins = append(s.Grants[0].Origins, s.Grants[0].Origins[0]) },
 		"provider-selector": func(s *Snapshot) { s.Grants[0].Rule = Rule{To: Destination{Provider: "anthropic"}} },
 	} {

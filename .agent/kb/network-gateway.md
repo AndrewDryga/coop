@@ -213,10 +213,11 @@ the exact path a workload gets, and it can never appear on a `RunSpec` a caller 
 The image is built from an embedded source tar plus a pinned Dockerfile, with no host compiler and
 no repository build context (`Context` in `gatewayimage/image.go`). `gatewayimage.Pack` defines the
 tar and `tools/gennetimage` writes it: the non-test Go files of `sourceDirs` (`cmd/coop-net`,
-`internal/egress`, `internal/networkgateway`, `internal/networkview`, `internal/safefile`), `LICENSE`,
-and the gateway's OWN go.mod and go.sum, which name only `sourceModules` (`go.yaml.in/yaml/v3`,
-`golang.org/x/net`, `golang.org/x/sys`) at the root's versions. A bump that leaves those three alone
-leaves the tar, `Fingerprint()` and every user's network setup alone, but most other bumps
+`internal/egress`, `internal/networkgateway`, `internal/networkview`, `internal/safefile`,
+`internal/safetext`), `LICENSE`, and the gateway's OWN go.mod and go.sum, which name only
+`sourceModules` (`go.yaml.in/yaml/v3`, `golang.org/x/net`, `golang.org/x/sys`) at the root's
+versions. A bump that leaves those three alone leaves the tar, `Fingerprint()` and every user's
+network setup alone, but most other bumps
 (x/crypto, the sqlite modules) also raise x/sys and so still move it; until 2026-10-16 the whole
 root go.mod/go.sum rode along and every Dependabot PR failed the freshness test. After a change to those
 packages, `LICENSE`, the root `go` line or a gateway module's version, run
@@ -282,6 +283,10 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-17 — `internal/safetext` joined `sourceDirs`: egress imports it for the characters
+  provenance text may not hold (task 2026-10-17-escape-c1-bidi-invisible-and-line-separator-char).
+  A package coop-net newly imports fails `TestEmbeddedGatewayModuleLoadsOnItsOwn` until it is
+  listed there, and that test's message now names `sourceDirs` as well as `sourceModules`.
 - 2026-10-17 — recovery also takes an unsealed run whose cleanup is complete (a supervisor killed
   between its artifact cleanup and its seal) and seals it `supervisor_lost` without contacting the
   daemon, which it now binds only for a resource still at the runtime, so a run left with only its

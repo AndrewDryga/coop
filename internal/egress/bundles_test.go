@@ -146,7 +146,7 @@ func TestBundleSourcesAreCanonicalAndDisplaySafe(t *testing.T) {
 	if len(bundle.Sources) != 3 || bundle.Sources[0] != "https://b.example.com" {
 		t.Fatal("normalization mutated its caller")
 	}
-	for _, control := range []string{"\u0085", "\u202e", "\u2066", "\xff"} {
+	for _, control := range []string{"\u0085", "\u202e", "\u2066", "\u2028", "\xff"} {
 		bundle.Sources = []string{"https://example.com/" + control}
 		if _, err := SelectedBundles([]Bundle{bundle}); err == nil {
 			t.Fatalf("unsafe source accepted: %q", control)
@@ -192,6 +192,7 @@ func TestInputProvenanceCannotSupplyDerivedIdentityOrDisplayControls(t *testing.
 		{Kind: "operator", Feature: "cloud-mcp"}, {Kind: "operator", BundleVersion: "1"},
 		{Kind: "operator", Name: "policy\u202e"}, {Kind: "operator", Version: "1\u0085"},
 		{Kind: "operator", Name: "invalid\xff"}, {Kind: "operator\n"},
+		{Kind: "operator", Name: "policy\u2029"},
 	} {
 		if got, err := Compile("test", Filtered, []Input{{Rules: []Rule{tlsRule("example.com")}, Origin: origin}}, nil, false, ownerKey()); err == nil || got.Fingerprint != "" {
 			t.Fatalf("invalid requesting provenance accepted: %#v", origin)
