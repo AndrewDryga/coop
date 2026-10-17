@@ -335,10 +335,10 @@ var ownerOf = func(path string) (uid int, known bool) {
 
 // HomeOrAbove reports whether dir is the user's home folder or a folder that holds it, and names
 // the home folder. box.FindRepo never picks one for a project, box.ResolveRepo refuses a link to
-// one, and a trusted git view refuses one its walk climbed to (forkspace). It compares folders, not
-// spellings, so neither a case-insensitive disk, a linked home nor a second mount of home's
-// filesystem lets one through. A HOME that is unset or relative falls back to the account's home
-// folder.
+// one, host git in forkspace refuses one its search climbed to, and the rules a project takes from
+// the folders above it stop below them. It compares folders, not spellings, so neither a
+// case-insensitive disk, a linked home nor a second mount of home's filesystem lets one through. A
+// HOME that is unset or relative falls back to the account's home folder.
 func HomeOrAbove(dir string) (string, bool) {
 	home, real, target, ok := homeAndFolder(dir)
 	if !ok {

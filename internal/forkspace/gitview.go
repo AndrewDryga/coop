@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/AndrewDryga/coop/internal/shadowpath"
+	"golang.org/x/sys/unix"
 )
 
 // Every repository coop runs git against is agent-writable, and git executes whatever the
@@ -105,16 +106,65 @@ var errNoRepository = errors.New("not inside a git repository")
 // GitRefCommand builds a hardened git command on the REAL git dir, for the few operations that
 // replace a top-level git-dir entry by rename and so cannot run under the view: pack-refs and the
 // deletion of a packed ref, update-ref, a writing symbolic-ref, worktree add/remove. None of them
-// passes worktree content through a filter or diff driver; hooks are blanked by the hardening.
+// passes worktree content through a filter or diff driver; hooks are blanked by the hardening. Git
+// finds the repository itself here, so checkRefRepository first makes sure it finds a view's.
 func GitRefCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	cmd := TrustedGitCommand(ctx, dir, withoutGitEnv(os.Environ()), args...)
 	if err := refOnlyGitArgs(args); err != nil {
 		cmd.Err = err
+		return cmd
 	}
-	if err := validateIsolatedGitAccess(dir); err != nil {
+	err := validateIsolatedGitAccess(dir)
+	// git init makes the folder's own repository and never searches above it.
+	if err == nil && (len(args) == 0 || args[0] != "init") {
+		err = checkRefRepository(dir)
+	}
+	if err != nil {
 		cmd.Err = err
 	}
 	return cmd
+}
+
+// checkRefRepository makes sure git, which searches for the repository itself under
+// GitRefCommand, stops at the one a view of dir uses: gitDirsOf refuses a search that climbs to
+// the home folder or above, and git passes over a git dir it cannot use, as a .git a box emptied
+// or half deleted is, and climbs on, to a home folder kept in Git among others. With no
+// repository anywhere above dir, git reports that itself.
+func checkRefRepository(dir string) error {
+	gitDir, commonDir, err := gitDirsOf(dir)
+	if errors.Is(err, errNoRepository) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !gitCanUse(gitDir, commonDir) {
+		return fmt.Errorf("%s is not a Git repository git can use: it has no valid HEAD, objects or refs; "+
+			"restore the folder's .git, or run git init in it", gitDir)
+	}
+	return nil
+}
+
+// gitCanUse is the test git's search puts to a git dir it meets (is_git_directory in git's
+// setup.c): objects and refs folders in its common dir, and a HEAD that names a ref or a commit.
+func gitCanUse(gitDir, commonDir string) bool {
+	for _, name := range []string{"objects", "refs"} {
+		if unix.Access(filepath.Join(commonDir, name), unix.X_OK) != nil {
+			return false
+		}
+	}
+	head := filepath.Join(gitDir, "HEAD")
+	if target, err := os.Readlink(head); err == nil {
+		return strings.HasPrefix(target, "refs/") // the linked HEAD old git wrote
+	}
+	data, err := readGitFile(head)
+	if err != nil {
+		return false
+	}
+	if ref, symbolic := strings.CutPrefix(string(data), "ref:"); symbolic {
+		return strings.HasPrefix(strings.TrimLeft(ref, " \t\r\n"), "refs/")
+	}
+	return validPinnedCommit(strings.TrimRight(string(data), "\r\n"))
 }
 
 // CloseGitViews forgets this process's views, so the next command resolves the root again.
@@ -297,7 +347,8 @@ func gitDirsOf(workTree string) (gitDir, commonDir string, err error) {
 	// folder, a home folder kept in Git among them, and host git would then read and write that
 	// repository; box.FindRepo never climbs to one either. A folder that holds the .git itself
 	// still names its repository, as a COOP_REPO at the home folder does. The refusal is not
-	// errNoRepository, on which GitCommand runs plain git, and plain git climbs there by itself.
+	// errNoRepository, on which GitCommand and GitRefCommand run plain git, and plain git climbs
+	// there by itself.
 	if root != abs {
 		if home, above := shadowpath.HomeOrAbove(root); above {
 			return "", "", fmt.Errorf("%s has no .git of its own, and the nearest Git repository above it is %s, "+

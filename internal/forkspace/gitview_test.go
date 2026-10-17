@@ -148,6 +148,11 @@ func readOut(t *testing.T, repo string, args ...string) []byte {
 	return out
 }
 
+// hasRef reports whether repo holds ref, for a test that expects either answer.
+func hasRef(repo, ref string) bool {
+	return exec.Command("git", "-C", repo, "show-ref", "--verify", "--quiet", ref).Run() == nil
+}
+
 // The view's mechanics: the real HEAD keeps its symref through a rebase, status refreshes the
 // REAL index (a raw status afterwards agrees), a linked worktree resolves objects and refs from
 // the common dir and HEAD from its own git dir, and ref-store writes go through the real git dir.
@@ -338,6 +343,102 @@ func TestGitViewNeverClimbsToTheHomeRepository(t *testing.T) {
 	}
 	if gitDir, _, err := gitDirsOf(inside); err != nil || gitDir != filepath.Join(me, "below", ".git") {
 		t.Fatalf("gitDirsOf in a folder of a repository below the home folder = %q, %v; want that repository", gitDir, err)
+	}
+}
+
+// GitRefCommand lets git search for the repository itself, and git climbs past a folder's .git
+// when it is gone or is one git cannot use: a fork land's update-ref, or a branch switch's
+// symbolic-ref, which needs no commit there, would then move a branch or HEAD of a home folder
+// kept in Git. Each is refused, a deleted .git in the very words a view uses, while plain git from
+// the same folder, the control, does write there. The home folder's own .git, git init in a folder
+// without one, and a climb that ends below the home folder still work.
+func TestGitRefCommandNeverClimbsToTheHomeRepository(t *testing.T) {
+	ctx := context.Background()
+	home, run := viewTestRepo(t)
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(home, "project")
+	gitDir := filepath.Join(workspace, ".git")
+	head := strings.TrimSpace(string(readOut(t, home, "rev-parse", "HEAD")))
+	hasBranch := func(name string) bool { return hasRef(home, "refs/heads/"+name) }
+	homeHead := func() string { return strings.TrimSpace(string(readOut(t, home, "symbolic-ref", "HEAD"))) }
+	unusable := gitDir + " is not a Git repository git can use"
+	for _, damage := range []struct {
+		name, want string
+		apply      func() error
+	}{
+		{"deleted", "the nearest Git repository above it is " + home + ", at your home folder", func() error {
+			return os.RemoveAll(gitDir)
+		}},
+		{"emptied", unusable, func() error {
+			if err := os.RemoveAll(gitDir); err != nil {
+				return err
+			}
+			return os.Mkdir(gitDir, 0o700)
+		}},
+		{"objects-deleted", unusable, func() error { return os.RemoveAll(filepath.Join(gitDir, "objects")) }},
+		{"head-emptied", unusable, func() error { return os.WriteFile(filepath.Join(gitDir, "HEAD"), nil, 0o600) }},
+		// A HEAD and an objects folder in the project pass for a bare repository; git also wants refs.
+		{"bare-lookalike", workspace + " is not a Git repository git can use", func() error {
+			if err := os.RemoveAll(gitDir); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+				return err
+			}
+			return os.Mkdir(filepath.Join(workspace, "objects"), 0o700)
+		}},
+	} {
+		if err := os.RemoveAll(workspace); err != nil {
+			t.Fatal(err)
+		}
+		run("init", "-q", "project")
+		if err := damage.apply(); err != nil {
+			t.Fatal(err)
+		}
+		branch := "escaped-" + damage.name
+		for _, args := range [][]string{
+			{"update-ref", "refs/heads/" + branch, head},
+			{"symbolic-ref", "HEAD", "refs/heads/" + branch},
+		} {
+			err := GitRefCommand(ctx, workspace, args...).Run()
+			if err == nil || !strings.Contains(err.Error(), damage.want) || !strings.Contains(err.Error(), "run git init in it") {
+				t.Fatalf("%s .git: GitRefCommand %v = %v; want a refusal saying %q", damage.name, args, err, damage.want)
+			}
+			if _, _, viewErr := gitDirsOf(workspace); damage.name == "deleted" && (viewErr == nil || err.Error() != viewErr.Error()) {
+				t.Fatalf("deleted .git: GitRefCommand %v = %v; want the view's words, %v", args, err, viewErr)
+			}
+		}
+		if hasBranch(branch) || homeHead() != "refs/heads/main" {
+			t.Fatalf("%s .git: a refused GitRefCommand moved a branch or HEAD of the home repository", damage.name)
+		}
+		// The control: plain git from the same folder climbs to the home repository and writes there.
+		run("-C", "project", "update-ref", "refs/heads/"+branch, head)
+		if !hasBranch(branch) {
+			t.Fatalf("%s .git: plain git never reached the home repository, so the refusal proves nothing", damage.name)
+		}
+	}
+
+	if out, err := GitRefCommand(ctx, home, "update-ref", "refs/heads/own", head).CombinedOutput(); err != nil || !hasBranch("own") {
+		t.Fatalf("update-ref in the home folder's own repository: %v\n%s", err, out)
+	}
+	if err := os.RemoveAll(workspace); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(workspace, "sub")
+	if err := os.MkdirAll(inside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := GitRefCommand(ctx, workspace, "init", "--quiet").CombinedOutput(); err != nil || !fileExists(filepath.Join(gitDir, "HEAD")) {
+		t.Fatalf("git init in a folder inside the home repository: %v\n%s", err, out)
+	}
+	if out, err := GitRefCommand(ctx, inside, "symbolic-ref", "HEAD", "refs/heads/topic").CombinedOutput(); err != nil {
+		t.Fatalf("symbolic-ref from a folder of a repository below the home folder: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(readOut(t, workspace, "symbolic-ref", "HEAD"))); got != "refs/heads/topic" {
+		t.Fatalf("HEAD of the repository below the home folder = %q; want refs/heads/topic", got)
+	}
+	if got := homeHead(); got != "refs/heads/main" {
+		t.Fatalf("HEAD of the home repository = %q; the climb below it moved the home repository", got)
 	}
 }
 

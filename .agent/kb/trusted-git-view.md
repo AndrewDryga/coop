@@ -69,8 +69,8 @@ that command, which holds no Coop lock.
 
 **Linked worktree backlinks.** A git dir with its own `commondir`, reached through a `.git` file or
 link, is a linked worktree's: it must sit at `<common dir>/worktrees/<name>` and its `gitdir`
-backlink must name this folder's `.git`. `checkLinkedWorktree` makes that check for views and for
-`coop approve` (`safeExcludeTarget`) alike. It compares the backlink's folder with the link-free
+backlink must name this folder's `.git`. `checkLinkedWorktree` makes that check for views,
+`GitRefCommand` (through `gitDirsOf`) and `coop approve` (`safeExcludeTarget`) alike. It compares the backlink's folder with the link-free
 worktree folder by identity (`os.SameFile`), so case-insensitive disks and `/var` →
 `/private/var` spellings agree; it never compares the `.git` files, because a box can replace its
 `.git` with a symbolic or hard link to another worktree's, which is that very file. Views read the
@@ -133,20 +133,32 @@ inside the folder give one path, and the secret walk looks inside it (see
 [[secret-shadow-walk]]); an override that cannot be resolved is kept as given. `EvalSymlinks` keeps
 the case the override was typed in, so on a case-insensitive disk that spelling still differs.
 
-A view refuses the same climb (`gitDirsOf`, so `RunGitFsck` and the observation snapshots too): a
-box that deleted the `.git` of a folder Coop later runs host git for (a loop's commit, sign or
-review step, a fork merge, a session clone) moved the view, and host git's reads and writes, to a
-home folder kept in Git. Only a climb is refused. A folder holding the `.git` itself keeps its
-repository, so a `COOP_REPO` at the home folder still has views; the task audit reads history from
-the project folder that holds its queue (`auditProjectDir`, which strips a literal `.agent/tasks`)
-instead of from inside the queue. Two queues in a home-folder project still climb and are refused:
-a subproject's `<member>/.agent/tasks` and a `--tasks`/COOP_TASKS queue elsewhere in it, so a task
-the audit reopened there cannot be completed or unblocked (queued). The error is never `errNoRepository`, on which `GitCommand` runs plain git, and plain
-git climbs there by itself. `GitRefCommand` lets git find the repository and is not covered (queued).
-FindRepo, the `.coopignore` walk above a repository and views share `shadowpath.HomeOrAbove`, which
-compares folders, not spellings. This refuses an accidental climb only: a box can still point a
-`.git` at the home repository through the redirects views accept (see "Redirects into another
-repository are accepted").
+A view refuses the same climb (`repositoryOf`, behind `gitDirsOf`, so `RunGitFsck` and the
+observation snapshots too): a box that deleted the `.git` of a folder Coop later runs host git for
+(a loop's commit, sign or review step, a fork merge, a session clone) moved the view, and host
+git's reads and writes, to a home folder kept in Git. Only a climb is refused. A folder holding the
+`.git` itself keeps its repository, so a `COOP_REPO` at the home folder still has views; the task
+audit reads history from the project folder that holds its queue (`auditProjectDir`, which strips
+a literal `.agent/tasks`) instead of from inside the queue. Two queues in a home-folder project
+still climb and are refused: a subproject's `<member>/.agent/tasks` and a `--tasks`/COOP_TASKS
+queue elsewhere in it, so a task the audit reopened there cannot be completed or unblocked
+(queued). The error is never `errNoRepository`, on which `GitCommand` and `GitRefCommand` run
+plain git, and plain git climbs there by itself. `GitRefCommand` lets git search for the
+repository, so `checkRefRepository` first makes sure the search stops at the one a view uses:
+`gitDirsOf` refuses the climb in the same words, and the git dir it finds must pass git's own test
+(`is_git_directory`: `objects` and `refs` in the common dir, a HEAD that names a ref or a commit),
+because git passes over a `.git` folder that fails it, as one a box emptied or half deleted does,
+and climbs on. A fork land's `update-ref` or a branch switch's `symbolic-ref`, which needs no
+commit there, therefore never reaches the home repository
+(`TestGitRefCommandNeverClimbsToTheHomeRepository`: a deleted, emptied, objectless or empty-HEAD
+`.git` and a bare look-alike, each with plain git as the control). Only `git init` skips the
+check, because it never searches above its folder; the task audit and the empty session source
+create repositories that way in folders a home repository may hold. A box racing the check, which
+runs before git searches, could get past it, but gains nothing the accepted redirects do not
+already give it. FindRepo, the `.coopignore` walk above a repository
+and views share `shadowpath.HomeOrAbove`, which compares folders, not spellings. This refuses an
+accidental climb only: a box can still point a `.git` at the home repository through the
+redirects views accept (see "Redirects into another repository are accepted").
 
 Session workspace clones use the view itself as their local transport source. A non-local,
 no-checkout clone plus an exact fetch of the validated commit avoids racing mutable loose-object
@@ -200,6 +212,12 @@ no checkout config or origin resolution. Test-only Git setup is outside the sour
 against accidental bypass, not a proof about arbitrary shell programs or mutations to exec.Cmd.
 
 ## Changelog
+- 2026-10-17 — `GitRefCommand` refuses the climb too (`checkRefRepository`): `gitDirsOf`'s
+  refusal in the same words, plus git's own test of the git dir it found, since a review showed
+  git climbing past an emptied, objectless or empty-HEAD `.git` to the home repository (task
+  2026-10-17-refuse-a-gitrefcommand-whose-git-would-climb-to). Swept its 40 production calls: all
+  but the two `git init` calls, which skip the check, name a folder holding its own `.git` (a
+  project, a fork or session workspace, or a repository Coop just made); none relied on a climb.
 - 2026-10-17 — restored worker publication and identity/LFS diagnostics with reviewed narrow
   policies; exact worker argv table covers staging, refresh, LFS status callbacks and publication.
 - 2026-10-17 — removed the raw release-query exception: remote transport uses private metadata

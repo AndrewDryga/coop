@@ -137,8 +137,10 @@
   up. If an agent in a box deleted the project's own `.git` while your home folder, or a folder
   above it, is a Git repository, the search ended there, and a loop's commits, signing and reviews,
   `coop fork merge` and session clones could read and write that repository. Coop now stops with an
-  error that names it. Choosing the project already refused such a repository, and `COOP_REPO` can
-  still name your home folder.
+  error that names it. Before updating a branch or `HEAD`, where Git searches for the `.git`
+  itself, Coop also stops when the folder's `.git` is one Git cannot use, such as one the agent
+  emptied, because Git would pass over it and climb on. Choosing the project already refused such
+  a repository, and `COOP_REPO` can still name your home folder.
 
 - **Coop no longer treats a process recorded on another operating system as stopped.** A Linux
   container that shares a project, or Coop's state folder, with macOS leaves records that name its
