@@ -505,6 +505,36 @@ func TestForkFreshConfirmsBeforeRuntimeWork(t *testing.T) {
 	}
 }
 
+// A --fresh fork loop checks each peer's login before it asks to recreate the fork: a peer that
+// cannot sign in is refused first, so the fork is never stopped or recloned for a loop that could
+// not start, and a signed-in peer goes on to the confirmation.
+func TestForkFreshChecksPeersBeforeConfirmation(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".agent", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
+	signInCred(t, cfg, "claude", "default") // the lead can run; Codex has no login yet
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	args := []string{"perf", "claude", "--loop", "--peer", "codex", "--fresh"}
+	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+	if code, err := a.forkCreate(args); code != 1 || err == nil || !strings.HasPrefix(err.Error(), "Codex needs a usable account") {
+		t.Fatalf("fork --fresh with a signed-out peer = (%d, %v), want the peer's sign-in refusal first", code, err)
+	}
+	signInCred(t, cfg, "codex", "default")
+	a = &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+	if code, err := a.forkCreate(args); code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("fork --fresh with a signed-in peer = (%d, %v), want it past the peer check to the confirmation", code, err)
+	}
+	if !pathExists(ws) || pathExists(recorder) {
+		t.Fatal("a refused --fresh deleted the fork or reached the runtime")
+	}
+}
+
 func TestForkFreshConfirmsBeforeForcedStop(t *testing.T) {
 	repo := initRepo(t)
 	ws, err := forkspace.Setup(repo, "perf")

@@ -345,7 +345,8 @@ func parseForkCreate(args []string) (forkArgs, error) {
 		return fa, errors.New("coop fork --peer only applies with --loop (name each peer: --peer <target>)")
 	}
 	// A peer typed wrong is refused here, before the fork is created or any account is checked.
-	// Whether each peer can sign in depends on the fork's rotation, checked once the fork exists.
+	// Whether each peer can sign in depends on the fork's agent and rotation: forkCreate checks it
+	// once those are known, still before the fork is created.
 	if _, err := resolvePeerTargets("coop fork "+fa.name, fa.peers, agents.Names()); err != nil {
 		return fa, err
 	}
@@ -457,6 +458,29 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return -1, fmt.Errorf("coop fork --tasks: no such tasks folder: %s", fa.tasks)
 		}
 		fa.tasks = abs
+	}
+	// Check each peer's login before --fresh stops or recreates anything and before any image or
+	// clone work, so a peer that cannot run never costs a fork: the check needs only the fork's agent
+	// and its rotation, both known by now (a fork with no agent is refused below). A detached start
+	// forwards the raw values, and its worker checks them again.
+	var peers []agents.Target
+	if len(fa.peers) > 0 && fa.agent != "" {
+		ladder, err := oneOffLadder(fa.model, fa.credential, fa.effort)
+		if err != nil {
+			return 2, err
+		}
+		if ladder == nil && a.preset != nil && fa.agent == a.preset.Lead().Provider {
+			ladder = a.preset.LeadTargets
+		}
+		// No account to run fails the job, exit 1 as runForkLoop's own rotation does; refusalExit
+		// keeps 2 only for a malformed peer.
+		rot, err := a.buildRotation(fa.agent, ladder)
+		if err != nil {
+			return -1, err
+		}
+		if peers, err = a.resolvePeersForLeads("coop fork "+fa.name, fa.peers, rot.Targets()); err != nil {
+			return refusalExit(err), err
+		}
 	}
 	// --fresh recreates an existing fork by destroying it first — run the same guard `fork rm` uses so
 	// it can't silently discard an agent's unmerged/uncommitted work (--fresh --force overrides). Do it
@@ -676,29 +700,6 @@ func (a *app) forkCreate(args []string) (int, error) {
 		return -1, fmt.Errorf("save fork provider before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))
 	}
 	if fa.loop {
-		// The worker/foreground paths run the loop here, so resolve --peer to peer targets
-		// (validate authed, reject an @account). The detach path re-execs `coop fork … --peer
-		// <t>` and the worker re-resolves, so it forwards the raw values instead.
-		var peers []agents.Target
-		if len(fa.peers) > 0 {
-			ladder, err := oneOffLadder(fa.model, fa.credential, fa.effort)
-			if err != nil {
-				return 2, err
-			}
-			if ladder == nil && a.preset != nil && fa.agent == a.preset.Lead().Provider {
-				ladder = a.preset.LeadTargets
-			}
-			// No account to run fails the job, exit 1 as runForkLoop's own rotation does; refusalExit
-			// keeps 2 only for a malformed peer.
-			rot, err := a.buildRotation(fa.agent, ladder)
-			if err != nil {
-				return -1, err
-			}
-			peers, err = a.resolvePeersForLeads("coop fork "+fa.name, fa.peers, rot.Targets())
-			if err != nil {
-				return refusalExit(err), err
-			}
-		}
 		switch {
 		case fa.worker:
 			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, true)

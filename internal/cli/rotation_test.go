@@ -11,6 +11,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 // signInCred writes a minimal adapter-valid credential so rotation sees a runnable account, not
@@ -234,13 +235,17 @@ func TestLadderRefusalsNameAFailedListing(t *testing.T) {
 // A --peer refusal exits by what went wrong, whichever command carries it: a peer with no usable
 // login fails the job like a lead with none (exit 1, with the sign-in it needs), while a peer that
 // is not allowed as typed is rejected input (exit 2), named before any account is checked and
-// wherever it sits among the peers. Nothing reaches the runtime either way.
+// wherever it sits among the peers. Nothing reaches the runtime either way, and no fork is created.
 func TestPeerRefusalsSplitAMissingLoginFromRejectedInput(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	cfg := freshConfig(t)
 	signInCred(t, cfg, "claude", "default") // the lead can run; Codex has no login, and ghost is no account
 	writePresetFile(t, cfg.RepoOverride, "lead", "lead:\n  agent: claude\n")
 	writePresetFile(t, cfg.RepoOverride, "lead-ghost", "lead:\n  agent: [claude@ghost]\n")
+	// A task queue, so a fork loop gets as far as its peers.
+	if err := os.MkdirAll(filepath.Join(cfg.RepoOverride, ".agent", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	launch := func(a *app, args []string) (int, error) { return a.launchAgent(args[0], args[1:]) }
 	// As the dispatcher runs `coop <preset>`: a preset that does not load is its own refusal.
@@ -251,7 +256,8 @@ func TestPeerRefusalsSplitAMissingLoginFromRejectedInput(t *testing.T) {
 		}
 		return a.launchPreset(p, args[1:])
 	}
-	// The fork commands refuse a peer typed wrong before they look for the fork, so none exists here.
+	// No fork exists here: a fork loop checks every peer before it creates one, and fork ACP checks a
+	// peer typed wrong before it looks for the fork it serves.
 	forkACP := func(a *app, args []string) (int, error) { return a.forkACP("nofork", args) }
 	forkLoop := func(a *app, args []string) (int, error) {
 		return a.forkCreate(append([]string{"nofork", args[0], "--loop"}, args[1:]...))
@@ -280,7 +286,7 @@ func TestPeerRefusalsSplitAMissingLoginFromRejectedInput(t *testing.T) {
 	}{
 		{"launch", target, launch, false}, {"preset", preset, launchPreset, false},
 		{"loop", target, (*app).cmdLoop, false}, {"acp", target, (*app).cmdACP, false},
-		{"fork-acp", target, forkACP, true}, {"fork-loop", target, forkLoop, true},
+		{"fork-acp", target, forkACP, true}, {"fork-loop", target, forkLoop, false},
 	}
 	for _, tc := range []struct {
 		name, account string // account is the lead's, "" for its default
@@ -306,6 +312,9 @@ func TestPeerRefusalsSplitAMissingLoginFromRejectedInput(t *testing.T) {
 				exit, refusal, _ := refuse(t, cfg, recorder, command.run, args)
 				if exit != tc.exit || !strings.HasPrefix(refusal, tc.refusal) {
 					t.Fatalf("%q = (exit %d, %q), want (%d, %q)", args, exit, refusal, tc.exit, tc.refusal)
+				}
+				if command.name == "fork-loop" && pathExists(forkspace.Home(cfg.RepoOverride)) {
+					t.Fatalf("%q left a fork folder or fork state behind", args)
 				}
 			})
 		}

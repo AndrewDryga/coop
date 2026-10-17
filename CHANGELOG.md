@@ -24,6 +24,12 @@
   minutes before its agent started. Now it prepares up to four at once. A failure still stops the
   others and names the repository that failed.
 
+- **A fork loop whose `--peer` agent is not signed in no longer clones the fork first.**
+  `coop fork <name> --loop --peer <agent>` checked the peer's login only after it had cloned the
+  fork, so a missing login cost a full clone and left the new fork behind. With `--fresh` it asked
+  to recreate the fork and, once you agreed, recreated it before refusing. Coop now checks each
+  peer's login first, so a refused peer leaves your forks as they were.
+
 - **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
   `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a
   file in place. An agent in a box could swap that file's folder for a named pipe just as

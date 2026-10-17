@@ -77,7 +77,9 @@ error's code. A `--peer` provider with no usable login gets `needsAccountErr` (t
 `refusalExit`: 1 for it, 2 for a malformed peer or one naming an account. Peer forms come first:
 each entry point checks them against `agents.Names()` before any account (a fork loop in
 `parseForkCreate`, before the fork is created), and `resolvePeerTargets` checks every form before
-any sign-in, so a malformed peer exits 2 wherever it sits. Filtered editor sessions
+any sign-in, so a malformed peer exits 2 wherever it sits. A fork loop checks each peer's login in
+`forkCreate` as soon as the fork's agent is known: before `--fresh` asks to recreate anything and
+before any image or clone work, so a refused peer leaves no fork behind. Filtered editor sessions
 (acp_network.go) and the ACP control only use the error as a signal and fall back, so they print
 nothing from it. `coop usage provider@account` uses its own listing ([[usage-history-cache]]).
 `coop credentials` lists what it could read and ends that agent's block with
@@ -92,6 +94,8 @@ and the default MCP file are `0600`. Coop does not recursively chmod provider tr
 the private ancestors protect those descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-10-17 - a fork loop now checks each peer's login before `--fresh`, image or clone work, not
+  after the clone; verified against internal/cli/fork_cmd.go
 - 2026-10-17 - a missing login now exits 1 from `coop acp --peer`'s lead expansion and a fork loop's
   `--peer` check too (-1, like the loop), and `needsAccountErr` is a `ui.CommandFailed`, so every
   peer check returns `refusalExit` (1 for no login, 2 for a malformed peer), with every peer's form
