@@ -53,7 +53,7 @@ var allowedEdges = map[string][]string{
 	"gatewayimage":          {"runtime"},
 	"forkctl":               {"agent", "box", "config", "forkspace", "hostsurface", "project", "runtime", "sessionsvc", "tasks", "ui"},
 	"hostsurface":           nil,
-	"forkspace":             {"fsidentity", "processidentity", "safefile"},
+	"forkspace":             {"fsidentity", "processidentity", "safefile", "shadowpath"},
 	"consult":               {"agent"},
 	"ladder":                {"agent"},
 	"loop":                  {"agent", "box", "config", "contextc", "forkspace", "ladder", "loopcfg", "preset", "project", "runtime", "taskmcp", "tasks", "ui"},

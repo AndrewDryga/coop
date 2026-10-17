@@ -46,6 +46,10 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-17 — forkspace imports shadowpath for `HomeOrAbove`: a trusted git view refuses a
+  repository its walk climbed to at the home folder or above with the check box.FindRepo uses,
+  not a second copy (task 2026-10-16-refuse-a-trusted-git-view-whose-nearest-git-is-t).
+  shadowpath imports only the safefile leaf, so no cycle.
 - 2026-10-17 — scaffold imports safefile so coop init's subproject walk opens each folder without
   following a link or waiting on a FIFO a box swapped in (task
   2026-10-17-read-coop-init-s-remaining-project-files-without). safefile is a leaf that scaffold

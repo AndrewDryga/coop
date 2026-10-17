@@ -2,7 +2,7 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
+sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
 updated: 2026-10-17
 ---
 
@@ -127,11 +127,26 @@ workspace mount anywhere, the home folder included. The walk also refuses a repo
 user owns (the folder or its `.git`), and never climbs to one at the home folder or above it;
 only `COOP_REPO` can name one of those. Outside any repository the working directory is still
 the project. The nearest `.git` wins even when a box planted it inside the real project; the
-`.coopignore` rules of the folders above still apply there ([[secret-shadow-walk]]), and the
-home-folder check both walks share is `shadowpath.HomeOrAbove`. `COOP_REPO` is followed through links to its folder (`EvalSymlinks`), so a linked
-override and a walk from inside the folder give one path, and the secret walk looks inside it (see
+`.coopignore` rules of the folders above still apply there ([[secret-shadow-walk]]). `COOP_REPO`
+is followed through links to its folder (`EvalSymlinks`), so a linked override and a walk from
+inside the folder give one path, and the secret walk looks inside it (see
 [[secret-shadow-walk]]); an override that cannot be resolved is kept as given. `EvalSymlinks` keeps
 the case the override was typed in, so on a case-insensitive disk that spelling still differs.
+
+A view refuses the same climb (`gitDirsOf`, so `RunGitFsck` and the observation snapshots too): a
+box that deleted the `.git` of a folder Coop later runs host git for (a loop's commit, sign or
+review step, a fork merge, a session clone) moved the view, and host git's reads and writes, to a
+home folder kept in Git. Only a climb is refused. A folder holding the `.git` itself keeps its
+repository, so a `COOP_REPO` at the home folder still has views; the task audit reads history from
+the project folder that holds its queue (`auditProjectDir`, which strips a literal `.agent/tasks`)
+instead of from inside the queue. Two queues in a home-folder project still climb and are refused:
+a subproject's `<member>/.agent/tasks` and a `--tasks`/COOP_TASKS queue elsewhere in it, so a task
+the audit reopened there cannot be completed or unblocked (queued). The error is never `errNoRepository`, on which `GitCommand` runs plain git, and plain
+git climbs there by itself. `GitRefCommand` lets git find the repository and is not covered (queued).
+FindRepo, the `.coopignore` walk above a repository and views share `shadowpath.HomeOrAbove`, which
+compares folders, not spellings. This refuses an accidental climb only: a box can still point a
+`.git` at the home repository through the redirects views accept (see "Redirects into another
+repository are accepted").
 
 Session workspace clones use the view itself as their local transport source. A non-local,
 no-checkout clone plus an exact fetch of the validated commit avoids racing mutable loose-object
@@ -160,6 +175,12 @@ inline-diff positive control but never during production review. The loop's work
 keep their existing restrictions.
 
 ## Changelog
+- 2026-10-17 — a view refuses a repository its walk climbed to at the home folder or above, with
+  `shadowpath.HomeOrAbove` (task 2026-10-16-refuse-a-trusted-git-view-whose-nearest-git-is-t).
+  Swept every caller: only the task audit's reopen, complete and unblock reads relied on a climb,
+  and they now read from the project folder holding the queue (`auditProjectDir`), so COOP_REPO=~
+  keeps working for its root queue (member and --tasks queues there are queued); `GitRefCommand`
+  is not covered (queued).
 - 2026-10-17 — redirects into another repository are an accepted, documented risk (owner decision
   C on task 2026-10-17-decide-how-trusted-git-views-treat-redirects-a-b); docs/box.md names them.
 - 2026-10-17 — a planted nested `.git` keeps the `.coopignore` rules above it; the home-folder check

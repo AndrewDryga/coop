@@ -282,6 +282,18 @@ func taskIDDuplicates(hosts []string, requireLive bool) ([]string, error) {
 	return duplicates, nil
 }
 
+// auditProjectDir is where the audit reads repository history for the queue at root: the project
+// folder holding the queue's .agent, whose own .git a trusted git view takes without climbing. From
+// inside the queue the search climbs, and a view refuses a climb that reaches the home folder, as it
+// would when the home folder itself is the project (COOP_REPO=~). A queue kept anywhere else
+// (--tasks) is read from where it is.
+func auditProjectDir(root string) string {
+	if filepath.Base(root) == "tasks" && filepath.Base(filepath.Dir(root)) == ".agent" {
+		return filepath.Dir(filepath.Dir(root))
+	}
+	return root
+}
+
 // completeTrustedTask is the host equivalent of the provider completion boundary. It holds the
 // task authority lock across move, finalization, and receipt creation so a concurrent loop can
 // observe either the old state or an accepted done inode, never a transient.
@@ -328,8 +340,9 @@ func CompleteTrustedTask(root string, task Item) (retErr error) {
 		return err
 	}
 	if reopened {
-		repo := gitOut(root, "rev-parse", "--show-toplevel")
-		head := gitOut(root, "rev-parse", "--verify", "HEAD^{commit}")
+		project := auditProjectDir(root)
+		repo := gitOut(project, "rev-parse", "--show-toplevel")
+		head := gitOut(project, "rev-parse", "--verify", "HEAD^{commit}")
 		if reopen.UnblockPending {
 			return &auditCompletionStateError{message: fmt.Sprintf(
 				"task %s has non-authorizing pending audit authority from an interrupted unblock; "+
@@ -2231,8 +2244,9 @@ func lockBlockedAuditReopenUnblock(root string, task Item, observed AuditReopenR
 	if !ok || current.State != StateBlocked || current.Dir != task.Dir {
 		return fail(fmt.Errorf("task %s changed state while its blocked audit authority was locked", task.ID))
 	}
-	repo := gitOut(root, "rev-parse", "--show-toplevel")
-	head := gitOut(root, "rev-parse", "HEAD")
+	project := auditProjectDir(root)
+	repo := gitOut(project, "rev-parse", "--show-toplevel")
+	head := gitOut(project, "rev-parse", "HEAD")
 	if repo == "" || head == "" {
 		return fail(fmt.Errorf("resolve repository history for blocked audit task %s", task.ID))
 	}
@@ -2287,8 +2301,9 @@ func finishPendingAuditUnblock(root string, task Item, observed AuditReopenRecor
 	if !ok || current.State != StateTodo || current.Dir != task.Dir {
 		return fail(fmt.Errorf("task %s is no longer the todo task from its pending audit unblock", task.ID))
 	}
-	repo := gitOut(root, "rev-parse", "--show-toplevel")
-	head := gitOut(root, "rev-parse", "HEAD")
+	project := auditProjectDir(root)
+	repo := gitOut(project, "rev-parse", "--show-toplevel")
+	head := gitOut(project, "rev-parse", "HEAD")
 	replacement := record
 	replacement.Version = auditReopenVersion
 	replacement.UnblockPending = false

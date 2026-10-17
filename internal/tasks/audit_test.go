@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 func TestAggregateDuplicateTaskIDs(t *testing.T) {
@@ -4486,6 +4488,19 @@ type blockedAuditRebaseFixture struct {
 	task                          Item
 	record                        AuditReopenRecord
 	git                           func(...string)
+}
+
+// With COOP_REPO=~ the home folder is the project and its queue is ~/.agent/tasks. The audit reads
+// history from the project folder, not from inside the queue, so a trusted git view finds the
+// home folder's own .git without the climb it refuses: a blocked audit task still unblocks.
+func TestAuditReadsHistoryWhenTheHomeFolderIsTheProject(t *testing.T) {
+	f := newBlockedAuditRebaseFixture(t)
+	t.Setenv("HOME", f.repo)
+	forkspace.CloseGitViews() // views the fixture opened were resolved under the old HOME
+	t.Cleanup(forkspace.CloseGitViews)
+	if err := resolveAndUnblock(f.root, f.task, "external acceptance passed"); err != nil {
+		t.Fatalf("unblock with the home folder as the project: %v", err)
+	}
 }
 
 func newBlockedAuditRebaseFixture(t *testing.T) blockedAuditRebaseFixture {

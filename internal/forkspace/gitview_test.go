@@ -2,6 +2,8 @@ package forkspace
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -257,6 +259,73 @@ func TestGitViewPopulatesANoCheckoutWorktree(t *testing.T) {
 		t.Fatalf("worktree HEAD = %s, want %s", got, head)
 	}
 	run("worktree", "remove", "--force", worktree)
+}
+
+// A box can delete the .git of a folder Coop runs git for, and the walk to the nearest .git then
+// climbs to the repository that holds the folder: host git would read and write a home folder
+// kept in Git. Views, integrity checks and observations refuse that before laying out anything.
+// The home folder itself, as a COOP_REPO may name it, keeps its repository, and a repository
+// below the home folder is still found from a folder inside it.
+func TestGitViewNeverClimbsToTheHomeRepository(t *testing.T) {
+	ctx := context.Background()
+	home, run := viewTestRepo(t)
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(home, "project")
+	run("init", "-q", "project")
+	if out, err := viewRun(t, workspace, "status", "--porcelain"); err != nil {
+		t.Fatalf("status while the workspace has its own .git: %v\n%s", err, out)
+	}
+	if err := os.RemoveAll(filepath.Join(workspace, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	views := t.TempDir()
+	t.Setenv(GitViewRootEnv, views)
+	CloseGitViews()
+	refused := func(what, dir string, err error) {
+		t.Helper()
+		// Never errNoRepository, on which GitCommand runs plain git, which climbs there by itself.
+		want := dir + " has no .git of its own, and the nearest Git repository above it is " + home + ", at your home folder"
+		if err == nil || errors.Is(err, errNoRepository) || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "run git init in it") {
+			t.Fatalf("%s in %s = %v; want a refusal naming the repository at the home folder", what, dir, err)
+		}
+	}
+	_, err := GitCommand(ctx, workspace, "status")
+	refused("GitCommand", workspace, err)
+	refused("RunGitFsck", workspace, RunGitFsck(ctx, workspace, os.Environ(), io.Discard, io.Discard))
+	_, err = ObserveGit(ctx, workspace, "rev-parse", "HEAD")
+	refused("ObserveGit", workspace, err)
+	if entries, err := os.ReadDir(views); err != nil || len(entries) != 0 {
+		t.Fatalf("a refused command laid out a view: %v, %v", entries, err)
+	}
+	link := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(home, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", link)
+	_, err = GitCommand(ctx, workspace, "status")
+	refused("GitCommand with a linked HOME", workspace, err)
+	if out, err := viewRun(t, home, "status", "--porcelain"); err != nil {
+		t.Fatalf("status in the home folder itself: %v\n%s", err, out)
+	}
+
+	// A repository above the home folder, met from a folder beside it, is refused just the same.
+	me, beside := filepath.Join(home, "users", "me"), filepath.Join(home, "opt", "tool")
+	for _, dir := range []string{me, beside} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", me)
+	_, err = GitCommand(ctx, beside, "status")
+	refused("GitCommand beside the home folder", beside, err)
+	run("init", "-q", "users/me/below")
+	inside := filepath.Join(me, "below", "sub")
+	if err := os.Mkdir(inside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if gitDir, _, err := gitDirsOf(inside); err != nil || gitDir != filepath.Join(me, "below", ".git") {
+		t.Fatalf("gitDirsOf in a folder of a repository below the home folder = %q, %v; want that repository", gitDir, err)
+	}
 }
 
 // A test binary that names no view root must fail. The per-process temporary root that used to

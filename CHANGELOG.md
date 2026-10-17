@@ -56,6 +56,14 @@
   `coop help` leaves the service list out, and the subproject search skips the folder. A
   `.tool-versions` or Compose file that links to another file in the project still works.
 
+- **Coop's own search for a project's `.git` no longer ends in your home folder.** Before running
+  Git in a project or fork, Coop looks for the nearest `.git`, starting in that folder and moving
+  up. If an agent in a box deleted the project's own `.git` while your home folder, or a folder
+  above it, is a Git repository, the search ended there, and a loop's commits, signing and reviews,
+  `coop fork merge` and session clones could read and write that repository. Coop now stops with an
+  error that names it. Choosing the project already refused such a repository, and `COOP_REPO` can
+  still name your home folder.
+
 - **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
   `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a
   file in place. An agent in a box could swap that file's folder for a named pipe just as

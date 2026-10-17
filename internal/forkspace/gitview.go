@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 )
 
 // Every repository coop runs git against is agent-writable, and git executes whatever the
@@ -270,7 +272,8 @@ func nearestGitDir(dir string) (root, gitDir string, err error) {
 // gitDirsOf resolves the worktree's git dir and common dir the way git does, without running
 // git: the nearest `.git` above workTree — a directory, or a `gitdir: <path>` file for a linked
 // worktree — and that dir's `commondir` pointer when it has one. Symlinks are resolved first so
-// one repository has one view. A linked worktree's git dir must name this worktree back.
+// one repository has one view. A linked worktree's git dir must name this worktree back, and a
+// repository the walk climbs to may not be the home folder or a folder above it.
 func gitDirsOf(workTree string) (gitDir, commonDir string, err error) {
 	abs, err := filepath.Abs(workTree)
 	if err != nil {
@@ -290,6 +293,18 @@ func gitDirsOf(workTree string) (gitDir, commonDir string, err error) {
 	}
 	if err != nil {
 		return "", "", err
+	}
+	// A box that deletes the folder's own .git moves the walk up to whatever repository holds the
+	// folder, a home folder kept in Git among them, and host git would then read and write that
+	// repository; box.FindRepo never climbs to one either. A folder that holds the .git itself
+	// still names its repository, as a COOP_REPO at the home folder does. The refusal is not
+	// errNoRepository, on which GitCommand runs plain git, and plain git climbs there by itself.
+	if root != abs {
+		if home, above := shadowpath.HomeOrAbove(root); above {
+			return "", "", fmt.Errorf("%s has no .git of its own, and the nearest Git repository above it is %s, "+
+				"at your home folder %s or above it, where Coop does not run git for a folder inside it; "+
+				"restore the folder's .git, or run git init in it", workTree, root, home)
+		}
 	}
 	if real, err := filepath.EvalSymlinks(gitDir); err == nil {
 		gitDir = real
