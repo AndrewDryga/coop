@@ -33,9 +33,9 @@ func TestDetectSubprojectsAndWriteProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	subs := DetectSubprojects(repo)
-	if !slices.Equal(subs, []string{"packs", "runner"}) {
-		t.Fatalf("DetectSubprojects = %v, want [packs runner]", subs)
+	subs, err := DetectSubprojects(repo)
+	if err != nil || !slices.Equal(subs, []string{"packs", "runner"}) {
+		t.Fatalf("DetectSubprojects = %v, %v; want [packs runner]", subs, err)
 	}
 
 	wrote, err := WriteProject(repo, subs)
@@ -86,10 +86,38 @@ func TestDetectSubprojectsAtAnyDepth(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got := DetectSubprojects(repo)
+	got, err := DetectSubprojects(repo)
 	want := []string{"portal", "portal/nested", "terraform/environments/va1"}
-	if !slices.Equal(got, want) {
-		t.Errorf("DetectSubprojects = %v, want %v", got, want)
+	if err != nil || !slices.Equal(got, want) {
+		t.Errorf("DetectSubprojects = %v, %v; want %v", got, err, want)
+	}
+}
+
+// The walk stays in the repository's real folders: a box can link a folder, or a member's .agent,
+// anywhere, and the task commands refuse a queue reached through a link. A FIFO is not a folder at
+// all. None of them is walked or makes a member.
+func TestDetectSubprojectsWalksOnlyRealFolders(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "api", ".agent", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "docs", "nested", ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Mkdir(filepath.Join(outside, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for link, target := range map[string]string{"web": "api", "docs/.agent": "../api/.agent", "elsewhere": outside} {
+		if err := os.Symlink(target, filepath.Join(repo, filepath.FromSlash(link))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := syscall.Mkfifo(filepath.Join(repo, "pipe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := DetectSubprojects(repo); err != nil || !slices.Equal(got, []string{"api", "docs/nested"}) {
+		t.Fatalf("DetectSubprojects = %v, %v; want only the real members [api docs/nested]", got, err)
 	}
 }
 
@@ -111,22 +139,23 @@ func TestDetectSubprojectsFindsMembersNestedInsideAMember(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := DetectSubprojects(repo); !slices.Equal(got, members) {
-		t.Errorf("DetectSubprojects = %v, want all six, sorted", got)
+	got, err := DetectSubprojects(repo)
+	if err != nil || !slices.Equal(got, members) {
+		t.Errorf("DetectSubprojects = %v, %v; want all six, sorted", got, err)
 	}
 	// Registering against a project.yaml that already lists the parents adds only the three
 	// nested roots, in place, and a second run adds nothing.
 	if _, err := WriteProject(repo, []string{"terraform/environments/gcp/blitz", "terraform/environments/gcp/immersiveai", "terraform/environments/va1"}); err != nil {
 		t.Fatal(err)
 	}
-	added, err := RegisterSubprojects(repo, DetectSubprojects(repo))
+	added, err := RegisterSubprojects(repo, got)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := members[3:]; !slices.Equal(added, want) {
 		t.Errorf("RegisterSubprojects added %v, want the nested three %v", added, want)
 	}
-	if again, err := RegisterSubprojects(repo, DetectSubprojects(repo)); err != nil || len(again) != 0 {
+	if again, err := RegisterSubprojects(repo, got); err != nil || len(again) != 0 {
 		t.Errorf("second registration added %v (err %v), want nothing", again, err)
 	}
 }

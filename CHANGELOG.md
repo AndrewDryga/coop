@@ -48,6 +48,14 @@
   which the next box gets read-write, or swap it just after Coop checks it. Keep `COOP_REPO` out
   of folders a box can write.
 
+- **`coop init` no longer freezes on a named pipe a box leaves in the project.** `coop init` reads
+  `.tool-versions`, Coop's `prepare-commit-msg` hook and every project folder while it looks for
+  subprojects, and `coop help` reads the Compose file for its service list. An agent in a box could
+  leave a named pipe at any of them, and the command waited forever. Now none of them waits:
+  `coop init` refuses a `.tool-versions` that is not a regular file of at most 1 MiB and names it,
+  `coop help` leaves the service list out, and the subproject search skips the folder. A
+  `.tool-versions` or Compose file that links to another file in the project still works.
+
 - **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
   `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a
   file in place. An agent in a box could swap that file's folder for a named pipe just as

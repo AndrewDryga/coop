@@ -590,6 +590,30 @@ func TestApprovedInitStackRefusal(t *testing.T) {
 	assertApprovedOutput(t, "13u-stack-missing-tool-versions", normalize(out))
 }
 
+// A .tool-versions coop cannot read is the file's problem whichever stack was asked for: init names
+// it, says what to make it and how to run again, before it says a word or asks a question.
+func TestInitRefusesAToolVersionsItCannotRead(t *testing.T) {
+	for _, args := range [][]string{nil, {"--stack", "asdf"}} {
+		repo := t.TempDir()
+		if err := os.Mkdir(filepath.Join(repo, ".tool-versions"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := initApp(t, repo)
+		var code int
+		out := captureTerminal(t, func() { code, _ = a.cmdInit(args) })
+		rerun := strings.TrimSpace("coop init " + strings.Join(args, " "))
+		for _, want := range []string{"Could not read .tool-versions", ".tool-versions must be a regular file",
+			"Make .tool-versions a readable regular file of at most 1 MiB, or a link to one inside the project, then run " + rerun + " again."} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s with a folder at .tool-versions printed no %q:\n%s", rerun, want, out)
+			}
+		}
+		if code != 1 {
+			t.Errorf("%s with a folder at .tool-versions exited %d, want 1", rerun, code)
+		}
+	}
+}
+
 // customComposeProject is an initialized project whose services live somewhere other than the
 // default path — the state that proves coop edits the file the project configured, and names it.
 func customComposeProject(t *testing.T, compose string) string {

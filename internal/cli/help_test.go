@@ -37,6 +37,25 @@ func TestHelpServicesSectionIsProjectAware(t *testing.T) {
 	if got := helpText(empty); !strings.Contains(got, "SERVICES: databases and other services defined in .agent/compose.yml") {
 		t.Errorf("with no services the section keeps the generic explanation:\n%s", got)
 	}
+	// A Compose file coop will not read, here one over 1 MiB, says nothing about the services: the
+	// generic explanation stays and the rows are not dimmed as if there were none.
+	unreadable := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(unreadable, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unreadable, ".agent", "compose.yml"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(unreadable, ".agent", "compose.yml"), 1<<20+1); err != nil {
+		t.Fatal(err)
+	}
+	unknown := &config.Config{RepoOverride: unreadable, BoxHome: "/b", ConfigDir: "/c"}
+	if got := helpText(unknown); !strings.Contains(got, "SERVICES: databases and other services defined in .agent/compose.yml") {
+		t.Errorf("an unreadable Compose file should keep the generic explanation:\n%s", got)
+	}
+	if got := renderMenu(ui.Colored(), unknown, false); strings.Contains(got, "\x1b[2mcoop up") {
+		t.Errorf("an unreadable Compose file must not dim the up row as if there were no services:\n%q", got)
+	}
 	// No services: the whole up/down rows recede on a terminal, the setup row does not.
 	got := renderMenu(ui.Colored(), empty, false)
 	for _, want := range []string{"\x1b[2mcoop up", "\x1b[2mcoop down"} {

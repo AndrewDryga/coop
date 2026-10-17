@@ -196,9 +196,9 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 
 // projectServices reads what the SERVICES section may state as fact: this project's Compose path
 // (the configured one, else the default) and the service names declared in it. known=false means
-// coop could not read a service list — no project, or a file it cannot parse — and the section must
-// then keep its generic explanation and undimmed rows rather than treat unknown as "none". The
-// reference form ignores the machine entirely, so its bytes are the same everywhere.
+// coop could not read a service list — no project, or a file it cannot read or parse — and the
+// section must then keep its generic explanation and undimmed rows rather than treat unknown as
+// "none". The reference form ignores the machine entirely, so its bytes are the same everywhere.
 func projectServices(cfg *config.Config, ref bool) (compose string, services []string, known bool) {
 	if ref {
 		return project.DefaultCompose, nil, false
@@ -208,12 +208,11 @@ func projectServices(cfg *config.Config, ref bool) (compose string, services []s
 		return project.DefaultCompose, nil, false
 	}
 	compose = project.ComposePath(repo)
-	file := box.ComposeFileAt(repo, compose)
-	if file == "" { // no Compose file at all: a project with no services yet
+	if box.ComposeFileAt(repo, compose) == "" { // no Compose file at all: a project with no services yet
 		return compose, nil, true
 	}
-	names := scaffold.ComposeServiceNames(file)
-	return compose, names, len(names) > 0
+	names, err := scaffold.ComposeServiceNames(repo, compose)
+	return compose, names, err == nil && len(names) > 0
 }
 
 // anyAgentSignedIn reports whether any agent has a signed-in default or named credential.

@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -119,12 +120,10 @@ func seedContinuation(seed []string) string {
 }
 
 // dockerFinds is what detectDocker turned up: the repo's own Dockerfiles and compose files
-// (coop's own .agent/Dockerfile / .agent/compose.yml live in the hidden .agent/, never scanned),
-// plus the service names from the first compose file.
+// (coop's own .agent/Dockerfile / .agent/compose.yml live in the hidden .agent/, never scanned).
 type dockerFinds struct {
 	dockerfiles []string // repo-relative paths
 	composes    []string // repo-relative paths
-	services    []string // service names from composes[0]
 }
 
 func (f dockerFinds) any() bool { return len(f.dockerfiles) > 0 || len(f.composes) > 0 }
@@ -164,9 +163,6 @@ func detectDocker(repo string) dockerFinds {
 		}
 		return nil
 	})
-	if len(f.composes) > 0 {
-		f.services = composeServices(filepath.Join(root, f.composes[0]))
-	}
 	return f
 }
 
@@ -196,12 +192,8 @@ func isComposeFile(name string) bool {
 var serviceKeyRe = regexp.MustCompile(`^  ([A-Za-z0-9._-]+):\s*$`)
 
 // composeServices shallow-scans a compose file's top-level services: block for the service
-// names (no YAML dependency — coop is stdlib-light, and the names are all the suggestion needs).
-func composeServices(path string) []string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
+// names (no YAML dependency — coop is stdlib-light, and the names are all a listing needs).
+func composeServices(data []byte) []string {
 	var names []string
 	inServices := false
 	for _, line := range strings.Split(string(data), "\n") {
@@ -224,10 +216,22 @@ func composeServices(path string) []string {
 }
 
 // ComposeServiceNames is the exported reader for composeServices — the service names actually
-// defined in the compose file at path (nil if there's no file or no services), e.g. for `coop help`
-// to list what `coop up` would start. Distinct from the ComposeServices var (the offerable menu):
-// picking "postgres" writes a service named "db", so the real name comes from the file.
-func ComposeServiceNames(path string) []string { return composeServices(path) }
+// defined in the compose file at rel inside repo, e.g. for `coop help` to list what `coop up` would
+// start. Distinct from the ComposeServices var (the offerable menu): picking "postgres" writes a
+// service named "db", so the real name comes from the file. A box can write the file, so it is
+// read without waiting on a FIFO and must be a regular file of at most 1 MiB.
+func ComposeServiceNames(repo, rel string) ([]string, error) {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return nil, fmt.Errorf("open scaffold root %s: %w", repo, err)
+	}
+	defer root.Close()
+	data, err := readRegular(root, filepath.FromSlash(rel), rel)
+	if err != nil {
+		return nil, err
+	}
+	return composeServices(data), nil
+}
 
 // DockerSetup is the project's own Docker configuration, when it has one and coop's box is not
 // set up yet: the files a person can point box.dockerfile / box.compose at instead of writing

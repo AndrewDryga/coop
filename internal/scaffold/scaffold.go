@@ -9,6 +9,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -136,7 +137,11 @@ func Init(repo, stack string, gateLangs, agentDirs []string, services ...string)
 		}
 	}
 	// The committed per-project config (serve ports, monorepo members). Never clobbers an existing one.
-	if _, err := WriteProject(repo, DetectSubprojects(repo), services...); err != nil {
+	subs, err := DetectSubprojects(repo)
+	if err != nil {
+		return s.notices, err
+	}
+	if _, err := WriteProject(repo, subs, services...); err != nil {
 		return s.notices, err
 	}
 	if err := s.updateGitignore(agentDirs, writeAndSync); err != nil {
@@ -189,7 +194,11 @@ func initDockerfile(repo, stack string) (content string, detected bool, err erro
 		// guessing which directory it was expected in when init ran from a subdirectory.
 		return "", false, fmt.Errorf("%s does not exist", toolVersionsPath)
 	}
-	content, err = asdfDockerfile(toolVersions(repo))
+	tools, err := toolVersions(repo)
+	if err != nil {
+		return "", false, err
+	}
+	content, err = asdfDockerfile(tools)
 	return content, detected, err
 }
 
@@ -361,11 +370,15 @@ func openRepoParent(repo, path string) (*os.Root, string, error) {
 // openDir opens the existing folder dir inside root as "<dir>/.", which makes os.Root open every
 // folder on the way with O_DIRECTORY. os.Root opens the last part of a path without it, so opening
 // the folder by its own name would block on a FIFO a box swapped in until something wrote to it.
-// An error names dir.
+// An error names dir, and the open rather than the system call that made it.
 func openDir(root *os.Root, dir string) (*os.Root, error) {
 	opened, err := root.OpenRoot(dir + string(filepath.Separator) + ".")
 	if err != nil {
-		return nil, repoPath(err, dir)
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			err = pathErr.Err
+		}
+		return nil, &fs.PathError{Op: "open", Path: dir, Err: err}
 	}
 	return opened, nil
 }
@@ -485,10 +498,7 @@ func (s *scaffolder) installGitHooks(langs, agentDirs []string) error {
 	prepareExists, prepareIsStock := false, false
 	if info, err := os.Lstat(preparePath); err == nil {
 		prepareExists = true
-		if info.Mode().IsRegular() {
-			data, readErr := os.ReadFile(preparePath)
-			prepareIsStock = readErr == nil && string(data) == prepareCommitMsgChainHook && info.Mode()&0o100 != 0
-		}
+		prepareIsStock = info.Mode().IsRegular() && isStockPrepareHook(s.repo)
 	}
 	if prepareExists {
 		// An existing prepare hook may deliberately be a project-owned symlink. It is the one
@@ -548,6 +558,26 @@ func (s *scaffolder) installGitHooks(langs, agentDirs []string) error {
 		})
 	}
 	return nil
+}
+
+// isStockPrepareHook reports whether repo's .githooks/prepare-commit-msg is Coop's own executable
+// chain hook. A box can swap the hook for a FIFO or a link after installGitHooks looked at it, so
+// the hook is opened without waiting on a FIFO or following a link, and read no further than the
+// stock hook's length. A hook coop cannot read this way is one it keeps.
+func isStockPrepareHook(repo string) bool {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	rel := filepath.Join(".githooks", "prepare-commit-msg")
+	file, info, err := openRegular(root, rel, rel)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, int64(len(prepareCommitMsgChainHook))+1))
+	return err == nil && string(data) == prepareCommitMsgChainHook && info.Mode()&0o100 != 0
 }
 
 // gitRepo reports whether repo is inside a git work tree.

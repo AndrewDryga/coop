@@ -2,7 +2,7 @@
 name: init-preflight
 description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links and files hidden from the box, and new files and agent links are created, checked and removed through one parent handle
 subsystem: scaffold
-sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go]
+sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/scaffold/gates.go, internal/scaffold/docker.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go]
 updated: 2026-10-17
 ---
 
@@ -14,7 +14,9 @@ hooks. Invalid stacks fail even when `.tool-versions` exists; explicit asdf stil
 file on re-init, including when a customized Dockerfile already exists.
 
 The existing create-only write path owns the Dockerfile and its auto-detection announcement.
-Tool parsing and unknown-tool acceptance are unchanged. The CLI calls Compose and global MCP
+Unknown tools are accepted. `.tool-versions` is read without waiting on a FIFO, as a regular file
+of at most 1 MiB that may be a link inside the project; one coop cannot read that way stops init as
+"Could not read .tool-versions", with or without --stack. The CLI calls Compose and global MCP
 scaffolding only after Init succeeds. First-run prompts remain CLI-owned and precede Init; this
 preflight does not introduce a second CLI validation implementation.
 
@@ -91,6 +93,21 @@ The handle reports a failed link by its bare name, so the link is returned as a 
 `*fs.PathError` on its path and init prints "Could not create .claude/skills: …" as for a file.
 
 ## Changelog
+- 2026-10-17 — the remaining reads went the same way. `.tool-versions` (toolVersions, CheckStack,
+  DetectStacks) and the Compose service list (`ComposeServiceNames`, now repo + path) read through
+  `readRegular`: no FIFO wait, a regular file of at most 1 MiB, and a link only if it stays in the
+  project (os.Root refuses one that leads out), since these only read. The stock
+  prepare-commit-msg comparison (`isStockPrepareHook`) uses the edits' stricter `openRegular` (no
+  link at all) and reads no further than the stock hook. DetectSubprojects opens each folder from
+  its parent with `safefile.OpenDir`, stops with "the folder X changed while coop was opening it"
+  on a swap, and goes no deeper than `maxWalkPath` (1024 bytes, macOS's PATH_MAX), so a box cannot
+  make it hold a folder open per level of an endless chain. An unreadable .tool-versions is
+  `ToolVersionsUnreadable`, which coop init reports as "Could not read .tool-versions" with or
+  without --stack. `openRealDir` says "X is not a folder" for a FIFO that was always there; errors
+  name the step once ("open .tool-versions: permission denied", `pathCause`). Setup failures escape
+  folder names (`ui.SafeInline`). TestReadsRefuseAFIFODeviceOrLinkOutAtOnce hangs to its deadline
+  with the old blocking `.tool-versions` read; TestDetectSubprojectsStopsAtTheLongestPath registers
+  a 1205-byte member without the bound (negative controls, 2026-10-17).
 - 2026-10-17 — the in-place reader opened each folder by name after `openRealDir`'s Lstat, so a
   FIFO a box swapped in between them froze `coop init --services` and registration (a FIFO already
   in place was refused by that Lstat). It now opens them with `openDir`, split out of

@@ -40,8 +40,9 @@ func TestDetectDocker(t *testing.T) {
 	if !slices.Equal(f.composes, []string{"docker-compose.yml"}) {
 		t.Errorf("composes = %v, want [docker-compose.yml]", f.composes)
 	}
-	if !slices.Equal(f.services, []string{"db", "redis"}) {
-		t.Errorf("services = %v, want [db redis]", f.services)
+	// The names come from the file's own services: block, as `coop help` lists them.
+	if names, err := ComposeServiceNames(repo, "docker-compose.yml"); err != nil || !slices.Equal(names, []string{"db", "redis"}) {
+		t.Errorf("services = %v, %v; want [db redis]", names, err)
 	}
 	// An empty repo finds nothing.
 	if detectDocker(t.TempDir()).any() {

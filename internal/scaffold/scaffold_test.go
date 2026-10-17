@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -1043,7 +1044,8 @@ func TestWriteNewRepoFileFailsFastOnAFIFOParent(t *testing.T) {
 // folder at a time. A box can leave a FIFO where that folder should be, or swap one in after the
 // edit looked at the folder and before it opened it. Opening a FIFO waits for a writer, so each
 // edit must refuse it at once instead of freezing coop init, and name the folder rather than the
-// "<dir>/." the open uses.
+// "<dir>/." the open uses or the system call that made it. A FIFO that was there all along is not
+// a folder; nothing changed while coop opened it.
 func TestInPlaceEditsFailFastOnAFIFOFolder(t *testing.T) {
 	if repo := os.Getenv("COOP_SCAFFOLD_FIFO_REPO"); repo != "" {
 		agent := filepath.Join(repo, ".agent")
@@ -1059,9 +1061,10 @@ func TestInPlaceEditsFailFastOnAFIFOFolder(t *testing.T) {
 		if err := syscall.Mkfifo(agent, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		for _, err := range edit() {
-			if err == nil || strings.Contains(err.Error(), "/./") {
-				t.Errorf("edit with a FIFO at .agent = %v, want a refusal", err)
+		for i, err := range edit() {
+			want := "open " + []string{".agent/project.yaml", ".agent/compose.yml"}[i] + ": .agent is not a folder"
+			if err == nil || err.Error() != want {
+				t.Errorf("edit with a FIFO at .agent = %v, want %q", err, want)
 			}
 		}
 		root, err := os.OpenRoot(repo)
@@ -1073,7 +1076,7 @@ func TestInPlaceEditsFailFastOnAFIFOFolder(t *testing.T) {
 		if err == nil {
 			_ = dir.Close()
 		}
-		if !errors.Is(err, syscall.ENOTDIR) || err.Error() != "openat .agent: not a directory" {
+		if !errors.Is(err, syscall.ENOTDIR) || err.Error() != "open .agent: not a directory" {
 			t.Errorf("opening a FIFO as a folder = %v, want ENOTDIR naming .agent", err)
 		}
 		t.Log("a FIFO swapped in while the edits open .agent")
@@ -1092,6 +1095,220 @@ func TestInPlaceEditsFailFastOnAFIFOFolder(t *testing.T) {
 		return
 	}
 	runFIFOChild(t, t.TempDir(), "edits with a FIFO for their folder")
+}
+
+// coop init reads .tool-versions and compares the prepare-commit-msg hook with its own, and
+// `coop help` lists the services in the Compose file. A box can leave a FIFO, a link to a device or
+// a link to a file outside the project at any of them. Opening a FIFO waits for a writer, a device
+// can be read without end, and an outside file is not the project's, so each read refuses all three
+// at once and names the file. A hook coop cannot read this way is not its own, so init keeps it;
+// installGitHooks reads only an entry Lstat found to be a regular file, and the read here stands
+// for one swapped after that check.
+func TestReadsRefuseAFIFODeviceOrLinkOutAtOnce(t *testing.T) {
+	if repo := os.Getenv("COOP_SCAFFOLD_FIFO_REPO"); repo != "" {
+		// What each read would accept, so following a link to a copy of it would get through.
+		accepted := map[string]string{
+			".tool-versions":               "golang 1.26.4\n",
+			".agent/compose.yml":           "services:\n  db:\n    image: postgres\n",
+			".githooks/prepare-commit-msg": prepareCommitMsgChainHook,
+		}
+		for _, kind := range []string{"a FIFO", "a link out to a device", "a link out to a file"} {
+			t.Run(kind, func(t *testing.T) {
+				dir := filepath.Join(repo, strings.ReplaceAll(kind, " ", "-"))
+				for rel, body := range accepted {
+					path := filepath.Join(dir, filepath.FromSlash(rel))
+					if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					var err error
+					switch kind {
+					case "a FIFO":
+						err = syscall.Mkfifo(path, 0o600)
+					case "a link out to a device":
+						err = os.Symlink(os.DevNull, path)
+					default: // what the read would accept, but outside dir, the project here
+						outside := filepath.Join(repo, strings.ReplaceAll(rel, "/", "-"))
+						if err = os.WriteFile(outside, []byte(body), 0o755); err == nil {
+							err = os.Symlink(outside, path)
+						}
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				refused := func(err error, file string) {
+					t.Helper()
+					want := file + " must be a regular file"
+					if kind != "a FIFO" {
+						want = file + " is a link to a file outside the project"
+					}
+					if !errors.Is(err, ErrNotRegular) || err.Error() != want {
+						t.Errorf("reading %s = %v, want %q", file, err, want)
+					}
+				}
+				_, err := toolVersions(dir)
+				refused(err, ".tool-versions")
+				refused(CheckStack(dir, ""), ".tool-versions")
+				if got := DetectStacks(dir); got != nil {
+					t.Errorf("DetectStacks = %v, want no stack from a .tool-versions coop cannot read", got)
+				}
+				_, err = ComposeServiceNames(dir, ".agent/compose.yml")
+				refused(err, ".agent/compose.yml")
+				if isStockPrepareHook(dir) {
+					t.Error("a prepare-commit-msg hook coop cannot read counts as its own")
+				}
+			})
+		}
+		return
+	}
+	runFIFOChild(t, t.TempDir(), "reads of a FIFO, a device or a link out of the project")
+}
+
+// A project may keep its .tool-versions or Compose file as a link to a file inside it, as monorepos
+// often do. A read that only reads follows such a link, as `coop up` does for the Compose file.
+func TestReadsFollowALinkThatStaysInTheProject(t *testing.T) {
+	repo := t.TempDir()
+	for rel, body := range map[string]string{
+		"shared/tool-versions": "golang 1.26.4\n",
+		"shared/compose.yml":   "services:\n  db:\n    image: postgres\n",
+	} {
+		path := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("shared/tool-versions", filepath.Join(repo, ".tool-versions")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../shared/compose.yml", filepath.Join(repo, ".agent", "compose.yml")); err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := toolVersions(repo); err != nil || !tools["golang"] {
+		t.Errorf("toolVersions through an in-project link = %v, %v; want golang", tools, err)
+	}
+	if names, err := ComposeServiceNames(repo, ".agent/compose.yml"); err != nil || !slices.Equal(names, []string{"db"}) {
+		t.Errorf("ComposeServiceNames through an in-project link = %v, %v; want [db]", names, err)
+	}
+}
+
+// A box can leave a sparse file of any size where a file coop only reads belongs. The read stops
+// past 1 MiB instead of filling the host's memory, and says why.
+func TestReadsRefuseAFileOverOneMiB(t *testing.T) {
+	repo := t.TempDir()
+	for _, rel := range []string{".tool-versions", ".agent/compose.yml"} {
+		path := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Truncate(path, maxReadBytes+1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := toolVersions(repo); err == nil || err.Error() != ".tool-versions is larger than 1 MiB" {
+		t.Errorf("toolVersions = %v, want the 1 MiB refusal", err)
+	}
+	if _, err := ComposeServiceNames(repo, ".agent/compose.yml"); err == nil || err.Error() != ".agent/compose.yml is larger than 1 MiB" {
+		t.Errorf("ComposeServiceNames = %v, want the 1 MiB refusal", err)
+	}
+}
+
+// The walk opens each folder from its parent, which has no path limit of its own, so a box could
+// nest folders without end and make it hold a folder open and a longer path for every level. It
+// stops descending past maxWalkPath; a member that deep is one no command could open anyway.
+func TestDetectSubprojectsStopsAtTheLongestPath(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "api", ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// One level past the bound, each a member, built a level at a time from its parent as a box could:
+	// the whole path is longer than macOS lets one system call take.
+	name := strings.Repeat("d", 200)
+	levels := maxWalkPath/(len(name)+1) + 1
+	dir, err := os.OpenRoot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range levels {
+		if err := dir.Mkdir(name, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		child, err := dir.OpenRoot(name)
+		_ = dir.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir = child
+		if err := dir.Mkdir(".agent", 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = dir.Close()
+	subs, err := DetectSubprojects(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// api, and every level whose path inside the repository is shorter than the bound.
+	if want := levels; !slices.Contains(subs, "api") || len(subs) != want {
+		t.Errorf("DetectSubprojects found %d members, want %d: api and all but the deepest level", len(subs), want)
+	}
+	for _, sub := range subs {
+		if len(sub) >= maxWalkPath {
+			t.Errorf("the walk registered a member %d bytes deep, past its %d-byte bound", len(sub), maxWalkPath)
+		}
+	}
+}
+
+// The subproject walk lists a folder, then opens each folder in it. A box can swap one for a FIFO or
+// a link in between. Opening a FIFO waits for a writer and a link can lead out of the repository, so
+// the walk must stop at once and name the folder, instead of freezing coop init or registering task
+// queues from another project.
+func TestDetectSubprojectsFailsFastOnASwappedFolder(t *testing.T) {
+	if repo := os.Getenv("COOP_SCAFFOLD_FIFO_REPO"); repo != "" {
+		previous := afterListed
+		t.Cleanup(func() { afterListed = previous })
+		outside := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(outside, "api", ".agent"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		infra := filepath.Join(repo, "infra")
+		for _, swap := range []string{"a FIFO", "a link"} {
+			t.Run(swap, func(t *testing.T) {
+				if err := os.Mkdir(infra, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Remove(infra) })
+				afterListed = func(dirRel string) {
+					if dirRel != "" {
+						return
+					}
+					err := os.Remove(infra)
+					if err == nil && swap == "a FIFO" {
+						err = syscall.Mkfifo(infra, 0o600)
+					} else if err == nil {
+						err = os.Symlink(outside, infra)
+					}
+					if err != nil {
+						t.Error(err)
+					}
+				}
+				subs, err := DetectSubprojects(repo)
+				if want := "the folder infra changed while coop was opening it"; err == nil || err.Error() != want {
+					t.Fatalf("walk with infra swapped for %s = %v, %v; want %q", swap, subs, err, want)
+				}
+			})
+		}
+		return
+	}
+	runFIFOChild(t, t.TempDir(), "walks with a folder swapped after its listing")
 }
 
 // swapInFIFOs keeps replacing the empty folder dir with a FIFO and back until the returned stop is

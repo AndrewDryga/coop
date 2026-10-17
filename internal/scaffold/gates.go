@@ -1,6 +1,8 @@
 package scaffold
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +29,9 @@ var knownStacks = []struct {
 // DetectStacks reports which gate languages the repo uses, by marker file, *.tf presence, or
 // .tool-versions — in GateLangs order, so the generated gate is deterministic.
 func DetectStacks(repo string) []string {
-	tools := toolVersions(repo)
+	// A .tool-versions coop cannot read adds no stack here: CheckStack and Init read it too, and
+	// refuse it with a message naming it.
+	tools, _ := toolVersions(repo)
 	var out []string
 	for _, st := range knownStacks {
 		present := false
@@ -51,13 +55,30 @@ func DetectStacks(repo string) []string {
 	return out
 }
 
+// ToolVersionsUnreadable is a .tool-versions coop found but cannot read: not a regular file, larger
+// than 1 MiB, or refused by the system. That is the file's own problem whichever --stack was asked
+// for, so coop init names the file, not the stack.
+type ToolVersionsUnreadable struct{ Err error }
+
+func (e ToolVersionsUnreadable) Error() string { return e.Err.Error() }
+func (e ToolVersionsUnreadable) Unwrap() error { return e.Err }
+
 // toolVersions returns the set of tool names declared in the repo's .tool-versions (the
-// first field of each non-comment line, lowercased). Missing file → empty set.
-func toolVersions(repo string) map[string]bool {
-	out := map[string]bool{}
-	data, err := os.ReadFile(filepath.Join(repo, ".tool-versions"))
+// first field of each non-comment line, lowercased). Missing file → empty set. A box can leave a
+// FIFO, a device or a link there, so it reads only a regular file of at most 1 MiB, without
+// waiting, and refuses anything else with a message naming .tool-versions.
+func toolVersions(repo string) (map[string]bool, error) {
+	root, err := os.OpenRoot(repo)
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("open scaffold root %s: %w", repo, err)
+	}
+	defer root.Close()
+	out := map[string]bool{}
+	data, err := readRegular(root, ".tool-versions", ".tool-versions")
+	if errors.Is(err, os.ErrNotExist) {
+		return out, nil
+	} else if err != nil {
+		return nil, ToolVersionsUnreadable{err}
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		f := strings.Fields(line)
@@ -65,7 +86,7 @@ func toolVersions(repo string) map[string]bool {
 			out[strings.ToLower(f[0])] = true
 		}
 	}
-	return out
+	return out, nil
 }
 
 // hasTerraformFiles reports whether the repo has a *.tf at its root or one level down (a

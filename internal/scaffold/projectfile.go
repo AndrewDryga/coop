@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/safefile"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"github.com/AndrewDryga/coop/internal/taskstate"
 )
@@ -51,30 +53,66 @@ func InitSubproject(repo, dir string) error {
 // the walk cheap:
 //   - hidden dirs (.git, .agent, .terraform, …) — never members, and the heavy ones live there
 //   - the build/vendor dirs in subprojectSkipDirs, which can hold thousands of files
-func DetectSubprojects(repo string) []string {
+//
+// A box can swap any folder it can write for a FIFO or a link while the walk runs. Each folder is
+// opened from the one above it without following a link or waiting on a FIFO, so the walk stays in
+// the repository's real folders, a member's .agent must be a real folder too, and a folder that is
+// no longer one when opened stops the walk at once with an error naming it. A folder coop cannot
+// open or list for another reason is skipped: it holds no member coop could use.
+func DetectSubprojects(repo string) ([]string, error) {
+	root, err := os.Open(repo)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
 	var subs []string
-	var walk func(dir, rel string)
-	walk = func(dir, rel string) {
-		entries, err := os.ReadDir(dir)
+	var walk func(dir *os.File, rel string) error
+	walk = func(dir *os.File, rel string) error {
+		entries, err := dir.ReadDir(-1)
 		if err != nil {
-			return
+			return nil
 		}
+		afterListed(rel)
 		for _, e := range entries {
 			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || subprojectSkipDirs[e.Name()] {
 				continue
 			}
 			childRel := path.Join(rel, e.Name())
-			child := filepath.Join(dir, e.Name())
-			if fi, err := os.Stat(filepath.Join(child, ".agent")); err == nil && fi.IsDir() {
+			if len(childRel) >= maxWalkPath {
+				continue // a box can nest folders without end; nothing can name a member this deep
+			}
+			child, err := safefile.OpenDir(dir, e.Name())
+			if errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP) {
+				return fmt.Errorf("the folder %s changed while coop was opening it", childRel)
+			} else if err != nil {
+				continue
+			}
+			if mode, err := safefile.LstatMode(child, ".agent"); err == nil && mode.IsDir() {
 				subs = append(subs, childRel) // a member — and it may hold members of its own
 			}
-			walk(child, childRel)
+			err = walk(child, childRel)
+			_ = child.Close()
+			if err != nil {
+				return err
+			}
 		}
+		return nil
 	}
-	walk(repo, "")
+	if err := walk(root, ""); err != nil {
+		return nil, err
+	}
 	sort.Strings(subs)
-	return subs
+	return subs, nil
 }
+
+// maxWalkPath bounds how deep the subproject walk goes, by a folder's path inside the repository.
+// Opening each folder from its parent has no path limit of its own, so a box could make the walk
+// hold a folder open and a longer path in memory for every level of a chain it nests without end.
+// 1024 bytes is macOS's PATH_MAX: no later command could open a member deeper than that anyway.
+const maxWalkPath = 1024
+
+// Injectable only in tests that swap a folder after the walk listed the folder holding it.
+var afterListed = func(dirRel string) {}
 
 // subprojectSkipDirs are directories the member walk never descends into: dependency and build
 // output that can hold tens of thousands of files and never holds a coop project.
@@ -188,36 +226,106 @@ func readProjectFile(root *os.Root, rel, display string) (snap projectFileSnapsh
 			_ = dir.Close()
 		}
 	}()
-	// Nonblocking lets the regular-file check refuse a FIFO without waiting for a writer.
-	file, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		if info, statErr := dir.Lstat(name); errors.Is(statErr, os.ErrNotExist) {
-			return snap, false, nil
-		} else if statErr == nil && !info.Mode().IsRegular() {
-			return snap, false, notRegular{display}
-		}
-		return snap, false, fmt.Errorf("open %s: %w", display, repoPath(err, display))
+	file, info, err := openRegular(dir, name, display)
+	if errors.Is(err, os.ErrNotExist) {
+		return snap, false, nil
+	} else if err != nil {
+		return snap, false, err
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return snap, false, fmt.Errorf("inspect %s: %w", display, repoPath(err, display))
-	}
-	// os.Root follows a link that stays inside it, even with O_NOFOLLOW, so only comparing the
-	// opened file with the named entry refuses a link at the file itself.
-	if named, err := dir.Lstat(name); err != nil || !info.Mode().IsRegular() || !os.SameFile(info, named) {
-		return snap, false, notRegular{display}
-	}
 	data, err := io.ReadAll(file)
 	if err != nil {
-		return snap, false, fmt.Errorf("read %s: %w", display, repoPath(err, display))
+		return snap, false, fmt.Errorf("read %s: %w", display, pathCause(err))
 	}
 	return projectFileSnapshot{dir: dir, name: name, info: info, data: data}, true, nil
 }
 
-// notRegular is an in-place edit's refusal of a link or special file. It keeps its own sentence
-// while answering errors.Is(err, ErrNotRegular), so coop init gives the remedy it gives any entry in
-// the way: fix the path, not its permissions.
+// openRegular opens the file rel inside dir for reading, and refuses anything there but a regular
+// file, a link included, as "<display> must be a regular file". A box can leave a FIFO or a device
+// where the file belongs, so the open never waits for a writer. A missing file matches
+// os.ErrNotExist.
+func openRegular(dir *os.Root, rel, display string) (*os.File, os.FileInfo, error) {
+	file, err := dir.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if info, statErr := dir.Lstat(rel); errors.Is(statErr, os.ErrNotExist) {
+			return nil, nil, statErr
+		} else if statErr == nil && !info.Mode().IsRegular() {
+			return nil, nil, notRegular{display}
+		}
+		return nil, nil, fmt.Errorf("open %s: %w", display, pathCause(err))
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("inspect %s: %w", display, pathCause(err))
+	}
+	// os.Root follows a link that stays inside it, even with O_NOFOLLOW, so only comparing the
+	// opened file with the named entry refuses a link at the file itself.
+	if named, err := dir.Lstat(rel); err != nil || !info.Mode().IsRegular() || !os.SameFile(info, named) {
+		_ = file.Close()
+		return nil, nil, notRegular{display}
+	}
+	return file, info, nil
+}
+
+// pathCause is the reason inside a path error, for a message that already names the file and the
+// step: "open .tool-versions: permission denied", not "...: openat .tool-versions: permission denied".
+func pathCause(err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	return err
+}
+
+// maxReadBytes bounds a project file coop only reads. A box can leave a sparse file of any size
+// where one belongs, and reading it whole would exhaust the host's memory.
+const maxReadBytes = 1 << 20
+
+// readRegular reads the regular file rel inside dir, for a caller that only reads it. Unlike an
+// edit, it follows a link that stays inside dir, as os.Root does, so a project may keep its
+// .tool-versions or Compose file as a link; os.Root refuses one that leads out. The open never waits
+// on a FIFO, and anything that is not a regular file, or is larger than 1 MiB, is refused with a
+// message naming display. A missing file matches os.ErrNotExist.
+func readRegular(dir *os.Root, rel, display string) ([]byte, error) {
+	file, err := dir.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if info, statErr := dir.Lstat(rel); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return nil, linkOut{display} // os.Root refuses a link that leads out of dir
+		} else if statErr == nil && !info.Mode().IsRegular() {
+			return nil, notRegular{display}
+		}
+		return nil, fmt.Errorf("open %s: %w", display, pathCause(err))
+	}
+	defer file.Close()
+	if info, err := file.Stat(); err != nil {
+		return nil, fmt.Errorf("inspect %s: %w", display, pathCause(err))
+	} else if !info.Mode().IsRegular() {
+		return nil, notRegular{display}
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxReadBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", display, pathCause(err))
+	}
+	if len(data) > maxReadBytes {
+		return nil, fmt.Errorf("%s is larger than 1 MiB", display)
+	}
+	return data, nil
+}
+
+// linkOut refuses a link that leads out of the project where coop only reads a file. It answers
+// errors.Is(err, ErrNotRegular) like notRegular, with a sentence that names the real problem.
+type linkOut struct{ file string }
+
+func (e linkOut) Error() string        { return e.file + " is a link to a file outside the project" }
+func (e linkOut) Is(target error) bool { return target == ErrNotRegular }
+
+// notRegular refuses a link or special file where coop reads or edits a regular file. It keeps its
+// own sentence while answering errors.Is(err, ErrNotRegular), so coop init gives the remedy it gives
+// any entry in the way: fix the path, not its permissions.
 type notRegular struct{ file string }
 
 func (e notRegular) Error() string        { return e.file + " must be a regular file" }
@@ -383,13 +491,16 @@ func unreadableCoopignore(dir *os.Root, dirRel string, err error) error {
 // once instead of freezing coop init. os.Root follows a link that stays inside the repository, so a
 // link a box swaps in after the Lstat is opened too; the directory opened must then be the one Lstat
 // found, which refuses a link to any other directory. A link back to that same directory gets
-// through, and the edit still reads the rules and the file from the directory Lstat found.
+// through, and the edit still reads the rules and the file from the directory Lstat found. The
+// caller resolved the links on the way, so a link Lstat finds was swapped in since; anything else
+// that is not a directory, such as a FIFO, is simply not a folder.
 func openRealDir(dir *os.Root, name string) (*os.Root, string, error) {
 	stored, named, err := storedName(dir, name)
 	if err != nil {
 		return nil, "", err
 	}
-	if named.IsDir() {
+	switch {
+	case named.IsDir():
 		child, err := openDir(dir, stored)
 		if err != nil {
 			return nil, "", err
@@ -398,6 +509,8 @@ func openRealDir(dir *os.Root, name string) (*os.Root, string, error) {
 			return child, stored, nil
 		}
 		_ = child.Close()
+	case named.Mode()&os.ModeSymlink == 0:
+		return nil, "", fmt.Errorf("%s is not a folder", name)
 	}
 	return nil, "", fmt.Errorf("%s changed while coop was opening it", name)
 }

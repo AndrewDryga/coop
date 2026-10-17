@@ -68,7 +68,7 @@ var allowedEdges = map[string][]string{
 	"project":               {"egress"},
 	"runtime":               {"config"},
 	"safefile":              nil,
-	"scaffold":              {"agent", "project", "shadowpath", "taskstate"},
+	"scaffold":              {"agent", "project", "safefile", "shadowpath", "taskstate"},
 	"session":               nil,
 	"sessionsvc":            {"agent", "box", "config", "egress", "forkspace", "hostsurface", "ladder", "mcp", "networkstate", "networkview", "runtime", "secretscan", "session", "tasks", "workerproto"},
 	"secretscan":            {},

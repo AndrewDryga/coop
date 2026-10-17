@@ -184,6 +184,18 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// A --stack coop can't honor is refused before it says a word or asks a question: nothing is
 	// worse than answering three prompts and then being told the flag was wrong.
 	if err := scaffold.CheckStack(repo, stack); err != nil {
+		// Without --stack, the only refusal is a .tool-versions coop cannot read, and that is the
+		// file's problem whichever stack was asked for.
+		var unreadable scaffold.ToolVersionsUnreadable
+		if stack == "" || errors.As(err, &unreadable) {
+			rerun := "coop init"
+			if stack != "" {
+				rerun += " --stack " + stack
+			}
+			return 1, reported("Could not read .tool-versions", sentence(firstLine(err)),
+				"Make .tool-versions a readable regular file of at most 1 MiB, or a link to one inside the project, then run "+rerun+" again.",
+				"No files were changed.")
+		}
 		return 1, reported("Could not use --stack "+stack, sentence(firstLine(err)),
 			"Add the tool versions this project needs, then run coop init --stack "+stack+".")
 	}
@@ -238,7 +250,10 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// Monorepo: detect member dirs (each with a .agent/), record them in the root .agent/project.yaml
 	// so coop aggregates their task queues, and give each member a project.yaml if it lacks one. A
 	// single repo still gets a project.yaml template. Never clobbers an existing file.
-	subs := scaffold.DetectSubprojects(repo)
+	subs, err := scaffold.DetectSubprojects(repo)
+	if err != nil {
+		return 1, setupFailure(repo, err)
+	}
 	if _, err := scaffold.WriteProject(repo, subs); err != nil {
 		return 1, setupFailure(repo, err)
 	}
@@ -350,7 +365,9 @@ func setupFailure(repo string, err error) error {
 	if refused := reportUnreadableCoopignore(err, "coop init", "Files already created have been kept."); refused != nil {
 		return refused
 	}
-	return reported("Could not finish Coop setup", sentence(pathReason(repo, "create", err)),
+	// The reason can name a folder a box created, so anything in it that would act on the terminal
+	// is shown escaped.
+	return reported("Could not finish Coop setup", sentence(ui.SafeInline(pathReason(repo, "create", err))),
 		initFix(err), "Files already created have been kept.")
 }
 
