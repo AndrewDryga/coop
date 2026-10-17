@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // The interactive half of owning the terminal. Reading one line back from the tty ui already
@@ -28,7 +30,11 @@ var (
 type needsConfirmation struct{ what string }
 
 func (e needsConfirmation) Error() string {
-	return fmt.Sprintf("cannot %s without confirmation. No terminal is available; run again with --yes", e.what)
+	// what is the prompt's question ("Delete this fork"), which starts with a capital; mid-sentence
+	// it reads as an ordinary verb.
+	first, size := utf8.DecodeRuneInString(e.what)
+	what := string(unicode.ToLower(first)) + e.what[size:]
+	return fmt.Sprintf("cannot %s without confirmation. No terminal is available; run again with --yes", what)
 }
 
 func (e needsConfirmation) Is(target error) bool { return target == ErrNeedsConfirmation }

@@ -498,7 +498,7 @@ func TestForkFreshConfirmsBeforeRuntimeWork(t *testing.T) {
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
 	code, err := a.forkCreate([]string{"perf", "claude", "--fresh"})
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "cannot recreate this fork without confirmation") || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("fork --fresh without confirmation = (%d, %v), want refusal naming --yes", code, err)
 	}
 	if !pathExists(ws) {

@@ -446,7 +446,7 @@ func TestForkRmConfirmsBeforeForcedStop(t *testing.T) {
 	}
 	a := &Control{cfg: &config.Config{RepoOverride: repo}}
 	code, err := a.ForkRm([]string{"perf", "--force"})
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "cannot delete this fork without confirmation") || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("forced fork rm without confirmation = (%d, %v), want refusal naming --yes", code, err)
 	}
 	if !pathExists(ws) || forkspace.RunningPid(repo, "perf") != os.Getpid() {
