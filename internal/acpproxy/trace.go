@@ -12,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 // ACP wire tracing — an opt-in diagnostic for when an editor's ACP session misbehaves (a lost
@@ -200,17 +202,14 @@ func pidAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM) // EPERM: exists but not ours to signal
 }
 
-// traceConfigDir mirrors coop's config base (XDG_CONFIG_HOME else ~/.config, + /coop) so traces land
-// beside the config. Empty only if the home dir can't be resolved.
+// traceConfigDir is coop's config root, so traces land beside the config. Empty when it cannot be
+// resolved, which includes a test binary that named no config home of its own.
 func traceConfigDir() string {
-	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
-		return filepath.Join(d, "coop")
-	}
-	home, err := os.UserHomeDir()
+	dir, err := config.RootDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".config", "coop")
+	return dir
 }
 
 func traceSentinelExists() bool {

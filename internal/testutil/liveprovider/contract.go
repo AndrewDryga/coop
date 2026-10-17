@@ -21,6 +21,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
 
 const (
@@ -805,6 +806,9 @@ func processEnvironmentValues(layout procharness.Layout, path string, runtime Ru
 		"COOP_CACHE": "0", "COOP_CAFFEINATE": "0", "COOP_EGRESS": "open",
 		"COOP_NO_UPDATE_CHECK": "1", "COOP_RUN_ARGS": "", "COOP_MEMORY": "", "COOP_CPUS": "",
 		"COOP_ACP_WARM": "0",
+		// The harness chose every folder above, and may add this host's network state: a child
+		// test binary keeps them, and Coop's test guards accept them.
+		teststate.LiveEnv: "1",
 	}
 	for key, value := range map[string]string{
 		"COOP_RUNTIME": runtime.Name, "COOP_IMAGE": runtime.Image,

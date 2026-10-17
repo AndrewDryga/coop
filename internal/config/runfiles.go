@@ -18,7 +18,10 @@ import (
 // The folder itself must be a real directory owned by this user; it is closed to everyone else and
 // returned with links resolved. The Coop home above it may be a link, as dotfiles setups make it.
 func PrivateRunfiles(cfg *Config) (string, error) {
-	root := runfilesPath(cfg)
+	root, err := runfilesPath(cfg)
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
 	}
@@ -28,27 +31,34 @@ func PrivateRunfiles(cfg *Config) (string, error) {
 // ExistingRunfiles locates the runfiles folder for housekeeping without creating it: a command that
 // never staged a run must not acquire state because the daily sweep was due.
 func ExistingRunfiles(cfg *Config) (string, bool, error) {
-	root := runfilesPath(cfg)
+	root, err := runfilesPath(cfg)
+	if err != nil {
+		return "", false, err
+	}
 	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
 		return "", false, nil
 	} else if err != nil {
 		return "", false, err
 	}
-	root, err := validateRunfiles(root)
+	root, err = validateRunfiles(root)
 	return root, err == nil, err
 }
 
 // runfilesPath is below cfg's BoxHome, which Load sets to RootDir; a test's Config without one uses
 // its ConfigDir. Code with no Config, such as the container runtime making a Docker client folder,
 // passes nil and gets RootDir's: the folder the daily sweep visits.
-func runfilesPath(cfg *Config) string {
-	home := RootDir()
+func runfilesPath(cfg *Config) (string, error) {
 	if cfg != nil && cfg.BoxHome != "" {
-		home = cfg.BoxHome
-	} else if cfg != nil && cfg.ConfigDir != "" {
-		home = cfg.ConfigDir
+		return filepath.Join(cfg.BoxHome, "runfiles"), nil
 	}
-	return filepath.Join(home, "runfiles")
+	if cfg != nil && cfg.ConfigDir != "" {
+		return filepath.Join(cfg.ConfigDir, "runfiles"), nil
+	}
+	home, err := RootDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "runfiles"), nil
 }
 
 func validateRunfiles(root string) (string, error) {

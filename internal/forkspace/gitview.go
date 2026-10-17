@@ -37,7 +37,7 @@ import (
 //
 // Production views persist per git directory, so an interrupted rebase can be recovered by the
 // next coop process. Refresh uses invocation-private scratch files and leaves an in-flight
-// operation's HEAD alone. Test binaries default to a per-process temporary root.
+// operation's HEAD alone. A test binary must name its own root (internal/testutil/teststate does).
 
 // gitViewHardening is appended after GitHardening on every view-side command: no auto-gc or
 // maintenance (they pack refs), no pruning, no commit-graph writes, and no submodule descent (a
@@ -69,8 +69,7 @@ var (
 	gitViewsRoot string
 )
 
-// GitViewRootEnv overrides where views live — tests point it at a scratch directory. Without it,
-// a test binary uses a per-process temp root (removed by CloseGitViews) and coop uses
+// GitViewRootEnv overrides where views live, and a test binary must set it. Without it, coop uses
 // ~/.local/state/coop/gitviews, where a view outlives the process: an interrupted rebase keeps
 // its state there for the next `coop fork merge` to recover.
 const GitViewRootEnv = "COOP_GITVIEW_ROOT"
@@ -117,13 +116,10 @@ func GitRefCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// CloseGitViews forgets this process's views and, for a test binary's temp root, removes them.
+// CloseGitViews forgets this process's views, so the next command resolves the root again.
 func CloseGitViews() {
 	gitViewsMu.Lock()
 	defer gitViewsMu.Unlock()
-	if gitViewsRoot != "" && strings.HasPrefix(filepath.Base(gitViewsRoot), "coop-gitview-") {
-		_ = os.RemoveAll(gitViewsRoot)
-	}
 	gitViewsRoot = ""
 	gitViews = map[string]*gitView{}
 }
@@ -136,11 +132,9 @@ func gitViewRoot() (string, error) {
 	switch {
 	case root != "":
 	case strings.HasSuffix(os.Args[0], ".test"):
-		dir, err := os.MkdirTemp("", "coop-gitview-")
-		if err != nil {
-			return "", err
-		}
-		root = dir
+		// A per-process temporary root used to stand in here, and every test binary that never
+		// removed it left one behind in the temp directory, about 130 a day.
+		return "", fmt.Errorf("a test binary must set %s (internal/testutil/teststate does)", GitViewRootEnv)
 	default:
 		home, err := os.UserHomeDir()
 		if err != nil {

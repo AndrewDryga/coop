@@ -16,7 +16,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
+
+// TestMain keeps the package's tests out of the developer's real Coop state.
+func TestMain(m *testing.M) { os.Exit(teststate.Isolate(m.Run)) }
 
 func TestPercentile(t *testing.T) {
 	// Eight samples is a realistic run, and p95 has to land between the top two rather than snapping

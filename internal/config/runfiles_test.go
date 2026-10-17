@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -79,5 +80,71 @@ func TestRunfilesFollowsALinkedHomeButNotALinkedFolder(t *testing.T) {
 	}
 	if got, exists, err := ExistingRunfiles(linked); err == nil || exists {
 		t.Fatalf("a linked runfiles folder was located: (%q, %v, %v)", got, exists, err)
+	}
+}
+
+// A test binary that names no config home must fail, never use the developer's real one: tests that
+// loaded it read the real settings and left run files in it.
+func TestConfigRootRefusesATestBinaryWithoutItsOwnConfigHome(t *testing.T) {
+	clearAgentEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	if root, err := RootDir(); err == nil || !strings.Contains(err.Error(), "XDG_CONFIG_HOME") {
+		t.Fatalf("RootDir = %q, %v; want a refusal naming XDG_CONFIG_HOME", root, err)
+	}
+	if _, err := Load(); err == nil {
+		t.Fatal("Load read the real config without the test's own config home")
+	}
+	if _, err := PrivateRunfiles(nil); err == nil {
+		t.Fatal("PrivateRunfiles made run files in the real config home")
+	}
+	if _, _, err := ExistingRunfiles(nil); err == nil {
+		t.Fatal("ExistingRunfiles looked in the real config home")
+	}
+	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
+		t.Fatalf("the refused calls wrote under HOME: %v, %v", entries, err)
+	}
+}
+
+// In a test binary a config or state home counts only inside the temporary folder that holds the
+// binary's teststate folder: a developer's shell may export one anywhere, inside HOME or not, and a
+// cli test that fell back to ~/.local/state sealed a run record in the real network store. A marked
+// live provider run chooses its own. The guard reads names only, so nothing here opens a folder.
+func TestStateHomeRefusesAnyFolderButTheTestsOwn(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(home, ".local", "state")
+	elsewhere := filepath.Join(string(filepath.Separator), "data", "state")
+	for _, value := range []string{"", real, elsewhere, "state"} {
+		t.Setenv("XDG_STATE_HOME", value)
+		if got, err := StateHome(); err == nil || !strings.Contains(err.Error(), "XDG_STATE_HOME") {
+			t.Errorf("XDG_STATE_HOME=%q: StateHome = %q, %v; want a refusal naming XDG_STATE_HOME", value, got, err)
+		}
+	}
+	if err := CheckTestFolder("HOME", home); err == nil {
+		t.Error("the developer's HOME passed as a test's own")
+	}
+	own := filepath.Join(t.TempDir(), "state")
+	t.Setenv("XDG_STATE_HOME", own)
+	if got, err := StateHome(); err != nil || got != own {
+		t.Fatalf("StateHome = %q, %v; want the test's own %s", got, err, own)
+	}
+	// A test that moves TMPDIR keeps the folders it made before: teststate's folder remembers where
+	// the temporary folder was. Without either, the same folder is refused.
+	t.Setenv("TMPDIR", t.TempDir())
+	if got, err := StateHome(); err != nil || got != own {
+		t.Errorf("StateHome = %q, %v after TMPDIR moved; want the test's own %s", got, err, own)
+	}
+	t.Setenv(testStateRootEnv, "")
+	if got, err := StateHome(); err == nil {
+		t.Errorf("StateHome = %q, in neither temporary folder; want a refusal", got)
+	}
+	t.Setenv(testLiveEnv, "1")
+	t.Setenv("XDG_STATE_HOME", real)
+	if got, err := StateHome(); err != nil || got != real {
+		t.Errorf("StateHome = %q, %v in a live run; want the state it chose, %s", got, err, real)
 	}
 }

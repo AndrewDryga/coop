@@ -59,7 +59,7 @@ func runProviderResumeLiveCompatibility(
 	if err != nil {
 		return fail(false, "target_selection")
 	}
-	networkStateHome, err := providerResumeNetworkStateHome(realConfig, selection)
+	networkStateHome, err := providerResumeNetworkStateHome(realConfig, selection, hostStateHome())
 	if err != nil {
 		return fail(false, "credential_kind")
 	}
@@ -124,12 +124,13 @@ func runProviderResumeLiveCompatibility(
 	return finishProviderResumeLive(layout, before, prepared, continued, continuedFailures)
 }
 
-func providerResumeNetworkStateHome(cfg *config.Config, selection liveprovider.Selection) (string, error) {
+// providerResumeNetworkStateHome is the host state home (hostStateHome) a brokered selection's
+// children need, or "" for one that runs open.
+func providerResumeNetworkStateHome(cfg *config.Config, selection liveprovider.Selection, home string) (string, error) {
 	brokered, err := liveprovider.BrokersKey(cfg, selection)
 	if err != nil || !brokered {
 		return "", err
 	}
-	home := hostStateHome()
 	if home == "" {
 		return "", errors.New("cannot locate host network state for a brokered API key")
 	}
@@ -384,13 +385,12 @@ func TestProviderResumeLiveContract(t *testing.T) {
 	)
 	t.Run("brokered key uses filtered networking in both stages", func(t *testing.T) {
 		host := filepath.Join(t.TempDir(), "host-state")
-		t.Setenv("XDG_STATE_HOME", host)
 		cfg := &config.Config{ConfigDir: t.TempDir()}
 		if err := os.WriteFile(cfg.EnvFile(), []byte("GEMINI_API_KEY=test-key\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		selection := liveprovider.Selection{Provider: "gemini", Account: "default"}
-		networkHome, err := providerResumeNetworkStateHome(cfg, selection)
+		networkHome, err := providerResumeNetworkStateHome(cfg, selection, host)
 		if err != nil || networkHome != host {
 			t.Fatalf("brokered key network home = %q, %v; want %q", networkHome, err, host)
 		}
@@ -416,7 +416,7 @@ func TestProviderResumeLiveContract(t *testing.T) {
 		if err := os.WriteFile(cfg.EnvFile(), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if networkHome, err := providerResumeNetworkStateHome(cfg, selection); err != nil || networkHome != "" {
+		if networkHome, err := providerResumeNetworkStateHome(cfg, selection, host); err != nil || networkHome != "" {
 			t.Fatalf("no-key account network home = %q, %v; want open", networkHome, err)
 		}
 	})

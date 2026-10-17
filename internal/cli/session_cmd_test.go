@@ -31,6 +31,7 @@ func shortSessionSocketRoot(t *testing.T) string {
 }
 
 func TestSessionHTTPDoctorDialerUsesUnixSocket(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // the doctor resolves the default session state even beside --socket
 	root := shortSessionSocketRoot(t)
 	socket := filepath.Join(root, "control.sock")
 	listener, cleanup, err := sessionsvc.ListenSocket(root, socket)
@@ -100,10 +101,17 @@ func captureSessionDoctorJSON(t *testing.T, socket string) (int, string) {
 	return code, string(data)
 }
 
+// Sessions live under HOME, so a test binary gets the default only under a temporary HOME of its
+// own; any other HOME is taken for the developer's, whose real sessions it must not reach.
 func TestSessionPaths(t *testing.T) {
+	t.Setenv("HOME", filepath.Join(string(filepath.Separator), "developer-home"))
+	if state, _, err := sessionSocketPath("", ""); err == nil {
+		t.Fatalf("a test binary resolved the developer's session state %q", state)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	state, socket, err := sessionSocketPath("", "")
-	home, _ := os.UserHomeDir()
-	if err != nil || !strings.HasPrefix(state, filepath.Join(home, ".local", "state", "coop", "sessions")) || socket != filepath.Join(state, "control.sock") {
+	if err != nil || state != filepath.Join(home, ".local", "state", "coop", "sessions") || socket != filepath.Join(state, "control.sock") {
 		t.Fatalf("defaults = %q %q %v", state, socket, err)
 	}
 }

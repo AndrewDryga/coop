@@ -25,6 +25,7 @@ import (
 	coopconfig "github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
 
 func TestDockerImageTemplateAcceptsOmittedLabels(t *testing.T) {
@@ -675,7 +676,7 @@ func TestDockerRebindUsesCapturedBinaryAndEndpoint(t *testing.T) {
 // daemon that does not qualify leaves nothing behind. The fake daemon gives the test a config root
 // of its own, so none of this touches the developer's ~/.config/coop.
 func TestDockerClientDirectoryLivesInPrivateRunfiles(t *testing.T) {
-	developers := coopconfig.RootDir()
+	developers := filepath.Join(teststate.DeveloperConfigHome(), "coop")
 	rt, file := fixtureDocker(t, dockerFixture{})
 	runfiles := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "coop", "runfiles")
 	if !filepath.IsAbs(runfiles) || pathWithin(developers, runfiles) {
@@ -730,7 +731,11 @@ func TestDockerClientDirectoryFollowsALinkedCoopHome(t *testing.T) {
 		t.Fatalf("a linked Coop home broke the Docker binding: %v", err)
 	}
 	defer d.Close()
-	swept, exists, err := coopconfig.ExistingRunfiles(&coopconfig.Config{BoxHome: coopconfig.RootDir()})
+	home, err := coopconfig.RootDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	swept, exists, err := coopconfig.ExistingRunfiles(&coopconfig.Config{BoxHome: home})
 	if err != nil || !exists || filepath.Dir(d.clientConfig) != swept {
 		t.Fatalf("client directory %s is not in the runfiles the sweep visits (%q, %v, %v)", d.clientConfig, swept, exists, err)
 	}

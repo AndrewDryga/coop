@@ -41,7 +41,7 @@ const (
 // gate happens to run under.
 var allowedEdges = map[string][]string{
 	"acpctl":                {"acpproxy", "agent", "config", "ladder", "preset", "safefile"},
-	"acpproxy":              nil,
+	"acpproxy":              {"config"},
 	"agent":                 {"config", "egress", "mcp", "safefile"},
 	"box":                   {"agent", "config", "consult", "egress", "forkspace", "fsidentity", "gatewayimage", "mcp", "networkgateway", "networkreport", "networkstate", "networkview", "preset", "processidentity", "project", "runtime", "safefile", "secretscan", "shadowpath", "taskchannel", "ui"},
 	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "egress", "eval", "forkctl", "forkspace", "hostsurface", "ladder", "loop", "loopcfg", "networkreport", "networkstate", "networkview", "preset", "project", "runtime", "scaffold", "secretscan", "session", "sessionsvc", "taskmcp", "tasks", "ui", "workerconnector", "workerproto"},
@@ -78,11 +78,12 @@ var allowedEdges = map[string][]string{
 	"tasks":                 {"box", "config", "forkspace", "processidentity", "project", "taskstate", "ui"},
 	"taskstate":             nil,
 	"testutil/gitrepo":      nil,
-	"testutil/liveprovider": {"agent", "box", "config", "testutil/procharness"},
+	"testutil/liveprovider": {"agent", "box", "config", "testutil/procharness", "testutil/teststate"},
 	"testutil/dockersock":   nil,
 	"testutil/nativeauth":   nil,
 	"testutil/nativedocker": {"gatewayimage", "runtime", "testutil/dockersock"},
 	"testutil/procharness":  nil,
+	"testutil/teststate":    nil,
 	"testutil/wait":         nil,
 	"testutil/workertls":    nil,
 	"ui":                    nil,

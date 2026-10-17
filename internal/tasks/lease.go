@@ -234,7 +234,7 @@ func leaseAuthorityRoot() (string, error) {
 		if root := os.Getenv(TestLeaseAuthorityRootEnv); root != "" {
 			return root, nil
 		}
-		return "", fmt.Errorf("a test binary must set %s (see internal/tasks/main_test.go); without it, tests write the real task-lease registry", TestLeaseAuthorityRootEnv)
+		return "", fmt.Errorf("a test binary must set %s (internal/testutil/teststate does); without it, tests write the real task-lease registry", TestLeaseAuthorityRootEnv)
 	}
 	return durableLeaseAuthorityRoot()
 }

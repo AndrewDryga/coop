@@ -26,6 +26,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
 
 const consultLiveChildDeadline = 18 * time.Minute
@@ -54,6 +55,9 @@ func testProviderPeerLiveCompatibility(t *testing.T, delegate bool) {
 		emitPeerLiveSummary(t, delegate, strict, targets, results)
 	}
 
+	// The suite runs the developer's signed-in providers on purpose, so it reads the real config.
+	t.Setenv(teststate.LiveEnv, "1")
+	t.Setenv("XDG_CONFIG_HOME", teststate.DeveloperConfigHome())
 	realConfig, err := config.Load()
 	if err != nil {
 		t.Fatal(err)

@@ -22,8 +22,9 @@ import (
 )
 
 // ServiceStateRootEnv overrides where coop keeps the host-owned state behind sibling services —
-// approvals and the decoy files sidecars mount. Honored only by test binaries, which otherwise get
-// a directory under the system temp dir, so a test never reads or writes the developer's real state.
+// approvals and the decoy files sidecars mount. Honored only by test binaries (internal/testutil/
+// teststate sets it), which otherwise get a directory under the system temp dir, so a test never
+// reads or writes the developer's real state.
 const ServiceStateRootEnv = "COOP_SERVICE_STATE_ROOT"
 
 // ServiceApproval records a human's decision that the sibling services defined by one exact

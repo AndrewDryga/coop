@@ -38,6 +38,11 @@ func defaultSessionStateRoot() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve user home: %w", err)
 	}
+	// Sessions live under HOME whatever XDG_STATE_HOME says, so a test binary reaches the
+	// developer's real ones unless the test pointed HOME at a temporary folder (t.TempDir).
+	if err := config.CheckTestFolder("HOME", home); err != nil {
+		return "", err
+	}
 	return filepath.Join(home, ".local", "state", "coop", "sessions"), nil
 }
 

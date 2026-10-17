@@ -2,7 +2,7 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go]
+sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
 updated: 2026-10-17
 ---
 
@@ -22,15 +22,15 @@ copy; `GIT_INDEX_FILE` naming the real index; no `hooks`, `info/attributes`, `co
 `modules`. Git reads exactly the bytes coop wrote, so there is no enumerate-then-execute race.
 `gc.auto`/`maintenance.auto`/`fetch.prune` are off under the view (a pack-refs rewrite would land
 in the view). Views live under `~/.local/state/coop/gitviews/<hash of git dir>` (`COOP_GITVIEW_ROOT`
-overrides; a test binary uses a temp root removed by `CloseGitViews`). The daily temp sweep calls
-`SweepGitViews` (`gitview_sweep.go`), which removes a view only when its `objects` link names a store
-that no longer exists: eval, session and temporary repositories left theirs behind for good (on one
-Mac 3,589 were created in the first half of October 2026, and 13,849 of 13,990 were dangling on
-2026-10-16). A view being laid out has no link yet and is kept; so is one whose store cannot be
-checked, and one holding an unfinished rebase or merge (only the view holds that state, and its
-repository may be on a disk that is not mounted). An entry that is not a plain directory is never
-followed, a test binary sweeps only a root it was pointed at, and a process whose cached view was
-swept lays it out again on its next command.
+overrides, and a test binary that leaves it unset is refused; see [[test-state-isolation]]). The
+daily temp sweep calls `SweepGitViews` (`gitview_sweep.go`), which removes a view only when its
+`objects` link names a store that no longer exists: eval, session and temporary repositories left
+theirs behind for good (on one Mac 3,589 were created in the first half of October 2026, and 13,849
+of 13,990 were dangling on 2026-10-16). A view being laid out has no link yet and is kept; so is one
+whose store cannot be checked, and one holding an unfinished rebase or merge (only the view holds
+that state, and its repository may be on a disk that is not mounted). An entry that is not a plain
+directory is never followed, a test binary sweeps only a root it was pointed at, and a process
+whose cached view was swept lays it out again on its next command.
 
 Separate host processes share that persistent view. Config parsing and atomic file publication
 therefore use invocation-private temporary files, closed before reading or renaming and removed
@@ -164,6 +164,8 @@ keep their existing restrictions.
 - 2026-10-16 — `ResolveRepo` follows a linked `COOP_REPO` to its folder (task
   2026-10-16-resolve-links-in-coop-repo-so-secret-decoys-stil).
 - 2026-10-16 — choosing the project (`box.FindRepo`) walks to the nearest `.git` instead of asking git.
+- 2026-10-16 — a test binary must name its view root; the per-process temporary root it used to
+  get, and the removal of it in `CloseGitViews`, are gone.
 - 2026-10-16 — the daily temp sweep removes views whose repository is gone (`SweepGitViews`).
 - 2026-10-10 — reproduced the pending-review fixture cleanup failure on actual Git 2.55 and
   restored saved config bytes, retaining unsupported-store, detached and malformed-HEAD checks.

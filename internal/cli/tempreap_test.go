@@ -319,7 +319,11 @@ func TestTempReapMakesNoRunfilesRoot(t *testing.T) {
 	if err := os.WriteFile(docker, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{BoxHome: config.RootDir()} // as Load sets it: the home a pin's client folder goes under
+	home, err := config.RootDir() // as Load sets BoxHome: the home a pin's client folder goes under
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{BoxHome: home}
 	stamp := tempReapPath(cfg)
 
 	reapTemp(containerruntime.Runtime{Name: docker}, cfg, stamp)

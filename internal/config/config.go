@@ -135,7 +135,10 @@ func (c *Config) Cmd(env, def string) []string {
 // Load resolves the configuration from the environment and conf file. A genuinely absent default
 // file is optional; an explicitly selected file or a present invalid file is an operator error.
 func Load() (*Config, error) {
-	boxHome := RootDir()
+	boxHome, err := RootDir()
+	if err != nil {
+		return nil, err
+	}
 	confPath, explicitConf := os.LookupEnv("COOP_CONF")
 	if !explicitConf {
 		confPath = filepath.Join(boxHome, "coop.conf")
@@ -724,8 +727,81 @@ func xdgConfigHome() string {
 	return filepath.Join(home, ".config")
 }
 
-// RootDir is Coop's per-user configuration root.
-func RootDir() string { return filepath.Join(xdgConfigHome(), "coop") }
+// The variables internal/testutil/teststate sets for a test binary: the folder it made, and the
+// mark of a live provider run (teststate.LiveEnv). This package cannot import that one.
+const (
+	testStateRootEnv = "COOP_TEST_STATE_ROOT"
+	testLiveEnv      = "COOP_TEST_LIVE_HOMES"
+)
+
+// testBinary reports whether this process is a Go test binary, which must keep out of the
+// developer's real Coop folders.
+func testBinary() bool { return strings.HasSuffix(filepath.Base(os.Args[0]), ".test") }
+
+// CheckTestFolder guards a per-user root that follows a variable a developer's shell may set too:
+// XDG_CONFIG_HOME, XDG_STATE_HOME or HOME. It is nil outside tests. In a test binary the variable
+// must name a folder inside the temporary folder, where teststate's folder and every t.TempDir
+// live; anything else may be the developer's real one. The temporary folder teststate started in
+// counts too, for a test that moved TMPDIR. A live provider run chose its folders on purpose and is
+// not checked.
+func CheckTestFolder(variable, path string) error {
+	if !testBinary() || os.Getenv(testLiveEnv) != "" {
+		return nil
+	}
+	if path == "" {
+		return fmt.Errorf("a test binary must set %s (internal/testutil/teststate does); without it, tests use the developer's real folder", variable)
+	}
+	if within(os.TempDir(), path) {
+		return nil
+	}
+	if root := os.Getenv(testStateRootEnv); root != "" && within(filepath.Dir(root), path) {
+		return nil
+	}
+	return fmt.Errorf("a test binary must keep %s inside the temporary folder (internal/testutil/teststate gives it one), not at %s, which may be the developer's real folder", variable, path)
+}
+
+// within reports whether path is dir or inside it. It also compares against dir with its links
+// resolved, because macOS reaches the temporary folder through /var, a link to /private/var.
+func within(dir, path string) bool {
+	dirs := []string{dir}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dirs = append(dirs, resolved)
+	}
+	for _, d := range dirs {
+		if rel, err := filepath.Rel(d, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// RootDir is Coop's per-user configuration root. A test binary must name its own with
+// XDG_CONFIG_HOME (internal/testutil/teststate does; see CheckTestFolder): the default is the
+// developer's real one, and tests that loaded it read the real settings and wrote run files into it.
+func RootDir() (string, error) {
+	if err := CheckTestFolder("XDG_CONFIG_HOME", os.Getenv("XDG_CONFIG_HOME")); err != nil {
+		return "", err
+	}
+	return filepath.Join(xdgConfigHome(), "coop"), nil
+}
+
+// StateHome is the XDG state folder that holds Coop's network authority and eval results:
+// XDG_STATE_HOME, else ~/.local/state. A test binary must name its own (see CheckTestFolder): a cli
+// test that fell back to the default sealed a run record in the real ~/.local/state/coop/network.
+func StateHome() (string, error) {
+	base := os.Getenv("XDG_STATE_HOME")
+	if err := CheckTestFolder("XDG_STATE_HOME", base); err != nil {
+		return "", err
+	}
+	if base != "" {
+		return base, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home: %w", err)
+	}
+	return filepath.Join(home, ".local", "state"), nil
+}
 
 // ShellSplit exposes shellSplit so other packages can split a committed command setting (e.g. the
 // .agent/project.yaml gate:) into argv exactly as Load splits COOP_GATE — one splitter, one rule.

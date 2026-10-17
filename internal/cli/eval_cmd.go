@@ -12,6 +12,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/eval"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -505,14 +506,11 @@ func renderEvalComparison(c *eval.Comparison) {
 
 // evalStateRoot is the owner-private eval results directory, outside every candidate mount.
 func evalStateRoot() (string, error) {
-	if base := os.Getenv("XDG_STATE_HOME"); base != "" {
-		return filepath.Join(base, "coop", "eval"), nil
-	}
-	home, err := os.UserHomeDir()
+	base, err := config.StateHome()
 	if err != nil {
-		return "", fmt.Errorf("resolve user home: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".local", "state", "coop", "eval"), nil
+	return filepath.Join(base, "coop", "eval"), nil
 }
 
 // evalInit scaffolds a custom suite: a working agent example and a documented loop example, so a

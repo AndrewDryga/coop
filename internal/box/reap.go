@@ -28,7 +28,10 @@ const reapMinimumAge = time.Hour
 // directory belongs to someone else and is never touched. Neither are the box files earlier
 // versions made there: none says which daemon its box ran on (see runDirPrefix).
 var tempPrefixes = []string{
-	"coop-audit-trees-", "coop-test-task-leases-",
+	"coop-audit-trees-",
+	// What killed test binaries leave: teststate's folder, and the lease and git-view folders that
+	// earlier builds' test binaries made for each process and nothing removed.
+	"coop-test-state-", "coop-test-task-leases-", "coop-gitview-",
 	// Earlier versions kept an open run's MCP credential broker folder, with the run's real
 	// credentials, here; a killed coop must not leave them behind. The helper that mounts it is not
 	// a box — the hour of grace, and the container holding the bind-mounted file open until it

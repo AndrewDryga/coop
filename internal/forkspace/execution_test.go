@@ -285,3 +285,53 @@ func TestExecutionRegistryFallsBackToUserStateWhenProjectParentIsReadOnly(t *tes
 		t.Fatalf("fallback record after cleanup: %v", err)
 	}
 }
+
+// A test binary that names no registry must fail, never fall back to the developer's real one
+// under HOME: service-launch tests left tens of thousands of lock files there.
+func TestExecutionRegistryRefusesATestBinaryWithoutItsOwnRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(TestExecutionRegistryRootEnv, "")
+	repo := t.TempDir()
+	if path, err := ServiceLaunchLockPath(repo); err == nil || !strings.Contains(err.Error(), TestExecutionRegistryRootEnv) {
+		t.Fatalf("ServiceLaunchLockPath = %q, %v; want a refusal naming %s", path, err, TestExecutionRegistryRootEnv)
+	}
+	if unlock, err := LockServiceLaunch(context.Background(), repo, true); err == nil {
+		unlock()
+		t.Fatal("LockServiceLaunch locked without the test root")
+	}
+	if _, err := ExecutionRegistryDirs(repo); err == nil {
+		t.Fatal("ExecutionRegistryDirs named the real registry")
+	}
+	if _, problems := Executions(repo); len(problems) == 0 {
+		t.Fatal("Executions read the real registry without reporting the missing test root")
+	}
+	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
+		t.Fatalf("the refused calls wrote under HOME: %v, %v", entries, err)
+	}
+}
+
+// Only records belong in a registry, and anything else is reported with its path, so whoever
+// reads the problem knows which file to remove. The one exception is the lock file that builds of
+// September 2026 kept there: it is skipped until the owner has removed those old-layout folders.
+func TestExecutionRegistryReportsAStrayEntryByPathButSkipsTheOldLock(t *testing.T) {
+	t.Setenv(TestExecutionRegistryRootEnv, t.TempDir())
+	repo := t.TempDir()
+	registries, err := ExecutionRegistryDirs(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback := registries[len(registries)-1]
+	if err := os.MkdirAll(fallback, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stray := filepath.Join(fallback, "leftover.tmp")
+	for _, path := range []string{stray, filepath.Join(fallback, ".service-launch.lock")} {
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, problems := Executions(repo); len(problems) != 1 || !strings.Contains(problems[0].Error(), stray) {
+		t.Fatalf("problems = %v; want only one, naming %s", problems, stray)
+	}
+}

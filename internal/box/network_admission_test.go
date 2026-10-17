@@ -338,3 +338,31 @@ func TestAdmissionWithExistingQualificationNeverSetsTheHostUp(t *testing.T) {
 		}
 	}
 }
+
+// A test binary never resolves the network authority store into the developer's real state: a cli
+// test that fell back to ~/.local/state once sealed a run record in the real store. Under TestMain
+// the store is outside the real home (a temporary folder may sit inside it), and the developer's
+// state is refused outright. NetworkStatePath only builds names, so the refused cases open nothing.
+func TestNetworkStatePathStaysOutOfTheRealHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inside := func(dir, path string) bool {
+		rel, err := filepath.Rel(dir, path)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	}
+	root, err := NetworkStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inside(home, root) && !inside(os.TempDir(), root) {
+		t.Fatalf("NetworkStatePath = %s, under the real home %s", root, home)
+	}
+	for _, value := range []string{"", filepath.Join(home, ".local", "state")} {
+		t.Setenv("XDG_STATE_HOME", value)
+		if path, err := NetworkStatePath(); err == nil {
+			t.Errorf("XDG_STATE_HOME=%q: NetworkStatePath = %s; want a refusal", value, path)
+		}
+	}
+}

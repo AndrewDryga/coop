@@ -3923,14 +3923,22 @@ func TestSynthSkillsMounts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Each synthesized mount is a copy in the system temp directory, which the test must remove.
+	synth := func() ([]extraMount, error) {
+		t.Helper()
+		mounts, temps, err := synthSkillsMounts(repo, "/home/node", "", []string{"claude", "codex", "gemini", "grok"})
+		for _, temp := range temps {
+			t.Cleanup(func() { _ = os.RemoveAll(temp) })
+		}
+		return mounts, err
+	}
 	// No .agent/skills → nothing to synthesize.
-	names := []string{"claude", "codex", "gemini", "grok"}
-	if got, _, err := synthSkillsMounts(repo, "/home/node", "", names); err != nil || got != nil {
+	if got, err := synth(); err != nil || got != nil {
 		t.Errorf("no .agent/skills → no mounts, got %v", got)
 	}
 	// .agent/skills present, no per-agent skills dirs → synthesize for skills-capable agents only.
 	mkdir(".agent/skills")
-	got, _, err := synthSkillsMounts(repo, "/home/node", "", names)
+	got, err := synth()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3946,7 +3954,7 @@ func TestSynthSkillsMounts(t *testing.T) {
 	// The repo's OWN skills dir wins — no synthesis for that agent (project beats user).
 	mkdir(".claude/skills")
 	mkdir(".grok/skills")
-	got, _, err = synthSkillsMounts(repo, "/home/node", "", names)
+	got, err = synth()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
 
 // killedSupervisorEnv hands TestKilledFilteredRunSupervisor its launch; only the test that kills it sets it.
@@ -44,7 +45,10 @@ func TestKilledFilteredRunIsSettledByTheNextLaunch(t *testing.T) {
 	if trial == "" {
 		t.Skip("requires COOP_NETWORK_TRIAL_STATE and a local Docker daemon")
 	}
-	// Recovery reads the store where NetworkStatePath resolves, so this trial store lives there.
+	// Recovery reads the store where NetworkStatePath resolves, so this trial store lives there. The
+	// operator may name a trial folder outside the temporary one, so the run is marked as choosing
+	// its state on purpose, and the killed supervisor inherits the mark.
+	t.Setenv(teststate.LiveEnv, "1")
 	t.Setenv("XDG_STATE_HOME", filepath.Join(trial, "killed-supervisor"))
 	// A killed supervisor never closes its Docker binding, so the client folder that binding made in
 	// Coop's runfiles stays behind; a config root of the test's own keeps it out of the developer's.

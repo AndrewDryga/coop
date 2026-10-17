@@ -27,7 +27,8 @@ const (
 	serviceLaunchLockName  = ".service-launch.lock"
 )
 
-// TestExecutionRegistryRootEnv isolates the user-state fallback in tests. Production ignores it.
+// TestExecutionRegistryRootEnv is the user-state fallback a test binary must name; production
+// ignores it.
 const TestExecutionRegistryRootEnv = "COOP_TEST_EXECUTION_REGISTRY_ROOT"
 
 type ExecutionKind string
@@ -122,7 +123,11 @@ func fallbackExecutionDir(repo string) (string, error) {
 	}
 	root := ""
 	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
-		root = os.Getenv(TestExecutionRegistryRootEnv)
+		// Falling back to HOME let tests leave tens of thousands of service-launch locks in the
+		// developer's real registry, so a test binary that names no root fails instead.
+		if root = os.Getenv(TestExecutionRegistryRootEnv); root == "" {
+			return "", fmt.Errorf("a test binary must set %s (internal/testutil/teststate does); without it, tests write the real execution registry", TestExecutionRegistryRootEnv)
+		}
 	}
 	if root == "" {
 		home, err := os.UserHomeDir()
@@ -593,11 +598,14 @@ func executionsInRegistry(registry string) ([]ExecutionObservation, []error) {
 	var observations []ExecutionObservation
 	var problems []error
 	for _, entry := range entries {
+		// Builds of September 15 to 23, 2026 kept the service-launch lock here, beside the records.
+		// This skip stays until the owner has removed those old-layout folders; the task
+		// 2026-10-17-drop-the-old-service-launch-lock-skip-after-the drops it.
 		if entry.Name() == serviceLaunchLockName {
 			continue
 		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			problems = append(problems, fmt.Errorf("%s: unsupported project execution registry entry", entry.Name()))
+			problems = append(problems, fmt.Errorf("%s: unsupported project execution registry entry", filepath.Join(registry, entry.Name())))
 			continue
 		}
 		record, err := readExecutionFile(root, entry.Name())

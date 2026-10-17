@@ -1,9 +1,15 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
+
+// TestMain keeps the package's tests out of the developer's real Coop state.
+func TestMain(m *testing.M) { os.Exit(teststate.Isolate(m.Run)) }
 
 // TestManPage: the man page carries a NAME line (for apropos/mandb) and the manual verbatim in a
 // no-fill block, and roff-escapes the body so arbitrary help text can't be misread as roff.

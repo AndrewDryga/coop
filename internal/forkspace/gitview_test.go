@@ -258,3 +258,19 @@ func TestGitViewPopulatesANoCheckoutWorktree(t *testing.T) {
 	}
 	run("worktree", "remove", "--force", worktree)
 }
+
+// A test binary that names no view root must fail. The per-process temporary root that used to
+// stand in was left behind by every test binary that never removed it.
+func TestGitViewRootRefusesATestBinaryWithoutItsOwnRoot(t *testing.T) {
+	repo, _ := viewTestRepo(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(GitViewRootEnv, "")
+	CloseGitViews()
+	if cmd, err := GitCommand(context.Background(), repo, "status"); err == nil || !strings.Contains(err.Error(), GitViewRootEnv) {
+		t.Fatalf("GitCommand = %v, %v; want a refusal naming %s", cmd, err, GitViewRootEnv)
+	}
+	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
+		t.Fatalf("the refused command wrote under HOME: %v, %v", entries, err)
+	}
+}

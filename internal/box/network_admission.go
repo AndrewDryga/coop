@@ -19,13 +19,9 @@ import (
 // NetworkStatePath is the owner-private authority root. It lives under the
 // host's state directory precisely because that is never an agent mount.
 func NetworkStatePath() (string, error) {
-	base := os.Getenv("XDG_STATE_HOME")
-	if base == "" {
-		hostHome, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(hostHome, ".local", "state")
+	base, err := config.StateHome()
+	if err != nil {
+		return "", err
 	}
 	if !filepath.IsAbs(base) {
 		return "", errors.New("restricted networking needs XDG_STATE_HOME to be an absolute path")

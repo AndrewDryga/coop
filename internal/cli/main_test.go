@@ -7,8 +7,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
-
-	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
 
 var fixtureBinaries *procharness.BinaryCache
@@ -21,23 +20,13 @@ func TestMain(m *testing.M) {
 	if os.Getenv(detachedChildEnv) != "" {
 		os.Exit(Main(os.Args[1:]))
 	}
-	root, err := os.MkdirTemp("", "coop-test-task-leases-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	if err := os.Setenv(tasks.TestLeaseAuthorityRootEnv, root); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		_ = os.RemoveAll(root)
-		os.Exit(1)
-	}
-	fixtureBinaries, err = procharness.NewBinaryCache(filepath.Join(root, "binaries"))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		_ = os.RemoveAll(root)
-		os.Exit(1)
-	}
-	code := m.Run()
-	_ = os.RemoveAll(root)
-	os.Exit(code)
+	os.Exit(teststate.Isolate(func() int {
+		var err error
+		fixtureBinaries, err = procharness.NewBinaryCache(filepath.Join(teststate.Dir(), "binaries"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return m.Run()
+	}))
 }

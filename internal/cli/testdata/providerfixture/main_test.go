@@ -17,7 +17,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
+
+// TestMain keeps the fixture's tests out of the developer's real Coop state.
+func TestMain(m *testing.M) { os.Exit(teststate.Isolate(m.Run)) }
 
 func TestCacheVolumeNamesMatchNativeLinuxIdentity(t *testing.T) {
 	for _, tc := range []struct {

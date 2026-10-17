@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,11 +46,18 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-17 — acpproxy imports config, its first internal edge: its trace folder now comes from
+  `config.RootDir`, so a test binary's refusal covers it instead of a second copy of the lookup.
+  config is a leaf, so no cycle. `testutil/liveprovider` imports the `testutil/teststate` leaf for
+  the mark it puts on every live child (`teststate.LiveEnv`).
 - 2026-10-16 — scaffold imports shadowpath so coop init's in-place edits refuse a file hidden from
   the box with the same decider the box mounts use (task
   2026-10-16-coop-init-never-writes-a-temp-file-beside-a-path). shadowpath was already the shared
   package that box and preset import for this decision; nothing moved, and scaffold still has no
   box edge.
+- 2026-10-16 — added the test-only `testutil/teststate` leaf: every TestMain that can reach Coop's
+  per-user state calls it. It must stay a leaf, because forkspace, tasks and config call it from
+  their own tests; it repeats their variable names instead of importing them.
 - 2026-10-15 — internal/liveprocess and the cooplivetest process-control files in acpctl and
   runtime are deleted (task 2026-10-15-simplify-process-control-in-the-live-test-harnes): dropped
   the liveprocess node and its edges from acpctl, cli, runtime and testutil/liveprovider, and the

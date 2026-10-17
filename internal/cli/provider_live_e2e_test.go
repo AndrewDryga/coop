@@ -28,6 +28,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
 
 const (
@@ -68,6 +69,9 @@ func testProviderLiveCompatibility(t *testing.T, workflow string) {
 	if err := liveprovider.ValidateStrictTargets(strict, targets); err != nil {
 		t.Fatal(err)
 	}
+	// The suite runs the developer's signed-in providers on purpose, so it reads the real config.
+	t.Setenv(teststate.LiveEnv, "1")
+	t.Setenv("XDG_CONFIG_HOME", teststate.DeveloperConfigHome())
 	realConfig, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -630,17 +634,8 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 // hostStateHome is where this host keeps `coop net setup`'s owner-private
 // record. A filtered child reads it — the network workflow, or any workflow
 // running a brokered API key — and only to launch behind the qualification a
-// human already made on this machine.
-func hostStateHome() string {
-	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
-		return value
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".local", "state")
-}
+// human already made on this machine. The parent itself keeps its own state.
+func hostStateHome() string { return teststate.DeveloperStateHome() }
 
 func liveCIDArgs(rt runtime.Runtime, cidDir, phase string) []string {
 	if !rt.SupportsCIDFile() {

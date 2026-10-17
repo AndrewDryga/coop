@@ -16,6 +16,7 @@ import (
 )
 
 func TestParseSessionConnectFlagsReportsTheActualBadArgument(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // a connect without --state resolves the default session state
 	for _, tc := range []struct {
 		args []string
 		want string

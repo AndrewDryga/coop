@@ -22,6 +22,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
 
 const (
@@ -39,6 +40,9 @@ func TestProviderAccountsLiveCompatibility(t *testing.T) {
 	if os.Getenv("COOP_LIVE_TARGETS") != "all" || os.Getenv("COOP_TEST_LIVE_CHILD") == "1" {
 		t.Skip("operator-only account qualification requires COOP_LIVE_TARGETS=all")
 	}
+	// The suite qualifies the developer's signed-in accounts on purpose, so it reads the real config.
+	t.Setenv(teststate.LiveEnv, "1")
+	t.Setenv("XDG_CONFIG_HOME", teststate.DeveloperConfigHome())
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal("load live configuration")
@@ -139,13 +143,9 @@ func runAccountLivePair(t *testing.T, source *config.Config, pair []liveprovider
 			HomeInBox: source.HomeInBox, ConnectionEnv: connection},
 	}
 	if brokered {
-		spec.NetworkStateHome = os.Getenv("XDG_STATE_HOME")
-		if spec.NetworkStateHome == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return fail("network_state")
-			}
-			spec.NetworkStateHome = filepath.Join(home, ".local", "state")
+		// The host's `coop net setup` record; the parent itself keeps its own state.
+		if spec.NetworkStateHome = teststate.DeveloperStateHome(); spec.NetworkStateHome == "" {
+			return fail("network_state")
 		}
 	}
 	env, err := liveprovider.ChildEnvironment(layout, spec)
