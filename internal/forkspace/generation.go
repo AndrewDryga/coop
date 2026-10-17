@@ -753,7 +753,7 @@ func publishGenerationAtomic(repo, name string, data []byte, replace bool) (bool
 		return false, publishErr
 	}
 	tmp = ""
-	dir, err := os.Open(StateDir(repo))
+	dir, err := OpenFolder(StateDir(repo), false)
 	if err != nil {
 		return true, err
 	}
@@ -794,7 +794,7 @@ func RemoveGenerationIfMatchesLocked(repo string, expected Identity) error {
 }
 
 func syncGenerationStateDir(repo string) error {
-	dir, err := os.Open(StateDir(repo))
+	dir, err := OpenFolder(StateDir(repo), false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

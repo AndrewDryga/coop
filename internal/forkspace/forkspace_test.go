@@ -1,11 +1,16 @@
 package forkspace
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
+
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestForkWorkspace(t *testing.T) {
@@ -72,5 +77,51 @@ func TestForkDiscoveryDistinguishesMissingAndBrokenRoots(t *testing.T) {
 	}
 	if _, err := Names(repo); err == nil || !strings.Contains(err.Error(), Home(repo)) {
 		t.Fatalf("Names with broken root error = %v", err)
+	}
+}
+
+// A box can put a FIFO, or a link, where a folder of the forks tree belongs. Every listing and
+// folder sync there fails at once with a plain error instead of waiting for a writer, which would
+// freeze coop fork ls, stop and merge.
+func TestForksTreeFoldersRefuseAPlantedFIFOOrLinkAtOnce(t *testing.T) {
+	for _, planted := range []string{"fifo", "link"} {
+		for _, at := range []string{"home", "state"} {
+			t.Run(planted+" at "+at, func(t *testing.T) {
+				repo := filepath.Join(t.TempDir(), "repo")
+				if err := os.Mkdir(repo, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				path := Home(repo)
+				if at == "state" {
+					if err := os.Mkdir(Home(repo), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					path = StateDir(repo)
+				}
+				if planted == "fifo" {
+					if err := syscall.Mkfifo(path, 0o600); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := os.Symlink(t.TempDir(), path); err != nil {
+					t.Fatal(err)
+				}
+				done := make(chan error, 1)
+				go func() {
+					_, err := LifecycleNames(repo)
+					if at == "state" && err == nil {
+						err = errors.Join(err, syncGenerationStateDir(repo))
+					}
+					done <- err
+				}()
+				select {
+				case err := <-done:
+					if err == nil {
+						t.Fatalf("the forks tree with a %s at its %s folder was read as fine", planted, at)
+					}
+				case <-time.After(wait.Deadline):
+					t.Fatalf("reading the forks tree waited on a %s at its %s folder", planted, at)
+				}
+			})
+		}
 	}
 }

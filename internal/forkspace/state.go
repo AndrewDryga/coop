@@ -118,7 +118,7 @@ func ensureForkHome(repo string) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("fork home path %q is not a real directory", home)
 	}
-	return confirmForkDirectoryEntry(home)
+	return confirmForkHomeEntry(home)
 }
 
 func ensurePrivateStateDir(path string) error {
@@ -140,8 +140,19 @@ func ensurePrivateStateDir(path string) error {
 	return confirmForkDirectoryEntry(path)
 }
 
+// confirmForkDirectoryEntry syncs the folder that holds path, in the forks tree.
 func confirmForkDirectoryEntry(path string) error {
-	parent, err := os.Open(filepath.Dir(path))
+	return syncParentFolder(path, false)
+}
+
+// confirmForkHomeEntry syncs the fork home's parent: the project's own parent folder, which a box
+// cannot write and a link may reach.
+func confirmForkHomeEntry(home string) error {
+	return syncParentFolder(home, true)
+}
+
+func syncParentFolder(path string, follow bool) error {
+	parent, err := OpenFolder(filepath.Dir(path), follow)
 	if err != nil {
 		return err
 	}

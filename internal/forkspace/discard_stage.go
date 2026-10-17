@@ -103,14 +103,16 @@ func StageWorkspaceDiscardLocked(repo, name string, pinned os.FileInfo) (string,
 // use it before retiring authority for a workspace whose path disappeared on an earlier attempt.
 func ConfirmWorkspaceDiscardState(repo string) error {
 	return errors.Join(
-		syncExistingDiscardDirectory(StagedDiscardDir(repo)),
-		syncExistingDiscardDirectory(Home(repo)),
-		syncExistingDiscardDirectory(filepath.Dir(Home(repo))),
+		syncExistingDiscardDirectory(StagedDiscardDir(repo), false),
+		syncExistingDiscardDirectory(Home(repo), false),
+		syncExistingDiscardDirectory(filepath.Dir(Home(repo)), true),
 	)
 }
 
-func syncExistingDiscardDirectory(path string) error {
-	dir, err := os.Open(path)
+// syncExistingDiscardDirectory syncs a folder of the forks tree, or, with follow, the fork home's
+// parent: the project's own parent folder, which a box cannot write and a link may reach.
+func syncExistingDiscardDirectory(path string, follow bool) error {
+	dir, err := OpenFolder(path, follow)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -127,7 +129,7 @@ func syncExistingDiscardDirectory(path string) error {
 // StagedDiscards lists the staged trees still holding storage. name scopes the answer to one fork;
 // "" reports every one.
 func StagedDiscards(repo, name string) ([]string, error) {
-	entries, err := os.ReadDir(StagedDiscardDir(repo))
+	entries, err := readFolder(StagedDiscardDir(repo))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -171,14 +173,14 @@ func PurgeStagedDiscards(repo, name string) (int, error) {
 	}
 	// Both tidy-ups mirror Destroy. An empty staging directory would keep telling an operator
 	// something is mid-removal, and it would keep the fork root alive past the last fork it held.
-	if entries, err := os.ReadDir(StagedDiscardDir(repo)); err == nil && len(entries) == 0 &&
+	if entries, err := readFolder(StagedDiscardDir(repo)); err == nil && len(entries) == 0 &&
 		os.Remove(StagedDiscardDir(repo)) == nil {
-		if err := syncExistingDiscardDirectory(Home(repo)); err != nil {
+		if err := syncExistingDiscardDirectory(Home(repo), false); err != nil {
 			return removed, fmt.Errorf("confirm removal of empty staged discard directory: %w", err)
 		}
-		if entries, err := os.ReadDir(Home(repo)); err == nil && len(entries) == 0 {
+		if entries, err := readFolder(Home(repo)); err == nil && len(entries) == 0 {
 			if os.Remove(Home(repo)) == nil {
-				if err := syncExistingDiscardDirectory(filepath.Dir(Home(repo))); err != nil {
+				if err := syncExistingDiscardDirectory(filepath.Dir(Home(repo)), true); err != nil {
 					return removed, fmt.Errorf("confirm removal of empty fork home: %w", err)
 				}
 			}
@@ -210,7 +212,7 @@ func removeStagedDiscard(path string) error {
 		}
 		return fmt.Errorf("verify staged discard %q removal: %w", path, err)
 	}
-	if err := syncExistingDiscardDirectory(filepath.Dir(path)); err != nil {
+	if err := syncExistingDiscardDirectory(filepath.Dir(path), false); err != nil {
 		return fmt.Errorf("confirm staged discard %q removal: %w", path, err)
 	}
 	return nil

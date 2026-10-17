@@ -168,7 +168,16 @@ to a process or a container, or prints, it is supervision.
   multi-fork view each piece ends with a newline so another fork never lands mid-line. A log that is
   not a regular file gets "remove it", not the permissions advice: a log only holds output.
 
+**Folders in the forks tree open without waiting.** `forkspace.OpenFolder` opens a folder with
+`O_DIRECTORY|O_NONBLOCK` and, unless told to follow, `O_NOFOLLOW`, so a FIFO or link a box put where
+`.coop`, the forks folder or the staged-discard folder belongs fails at once; the listings
+(`Names`, `LifecycleNames`, `StagedDiscards`) and the folder syncs use it. Only the fork home's
+parent, the project's own parent folder, may be reached through a link (`confirmForkHomeEntry`).
+forkctl's `syncIsolatedPath` opens files and folders under `.coop` with `O_NONBLOCK|O_NOFOLLOW`.
+
 ## Changelog
+- 2026-10-18 — folder opens in the forks tree no longer wait on a planted FIFO or follow a link
+  (task 2026-10-16-open-the-forks-tree-s-folders-without-waiting-on).
 - 2026-10-18 — Linux start tokens name their PID namespace (v2), and a token from another namespace
   is Foreign (task 2026-10-17-treat-a-linux-fork-record-written-in-another-pid).
 - 2026-10-17 — the task snapshot reads another system's record through the same check as

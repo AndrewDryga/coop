@@ -191,8 +191,10 @@ func writeIsolatedRecord(path string, value any) (published bool, err error) {
 	return true, syncIsolatedPath(filepath.Dir(path))
 }
 
+// syncIsolatedPath syncs a file or folder the land wrote under .coop, opened without waiting on a
+// FIFO a box put there and without following a link.
 func syncIsolatedPath(path string) error {
-	file, err := os.Open(path)
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return err
 	}

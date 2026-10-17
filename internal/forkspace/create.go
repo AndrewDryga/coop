@@ -238,9 +238,9 @@ func Destroy(repo, name string) error {
 		return fmt.Errorf("confirm fork workspace removal: %w", err)
 	}
 	home := Home(repo)
-	if entries, _ := os.ReadDir(home); len(entries) == 0 {
+	if entries, _ := readFolder(home); len(entries) == 0 {
 		if err := os.Remove(home); err == nil {
-			if err := confirmForkDirectoryEntry(home); err != nil {
+			if err := confirmForkHomeEntry(home); err != nil {
 				return fmt.Errorf("confirm empty fork home removal: %w", err)
 			}
 		}

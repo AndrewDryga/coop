@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // Suffix names the sibling directory that holds a repo's forks.
@@ -74,7 +75,7 @@ func Pin(path string) (*os.File, os.FileInfo, error) {
 	if !entry.IsDir() || entry.Mode()&os.ModeSymlink != 0 {
 		return nil, nil, errors.New("workspace is not a directory")
 	}
-	handle, err := os.Open(path)
+	handle, err := OpenFolder(path, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -120,10 +121,34 @@ func ValidName(name string) bool {
 	return !Reserved(name) && ValidExistingName(name)
 }
 
+// OpenFolder opens the folder at path without waiting: a box can plant a FIFO in a folder's place in
+// the forks tree, where a plain open would block until something writes to it, freezing coop fork
+// ls, stop, merge and coop tasks watch. O_DIRECTORY and O_NONBLOCK fail on anything that is not a
+// folder at once, and, unless follow, O_NOFOLLOW refuses a link in its place.
+func OpenFolder(path string, follow bool) (*os.File, error) {
+	flags := os.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NONBLOCK
+	if !follow {
+		flags |= syscall.O_NOFOLLOW
+	}
+	return os.OpenFile(path, flags, 0)
+}
+
+// readFolder is os.ReadDir through OpenFolder, refusing a link: the entries in name order.
+func readFolder(path string) ([]os.DirEntry, error) {
+	dir, err := OpenFolder(path, false)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, err
+}
+
 // Names lists the forks of repo (subdirectories of the forks home, skipping
 // the hidden state dir).
 func Names(repo string) ([]string, error) {
-	entries, err := os.ReadDir(Home(repo))
+	entries, err := readFolder(Home(repo))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -151,7 +176,7 @@ func LifecycleNames(repo string) ([]string, error) {
 	for _, name := range names {
 		seen[name] = true
 	}
-	entries, err := os.ReadDir(StateDir(repo))
+	entries, err := readFolder(StateDir(repo))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read fork lifecycle root %s: %w", StateDir(repo), err)
 	}

@@ -41,6 +41,11 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **A FIFO put in the forks folder no longer freezes `coop fork` commands.** An agent can write the
+  folder that holds a project's forks, and a FIFO or link put where `.coop` or the forks folder
+  belongs made `coop fork ls`, `stop` and `merge` wait forever, or read another folder. Coop now
+  opens those folders without waiting and refuses a link, so the command stops with an error.
+
 - **A fork worker started in a container is no longer judged dead by the host.** On Linux, Coop
   identified a process by its pid and start time, and a pid means something only in the PID
   namespace it was read in. So a Coop on the host reading a record that a Coop in a container wrote
