@@ -1091,3 +1091,45 @@ func TestForkRmKeepsSubmoduleWork(t *testing.T) {
 		}
 	}
 }
+
+// A fork with only leftover state asks like every other destroy gate: a capitalised question, and
+// one blank line after it is answered (none with --yes, which asks nothing).
+func TestForkRmLeftoverStateQuestion(t *testing.T) {
+	for _, tc := range []struct{ answer, want string }{
+		{"", "✓ Removed leftover state for fork a\n"},
+		{"y", "Remove orphaned fork state a? [y/N] y\n\n✓ Removed leftover state for fork a\n"},
+	} {
+		repo := initRepo(t)
+		ws, err := forkspace.Setup(repo, "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		unlock, err := forkspace.LockState(repo, "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = forkspace.EnsureGenerationLocked(repo, "a")
+		unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(ws); err != nil {
+			t.Fatal(err)
+		}
+		c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+		args := []string{"a"}
+		if tc.answer == "" {
+			args = append(args, "--yes")
+		} else {
+			c.askDelete = func(question string) bool {
+				fmt.Fprintf(os.Stderr, "%s [y/N] %s\n", question, tc.answer)
+				return true
+			}
+		}
+		var code int
+		stderr := captureStderr(t, func() { code, err = c.ForkRm(args) })
+		if code != 0 || err != nil || stderr != tc.want {
+			t.Errorf("ForkRm(%s) = (%d, %v), printed %q, want %q", strings.Join(args, " "), code, err, stderr, tc.want)
+		}
+	}
+}

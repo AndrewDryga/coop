@@ -279,8 +279,11 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		if !orphaned {
 			return -1, fmt.Errorf("no such fork: %s", name)
 		}
-		if err := ui.DestroyGate("remove orphaned fork state "+name, hasYes(args)); err != nil {
+		if err := c.destroyGate("Remove orphaned fork state "+name, hasYes(args)); err != nil {
 			return 2, err
+		}
+		if !hasYes(args) {
+			ui.Note("") // an answered question is a section of its own; --yes asked nothing
 		}
 		unlock, err := forkspace.LockState(repo, name)
 		if err != nil {
