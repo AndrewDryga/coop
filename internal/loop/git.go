@@ -39,6 +39,7 @@ func gitRawOutErr(dir string, args ...string) (string, error) {
 	}
 	out, err := cmd.Output()
 	if err != nil {
+		err = forkspace.GitStalled(cmd, err)
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			if detail := strings.TrimSpace(string(exitErr.Stderr)); detail != "" {

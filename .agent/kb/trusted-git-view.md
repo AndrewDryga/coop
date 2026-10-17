@@ -214,7 +214,19 @@ views; remote tag lookup uses fresh private metadata and an explicit workflow-ow
 no checkout config or origin resolution. Test-only Git setup is outside the source check. This source check is a guard
 against accidental bypass, not a proof about arbitrary shell programs or mutations to exec.Cmd.
 
+**Every host git command has an end.** Git opens a repository's index, refs and objects with
+blocking opens, and a FIFO a box puts at one (`.git/packed-refs` held git 2.39's `update-ref`)
+holds git forever, while many callers pass `context.Background()`. `boundedGitCommand`, the one
+constructor behind `TrustedGitCommand` and `GlobalGitConfig`, stops a command whose context sets no
+deadline at `gitStallLimit` (15 minutes); `GitStalled(cmd, err)` turns that into "git did not
+finish in <dir> within ..." and the central helpers (forkctl, cli, tasks and loop `git.go`) pass
+errors through it. A command a person sees (stdin or stdout the terminal: a pager, a signing
+prompt) is left to run. `GlobalGitConfig` reads `git config --global` from `/` with a git dir that
+cannot exist, so it never searches a box's repository from coop's working folder.
+
 ## Changelog
+- 2026-10-18 — host git commands without a deadline stop at gitStallLimit; global config reads go
+  through GlobalGitConfig (task 2026-10-17-bound-stalls-in-the-git-commands-coop-runs-on-bo).
 - 2026-10-17 — GitCommand's no-repository fallback runs git with a git dir that cannot exist, so git
   never searches (task 2026-10-17-stop-gitcommand-s-plain-git-fallback-from-findin).
 - 2026-10-17 — `GitRefCommand` refuses the climb too (`checkRefRepository`): `gitDirsOf`'s

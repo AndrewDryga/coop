@@ -38,6 +38,7 @@ func gitRawOutErr(dir string, args ...string) (string, error) {
 	}
 	out, err := cmd.Output()
 	if err != nil {
+		err = forkspace.GitStalled(cmd, err)
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			if detail := strings.TrimSpace(string(exitErr.Stderr)); detail != "" {
@@ -55,7 +56,7 @@ func gitRun(dir string, args ...string) error {
 	if err != nil {
 		return err
 	}
-	return cmd.Run()
+	return forkspace.GitStalled(cmd, cmd.Run())
 }
 
 // gitInteractive runs a hardened git command wired to the real stdio (a diff to the terminal, a
@@ -91,13 +92,7 @@ func gitSign(dir string, args ...string) error {
 // from: your core.editor, your global diff.tool. The repo's own .git/config is agent-writable, so
 // reading these from it would let a poisoned repo redirect coop to run or exfiltrate whatever it
 // names. A value only in repo config is treated as unset (fail closed).
-func gitGlobalOut(args ...string) string {
-	out, err := exec.Command("git", append([]string{"config", "--global"}, args...)...).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
+func gitGlobalOut(args ...string) string { return forkspace.GlobalGitConfig(args...) }
 
 func gitBranch(dir string) string { return gitOut(dir, "rev-parse", "--abbrev-ref", "HEAD") }
 

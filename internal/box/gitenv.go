@@ -3,12 +3,12 @@ package box
 import (
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 // prepareCommitMsgHook stamps the two trailers a box commit must carry, from git config values the
@@ -56,13 +56,7 @@ const (
 
 // hostGitGlobal reads a value from the host's GLOBAL git config (~/.gitconfig), or
 // "" if unset or git is unavailable.
-func hostGitGlobal(args ...string) string {
-	out, err := exec.Command("git", append([]string{"config", "--global"}, args...)...).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
+func hostGitGlobal(args ...string) string { return forkspace.GlobalGitConfig(args...) }
 
 // buildGitConfig renders a curated ~/.gitconfig for the box: the given identity
 // (omitted when empty) plus signing turned off — the box holds no GPG/SSH key, so a

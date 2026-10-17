@@ -248,17 +248,7 @@ func gitConfigContext(ctx context.Context, dir, key string) (string, bool, error
 // from. The repo's own .git/config is agent-writable, so reading these from it would let a poisoned
 // repo redirect coop to run or exfiltrate whatever it names. Returns "" when unset or git is
 // unavailable.
-func gitGlobalOut(args ...string) string {
-	return gitGlobalOutContext(context.Background(), args...)
-}
-
-func gitGlobalOutContext(ctx context.Context, args ...string) string {
-	out, err := exec.CommandContext(ctx, "git", append([]string{"config", "--global"}, args...)...).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
+func gitGlobalOut(args ...string) string { return GlobalGitConfig(args...) }
 
 // WantsSigning reports whether you sign commits (commit.gpgsign=true in your git
 // config), so a fork's unsigned box commits can be signed with your key on land.

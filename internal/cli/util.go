@@ -135,6 +135,7 @@ func gitOutErr(dir string, args ...string) (string, error) {
 	}
 	out, err := cmd.Output()
 	if err != nil {
+		err = forkspace.GitStalled(cmd, err)
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			if detail := strings.TrimSpace(string(exitErr.Stderr)); detail != "" {
@@ -153,7 +154,8 @@ func gitOutputBytes(dir string, args ...string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return cmd.Output()
+	out, err := cmd.Output()
+	return out, forkspace.GitStalled(cmd, err)
 }
 
 // gitRun runs `git -C dir <args>` hardened, for effect, returning its error.
@@ -162,7 +164,7 @@ func gitRun(dir string, args ...string) error {
 	if err != nil {
 		return err
 	}
-	return cmd.Run()
+	return forkspace.GitStalled(cmd, cmd.Run())
 }
 
 // gitSign runs a hardened git command (like a rebase with signing), wiring Stdin

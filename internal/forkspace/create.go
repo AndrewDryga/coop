@@ -162,7 +162,7 @@ func propagateGitEnvContext(ctx context.Context, repo, ws string) error {
 	// Read core.excludesfile from your GLOBAL config, never the agent-writable repo: a poisoned
 	// repo could otherwise point it at a host secret (e.g. ~/.ssh/id_rsa) and we'd copy that file's
 	// content into the fork the agent reads. `--path` expands a leading ~ in the configured path.
-	if gi := gitGlobalOutContext(ctx, "--path", "core.excludesfile"); gi != "" {
+	if gi := GlobalGitConfig("--path", "core.excludesfile"); gi != "" {
 		if data, err := os.ReadFile(gi); err == nil && len(data) > 0 {
 			excl := filepath.Join(ws, ".git", "info", "exclude")
 			// Pinned clones disable templates, so Git has not created info/ yet.

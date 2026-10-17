@@ -41,6 +41,11 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **A stuck git command no longer hangs Coop forever.** Coop runs git on repositories an agent can
+  write, and a FIFO put in a repository's `.git` makes git wait forever. Coop now stops any git
+  command that runs longer than 15 minutes and says which repository it stalled in. Commands you
+  interact with, such as a pager or a signing prompt, are not stopped.
+
 - **Leftover containers of finished remote sessions are cleaned up.** A session run's credential
   helper (`coop-native-*`) could outlive the run, and since the run's workspace was gone, no cleanup
   ever reached it. Coop's sweep now removes a session run's leftover containers from any project,

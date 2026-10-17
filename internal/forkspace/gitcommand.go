@@ -2,11 +2,35 @@ package forkspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 )
+
+// gitStallLimit bounds a git command whose caller set no deadline. Git opens the index, refs and
+// objects of a repository a box can write with blocking opens, and a FIFO a box puts at one holds
+// git until something writes to it, which is never. The longest host git run, a clone or fsck of a
+// large repository, finishes well inside it.
+var gitStallLimit = 15 * time.Minute
+
+// gitStalls holds the commands stopped at gitStallLimit, by command, until GitStalled reads them:
+// only stopped ones, so it stays as small as the stalls are rare.
+var gitStalls sync.Map
+
+// GitStalled is err, or, for a cmd this package stopped at its time limit, a plain refusal naming
+// the repository it was run in. Callers that report git's failure pass its error through it.
+func GitStalled(cmd *exec.Cmd, err error) error {
+	dir, stalled := gitStalls.LoadAndDelete(cmd)
+	if !stalled || err == nil {
+		return err
+	}
+	return fmt.Errorf("git did not finish in %s within %s, so Coop stopped it: a file in its .git may be a FIFO or on a disk that does not answer: %w", dir, gitStallLimit, err)
+}
 
 // TrustedGitCommand runs Git with metadata the caller already owns (a view or a
 // private snapshot). It preserves that metadata's environment and index. Ordinary
@@ -22,12 +46,53 @@ func TrustedGitCommand(ctx context.Context, dir string, env []string, args ...st
 		full = append(full, "-C", dir)
 	}
 	full = append(full, args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd := boundedGitCommand(ctx, dir, full...)
 	cmd.Env = env
 	if err != nil {
 		cmd.Err = err
 	}
 	return cmd
+}
+
+// boundedGitCommand is exec.CommandContext for git, stopped at gitStallLimit when ctx sets no
+// deadline of its own; GitStalled then names dir in the error.
+func boundedGitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	var stop context.CancelFunc
+	if _, bounded := ctx.Deadline(); !bounded {
+		ctx, stop = context.WithTimeout(ctx, gitStallLimit)
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	if stop != nil {
+		cmd.Cancel = func() error {
+			stop()
+			// A person at the terminal decides how long a command they see takes, a pager or a
+			// signing prompt: it runs on, and its own exit status stands.
+			if cmd.Stdin == os.Stdin || cmd.Stdout == os.Stdout {
+				return os.ErrProcessDone
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				gitStalls.Store(cmd, dir)
+			}
+			return cmd.Process.Kill()
+		}
+	}
+	return cmd
+}
+
+// GlobalGitConfig reads the host user's GLOBAL git config (`git config --global <args>`), or ""
+// when it is unset or cannot be read: the one scope an agent cannot write, for every value coop
+// reads and then executes or opens. Git starts with a git dir that cannot exist, so it never looks
+// for a repository from coop's working folder, which may be a box's, where a FIFO at .git/HEAD
+// would hold it; and it is stopped at gitStallLimit.
+func GlobalGitConfig(args ...string) string {
+	cmd := boundedGitCommand(context.Background(), "", append([]string{"config", "--global"}, args...)...)
+	cmd.Dir = "/"
+	cmd.Env = append(withoutGitEnv(os.Environ()), "GIT_DIR="+noGitDir, "GIT_CEILING_DIRECTORIES=/")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func nonRecursiveGitArgs(args []string) ([]string, error) {

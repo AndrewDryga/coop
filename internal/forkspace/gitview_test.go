@@ -8,9 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func viewTestRepo(t *testing.T) (string, func(...string)) {
@@ -498,5 +501,32 @@ func TestGitCommandOutsideARepositoryNeverFindsALaterGit(t *testing.T) {
 	_, _ = hash.CombinedOutput()
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("host git ran the planted filter driver: %v", err)
+	}
+}
+
+// Git opens a repository's refs, index and objects with blocking opens, so a FIFO a box puts at
+// .git/packed-refs holds a host git command forever. A command whose caller set no deadline is
+// stopped at the limit, and GitStalled names the repository it stalled in.
+func TestGitCommandsStopAtTheStallLimitAndSaySo(t *testing.T) {
+	defer func(saved time.Duration) { gitStallLimit = saved }(gitStallLimit)
+	gitStallLimit = time.Second
+	repo, _ := gitrepo.NewCommitted(t)
+	if err := os.Remove(filepath.Join(repo, ".git", "packed-refs")); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(repo, ".git", "packed-refs"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := GitRefCommand(context.Background(), repo, "update-ref", "refs/heads/stalled", "HEAD")
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	select {
+	case err := <-done:
+		err = GitStalled(cmd, err)
+		if err == nil || !strings.Contains(err.Error(), "git did not finish in "+repo) || !strings.Contains(err.Error(), "FIFO") {
+			t.Fatalf("stalled git = %v, want the plain refusal naming %s", err, repo)
+		}
+	case <-time.After(wait.Deadline):
+		t.Fatal("git waited on the FIFO past the stall limit")
 	}
 }
