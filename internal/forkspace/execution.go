@@ -598,12 +598,6 @@ func executionsInRegistry(registry string) ([]ExecutionObservation, []error) {
 	var observations []ExecutionObservation
 	var problems []error
 	for _, entry := range entries {
-		// Builds of September 15 to 23, 2026 kept the service-launch lock here, beside the records.
-		// This skip stays until the owner has removed those old-layout folders; the task
-		// 2026-10-17-drop-the-old-service-launch-lock-skip-after-the drops it.
-		if entry.Name() == serviceLaunchLockName {
-			continue
-		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			problems = append(problems, fmt.Errorf("%s: unsupported project execution registry entry", filepath.Join(registry, entry.Name())))
 			continue

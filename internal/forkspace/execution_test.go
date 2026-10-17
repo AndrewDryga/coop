@@ -312,9 +312,9 @@ func TestExecutionRegistryRefusesATestBinaryWithoutItsOwnRoot(t *testing.T) {
 }
 
 // Only records belong in a registry, and anything else is reported with its path, so whoever
-// reads the problem knows which file to remove. The one exception is the lock file that builds of
-// September 2026 kept there: it is skipped until the owner has removed those old-layout folders.
-func TestExecutionRegistryReportsAStrayEntryByPathButSkipsTheOldLock(t *testing.T) {
+// reads the problem knows which file to remove. That includes the lock file that builds of
+// September 2026 kept there, which docs/session-api.md tells a worker's operator how to remove.
+func TestExecutionRegistryReportsEveryStrayEntryByPath(t *testing.T) {
 	t.Setenv(TestExecutionRegistryRootEnv, t.TempDir())
 	repo := t.TempDir()
 	registries, err := ExecutionRegistryDirs(repo)
@@ -325,13 +325,20 @@ func TestExecutionRegistryReportsAStrayEntryByPathButSkipsTheOldLock(t *testing.
 	if err := os.MkdirAll(fallback, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	stray := filepath.Join(fallback, "leftover.tmp")
-	for _, path := range []string{stray, filepath.Join(fallback, ".service-launch.lock")} {
+	strays := []string{filepath.Join(fallback, ".service-launch.lock"), filepath.Join(fallback, "leftover.tmp")}
+	for _, path := range strays {
 		if err := os.WriteFile(path, nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, problems := Executions(repo); len(problems) != 1 || !strings.Contains(problems[0].Error(), stray) {
-		t.Fatalf("problems = %v; want only one, naming %s", problems, stray)
+	_, problems := Executions(repo)
+	if len(problems) != len(strays) {
+		t.Fatalf("problems = %v; want one per stray entry %v", problems, strays)
+	}
+	report := errors.Join(problems...).Error() // the directory lists entries in no fixed order
+	for _, stray := range strays {
+		if !strings.Contains(report, stray) {
+			t.Errorf("problems = %v; want one naming %s", problems, stray)
+		}
 	}
 }

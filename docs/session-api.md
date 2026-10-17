@@ -191,6 +191,17 @@ holds the state lock shared, so a service can't start and convert the data while
 refuses to read while a service owns the state directory, because only a stopped service's data
 holds still.
 
+Only a worker that ran a development build of coop's `main` branch from 2026-09-15 to 2026-09-23
+needs one more step; no release wrote these files. Those builds left a `.service-launch.lock` in
+each folder of the execution registry, and current builds refuse to launch in the repositories
+those folders belong to, naming the file as an unsupported registry entry. With the worker
+stopped, delete the files and the folders they leave empty, as the worker's own user:
+
+```bash
+find ~/.local/state/coop/executions/v1 -mindepth 2 -maxdepth 2 -type f -name .service-launch.lock -delete
+find ~/.local/state/coop/executions/v1 -mindepth 1 -maxdepth 1 -type d -empty -delete
+```
+
 ### Session inspection evidence
 
 Your controller may ask a worker for one bounded, versioned account of a session the worker hosts.

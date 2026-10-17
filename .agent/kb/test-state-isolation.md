@@ -85,18 +85,20 @@ folder shares the parent's stubs, and the parent reports. The tagged suites buil
 (`internal/box/reap.go`) removes `coop-test-state-*` entries older than an hour, and the
 `coop-test-task-leases-*` and `coop-gitview-*` folders that earlier builds' test binaries made for
 each process; a test binary that runs past an hour while a real coop sweeps could lose its folder.
-Registries report any non-record entry with its full path, except `.service-launch.lock`: builds of
-September 15 to 23, 2026 kept that lock in each `<sha256>` registry folder (29,648 on one Mac, and
-on Ryker workers that ran those builds), and reporting it would make filtered launches, `coop up`,
-fork changes and ACP cleanup refuse in each of those repositories. `executionsInRegistry` skips that
-one name until the owner has removed those old-layout folders; task
-2026-10-17-drop-the-old-service-launch-lock-skip-after-the holds the cleanup and then drops the skip.
+Registries report any non-record entry with its full path, and that refusal stops filtered launches,
+`coop up`, fork changes and ACP cleanup in the repository. That includes the `.service-launch.lock`
+that builds of September 15 to 23, 2026 kept in each `<sha256>` registry folder: 29,648 on one Mac
+and one on a Ryker worker were removed on 2026-10-17, and docs/session-api.md tells an operator how
+to remove any left. The current locks in `service-locks/` are never removed either (62,230 on that
+Mac, about 5,400 a day); task 2026-10-17-stop-service-launch-lock-files-piling-up-in-the.
 
 **Proving it.** Run the tests under `sandbox-exec` with a profile that denies `file-write*` on
 the two real roots, then read the denials with `/usr/bin/log show --predicate 'sender == "Sandbox"'`.
 Nothing reaches the real folders, and every attempted write is named with its process.
 
 ## Changelog
+- 2026-10-17 — the old-layout `.service-launch.lock` skip is gone after the owner-approved cleanup;
+  the still-growing `service-locks/` folder is queued.
 - 2026-10-17 — why Isolate leaves TMPDIR alone: with TMPDIR as long as one inside the state folder,
   `TestIsolatedMountRefusesSocketsAndKernelSources` could not bind its socket; with the real one it
   passes. Box's source-copy tests pin their own with `pinTemp`.
