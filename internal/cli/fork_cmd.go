@@ -459,12 +459,13 @@ func (a *app) forkCreate(args []string) (int, error) {
 		}
 		fa.tasks = abs
 	}
-	// Check each peer's login before --fresh stops or recreates anything and before any image or
-	// clone work, so a peer that cannot run never costs a fork: the check needs only the fork's agent
-	// and its rotation, both known by now (a fork with no agent is refused below). A detached start
-	// forwards the raw values, and its worker checks them again.
+	// Check the loop's own login, and each peer's, before --fresh stops or recreates anything and
+	// before any image or clone work, so an agent that cannot run never costs a fork: the check needs
+	// only the fork's agent and its rotation, both known by now (a fork with no agent is refused
+	// below). A detached start checks here, in the parent, so the refusal is printed where it was
+	// typed; it forwards the raw values, and its worker checks them again.
 	var peers []agents.Target
-	if len(fa.peers) > 0 && fa.agent != "" {
+	if fa.loop && fa.agent != "" {
 		ladder, err := oneOffLadder(fa.model, fa.credential, fa.effort)
 		if err != nil {
 			return 2, err
@@ -478,8 +479,10 @@ func (a *app) forkCreate(args []string) (int, error) {
 		if err != nil {
 			return -1, err
 		}
-		if peers, err = a.resolvePeersForLeads("coop fork "+fa.name, fa.peers, rot.Targets()); err != nil {
-			return refusalExit(err), err
+		if len(fa.peers) > 0 {
+			if peers, err = a.resolvePeersForLeads("coop fork "+fa.name, fa.peers, rot.Targets()); err != nil {
+				return refusalExit(err), err
+			}
 		}
 	}
 	// --fresh recreates an existing fork by destroying it first — run the same guard `fork rm` uses so

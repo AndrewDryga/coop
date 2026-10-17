@@ -41,6 +41,11 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **A fork loop whose agent is not signed in stops before it makes the fork.** `coop fork <name>
+  --loop` checked its own agent's sign-in only after cloning the fork, and with `-d` the error
+  showed only in the fork's log. It now stops with the sign-in message before anything is made,
+  and with `-d` prints it in your terminal.
+
 - **A fork that changes a `.coopignore` needs `--force` to merge.** A `.coopignore` decides what
   every later box is shown, and a fork could edit one to drop a rule and merge without a word,
   after which the next boxes saw the files that rule hid. `coop fork merge` now names any

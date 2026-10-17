@@ -536,6 +536,26 @@ func TestForkFreshChecksPeersBeforeConfirmation(t *testing.T) {
 	}
 }
 
+// A fork loop whose own agent cannot sign in is refused before anything of the fork exists, in the
+// foreground and with -d, whose parent prints the refusal instead of leaving it to the worker's log.
+func TestForkLoopChecksItsOwnLoginBeforeTheFork(t *testing.T) {
+	for _, args := range [][]string{{"perf", "claude", "--loop"}, {"perf", "claude", "--loop", "-d"}} {
+		repo := initRepo(t)
+		if err := os.MkdirAll(filepath.Join(repo, ".agent", "tasks"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
+		recorder := filepath.Join(t.TempDir(), "runtime-args")
+		a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+		if code, err := a.forkCreate(args); code != -1 || err == nil || !strings.HasPrefix(err.Error(), "no signed-in account for claude") {
+			t.Fatalf("coop fork %s with no Claude login = (%d, %v), want the sign-in refusal", strings.Join(args, " "), code, err)
+		}
+		if forks := filepath.Dir(forkspace.Workspace(repo, "perf")); pathExists(forks) || pathExists(recorder) {
+			t.Fatalf("coop fork %s refused after making %s or reaching the runtime", strings.Join(args, " "), forks)
+		}
+	}
+}
+
 func TestForkFreshConfirmsBeforeForcedStop(t *testing.T) {
 	repo := initRepo(t)
 	ws, err := forkspace.Setup(repo, "perf")
