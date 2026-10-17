@@ -2,7 +2,7 @@
 name: command-output-tiers
 description: "Unprefixed human output, truthful progress, useful results, and readable consequences"
 scope: cli-output
-sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/box/run.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/session_cmd.go, internal/cli/models.go, internal/cli/eval_cmd.go, internal/forkctl/merge.go]
+sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/box/run.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/session_cmd.go, internal/cli/models.go, internal/cli/eval_cmd.go, internal/forkctl/merge.go, internal/forkctl/rm.go]
 check: "none"
 updated: 2026-10-17
 ---
@@ -72,6 +72,11 @@ is not proof the live helpers conform; regression tests must exercise all output
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-10-17 — `coop fork rm <name> --yes` now guards its blank line before `✓ Deleted fork` the
+  same way, keeping it when a forced stop printed its own lines first;
+  TestForkRmYesPrintsOneBlankLineBetweenSections pins both. `coop fork <name> --fresh --yes` was
+  checked: its preview's blank line is followed directly by `Creating fork: <name>`, one blank line
+  between sections. The interactive `--fresh` misses the blank after its answered question (queued).
 - 2026-10-17 — `coop fork merge --yes` printed two blank lines where its delete question would
   stand: before `✓ Deleted fork`, and before the first fork of `--all`. Fixed both with the
   `if !yes` blank line named above; TestForkMergeYesPrintsOneBlankLineBetweenSections pins the

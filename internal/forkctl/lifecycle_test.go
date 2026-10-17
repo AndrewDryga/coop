@@ -313,6 +313,73 @@ func TestForkRmGate(t *testing.T) {
 	}
 }
 
+// At a terminal the delete confirmation is a section of its own, with a blank line on either side.
+// --yes asks nothing, so those two blank lines must not stack: `coop fork rm --yes` keeps exactly
+// one blank line between the preview and the result. A forced stop prints its own lines before the
+// result, and one blank line still separates them.
+func TestForkRmYesPrintsOneBlankLineBetweenSections(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		running bool // a leftover worker record, so --force stops the fork before deleting it
+		want    string
+	}{
+		{name: "one fork", want: "" +
+			"Delete fork \"a\"\n" +
+			"\n" +
+			"  <ws>\n" +
+			"\n" +
+			"Will be permanently deleted:\n" +
+			"  - Service containers, Docker volumes, and their stored data.\n" +
+			"\n" +
+			"✓ Deleted fork a\n"},
+		{name: "a running fork with --force", running: true, want: "" +
+			"Delete fork \"a\"\n" +
+			"\n" +
+			"  <ws>\n" +
+			"\n" +
+			"Coop will:\n" +
+			"  - Stop its running worker.\n" +
+			"\n" +
+			"Will be permanently deleted:\n" +
+			"  - Service containers, Docker volumes, and their stored data.\n" +
+			"\n" +
+			"Stopping fork a\n" +
+			"\n" +
+			"✓ Fork a stopped\n" +
+			"\n" +
+			"✓ Deleted fork a\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initRepo(t)
+			ws, err := forkspace.Setup(repo, "a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"a", "--yes"}
+			if tc.running {
+				if err := forkspace.WriteWorkerState(repo, "a", deadWorker); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--force")
+			}
+			// A runtime that does nothing, so only rm's and stop's own lines reach stderr.
+			runtimeCLI := filepath.Join(t.TempDir(), "runtime")
+			if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: runtimeCLI}}
+			var code int
+			stderr := captureStderr(t, func() { code, err = c.ForkRm(args) })
+			if code != 0 || err != nil {
+				t.Fatalf("ForkRm(a --yes) = (%d, %v), want (0, nil)\n%s", code, err, stderr)
+			}
+			if got := strings.ReplaceAll(stderr, ws, "<ws>"); got != tc.want {
+				t.Errorf("coop fork rm %s printed:\n%q\nwant:\n%q", strings.Join(args, " "), got, tc.want)
+			}
+		})
+	}
+}
+
 func TestForkRmConfirmsBeforeForcedStop(t *testing.T) {
 	repo := initRepo(t)
 	ws, err := forkspace.Setup(repo, "perf")

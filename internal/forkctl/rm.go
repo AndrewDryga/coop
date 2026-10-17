@@ -407,7 +407,11 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			return -1, fmt.Errorf("remove fork %s generation: %w", name, err)
 		}
 	}
-	ui.Note("")
+	// --yes asked nothing, so there is no answered question to separate from the result, unless a
+	// forced stop printed its own lines in between.
+	if !hasYes(args) || needsStop {
+		ui.Note("")
+	}
 	ui.OK("Deleted fork %s", name)
 	return 0, nil
 }
