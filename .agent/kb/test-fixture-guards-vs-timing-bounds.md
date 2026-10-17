@@ -83,6 +83,13 @@ reply and publish a marker; the unchanged eight-second freeze starts after that 
 this ordering, a small reply can drain before the first process listing. Failure cleanup kills
 the exact group and joins the command's output writer before inspecting its capture.
 
+**macOS's /dev/fd fails now and then under concurrent lookups.** stat(2) on `/dev/stdin` (devfs
+`/dev/fd/0`) answers "Bad file descriptor" for an open descriptor every few thousand calls while
+many processes resolve `/dev/fd` at once, as a full `go test ./...` makes them do (a CPU hog alone
+does not). stat on the descriptor itself never goes through devfs: `stat -c %i -` (GNU) or
+`stat -f %i` with no operand (BSD) reads stdin's inode, and `stat … <&8` another descriptor's.
+The consult and delegate lost-EOF stubs find their FIFO that way.
+
 **A persisted receipt is not a joined writer.** An asynchronous session operation records its
 failure before writing its diagnostic. Observing that terminal receipt does not make an injected
 `bytes.Buffer` safe to read or ensure the log exists yet. Stop and join the service before reading
@@ -114,6 +121,10 @@ on failure and reap its resident group on every assertion path. The editor-stdin
 stable-leader assertions remain unchanged.
 
 ## Changelog
+- 2026-10-17 — macOS's /dev/fd answers stat with EBADF now and then under concurrent lookups
+  (reproduced outside coop: 4 to 6 in 9,600 stats from 32 shells); the consult and delegate lost-EOF
+  stubs stat their stdin descriptor directly instead (task
+  2026-10-17-make-the-consult-wrapper-capture-tests-hold-unde).
 - 2026-10-17 — the Google token cancellation test read its helper's pid file empty in 17 of 200
   runs: `wait.ForFile` saw the file the redirection had just created. The helper now writes a
   ready marker after the pid and the test waits for it; 200 plain and 50 race runs green, with the

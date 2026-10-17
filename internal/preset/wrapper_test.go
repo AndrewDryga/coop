@@ -939,14 +939,16 @@ func TestDelegateWrapperRedeliversALostCaptureEOF(t *testing.T) {
 	h := newDelegateHarness(t)
 	h.stub("gemini", "echo "+reply+"; echo provider-diagnostics >&2")
 	// A capture reads one dd block at a time and stops on an empty one. The drain finds its own
-	// FIFO by inode: macOS reports an open FIFO on a different device than its path.
+	// FIFO by inode: macOS reports an open FIFO on a different device than its path. Its stdin's
+	// inode comes from stat on the descriptor itself, not through /dev/stdin, which macOS's /dev/fd
+	// now and then answers with "Bad file descriptor" under concurrent lookups.
 	dd := `#!/bin/sh
 /bin/dd "$@" || exit
 chunk=
 for arg do case $arg in of=*) chunk=${arg#of=} ;; esac; done
 [ -n "$chunk" ] && [ ! -s "$chunk" ] || exit 0
 inode() { stat -L -c %i "$1" 2>/dev/null || stat -L -f %i "$1"; }
-mine=$(inode /dev/stdin)
+mine=$(stat -c %i - 2>/dev/null || stat -f %i)
 for pipe in "$TMPDIR"/coop-delegate-*/provider-*-pipe-*; do
 	[ -p "$pipe" ] && [ "$(inode "$pipe")" = "$mine" ] && exec /bin/cat <"$pipe" >/dev/null
 done

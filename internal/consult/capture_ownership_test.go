@@ -159,11 +159,13 @@ func TestConsultWrapperRedeliversALostCaptureEOF(t *testing.T) {
 	writeStub(t, dir, "gemini", `printf '{"type":"message","role":"assistant","content":"`+reply+`"}\n'
 printf '{"type":"result","status":"success"}\n'`)
 	// The capture's drain is the wrapper's only bare cat; every other cat names a file. It finds
-	// its own FIFO by inode: macOS reports an open FIFO on a different device than its path.
+	// its own FIFO by inode: macOS reports an open FIFO on a different device than its path. Its
+	// stdin's inode comes from stat on the descriptor itself, not through /dev/stdin: macOS's
+	// /dev/fd now and then answers "Bad file descriptor" while many processes resolve it at once.
 	writeStub(t, dir, "cat", `[ "$#" -eq 0 ] || exec /bin/cat "$@"
 /bin/cat || exit
 inode() { stat -L -c %i "$1" 2>/dev/null || stat -L -f %i "$1"; }
-mine=$(inode /dev/stdin)
+mine=$(stat -c %i - 2>/dev/null || stat -f %i)
 for pipe in "$TMPDIR"/coop-consult-*/*pipe*; do
 	[ "$(inode "$pipe")" != "$mine" ] || exec /bin/cat <"$pipe" >/dev/null
 done
