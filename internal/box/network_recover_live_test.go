@@ -46,6 +46,9 @@ func TestKilledFilteredRunIsSettledByTheNextLaunch(t *testing.T) {
 	}
 	// Recovery reads the store where NetworkStatePath resolves, so this trial store lives there.
 	t.Setenv("XDG_STATE_HOME", filepath.Join(trial, "killed-supervisor"))
+	// A killed supervisor never closes its Docker binding, so the client folder that binding made in
+	// Coop's runfiles stays behind; a config root of the test's own keeps it out of the developer's.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	root, err := NetworkStatePath()
 	if err != nil {
 		t.Fatal(err)

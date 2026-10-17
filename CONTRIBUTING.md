@@ -102,7 +102,7 @@ These test layers apply to a source checkout.
 | Local iteration | `make check-local SCOPE=<owner>` | actual docs/rules or owner and reverse-consumer checks; unknown scope takes the broad path |
 | Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, govulncheck, unit tests under `-race` (CI also runs them plain), deterministic provider process E2E, tagged process-control races, generated docs, rules cards, maintenance tools, and comment alignment; no runtime or credentials |
 | Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork policy, ACP switching/recovery, and live-harness contracts with fixtures |
-| Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` | real box isolation, process reaping/signal forwarding, and report-only review mounts; requires Docker (or Apple `container` for doctor) |
+| Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` · `make network-runtime-e2e` | real box isolation, process reaping/signal forwarding, report-only review mounts, and filtered networking; requires Docker (or Apple `container` for doctor) |
 | Pinned clients, offline | `make native-roles-e2e` · `make skills-e2e` · `make mcp-e2e` | each pinned client's own role, skill and MCP handling, with no network, in the locked image `coop net setup` builds; no credentials or model calls |
 | Upstream compatibility | provider live targets [below](#live-provider-suites) · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
 
@@ -118,6 +118,16 @@ with `-v` and inspect its bounded, redacted trace.
 The security-critical logic is pure and unit-tested without a runtime: secret enumeration
 (`internal/box/mounts.go`) and run-arg assembly (`internal/box/run.go`). `coop doctor` proves the
 whole thing end-to-end against the real box.
+
+`make network-runtime-e2e` is the evidence behind the [network support matrix](docs/networking.md).
+It builds the locked client and gateway images, which is slow on a Docker daemon that lacks them,
+then runs real filtered boxes: allowed and refused traffic and the receipts that record it, a lost
+guard, every transport the rule grammar accepts, and the cleanup of a run whose supervisor was
+killed. `make check` never runs it, and CI doesn't run it yet. It keeps its records in a new folder
+that only you can read and prints that folder's path. Set `COOP_NETWORK_TRIAL_STATE` to an absolute
+path of a new folder, or of one only you can read, to choose the folder, but never point it at
+Coop's own network state. Its fixture container has a fixed name, so run one copy per Docker daemon
+at a time.
 
 ## Live provider suites
 

@@ -2,8 +2,8 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go]
-updated: 2026-10-16
+sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile]
+updated: 2026-10-17
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -117,9 +117,15 @@ admission stays barred. The project file spells no-network access `offline` — 
 the one place it becomes the internal `none`, with no alias (`internal/project/project.go`).
 
 Qualification has two halves. The release half is the `networkruntimee2e`-tagged suite —
-enforcement, denial, guard/collector faults, transports, credentialed providers — and it is what the
-published support matrix rests on. The per-host half is `SetupNetwork`: it builds the pinned
-gateway and locked client images for the bound daemon, runs ONE smoke through the ordinary launch
+enforcement and denial evidence, a lost guard, every transport the grammar accepts and a killed
+run's recovery — and it is what the published support matrix rests on. `make network-runtime-e2e`
+runs it on Docker against a fresh owner-only store (or the one `COOP_NETWORK_TRIAL_STATE` names); it
+is never in `make check`, CI does not run it yet (backlog
+2026-10-15-run-the-network-runtime-test-suite-in-ci), and its fixture container has a fixed name, so
+one run per daemon. Credentialed providers through the gateway are the live
+`make provider-network-live-e2e-all`.
+The per-host half is `SetupNetwork`: it builds the pinned gateway and locked client images for the
+bound daemon, runs ONE smoke through the ordinary launch
 engine (allowed TLS with no proxy variables; a denied name, a raw IP, metadata and the resolver all
 refused — `smokeScript`, `setupChecks`), and records the runtime binding, image digests, contract
 and receipt. It is machinery, not a decision, so an ordinary filtered launch runs it itself when
@@ -318,6 +324,9 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-10-17 — the release suite has a runner, `make network-runtime-e2e`, and the qualification
+  paragraph says what it covers: it never had a collector-fault or credentialed-provider case (those
+  providers are the live network suite). Verified by full runs on Docker 29.8.2 (OrbStack, arm64).
 - 2026-10-16 — Docker's embedded resolver: a box's lookup on its high port left the host, so the
   gateway now refuses the agent's 127.0.0.11 as a protected address; the live case fails on any
   reachable port there and sniffs the engine namespace; services rely on a CVE-2024-29018-fixed

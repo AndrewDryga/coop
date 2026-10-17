@@ -326,6 +326,14 @@ box-runtime-e2e: ## Init/reaping, signal, and entrypoint descendant-supervision 
 	@test -n "$$COOP_RUNTIME" || { echo 'COOP_RUNTIME is required (for example: COOP_RUNTIME=docker make box-runtime-e2e)'; exit 2; }
 	@go test -tags boxruntimee2e -run '^TestRuntime(Init|Entrypoint|Compose)' -count=1 -v ./internal/box/
 
+# The suite the published network support matrix rests on. It stays out of `check` because it needs
+# Docker. Its fixture container has a fixed name, so two runs on one daemon break each other.
+# Records go to a fresh owner-only folder or the one COOP_NETWORK_TRIAL_STATE names, never Coop's
+# own store.
+network-runtime-e2e: ## Filtered-network enforcement, transports and killed-run recovery (needs Docker; builds the image pair)
+	@state="$${COOP_NETWORK_TRIAL_STATE:-$$(mktemp -d)}" || exit 1; echo "network trial records: $$state"; \
+	COOP_NETWORK_TRIAL_STATE="$$state" go test -tags networkruntimee2e -run '^Test(RestrictedNetwork|KilledFilteredRun)' -count=1 -timeout 45m -v ./internal/box/
+
 clean: ## Remove build artifacts
 	@rm -f coop
 	@rm -rf dist
@@ -333,7 +341,7 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
+.PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e network-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: check-local bench-tools-test services-bench require-services-workspace
 .PHONY: check-static check-unit check-process check-race
