@@ -319,7 +319,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	if needsStop && !force {
 		return 1, fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or use --force)", name, name)
 	}
-	initialUnmerged, initialDirty := ForkUnmerged(repo, ws), gitDirty(ws)
+	initialUnmerged, initialDirty := ForkUnmerged(repo, ws), ForkWorktreeClean(ws) != nil
 	if err := ForkRmSafe(initialUnmerged, initialDirty, force); err != nil {
 		return 1, err
 	}
@@ -372,7 +372,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	if forkspace.NeedsStop(repo, name) {
 		return 1, fmt.Errorf("fork %q started while awaiting confirmation — stop it first: coop fork stop %s", name, name)
 	}
-	currentUnmerged, currentDirty := ForkUnmerged(repo, ws), gitDirty(ws)
+	currentUnmerged, currentDirty := ForkUnmerged(repo, ws), ForkWorktreeClean(ws) != nil
 	if currentUnmerged != initialUnmerged || currentDirty != initialDirty {
 		return 1, fmt.Errorf("fork %q Git work changed while awaiting confirmation — retry to review the new deletion impact", name)
 	}

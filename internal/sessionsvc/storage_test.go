@@ -659,3 +659,52 @@ func TestStorageLimitsValidateRejectsIncoherentBudgets(t *testing.T) {
 		}
 	}
 }
+
+func TestStorageForkDirtyIncludesNestedWork(t *testing.T) {
+	for _, mode := range []string{"clean", "tracked", "untracked", "commit", "assume unchanged", "staged only", "staged deletion"} {
+		t.Run(mode, func(t *testing.T) {
+			repo := nestedSessionSource(t)
+			workspace, err := forkspace.Setup(repo, "storage")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sessionWorkspaceGit(t, workspace, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive", "--quiet")
+			child := filepath.Join(workspace, "vendor", "child", "nested space")
+			switch mode {
+			case "tracked", "commit", "assume unchanged":
+				if mode == "assume unchanged" {
+					sessionWorkspaceGit(t, child, "update-index", "--assume-unchanged", "code")
+				}
+				sessionWorkspaceWrite(t, filepath.Join(child, "code"), "uncommitted nested work\n")
+				if mode == "commit" {
+					sessionWorkspaceGit(t, child, "add", "code")
+					sessionWorkspaceGit(t, child, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "nested history")
+				}
+			case "staged only", "staged deletion":
+				original, err := os.ReadFile(filepath.Join(child, "code"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if mode == "staged only" {
+					sessionWorkspaceWrite(t, filepath.Join(child, "code"), "staged nested work\n")
+					sessionWorkspaceGit(t, child, "add", "code")
+				} else {
+					sessionWorkspaceGit(t, child, "rm", "code")
+				}
+				if err := os.WriteFile(filepath.Join(child, "code"), original, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "untracked":
+				sessionWorkspaceWrite(t, filepath.Join(child, "new file"), "untracked work\n")
+			}
+			service := &Service{}
+			dirty, reason := service.forkIsDirty(repo, "storage")
+			if dirty != (mode != "clean") {
+				t.Fatalf("dirty=%v: %s", dirty, reason)
+			}
+			if _, err := os.Stat(child); err != nil {
+				t.Fatalf("inspection removed child: %v", err)
+			}
+		})
+	}
+}

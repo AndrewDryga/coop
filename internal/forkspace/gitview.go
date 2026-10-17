@@ -42,8 +42,9 @@ import (
 // operation's HEAD alone. A test binary must name its own root (internal/testutil/teststate does).
 
 // gitViewHardening is appended after GitHardening on every view-side command: no auto-gc or
-// maintenance (they pack refs), no pruning, no commit-graph writes, and no submodule descent (a
-// submodule's own git dir is agent-writable too).
+// maintenance (they pack refs), no pruning and no commit-graph writes. These defaults
+// alone do not prevent submodule descent: .gitmodules can override ignore settings.
+// TrustedGitCommand enforces the command-level policy for every view and snapshot.
 var gitViewHardening = []string{
 	"-c", "gc.auto=0",
 	"-c", "maintenance.auto=false",
@@ -85,20 +86,17 @@ func GitCommand(ctx context.Context, dir string, args ...string) (*exec.Cmd, err
 // GitCommandWithEnv is GitCommand with a caller-chosen base environment (extra GIT_CONFIG_*
 // entries, a private HOME); the repository-locating variables are still the view's own.
 func GitCommandWithEnv(ctx context.Context, dir string, env []string, args ...string) (*exec.Cmd, error) {
-	full := append(append(append([]string{"-C", dir}, GitHardening...), gitViewHardening...), args...)
 	_, viewEnv, err := openGitView(ctx, dir, env)
 	if errors.Is(err, errNoRepository) {
 		// Nothing to shield: with no repository above dir, git itself finds no config to read
 		// (the repository-locating variables are stripped) and reports that in its own words.
-		cmd := exec.CommandContext(ctx, "git", full...)
-		cmd.Env = withoutGitEnv(env)
+		cmd := TrustedGitCommand(ctx, dir, withoutGitEnv(env), args...)
 		return cmd, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, "git", full...)
-	cmd.Env = viewEnv
+	cmd := TrustedGitCommand(ctx, dir, viewEnv, args...)
 	return cmd, nil
 }
 
@@ -109,9 +107,10 @@ var errNoRepository = errors.New("not inside a git repository")
 // deletion of a packed ref, update-ref, a writing symbolic-ref, worktree add/remove. None of them
 // passes worktree content through a filter or diff driver; hooks are blanked by the hardening.
 func GitRefCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	full := append(append(append([]string{"-C", dir}, GitHardening...), gitViewHardening...), args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
-	cmd.Env = withoutGitEnv(os.Environ())
+	cmd := TrustedGitCommand(ctx, dir, withoutGitEnv(os.Environ()), args...)
+	if err := refOnlyGitArgs(args); err != nil {
+		cmd.Err = err
+	}
 	if err := validateIsolatedGitAccess(dir); err != nil {
 		cmd.Err = err
 	}

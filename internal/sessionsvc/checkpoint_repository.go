@@ -26,7 +26,7 @@ import (
 // streaming credential scan must see even content later deleted from history.
 func writeCheckpointRepository(ctx context.Context, workspace, base, head, tree string, env []string, output io.Writer) error {
 	command := func(args ...string) *exec.Cmd {
-		cmd := exec.CommandContext(ctx, "git", gitArgs(workspace, args)...)
+		cmd := forkspace.TrustedGitCommand(ctx, workspace, env, args...)
 		cmd.Env = env
 		return cmd
 	}

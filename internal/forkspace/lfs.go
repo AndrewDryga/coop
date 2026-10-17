@@ -157,9 +157,7 @@ func startLFSReaderAt(ctx context.Context, repository, commit string, args ...st
 	if commit != "" {
 		// Cached attributes must use the exact tree, not a later source-index snapshot.
 		// This read-tree writes only the observation's private disposable index.
-		readArgs := append(append(append([]string{"-C", repository}, GitHardening...), gitViewHardening...), "read-tree", commit)
-		index := exec.CommandContext(ctx, "git", readArgs...)
-		index.Env = command.Env
+		index := TrustedGitCommand(ctx, repository, command.Env, "read-tree", commit)
 		if err := index.Run(); err != nil {
 			return nil, err
 		}

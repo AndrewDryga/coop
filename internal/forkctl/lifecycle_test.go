@@ -1034,3 +1034,60 @@ func TestRecoverOrphanedGenerationReturnsHeldTasksOnlyWithForce(t *testing.T) {
 		t.Fatalf("orphaned generation survives: ok=%v err=%v", ok, err)
 	}
 }
+
+// Parent status intentionally does not inspect children. Both the early refusal
+// and the locked recheck must protect work two levels below that parent.
+func TestForkRmKeepsSubmoduleWork(t *testing.T) {
+	for _, mode := range []string{"tracked", "untracked"} {
+		for _, phase := range []string{"before confirmation", "under lock"} {
+			t.Run(mode+"/"+phase, func(t *testing.T) {
+				leafSource, middleSource, repo := initRepo(t), initRepo(t), initRepo(t)
+				git(t, middleSource, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", leafSource, "leaf")
+				git(t, middleSource, "commit", "-qam", "nested module")
+				git(t, repo, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", middleSource, "middle")
+				git(t, repo, "commit", "-qam", "module")
+				ws, err := forkspace.Setup(repo, "nested")
+				if err != nil {
+					t.Fatal(err)
+				}
+				git(t, ws, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive", "--quiet")
+				child := filepath.Join(ws, "middle", "leaf")
+				name := "README.md"
+				if mode == "untracked" {
+					name = "untracked.txt"
+				}
+				path := filepath.Join(child, name)
+				mutate := func() {
+					if err := os.WriteFile(path, []byte("keep child work\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					if gitDirty(ws) {
+						t.Fatal("fixture parent status already sees child work")
+					}
+				}
+
+				control := &Control{cfg: &config.Config{RepoOverride: repo}}
+
+				var code int
+				if phase == "before confirmation" {
+					mutate()
+					code, err = control.ForkRm([]string{"nested"})
+					if code != 1 || err == nil || !strings.Contains(err.Error(), "--force") {
+						t.Fatalf("child work reached confirmation: (%d, %v)", code, err)
+					}
+				} else {
+					got := runForkCommandAcrossLockedMutation(t, repo, "nested", func() (int, error) {
+						return control.ForkRm([]string{"nested", "--yes"})
+					}, mutate)
+					if got.code != 1 || got.err == nil || !strings.Contains(got.err.Error(), "Git work changed") {
+						t.Fatalf("locked recheck missed child work: (%d, %v)", got.code, got.err)
+					}
+				}
+				contents, err := os.ReadFile(path)
+				if err != nil || string(contents) != "keep child work\n" {
+					t.Fatalf("child work was lost: %q, %v", contents, err)
+				}
+			})
+		}
+	}
+}

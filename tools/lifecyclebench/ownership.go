@@ -78,7 +78,7 @@ func (b *bench) list(kind string, args ...string) (set, error) {
 	found := set{}
 	for _, filter := range ownedFilters {
 		query := append(slices.Clip(args), "--filter", filter)
-		res, err := b.command(30*time.Second, b.runtime, query...)
+		res, err := b.executeCommand(30*time.Second, b.runtime, query...)
 		if err == nil && res.code != 0 {
 			err = fmt.Errorf("%s %s exited %d: %s", b.runtime, strings.Join(query, " "), res.code, firstOf(res.stderr))
 		}
@@ -105,7 +105,7 @@ func (b *bench) labels(item string) (labels, bool, error) {
 		args = []string{"inspect", "--format", fmt.Sprintf("{{index .Config.Labels %q}}\t{{index .Config.Labels %q}}\t{{index .Config.Labels %q}}",
 			box.LabelHost, box.LabelNetworkRun, sampleLabel), name}
 	}
-	res, err := b.command(30*time.Second, b.runtime, args...)
+	res, err := b.executeCommand(30*time.Second, b.runtime, args...)
 	switch {
 	case err != nil:
 		return labels{}, false, err
@@ -213,7 +213,7 @@ func (b *bench) remove(items set) error {
 		if kind == "v" {
 			args = []string{"volume", "rm", "-f", name}
 		}
-		if _, err := b.command(60*time.Second, b.runtime, args...); err != nil {
+		if _, err := b.executeCommand(60*time.Second, b.runtime, args...); err != nil {
 			errs = append(errs, err)
 		}
 	}

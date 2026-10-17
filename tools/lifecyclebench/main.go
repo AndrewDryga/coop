@@ -148,7 +148,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	context.AfterFunc(ctx, stop)
 	code := run(ctx, os.Args[1:], &bench{
-		env: os.Environ(), command: runCommand, start: (*exec.Cmd).Start, token: newToken, log: os.Stderr,
+		env: os.Environ(), start: (*exec.Cmd).Start, token: newToken, log: os.Stderr,
 		caseTimeout: caseTimeout, goneTimeout: goneTimeout, stopSteps: stopSteps,
 	}, cases, os.Stdout)
 	stop()
@@ -310,6 +310,15 @@ type result struct {
 // every metadata probe goes through one, so a test can answer them all.
 type commandFunc func(timeout time.Duration, name string, args ...string) (result, error)
 
+// Tests may inject a command runner; production calls the constructor directly
+// so an aliased generic runner cannot hide a future Git subprocess from review.
+func (b *bench) executeCommand(timeout time.Duration, name string, args ...string) (result, error) {
+	if b.command != nil {
+		return b.command(timeout, name, args...)
+	}
+	return runCommand(timeout, name, args...)
+}
+
 func runCommand(timeout time.Duration, name string, args ...string) (result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -374,11 +383,11 @@ func round(x float64, places int) float64 {
 // selection and mount assembly all scale with the tree. A number without this is not reproducible.
 func (b *bench) describeWorkspace() map[string]any {
 	tracked := "unknown"
-	if res, err := b.command(60*time.Second, "git", "-C", b.repo, "ls-files"); err == nil && res.code == 0 {
+	if res, err := b.executeCommand(60*time.Second, "git", "-C", b.repo, "ls-files"); err == nil && res.code == 0 {
 		tracked = strconv.Itoa(strings.Count(res.stdout, "\n"))
 	}
 	head := "none"
-	if res, err := b.command(30*time.Second, "git", "-C", b.repo, "rev-parse", "--short", "HEAD"); err == nil && res.code == 0 {
+	if res, err := b.executeCommand(30*time.Second, "git", "-C", b.repo, "rev-parse", "--short", "HEAD"); err == nil && res.code == 0 {
 		head = strings.TrimSpace(res.stdout)
 	}
 	absolute, _ := filepath.Abs(b.repo)
@@ -394,28 +403,29 @@ func (b *bench) describeWorkspace() map[string]any {
 	}
 }
 
-func (b *bench) collectEnvironment() map[string]any {
-	firstLine := func(name string, args ...string) string {
-		res, err := b.command(30*time.Second, name, args...)
-		if err != nil {
-			return "unavailable"
-		}
-		text := res.stdout
-		if strings.TrimSpace(text) == "" {
-			text = res.stderr
-		}
-		if line := firstOf(text); line != "" {
-			return redact(line)
-		}
+func (b *bench) commandFirstLine(name string, args ...string) string {
+	res, err := b.executeCommand(30*time.Second, name, args...)
+	if err != nil {
 		return "unavailable"
 	}
+	text := res.stdout
+	if strings.TrimSpace(text) == "" {
+		text = res.stderr
+	}
+	if line := firstOf(text); line != "" {
+		return redact(line)
+	}
+	return "unavailable"
+}
+
+func (b *bench) collectEnvironment() map[string]any {
 
 	// The binary's OWN stamp, not the checkout's HEAD: they are routinely different, and a report
 	// that names a commit the measured binary was not built from is worse than one that admits it.
-	version := firstLine(b.coop, "version")
+	version := b.commandFirstLine(b.coop, "version")
 	memory := "unknown"
 	if runtime.GOOS == "darwin" {
-		if res, err := b.command(10*time.Second, "sysctl", "-n", "hw.memsize"); err == nil {
+		if res, err := b.executeCommand(10*time.Second, "sysctl", "-n", "hw.memsize"); err == nil {
 			if size, err := strconv.ParseInt(strings.TrimSpace(res.stdout), 10, 64); err == nil {
 				memory = fmt.Sprintf("%d GiB", size>>30)
 			}
@@ -431,7 +441,7 @@ func (b *bench) collectEnvironment() map[string]any {
 	// its own CPU and memory budget and its own clock. Best-effort, so a missing or slow runtime
 	// still leaves the samples their metadata.
 	daemon := "unknown"
-	if res, err := b.command(60*time.Second, b.runtime, "info", "--format",
+	if res, err := b.executeCommand(60*time.Second, b.runtime, "info", "--format",
 		"{{.OperatingSystem}} / {{.ServerVersion}} / {{.NCPU}} cpus / {{.MemTotal}} bytes"); err == nil &&
 		res.code == 0 && strings.TrimSpace(res.stdout) != "" {
 		daemon = redact(firstOf(res.stdout))
@@ -450,7 +460,7 @@ func (b *bench) collectEnvironment() map[string]any {
 		"coop_version":      version,
 		"binary_provenance": provenance,
 		"runtime":           b.runtime,
-		"runtime_version":   firstLine(b.runtime, "--version"),
+		"runtime_version":   b.commandFirstLine(b.runtime, "--version"),
 		"runtime_daemon":    daemon,
 		"host_os":           hostOS,
 		"host_cpus":         runtime.NumCPU(),

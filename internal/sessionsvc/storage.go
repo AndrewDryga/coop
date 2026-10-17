@@ -739,6 +739,17 @@ func (s *Service) forkIsDirty(repo, name string) (bool, string) {
 	if truncated || len(status) > 0 {
 		return true, "it holds uncommitted work"
 	}
+	// Parent status must not enter a child's box-written Git configuration.
+	// Inspect descendants through their own pinned views before allowing cleanup.
+	head, err := sessionWorkspaceCommitContext(context.Background(), workspace, "HEAD")
+	if err != nil {
+		return true, "its workspace HEAD cannot be read"
+	}
+	remaining := 1024
+	clean, err := storageGitlinksClean(context.Background(), workspace, head, 0, &remaining)
+	if err != nil || !clean {
+		return true, "a submodule holds uncommitted work or cannot be inspected"
+	}
 	return false, ""
 }
 
@@ -862,4 +873,63 @@ func (s *Service) reclaimStorageOnce(ctx context.Context) {
 	if result.SourcesPruned > 0 {
 		s.log.Info("removed staged job sources no session can still use", "sources_pruned", result.SourcesPruned)
 	}
+}
+
+// Historical forks may use ordinary .git/modules storage; companion custody's
+// independent-directory requirement does not apply to them. Each populated child
+// still gets a private pinned index and its own trusted view, never parent Git recursion.
+func storageGitlinksClean(ctx context.Context, workspace, commit string, depth int, remaining *int) (bool, error) {
+	if depth > 32 || *remaining <= 0 {
+		return false, errors.New("too many nested submodules")
+	}
+	*remaining--
+	links, err := forkspace.Gitlinks(ctx, workspace, commit)
+	if err != nil {
+		return false, err
+	}
+	root, err := os.OpenRoot(workspace)
+	if err != nil {
+		return false, err
+	}
+	defer root.Close()
+	for path, expected := range links {
+		if _, err := root.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return false, err
+		}
+		child, err := forkspace.SubmoduleDirectory(workspace, path)
+		if err != nil {
+			return false, err
+		}
+		entries, err := os.ReadDir(child)
+		if err != nil {
+			return false, err
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		if _, err := root.Lstat(filepath.Join(path, ".git")); err != nil {
+			return false, err
+		}
+		head, err := sessionWorkspaceCommitContext(ctx, child, "HEAD")
+		if err != nil || head != expected {
+			return false, err
+		}
+		// The pinned index below detects hidden worktree edits, but cannot see
+		// staged-only work whose working bytes were restored to HEAD.
+		if _, _, err := runSessionWorkspaceGitWithEnvContext(ctx, child, sessionWorkspaceGitOutputLimit, sessionCompanionGitEnv(),
+			"diff-index", "--cached", "--quiet", "--ignore-submodules=dirty", expected, "--"); err != nil {
+			return false, err
+		}
+		status, truncated, err := sessionPinnedStatusContext(ctx, session.CompanionRepository{Workspace: child, BaseCommit: expected})
+		if err != nil || truncated || len(status) != 0 {
+			return false, err
+		}
+		clean, err := storageGitlinksClean(ctx, child, expected, depth+1, remaining)
+		if err != nil || !clean {
+			return false, err
+		}
+	}
+	return true, nil
 }

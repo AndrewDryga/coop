@@ -522,10 +522,10 @@ func sessionPinnedStatusContext(
 	ctx context.Context, binding session.CompanionRepository,
 ) (status []byte, truncated bool, returnErr error) {
 	returnErr = withSessionPrivateIndex(ctx, binding, func(env []string) error {
-		command := exec.CommandContext(ctx, "git", gitArgs(binding.Workspace, []string{
+		command := forkspace.TrustedGitCommand(ctx, binding.Workspace, env, []string{
 			"status", "--porcelain=v2", "--untracked-files=all", "--no-renames",
 			"--ignore-submodules=all", "-z",
-		})...)
+		}...)
 		command.Env = env
 		output := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceGitOutputLimit}
 		err := forkspace.RunLFSStatus(ctx, binding.Workspace, command, output, func(limit int, args ...string) ([]byte, error) {

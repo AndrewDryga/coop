@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
@@ -236,4 +237,9 @@ func assertReviewScratchEmpty(t *testing.T, dir string) {
 	if len(entries) != 0 {
 		t.Errorf("review scratch leaked entries: %v", entries)
 	}
+}
+
+// Fixture Git intentionally bypasses production policy when creating test history.
+func gitArgs(dir string, args []string) []string {
+	return append(append([]string{"-C", dir}, forkspace.GitHardening...), args...)
 }

@@ -181,8 +181,21 @@ func TestGitViewKeepsTheRealRepositoryAuthoritative(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("changed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := viewRun(t, repo, "-c", "user.email=a@b", "-c", "user.name=n", "commit", "-qam", "under the view"); err != nil {
-		t.Fatalf("commit under the view: %v\n%s", err, out)
+	// Host porcelain commit -a implicitly runs add's recursive submodule scan.
+	// Exercise the same real index/object/ref writes with the supported plumbing.
+	if out, err := viewRun(t, repo, "update-index", "tracked.txt"); err != nil {
+		t.Fatalf("stage under view: %v: %s", err, out)
+	}
+	tree, err := viewRun(t, repo, "write-tree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := viewRun(t, repo, "-c", "user.email=a@b", "-c", "user.name=n", "commit-tree", strings.TrimSpace(tree), "-p", "HEAD", "-m", "under the view")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := viewRun(t, repo, "update-ref", "HEAD", strings.TrimSpace(commit)); err != nil {
+		t.Fatalf("update real branch: %v: %s", err, out)
 	}
 	if subject := strings.TrimSpace(string(readOut(t, repo, "log", "-1", "--format=%s"))); subject != "under the view" {
 		t.Fatalf("real branch after a view commit = %q", subject)

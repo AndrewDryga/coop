@@ -60,8 +60,7 @@ func GitClone(src, dst string) error {
 }
 
 func GitCloneContext(ctx context.Context, src, dst string) error {
-	args := append(append([]string{}, GitHardening...), "clone", "--quiet", src, dst)
-	err := exec.CommandContext(ctx, "git", args...).Run()
+	err := TrustedGitCommand(ctx, "", os.Environ(), "clone", "--quiet", src, dst).Run()
 	if ctx.Err() != nil {
 		return errors.Join(ctx.Err(), err)
 	}
@@ -80,9 +79,7 @@ func GitClonePinnedContext(ctx context.Context, src, dst, commit string) error {
 		return err
 	}
 	defer os.RemoveAll(view.dir)
-	args := append(append([]string{}, GitHardening...), "clone", "--quiet", "--template=", "--no-local", "--no-checkout", "--", view.dir, dst)
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = env
+	cmd := TrustedGitCommand(ctx, "", env, "clone", "--quiet", "--template=", "--no-local", "--no-checkout", "--", view.dir, dst)
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return errors.Join(ctx.Err(), err)
@@ -148,8 +145,7 @@ func GitCopyPinnedHistoryContext(ctx context.Context, src, dst, commit string) e
 		format = "sha256"
 	}
 	git := func(env []string, args ...string) *exec.Cmd {
-		cmd := exec.CommandContext(ctx, "git", append(append(append([]string{}, GitHardening...), gitViewHardening...), args...)...)
-		cmd.Env = env
+		cmd := TrustedGitCommand(ctx, "", env, args...)
 		return cmd
 	}
 	env := pinnedTransferEnv()
@@ -207,10 +203,13 @@ func pinnedSourceView(ctx context.Context, repository string) (*gitView, error) 
 	return view, nil
 }
 
-// gitCheckoutNewBranchContext runs on the real git dir: `checkout -b` rewrites HEAD, which a view
-// would keep to itself. It checks out no files (the new branch is the current commit).
+// gitCheckoutNewBranchContext creates a branch at the freshly cloned HEAD without
+// checking out files or asking Git to inspect any populated submodule.
 func gitCheckoutNewBranchContext(ctx context.Context, repo, branch string) error {
-	return GitRefCommand(ctx, repo, "checkout", "--quiet", "-b", branch).Run()
+	if err := GitRefCommand(ctx, repo, "branch", branch, "HEAD").Run(); err != nil {
+		return err
+	}
+	return GitRefCommand(ctx, repo, "symbolic-ref", "HEAD", "refs/heads/"+branch).Run()
 }
 
 func gitOutputContext(ctx context.Context, dir string, args ...string) (string, error) {

@@ -192,7 +192,7 @@ func TestRepositoryFetchRemainsCancellableAtItsOwnDeadline(t *testing.T) {
 func TestSourceGitCancellationKillsCredentialedHelpers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cmd := sourceGitCommand(ctx, "", "https")
+	cmd := sourceGitCommand(ctx, "", "https", "fetch", "origin")
 	cmd.Path, cmd.Args = "/bin/sh", []string{"sh", "-c", "sleep 60 & printf '%s\\n' \"$!\"; wait"}
 	output, err := cmd.StdoutPipe()
 	if err != nil {

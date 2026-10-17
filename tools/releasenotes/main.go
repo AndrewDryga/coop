@@ -6,8 +6,8 @@
 //
 // notes checks that the tag names HEAD and that CHANGELOG.md's first release section is the tag's,
 // then prints the tag's section of .github/release-notes.md: the short summary the release commit
-// carries, which is the whole release body. verify-remote checks that origin's tag is still the
-// one checked out, just before publication.
+// carries, which is the whole release body. verify-remote checks the tag at RELEASE_REMOTE_URL
+// still matches the checkout, just before publication.
 //
 // Both files use the release changelog format, not general Markdown. Release sections use ATX H2
 // headings, with closed comments and fenced code blocks. Raw HTML blocks are unsupported; put HTML
@@ -20,12 +20,13 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 var (
@@ -140,10 +141,11 @@ func leadingZero(prerelease string) bool {
 func git(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	// A remote helper can hold git's stderr open after the timeout kills git; stop waiting for it.
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
+	repo, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	out, err := forkspace.ObserveGit(ctx, repo, args...)
 	if err != nil {
 		if ctx.Err() != nil {
 			err = fmt.Errorf("timed out after %v", time.Minute)
@@ -160,7 +162,11 @@ func verifyRemote(tag tagIdentity) error {
 	if tag.object != tag.commit {
 		expected[tag.ref+"^{}"] = tag.commit
 	}
-	out, err := git("ls-remote", "--exit-code", "origin", tag.ref, tag.ref+"^{}")
+	remote := os.Getenv("RELEASE_REMOTE_URL")
+	if remote == "" {
+		return errors.New("verify-remote requires RELEASE_REMOTE_URL from the release workflow")
+	}
+	out, err := remoteTags(remote, tag.ref)
 	if err != nil {
 		return err
 	}
@@ -176,6 +182,30 @@ func verifyRemote(tag tagIdentity) error {
 		return errors.New("remote event tag is missing or changed since checkout")
 	}
 	return nil
+}
+
+// The checkout cannot choose the remote or transport. Even an explicit URL can
+// be rewritten by repository config, so the network lookup uses private metadata.
+func remoteTags(remote, ref string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	dir, err := os.MkdirTemp("", "coop-release-remote-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+	env := append(forkspace.IndependentGitEnv(), "GIT_DIR="+dir)
+	if err := forkspace.TrustedGitCommand(ctx, dir, env, "init", "--bare", "--quiet", "--template=").Run(); err != nil {
+		return "", fmt.Errorf("initialize release remote lookup: %w", err)
+	}
+	cmd := forkspace.TrustedGitCommand(ctx, dir, env, "ls-remote", "--exit-code", "--", remote, ref, ref+"^{}")
+	// A remote helper may retain stderr after Git exits or times out.
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("read release remote tags: %w", errors.Join(err, ctx.Err()))
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // releaseNotes returns the first release section of text, which must be headed ## version, with

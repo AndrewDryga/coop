@@ -907,11 +907,7 @@ func (b *sourceGitOutput) Write(data []byte) (int, error) {
 }
 
 func sourceGitCommand(ctx context.Context, directory, protocol string, args ...string) *exec.Cmd {
-	args = append(append([]string{}, forkspace.GitHardening...), append([]string{"-c", "submodule.recurse=false", "-c", "fetch.recurseSubmodules=false"}, args...)...)
-	if directory != "" {
-		args = append([]string{"-C", directory}, args...)
-	}
-	command := exec.CommandContext(ctx, "git", args...)
+	command := forkspace.TrustedGitCommand(ctx, directory, nil, args...)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Cancel = func() error {
 		err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL)

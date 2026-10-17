@@ -515,7 +515,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 			if generationErr != nil {
 				return 1, fmt.Errorf("--fresh: read fork %q generation: %w", fa.name, generationErr)
 			}
-			originalUnmerged, originalDirty = forkctl.ForkUnmerged(repo, ws), gitDirty(ws)
+			originalUnmerged, originalDirty = forkctl.ForkUnmerged(repo, ws), forkctl.ForkWorktreeClean(ws) != nil
 			if err := forkctl.ForkRmSafe(originalUnmerged, originalDirty, fa.force); err != nil {
 				return 1, fmt.Errorf("--fresh: %w (add --force to recreate anyway)", err)
 			}
@@ -600,7 +600,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return 1, fmt.Errorf("--fresh: fork %q started or entered cleanup while awaiting recreation — stop it first: coop fork stop %s", fa.name, fa.name)
 		}
 		if existed {
-			currentUnmerged, currentDirty := forkctl.ForkUnmerged(repo, ws), gitDirty(ws)
+			currentUnmerged, currentDirty := forkctl.ForkUnmerged(repo, ws), forkctl.ForkWorktreeClean(ws) != nil
 			if currentUnmerged != originalUnmerged || currentDirty != originalDirty {
 				unlock()
 				return 1, fmt.Errorf("--fresh: fork %q Git work changed while awaiting recreation — retry to review the new impact", fa.name)

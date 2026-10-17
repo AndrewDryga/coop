@@ -95,9 +95,7 @@ func observationGitCommandWithCheckout(ctx context.Context, repository string, c
 			return nil, nil, err
 		}
 	}
-	full := append(append(append([]string{"-C", repository}, GitHardening...), gitViewHardening...), args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
-	cmd.Env = view.envFrom(IndependentGitEnv())
+	cmd := TrustedGitCommand(ctx, repository, view.envFrom(IndependentGitEnv()), args...)
 	cmd.Env = append(cmd.Env, "GIT_INDEX_FILE="+filepath.Join(view.dir, "index"))
 	return cmd, cleanup, nil
 }
@@ -118,10 +116,8 @@ func ImportIsolatedObjects(ctx context.Context, source, repository, commit strin
 		return err
 	}
 	defer os.RemoveAll(dst.dir)
-	args := append(append(append([]string{"-C", repository}, GitHardening...), gitViewHardening...),
+	cmd := TrustedGitCommand(ctx, repository, dst.envFrom(pinnedTransferEnv()),
 		"fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--recurse-submodules=no", "--", src.dir, commit)
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = dst.envFrom(pinnedTransferEnv())
 	return errors.Join(cmd.Run(), ctx.Err())
 }
 
@@ -142,20 +138,16 @@ func CheckoutIsolatedTree(ctx context.Context, repository, before, publication s
 	}
 	// read-tree expects refreshed stat data. The caller already verifies all bytes
 	// semantically; -q leaves unchanged hydrated LFS entries alone without filters.
-	refreshArgs := append(append(append([]string{"-C", repository}, GitHardening...), gitViewHardening...),
+	refresh := TrustedGitCommand(ctx, repository, view.envFrom(IndependentGitEnv()),
 		"update-index", "-q", "--refresh", "--ignore-submodules")
-	refresh := exec.CommandContext(ctx, "git", refreshArgs...)
-	refresh.Env = view.envFrom(IndependentGitEnv())
 	if output, err := refresh.CombinedOutput(); err != nil {
 		if len(output) > 4096 {
 			output = output[len(output)-4096:]
 		}
 		return errors.Join(fmt.Errorf("refresh isolated index: %w: %s", err, strings.TrimSpace(string(output))), ctx.Err())
 	}
-	args := append(append(append([]string{"-C", repository}, GitHardening...), gitViewHardening...),
+	cmd := TrustedGitCommand(ctx, repository, view.envFrom(IndependentGitEnv()),
 		"read-tree", "--no-sparse-checkout", "--no-recurse-submodules", "-u", "-m", before, publication)
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = view.envFrom(IndependentGitEnv())
 	output, runErr := cmd.CombinedOutput()
 	if len(output) > 4096 {
 		output = output[len(output)-4096:]

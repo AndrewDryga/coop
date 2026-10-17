@@ -33,12 +33,18 @@ The canonical gate starts with the same nonmutating `mod-check`, so module metad
 fails before long behavioral suites, not for the first time in the privileged publisher.
 
 The remote raw/peeled tag recheck, `verify-remote <tag>`, runs just before GoReleaser starts, not
-atomically with GitHub publication. Keep v* update/deletion rules enforced; trusted bypass actors
+atomically with GitHub publication. It requires RELEASE_REMOTE_URL, supplied by the workflow
+from github.server_url and github.repository; it never resolves origin from the checkout.
+Local identity queries use a trusted observation view. Remote lookup uses a fresh private Git
+directory and independent environment, so checkout sshCommand and URL rewrites cannot execute
+a transport. Missing remote authority fails closed. Keep v* update/deletion rules enforced; trusted bypass actors
 must not mutate the tag or protection during build/publication. Local fixture tests cannot prove
 hosted CI, signing or publication succeeded. Test refs/remotes are confined to temporary
 filesystem repositories.
 
 ## Changelog
+- 2026-10-17 — isolated release Git queries and moved remote authority into workflow context;
+  hostile origin, sshCommand and URL-rewrite regression preserves tag identity checks.
 - 2026-10-17 — the published body is `.github/release-notes.md`'s section, not the CHANGELOG
   section (owner decision); CHANGELOG.md is still checked, and both files share the parser.
 - 2026-10-16 — the preflight is Go (tools/releasenotes), so unit tests need no python3; it gives

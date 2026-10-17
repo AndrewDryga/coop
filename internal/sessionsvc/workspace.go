@@ -247,7 +247,7 @@ func sessionWorkspaceStatusContext(ctx context.Context, workspace string) ([]byt
 // view and accidentally reset the agent's index during an inspection.
 func runSessionPrivateGitContext(ctx context.Context, workspace string, limit int, env []string, args ...string) ([]byte, bool, error) {
 	stdout := &sessionWorkspaceLimitedWriter{limit: limit}
-	command := exec.CommandContext(ctx, "git", gitArgs(workspace, args)...)
+	command := forkspace.TrustedGitCommand(ctx, workspace, env, args...)
 	command.Env = env
 	command.Stdout = stdout
 	if err := command.Run(); err != nil {

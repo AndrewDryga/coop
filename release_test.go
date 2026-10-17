@@ -233,10 +233,12 @@ func TestReleaseRemoteLookupFailsClosed(t *testing.T) {
 	}
 	bin := t.TempDir()
 	shim := `#!/bin/sh
-if [ "$1" = ls-remote ]; then
+for arg in "$@"; do
+if [ "$arg" = ls-remote ]; then
   printf '%s\n' "$COOP_TEST_REMOTE_OUTPUT"
   exit "$COOP_TEST_REMOTE_STATUS"
 fi
+done
 exec "$COOP_TEST_REAL_GIT" "$@"
 `
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(shim), 0o700); err != nil {
@@ -258,12 +260,40 @@ exec "$COOP_TEST_REAL_GIT" "$@"
 			out, diagnostic, err := runReleaseNotes(tool, repo, "verify-remote", "v1.2.3",
 				"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"COOP_TEST_REAL_GIT="+realGit, "COOP_TEST_REMOTE_OUTPUT="+tc.output,
-				"COOP_TEST_REMOTE_STATUS="+tc.status)
+				"COOP_TEST_REMOTE_STATUS="+tc.status, "RELEASE_REMOTE_URL=https://example.invalid/release.git")
 			if out != "" || (tc.ok && (err != nil || diagnostic != "")) ||
 				(!tc.ok && (err == nil || !strings.Contains(diagnostic, "refusing to publish"))) {
 				t.Fatalf("ok=%v out=%q stderr=%q err=%v", tc.ok, out, diagnostic, err)
 			}
 		})
+	}
+}
+
+func TestReleaseRemoteIgnoresCheckoutConfig(t *testing.T) {
+	tool := buildReleaseNotes(t)
+	repo, git := gitrepo.New(t)
+	remote, _ := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "fixture")
+	git("tag", "v1.2.3")
+	git("push", remote, "refs/tags/v1.2.3")
+	marker := filepath.Join(t.TempDir(), "transport-ran")
+	helper := filepath.Join(t.TempDir(), "hostile-ssh")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nprintf ran > \""+marker+"\"\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	git("config", "remote.origin.url", "ssh://untrusted.invalid/release.git")
+	git("config", "core.sshCommand", helper)
+	git("config", "url.ssh://untrusted.invalid/rewritten.insteadOf", remote)
+	out, diagnostic, err := runReleaseNotes(tool, repo, "verify-remote", "v1.2.3", "RELEASE_REMOTE_URL="+remote)
+	if err != nil || out != "" || diagnostic != "" {
+		t.Fatalf("explicit remote: %q %q %v", out, diagnostic, err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("checkout transport used: %v", err)
+	}
+	_, diagnostic, err = runReleaseNotes(tool, repo, "verify-remote", "v1.2.3", "RELEASE_REMOTE_URL=")
+	if err == nil || !strings.Contains(diagnostic, "requires RELEASE_REMOTE_URL") {
+		t.Fatalf("missing remote authority: %q %v", diagnostic, err)
 	}
 }
 
@@ -288,7 +318,7 @@ func TestReleaseTagIdentity(t *testing.T) {
 			writeReleaseFiles(t, repo, "## 1.2.3\nChanges.\n", "## 1.2.3\nSummary.\n")
 			check := func(command string, success bool) {
 				t.Helper()
-				out, diagnostic, err := runReleaseNotes(tool, repo, command, "v1.2.3")
+				out, diagnostic, err := runReleaseNotes(tool, repo, command, "v1.2.3", "RELEASE_REMOTE_URL="+remote)
 				if success {
 					if err != nil || diagnostic != "" || (command == "verify-remote" && out != "") {
 						t.Fatalf("%s: out=%q stderr=%q err=%v", command, out, diagnostic, err)
@@ -308,7 +338,7 @@ func TestReleaseTagIdentity(t *testing.T) {
 			remoteGit("commit", "--allow-empty", "-qm", "different commit")
 			remoteGit("tag", "v1.2.3")
 			check("verify-remote", false)
-			git("remote", "set-url", "origin", filepath.Join(t.TempDir(), "absent"))
+			remote = filepath.Join(t.TempDir(), "absent")
 			check("verify-remote", false)
 			git("commit", "--allow-empty", "-qm", "HEAD changed")
 			check("notes", false)
@@ -630,6 +660,9 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 			notes = i
 		case `go run ./tools/releasenotes verify-remote "$RELEASE_TAG"`:
 			remote = i
+			if step.Env["RELEASE_REMOTE_URL"] != "${{ github.server_url }}/${{ github.repository }}.git" {
+				t.Error("remote authority must come from workflow context, not checkout config")
+			}
 		}
 		if strings.Contains(step.Run, "tools/releasenotes") && step.Env["RELEASE_TAG"] != "${{ github.ref_name }}" {
 			t.Error("tag must enter the helper as quoted data, not shell source")

@@ -144,7 +144,7 @@ type sessionLadder struct {
 }
 
 func newSessionTurnRunner(sourceCfg *config.Config, stateRoot string, store *session.Store, rt runtime.Runtime, executable string, command ...sessionACPCommand) *sessionTurnRunner {
-	start := sessionACPCommand(exec.Command)
+	var start sessionACPCommand
 	if len(command) > 0 && command[0] != nil {
 		start = command[0]
 	}
@@ -2195,7 +2195,12 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		}
 		env = append(env, box.SessionMCPHandoffEnv+"="+mcpHandoff)
 	}
-	cmd := r.command(executable, "fork", bound.ForkName, "acp", bound.Target)
+	var cmd *exec.Cmd
+	if r.command != nil {
+		cmd = r.command(executable, "fork", bound.ForkName, "acp", bound.Target)
+	} else {
+		cmd = exec.Command(executable, "fork", bound.ForkName, "acp", bound.Target)
+	}
 	if cmd == nil {
 		return nil, acpFailure(sessionACPProcessError, "Coop child could not be constructed")
 	}

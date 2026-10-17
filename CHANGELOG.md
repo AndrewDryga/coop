@@ -53,6 +53,14 @@
   those characters escaped, as `\u001B` for example, and so does the warning about network access
   Coop could not check, which can quote `.agent/project.yaml` or the Compose file.
 
+- **A fork's submodule filters no longer run on the host during cleanup.** After landing a fork,
+  Git could read a populated submodule's box-written configuration while checking for leftover
+  work. Coop now checks each child through its own trusted Git view and prevents recursive
+  submodule commands across host workspace operations. Dirty or untracked child work still
+  keeps the workspace, including during `fork rm` and `fork --fresh`; changed submodule commits
+  still appear in reviews. Release tag verification also ignores checkout transport settings and
+  takes its remote URL from the release workflow.
+
 - **A `.agent/loop.yaml` or preset that does not load now exits 1 instead of 2.** `coop loop`,
   `coop acp`, `coop fork`, `coop <preset>`, `coop presets <name>` and `coop help <name>` exited 2,
   the code for a mistyped command, when the loop's settings file or a preset's `preset.yaml` did

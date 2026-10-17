@@ -77,3 +77,60 @@ func TestTrackedSnapshotRetainsRealEditsWithoutFiltersOrIndexMutation(t *testing
 		})
 	}
 }
+
+func TestTrackedSnapshotStagesLiteralChangesWithoutTouchingAgentIndex(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	for _, path := range []string{"deleted", "executable", "-literal\nname", "staged"} {
+		sessionWorkspaceWrite(t, filepath.Join(repo, path), "base\n")
+	}
+	if err := os.Symlink("old-target", filepath.Join(repo, "link")); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-qm", "snapshot fixture")
+	sessionWorkspaceWrite(t, filepath.Join(repo, "staged"), "staged only\n")
+	git("add", "staged")
+	if err := os.Remove(filepath.Join(repo, "deleted")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(repo, "executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repo, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("new-target", filepath.Join(repo, "link")); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceWrite(t, filepath.Join(repo, "-literal\nname"), "changed literal\n")
+	sessionWorkspaceWrite(t, filepath.Join(repo, "untracked"), "not part of tracked snapshot\n")
+	before, err := os.ReadFile(filepath.Join(repo, ".git", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = withSessionTrackedTree(t.Context(), repo, func(tree string, env []string) error {
+		listing, _, err := runSessionPrivateGitContext(context.Background(), repo, 4096, env, "ls-tree", "-z", tree)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(listing), "deleted") || strings.Contains(string(listing), "untracked") || !strings.Contains(string(listing), "100755 blob") {
+			t.Fatalf("wrong tracked tree: %q", listing)
+		}
+		for path, expected := range map[string]string{"staged": "staged only\n", "-literal\nname": "changed literal\n", "link": "new-target"} {
+			body, _, err := runSessionPrivateGitContext(context.Background(), repo, 4096, env, "show", tree+":"+path)
+			if err != nil || string(body) != expected {
+				t.Fatalf("snapshot %q = %q, %v", path, body, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(filepath.Join(repo, ".git", "index"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("snapshot changed agent index: %v", err)
+	}
+}

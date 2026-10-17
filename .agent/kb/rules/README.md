@@ -162,6 +162,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [repository-refresh-bounds-stalls-not-catch-up](repository-refresh-bounds-stalls-not-catch-up.md) — bound a stalled repository refresh without treating a normal catch-up fetch like one remote lookup
 - [structured-output-is-runtime-enforced](structured-output-is-runtime-enforced.md) — a structured-output schema is durable execution control, validated before completion, never prompt-only advice
 - [design-for-shared-checkout-not-forks](design-for-shared-checkout-not-forks.md) — outside agents and `coop loop` share one checkout; forks are optional, never the assumed context of a design
+- [host-git-submodule-boundary](host-git-submodule-boundary.md) — explicit per-child deletion checks and exact review of dynamic Git constructors
 - [hermetic-git-tests](hermetic-git-tests.md) — a test that runs git pins `GIT_CONFIG_GLOBAL` *and* `GIT_CONFIG_SYSTEM`; identity envs alone still let the host's config in
 - [test-binaries-isolate-coop-state](test-binaries-isolate-coop-state.md) — every test binary that links config, forkspace or tasks runs under `teststate.Isolate`; a test never points Coop at the developer's real folders
 - [one-upgrade-for-old-state](one-upgrade-for-old-state.md) — an old on-disk format is read for one upgrade step, then refused with the state version that converts it; check a worker with the new build before swapping it

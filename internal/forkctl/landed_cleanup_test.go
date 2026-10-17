@@ -403,3 +403,44 @@ func TestDestroyLandedForkPreservesPostLandWork(t *testing.T) {
 		})
 	}
 }
+
+// Decision B forbids re-running the live attack. This regression exercises only
+// the protected production path; the historical positive control is in task.md.
+func TestLandedCleanupNeverExecutesSubmoduleFilter(t *testing.T) {
+	t.Setenv("GIT_OPTIONAL_LOCKS", "0") // the child check must leave its stat-dirty index untouched
+	childSource, repo := initRepo(t), initRepo(t)
+	for name, body := range map[string]string{".gitattributes": "*.txt filter=cleanup_probe\n", "tracked.txt": "unchanged\n"} {
+		if err := os.WriteFile(filepath.Join(childSource, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, childSource, "add", ".gitattributes", "tracked.txt")
+	git(t, childSource, "commit", "-qm", "child attributes")
+	git(t, repo, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", childSource, "child")
+	git(t, repo, "commit", "-qam", "child")
+	ws, err := forkspace.Setup(repo, "landed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--quiet")
+	c := &Control{cfg: &config.Config{}}
+	result, err := c.mergeOne(repo, "", "landed", false)
+	t.Cleanup(result.approval.close)
+	if err != nil || result.approval == nil {
+		t.Fatalf("land: %v", err)
+	}
+
+	marker := filepath.Join(t.TempDir(), "filter-ran")
+	// Define the driver only in .git/modules/child/config, never in the parent.
+	git(t, filepath.Join(ws, "child"), "config", "filter.cleanup_probe.clean", "printf ran > '"+marker+"'; cat")
+	changedTime := time.Now().Add(-24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(ws, "child", "tracked.txt"), changedTime, changedTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := result.approval.validateRemoval(repo, "landed"); err != nil {
+		t.Fatalf("post-land cleanup refused unchanged child: %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("submodule filter executed (or marker unreadable): %v", err)
+	}
+}

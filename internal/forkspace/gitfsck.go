@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/AndrewDryga/coop/internal/safefile"
@@ -20,9 +19,7 @@ func RunGitFsck(ctx context.Context, dir string, env []string, stdout, stderr io
 		return err
 	}
 	defer os.RemoveAll(view.dir)
-	full := append(append(append([]string{"-C", dir}, GitHardening...), gitViewHardening...), "fsck", "--no-reflogs")
-	cmd := exec.CommandContext(ctx, "git", append(full, args...)...)
-	cmd.Env = view.envFrom(env)
+	cmd := TrustedGitCommand(ctx, dir, view.envFrom(env), append([]string{"fsck", "--no-reflogs"}, args...)...)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	return cmd.Run()
 }

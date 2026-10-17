@@ -2,7 +2,7 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
+sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
 updated: 2026-10-17
 ---
 
@@ -165,16 +165,54 @@ linked and the real index remains selected. These checks exclude reflogs. Tempor
 metadata is removed on construction/command failures and success; cached mutable
 views and real HEAD are never refreshed by an integrity check.
 
-Immutable commit comparisons that must include changed gitlinks use both
-`--ignore-submodules=dirty` and `--submodule=short`. The first overrides the view's conservative
-`diff.ignoreSubmodules=all`; the second pins old/new commit IDs rather than honoring a host
-`diff.submodule=diff` preference. Inline diffs start another Git inside the submodule, outside
-the trusted parent view, and the parent's `--no-ext-diff`/`--no-textconv` flags do not protect
-that child. The loop regression proves a submodule-local named diff driver runs in a raw
-inline-diff positive control but never during production review. The loop's working-tree reads
-keep their existing restrictions.
+**Submodule commands need their own boundary.** A trusted parent view does not protect Git
+subprocesses started inside a populated child. Even `diff.ignoreSubmodules=all` loses to
+box-written `.gitmodules` ignore settings; inline submodule diffs also start child Git.
+`TrustedGitCommand` therefore enforces one argv policy for operational views, observation views,
+private session indexes, pinned transfers and worker-owned staging. Status/diff compare gitlink
+HEADs with `--ignore-submodules=dirty`; explicit `all` is preserved. Diff/log/show pin short
+submodule output and disable external diff/textconv. Explicit trusted difftools still work.
+Worker publication pins push recursion off in both argv and config. Git LFS accepts fetch,
+diagnostic env, and only push --object-id <remote> --stdin; identity diagnostics accept only
+var GIT_COMMITTER_IDENT. Recursive options (including aliases/abbreviations), generic add/commit/submodule and unknown
+verbs are refused. Rebase's internal cleanliness checks override submodule ignore settings;
+recursive checkout/fetch and custom strategy/exec options are forbidden.
+
+`forkctl.ForkWorktreeClean` checks populated children through their own views before parent
+status. Landed cleanup, `fork rm` and `fork --fresh` share it; removal and recreation repeat it
+under the lifecycle lock after confirmation. An unreadable child counts as dirty, and explicit
+`--force` retains its existing override for removal/recreation. Ordinary
+fork storage uses the same per-child principle while accepting `.git/modules` metadata; session
+companion custody still requires independent child metadata. Private session staging uses
+`update-index --add --remove -z --stdin` on literal changed paths instead of add's recursive diff
+scan. It preserves staged changes, conversions and the agent's real index. Ref-only commands
+have a separate runtime policy so they cannot bypass view isolation for content reads.
+
+`TestHostGitCommandsUseSharedBoundary` parses production Go and pins each reviewed raw Git
+constructor and low-level trusted constructor by exact call expression. New or changed calls
+fail, including additional calls inside an existing wrapper. New ordinary callers use GitCommand;
+private-metadata exceptions require explicit review and a reason. Dynamic executables require
+review regardless of variable name. Constructor function values and forwarding wrappers are
+forbidden independently of the allowlist: approving an assignment cannot approve its later calls.
+Only literal non-Git executable names are excluded. Release metadata queries use observation
+views; remote tag lookup uses fresh private metadata and an explicit workflow-owned URL, with
+no checkout config or origin resolution. Test-only Git setup is outside the source check. This source check is a guard
+against accidental bypass, not a proof about arbitrary shell programs or mutations to exec.Cmd.
 
 ## Changelog
+- 2026-10-17 — restored worker publication and identity/LFS diagnostics with reviewed narrow
+  policies; exact worker argv table covers staging, refresh, LFS status callbacks and publication.
+- 2026-10-17 — removed the raw release-query exception: remote transport uses private metadata
+  and RELEASE_REMOTE_URL from workflow context. Replaced production constructor aliases with
+  direct calls and added an unconditional function-value guard plus copied-tree negative controls.
+- 2026-10-17 — shared recursive cleanliness across landed cleanup, removal and recreation;
+  tested dirty/untracked grandchildren before confirmation and after a locked mutation. Audited
+  21 dynamic subprocess/constructor-value exceptions; the guard now rejects unknown executables
+  and aliases instead of guessing from names, including mixed dot imports.
+- 2026-10-17 — closed submodule child-config execution after landing and in shared host Git
+  calls; swept status, worktree/commit diffs, add, rebase, recursive fetch/checkout and session
+  publish/discard. Added the shared command policy, literal private-index staging, explicit
+  nested storage checks and constructor guard (task 2026-10-15-stop-coop-fork-merge-from-running-a-fork-s-submo).
 - 2026-10-17 — a view refuses a repository its walk climbed to at the home folder or above, with
   `shadowpath.HomeOrAbove` (task 2026-10-16-refuse-a-trusted-git-view-whose-nearest-git-is-t).
   Swept every caller: only the task audit's reopen, complete and unblock reads relied on a climb,

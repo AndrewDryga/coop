@@ -17,9 +17,9 @@ import (
 // neither the model's index nor its executable filters participate in capture.
 func streamSessionTrackedPatch(ctx context.Context, workspace, base string, output io.Writer) error {
 	return withSessionTrackedTree(ctx, workspace, func(tree string, env []string) error {
-		diff := exec.CommandContext(ctx, "git", gitArgs(workspace, []string{
+		diff := forkspace.TrustedGitCommand(ctx, workspace, env, []string{
 			"diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", "--submodule=short", "--binary", base, tree, "--",
-		})...)
+		}...)
 		diff.Env, diff.Stdout = env, output
 		return errors.Join(diff.Run(), ctx.Err())
 	})
@@ -33,7 +33,7 @@ func withSessionTrackedTree(ctx context.Context, workspace string, action func(s
 	return withSessionPrivateIndex(ctx, session.CompanionRepository{Workspace: workspace, BaseCommit: head}, func(env []string) error {
 		env = append(env, "GIT_LITERAL_PATHSPECS=1")
 		command := func(args ...string) *exec.Cmd {
-			cmd := exec.CommandContext(ctx, "git", gitArgs(workspace, args)...)
+			cmd := forkspace.TrustedGitCommand(ctx, workspace, env, args...)
 			cmd.Env = env
 			return cmd
 		}
@@ -89,7 +89,9 @@ func withSessionTrackedTree(ctx context.Context, workspace string, action func(s
 			paths.WriteByte(0)
 		}
 		if paths.Len() != 0 {
-			stage := command("add", "-u", "--pathspec-from-file=-", "--pathspec-file-nul")
+			// Update only these literal paths. Unlike add, update-index never runs
+			// a child status while scanning gitlinks. The private index owns all writes.
+			stage := command("update-index", "--add", "--remove", "-z", "--stdin")
 			stage.Stdin = &paths
 			if err := stage.Run(); err != nil {
 				return err
