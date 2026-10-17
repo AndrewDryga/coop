@@ -3,10 +3,12 @@ package tasks
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 )
@@ -35,16 +37,21 @@ updated: <ISO-8601 timestamp>
 
 type taskTemplate struct{ lines []string }
 
-func loadTaskTemplate(root string) (taskTemplate, error) {
-	path := filepath.Join(root, "README.md")
-	data, err := os.ReadFile(path)
+// taskTemplateLimit bounds the queue README.md a task template is read from.
+const taskTemplateLimit = 256 << 10
+
+// loadTaskTemplate reads the template block of README.md in queue, the queue folder, through
+// readTaskTemplate. A queue without a README.md uses the built-in template.
+func loadTaskTemplate(queue *os.Root) (taskTemplate, error) {
+	path := filepath.Join(queue.Name(), "README.md")
+	data, err := readTaskTemplate(queue, path)
 	if errors.Is(err, os.ErrNotExist) {
 		return parseTaskTemplate(fallbackTaskTemplate)
 	}
 	if err != nil {
-		return taskTemplate{}, fmt.Errorf("read task template %s: %w", path, err)
+		return taskTemplate{}, err
 	}
-	if len(data) > 256<<10 || !utf8.Valid(data) {
+	if len(data) > taskTemplateLimit || !utf8.Valid(data) {
 		return taskTemplate{}, fmt.Errorf("task template %s: README is too large or not UTF-8", path)
 	}
 	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
@@ -87,6 +94,42 @@ func loadTaskTemplate(root string) (taskTemplate, error) {
 		return taskTemplate{}, fmt.Errorf("task template %s: %w", path, err)
 	}
 	return t, nil
+}
+
+// readTaskTemplate reads README.md in queue, found at path, without following a symbolic link or
+// waiting on a FIFO, and at most one byte past taskTemplateLimit. A symbolic link is refused: it
+// could point task creation at a file outside the queue. Other hard links are fine, unlike for a
+// task file: the template is only read, and a box can hard-link only files inside its own mount.
+func readTaskTemplate(queue *os.Root, path string) ([]byte, error) {
+	before, err := queue.Lstat("README.md")
+	if err != nil {
+		return nil, fmt.Errorf("read task template %s: %w", path, err)
+	}
+	if before.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("task template %s is a symbolic link — replace the link with a copy of the file, or delete it to use the built-in template", path)
+	}
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("task template %s is not a regular file", path)
+	}
+	f, err := queue.OpenFile("README.md", os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Errorf("read task template %s: %w", path, err)
+	}
+	defer f.Close()
+	after, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("read task template %s: %w", path, err)
+	}
+	// os.Root follows a link inside it even with O_NOFOLLOW, so the opened file must be the one
+	// checked above.
+	if !os.SameFile(before, after) {
+		return nil, fmt.Errorf("task template %s changed while it was opened", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, taskTemplateLimit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read task template %s: %w", path, err)
+	}
+	return data, nil
 }
 
 func parseTaskTemplate(src string) (taskTemplate, error) {
@@ -172,14 +215,23 @@ func taskTitleScalar(title string) string {
 	return title
 }
 
-func (t taskTemplate) render(id, title, now string, values map[string]string, subtasks []string) (string, error) {
+// checkTaskText refuses a title or subtask that is not one safe line within its limit. It does not
+// depend on the template, so `add` runs it before it makes a missing queue folder.
+func checkTaskText(title string, subtasks []string) error {
 	if !ValidTaskText(title, false, TaskTitleLimit) {
-		return "", fmt.Errorf("task title must be one safe line of at most %d bytes", TaskTitleLimit)
+		return fmt.Errorf("task title must be one safe line of at most %d bytes", TaskTitleLimit)
 	}
 	for _, step := range subtasks {
 		if !ValidTaskText(step, false, TaskLineLimit) {
-			return "", fmt.Errorf("subtask must be one safe line of at most %d bytes", TaskLineLimit)
+			return fmt.Errorf("subtask must be one safe line of at most %d bytes", TaskLineLimit)
 		}
+	}
+	return nil
+}
+
+func (t taskTemplate) render(id, title, now string, values map[string]string, subtasks []string) (string, error) {
+	if err := checkTaskText(title, subtasks); err != nil {
+		return "", err
 	}
 	var out []string
 	inSubtasks := false

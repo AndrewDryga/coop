@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 func TestWriteForkProposalSerializedLimitMatchesImport(t *testing.T) {
@@ -34,7 +36,7 @@ func TestWriteForkProposalSerializedLimitMatchesImport(t *testing.T) {
 			if len(draft.Approach) > TaskBlockLimit {
 				t.Fatal("fixture exceeds an individual field bound")
 			}
-			path, err := WriteForkProposal(outbox, draft)
+			path, err := WriteForkProposal(forkspace.Workspace(repo, assignment.Owner.Fork.Name), outbox, draft)
 			if delta > 0 {
 				if err == nil || !strings.Contains(err.Error(), "serialized JSON") {
 					t.Fatalf("oversized write = %q, %v", path, err)

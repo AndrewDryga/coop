@@ -1822,6 +1822,109 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 	}
 }
 
+// A title `add` refuses is refused before a missing queue is made: an empty queue left behind
+// would make `coop loop` take the project for a set-up one instead of saying to run 'coop init'.
+func TestTasksFolderAddRefusesABadTitleBeforeMakingTheQueue(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "project")
+	root := filepath.Join(project, ".agent", "tasks")
+	code, err := tasksFolderAdd(root, []string{"bad\nheader"}, StateTodo, "tasks add")
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "task title must be one safe line") {
+		t.Fatalf("add with a bad title = (%d, %v)", code, err)
+	}
+	if _, err := os.Lstat(project); !os.IsNotExist(err) {
+		t.Fatalf("a refused add made the queue's folders: %v", err)
+	}
+}
+
+// A file already at a task file's path, which a box can plant in the new folder before its files
+// are written, makes creation refuse rather than follow or overwrite it. The files written before
+// the refusal are removed; the folder stays because it still holds what was planted.
+func TestWriteTaskFilesRefusesAFileAlreadyThere(t *testing.T) {
+	for _, planted := range []string{"file", "link"} {
+		t.Run(planted, func(t *testing.T) {
+			stateDirPath := t.TempDir()
+			folder := filepath.Join(stateDirPath, "2026-01-01-planted")
+			writeTaskFile(t, filepath.Join(folder, "notes.md"), "planted\n")
+			if planted == "link" {
+				// os.Root follows a link that stays inside it, so only O_EXCL refuses this one.
+				if err := os.Symlink("notes.md", filepath.Join(folder, "task.md")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeTaskFile(t, filepath.Join(folder, "task.md"), "planted\n")
+			}
+			stateDir, err := os.OpenRoot(stateDirPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stateDir.Close()
+			files := map[string]string{"log.md": "new\n", "state.md": "new\n", "task.md": "new\n"}
+			if err := writeTaskFiles(stateDir, "2026-01-01-planted", files); err == nil {
+				t.Fatal("writeTaskFiles wrote over a planted task.md")
+			}
+			for _, name := range []string{"notes.md", "task.md"} {
+				if got := readFileString(filepath.Join(folder, name)); got != "planted\n" {
+					t.Errorf("planted %s now reads %q", name, got)
+				}
+			}
+			if info, err := os.Lstat(filepath.Join(folder, "task.md")); err != nil || (planted == "link") != (info.Mode()&os.ModeSymlink != 0) {
+				t.Errorf("planted task.md was replaced: %v, %v", info, err)
+			}
+			entries, err := os.ReadDir(folder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, entry := range entries {
+				names = append(names, entry.Name())
+			}
+			if !slices.Equal(names, []string{"notes.md", "task.md"}) {
+				t.Errorf("folder after a refused write holds %v, want only the planted files", names)
+			}
+		})
+	}
+}
+
+// A task file that cannot be written leaves no half-made folder behind, so retrying the same title
+// is not refused as a duplicate. A name in a missing subfolder cannot be opened, so it stands in for
+// a write that fails after another file was written, such as on a full disk.
+func TestWriteTaskFilesLeavesNoFolderWhenAWriteFails(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		mode  os.FileMode
+		files map[string]string
+		want  error
+	}{
+		{"after a written file", 0o755, map[string]string{"log.md": "new\n", "missing/task.md": "new\n"}, os.ErrNotExist},
+		{"read-only folder", 0o555, map[string]string{"log.md": "new\n", "task.md": "new\n"}, os.ErrPermission},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.want == os.ErrPermission && os.Geteuid() == 0 {
+				t.Skip("root writes into a read-only folder")
+			}
+			stateDirPath := t.TempDir()
+			folder := filepath.Join(stateDirPath, "2026-01-01-partial")
+			if err := os.Mkdir(folder, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(folder, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			stateDir, err := os.OpenRoot(stateDirPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stateDir.Close()
+			if err := writeTaskFiles(stateDir, "2026-01-01-partial", tc.files); !errors.Is(err, tc.want) {
+				t.Fatalf("writeTaskFiles = %v, want %v", err, tc.want)
+			}
+			if _, err := os.Lstat(folder); !os.IsNotExist(err) {
+				t.Fatalf("a failed write left the task folder behind: %v", err)
+			}
+		})
+	}
+}
+
 // A move onto a destination that already holds the same id (a torn move / stray duplicate across
 // states) must be a clean, actionable error — not a raw os.Rename "file exists" that strands the task.
 func TestMoveTaskDirRefusesDuplicateDest(t *testing.T) {

@@ -326,7 +326,7 @@ func TestBulkWalkNeverWaitsOnAFIFOOrFollowsALink(t *testing.T) {
 		}
 	}
 	measured := make(chan bulkMeasure, 1)
-	go func() { measured <- taskFolderBulk(queue, dir) }()
+	go func() { measured <- taskFolderBulk(filepath.Dir(filepath.Dir(queue)), dir) }()
 	select {
 	case m := <-measured:
 		if m.stopped != "" || len(m.programs) != 0 || m.entries != 6 {
@@ -361,6 +361,41 @@ func TestBulkWalkNeverFollowsALinkAboveTheTask(t *testing.T) {
 			}
 			if headline, facts, ok := TaskBulkWarning(queue, dir); ok {
 				t.Errorf("the walk followed %s to a folder outside the project: %s %q", swapped, headline, facts)
+			}
+		})
+	}
+}
+
+// A fork's queue sits deeper in the workspace the box mounts, below folders the box can also swap,
+// and the project folder of its queue is one of them. Measured from the workspace, as the in-box
+// task tool measures (TaskBulkWarningBelow), a swapped folder there measures nothing, where the
+// walk from the project folder followed the link and described another project's folder.
+func TestBulkWalkFromTheWorkspaceNeverFollowsALink(t *testing.T) {
+	const elf = "\x7fELF\x02\x01\x01\x00"
+	generation := filepath.Join(".coop", "task-executions", "generation")
+	for _, swapped := range []string{generation, ".coop"} {
+		t.Run(swapped, func(t *testing.T) {
+			workspace := t.TempDir()
+			queue := filepath.Join(workspace, generation, "assignment", "tasks")
+			dir := filepath.Join(queue, StateDone, "2026-10-16-ship-it")
+			writeTaskFile(t, filepath.Join(dir, "task.md"), "# Ship it\n")
+			below, err := filepath.Rel(filepath.Join(workspace, swapped), dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(t.TempDir(), "other", ".agent")
+			writeTaskBytes(t, filepath.Join(outside, below, "bin", "secret-tool"), elf, 0o755)
+			if err := os.Rename(filepath.Join(workspace, swapped), filepath.Join(workspace, swapped)+".kept"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(workspace, swapped)); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, ok := TaskBulkWarning(queue, dir); !ok {
+				t.Fatal("from the project folder the walk did not reach the other project, so the swap proves nothing")
+			}
+			if headline, facts, ok := TaskBulkWarningBelow(workspace, dir); ok {
+				t.Errorf("the walk followed %s to another project: %s %q", swapped, headline, facts)
 			}
 		})
 	}

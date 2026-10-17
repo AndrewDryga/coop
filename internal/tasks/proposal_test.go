@@ -107,6 +107,40 @@ func TestImportForkProposalCreatesOneCanonicalTaskIdempotently(t *testing.T) {
 	}
 }
 
+// The fork loop adds a discovered task with the canonical queue's template, read as `coop tasks add`
+// reads it: a README.md with another hard link works, and a symbolic link is refused with what to
+// do about it.
+func TestImportForkProposalReadsAHardLinkedTemplateAndRefusesASymlink(t *testing.T) {
+	repo, root, assignment := proposalAssignment(t, "proposal-template")
+	shared := t.TempDir()
+	writeQueueTemplate(t, shared, strings.Replace(fallbackTaskTemplate,
+		"- [ ] <a small step with a way to check it worked>", "- [ ] Run the shared gate\n- [ ] <task-specific step>", 1))
+	readme := filepath.Join(root, "README.md")
+	if err := os.Link(filepath.Join(shared, "README.md"), readme); err != nil {
+		t.Fatal(err)
+	}
+	writeForkProposal(t, assignment.Owner, testForkProposal(strings.Repeat("c", 32), "Fix the hard link import"))
+	imported, err := ImportForkProposals(repo, assignment.Owner.Fork)
+	if err != nil || len(imported) != 1 {
+		t.Fatalf("import with a hard-linked README = %+v, %v", imported, err)
+	}
+	item, ok := mustCurrentTask(t, root, imported[0].TaskID)
+	if body := readFileString(filepath.Join(item.Dir, "task.md")); !ok || !strings.Contains(body, "- [ ] Run the shared gate") {
+		t.Fatalf("imported task did not use the hard-linked template: ok=%v\n%s", ok, body)
+	}
+
+	if err := os.Remove(readme); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(shared, "README.md"), readme); err != nil {
+		t.Fatal(err)
+	}
+	writeForkProposal(t, assignment.Owner, testForkProposal(strings.Repeat("d", 32), "Fix the symbolic link import"))
+	if _, err := ImportForkProposals(repo, assignment.Owner.Fork); err == nil || !strings.Contains(err.Error(), "replace the link with a copy of the file") {
+		t.Fatalf("import with a symlinked README = %v", err)
+	}
+}
+
 func TestImportForkProposalReplaysCrashAfterCanonicalCreate(t *testing.T) {
 	repo, root, assignment := proposalAssignment(t, "proposal-crash")
 	proposal := testForkProposal(strings.Repeat("b", 32), "Recover proposal import")

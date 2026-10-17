@@ -133,7 +133,12 @@ func TestQueueTemplateSelectionAndSafeTitle(t *testing.T) {
 
 func TestShippedTaskReadmesAreUsableTemplates(t *testing.T) {
 	for _, root := range []string{"../../.agent/tasks", "../scaffold/templates/agent/tasks"} {
-		template, err := loadTaskTemplate(root)
+		queue, err := os.OpenRoot(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		template, err := loadTaskTemplate(queue)
+		queue.Close()
 		if err != nil {
 			t.Fatalf("%s: %v", root, err)
 		}
@@ -148,12 +153,87 @@ func TestDraftTaskUsesQueueTemplate(t *testing.T) {
 	root := t.TempDir()
 	writeQueueTemplate(t, root, strings.Replace(fallbackTaskTemplate,
 		"- [ ] <a small step with a way to check it worked>", "- [ ] Draft gate\n- [ ] <task-specific step>", 1))
-	item, err := CreateDraftTask(root, TaskDraft{Kind: ForkProposalTask, Title: "Draft work", Context: "why", Acceptance: "proof", Approach: "how", Subtasks: []string{"test it"}})
+	item, err := CreateDraftTask(filepath.Dir(root), root, TaskDraft{Kind: ForkProposalTask, Title: "Draft work", Context: "why", Acceptance: "proof", Approach: "how", Subtasks: []string{"test it"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := readFileString(filepath.Join(item.Dir, "task.md"))
 	if !strings.Contains(body, "- [ ] Draft gate") || !strings.Contains(body, "- [ ] test it") {
 		t.Errorf("draft lost queue template: %s", body)
+	}
+}
+
+// The template is read through the queue folder, so a README.md that is a symbolic link, out of the
+// queue to another project's README say, is refused with what to do about it, and nothing is
+// created.
+func TestDraftTaskRefusesALinkedQueueTemplate(t *testing.T) {
+	root := t.TempDir()
+	other := t.TempDir()
+	writeQueueTemplate(t, other, strings.Replace(fallbackTaskTemplate,
+		"- [ ] <a small step with a way to check it worked>", "- [ ] The other project's gate", 1))
+	if err := os.Symlink(filepath.Join(other, "README.md"), filepath.Join(root, "README.md")); err != nil {
+		t.Fatal(err)
+	}
+	want := "is a symbolic link — replace the link with a copy of the file, or delete it to use the built-in template"
+	draft := TaskDraft{Kind: ForkProposalTask, Title: "Draft work", Context: "why", Acceptance: "proof", Approach: "how", Subtasks: []string{"test it"}}
+	if item, err := CreateDraftTask(filepath.Dir(root), root, draft); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("draft through a linked README = %+v, %v", item, err)
+	}
+	if code, err := tasksFolderAdd(root, []string{"Added work"}, StateTodo, "tasks add"); code == 0 || err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("tasks add through a linked README = %d, %v", code, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, StateTodo)); !os.IsNotExist(err) {
+		t.Fatalf("a refused draft created state folders: %v", err)
+	}
+}
+
+// A README.md with another hard link is read like any other: the template is only read, and a box
+// can hard-link only files inside its own mount.
+func TestQueueTemplateMayHaveAnotherHardLink(t *testing.T) {
+	root := t.TempDir()
+	shared := t.TempDir()
+	writeQueueTemplate(t, shared, strings.Replace(fallbackTaskTemplate,
+		"- [ ] <a small step with a way to check it worked>", "- [ ] The shared gate", 1))
+	if err := os.Link(filepath.Join(shared, "README.md"), filepath.Join(root, "README.md")); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderAdd(root, []string{"Added work"}, StateTodo, "tasks add"); code != 0 || err != nil {
+		t.Fatalf("tasks add with a hard-linked README = %d, %v", code, err)
+	}
+	draft := TaskDraft{Kind: ForkProposalTask, Title: "Draft work", Context: "why", Acceptance: "proof", Approach: "how", Subtasks: []string{"test it"}}
+	if item, err := CreateDraftTask(filepath.Dir(root), root, draft); err != nil {
+		t.Fatalf("draft with a hard-linked README = %+v, %v", item, err)
+	}
+	items := mustReadTaskTree(t, root)
+	if len(items) != 2 {
+		t.Fatalf("created %d tasks, want two", len(items))
+	}
+	for _, item := range items {
+		if body := readFileString(filepath.Join(item.Dir, "task.md")); !strings.Contains(body, "- [ ] The shared gate") {
+			t.Errorf("%s did not use the hard-linked template:\n%s", item.ID, body)
+		}
+	}
+}
+
+// `coop tasks add` creates through the queue folder as the in-box task tool does, so a todo or
+// backlog folder that is a link to another project's is refused, never written through.
+func TestTasksAddRefusesALinkedQueueStateFolder(t *testing.T) {
+	for state, label := range map[string]string{StateTodo: "tasks add", StateBacklog: "backlog add"} {
+		t.Run(state, func(t *testing.T) {
+			root := t.TempDir()
+			other := filepath.Join(t.TempDir(), state)
+			if err := os.MkdirAll(other, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(other, filepath.Join(root, state)); err != nil {
+				t.Fatal(err)
+			}
+			if code, err := tasksFolderAdd(root, []string{"Planted"}, state, label); code == 0 || err == nil || !strings.Contains(err.Error(), "is a link") {
+				t.Fatalf("%s through a linked %s = %d, %v", label, state, code, err)
+			}
+			if entries, err := os.ReadDir(other); err != nil || len(entries) != 0 {
+				t.Fatalf("%s wrote through the link: %v, %v", label, entries, err)
+			}
+		})
 	}
 }

@@ -41,9 +41,16 @@ const (
 // the time. It looks at the whole folder, not only artifacts/: agents also leave builds at the
 // task's top level and in folders of their own naming. `coop tasks done` and the loop print it with
 // WarnTaskBulk, a fork landing with WarnTaskBulkWithFolder; the in-box task tool returns it to the
-// agent that completed the task.
+// agent that completed the task, through TaskBulkWarningBelow.
 func TaskBulkWarning(queueRoot, taskDir string) (headline string, facts []string, ok bool) {
-	m := taskFolderBulk(queueRoot, taskDir)
+	return TaskBulkWarningBelow(filepath.Dir(filepath.Dir(queueRoot)), taskDir)
+}
+
+// TaskBulkWarningBelow is TaskBulkWarning measured from top, a folder that holds the task folder.
+// The in-box task tool passes the folder the box mounts, which the box cannot replace, so the walk
+// down to the task never starts below a folder the box could swap for a link (taskFolderBulk).
+func TaskBulkWarningBelow(top, taskDir string) (headline string, facts []string, ok bool) {
+	m := taskFolderBulk(top, taskDir)
 	big := m.size > bulkWarnBytes
 	if !big && len(m.programs) == 0 && m.stopped == "" {
 		return "", nil, false
@@ -120,26 +127,25 @@ type bulkMeasure struct {
 	stopped  string
 }
 
-// taskFolderBulk measures a task folder of the queue at queueRoot. Its top-level tmp/ does not
-// count, since done removes it; the in-box task tool looks before the host has. The walk starts at
-// the project folder holding the queue and opens each folder from there down without following a
-// link: a box that swaps .agent, the state folder or the task folder for a link to a host folder
-// would otherwise learn, from the tool's answer, the names and sizes of the files in it. A folder
-// on the way that is a link measures nothing. For the repository's own queue the project folder is
-// the box's mount point, which the box cannot replace; a subproject's, a fork's or a COOP_TASKS
-// queue starts below a folder the box could swap, as every other operation on that queue does.
-func taskFolderBulk(queueRoot, taskDir string) bulkMeasure {
+// taskFolderBulk measures the task folder taskDir, which top holds. Its top-level tmp/ does not
+// count, since done removes it; the in-box task tool looks before the host has. The walk opens each
+// folder from top down to the task from its parent, without following a link or waiting on a FIFO
+// (openBelow): a box that swaps .agent, a fork's assignment folder, the state folder or the task
+// folder for a link to a host folder would otherwise learn, from the tool's answer, the names and
+// sizes of the files in it. A folder on the way that is a link measures nothing. The in-box task
+// tool starts at the folder the box mounts; `coop tasks done` and the loop start at the project
+// folder holding the queue, and show the warning to a person rather than to the box.
+func taskFolderBulk(top, taskDir string) bulkMeasure {
 	var m bulkMeasure
-	project := filepath.Dir(filepath.Dir(queueRoot))
-	rel, err := filepath.Rel(project, taskDir)
+	rel, err := filepath.Rel(top, taskDir)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return m
 	}
-	fd, err := unix.Open(project, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+	fd, err := unix.Open(top, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return m
 	}
-	dir := os.NewFile(uintptr(fd), project)
+	dir := os.NewFile(uintptr(fd), top)
 	for _, name := range strings.Split(rel, string(filepath.Separator)) {
 		sub := openBelow(dir, name, unix.O_DIRECTORY)
 		dir.Close()

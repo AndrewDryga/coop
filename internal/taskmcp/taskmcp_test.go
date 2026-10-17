@@ -129,11 +129,19 @@ func rpcErrorCode(t *testing.T, reply map[string]any) int {
 	return int(e["code"].(float64))
 }
 
-// queue builds a fixture queue with one task per requested state and returns its root.
+// queue builds a fixture queue with one task per requested state and returns its root,
+// <workspace>/.agent/tasks, as the repository's own queue sits in the folder the box mounts.
 func queue(t *testing.T, ids map[string]string) string {
 	t.Helper()
 	t.Setenv(tasks.TestLeaseAuthorityRootEnv, t.TempDir())
-	root := filepath.Join(t.TempDir(), ".agent", "tasks")
+	return queueIn(t, t.TempDir(), filepath.Join(".agent", "tasks"), ids)
+}
+
+// queueIn builds a fixture queue at rel inside workspace, where a subproject's queue sits in the
+// repository, and returns its root.
+func queueIn(t *testing.T, workspace, rel string, ids map[string]string) string {
+	t.Helper()
+	root := filepath.Join(workspace, rel)
 	if err := tasks.ScaffoldStateDirs(root); err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +149,17 @@ func queue(t *testing.T, ids map[string]string) string {
 		writeTask(t, filepath.Join(root, state, id), id)
 	}
 	return root
+}
+
+// outboxIn makes a fork proposal outbox in the workspace of the queue at root, which a fork's
+// outbox shares with its queue.
+func outboxIn(t *testing.T, root string) string {
+	t.Helper()
+	outbox := filepath.Join(filepath.Dir(filepath.Dir(root)), "proposals")
+	if err := os.Mkdir(outbox, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return outbox
 }
 
 func writeTask(t *testing.T, dir, id string) {
@@ -162,9 +181,11 @@ func writeTask(t *testing.T, dir, id string) {
 	}
 }
 
+// newServer serves the fixture queue at root, which sits at <workspace>/.agent/tasks as the
+// repository's own queue does.
 func newServer(t *testing.T, root, assigned string) *Server {
 	t.Helper()
-	s, err := New(Authority{QueueRoots: []string{root}, Assigned: assigned,
+	s, err := New(Authority{Workspace: filepath.Dir(filepath.Dir(root)), QueueRoots: []string{root}, Assigned: assigned,
 		Owner: tasks.TaskLeaseOwner{RunID: "test-run", PID: os.Getpid(), Provider: "test", Target: "test"}})
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +196,30 @@ func newServer(t *testing.T, root, assigned string) *Server {
 func TestNewNeedsAQueueRoot(t *testing.T) {
 	if _, err := New(Authority{}); err == nil {
 		t.Fatal("an authority without queue roots must be refused")
+	}
+}
+
+// The tools open every queue and the outbox from the workspace the box mounts, so the server
+// refuses an authority without one, or with a folder it could not reach from it.
+func TestNewKeepsEveryFolderInsideTheWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	root := filepath.Join(workspace, ".agent", "tasks")
+	for name, authority := range map[string]Authority{
+		"no workspace":       {QueueRoots: []string{root}},
+		"relative workspace": {Workspace: "repo", QueueRoots: []string{root}},
+		"relative queue":     {Workspace: workspace, QueueRoots: []string{filepath.Join(".agent", "tasks")}},
+		"queue outside":      {Workspace: workspace, QueueRoots: []string{root, filepath.Join(t.TempDir(), ".agent", "tasks")}},
+		"queue above":        {Workspace: root, QueueRoots: []string{workspace}},
+		"outbox outside":     {Workspace: workspace, QueueRoots: []string{root}, ProposalOutbox: filepath.Join(workspace, "..", "proposals")},
+	} {
+		if _, err := New(authority); err == nil {
+			t.Errorf("%s: New accepted %+v", name, authority)
+		}
+	}
+	inside := Authority{Workspace: workspace, QueueRoots: []string{root, filepath.Join(workspace, "api", ".agent", "tasks")},
+		ProposalOutbox: filepath.Join(workspace, "proposals")}
+	if _, err := New(inside); err != nil {
+		t.Errorf("queues and an outbox inside the workspace were refused: %v", err)
 	}
 }
 
@@ -728,8 +773,8 @@ func TestProposeCreatesAQueueFolderTheHostWouldHave(t *testing.T) {
 
 func TestProposeInAForkWritesTheOutboxTheHostImports(t *testing.T) {
 	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
-	outbox := t.TempDir()
-	s, err := New(Authority{QueueRoots: []string{root}, Assigned: "t1", ProposalOutbox: outbox})
+	outbox := outboxIn(t, root)
+	s, err := New(Authority{Workspace: filepath.Dir(filepath.Dir(root)), QueueRoots: []string{root}, Assigned: "t1", ProposalOutbox: outbox})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -753,6 +798,158 @@ func TestProposeInAForkWritesTheOutboxTheHostImports(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Join(root, tasks.StateTodo)); len(entries) != 0 {
 		t.Fatalf("a fork proposal must not create a queue folder: %v", entries)
+	}
+}
+
+// A box can replace any folder inside the workspace it mounts while its task tools run. A fork's
+// assignment folder, a folder above it, a subproject or .agent swapped for a link to another
+// project's .agent pointed every tool at that project's tasks, because the host found the queue by
+// name and followed the link; a todo or backlog folder swapped for a link to another project's had a
+// proposal written into it. The tools walk to each queue from the workspace one real folder at a
+// time, and create a task through the folders that walk opened, so every one of them refuses: none
+// lists, reads, changes or adds to the other project's tasks, and nothing of them reaches the box.
+func TestToolsRefuseAQueueReachedThroughALink(t *testing.T) {
+	fork := filepath.Join(".coop", "task-executions", "generation", "assignment")
+	repoQueue := filepath.Join(".agent", "tasks")
+	todo, backlog := filepath.Join(repoQueue, tasks.StateTodo), filepath.Join(repoQueue, tasks.StateBacklog)
+	for _, tc := range []struct {
+		name    string
+		queue   string // the queue root, inside the workspace
+		swapped string // the folder the box swaps for a link
+		target  string // where the link points, inside the other project
+		state   string // the state folder holding the other project's task
+		fork    bool   // a fork's queue, with its proposal outbox beside it
+	}{
+		{"fork assignment folder", filepath.Join(fork, "tasks"), fork, ".agent", tasks.StateInProgress, true},
+		{"folder above the assignment", filepath.Join(fork, "tasks"), ".coop", ".agent", tasks.StateInProgress, true},
+		{"subproject", filepath.Join("api", ".agent", "tasks"), "api", ".", tasks.StateInProgress, false},
+		{"repository .agent", repoQueue, ".agent", ".agent", tasks.StateInProgress, false},
+		{"todo folder", repoQueue, todo, todo, tasks.StateTodo, false},
+		{"backlog folder", repoQueue, backlog, backlog, tasks.StateBacklog, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(tasks.TestLeaseAuthorityRootEnv, t.TempDir())
+			workspace := t.TempDir()
+			root := queueIn(t, workspace, tc.queue, map[string]string{"mine": tasks.StateInProgress})
+			authority := Authority{Workspace: workspace, QueueRoots: []string{root}, Assigned: "mine",
+				Owner: tasks.TaskLeaseOwner{RunID: "test-run", PID: os.Getpid(), Provider: "test", Target: "test"}}
+			if tc.fork {
+				authority.ProposalOutbox = filepath.Join(filepath.Dir(root), "proposals")
+				if err := os.Mkdir(authority.ProposalOutbox, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s, err := New(authority)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sess := newSession(t, s)
+			if text := sess.mustCall("tasks_list", map[string]any{}); !strings.Contains(text, `"mine"`) {
+				t.Fatalf("before the swap the queue lists %s", text)
+			}
+
+			// The other project's queue, and a fork's outbox beside it, sit where the workspace's paths
+			// lead once the link is in place.
+			swapped := filepath.Join(workspace, tc.swapped)
+			below, err := filepath.Rel(swapped, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			other := filepath.Join(t.TempDir(), "other")
+			target := filepath.Join(other, tc.target)
+			queueIn(t, target, below, map[string]string{"secret": tc.state})
+			if tc.fork {
+				if err := os.Mkdir(filepath.Join(target, filepath.Dir(below), "proposals"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A queue has no backlog folder until its first idea.
+			if err := os.MkdirAll(swapped, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(swapped, swapped+".kept"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, swapped); err != nil {
+				t.Fatal(err)
+			}
+			// Found by name, as the tools found it, the queue now leads to the other project's task.
+			if _, err := os.Stat(filepath.Join(root, tc.state, "secret", "task.md")); err != nil {
+				t.Fatalf("the swap did not lead the queue to the other project: %v", err)
+			}
+			before := taskFiles(t, other)
+
+			for _, call := range []struct {
+				tool string
+				args map[string]any
+			}{
+				{"tasks_list", map[string]any{}},
+				{"tasks_list", map[string]any{"query": "secret"}},
+				{"tasks_get", map[string]any{"id": "secret"}},
+				{"tasks_get", map[string]any{"id": "mine"}},
+				{"tasks_update_state", map[string]any{"id": "secret", "status": "planted"}},
+				{"tasks_append_log", map[string]any{"id": "secret", "entry": "## planted"}},
+				{"tasks_set_subtasks", map[string]any{"id": "secret", "subtasks": []map[string]any{{"text": "planted", "done": true}}}},
+				{"tasks_block", map[string]any{"id": "secret", "decision": "d", "options": []string{"A — a"}, "recommendation": "r"}},
+				{"tasks_complete", map[string]any{"id": "secret"}},
+				{"tasks_complete", map[string]any{"id": "mine"}},
+				{"tasks_propose", map[string]any{"kind": "task", "title": "Planted", "context": "c", "acceptance": "a", "approach": "p", "subtasks": []string{"s"}}},
+				{"tasks_propose", map[string]any{"kind": "backlog", "title": "Planted idea", "context": "c", "acceptance": "a", "approach": "p", "subtasks": []string{"s"}}},
+			} {
+				// No other tool reads the backlog, so a swapped backlog folder matters only to a proposal.
+				if tc.state == tasks.StateBacklog && call.tool != "tasks_propose" {
+					continue
+				}
+				text, refused := sess.call(call.tool, call.args)
+				if !refused {
+					t.Errorf("%s %v should have been refused, got: %s", call.tool, call.args, text)
+				}
+				if strings.Contains(text, "secret") || strings.Contains(text, other) {
+					t.Errorf("%s %v answered with the other project's tasks: %s", call.tool, call.args, text)
+				}
+				// Checked after every call: a write can land before a later step refuses.
+				if after := taskFiles(t, other); !maps.Equal(before, after) {
+					t.Fatalf("%s %v changed the other project:\nbefore %v\nafter  %v", call.tool, call.args, before, after)
+				}
+			}
+		})
+	}
+}
+
+// A configured queue that does not exist yet, a subproject's before its first task, still lists
+// as empty: only a folder that is there and is a link stops the tools.
+func TestToolsListAQueueThatDoesNotExistYetAsEmpty(t *testing.T) {
+	root := queue(t, map[string]string{"t1": tasks.StateTodo})
+	s := newServer(t, root, "")
+	s.authority.QueueRoots = append(s.authority.QueueRoots, filepath.Join(filepath.Dir(filepath.Dir(root)), "api", ".agent", "tasks"))
+	text := newSession(t, s).mustCall("tasks_list", map[string]any{})
+	if !strings.Contains(text, `"t1"`) {
+		t.Fatalf("a missing subproject queue hid the other queue: %s", text)
+	}
+}
+
+// A fork's outbox is a folder in its workspace too. Swapped for a link, it would have had the host
+// write the box's proposal into whatever folder the link names, another project's todo say.
+func TestForkProposalRefusesAnOutboxSwappedForALink(t *testing.T) {
+	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+	outbox := outboxIn(t, root)
+	s, err := New(Authority{Workspace: filepath.Dir(filepath.Dir(root)), QueueRoots: []string{root}, Assigned: "t1", ProposalOutbox: outbox})
+	if err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := filepath.Join(t.TempDir(), ".agent", "tasks", tasks.StateTodo)
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(outbox); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, outbox); err != nil {
+		t.Fatal(err)
+	}
+	newSession(t, s).mustRefuse("tasks_propose", map[string]any{"kind": "task", "title": "Planted", "context": "c", "acceptance": "a", "approach": "p", "subtasks": []string{"s"}})
+	if entries, err := os.ReadDir(elsewhere); err != nil || len(entries) != 0 {
+		t.Fatalf("the proposal went through the link: %v, %v", entries, err)
 	}
 }
 

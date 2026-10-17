@@ -18,6 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
+	"slices"
 	"sync"
 
 	"github.com/AndrewDryga/coop/internal/mcp"
@@ -44,7 +46,14 @@ var supportedProtocolVersions = map[string]bool{"2024-11-05": true, "2025-03-26"
 // Authority is everything the server may act on, assembled by the host process that owns the
 // queue. Nothing here is read from the environment or a config file.
 type Authority struct {
-	// QueueRoots are the absolute task queue roots the tools reach — every task in them.
+	// Workspace is the absolute folder the box mounts: the repository, or a fork's workspace. The
+	// box cannot replace this folder, only what is inside it, so the tools walk from it to every
+	// queue and to the proposal outbox without following a link. A box that swaps a folder on the
+	// way, such as a fork's assignment folder, a subproject, .agent or a state folder, for a link to
+	// another project's tasks gets a refusal instead of that project's tasks.
+	Workspace string
+	// QueueRoots are the absolute task queue roots the tools reach — every task in them. Each lies
+	// inside Workspace.
 	QueueRoots []string
 	// Assigned is the task the launching iteration already leases host-side (the loop's
 	// AssignLoopTaskOnly). Mutations on it run under that lease; the server never takes a second
@@ -57,7 +66,8 @@ type Authority struct {
 	ValidateAssignedCompletion func(CompletionClaim) error
 	// ProposalOutbox, when set, is where tasks_propose writes validated proposals instead of
 	// creating queue folders: a fork's one-task projection has no canonical todo/backlog, so the
-	// host imports the outbox when the fork lands (tasks.ImportForkProposals).
+	// host imports the outbox when the fork lands (tasks.ImportForkProposals). It lies inside
+	// Workspace.
 	ProposalOutbox string
 	// Owner identifies the leases the server takes on tasks other than Assigned.
 	Owner tasks.TaskLeaseOwner
@@ -101,6 +111,19 @@ func (s *Server) LatestAssignedTerminalRefusal() (AssignedTerminalRefusal, bool)
 func New(authority Authority) (*Server, error) {
 	if len(authority.QueueRoots) == 0 {
 		return nil, errors.New("task tools need at least one queue root")
+	}
+	if !filepath.IsAbs(authority.Workspace) {
+		return nil, errors.New("task tools need the absolute workspace folder the box mounts")
+	}
+	paths := slices.Clone(authority.QueueRoots)
+	if authority.ProposalOutbox != "" {
+		paths = append(paths, authority.ProposalOutbox)
+	}
+	for _, path := range paths {
+		// Only a folder inside the workspace can be opened from it.
+		if rel, err := filepath.Rel(authority.Workspace, path); err != nil || !filepath.IsAbs(path) || !filepath.IsLocal(rel) {
+			return nil, fmt.Errorf("task tools reach only folders inside the workspace %s, not %q", authority.Workspace, path)
+		}
 	}
 	return &Server{authority: authority}, nil
 }

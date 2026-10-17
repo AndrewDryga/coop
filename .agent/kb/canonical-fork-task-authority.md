@@ -2,8 +2,8 @@
 name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
-sources: [internal/tasks/identity.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go]
-updated: 2026-09-23
+sources: [internal/tasks/identity.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go]
+updated: 2026-10-17
 ---
 
 The canonical queue is the task database. Fork work never creates a second authority: the host
@@ -16,7 +16,12 @@ the box.
 
 Projection state is evidence, not authority. The host opens it with rooted no-follow operations,
 rejects extra tasks/symlinks/hardlinks/oversized trees, snapshots it immutably, then syncs only the
-allowed Markdown/artifact surface while holding exact task authority. Blocked work updates the
+allowed Markdown/artifact surface while holding exact task authority. The box can swap the
+assignment folder, or one above it, for a link while it runs, so the in-box task tools walk to the
+projection from the fork workspace without following a link and refuse it when a link is on the way,
+and write proposals through the outbox that walk opened. For the projection the walk is a check, not
+a handle: task mutations still reach it by name and can race a swap ([[in-box-task-channel]]).
+Blocked work updates the
 canonical blocked folder. A projected done task becomes `reviewing`; after all signoff and signing,
 one generation candidate atomically binds HEAD/tree plus every assignment and projection digest.
 Canonical tasks remain in-progress until merge lands that exact candidate.
@@ -35,6 +40,10 @@ Execution records normally live beside fork state and fall back to project-keyed
 when an ordinary repository's parent is read-only.
 
 ## Changelog
+- 2026-10-17 — the in-box task tools check the projection, and open the outbox, from the fork
+  workspace: a box that swapped its assignment folder or a folder above it for a link to another
+  project's .agent had them list, read and change that project's tasks. Verified against
+  channel.go, dir.go and taskmcp; the check-then-use race is recorded in [[in-box-task-channel]].
 - 2026-09-23 — corrected the allocator assumption: tasks remain authorized by random queue/task
   identity plus locks, semantic records and live pins; durable fork generations now use a private
   hardlink anchor. No task record migration was introduced.

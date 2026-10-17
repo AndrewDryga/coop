@@ -317,6 +317,19 @@ func ReadTaskTree(root string) ([]Item, error) {
 	return nil, fmt.Errorf("task queue %s kept changing while it was read; retry", root)
 }
 
+// ReadTaskTreeBelow is ReadTaskTree for a queue inside top, a folder a running box mounts and can
+// change anything in: the in-box task tool reads its queues this way, and the loop checks them with
+// it at startup. It reads the queue at root only when every folder from top down to root is a real
+// folder (requireRealFolders): a box that swapped one for a link, a fork's assignment folder or
+// .agent, would otherwise have the tool list another project's tasks, and a subproject folder that
+// is a link leads there too. ReadTaskTree itself refuses a link only at the queue root and below.
+func ReadTaskTreeBelow(top, root string) ([]Item, error) {
+	if err := requireRealFolders(top, root); err != nil {
+		return nil, fmt.Errorf("refusing task queue %s: %w", root, err)
+	}
+	return ReadTaskTree(root)
+}
+
 func readTaskTreeOnce(root string) ([]Item, bool, error) {
 	var items []Item
 	info, err := os.Lstat(root)

@@ -36,7 +36,7 @@ func newProviderLoopLiveTaskServer(repo, provider string) (*providerLoopLiveTask
 	root, id := filepath.Join(repo, tasksRoot), providerLoopLiveTaskID(provider)
 	// This diagnostic owns no loop iteration/ref window. It proves native
 	// checklist-tool behavior; external controller/binding proof is separate.
-	server, err := taskmcp.New(taskmcp.Authority{QueueRoots: []string{root}, Assigned: id})
+	server, err := taskmcp.New(taskmcp.Authority{Workspace: repo, QueueRoots: []string{root}, Assigned: id})
 	if err != nil {
 		return nil, err
 	}

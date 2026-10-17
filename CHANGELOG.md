@@ -48,6 +48,19 @@
   fork cannot publish one at all. `~/.coopignore` does not apply to the projects below it, and a
   `.coopignore` in a folder another user owns, such as `/tmp`, is ignored.
 
+- **The task tools in a box refuse a task queue reached through a link.** In `coop loop` and
+  `coop fork`, the agent manages its tasks through task tools that Coop runs outside the box. Coop
+  found each task queue by its path, so an agent could replace a folder on that path with a link to
+  another project: `.agent`, a subproject folder, a fork's task folder, or a queue's `00_todo` or
+  `xx_backlog` folder. The tools then listed and read that project's tasks, changed them, and added
+  tasks or proposals to it. The tools now refuse a queue, or a state folder, reached through a link.
+  This also refuses a setup that used to work: if a subproject folder or a task queue folder is a
+  link, `coop loop` now names the queue and stops at startup. Replace the link with the real folder,
+  or point `project.yaml` (or `--tasks`) at the real folder. `coop tasks add` and `coop backlog add`
+  refuse a state folder that is a link. They, and a fork loop adding a task its agent discovered,
+  also refuse a queue `README.md` that is a symbolic link: replace the link with a copy of the file,
+  or delete it to use the built-in template.
+
 - **Coop no longer lets a box's Git settings choose the project folder.** Coop asked Git where your
   repository starts, and Git follows a setting in `.git/config` that an agent in a box can change. A
   box could point it at another folder, such as your home folder, and the next Coop command used that

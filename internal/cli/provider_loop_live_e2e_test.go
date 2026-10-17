@@ -689,7 +689,7 @@ func TestProviderLoopLiveContract(t *testing.T) {
 		if err := os.Rename(task, filepath.Join(layout.Repo, tasksRoot, stateDone, providerLoopLiveTaskID(target.Provider))); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tasks.CreateDraftTask(filepath.Join(layout.Repo, tasksRoot), providerLoopLiveProposal()); err != nil {
+		if _, err := tasks.CreateDraftTask(layout.Repo, filepath.Join(layout.Repo, tasksRoot), providerLoopLiveProposal()); err != nil {
 			t.Fatal(err)
 		}
 		return layout, before, target, marker
@@ -888,7 +888,7 @@ func TestProviderLoopLiveContract(t *testing.T) {
 			if altered == "second proposal" {
 				draft := providerLoopLiveProposal()
 				draft.Title = "Unexpected second proposal"
-				if _, err := tasks.CreateDraftTask(filepath.Join(layout.Repo, tasksRoot), draft); err != nil {
+				if _, err := tasks.CreateDraftTask(layout.Repo, filepath.Join(layout.Repo, tasksRoot), draft); err != nil {
 					t.Fatal(err)
 				}
 			} else {

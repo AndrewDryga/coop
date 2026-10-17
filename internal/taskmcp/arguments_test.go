@@ -132,7 +132,7 @@ func TestTaskArgumentsKeepStrictTextAndTypeBoundaries(t *testing.T) {
 	for _, fork := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fork=%v", fork), func(t *testing.T) {
 			root := queue(t, map[string]string{"t1": tasks.StateInProgress})
-			outbox := t.TempDir()
+			outbox := outboxIn(t, root)
 			server := newServer(t, root, "t1")
 			if fork {
 				server.authority.ProposalOutbox = outbox
@@ -261,7 +261,7 @@ func TestTaskOptionalStringsRejectNullWithoutMutation(t *testing.T) {
 
 func TestForkProposalRefusesUnimportableSerializedSize(t *testing.T) {
 	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
-	outbox := t.TempDir()
+	outbox := outboxIn(t, root)
 	server := newServer(t, root, "t1")
 	server.authority.ProposalOutbox = outbox
 	sess := newSession(t, server)
@@ -329,7 +329,7 @@ func TestMissingArgumentsReportEveryFieldWithoutMutation(t *testing.T) {
 		}
 		t.Run(mode, func(t *testing.T) {
 			root := queue(t, map[string]string{"t1": tasks.StateInProgress})
-			outbox := t.TempDir()
+			outbox := outboxIn(t, root)
 			server := newServer(t, root, "t1")
 			if fork {
 				server.authority.ProposalOutbox = outbox

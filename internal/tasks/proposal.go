@@ -150,7 +150,7 @@ func openRealSubroot(base *os.Root, rel string) (*os.Root, error) {
 			if err != nil {
 				return nil, err
 			}
-			return nil, fmt.Errorf("rooted task path component %q is not a real directory", component)
+			return nil, fmt.Errorf("%q is a link or not a real directory", component)
 		}
 		next, err := root.OpenRoot(component)
 		if err != nil {
@@ -202,7 +202,7 @@ func ensureRealSubroot(base *os.Root, rel string, mode os.FileMode) (*os.Root, e
 			if err != nil {
 				return nil, err
 			}
-			return nil, fmt.Errorf("rooted task path component %q is not a real directory", component)
+			return nil, fmt.Errorf("%q is a link or not a real directory", component)
 		}
 		next, err := root.OpenRoot(component)
 		if err != nil {
@@ -364,7 +364,12 @@ func proposalTaskFiles(record ForkProposalRecord) (map[string]string, error) {
 		"Acceptance criteria": proposal.Acceptance,
 		"Approach":            proposal.Approach,
 	}
-	template, err := loadTaskTemplate(record.CanonicalRoot)
+	queue, err := os.OpenRoot(record.CanonicalRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer queue.Close()
+	template, err := loadTaskTemplate(queue)
 	if err != nil {
 		return nil, err
 	}

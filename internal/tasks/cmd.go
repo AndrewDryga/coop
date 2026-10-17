@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	osuser "os/user"
@@ -437,11 +438,32 @@ type taskExistsError struct{ msg string }
 func (e taskExistsError) Error() string { return e.msg }
 
 // createTaskFolder writes a new task folder <date>-<slug> under root/state from the given body values
-// and returns its id. Shared by `coop tasks add`, `coop backlog add`, and the in-box task channel, so
-// every path creates the same files with the same collision rule.
+// and returns its id, for `coop tasks add` and `coop backlog add`. A queue that does not exist yet is
+// made first: `add` is how a secondary --tasks queue starts. The text is checked before that, so a
+// refused add leaves no empty queue behind for `coop loop` to take for a set-up project.
 func createTaskFolder(root, state, slug, title string, values map[string]string, subtasks []string) (string, error) {
+	if err := checkTaskText(title, subtasks); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", err
+	}
+	queue, err := os.OpenRoot(root)
+	if err != nil {
+		return "", err
+	}
+	defer queue.Close()
+	return createTaskFolderIn(queue, state, slug, title, values, subtasks)
+}
+
+// createTaskFolderIn is createTaskFolder in the queue folder queue, the one the in-box task channel
+// also creates through, so every path creates the same files with the same collision rule. Each
+// state folder must be a real folder, and the task folder and its files are made through queue,
+// never by name: a box can swap a state folder for a link to another project's, or plant a link in
+// the new folder before its files are written.
+func createTaskFolderIn(queue *os.Root, state, slug, title string, values map[string]string, subtasks []string) (string, error) {
 	id := time.Now().Format("2006-01-02") + "-" + slug
-	template, err := loadTaskTemplate(root)
+	template, err := loadTaskTemplate(queue)
 	if err != nil {
 		return "", err
 	}
@@ -452,32 +474,80 @@ func createTaskFolder(root, state, slug, title string, values map[string]string,
 	// An id is a stable, unique handle, so reject a collision in ANY state — the four lifecycle dirs
 	// AND xx_backlog — else a re-add (or a promote) would make two folders share an id, and
 	// findTask/findBacklogTask would silently shadow one.
-	for _, st := range TaskStates {
-		if pathExists(filepath.Join(root, st, id)) {
-			return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/", id, st)}
+	for _, st := range append(slices.Clone(TaskStates), StateBacklog) {
+		dir, err := openRealSubroot(queue, st)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
 		}
-	}
-	if pathExists(filepath.Join(root, StateBacklog, id)) {
-		return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/ — promote it (coop backlog promote %s) instead of re-adding", id, StateBacklog, id)}
-	}
-	// Ensure all four state dirs exist (the queue may be fresh, or predate the four-state scaffold), so
-	// the move-a-folder-between-states protocol always has a real dir to move into — same guarantee as
-	// `coop init`. Then the task's own todo dir.
-	if err := ScaffoldStateDirs(root); err != nil {
-		return "", err
-	}
-	// The target dir: stateTodo lives under scaffoldStateDirs above; xx_backlog is created on demand
-	// here (like a fresh secondary queue), so `coop init` never has to scaffold an empty backlog drawer.
-	dir := filepath.Join(root, state, id)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		if err != nil {
+			return "", err
+		}
+		_, err = dir.Lstat(id)
+		dir.Close()
+		switch {
+		case err == nil && st == StateBacklog:
+			return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/ — promote it (coop backlog promote %s) instead of re-adding", id, StateBacklog, id)}
+		case err == nil:
+			return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/", id, st)}
+		case !errors.Is(err, os.ErrNotExist):
 			return "", err
 		}
 	}
+	// Ensure all four state dirs exist (the queue may be fresh, or predate the four-state scaffold), so
+	// the move-a-folder-between-states protocol always has a real dir to move into — same guarantee as
+	// `coop init`. Then the task's own state dir: xx_backlog is created on demand here (like a fresh
+	// secondary queue), so `coop init` never has to scaffold an empty backlog drawer.
+	for _, st := range TaskStates {
+		dir, err := ensureRealSubroot(queue, st, 0o755)
+		if err != nil {
+			return "", err
+		}
+		dir.Close()
+	}
+	stateDir, err := ensureRealSubroot(queue, state, 0o755)
+	if err != nil {
+		return "", err
+	}
+	defer stateDir.Close()
+	if err := stateDir.Mkdir(id, 0o755); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/", id, state)}
+		}
+		return "", err
+	}
+	if err := writeTaskFiles(stateDir, id, files); err != nil {
+		return "", err
+	}
 	return id, nil
+}
+
+// writeTaskFiles writes files, in name order, into id, the task folder just made in stateDir. Each
+// file is created exclusively, so a file planted in the folder first is refused, never followed or
+// overwritten. If a file cannot be written, the files written so far and then the empty folder are
+// removed through stateDir, so retrying the same title is not refused as a duplicate. A folder that
+// still holds anything this call did not write is left in place.
+func writeTaskFiles(stateDir *os.Root, id string, files map[string]string) error {
+	dir, err := openRealSubroot(stateDir, id)
+	if err != nil {
+		return errors.Join(err, stateDir.Remove(id))
+	}
+	defer dir.Close()
+	var written []string
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		f, err := dir.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			written = append(written, name)
+			_, err = f.Write([]byte(files[name]))
+			err = errors.Join(err, f.Close())
+		}
+		if err != nil {
+			for _, made := range written {
+				err = errors.Join(err, dir.Remove(made))
+			}
+			return errors.Join(err, stateDir.Remove(id))
+		}
+	}
+	return nil
 }
 
 // taskOwnerIdentity is the best-effort "who is claiming this" pair `coop tasks claim` records: no
@@ -1470,25 +1540,16 @@ func uniqueLabeledValue(lines []string, label, fallback string) string {
 
 const taskMetadataFileLimit = 1 << 20
 
+// OpenTaskMetadataRoot opens the task folder taskDir as an os.Root for its files. The folder itself
+// must be a real folder, not a link: it is opened from its parent (openRootBelow).
 func OpenTaskMetadataRoot(taskDir string) (*os.Root, error) {
-	before, err := os.Lstat(taskDir)
+	if taskDir == "" {
+		return nil, errors.New("open task folder: no folder given") // never the working directory
+	}
+	taskDir = filepath.Clean(taskDir)
+	root, err := openRootBelow(filepath.Dir(taskDir), taskDir)
 	if err != nil {
-		return nil, fmt.Errorf("inspect task folder: %w", err)
-	}
-	if before.Mode()&os.ModeSymlink != 0 || !before.IsDir() {
-		return nil, fmt.Errorf("refusing task metadata access through non-directory task folder %q", taskDir)
-	}
-	root, err := os.OpenRoot(taskDir)
-	if err != nil {
-		return nil, fmt.Errorf("open task folder: %w", err)
-	}
-	after, err := root.Stat(".")
-	if err != nil || !os.SameFile(before, after) {
-		root.Close()
-		if err != nil {
-			return nil, fmt.Errorf("reinspect task folder: %w", err)
-		}
-		return nil, fmt.Errorf("task folder %q changed while opening", taskDir)
+		return nil, fmt.Errorf("open task folder %s: %w", taskDir, err)
 	}
 	return root, nil
 }

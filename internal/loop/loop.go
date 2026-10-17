@@ -168,13 +168,16 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	}
 	queueExists := false
 	for _, host := range hosts {
+		// The box's task tools refuse a queue reached through a link, such as a subproject folder
+		// that is one or a link an earlier box left, so the loop refuses it here rather than run an
+		// iteration whose every task call fails. A missing queue reads as empty and is skipped.
+		if _, readErr := tasks.ReadTaskTreeBelow(repo, host); readErr != nil {
+			return 1, readErr
+		}
 		if _, statErr := os.Lstat(host); errors.Is(statErr, os.ErrNotExist) {
 			continue
 		} else if statErr != nil {
 			return 1, statErr
-		}
-		if _, readErr := tasks.ReadTaskTree(host); readErr != nil {
-			return 1, readErr
 		}
 		queueExists = true
 	}
@@ -819,12 +822,14 @@ reviewAgain:
 			}
 			// The box's task tools: every queue this loop works, the leased task, and — in a fork —
 			// the proposal outbox the host imports at merge. Built here, where the lease lives; the
-			// box only carries the server.
+			// box only carries the server. repo is the folder the box mounts (a fork's workspace in
+			// a fork), so the tools walk to every queue from it and refuse one the box has reached
+			// through a link.
 			// A successful binding precheck is not completion: a later checklist
 			// refusal or failed move must not advance the next attempt's base.
 			var completionClaim atomic.Pointer[taskmcp.CompletionClaim]
 			taskTools, toolsErr := taskmcp.New(taskmcp.Authority{
-				QueueRoots: hosts, Assigned: assigned.Item.ID, ProposalOutbox: c.proposalOutboxPath(repo),
+				Workspace: repo, QueueRoots: hosts, Assigned: assigned.Item.ID, ProposalOutbox: c.proposalOutboxPath(repo),
 				Owner: tasks.TaskLeaseOwner{RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: target.String()},
 				ValidateAssignedCompletion: func(claim taskmcp.CompletionClaim) error {
 					completionClaim.Store(nil)

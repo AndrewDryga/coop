@@ -56,7 +56,7 @@ func TestTaskChannelLiveInARealBox(t *testing.T) {
 	}
 	defer lease.Release()
 
-	server, err := taskmcp.New(taskmcp.Authority{QueueRoots: []string{queue}, Assigned: "mine"})
+	server, err := taskmcp.New(taskmcp.Authority{Workspace: repo, QueueRoots: []string{queue}, Assigned: "mine"})
 	if err != nil {
 		t.Fatal(err)
 	}

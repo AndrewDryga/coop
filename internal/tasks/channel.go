@@ -16,6 +16,13 @@ import (
 // request through its eight task tools lands here, on the same validation, file discipline, and
 // collision rules the CLI uses, so a call from the box can never write a queue the host would not
 // have written itself.
+//
+// The box can also replace any folder inside the workspace it mounts while the tools run, and a
+// queue reached by name follows a folder swapped for a link to another project. So the channel
+// takes that workspace as top, the one folder the box cannot replace, and walks down from it one
+// real folder at a time (openRootBelow). Task creation, ReadTaskFiles and the proposal outbox work
+// through the folder that walk opened; a queue that is read, and the task folders the other
+// mutations change, are checked that way first and then still found by name.
 
 // Task text/list limits are shared by proposal validation and the task-channel descriptors.
 const (
@@ -72,12 +79,29 @@ func (d TaskDraft) proposal() (ForkTaskProposal, error) {
 }
 
 // CreateDraftTask validates draft and creates its folder under root — 00_todo/ for kind task,
-// xx_backlog/ for kind backlog — exactly as `coop tasks add` / `coop backlog add` would.
-func CreateDraftTask(root string, draft TaskDraft) (Item, error) {
+// xx_backlog/ for kind backlog — exactly as `coop tasks add` / `coop backlog add` would. The queue is
+// opened from top, the workspace the box mounts, one real folder at a time (making the missing ones,
+// as `add` makes a new queue), and the task is created through that handle (createTaskFolderIn): a
+// queue or a state folder the box has swapped for a link is refused, never written through.
+func CreateDraftTask(top, root string, draft TaskDraft) (Item, error) {
 	proposal, err := draft.proposal()
 	if err != nil {
 		return Item{}, err
 	}
+	rel, err := filepath.Rel(top, root)
+	if err != nil {
+		return Item{}, err
+	}
+	workspace, err := os.OpenRoot(top)
+	if err != nil {
+		return Item{}, err
+	}
+	defer workspace.Close()
+	queue, err := ensureRealSubroot(workspace, rel, 0o755)
+	if err != nil {
+		return Item{}, fmt.Errorf("refusing task queue %s: %w", root, err)
+	}
+	defer queue.Close()
 	state := StateTodo
 	if proposal.Kind == ForkProposalBacklog {
 		state = StateBacklog
@@ -85,7 +109,7 @@ func CreateDraftTask(root string, draft TaskDraft) (Item, error) {
 	values := map[string]string{
 		"Context": proposal.Context, "Acceptance criteria": proposal.Acceptance, "Approach": proposal.Approach,
 	}
-	id, err := createTaskFolder(root, state, slugify(proposal.Title), proposal.Title, values, proposal.Subtasks)
+	id, err := createTaskFolderIn(queue, state, slugify(proposal.Title), proposal.Title, values, proposal.Subtasks)
 	if err != nil {
 		return Item{}, err
 	}
@@ -108,13 +132,15 @@ func CreateDraftTask(root string, draft TaskDraft) (Item, error) {
 
 // WriteForkProposal validates draft and writes it into outbox as <id>.json — the exact file
 // ImportForkProposals reads when the fork lands — returning the file's path. The outbox's entry
-// limit is enforced here so the import can never be poisoned by one proposal too many.
-func WriteForkProposal(outbox string, draft TaskDraft) (string, error) {
+// limit is enforced here so the import can never be poisoned by one proposal too many. The outbox
+// sits in the fork's workspace, so it is opened from top, that workspace (openRootBelow): a box
+// that swaps it, or a folder above it, for a link cannot have the host write into another folder.
+func WriteForkProposal(top, outbox string, draft TaskDraft) (string, error) {
 	proposal, err := draft.proposal()
 	if err != nil {
 		return "", err
 	}
-	root, err := os.OpenRoot(outbox)
+	root, err := openRootBelow(top, outbox)
 	if err != nil {
 		return "", fmt.Errorf("open proposal outbox: %w", err)
 	}
@@ -412,9 +438,11 @@ func ReplaceDecision(taskDir, id, title string, d Decision) (earlierAnswer strin
 var TaskFileNames = []string{"task.md", "state.md", "log.md", "decision.md"}
 
 // ReadTaskFiles returns the task folder's metadata files by name, omitting absent ones, each read
-// through the bounded single-link boundary every host reader uses.
-func ReadTaskFiles(taskDir string) (map[string]string, error) {
-	root, err := OpenTaskMetadataRoot(taskDir)
+// through the bounded single-link boundary every host reader uses. The folder is opened from top,
+// the workspace the box mounts (openRootBelow), so the box gets back only files of a task folder
+// inside it, never one a swapped folder above it leads to.
+func ReadTaskFiles(top, taskDir string) (map[string]string, error) {
+	root, err := openRootBelow(top, taskDir)
 	if err != nil {
 		return nil, err
 	}
@@ -431,4 +459,35 @@ func ReadTaskFiles(taskDir string) (map[string]string, error) {
 		files[name] = string(data)
 	}
 	return files, nil
+}
+
+// requireRealFolders refuses folder unless every folder from top down to it is a real folder
+// (openRootBelow). A folder that does not exist yet passes: a missing queue reads as empty. It
+// checks once, when it runs; the operation after it still finds the folder by name.
+func requireRealFolders(top, folder string) error {
+	root, err := openRootBelow(top, folder)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return root.Close()
+}
+
+// openRootBelow opens folder, which top holds, as an os.Root whose reads and writes cannot leave
+// it. Only top is opened by name, so callers pass a folder a running box cannot replace: the
+// workspace it mounts. Below it each folder is opened from its parent and must be a real folder,
+// not a link (openRealSubroot), since the box can swap any of them for a link to another project.
+func openRootBelow(top, folder string) (*os.Root, error) {
+	rel, err := filepath.Rel(top, folder)
+	if err != nil {
+		return nil, err
+	}
+	base, err := os.OpenRoot(top)
+	if err != nil {
+		return nil, err
+	}
+	defer base.Close()
+	return openRealSubroot(base, rel)
 }

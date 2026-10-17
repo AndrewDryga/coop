@@ -2,8 +2,8 @@
 name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
-sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go]
-updated: 2026-10-13
+sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/loop/loop.go]
+updated: 2026-10-17
 ---
 
 A loop work box changes task state through the `coop-tasks` MCP server (eight tools:
@@ -52,7 +52,7 @@ validated snapshot BEFORE the per-run artifact is written (`run.go` ~line 350), 
 projections carry it unchanged (see [[mcp-authority-projection]]). No bearer token: the socket is
 mounted only into this run's box, so the mount is the authority, not a secret.
 
-**Authority is explicit, never ambient.** `taskmcp.Authority{QueueRoots, Assigned, ProposalOutbox,
+**Authority is explicit, never ambient.** `taskmcp.Authority{Workspace, QueueRoots, Assigned, ProposalOutbox,
 Owner, ValidateAssignedCompletion}` is built host-side by the loop (`internal/loop/loop.go`, where the lease lives). Every tool
 works on every task in those queues — there is no per-run scope; the assigned task is what the prompt
 says to work, not a permission. A mutation on a task
@@ -65,6 +65,32 @@ result tells the agent it had been answered. In a fork, `tasks_propose` writes t
 validated proposal into `Authority.ProposalOutbox` (the same file `tasks.ImportForkProposals` reads at
 merge); in a plain loop it creates the `00_todo/`/`xx_backlog/` folder directly. Forks reach this same
 `box.Run` plumbing — `internal/loop/iteration.go` builds one RunSpec for plain and fork iterations.
+
+**Every queue is walked to from the workspace the box mounts.** The box can replace any folder
+inside its mount while the tools run, and a queue found by name follows a folder swapped for a link
+(`.agent`, a subproject, a fork's assignment folder or one above it, a state folder) into another
+project. `Authority.Workspace` names that mount (the repository, or the fork workspace), the one
+folder the box cannot replace, and `New` refuses a queue root or outbox outside it. The walk is
+`tasks.openRootBelow`: `os.OpenRoot(workspace)`, then `openRealSubroot` opens each folder from its
+parent and refuses one that is a link. Two kinds of use follow:
+
+- Through the walk's handle: `tasks_get` (`ReadTaskFiles`), the fork outbox (`WriteForkProposal`)
+  and plain proposals. `CreateDraftTask` walks with `ensureRealSubroot`, which also makes a missing
+  queue, then `createTaskFolderIn` refuses a linked state folder or a README.md that is a symbolic
+  link, writes the new files `O_EXCL` through the handle, and removes what it wrote if a write
+  fails. A hard-linked README.md is read: the template is only read, and a box can hard-link only
+  files in its own mount. `coop tasks add` shares that creator; the fork proposal import shares the
+  README reader (`readTaskTemplate`).
+- As a check only: `tasks_list` and every tool that names a task read the queue with
+  `tasks.ReadTaskTreeBelow`, which runs the walk down to the queue root (a missing folder still
+  reads as empty), then `ReadTaskTree` by name, which refuses a linked state or task folder. The
+  mutations then reach the task folder by name, so a box that swaps a folder between the check and
+  the operation is not ruled out; the reader has the same check-then-use at each state and task
+  folder. `openRealSubroot` checks each folder with `Lstat` before `os.Root.OpenRoot`, which does
+  not pass `O_NONBLOCK`, so a box that swaps in a FIFO between the two makes that call wait.
+
+The loop runs the same `ReadTaskTreeBelow` at startup, so a linked subproject stops it there. The
+completion bulk note measures from the workspace with its own `openat(O_NOFOLLOW|O_NONBLOCK)` walk.
 
 Assigned completion also gets early host feedback: the loop supplies an immutable callback tied
 to that iteration's base and audit authority. `tasks_complete` invokes it before the done move;
@@ -109,6 +135,12 @@ server validates structure and authority, not diagnostic truth or semantic dupli
 an accepted proposal is not evidence that its diagnosis is correct.
 
 ## Changelog
+- 2026-10-17 — the tools now walk to every queue from the workspace the box mounts
+  (`Authority.Workspace`): before, a fork box that swapped its assignment folder or a folder above
+  it, or any box that swapped `.agent`, a subproject or a todo/backlog folder, for a link had the
+  tools list, read, change and add to another project's tasks. Reads check the walk, then go by
+  name; creation, `tasks_get` and the outbox go through its handle. Regressed through real JSON-RPC
+  calls for each swap; the residual check-then-use race is recorded above.
 - 2026-10-13 — hosted release CI caught a helper-output ownership race during normal shutdown.
   Reaping previously closed the reader early, losing buffered output or yielding ErrClosed.
   Caller-owned stdout and explicit consumer cleanup preserve final data and EOF without

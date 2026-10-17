@@ -399,7 +399,7 @@ func doctorCheckTaskChannel(s *doctorSection, a *app, fixture, img string) {
 		return
 	}
 	defer func() { _ = lease.Release() }()
-	server, err := taskmcp.New(taskmcp.Authority{QueueRoots: []string{queue}, Assigned: "mine"})
+	server, err := taskmcp.New(taskmcp.Authority{Workspace: fixture, QueueRoots: []string{queue}, Assigned: "mine"})
 	if err != nil {
 		fail("Could not start the test task server", err.Error())
 		return

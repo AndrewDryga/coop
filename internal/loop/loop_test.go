@@ -222,6 +222,26 @@ func TestLoopAcceptsFolderQueue(t *testing.T) {
 	}
 }
 
+// A subproject folder that is a link, or a link an earlier box left on the way to a queue, passes a
+// check by name, and then the box's task tools, which refuse such a queue, fail every call. The loop
+// refuses the queue before it starts, naming it and the link.
+func TestLoopRefusesAQueueReachedThroughALinkAtStartup(t *testing.T) {
+	repo := t.TempDir()
+	other := t.TempDir()
+	writeTaskFile(t, filepath.Join(other, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
+	if err := os.Symlink(other, filepath.Join(repo, "api")); err != nil {
+		t.Fatal(err)
+	}
+	queue := filepath.Join("api", tasksRoot)
+	c := New(&config.Config{RepoOverride: repo}, runtime.Runtime{Name: "false"}, "test", Host{})
+
+	code, err := c.Run(RunSpec{Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{queue}, Sink: io.Discard})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "refusing task queue "+filepath.Join(repo, queue)) ||
+		!strings.Contains(err.Error(), `"api" is a link`) {
+		t.Fatalf("loop over a linked subproject queue = (%d, %v), want a refusal naming the queue and the link", code, err)
+	}
+}
+
 func TestLoopRejectsInvalidVerifyAgentBeforeImageCheck(t *testing.T) {
 	repo := t.TempDir()
 	taskPath := filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md")

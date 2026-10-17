@@ -297,14 +297,16 @@ type located struct {
 }
 
 // locate finds a task by exact id across the queue roots. A slug fragment is not enough here: a
-// machine caller must never mutate a task it only partially named.
+// machine caller must never mutate a task it only partially named. Every tool that names a task
+// starts here, so each refuses a queue the box has pointed elsewhere by swapping a folder for a
+// link: the queue is checked from the workspace before it is read (tasks.ReadTaskTreeBelow).
 func (s *Server) locate(id string) (located, *toolResult) {
 	if id == "" {
 		return located{}, refusal("id is required")
 	}
 	var hits []located
 	for _, root := range s.authority.QueueRoots {
-		items, err := tasks.ReadTaskTree(root)
+		items, err := tasks.ReadTaskTreeBelow(s.authority.Workspace, root)
 		if err != nil {
 			return located{}, refusal(fmt.Sprintf("read queue %s: %v", root, err))
 		}
@@ -411,7 +413,7 @@ func (s *Server) list(_ context.Context, args json.RawMessage) *toolResult {
 	out := []listedTask{}
 	matched := 0
 	for _, root := range s.authority.QueueRoots {
-		items, err := tasks.ReadTaskTree(root)
+		items, err := tasks.ReadTaskTreeBelow(s.authority.Workspace, root)
 		if err != nil {
 			return refusal(fmt.Sprintf("read queue %s: %v", root, err))
 		}
@@ -476,7 +478,7 @@ func (s *Server) get(_ context.Context, args json.RawMessage) *toolResult {
 	if r != nil {
 		return r
 	}
-	files, err := tasks.ReadTaskFiles(loc.item.Dir)
+	files, err := tasks.ReadTaskFiles(s.authority.Workspace, loc.item.Dir)
 	if err != nil {
 		return refusal(fmt.Sprintf("read task %s: %v", loc.item.ID, err))
 	}
@@ -569,8 +571,10 @@ const completionEvidenceHandoff = " — write nothing more inside that folder. H
 // bulkNote follows a completion with the bulk warning `coop tasks done` prints, or nothing when the
 // folder holds no bulk. Its advice is not the host's (record the build in log.md instead): the agent
 // has just been told to write nothing more inside that folder, so it leaves the decision to a person.
-func bulkNote(queueRoot, dir string) string {
-	headline, facts, ok := tasks.TaskBulkWarning(queueRoot, dir)
+// The folder is measured from the workspace, so a folder swapped for a link since the task was
+// located measures nothing.
+func (s *Server) bulkNote(dir string) string {
+	headline, facts, ok := tasks.TaskBulkWarningBelow(s.authority.Workspace, dir)
 	if !ok {
 		return ""
 	}
@@ -616,7 +620,7 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		if err := tasks.RequireCompletedChecklist(loc.item); err != nil {
 			return refusal(err.Error())
 		}
-		return textResult(fmt.Sprintf("%s is already done", loc.item.ID) + completionEvidenceHandoff + bulkNote(loc.root, loc.item.Dir))
+		return textResult(fmt.Sprintf("%s is already done", loc.item.ID) + completionEvidenceHandoff + s.bulkNote(loc.item.Dir))
 	}
 	if loc.item.ID != s.authority.Assigned {
 		if claim.NoChange() {
@@ -631,7 +635,7 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 			return refusal(fmt.Sprintf("complete %s: %v", loc.item.ID, err))
 		}
 		dir := filepath.Join(loc.root, tasks.StateDone, loc.item.ID)
-		return textResult(fmt.Sprintf("%s moved to %s/", loc.item.ID, tasks.StateDone) + completionEvidenceHandoff + bulkNote(loc.root, dir))
+		return textResult(fmt.Sprintf("%s moved to %s/", loc.item.ID, tasks.StateDone) + completionEvidenceHandoff + s.bulkNote(dir))
 	}
 	// The assigned task moves under the launching iteration's lease; the host finalizes it after
 	// the box exits (commit binding, receipt, tmp/ removal). Normalizing here keeps state.md's
@@ -670,7 +674,7 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	if claim.NoChange() {
 		result = fmt.Sprintf("%s closed as %s", loc.item.ID, strings.ReplaceAll(claim.Outcome, "_", " "))
 	}
-	return textResult(result + completionEvidenceHandoff + bulkNote(loc.root, dir))
+	return textResult(result + completionEvidenceHandoff + s.bulkNote(dir))
 }
 
 func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {
@@ -794,7 +798,7 @@ func (s *Server) propose(_ context.Context, args json.RawMessage) *toolResult {
 	draft := tasks.TaskDraft{Kind: kind, Title: in.Title, Context: in.Context, Acceptance: in.Acceptance, Approach: in.Approach, Subtasks: in.Subtasks}
 	if s.authority.ProposalOutbox != "" {
 		// A fork's projection has no canonical queue: the host imports the outbox when it lands.
-		path, err := tasks.WriteForkProposal(s.authority.ProposalOutbox, draft)
+		path, err := tasks.WriteForkProposal(s.authority.Workspace, s.authority.ProposalOutbox, draft)
 		if err != nil {
 			return refusal("propose: " + err.Error())
 		}
@@ -804,7 +808,7 @@ func (s *Server) propose(_ context.Context, args json.RawMessage) *toolResult {
 	if r != nil {
 		return r
 	}
-	item, err := tasks.CreateDraftTask(root, draft)
+	item, err := tasks.CreateDraftTask(s.authority.Workspace, root, draft)
 	if err != nil {
 		return refusal("propose: " + err.Error())
 	}

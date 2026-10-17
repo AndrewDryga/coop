@@ -46,9 +46,10 @@ func TestTaskSearchAuthorityAndLiteralMatching(t *testing.T) {
 	for _, fork := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fork=%v", fork), func(t *testing.T) {
 			root := queue(t, map[string]string{"alpha": tasks.StateTodo, "beta": tasks.StateInProgress, "gamma": tasks.StateBlocked, "delta": tasks.StateDone})
-			second := queue(t, map[string]string{"zeta": tasks.StateDone})
+			workspace := filepath.Dir(filepath.Dir(root))
+			second := queueIn(t, workspace, filepath.Join("second", ".agent", "tasks"), map[string]string{"zeta": tasks.StateDone})
 			outside := queue(t, map[string]string{"outside": tasks.StateDone})
-			outbox := queue(t, map[string]string{"outbox": tasks.StateTodo})
+			outbox := queueIn(t, workspace, "outbox", map[string]string{"outbox": tasks.StateTodo})
 			writeTask(t, filepath.Join(root, tasks.StateBacklog, "backlog"), "backlog")
 			path := filepath.Join(root, tasks.StateDone, "delta", "task.md")
 			if err := os.WriteFile(path, []byte("# Café retry [x].*\n\n## Subtasks\n- [x] check\n"), 0o600); err != nil {
@@ -217,7 +218,7 @@ func TestTaskSearchSerializedByteBound(t *testing.T) {
 
 func TestTaskSearchKeepsDistinctQueuesForTheSameID(t *testing.T) {
 	first := queue(t, map[string]string{"duplicate": tasks.StateTodo})
-	second := queue(t, map[string]string{"duplicate": tasks.StateDone})
+	second := queueIn(t, filepath.Dir(filepath.Dir(first)), filepath.Join("second", ".agent", "tasks"), map[string]string{"duplicate": tasks.StateDone})
 	server := newServer(t, first, "")
 	server.authority.QueueRoots = []string{second, first}
 	sess := newSession(t, server)

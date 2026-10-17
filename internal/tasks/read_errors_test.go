@@ -223,3 +223,26 @@ func TestReadTaskTreeSkipsStrayRegularFilesAndLintNamesThem(t *testing.T) {
 		t.Fatalf("ReadBacklog beside a dotfile = %+v, %v; want an empty backlog", items, err)
 	}
 }
+
+// The in-box task tool reads a task's files after it has found the task, and the box can swap a
+// folder above it for a link in between. ReadTaskFiles opens the folder from the workspace the box
+// mounts, so it refuses instead of returning another project's task at the same path.
+func TestReadTaskFilesRefusesAFolderSwappedAboveTheTask(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, ".agent", "tasks", StateInProgress, "t1")
+	writeTaskFile(t, filepath.Join(dir, "task.md"), "# Mine\n")
+	if files, err := ReadTaskFiles(workspace, dir); err != nil || files["task.md"] != "# Mine\n" {
+		t.Fatalf("ReadTaskFiles = %q, %v", files, err)
+	}
+	other := filepath.Join(t.TempDir(), "other", ".agent")
+	writeTaskFile(t, filepath.Join(other, "tasks", StateInProgress, "t1", "task.md"), "# Secret\n")
+	if err := os.Rename(filepath.Join(workspace, ".agent"), filepath.Join(workspace, ".agent.kept")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, filepath.Join(workspace, ".agent")); err != nil {
+		t.Fatal(err)
+	}
+	if files, err := ReadTaskFiles(workspace, dir); err == nil || len(files) != 0 {
+		t.Fatalf("ReadTaskFiles read through the link: %q, %v", files, err)
+	}
+}
