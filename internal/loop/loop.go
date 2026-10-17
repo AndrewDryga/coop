@@ -1729,7 +1729,7 @@ reviewAgain:
 				return 1, err
 			}
 			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
-				noteConcurrentCompletions(pending, requeued)
+				noteConcurrentCompletions(pending, requeued, soRun.concurrent)
 				signoffRound = nextRoundAfterPending(signoffRound, pending, requeued)
 				goto reviewAgain
 			}
@@ -1748,7 +1748,7 @@ reviewAgain:
 				return 1, err
 			}
 			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
-				noteConcurrentCompletions(pending, requeued)
+				noteConcurrentCompletions(pending, requeued, soRun.concurrent)
 				signoffRound = nextRoundAfterPending(signoffRound, pending, requeued)
 				goto reviewAgain
 			}
@@ -1900,7 +1900,7 @@ reviewAgain:
 				return 1, err
 			}
 			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
-				noteConcurrentCompletions(pending, requeued)
+				noteConcurrentCompletions(pending, requeued, vRun.concurrent)
 				signoffRound = nextRoundAfterPending(signoffRound, pending, requeued)
 				goto reviewAgain
 			}

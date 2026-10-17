@@ -558,9 +558,10 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 0 ||
+			strings.Count(result.Stderr, "Another session completed") != 1 ||
 			!strings.Contains(result.Stderr, "Another session completed 1 task during this review.") ||
 			!strings.Contains(result.Stderr, "All tasks passed final review · 2/2 done") {
-			t.Fatalf("concurrent completion loop = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+			t.Fatalf("concurrent completion loop (one notice for one completion) = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, hostID)) ||
 			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, hostID)) ||

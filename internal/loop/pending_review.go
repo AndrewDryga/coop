@@ -92,8 +92,10 @@ func nextRoundAfterPending(round int, pending, requeued []string) int {
 }
 
 // noteConcurrentCompletions says another session completed the pending tasks that are not requeued.
-func noteConcurrentCompletions(pending, requeued []string) {
-	if others := withoutReviewIDs(pending, requeued); len(others) > 0 {
+// The review stage already announced the completions it observed itself (announced), and saying so
+// twice for one completion reads as two.
+func noteConcurrentCompletions(pending, requeued, announced []string) {
+	if others := withoutReviewIDs(withoutReviewIDs(pending, requeued), announced); len(others) > 0 {
 		ui.Note("Another session completed %s during this review. Reviewing it before finishing.", ui.Count(len(others), "task"))
 	}
 }
