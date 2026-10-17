@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -445,6 +446,8 @@ func TestForkTeardownWarningsEndWithOneBlankLine(t *testing.T) {
 	}
 	warnings := "fork a: services its stopped runs left behind were not all removed"
 	t.Run("rm", func(t *testing.T) {
+		// Without --force a failed teardown keeps the fork (TestForkRmKeepsWorkItsServicesWrote);
+		// with it the fork goes, after the warnings and their one blank line.
 		repo := initRepo(t)
 		ws, err := forkspace.Setup(repo, "a")
 		if err != nil {
@@ -452,7 +455,7 @@ func TestForkTeardownWarningsEndWithOneBlankLine(t *testing.T) {
 		}
 		c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: failing}}
 		var code int
-		stderr := captureStderr(t, func() { code, err = c.ForkRm([]string{"a", "--yes"}) })
+		stderr := captureStderr(t, func() { code, err = c.ForkRm([]string{"a", "--yes", "--force"}) })
 		if code != 0 || err != nil {
 			t.Fatalf("ForkRm = (%d, %v)\n%s", code, err, stderr)
 		}
@@ -481,6 +484,67 @@ func TestForkTeardownWarningsEndWithOneBlankLine(t *testing.T) {
 			t.Errorf("coop fork merge with a failing teardown printed:\n%q", stderr)
 		}
 	})
+}
+
+// A service with a writable bind can write to the fork until it stops, after rm checked the fork for
+// work. So rm keeps the fork when its teardown failed, or when work appeared while its services
+// stopped: tracked or untracked, in the fork or in a submodule. --force still deletes it.
+func TestForkRmKeepsWorkItsServicesWrote(t *testing.T) {
+	writer := func(t *testing.T, path, body string, exit int) string {
+		t.Helper()
+		script := filepath.Join(t.TempDir(), "runtime")
+		body = "#!/bin/sh\nprintf '%s' " + strconv.Quote(body) + " > " + strconv.Quote(path) + "\nexit " + strconv.Itoa(exit) + "\n"
+		if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return script
+	}
+	for _, tc := range []struct {
+		name, file string // file, relative to the fork, a service writes during teardown
+		submodule  bool
+		exit       int // the runtime's exit status: 1 is a teardown that failed
+	}{
+		{name: "untracked in the fork", file: "late.txt"},
+		{name: "tracked in the fork", file: "README.md"},
+		{name: "untracked in a submodule", file: "child/late.txt", submodule: true},
+		{name: "teardown failed", file: "unrelated.tmp", exit: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initRepo(t)
+			if tc.submodule {
+				child := initRepo(t)
+				git(t, repo, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", child, "child")
+				git(t, repo, "commit", "-qam", "module")
+			}
+			ws, err := forkspace.Setup(repo, "a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.submodule {
+				git(t, ws, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--quiet")
+			}
+			if tc.exit != 0 {
+				// The runtime writes outside the fork, so only the failed teardown can keep it.
+				tc.file = filepath.Join(t.TempDir(), tc.file)
+			} else {
+				tc.file = filepath.Join(ws, tc.file)
+			}
+			rt := runtime.Runtime{Name: writer(t, tc.file, "written while services stopped\n", tc.exit)}
+			c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, rt: rt}
+			var code int
+			captureStderr(t, func() { code, err = c.ForkRm([]string{"a", "--yes"}) })
+			if code == 0 || err == nil || !strings.Contains(err.Error(), "fork a was kept") || !strings.Contains(err.Error(), "--force") {
+				t.Fatalf("ForkRm = (%d, %v), want the fork kept", code, err)
+			}
+			if !pathExists(ws) {
+				t.Fatal("the fork was deleted with the work its services wrote")
+			}
+			captureStderr(t, func() { code, err = c.ForkRm([]string{"a", "--yes", "--force"}) })
+			if code != 0 || err != nil || pathExists(ws) {
+				t.Fatalf("ForkRm --force = (%d, %v), fork kept = %v; want it deleted", code, err, pathExists(ws))
+			}
+		})
+	}
 }
 
 func TestForkRmConfirmsBeforeForcedStop(t *testing.T) {
@@ -750,7 +814,7 @@ func TestForkLifecycle(t *testing.T) {
 	}
 
 	// DestroyFork removes the workspace and the review ref.
-	if err := DestroyFork(runtime.Runtime{}, repo, "perf"); err != nil {
+	if err := DestroyFork(runtime.Runtime{}, repo, "perf", false); err != nil {
 		t.Fatalf("DestroyFork: %v", err)
 	}
 	if pathExists(ws) {
@@ -941,7 +1005,8 @@ func TestDestroyForkStopsServicesBeforeRemovingTheWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := DestroyFork(runtime.Runtime{Name: "stubruntime"}, repo, "svc"); err != nil {
+	// The compose file is uncommitted work, which only a forced removal deletes.
+	if err := DestroyFork(runtime.Runtime{Name: "stubruntime"}, repo, "svc", true); err != nil {
 		t.Fatalf("DestroyFork: %v", err)
 	}
 

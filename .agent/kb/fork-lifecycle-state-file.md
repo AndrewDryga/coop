@@ -175,7 +175,16 @@ to a process or a container, or prints, it is supervision.
 parent, the project's own parent folder, may be reached through a link (`confirmForkHomeEntry`).
 forkctl's `syncIsolatedPath` opens files and folders under `.coop` with `O_NONBLOCK|O_NOFOLLOW`.
 
+**Removal rechecks the fork once its services stop.** `DestroyFork(rt, repo, name, force)` is rm's
+and `--fresh`'s removal, under the fork's lifecycle lock. A service with a writable bind can write
+to the fork until it stops, after the earlier cleanliness check, so unless `force` it keeps the fork
+when `stopForkServices` returned a failure, and runs `ForkWorktreeClean` (recursive through
+populated submodules) once more before `forkspace.Destroy`. Merge's `destroyLandedFork` keeps its
+own after-teardown `validateRemoval` and treats teardown as best effort.
+
 ## Changelog
+- 2026-10-18 — rm and --fresh keep a fork whose teardown failed or that gained work while its
+  services stopped (task 2026-10-17-recheck-a-fork-s-submodule-work-after-its-servic).
 - 2026-10-18 — folder opens in the forks tree no longer wait on a planted FIFO or follow a link
   (task 2026-10-16-open-the-forks-tree-s-folders-without-waiting-on).
 - 2026-10-18 — Linux start tokens name their PID namespace (v2), and a token from another namespace

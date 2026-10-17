@@ -580,7 +580,7 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string, approval *landedFo
 			return errors.New("landed fork still owns canonical task authority")
 		}
 	}
-	stopForkServices(rt, repo, name, exposedRoots...)
+	_ = stopForkServices(rt, repo, name, exposedRoots...) // best effort; the warnings name what failed
 	// Services have writable binds and stopping them can take time. Check again
 	// after teardown, not merely before giving those processes their last turn.
 	if err := approval.validateRemoval(repo, name); err != nil {

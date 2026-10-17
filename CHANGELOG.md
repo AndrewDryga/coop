@@ -41,6 +41,12 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **`coop fork rm` and `--fresh` keep work a fork's services wrote while stopping.** Coop checked a
+  fork for uncommitted work, then stopped its services and deleted it. A service that could write
+  to the fork kept writing until it stopped, and a service that failed to stop was ignored, so that
+  work was deleted. Coop now checks the fork again once its services have stopped, and keeps it
+  when they did not stop cleanly or when new work appeared; `--force` still deletes it.
+
 - **A stuck git command no longer hangs Coop forever.** Coop runs git on repositories an agent can
   write, and a FIFO put in a repository's `.git` makes git wait forever. Coop now stops any git
   command that runs longer than 15 minutes and says which repository it stalled in. Commands you

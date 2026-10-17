@@ -657,9 +657,9 @@ func (a *app) forkCreate(args []string) (int, error) {
 					}
 				}
 			}
-			if err := forkctl.DestroyFork(a.rt, repo, fa.name, box.ConfigExposureRoots(a.cfg)...); err != nil {
+			if err := forkctl.DestroyFork(a.rt, repo, fa.name, fa.force, box.ConfigExposureRoots(a.cfg)...); err != nil {
 				unlock()
-				return -1, err
+				return 1, err
 			}
 			if hasCurrentGeneration {
 				if err := forkspace.RemoveGenerationIfMatchesLocked(repo, currentGeneration); err != nil {

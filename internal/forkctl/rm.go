@@ -79,24 +79,34 @@ func RecoverOrphanedGenerationLocked(repo, name string, force bool) (bool, error
 // (measured: a fork's keycloak + postgres still up five days after `fork rm`, holding disk the whole
 // time). Volumes go with them — a fork is disposable by definition.
 //
-// Best effort: a service that refuses to stop must not block the removal the operator asked
-// for, but it must not vanish silently either.
-func DestroyFork(rt runtime.Runtime, repo, name string, exposedRoots ...string) error {
-	stopForkServices(rt, repo, name, exposedRoots...)
+// Unless force, a service with a writable bind can still write to the fork until it is gone, and
+// the fork's own work was checked before its services stopped: so a teardown that failed keeps the
+// fork, and so does work found in it once they stopped. The caller holds the fork's lifecycle lock.
+// With force the removal goes ahead after the warnings, as the operator asked.
+func DestroyFork(rt runtime.Runtime, repo, name string, force bool, exposedRoots ...string) error {
+	stopErr := stopForkServices(rt, repo, name, exposedRoots...)
+	if !force {
+		if stopErr != nil {
+			return fmt.Errorf("fork %s was kept: Coop could not confirm its services stopped, so they may still write to it — fix what the warnings above name and run again, or delete it anyway with --force", name)
+		}
+		if err := ForkWorktreeClean(forkspace.Workspace(repo, name)); err != nil {
+			return fmt.Errorf("fork %s was kept: it has work written while its services stopped (%w) — review it, or delete it anyway with --force", name, err)
+		}
+	}
 	return forkspace.Destroy(repo, name)
 }
 
-// stopForkServices ends its warnings, when it has any, with the blank line that separates them from
-// the caller's next section.
-func stopForkServices(rt runtime.Runtime, repo, name string, exposedRoots ...string) {
+// stopForkServices stops the fork's services and returns what failed. Its warnings, when it has
+// any, end with the blank line that separates them from the caller's next section.
+func stopForkServices(rt runtime.Runtime, repo, name string, exposedRoots ...string) error {
 	if rt.Name == "" {
-		return
+		return nil
 	}
-	warned := false
+	var failures []error
 	ws := forkspace.Workspace(repo, name)
 	if err := box.DownServices(rt, ws, repo, true, io.Discard, io.Discard, exposedRoots...); err != nil {
 		ui.Note("fork %s: project services did not stop cleanly (%v). Check the reported service error and review any remaining containers or volumes", name, err)
-		warned = true
+		failures = append(failures, err)
 	}
 	// A killed fork run's own services are scoped to this workspace, which no later sweep
 	// reaches once it is gone.
@@ -104,11 +114,12 @@ func stopForkServices(rt runtime.Runtime, repo, name string, exposedRoots ...str
 	defer cancel()
 	if _, err := box.ReapOrphanServices(ctx, rt, ws); err != nil {
 		ui.Note("fork %s: services its stopped runs left behind were not all removed (%v). Review any remaining containers or volumes", name, err)
-		warned = true
+		failures = append(failures, err)
 	}
-	if warned {
+	if len(failures) > 0 {
 		ui.Note("")
 	}
+	return errors.Join(failures...)
 }
 
 // oneForkName returns the single fork name from the parsed positionals, rejecting a second one. The
@@ -426,8 +437,8 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			}
 		}
 	}
-	if err := DestroyFork(c.rt, repo, name, box.ConfigExposureRoots(c.cfg)...); err != nil {
-		return -1, err
+	if err := DestroyFork(c.rt, repo, name, force, box.ConfigExposureRoots(c.cfg)...); err != nil {
+		return 1, err
 	}
 	if hasGenerationNow {
 		if err := forkspace.RemoveGenerationIfMatchesLocked(repo, identity); err != nil {
