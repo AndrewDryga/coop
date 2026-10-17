@@ -234,7 +234,7 @@ func TestCheckSecretsCoopignoreExactExceptions(t *testing.T) {
 // as check-secrets, whatever the error was wrapped in on the way up, and exits 1. A box chooses the
 // folder names in it, so anything a terminal would act on is shown escaped.
 func TestEveryCommandDrawsAnUnreadableCoopignoreTheSameWay(t *testing.T) {
-	policy := box.UnreadableCoopignore{File: "evil\x1b]0;PWNED\x07dir/.coopignore", Reason: "is not a regular file"}
+	policy := box.UnreadableCoopignore{File: "evil\x1b]0;PWNED\x07\nfake/.coopignore", Reason: "is not a regular file"}
 	wrapped := fmt.Errorf("reading the build context of /repo: %w", policy)
 	for _, tc := range []struct {
 		name, then string
@@ -246,20 +246,23 @@ func TestEveryCommandDrawsAnUnreadableCoopignoreTheSameWay(t *testing.T) {
 		{"coop up", "Then run coop up again.", func() error {
 			return composeRefusal("Could not start services from compose.yml", "compose.yml", wrapped, "coop up")
 		}},
+		{"coop init", "Then run coop init again.", func() error {
+			return reportUnreadableCoopignore(wrapped, "coop init", "No files were changed.")
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var code int
 			out := captureStderr(t, func() { code = reportExit(-1, tc.draw()) })
 			for _, want := range []string{
-				`Could not read evil\u001B]0;PWNED\u0007dir/.coopignore`,
-				`Remove evil\u001B]0;PWNED\u0007dir/.coopignore if you did not create it; otherwise make it a readable regular file of at most 1 MiB. ` + tc.then,
+				`Could not read evil\u001B]0;PWNED\u0007\u000Afake/.coopignore`,
+				`Remove evil\u001B]0;PWNED\u0007\u000Afake/.coopignore if you did not create it; otherwise make it a readable regular file of at most 1 MiB. ` + tc.then,
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("missing %q:\n%s", want, out)
 				}
 			}
-			if strings.ContainsAny(out, "\x1b\x07") {
-				t.Errorf("the refusal printed a raw control character:\n%q", out)
+			if strings.ContainsAny(out, "\x1b\x07") || strings.Contains(out, "\nfake") {
+				t.Errorf("the refusal printed a raw control character or line break:\n%q", out)
 			}
 			if code != 1 {
 				t.Errorf("exit code = %d, want 1", code)
