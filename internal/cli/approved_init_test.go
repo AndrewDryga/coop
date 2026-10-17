@@ -339,6 +339,25 @@ func TestApprovedReinit(t *testing.T) {
 		}
 		assertApprovedOutput(t, "13h-reinit-unregistered-queues", normalize(out))
 	})
+
+	// One queue left to register reads in the singular.
+	t.Run("one unregistered queue", func(t *testing.T) {
+		a, _, repo := settledProject(t)
+		if code, err := a.cmdInit(nil); code != 0 || err != nil {
+			t.Fatalf("first init = (%d, %v)", code, err)
+		}
+		if err := os.MkdirAll(filepath.Join(repo, "api", ".agent", "tasks"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"),
+			[]byte("subprojects: [docs]\nbox:\n  egress: filtered\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := captureTerminal(t, func() { _, _ = a.cmdInit(nil) })
+		if !strings.Contains(out, "One task queue still needs to be registered\n") {
+			t.Errorf("the warning for one queue is not singular:\n%s", out)
+		}
+	})
 }
 
 // A project that already has its own Docker gets a pointer to it, not an adopted file: coop

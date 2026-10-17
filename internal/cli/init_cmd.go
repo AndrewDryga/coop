@@ -318,7 +318,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 	}
 	if len(unregistered) > 0 {
 		ui.Note("")
-		warnBlock(fmt.Sprintf("%s still need to be registered", countWord(len(unregistered), "task queue")),
+		verb := "need"
+		if len(unregistered) == 1 {
+			verb = "needs"
+		}
+		warnBlock(fmt.Sprintf("%s still %s to be registered", countWord(len(unregistered), "task queue"), verb),
 			project.File+" uses a subprojects list Coop could not update safely.",
 			fmt.Sprintf("Add %s to subprojects in %s.", ui.SafeInline(joinAnd(unregistered)), project.File))
 	}
