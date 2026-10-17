@@ -83,25 +83,11 @@ func forkCandidateRoundName(ref forkCandidateRef) string {
 }
 
 func ensureForkCandidateHistoryDir(repo string, identity forkspace.Identity) error {
-	if err := forkspace.EnsureStateDir(repo); err != nil {
+	root, err := openStateRoot(repo, forkCandidateHistoryDir(repo, identity), true)
+	if err != nil {
 		return err
 	}
-	if err := ensureRealDirectory(forkCandidateHistoryRoot(repo), 0o700); err != nil {
-		return err
-	}
-	if err := ensureRealDirectory(forkCandidateHistoryDir(repo, identity), 0o700); err != nil {
-		return err
-	}
-	for _, dirPath := range []string{forkspace.StateDir(repo), forkCandidateHistoryRoot(repo)} {
-		dir, err := os.Open(dirPath)
-		if err != nil {
-			return err
-		}
-		if err := errors.Join(dir.Sync(), dir.Close()); err != nil {
-			return err
-		}
-	}
-	return nil
+	return root.Close()
 }
 
 func readForkCandidateControlFile(path, kind string) ([]byte, bool, error) {
@@ -242,7 +228,7 @@ func readForkCandidateRound(repo string, identity forkspace.Identity, ref forkCa
 	if err := validateForkCandidateRef(ref); err != nil {
 		return forkCandidateRoundRecord{}, err
 	}
-	root, err := os.OpenRoot(forkCandidateHistoryDir(repo, identity))
+	root, err := openStateRoot(repo, forkCandidateHistoryDir(repo, identity), false)
 	if err != nil {
 		return forkCandidateRoundRecord{}, err
 	}
@@ -370,7 +356,7 @@ func writeForkCandidateRound(repo string, record forkCandidateRoundRecord) error
 	if err != nil {
 		return err
 	}
-	root, err := os.OpenRoot(forkCandidateHistoryDir(repo, record.Candidate.Fork))
+	root, err := openStateRoot(repo, forkCandidateHistoryDir(repo, record.Candidate.Fork), true)
 	if err != nil {
 		return err
 	}
@@ -404,19 +390,20 @@ func writeForkCandidateManifest(repo string, manifest forkCandidateManifest) err
 	if err := validateForkCandidateManifest(manifest, manifest.Fork); err != nil {
 		return err
 	}
-	if err := forkspace.EnsureStateDir(repo); err != nil {
-		return err
-	}
 	body, err := json.Marshal(manifest)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(forkspace.StateDir(repo), "."+manifest.Fork.Name+".candidate-manifest-")
+	state, err := forkspace.OpenStateRoot(repo, "", true)
 	if err != nil {
 		return err
 	}
-	name := tmp.Name()
-	defer os.Remove(name)
+	defer state.Close()
+	tmp, name, err := forkspace.CreateTempIn(state, "."+manifest.Fork.Name+".candidate-manifest-")
+	if err != nil {
+		return err
+	}
+	defer state.Remove(name)
 	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()
 		return err
@@ -432,14 +419,10 @@ func writeForkCandidateManifest(repo string, manifest forkCandidateManifest) err
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(name, ForkCandidatePath(repo, manifest.Fork)); err != nil {
+	if err := state.Rename(name, filepath.Base(ForkCandidatePath(repo, manifest.Fork))); err != nil {
 		return err
 	}
-	dir, err := os.Open(forkspace.StateDir(repo))
-	if err != nil {
-		return err
-	}
-	return errors.Join(dir.Sync(), dir.Close())
+	return forkspace.SyncRoot(state)
 }
 
 func candidateFromManifest(repo string, manifest forkCandidateManifest) (ForkCandidate, error) {

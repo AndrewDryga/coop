@@ -270,7 +270,7 @@ func GenerationCreatedAt(repo string, identity Identity) (time.Time, error) {
 // workspace disappeared out of band. Per-record failures remain visible without hiding healthy
 // siblings; callers must not turn a malformed record into permission to mutate anything.
 func GenerationIdentities(repo string) ([]Identity, []error) {
-	root, err := os.OpenRoot(StateDir(repo))
+	root, err := OpenStateRoot(repo, "", false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -333,7 +333,7 @@ func ValidateGenerationWorkspace(repo string, identity Identity) error {
 	if record.Version != forkGenerationVersion && record.Version != forkGenerationIsolatedVersion {
 		return fmt.Errorf("fork %s uses an older workspace identity — stop it and retry so Coop can verify and anchor it", identity.Name)
 	}
-	state, err := os.OpenRoot(StateDir(repo))
+	state, err := OpenStateRoot(repo, "", false)
 	if err != nil {
 		return err
 	}
@@ -360,7 +360,7 @@ func OpenGenerationWorkspaceRoot(repo string, identity Identity) (*os.Root, erro
 	if record.Version != forkGenerationVersion && record.Version != forkGenerationIsolatedVersion {
 		return nil, fmt.Errorf("fork %s uses an older workspace identity — stop it and retry so Coop can verify and anchor it", identity.Name)
 	}
-	state, err := os.OpenRoot(StateDir(repo))
+	state, err := OpenStateRoot(repo, "", false)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +382,7 @@ func GenerationMarkerInfo(repo string, identity Identity) (os.FileInfo, error) {
 	if err != nil || record.Generation != identity.Generation {
 		return nil, errors.Join(errors.New("fork generation changed"), err)
 	}
-	state, err := os.OpenRoot(StateDir(repo))
+	state, err := OpenStateRoot(repo, "", false)
 	if err != nil {
 		return nil, err
 	}
@@ -491,10 +491,7 @@ func ensureGenerationLocked(repo, name string, isolated bool) (Identity, error) 
 	if err := confirmForkDirectoryEntry(Workspace(repo, name)); err != nil {
 		return Identity{}, fmt.Errorf("confirm fork workspace before binding generation: %w", err)
 	}
-	if err := EnsureStateDir(repo); err != nil {
-		return Identity{}, err
-	}
-	state, err := os.OpenRoot(StateDir(repo))
+	state, err := OpenStateRoot(repo, "", true)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -577,10 +574,7 @@ func migrateLegacyGenerationLocked(repo string, record generationRecord) error {
 	if err := verifyForkRepository(repo, record.Name); err != nil {
 		return fmt.Errorf("fork %s uses an older workspace identity and could not be safely verified: %w", record.Name, err)
 	}
-	if err := EnsureStateDir(repo); err != nil {
-		return err
-	}
-	state, err := os.OpenRoot(StateDir(repo))
+	state, err := OpenStateRoot(repo, "", true)
 	if err != nil {
 		return err
 	}
@@ -713,17 +707,18 @@ func replaceGenerationAtomic(repo, name string, data []byte) error {
 // publishGenerationAtomic reports whether the final rename happened. An error after publication
 // must not make a caller retire authority that the visible record still references.
 func publishGenerationAtomic(repo, name string, data []byte, replace bool) (bool, error) {
-	if err := EnsureStateDir(repo); err != nil {
-		return false, err
-	}
-	f, err := os.CreateTemp(StateDir(repo), "."+name+".generation-")
+	state, err := OpenStateRoot(repo, "", true)
 	if err != nil {
 		return false, err
 	}
-	tmp := f.Name()
+	defer state.Close()
+	f, tmp, err := CreateTempIn(state, "."+name+".generation-")
+	if err != nil {
+		return false, err
+	}
 	defer func() {
 		if tmp != "" {
-			_ = os.Remove(tmp)
+			_ = state.Remove(tmp)
 		}
 	}()
 	if err := f.Chmod(0o600); err != nil {
@@ -744,16 +739,17 @@ func publishGenerationAtomic(repo, name string, data []byte, replace bool) (bool
 	// Creation refuses an existing authority path; a locked legacy upgrade deliberately replaces
 	// its old record. Both publish one fully-synced inode with a single rename.
 	var publishErr error
+	record := filepath.Base(GenerationPath(repo, name))
 	if replace {
-		publishErr = os.Rename(tmp, GenerationPath(repo, name))
+		publishErr = state.Rename(tmp, record)
 	} else {
-		publishErr = renameNoReplace(tmp, GenerationPath(repo, name))
+		publishErr = PublishNoReplace(state, tmp, record)
 	}
 	if publishErr != nil {
 		return false, publishErr
 	}
 	tmp = ""
-	dir, err := OpenFolder(StateDir(repo), false)
+	dir, err := state.OpenFile(".", os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return true, err
 	}
@@ -787,7 +783,16 @@ func RemoveGenerationIfMatchesLocked(repo string, expected Identity) error {
 			return err
 		}
 	}
-	if err := os.Remove(GenerationPath(repo, expected.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if state, err := OpenStateRoot(repo, "", false); err == nil {
+		removeErr := state.Remove(filepath.Base(GenerationPath(repo, expected.Name)))
+		closeErr := state.Close()
+		if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return removeErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return syncGenerationStateDir(repo)
@@ -805,7 +810,7 @@ func syncGenerationStateDir(repo string) error {
 }
 
 func retireGenerationAnchor(repo string, record generationRecord) error {
-	state, err := os.OpenRoot(StateDir(repo))
+	state, err := OpenStateRoot(repo, "", false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

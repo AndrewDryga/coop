@@ -41,6 +41,11 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **Coop no longer writes fork records through a link an agent put in their place.** Coop keeps
+  each fork's records in `<project>-forks/.coop`. An agent that could write the forks folder could
+  replace `.coop` with a link while Coop was writing, and the record went where the link pointed.
+  Every record there is now written through the real folder, and a link in its place is refused.
+
 - **`coop fork rm` and `--fresh` keep work a fork's services wrote while stopping.** Coop checked a
   fork for uncommitted work, then stopped its services and deleted it. A service that could write
   to the fork kept writing until it stopped, and a service that failed to stop was ignored, so that

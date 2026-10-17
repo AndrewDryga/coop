@@ -148,19 +148,22 @@ func writeLandIntent(repo string, intent landIntent) error {
 	if err := validateLandIntent(intent); err != nil {
 		return err
 	}
-	if err := forkspace.EnsureStateDir(repo); err != nil {
-		return err
-	}
 	body, err := json.Marshal(intent)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(forkspace.StateDir(repo), "."+intent.Candidate.Fork.Name+".land-")
+	// Through .coop's own folder, never by name: a box that can write the forks folder could swap
+	// .coop for a link between a check and this write.
+	state, err := forkspace.OpenStateRoot(repo, "", true)
 	if err != nil {
 		return err
 	}
-	name := tmp.Name()
-	defer os.Remove(name)
+	defer state.Close()
+	tmp, name, err := forkspace.CreateTempIn(state, "."+intent.Candidate.Fork.Name+".land-")
+	if err != nil {
+		return err
+	}
+	defer state.Remove(name)
 	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()
 		return err
@@ -176,7 +179,7 @@ func writeLandIntent(repo string, intent landIntent) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(name, landIntentPath(repo, intent.Candidate.Fork))
+	return state.Rename(name, filepath.Base(landIntentPath(repo, intent.Candidate.Fork)))
 }
 
 func removeLandIntent(repo string, intent landIntent) error {
@@ -187,7 +190,15 @@ func removeLandIntent(repo string, intent landIntent) error {
 	if current.Candidate.ID != intent.Candidate.ID || current.ParentBefore != intent.ParentBefore {
 		return errors.New("fork land intent changed before removal")
 	}
-	if err := os.Remove(landIntentPath(repo, intent.Candidate.Fork)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	state, err := forkspace.OpenStateRoot(repo, "", false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer state.Close()
+	if err := state.Remove(filepath.Base(landIntentPath(repo, intent.Candidate.Fork))); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil

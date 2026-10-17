@@ -349,17 +349,17 @@ func TestIsolatedUnmergedRequiresCurrentPublicationEvidence(t *testing.T) {
 		{Version: 2, Fork: identity, Head: record.Head, Tree: record.Tree, PublicationHead: record.PublicationHead, PublicationTree: record.Head},
 		{Version: 2, Fork: forkspace.Identity{Name: identity.Name, Generation: forkspace.Generation("other")}, Head: record.Head, Tree: record.Tree, PublicationHead: record.PublicationHead, PublicationTree: record.PublicationTree},
 	} {
-		if _, err := writeIsolatedRecord(isolatedSourcePath(repo, identity), bad); err != nil {
+		if _, err := writeIsolatedRecord(repo, isolatedSourcePath(repo, identity), bad); err != nil {
 			t.Fatal(err)
 		}
 		if !ForkUnmerged(repo, ws) {
 			t.Fatalf("invalid/old receipt granted removal authority: %+v", bad)
 		}
 	}
-	if _, err := writeIsolatedRecord(isolatedSourcePath(repo, identity), record); err != nil {
+	if _, err := writeIsolatedRecord(repo, isolatedSourcePath(repo, identity), record); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeIsolatedRecord(landIntentPath(repo, identity), map[string]string{"phase": "started"}); err != nil {
+	if _, err := writeIsolatedRecord(repo, landIntentPath(repo, identity), map[string]string{"phase": "started"}); err != nil {
 		t.Fatal(err)
 	}
 	if !ForkUnmerged(repo, ws) {
@@ -482,7 +482,7 @@ func TestIsolatedPublicationBindsCheckedBytesAcrossCASAndReplay(t *testing.T) {
 						t.Fatal("missing replay journal", err)
 					}
 					intent.Phase = "landed"
-					if _, err := writeIsolatedRecord(landIntentPath(repo, identity), intent); err != nil {
+					if _, err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -1120,7 +1120,7 @@ func TestIsolatedPublicationMissingContentProofPreservesCustody(t *testing.T) {
 					intent.Phase = "landed"
 				}
 			}
-			if _, err := writeIsolatedRecord(landIntentPath(repo, identity), intent); err != nil {
+			if _, err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent); err != nil {
 				t.Fatal(err)
 			}
 			before, err := captureIsolatedParent(repo)
@@ -1157,7 +1157,7 @@ func TestIsolatedPublicationRefusesPartialCheckoutAndUncertainLock(t *testing.T)
 				SourceTree: candidate.sourceTree, Upstream: candidate.upstream, Parent: candidate.parent,
 				PublicationHead: candidate.head, PublicationTree: candidate.tree,
 				Custody: filepath.Base(candidate.dir), Phase: "started", CreatedAt: time.Now().UTC()}
-			if _, err := writeIsolatedRecord(landIntentPath(repo, identity), intent); err != nil {
+			if _, err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent); err != nil {
 				t.Fatal(err)
 			}
 			if lock {
@@ -1226,6 +1226,42 @@ func TestIsolatedParentRejectsFlagsDirtyModesAndIntroducedIgnoredPaths(t *testin
 				if body, _ := os.ReadFile(filepath.Join(repo, "new.txt")); string(body) != "outside ignored work\n" {
 					t.Fatal("ignored file overwritten")
 				}
+			}
+		})
+	}
+}
+
+// The land's records and its candidate folders are made in .coop through .coop's own folder, so
+// with .coop replaced by a link to a folder elsewhere each refuses and that folder stays as it was.
+func TestLandStateNeverWritesThroughACoopLink(t *testing.T) {
+	identity := forkspace.Identity{Name: "perf", Generation: forkspace.Generation(strings.Repeat("a", 32))}
+	for _, tc := range []struct {
+		name  string
+		write func(repo string) error
+	}{
+		{"isolated record", func(repo string) error {
+			_, err := writeIsolatedRecord(repo, landIntentPath(repo, identity), map[string]string{"phase": "started"})
+			return err
+		}},
+		{"candidate folder", func(repo string) error {
+			_, err := mkdirStateTemp(repo, ".isolated-candidate-")
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := filepath.Join(t.TempDir(), "proj")
+			outside := t.TempDir()
+			if err := os.MkdirAll(forkspace.Home(repo), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, forkspace.StateDir(repo)); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.write(repo); err == nil {
+				t.Fatalf("%s wrote through a .coop link", tc.name)
+			}
+			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+				t.Fatalf("%s wrote where the link points: %v, %v", tc.name, entries, err)
 			}
 		})
 	}

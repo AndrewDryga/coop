@@ -55,28 +55,6 @@ func forkProposalAssignmentRecordRoot(repo string, identity forkspace.Identity, 
 	return filepath.Join(forkProposalRecordRoot(repo, identity), assignmentID)
 }
 
-func ensureForkProposalAssignmentRecordRoot(repo string, identity forkspace.Identity, assignmentID string) error {
-	if !validAssignmentID(assignmentID) {
-		return errors.New("invalid proposal assignment identity")
-	}
-	if err := forkspace.EnsureStateDir(repo); err != nil {
-		return err
-	}
-	for _, dir := range []struct {
-		path string
-		mode os.FileMode
-	}{
-		{filepath.Join(forkspace.StateDir(repo), "proposals"), 0o700},
-		{forkProposalRecordRoot(repo, identity), 0o700},
-		{forkProposalAssignmentRecordRoot(repo, identity, assignmentID), 0o700},
-	} {
-		if err := ensureRealDirectory(dir.path, dir.mode); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func validateForkProposalRecord(record ForkProposalRecord) error {
 	if record.Version != forkProposalRecordVersion ||
 		!forkspace.ValidExistingName(record.Fork.Name) || !forkspace.ValidGeneration(record.Fork.Generation) ||
@@ -200,10 +178,10 @@ func createForkProposalRecord(repo string, record ForkProposalRecord) error {
 	if err := validateForkProposalRecord(record); err != nil {
 		return err
 	}
-	if err := ensureForkProposalAssignmentRecordRoot(repo, record.Fork, record.AssignmentID); err != nil {
-		return err
+	if !validAssignmentID(record.AssignmentID) {
+		return errors.New("invalid proposal assignment identity")
 	}
-	root, err := os.OpenRoot(forkProposalAssignmentRecordRoot(repo, record.Fork, record.AssignmentID))
+	root, err := openStateRoot(repo, forkProposalAssignmentRecordRoot(repo, record.Fork, record.AssignmentID), true)
 	if err != nil {
 		return err
 	}
@@ -233,7 +211,7 @@ func updateForkProposalRecord(repo string, expected, next ForkProposalRecord) er
 		expected.Task.Ref != next.Task.Ref || expected.CreatedAt != next.CreatedAt {
 		return errors.New("fork proposal immutable identity changed")
 	}
-	root, err := os.OpenRoot(forkProposalAssignmentRecordRoot(repo, expected.Fork, expected.AssignmentID))
+	root, err := openStateRoot(repo, forkProposalAssignmentRecordRoot(repo, expected.Fork, expected.AssignmentID), false)
 	if err != nil {
 		return err
 	}
@@ -250,7 +228,7 @@ func updateForkProposalRecord(repo string, expected, next ForkProposalRecord) er
 }
 
 func removeForkProposalRecord(repo string, expected ForkProposalRecord) error {
-	root, err := os.OpenRoot(forkProposalAssignmentRecordRoot(repo, expected.Fork, expected.AssignmentID))
+	root, err := openStateRoot(repo, forkProposalAssignmentRecordRoot(repo, expected.Fork, expected.AssignmentID), false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

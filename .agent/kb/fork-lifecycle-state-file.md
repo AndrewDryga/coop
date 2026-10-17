@@ -2,7 +2,7 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
-sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
+sources: [internal/forkspace/state_root.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
 updated: 2026-10-17
 ---
 A fork's detached loop is recorded in ONE small file, `<repo>-forks/.coop/<name>.pid`, read and
@@ -182,7 +182,20 @@ when `stopForkServices` returned a failure, and runs `ForkWorktreeClean` (recurs
 populated submodules) once more before `forkspace.Destroy`. Merge's `destroyLandedFork` keeps its
 own after-teardown `validateRemoval` and treats teardown as best effort.
 
+**Every `.coop` record is written through `.coop`'s own folder.** `forkspace.OpenStateRoot(repo,
+sub, create)` opens `.coop`, or a folder below it (several components), by descriptor without
+following a link at any step (made owner-only, with the parent barrier, when `create`), then opens
+it as an `os.Root` and requires the two to be the same folder, so every open, rename and removal
+through the root stays there even if a box swaps the name afterwards. `CreateTempIn`,
+`MkdirTempIn`, `PublishNoReplace` (hard link, then unlink: never replaces) and `SyncRoot` work
+through that root. Generation records, the reservation and execution registries, forkctl's land
+journal, isolated records and candidate folders, and tasks' assignment, proposal and candidate
+registries, discard intent and projection snapshots all use it (tasks' `openStateRoot` takes a
+path under `.coop`). `.discarding`, beside `.coop`, is still staged by path (queued).
+
 ## Changelog
+- 2026-10-18 — the remaining `.coop` writers go through `OpenStateRoot` (task
+  2026-10-17-route-the-remaining-coop-writers-through-the-no).
 - 2026-10-18 — rm and --fresh keep a fork whose teardown failed or that gained work while its
   services stopped (task 2026-10-17-recheck-a-fork-s-submodule-work-after-its-servic).
 - 2026-10-18 — folder opens in the forks tree no longer wait on a planted FIFO or follow a link

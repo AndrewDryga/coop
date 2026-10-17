@@ -488,11 +488,12 @@ func copyPathTreeToOpened(src string, dstRoot *os.Root) error {
 	return copyOpenedProjectionTree(srcRoot, dstRoot)
 }
 
-func copyOpenedTreeToPath(srcRoot *os.Root, dst string) error {
-	if err := os.Mkdir(dst, 0o755); err != nil {
+// copyOpenedTreeInto copies srcRoot into the new folder name below parent, through parent.
+func copyOpenedTreeInto(srcRoot, parent *os.Root, name string) error {
+	if err := parent.Mkdir(name, 0o755); err != nil {
 		return err
 	}
-	dstRoot, _, err := openProjectionRoot(dst)
+	dstRoot, err := parent.OpenRoot(name)
 	if err != nil {
 		return err
 	}
@@ -1325,30 +1326,30 @@ func snapshotForkProjection(authorityRepo, root, id string, expected ForkTaskOwn
 	if err != nil {
 		return ProjectionResult{}, "", err
 	}
-	stateRoot := forkspace.StateDir(authorityRepo)
-	if err := forkspace.EnsureStateDir(authorityRepo); err != nil {
+	// The snapshot is made, filled and removed through .coop's own folders, never by name: a box
+	// that can write the forks folder could swap .coop for a link between a check and a write.
+	snapshots := filepath.Join(forkspace.StateDir(authorityRepo), "projection-snapshots")
+	state, err := openStateRoot(authorityRepo, snapshots, true)
+	if err != nil {
 		return ProjectionResult{}, "", err
 	}
-	snapshots := filepath.Join(stateRoot, "projection-snapshots")
-	if err := ensureRealDirectory(snapshots, 0o700); err != nil {
-		return ProjectionResult{}, "", err
-	}
-	tmp, err := os.MkdirTemp(snapshots, "."+expected.AssignmentID+"-")
+	defer state.Close()
+	tmpName, err := forkspace.MkdirTempIn(state, "."+expected.AssignmentID+"-")
 	if err != nil {
 		return ProjectionResult{}, "", err
 	}
 	cleanup := true
 	defer func() {
 		if cleanup {
-			_ = os.RemoveAll(tmp)
+			_ = state.RemoveAll(tmpName)
 		}
 	}()
-	snapshot := filepath.Join(tmp, id)
+	snapshot := filepath.Join(snapshots, tmpName, id)
 	taskRoot, err := openProjectedTask(projection, before.State, id)
 	if err != nil {
 		return ProjectionResult{}, "", err
 	}
-	copyErr := copyOpenedTreeToPath(taskRoot, snapshot)
+	copyErr := copyOpenedTreeInto(taskRoot, state, filepath.Join(tmpName, id))
 	copyErr = errors.Join(copyErr, taskRoot.Close())
 	if copyErr != nil {
 		return ProjectionResult{}, "", copyErr

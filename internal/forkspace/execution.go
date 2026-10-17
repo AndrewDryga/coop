@@ -112,7 +112,20 @@ func (o ExecutionObservation) Path() string {
 	return filepath.Join(o.Record.registry, o.Record.ID+".json")
 }
 
-func executionDir(repo string) string { return filepath.Join(StateDir(repo), "executions") }
+// executionFolder holds the project's execution records, in .coop.
+const executionFolder = "executions"
+
+func executionDir(repo string) string { return filepath.Join(StateDir(repo), executionFolder) }
+
+// openExecutionRegistry opens registry as a root. The project's own registry is in .coop, which a
+// box that can write the forks folder could swap for a link, so it is opened through OpenStateRoot;
+// the fallback is in Coop's per-user state, which no box mounts.
+func openExecutionRegistry(repo, registry string, create bool) (*os.Root, error) {
+	if filepath.Clean(registry) == executionDir(repo) {
+		return OpenStateRoot(repo, executionFolder, create)
+	}
+	return os.OpenRoot(registry)
+}
 
 // ensureProjectExecutionDir is a test seam for the one compatibility fallback. Fork activity
 // normally uses the sibling lifecycle registry; ordinary boxes must also work when that sibling
@@ -247,10 +260,11 @@ func decodeExecutionRecord(data []byte) (ExecutionRecord, error) {
 }
 
 func ensureExecutionDir(repo string) error {
-	if err := EnsureStateDir(repo); err != nil {
+	root, err := OpenStateRoot(repo, executionFolder, true)
+	if err != nil {
 		return err
 	}
-	return ensurePrivateStateDir(executionDir(repo))
+	return root.Close()
 }
 
 func ensureFallbackExecutionDir(dir string) error {
@@ -482,7 +496,7 @@ func BeginExecution(repo string, spec ExecutionSpec) (ExecutionRecord, error) {
 	if err != nil {
 		return ExecutionRecord{}, err
 	}
-	root, err := os.OpenRoot(registry)
+	root, err := openExecutionRegistry(repo, registry, true)
 	if err != nil {
 		return ExecutionRecord{}, err
 	}
@@ -565,7 +579,7 @@ func EndExecution(repo string, expected ExecutionRecord) error {
 		}
 	}
 	for _, registry := range registries {
-		root, err := os.OpenRoot(registry)
+		root, err := openExecutionRegistry(repo, registry, false)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -794,7 +808,7 @@ func replaceExecutionRole(repo string, expected ExecutionRecord, role ExecutionR
 			return os.ErrNotExist
 		}
 	}
-	root, err := os.OpenRoot(registry)
+	root, err := openExecutionRegistry(repo, registry, false)
 	if err != nil {
 		return err
 	}

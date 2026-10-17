@@ -44,7 +44,7 @@ func (candidate isolatedCandidate) cleanup() {
 // Custom tools need published files without changing the base comparison's
 // HEAD...ref contract. Both copies are retained because GUI tools can return early.
 func (candidate isolatedCandidate) committedPreview(repo string) (_ string, err error) {
-	preview, err := os.MkdirTemp(forkspace.StateDir(repo), ".isolated-preview-")
+	preview, err := mkdirStateTemp(repo, ".isolated-preview-")
 	if err != nil {
 		return "", err
 	}
@@ -104,10 +104,7 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 	if _, err := observed(ws, "merge-base", "--is-ancestor", upstream, sourceHead); err != nil {
 		return isolatedCandidate{}, fmt.Errorf("isolated fork no longer descends from its published source boundary: %w", err)
 	}
-	if err := forkspace.EnsureStateDir(repo); err != nil {
-		return isolatedCandidate{}, err
-	}
-	dir, err := os.MkdirTemp(forkspace.StateDir(repo), ".isolated-candidate-")
+	dir, err := mkdirStateTemp(repo, ".isolated-candidate-")
 	if err != nil {
 		return isolatedCandidate{}, err
 	}
@@ -320,4 +317,19 @@ func (c *Control) gateIsolatedCandidate(repo, img string, candidate isolatedCand
 		return errors.Join(errors.New("isolated gate changed the checked candidate; approval refused"), err)
 	}
 	return candidate.validateSource(repo)
+}
+
+// mkdirStateTemp makes a new owner-only folder in .coop through .coop's own folder, never by name,
+// so a box that swapped .coop for a link cannot place it elsewhere, and returns its path.
+func mkdirStateTemp(repo, prefix string) (string, error) {
+	state, err := forkspace.OpenStateRoot(repo, "", true)
+	if err != nil {
+		return "", err
+	}
+	defer state.Close()
+	name, err := forkspace.MkdirTempIn(state, prefix)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(forkspace.StateDir(repo), name), nil
 }

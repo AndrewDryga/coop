@@ -59,7 +59,10 @@ func sameWorkspaceReservationOwner(a, b WorkspaceReservation) bool {
 		a.OwnerStoreID == b.OwnerStoreID && a.OwnerID == b.OwnerID
 }
 
-func reservationDir(repo string) string { return filepath.Join(StateDir(repo), "reservations") }
+// reservationFolder holds the workspace reservations, in .coop.
+const reservationFolder = "reservations"
+
+func reservationDir(repo string) string { return filepath.Join(StateDir(repo), reservationFolder) }
 
 func reservationName(identity Identity) string {
 	return identity.Name + "." + string(identity.Generation) + ".json"
@@ -91,10 +94,11 @@ func validateWorkspaceReservation(record WorkspaceReservation) error {
 }
 
 func ensureReservationDir(repo string) error {
-	if err := EnsureStateDir(repo); err != nil {
+	root, err := OpenStateRoot(repo, reservationFolder, true)
+	if err != nil {
 		return err
 	}
-	return ensurePrivateStateDir(reservationDir(repo))
+	return root.Close()
 }
 
 func decodeWorkspaceReservation(data []byte) (WorkspaceReservation, error) {
@@ -157,10 +161,7 @@ func ReserveWorkspaceLocked(repo string, record WorkspaceReservation) error {
 	if err := ValidateGenerationWorkspace(repo, record.Fork); err != nil {
 		return err
 	}
-	if err := ensureReservationDir(repo); err != nil {
-		return err
-	}
-	root, err := os.OpenRoot(reservationDir(repo))
+	root, err := OpenStateRoot(repo, reservationFolder, true)
 	if err != nil {
 		return err
 	}
@@ -180,14 +181,13 @@ func ReserveWorkspaceLocked(repo string, record WorkspaceReservation) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(reservationDir(repo), ".reservation-")
+	f, tmp, err := CreateTempIn(root, ".reservation-")
 	if err != nil {
 		return err
 	}
-	tmp := f.Name()
 	defer func() {
 		if tmp != "" {
-			_ = os.Remove(tmp)
+			_ = root.Remove(tmp)
 		}
 	}()
 	if err := f.Chmod(0o600); err != nil {
@@ -204,7 +204,7 @@ func ReserveWorkspaceLocked(repo string, record WorkspaceReservation) error {
 	if writeErr != nil {
 		return writeErr
 	}
-	if err := renameNoReplace(tmp, filepath.Join(reservationDir(repo), name)); err != nil {
+	if err := PublishNoReplace(root, tmp, name); err != nil {
 		return err
 	}
 	tmp = ""
@@ -251,9 +251,9 @@ func RequireNoWorkspaceReservationLocked(repo string, identity Identity) error {
 // its state-directory parent when the registry is absent) confirms that visible absence before a
 // replacement owner is allowed to publish.
 func ConfirmWorkspaceReservationState(repo string) error {
-	root, err := os.OpenRoot(reservationDir(repo))
+	root, err := OpenStateRoot(repo, reservationFolder, false)
 	if errors.Is(err, os.ErrNotExist) {
-		root, err = os.OpenRoot(StateDir(repo))
+		root, err = OpenStateRoot(repo, "", false)
 	}
 	// No Coop state directory means no reservation registry has ever been published by this
 	// checkout. Coop never removes StateDir, so there is no deleted registry whose absence needs
@@ -313,7 +313,7 @@ func RemoveWorkspaceReservationIfMatchesLocked(repo string, expected WorkspaceRe
 	if expected.Version != workspaceReservationVersion {
 		return errors.New("cannot remove an old-format workspace reservation")
 	}
-	root, err := os.OpenRoot(reservationDir(repo))
+	root, err := OpenStateRoot(repo, reservationFolder, false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

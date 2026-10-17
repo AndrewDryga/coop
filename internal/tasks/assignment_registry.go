@@ -56,29 +56,22 @@ func validateForkAssignmentIndex(record ForkAssignmentIndex) error {
 	return nil
 }
 
-func ensureRealDirectory(path string, mode os.FileMode) error {
-	if err := os.Mkdir(path, mode); err != nil && !errors.Is(err, os.ErrExist) {
-		return err
-	}
-	info, err := os.Lstat(path)
+func ensureForkAssignmentIndexDir(repo string, identity forkspace.Identity) error {
+	root, err := openStateRoot(repo, forkAssignmentIndexDir(repo, identity), true)
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("host authority path %q is not a real directory", path)
-	}
-	return nil
+	return root.Close()
 }
 
-func ensureForkAssignmentIndexDir(repo string, identity forkspace.Identity) error {
-	if err := forkspace.EnsureStateDir(repo); err != nil {
-		return err
+// openStateRoot opens dir, a folder in repo's <repo>-forks/.coop, through forkspace.OpenStateRoot:
+// never through a link a box put in place of .coop or any folder on the way, made when create.
+func openStateRoot(repo, dir string, create bool) (*os.Root, error) {
+	rel, err := filepath.Rel(forkspace.StateDir(repo), dir)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("%s is not in the fork state folder", dir)
 	}
-	root := filepath.Join(forkspace.StateDir(repo), "assignments")
-	if err := ensureRealDirectory(root, 0o700); err != nil {
-		return err
-	}
-	return ensureRealDirectory(forkAssignmentIndexDir(repo, identity), 0o700)
+	return forkspace.OpenStateRoot(repo, rel, create)
 }
 
 func decodeForkAssignmentIndex(data []byte) (ForkAssignmentIndex, error) {
@@ -138,10 +131,7 @@ func RegisterForkAssignmentIndex(repo string, record ForkAssignmentIndex) error 
 	if err := validateForkAssignmentIndex(record); err != nil {
 		return err
 	}
-	if err := ensureForkAssignmentIndexDir(repo, record.Fork); err != nil {
-		return err
-	}
-	root, err := os.OpenRoot(forkAssignmentIndexDir(repo, record.Fork))
+	root, err := openStateRoot(repo, forkAssignmentIndexDir(repo, record.Fork), true)
 	if err != nil {
 		return err
 	}
@@ -317,7 +307,7 @@ func AllIndexedForkAssignments(repo string) ([]ForkAssignmentIndex, []error) {
 
 // RemoveForkAssignmentIndex removes only an exact immutable record after landing or discard.
 func RemoveForkAssignmentIndex(repo string, expected ForkAssignmentIndex) error {
-	root, err := os.OpenRoot(forkAssignmentIndexDir(repo, expected.Fork))
+	root, err := openStateRoot(repo, forkAssignmentIndexDir(repo, expected.Fork), false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -341,7 +331,15 @@ func RemoveForkAssignmentIndex(repo string, expected ForkAssignmentIndex) error 
 		return err
 	}
 	dir := forkAssignmentIndexDir(repo, expected.Fork)
-	if err := os.Remove(dir); err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) {
+	parent, err := openStateRoot(repo, filepath.Dir(dir), false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	if err := parent.Remove(filepath.Base(dir)); err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {
 		return err
 	}
 	return nil

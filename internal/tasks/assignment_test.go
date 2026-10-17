@@ -1079,3 +1079,47 @@ func TestPendingForkDiscardFailsClosedAndReplayCoversCurrentAssignments(t *testi
 		t.Fatalf("indexes after the union replay = %+v", after)
 	}
 }
+
+// The task registries under <repo>-forks/.coop are written through .coop's own folder, so with
+// .coop replaced by a link to a folder elsewhere each refuses and that folder stays as it was.
+func TestTaskRegistriesNeverWriteThroughACoopLink(t *testing.T) {
+	identity := forkspace.Identity{Name: "perf", Generation: forkspace.Generation(strings.Repeat("a", 32))}
+	for _, tc := range []struct {
+		name  string
+		write func(repo string) error
+	}{
+		{"assignment index", func(repo string) error { return ensureForkAssignmentIndexDir(repo, identity) }},
+		{"candidate history", func(repo string) error { return ensureForkCandidateHistoryDir(repo, identity) }},
+		{"proposal records", func(repo string) error {
+			root, err := openStateRoot(repo, forkProposalAssignmentRecordRoot(repo, identity, strings.Repeat("b", 32)), true)
+			if err == nil {
+				err = root.Close()
+			}
+			return err
+		}},
+		{"state folder, as the discard intent and candidate manifest open it", func(repo string) error {
+			state, err := forkspace.OpenStateRoot(repo, "", true)
+			if err == nil {
+				err = state.Close()
+			}
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := filepath.Join(t.TempDir(), "proj")
+			outside := t.TempDir()
+			if err := os.MkdirAll(forkspace.Home(repo), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, forkspace.StateDir(repo)); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.write(repo); err == nil {
+				t.Fatalf("%s wrote through a .coop link", tc.name)
+			}
+			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+				t.Fatalf("%s wrote where the link points: %v, %v", tc.name, entries, err)
+			}
+		})
+	}
+}

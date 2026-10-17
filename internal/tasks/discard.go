@@ -235,15 +235,17 @@ func writeForkDiscard(repo string, intent forkDiscardIntent) error {
 	if err := validateForkDiscard(intent); err != nil {
 		return err
 	}
-	if err := forkspace.EnsureStateDir(repo); err != nil {
-		return err
-	}
 	body, err := json.Marshal(intent)
 	if err != nil {
 		return err
 	}
-	path := forkDiscardPath(repo, intent.Fork)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	state, err := forkspace.OpenStateRoot(repo, "", true)
+	if err != nil {
+		return err
+	}
+	defer state.Close()
+	name := filepath.Base(forkDiscardPath(repo, intent.Fork))
+	f, err := state.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}
@@ -257,7 +259,7 @@ func writeForkDiscard(repo string, intent forkDiscardIntent) error {
 		writeErr = errors.Join(writeErr, err)
 	}
 	if writeErr != nil {
-		_ = os.Remove(path)
+		_ = state.Remove(name)
 	}
 	return writeErr
 }
@@ -334,7 +336,15 @@ func DiscardForkTaskStateLocked(repo string, identity forkspace.Identity) error 
 			return err
 		}
 	}
-	if err := os.Remove(forkDiscardPath(repo, identity)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	state, err := forkspace.OpenStateRoot(repo, "", false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer state.Close()
+	if err := state.Remove(filepath.Base(forkDiscardPath(repo, identity))); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil

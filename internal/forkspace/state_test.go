@@ -1034,3 +1034,65 @@ func TestClearForkPidIfMine(t *testing.T) {
 		})
 	}
 }
+
+// The record writers that go through OpenStateRoot never write through a link a box put in place
+// of .coop: not one planted before they run, and not one swapped in while they open the folder.
+// Either way nothing outside the forks tree changes.
+func TestCoopRecordWritersNeverWriteThroughALink(t *testing.T) {
+	writers := []struct {
+		name  string
+		write func(repo string) error
+	}{
+		{"generation record", func(repo string) error {
+			_, err := publishGenerationAtomic(repo, "perf", []byte("{}\n"), false)
+			return err
+		}},
+		{"execution registry", func(repo string) error {
+			root, err := openExecutionRegistry(repo, executionDir(repo), true)
+			if err == nil {
+				err = errors.Join(root.WriteFile("probe.json", []byte("{}\n"), 0o600), root.Close())
+			}
+			return err
+		}},
+		{"reservation registry", ensureReservationDir},
+		{"nested state folder", func(repo string) error {
+			root, err := OpenStateRoot(repo, filepath.Join("assignments", "perf.1"), true)
+			if err == nil {
+				err = root.Close()
+			}
+			return err
+		}},
+	}
+	for _, w := range writers {
+		for _, when := range []string{"planted before", "swapped while opening"} {
+			t.Run(w.name+"/"+when, func(t *testing.T) {
+				repo, outside := swapFixture(t, ".")
+				untouched := treeState(t, outside)
+				if when == "planted before" {
+					if err := os.Rename(StateDir(repo), StateDir(repo)+".pinned"); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(outside, StateDir(repo)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				swapped := new(bool)
+				if when == "planted before" {
+					*swapped = true
+				} else {
+					swapped = swapAtSync(t, Home(repo), 1, StateDir(repo), outside)
+				}
+				err := w.write(repo)
+				if !*swapped {
+					t.Fatal("the swap never happened")
+				}
+				if when == "planted before" && err == nil {
+					t.Fatalf("%s wrote through a .coop link", w.name)
+				}
+				if after := treeState(t, outside); !reflect.DeepEqual(after, untouched) {
+					t.Fatalf("%s (%v) changed files outside the forks tree:\nbefore %v\nafter  %v", w.name, err, untouched, after)
+				}
+			})
+		}
+	}
+}
