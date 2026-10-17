@@ -54,15 +54,12 @@ func accountsUnlistedErr(agent string, err error) error {
 
 // needsAccountErr refuses a launch whose agent has no usable login at all — only where the run
 // actually requires one (a peer coop is about to mount, not a heads-up before an interactive run,
-// which stays the warning nudgeIfUnauthed prints).
+// which stays the warning nudgeIfUnauthed prints). What was typed is fine and a sign-in is missing,
+// so it is a failed job: callers return refusalExit, which gives 1 here and 2 for a malformed peer.
 func needsAccountErr(agent string) error {
-	return &ui.UsageError{
-		Headline: titleName(agent) + " needs a usable account",
-		Rows: [][2]string{
-			{"Sign in:", "coop login " + agent},
-			{"Help:", "coop help credentials"},
-		},
-	}
+	return ui.CommandFailed(titleName(agent)+" needs a usable account", "",
+		[2]string{"Sign in:", "coop login " + agent},
+		[2]string{"Help:", "coop help credentials"})
 }
 
 // noProviderErr is coop's one actionable message when a launch names no target (and no
@@ -150,8 +147,9 @@ func foldTarget(t agents.Target, command string, model, profile *string) error {
 // resolvePeers parses each --peer value into a peer target and validates it: a known, authed
 // provider with an optional :model and NO account — a peer shares the run's selected account for
 // its provider (the default unless that provider also leads). command names the run ("coop claude"), so a refusal
-// points at that run's own page. Unknown or unauthed → a usage refusal naming the peer + the fix;
-// never a silent skip.
+// points at that run's own page. An unknown peer, or one naming an account, is rejected input (exit
+// 2); a peer without a login fails the job (exit 1). Each refusal names the peer and the fix; never
+// a silent skip.
 func (a *app) resolvePeers(command string, vals []string) ([]agents.Target, error) {
 	if len(vals) == 0 {
 		return nil, nil
@@ -187,8 +185,10 @@ func (a *app) resolvePeersForLeads(command string, vals []string, leads []agents
 }
 
 // resolvePeerTargets validates each --peer value against one already-taken list of signed-in
-// providers. A refusal quotes the peer AS TYPED, model and all: "codex" when the user wrote
-// "codex:gpt-6-astra" sends them looking for a peer they did not name.
+// providers. Every peer's form is checked before any sign-in, so a peer typed wrong is refused as
+// rejected input wherever it sits in the list, never hidden behind another peer's missing login. A
+// refusal quotes the peer AS TYPED, model and all: "codex" when the user wrote "codex:gpt-6-astra"
+// sends them looking for a peer they did not name.
 func resolvePeerTargets(command string, vals, authed []string) ([]agents.Target, error) {
 	var peers []agents.Target
 	for _, v := range vals {
@@ -204,10 +204,12 @@ func resolvePeerTargets(command string, vals, authed []string) ([]agents.Target,
 				Rows: [][2]string{{"Help:", ui.HelpCommand(command)}},
 			}
 		}
+		peers = append(peers, t)
+	}
+	for _, t := range peers {
 		if !slices.Contains(authed, t.Provider) {
 			return nil, needsAccountErr(t.Provider)
 		}
-		peers = append(peers, t)
 	}
 	return peers, nil
 }

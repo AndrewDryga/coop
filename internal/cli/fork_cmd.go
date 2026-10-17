@@ -344,6 +344,11 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	if len(fa.peers) > 0 && !fa.loop {
 		return fa, errors.New("coop fork --peer only applies with --loop (name each peer: --peer <target>)")
 	}
+	// A peer typed wrong is refused here, before the fork is created or any account is checked.
+	// Whether each peer can sign in depends on the fork's rotation, checked once the fork exists.
+	if _, err := resolvePeerTargets("coop fork "+fa.name, fa.peers, agents.Names()); err != nil {
+		return fa, err
+	}
 	return fa, nil
 }
 
@@ -683,13 +688,15 @@ func (a *app) forkCreate(args []string) (int, error) {
 			if ladder == nil && a.preset != nil && fa.agent == a.preset.Lead().Provider {
 				ladder = a.preset.LeadTargets
 			}
+			// No account to run fails the job, exit 1 as runForkLoop's own rotation does; refusalExit
+			// keeps 2 only for a malformed peer.
 			rot, err := a.buildRotation(fa.agent, ladder)
 			if err != nil {
-				return refusalExit(err), err
+				return -1, err
 			}
 			peers, err = a.resolvePeersForLeads("coop fork "+fa.name, fa.peers, rot.Targets())
 			if err != nil {
-				return 2, err
+				return refusalExit(err), err
 			}
 		}
 		switch {
@@ -935,6 +942,11 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if a.mode.Restricted() && len(peerVals) > 0 {
 		return 2, fmt.Errorf("a %s run consults no peers — drop --peer", a.mode)
 	}
+	// Every peer's form before the fork, its image or any account is looked at: a peer typed wrong
+	// exits 2. Whether each peer can sign in is checked once the session's account is chosen.
+	if _, err := resolvePeerTargets("coop fork "+name, peerVals, agents.Names()); err != nil {
+		return 2, err
+	}
 	usage := fmt.Sprintf("usage: coop fork %s acp [<target>] [--readonly] [--peer <target>...] [--egress <mode>]", name)
 	if len(rest) > 1 || (len(rest) == 1 && !isTargetHead(rest[0])) {
 		return 2, errors.New(usage)
@@ -1019,7 +1031,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	peers, err := a.resolvePeers("coop fork "+name, peerVals)
 	if err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	lead := ""
 	if len(peers) > 0 {

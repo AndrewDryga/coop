@@ -16,7 +16,8 @@ import (
 
 // Every box a loop starts carries its preset's roles, under whichever provider leads that box. A
 // work ladder that rotates onto a provider which cannot host one of the preset's native roles is
-// refused before the first box — never run with the role quietly turned into a read-only consult.
+// refused before the first box — never run with the role quietly turned into a read-only consult —
+// and fails the job (-1, so exit 1): the ladder comes from committed files, not from what was typed.
 func TestLoopRefusesALeadThatCannotHostANativeRole(t *testing.T) {
 	repo := t.TempDir()
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
@@ -30,7 +31,7 @@ func TestLoopRefusesALeadThatCannotHostANativeRole(t *testing.T) {
 	}}
 	code, err := c.Run(RunSpec{Repo: repo, Image: "img", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, Preset: p,
 		Rotation: ladder.NewRotation([]agents.Target{target("claude", "work"), target("codex", "work")})})
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "work agent: preset t: thinker is a native claude subagent, but codex can lead this preset too") {
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "work agent: preset t: thinker is a native claude subagent, but codex can lead this preset too") {
 		t.Fatalf("a work ladder a native role cannot follow = (%d, %v)", code, err)
 	}
 }

@@ -9,6 +9,15 @@
   file in place. An agent in a box could swap that file's folder for a named pipe just as
   `coop init` opened it, and `coop init` waited forever. Now it stops at once and names the folder.
 
+- **A missing sign-in, or a preset a loop cannot run, now exits 1 instead of 2.** `coop acp --peer`
+  and a fork loop with `--peer` exited 2 when their own agent had no account to run, though
+  `coop loop` exits 1 for the same problem. Any run exited 2 when a `--peer` agent was not signed
+  in, and `coop loop` and fork loops exited 2 when an agent in `.agent/loop.yaml` could not host a
+  native role of the loop's preset. Exit 2 is for a mistyped command, and these were typed
+  correctly, so they now exit 1 with the same messages. A `--peer` value Coop cannot take, such as
+  one that names an account, still exits 2. Coop now names it before checking any account, wherever
+  it sits among the peers, so a fork loop no longer creates the fork first.
+
 - **A session whose box image is missing says so even when it fails fast.** When the model process
   of a session exited before Coop sent it anything, the turn failed with "ACP frame could not be
   written" instead of the advice to run `coop build`. Coop now reports such a failure the same way

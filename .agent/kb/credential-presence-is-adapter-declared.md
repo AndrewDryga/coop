@@ -2,7 +2,7 @@
 name: credential-presence-is-adapter-declared
 description: adapters own credential presence, selected env authority, and inspectable stored readiness
 subsystem: credentials
-sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/cli/target.go, internal/cli/cli.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/loop/review.go, internal/testutil/liveprovider/credentials.go]
+sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/cli/target.go, internal/cli/cli.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/fork_cmd.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/loop/loop.go, internal/loop/review.go, internal/testutil/liveprovider/credentials.go]
 updated: 2026-10-17
 ---
 
@@ -68,10 +68,16 @@ the accounts that could be listed. One that resolves nothing names the first of 
 listing failed with `accountsUnlistedErr`, ahead of any sign-in repair, since the account it needs
 may be in what could not be read. Accepted trade-off: when a pinned login needs re-login and a
 folder cannot be listed, the folder message comes first and the re-login only once the folder lists
-again. The advice is late, never wrong. Every command that prints the refusal exits 1. `coop loop`,
-a fork loop's own rotation (`runForkLoop`, fork_cmd.go) and the loop's review stages
-(`Control.Run`, internal/loop/loop.go) return -1, which takes the error's code;
-`coop acp --peer` and a fork loop's peer check return `refusalExit`. Filtered editor sessions
+again. The advice is late, never wrong. Every command that prints a ladder refusal exits 1, for a
+failed listing and a missing login alike: `coop loop`, a fork loop's rotation (`runForkLoop`, and
+the `--peer` check in `forkCreate`, fork_cmd.go), the loop's review stages (`Control.Run`,
+internal/loop/loop.go) and the lead expansion behind `coop acp --peer` return -1, which takes the
+error's code. A `--peer` provider with no usable login gets `needsAccountErr` (target.go), a
+`ui.CommandFailed`, so every peer check (launches, `coop loop`, `coop acp`, `coop fork`) returns
+`refusalExit`: 1 for it, 2 for a malformed peer or one naming an account. Peer forms come first:
+each entry point checks them against `agents.Names()` before any account (a fork loop in
+`parseForkCreate`, before the fork is created), and `resolvePeerTargets` checks every form before
+any sign-in, so a malformed peer exits 2 wherever it sits. Filtered editor sessions
 (acp_network.go) and the ACP control only use the error as a signal and fall back, so they print
 nothing from it. `coop usage provider@account` uses its own listing ([[usage-history-cache]]).
 `coop credentials` lists what it could read and ends that agent's block with
@@ -86,6 +92,11 @@ and the default MCP file are `0600`. Coop does not recursively chmod provider tr
 the private ancestors protect those descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-10-17 - a missing login now exits 1 from `coop acp --peer`'s lead expansion and a fork loop's
+  `--peer` check too (-1, like the loop), and `needsAccountErr` is a `ui.CommandFailed`, so every
+  peer check returns `refusalExit` (1 for no login, 2 for a malformed peer), with every peer's form
+  checked before any account; added commands.go and loop_cmd.go to sources; verified against
+  internal/cli/acp_cmd.go, fork_cmd.go, commands.go, loop_cmd.go, target.go and cli.go
 - 2026-10-17 - the loop's review stages now return -1 like the work rotation (`rotationRefusal` is
   gone); recorded `runForkLoop`'s -1, the late re-login trade-off and that rotation ignores a failed
   listing only while its ladder can run; added acp_network.go, fork_cmd.go and loop.go to sources;

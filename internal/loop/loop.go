@@ -355,7 +355,9 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// A preset's roles ride every box this run starts, work and review alike, so every lead those
 	// boxes may run under must host its native roles as written — refused now, not demoted later. A
 	// stage that cannot start a box (verify switched off; no review under a custom work.command)
-	// is not asked; box.Run still refuses any box that slips past.
+	// is not asked; box.Run still refuses any box that slips past. Like box.Run's, the refusal fails
+	// the job (exit 1), since nothing typed is wrong: a bare `coop loop` meets it through
+	// .agent/loop.yaml, and the fix is an edit to the preset or that file.
 	if c.preset != nil {
 		for _, stage := range []struct {
 			name string
@@ -373,7 +375,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 				leads = append(leads, target.Provider)
 			}
 			if err := c.preset.CheckLeads(leads...); err != nil {
-				return 2, fmt.Errorf("%s agent: %w", stage.name, err)
+				return -1, fmt.Errorf("%s agent: %w", stage.name, err)
 			}
 		}
 	}

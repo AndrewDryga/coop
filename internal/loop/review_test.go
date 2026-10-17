@@ -16,6 +16,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
@@ -270,31 +271,47 @@ func TestReviewLadder(t *testing.T) {
 	}
 }
 
-// A review stage whose rotation cannot be built stops the run before any box and fails it as the
-// work rotation does in cmdLoop: Run returns -1 with the host's error intact, and the error sets the
-// exit code, 1 for both, since neither unlistable accounts nor a missing login is rejected input.
+// A review stage that cannot run stops the run before any box and fails it as the work rotation
+// does in cmdLoop: Run returns -1 with the error intact, and the error sets the exit code, 1 for each.
+// None is rejected input: not unlistable accounts, not a missing login, and not a stage lead that
+// cannot host the preset's native role, which .agent/loop.yaml and the preset decide, not argv.
 func TestReviewStageRotationRefusals(t *testing.T) {
+	native := &preset.Preset{Name: "t", Dir: t.TempDir(), Roles: []preset.Role{
+		{Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude"}}},
+	}}
 	for _, test := range []struct {
-		name string
-		err  error
+		name   string
+		err    error          // the signoff rotation's refusal; nil builds the rotation
+		preset *preset.Preset // the run's preset, whose roles every stage's lead must host
 	}{
-		{"accounts that could not be listed", ui.CommandFailed("Could not list every Codex account", "open /config/codex/credentials: permission denied")},
-		{"no account to run", errors.New("credential codex@work is not signed in — run: coop login codex@work")},
+		{"accounts that could not be listed", ui.CommandFailed("Could not list every Codex account", "open /config/codex/credentials: permission denied"), nil},
+		{"no account to run", errors.New("credential codex@work is not signed in — run: coop login codex@work"), nil},
+		{"a lead that cannot host the preset's native role", nil, native},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			repo := t.TempDir()
 			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
 			writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), "signoff:\n  agent: [codex:gpt-5.6-sol@work]\n")
-			host := Host{BuildRotation: func(string, []agents.Target) (*ladder.Rotation, error) { return nil, test.err }}
+			host := Host{BuildRotation: func(_ string, rungs []agents.Target) (*ladder.Rotation, error) {
+				if test.err != nil {
+					return nil, test.err
+				}
+				return ladder.NewRotation(rungs), nil
+			}}
 			c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, runtime.Runtime{Name: "true"}, "test", host)
 			c.boxRun = func(box.RunSpec) (int, error) {
 				t.Error("a box launched")
 				return 0, nil
 			}
 			code, err := c.Run(RunSpec{Repo: repo, Image: "img", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
-				Rotation: ladder.NewRotation([]agents.Target{target("claude", "work")})})
-			if code != -1 || !errors.Is(err, test.err) || !strings.HasPrefix(err.Error(), "signoff agent: ") {
+				Preset: test.preset, Rotation: ladder.NewRotation([]agents.Target{target("claude", "work")})})
+			refused := errors.Is(err, test.err)
+			if test.err == nil {
+				var leads *preset.LoadError
+				refused = errors.As(err, &leads)
+			}
+			if code != -1 || !refused || !strings.HasPrefix(err.Error(), "signoff agent: ") {
 				t.Fatalf("Run = (%d, %v), want (-1, the signoff stage's refusal)", code, err)
 			}
 		})

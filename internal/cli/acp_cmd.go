@@ -256,13 +256,15 @@ func (a *app) cmdACP(args []string) (int, error) {
 			if a.preset != nil && !toolSet {
 				rungs = a.preset.LeadTargets
 			}
+			// A lead or peer with no account to run fails the job, exit 1 as in cmdLoop: -1 lets the
+			// error set the code, and refusalExit keeps 2 only for a malformed peer.
 			leads, err := expandLadder(a.cfg, tool, rungs)
 			if err != nil {
-				return refusalExit(err), err
+				return -1, err
 			}
 			peers, err = a.resolvePeersForLeads("coop acp", peerVals, leads)
 			if err != nil {
-				return 2, err
+				return refusalExit(err), err
 			}
 			a.acpPeers = slices.Clone(peers)
 		}
@@ -322,7 +324,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	peers, err = a.resolvePeers("coop acp", peerVals)
 	if err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	a.acpPeers = slices.Clone(peers)
 	// Built AFTER the model selection: gemini's ACP command is its own binary and carries

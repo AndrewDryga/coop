@@ -167,7 +167,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	}
 	peers, err := a.resolvePeersForLeads(loopCommand, peerVals, rot.Targets())
 	if err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	// Everything above is usage and config; only the run itself needs the project and a container
 	// runtime, so those are checked last and a usage error never reads as "runtime not found".

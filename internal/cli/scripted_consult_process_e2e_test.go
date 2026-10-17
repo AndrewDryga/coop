@@ -585,7 +585,8 @@ func TestProviderScriptedConsultScopeFailures(t *testing.T) {
 	t.Run("unauthenticated ad hoc peer fails before runtime", func(t *testing.T) {
 		disableProcessCredential(t, suite, "gemini")
 		result, trace := suite.run(t, []string{"claude", "--peer", "gemini"}, processScenario("claude", nil, 0, ""))
-		if result.Err != nil || result.ExitCode != 2 || len(trace) != 0 ||
+		// A missing login is a failed job, not rejected input: exit 1.
+		if result.Err != nil || result.ExitCode != 1 || len(trace) != 0 ||
 			!strings.Contains(result.Stderr, "Gemini needs a usable account") {
 			t.Fatalf("unauthenticated peer rejection = exit %d err %v trace %d\nstderr:\n%s", result.ExitCode, result.Err, len(trace), result.Stderr)
 		}

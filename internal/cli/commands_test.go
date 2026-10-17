@@ -791,6 +791,12 @@ func TestResolvePeers(t *testing.T) {
 	if _, err := a.resolvePeers("coop claude", []string{"borg"}); err == nil {
 		t.Error("an unknown provider must be rejected")
 	}
+	// Every peer's form comes before any sign-in: one typed wrong is refused as such even after a
+	// peer that is not signed in.
+	if _, err := a.resolvePeers("coop claude", []string{"codex", "claude@work"}); err == nil ||
+		!strings.HasPrefix(err.Error(), "Peers share this run's selected accounts") {
+		t.Errorf("an unauthed peer, then one with an @account = %v, want the @account refusal", err)
+	}
 	if peers, err := a.resolvePeers("coop claude", nil); err != nil || peers != nil {
 		t.Errorf("resolvePeers(nil) = (%v, %v), want (nil, nil)", peers, err)
 	}

@@ -434,13 +434,18 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 		}
 		return a.loginTo(tool, acct)
 	}
+	// Every peer's form before any account check, as coop acp and coop loop do: a peer typed wrong
+	// exits 2 whatever is signed in. Whether each peer can sign in is checked once the lead is chosen.
+	if _, err := resolvePeerTargets("coop "+tool, peerVals, agents.Names()); err != nil {
+		return 2, err
+	}
 	if err := a.applyRunTarget(t, "coop "+tool); err != nil {
 		return refusalExit(err), err
 	}
 	a.nudgeIfUnauthed(tool)
 	peers, err := a.resolvePeers("coop "+tool, peerVals)
 	if err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	providerArgs := dropDashDash(args)
 	return a.runAgentCommandInBox(append(append([]string{}, a.defaultCmd(tool)...), providerArgs...), tool, peers, providerArgs)
@@ -469,13 +474,16 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	if _, err := resolvePeerTargets("coop "+p.Name, peerVals, agents.Names()); err != nil {
+		return 2, err // peer forms first, as in launchAgent
+	}
 	if err := a.applyPinnedPreset(p, tool); err != nil {
 		return refusalExit(err), err
 	}
 	a.nudgeIfUnauthed(tool)
 	peers, err := a.resolvePeers("coop "+p.Name, peerVals)
 	if err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	providerArgs := dropDashDash(args)
 	return a.runAgentCommandInBox(append(append([]string{}, a.defaultCmd(tool)...), providerArgs...), tool, peers, providerArgs)
