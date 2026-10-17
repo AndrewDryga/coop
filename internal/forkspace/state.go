@@ -210,13 +210,19 @@ const (
 	ProcessIdentityMatch
 	ProcessIdentityMismatch
 	ProcessIdentityUnknown
+	ProcessIdentityForeign // another operating system wrote the token (processidentity.Foreign)
 )
 
 // ProcessIdentityOf separates conservative liveness from authorization to signal. Destructive
-// guards retain unknown state, but status calls only a corroborated identity running.
+// guards retain unknown and foreign state, but status calls only a corroborated identity running.
 func ProcessIdentityOf(pid int, token string) ProcessIdentity {
 	if pid <= 1 { // a detached worker cannot be init; -1 is kill(2)'s broadcast target
 		return ProcessGone
+	}
+	// A pid recorded on another operating system is not this kernel's, so whether it is missing or
+	// taken here says nothing about the process that wrote the record.
+	if StableProcToken(token) && !processidentity.Native(token) {
+		return ProcessIdentityForeign
 	}
 	if err := SignalPID(pid, 0); errors.Is(err, syscall.ESRCH) {
 		return ProcessGone
@@ -252,8 +258,9 @@ func processAlive(pid int, token string) bool {
 // OwnerProvablyDead is the ONE test the fork lifecycle shares for "the process this record names is
 // not running any more": the kernel says its pid is gone, or that pid now belongs to a different
 // process than the one recorded. A live match and — deliberately — an identity coop could not read
-// are both unproven, so every caller (stop, the merge's rebase recovery) fails closed on them.
-// Identity is pid + start token or nothing: no file age, no elapsed time.
+// or one another operating system recorded are all unproven, so every caller (stop, the merge's
+// rebase recovery) fails closed on them. Identity is pid + start token or nothing: no file age, no
+// elapsed time.
 func OwnerProvablyDead(identity ProcessIdentity) bool {
 	return identity == ProcessGone || identity == ProcessIdentityMismatch
 }
@@ -620,3 +627,7 @@ func ProcStartToken(pid int) string { return ReadProcStartToken(pid) }
 func StableProcToken(token string) bool {
 	return processidentity.Stable(token)
 }
+
+// ProcTokenSystem names the operating system that wrote token, "Linux" or "macOS", so a refusal of
+// a foreign record can say where its worker can be checked.
+func ProcTokenSystem(token string) string { return processidentity.System(token) }

@@ -15,12 +15,23 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 )
 
 // departSupervisor rewrites one retained run's supervisor identity so the
 // kernel reports the launching process as departed — what a host crash, a
 // SIGKILL or a reboot leaves behind.
 func departSupervisor(t *testing.T, store *networkstate.Store, id string) {
+	t.Helper()
+	// Same pid, a different start time in the same token format: the kernel
+	// proves the process that launched this run is not the one holding that pid
+	// now, which is exactly what a reused pid after a crash looks like.
+	rewriteSupervisorToken(t, store, id, func(token string) string { return token + "9" })
+}
+
+// rewriteSupervisorToken replaces one retained run's recorded supervisor start
+// token with what change makes of it.
+func rewriteSupervisorToken(t *testing.T, store *networkstate.Store, id string, change func(token string) string) {
 	t.Helper()
 	path := filepath.Join(store.Path(), "execution-"+id+".json")
 	data, err := os.ReadFile(path)
@@ -36,10 +47,7 @@ func departSupervisor(t *testing.T, store *networkstate.Store, id string) {
 	if token == "" {
 		t.Fatal("the run recorded no supervisor identity")
 	}
-	// Same pid, a different start time in the same token format: the kernel
-	// proves the process that launched this run is not the one holding that pid
-	// now, which is exactly what a reused pid after a crash looks like.
-	supervisor["start_token"] = token + "9"
+	supervisor["start_token"] = change(token)
 	updated, err := json.Marshal(record)
 	if err != nil {
 		t.Fatal(err)
@@ -262,6 +270,27 @@ func TestRecoverNetworkRunsRefusesALiveOwner(t *testing.T) {
 	record, err := evidence.Execution(f.record.ID)
 	if err != nil || record.Receipt != nil {
 		t.Fatal("a live run's receipt was sealed", err)
+	}
+}
+
+// A run another operating system supervised names a pid this kernel cannot
+// check, so recovery leaves it alone as it would a live one: nothing removed,
+// nothing sealed.
+func TestRecoverNetworkRunsLeavesAnotherSystemsRunAlone(t *testing.T) {
+	f, d, evidence, connect := recoveryFixture(t)
+	rewriteSupervisorToken(t, f.store, f.record.ID, func(string) string { return starttoken.Foreign() })
+	results, err := recoverNetworkRuns(context.Background(), evidence, "", connect)
+	if err != nil || len(results) != 1 || !results[0].Live || len(results[0].Removed) != 0 || results[0].Sealed {
+		t.Fatalf("recovery of another system's run = %+v %v, want it left alone", results, err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.containers) == 0 || len(d.volumes) == 0 {
+		t.Fatal("another system's run lost its resources")
+	}
+	record, err := evidence.Execution(f.record.ID)
+	if err != nil || record.Receipt != nil {
+		t.Fatal("another system's run was sealed", err)
 	}
 }
 

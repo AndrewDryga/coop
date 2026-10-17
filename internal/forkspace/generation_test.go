@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/fsidentity"
+	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 )
 
 func makeGenerationWorkspace(t *testing.T, repo, name string) {
@@ -235,7 +236,7 @@ func TestForkGenerationMigratesOnlyStoppedSemanticallyVerifiedLegacyRecords(t *t
 				t.Fatal(err)
 			}
 			legacy := writeLegacyGenerationRecord(t, repo, "legacy", version)
-			if err := WriteWorkerState(repo, "legacy", WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}); err != nil {
+			if err := WriteWorkerState(repo, "legacy", WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
 				t.Fatal(err)
 			}
 			unlock, err := LockState(repo, "legacy")
@@ -572,7 +573,7 @@ func TestForkGenerationAdoptsOnlyStoppedLegacyWorkspace(t *testing.T) {
 	if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteWorkerState(repo, "legacy", WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}); err != nil {
+	if err := WriteWorkerState(repo, "legacy", WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
 		t.Fatal(err)
 	}
 	unlock, err := LockState(repo, "legacy")

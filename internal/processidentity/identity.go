@@ -16,6 +16,10 @@ const (
 	Match
 	Mismatch
 	Unknown
+	// Foreign is a token another operating system wrote: a Linux token read on macOS, or the
+	// reverse, as when a folder is shared with a Linux container. Its pid is not this kernel's, so
+	// nothing here can prove that process alive or dead, and callers keep its record.
+	Foreign
 )
 
 // StartToken returns a stable, opaque token for pid, or an empty string when the kernel identity
@@ -23,16 +27,33 @@ const (
 func StartToken(pid int) string { return platformStartToken(pid) }
 
 // Stable reports whether token has a supported, versioned kernel identity shape.
-func Stable(token string) bool {
-	return strings.HasPrefix(token, "linux-proc-v1:") ||
-		strings.HasPrefix(token, "darwin-kinfo-v1:")
+func Stable(token string) bool { return System(token) != "" }
+
+// System names the operating system whose kernel wrote token, "Linux" or "macOS", or returns ""
+// for a shape it does not know.
+func System(token string) string {
+	switch {
+	case strings.HasPrefix(token, "linux-proc-v1:"):
+		return "Linux"
+	case strings.HasPrefix(token, "darwin-kinfo-v1:"):
+		return "macOS"
+	}
+	return ""
 }
 
+// Native reports whether token has the shape this platform's StartToken writes. A stable token that
+// is not native was written on another operating system, whose pids this kernel cannot check.
+func Native(token string) bool { return strings.HasPrefix(token, platformTokenPrefix) }
+
 // Inspect separates liveness from authority to signal. Unknown is fail-closed: the process appears
-// live, but its identity cannot be proved. A reused pid is Mismatch, not Match.
+// live, but its identity cannot be proved. A reused pid is Mismatch, not Match, and another
+// operating system's token is Foreign before any pid here is asked.
 func Inspect(pid int, token string) State {
 	if pid <= 1 || !Stable(token) {
 		return Unknown
+	}
+	if !Native(token) {
+		return Foreign
 	}
 	if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
 		return Gone

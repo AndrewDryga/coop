@@ -46,6 +46,11 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-17 — added the test-only `testutil/starttoken` package, which imports the
+  `processidentity` leaf: forkspace, forkctl, cli, sessionsvc, box and tasks tests need a start
+  token of this platform's shape that no process has, and one of the other platform's, now that
+  `processidentity.Inspect` reads the other platform's token as Foreign instead of dead (task
+  2026-10-17-stop-judging-a-fork-pidfile-s-process-dead-becau).
 - 2026-10-17 — forkspace imports shadowpath for `HomeOrAbove`: a trusted git view refuses a
   repository its walk climbed to at the home folder or above with the check box.FindRepo uses,
   not a second copy (task 2026-10-16-refuse-a-trusted-git-view-whose-nearest-git-is-t).

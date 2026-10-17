@@ -33,6 +33,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
+	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
@@ -2886,7 +2887,7 @@ func TestSessionTurnRunnerInterruptedTurnUsesExactExecutionAuthority(t *testing.
 		Version: 1, ID: strings.Repeat("1", 32), Kind: forkspace.ExecutionRemoteSession,
 		Role: forkspace.ExecutionRoleActiveTurn, Workspace: fixture.session.Workspace,
 		Fork: &identity, SourceID: runID, PID: 1 << 30,
-		Token: "darwin-kinfo-v1:1:1", StartedAt: time.Now().UTC(),
+		Token: starttoken.Stale(), StartedAt: time.Now().UTC(),
 	}
 	body, err := json.Marshal(record)
 	if err != nil {

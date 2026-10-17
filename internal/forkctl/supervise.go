@@ -102,6 +102,8 @@ func requireNoWorkerLocked(repo, name string) error {
 		return fmt.Errorf("fork %s already has a loop running (pid %d) — stop it first: coop fork stop %s", name, state.Pid, name)
 	case forkspace.OwnerProvablyDead(identity):
 		return fmt.Errorf("fork %s has a leftover record from an earlier background loop — clean it up first: coop fork stop %s", name, name)
+	case identity == forkspace.ProcessIdentityForeign:
+		return forkForeignWorker(repo, name, state)
 	default: // a live pid whose start token cannot be read: stop prints how to check it by hand
 		return fmt.Errorf("fork %s still has a background loop record — clean it up first: coop fork stop %s", name, name)
 	}
@@ -109,6 +111,16 @@ func requireNoWorkerLocked(repo, name string) error {
 
 func forkWorkerRecovery(name string, pid int) string {
 	return fmt.Sprintf("inspect it with: ps -p %d -o pid=,lstart=,command=; after verifying it is this fork's worker, run: kill -TERM -%d; if it remains, run: kill -KILL -%d; then retry: coop fork stop %s", pid, pid, pid, name)
+}
+
+// forkForeignWorker refuses a record another operating system wrote, as when a coop in a Linux
+// container shares this folder with macOS. Its pid is not this kernel's, so the record stays; a coop
+// on the system that wrote it can check that pid and stop the loop. When that system is gone, as a
+// deleted container is, only the person can tell, so the refusal ends with the guarded removal.
+func forkForeignWorker(repo, name string, state forkspace.WorkerState) error {
+	system := forkspace.ProcTokenSystem(state.Token)
+	return fmt.Errorf("fork %s's background loop (pid %d) was started on %s, so Coop cannot tell from here whether it is still running and keeps its record — stop it on %s: coop fork stop %s. If no coop on %s can reach this folder any more, check that no box of this fork is running, then remove the record: %s; then run: coop fork stop %s",
+		name, state.Pid, system, system, name, system, removeCommand(forkspace.PidPath(repo, name)), name)
 }
 
 // runningForkNames returns the subset that still needs stop, in order — a live worker, or a leftover
@@ -512,9 +524,6 @@ func (c *Control) ForkStop(args []string) (int, error) {
 	if err != nil {
 		return 1, workerStateFormatError(repo, name, err)
 	}
-	// From here a worker really is being signalled, so the narration starts — a "stopping" line
-	// above the not-running branch would describe work that never happened.
-	ui.Note("Stopping fork %s", name)
 	if state.Generation != "" {
 		if !hasGeneration || forkIdentity.Generation != state.Generation {
 			return 1, fmt.Errorf("fork %s worker state generation does not match host generation authority", name)
@@ -524,9 +533,15 @@ func (c *Control) ForkStop(args []string) (int, error) {
 	}
 	pid, token := state.Pid, state.Token
 	identity := forkspace.ProcessIdentityOf(pid, token)
-	if identity == forkspace.ProcessIdentityUnknown {
+	switch identity {
+	case forkspace.ProcessIdentityUnknown:
 		return 1, fmt.Errorf("fork %s worker identity for pid %d could not be verified — %s", name, pid, forkWorkerRecovery(name, pid))
+	case forkspace.ProcessIdentityForeign:
+		return 1, forkForeignWorker(repo, name, state)
 	}
+	// From here a worker really is being signalled, so the narration starts — a "stopping" line
+	// above a refusal would describe work that never happened.
+	ui.Note("Stopping fork %s", name)
 	// The record stays as it is until the box is gone. If anything below fails, a dead worker's
 	// record is what the next stop retries with, and it keeps a new start from stranding an orphan.
 	if err := c.ensureRuntime(); err != nil {
@@ -542,7 +557,7 @@ func (c *Control) ForkStop(args []string) (int, error) {
 		switch identity := forkspace.ProcessIdentityOf(pid, token); {
 		case forkspace.OwnerProvablyDead(identity):
 			return nil
-		case identity == forkspace.ProcessIdentityUnknown:
+		case identity != forkspace.ProcessIdentityMatch:
 			return errors.New("worker identity became unreadable")
 		}
 		if forkspace.SignalPID(-pid, sig) != nil {
@@ -650,7 +665,7 @@ func waitForExit(pid int, token string, timeout time.Duration) (bool, error) {
 		switch identity := forkspace.ProcessIdentityOf(pid, token); {
 		case forkspace.OwnerProvablyDead(identity):
 			return true, nil
-		case identity == forkspace.ProcessIdentityUnknown:
+		case identity != forkspace.ProcessIdentityMatch:
 			return false, errors.New("worker identity became unreadable")
 		}
 		if time.Now().After(deadline) {

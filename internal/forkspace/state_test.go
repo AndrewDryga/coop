@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
@@ -41,7 +42,7 @@ func TestForkStateRootAndFilesAreOwnerOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	unlock()
-	if err := WriteWorkerState(repo, "perf", WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}); err != nil {
+	if err := WriteWorkerState(repo, "perf", WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
 		t.Fatal(err)
 	}
 	assertForkStatePerm(t, StateDir(repo), 0o700)
@@ -172,7 +173,7 @@ func TestForkRunningPid(t *testing.T) {
 		t.Fatalf("unsupported state changed = %q, %v; want exact %q", got, err, unsupported)
 	}
 	// A dead/out-of-range pid → 0, but its state remains until forkStop reaps any orphaned box.
-	if err := os.WriteFile(PidPath(repo, "dead"), []byte(OwnerStateV1+"2147483646\nlinux-proc-v1:1:2\n"), 0o644); err != nil {
+	if err := os.WriteFile(PidPath(repo, "dead"), []byte(OwnerStateV1+"2147483646\n"+starttoken.Stale()+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := RunningPid(repo, "dead"); got != 0 {
@@ -702,7 +703,7 @@ func TestForkRunningPidReusedPid(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Our own (live) pid, but recorded with a start time from a different process → reused → 0.
-	if err := os.WriteFile(PidPath(repo, "reused"), []byte(fmt.Sprintf("%s%d\nlinux-proc-v1:0\n", OwnerStateV1, os.Getpid())), 0o644); err != nil {
+	if err := os.WriteFile(PidPath(repo, "reused"), []byte(fmt.Sprintf("%s%d\n%s\n", OwnerStateV1, os.Getpid(), starttoken.Stale())), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := RunningPid(repo, "reused"); got != 0 {
@@ -717,6 +718,49 @@ func TestForkRunningPidReusedPid(t *testing.T) {
 	}
 	if got := RunningPid(repo, "live"); got != os.Getpid() {
 		t.Errorf("RunningPid(live, matching token) = %d, want %d", got, os.Getpid())
+	}
+}
+
+// A record another operating system wrote (a coop in a Linux container sharing this folder with
+// macOS, or the reverse) names a pid this kernel cannot check. Whether that pid is missing here or
+// held by this very process, the worker is not running as far as status goes, but the fork stays
+// held, the record is never provably dead, and no pid here is even asked.
+func TestForkRecordFromAnotherSystemStaysHeld(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "proj")
+	if err := EnsureStateDir(repo); err != nil {
+		t.Fatal(err)
+	}
+	oldSignal := SignalPID
+	SignalPID = func(pid int, sig syscall.Signal) error {
+		t.Errorf("signal %v sent to pid %d for another system's record", sig, pid)
+		return nil
+	}
+	t.Cleanup(func() { SignalPID = oldSignal })
+	for _, pid := range []int{2147483646, os.Getpid()} {
+		name := "foreign-" + strconv.Itoa(pid)
+		state := WorkerState{Pid: pid, Token: starttoken.Foreign()}
+		if err := WriteWorkerState(repo, name, state); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.ReadFile(PidPath(repo, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := ProcessIdentityOf(pid, state.Token); got != ProcessIdentityForeign || OwnerProvablyDead(got) {
+			t.Errorf("ProcessIdentityOf(%d, %q) = %v, want foreign and not provably dead", pid, state.Token, got)
+		}
+		if got := RunningPid(repo, name); got != 0 {
+			t.Errorf("RunningPid(%s) = %d, want 0", name, got)
+		}
+		if got, held := StateOwner(repo, name); got != pid || !held {
+			t.Errorf("StateOwner(%s) = (%d, %v), want (%d, true)", name, got, held, pid)
+		}
+		if !NeedsStop(repo, name) {
+			t.Errorf("%s must keep the destructive-operation guard held", name)
+		}
+		if after, err := os.ReadFile(PidPath(repo, name)); err != nil || !bytes.Equal(after, before) {
+			t.Errorf("%s record changed = (%q, %v), want %q", name, after, err, before)
+		}
 	}
 }
 
@@ -889,7 +933,7 @@ func TestClearForkPidIfMine(t *testing.T) {
 		t.Error("ClearPidIfMine should remove a pidfile that names us")
 	}
 	// A pidfile owned by another pid must be left alone.
-	if err := os.WriteFile(PidPath(repo, "other"), []byte(OwnerStateV1+"424242\nlinux-proc-v1:1:2\n"), 0o644); err != nil {
+	if err := os.WriteFile(PidPath(repo, "other"), []byte(OwnerStateV1+"424242\n"+starttoken.Stale()+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ClearPidIfMine(repo, "other", "")

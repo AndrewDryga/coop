@@ -774,7 +774,7 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 		if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}); err != nil {
+		if err := forkspace.WriteWorkerState(repo, "perf", deadWorker); err != nil {
 			t.Fatal(err)
 		}
 		c := &Control{cfg: &config.Config{}}

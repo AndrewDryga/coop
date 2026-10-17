@@ -48,13 +48,16 @@ byte-exact record and gives up, rather than wait, while stop holds the flock.
 
 `ForkStop` holds the flock throughout. It signals only a verified live worker (TERM, then KILL, to
 its session group, re-checking the token before each signal) and refuses an unverifiable identity
-with the manual `ps`/`kill` recovery. Then it reaps the boxes labelled with the fork's exact owner,
-generation and worker flag, retires provably dead `fork-loop` sandbox records of that generation
-after their own exact runtime reap, and removes the file last. Any failure leaves the record as it
-was: a dead worker's record is the retry handle, so a new start refuses it and the next stop
-finishes. Live, unknown, foreign-generation and foreground/editor records stay held. With no file,
-stop still reaps provably dead execution records of the exact generation. Nothing else clears a
-dead worker's record: it may still own an orphaned box.
+with the manual `ps`/`kill` recovery. A record another operating system wrote (a coop in a Linux
+container sharing the folder with macOS, or the reverse) is refused before the runtime is touched,
+naming the system whose coop can check that pid (`forkForeignWorker`); a detached start refuses it
+the same way. Then it reaps the boxes labelled with the fork's exact owner, generation and worker
+flag, retires provably dead `fork-loop` sandbox records of that generation after their own exact
+runtime reap, and removes the file last. Any failure leaves the record as it was: a dead worker's
+record is the retry handle, so a new start refuses it and the next stop finishes. Live, unknown,
+other-system, foreign-generation and foreground/editor records stay held. With no file, stop still
+reaps provably dead execution records of the exact generation. Nothing else clears a dead worker's
+record: it may still own an orphaned box.
 
 ## Unsupported state never becomes an identity
 
@@ -78,8 +81,10 @@ reaps the box through the dead worker's activity record. Skipping the check stay
 
 `forkspace.OwnerProvablyDead` is the single definition, over a `forkspace.ProcessIdentity`:
 **Gone** (the kernel says the pid is dead) or **Mismatch** (the pid now belongs to another process).
-A live Match and an unreadable identity (Unknown: no stable token, or `/proc` and sysctl unreadable)
-are both unproven and fail closed. There is no mtime, age or "it's been a while" anywhere in this
+A live Match, an unreadable identity (Unknown: no stable token, or `/proc` and sysctl unreadable)
+and a token of the other platform's shape (Foreign, decided before any pid is probed: a Linux pid
+means nothing to macOS's kernel, nor the reverse; `processidentity.Native`) are all unproven and
+fail closed. There is no mtime, age or "it's been a while" anywhere in this
 subsystem, and adding one is a rule violation, not an optimization: file age cannot tell a wedged
 host from a busy one. `forkspace.StateOwner` wraps it for "may I touch this fork?": only a missing
 record or a provably dead worker answers "not held". `recoverInterruptedRebase`
@@ -141,6 +146,12 @@ to a process or a container, or prints, it is supervision.
   not a regular file gets "remove it", not the permissions advice: a log only holds output.
 
 ## Changelog
+- 2026-10-17 — a record whose start token is the other platform's shape is
+  `ProcessIdentityForeign`, decided before any pid is probed, and never provably dead: `ForkStop`
+  and a detached start refuse it by name and keep it, and `killGroup`/`waitForExit` proceed only on
+  a Match. Before, a Linux record read on macOS (or the reverse) looked gone or reused, so stop
+  reaped the fork's boxes and deleted the record of a loop that could still run. Re-verified against
+  state.go and supervise.go (task 2026-10-17-stop-judging-a-fork-pidfile-s-process-dead-becau).
 - 2026-10-17 — the lock, the log and the worker record are written only through a handle each call opens on
   `.coop`, opened with the forks folder without following a link: lock and log opens refuse
   anything but a regular file before their fchmod, the record is renamed and removed with

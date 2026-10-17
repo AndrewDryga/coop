@@ -14,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 )
 
 // fakeRuntimeScript is a container runtime backed by one file per container: $COOP_TEST_BOXES/<id>
@@ -257,7 +258,7 @@ func goneSupervisorLabel(t *testing.T, workspace string) string {
 // supervisorLabel builds a well-formed label for pid carrying a start token that is NOT pid's, so
 // the identity test can only ever answer "gone" or "reused" — never a live match.
 func supervisorLabel(workspace string, pid int) string {
-	return supervisorLabelVersion + ":" + workspaceScope(workspace) + ":" + strconv.Itoa(pid) + ":linux-proc-v1:0"
+	return supervisorLabelVersion + ":" + workspaceScope(workspace) + ":" + strconv.Itoa(pid) + ":" + starttoken.Stale()
 }
 
 // The whole decision table, in one place: only a box of THIS workspace whose recorded supervisor is

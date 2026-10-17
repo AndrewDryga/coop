@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+const platformTokenPrefix = "linux-proc-v1:"
+
 func platformStartToken(pid int) string {
 	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	if err != nil || strings.TrimSpace(string(boot)) == "" {
@@ -22,7 +24,7 @@ func platformStartToken(pid int) string {
 	if !ok {
 		return ""
 	}
-	return "linux-proc-v1:" + strings.TrimSpace(string(boot)) + ":" + start
+	return platformTokenPrefix + strings.TrimSpace(string(boot)) + ":" + start
 }
 
 func linuxStartTicks(stat []byte) (string, bool) {

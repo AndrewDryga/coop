@@ -26,6 +26,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
+	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 )
 
 const testForkSessionStoreID = "store_test"
@@ -560,7 +561,7 @@ func TestForkFreshRefusesStateOnlyCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A crashed worker's record with no workspace: only `coop fork stop` may finish its cleanup.
-	if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}); err != nil {
+	if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
@@ -588,7 +589,7 @@ func TestForkFreshRechecksLifecycleUnderLock(t *testing.T) {
 	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
 		return a.forkCreate([]string{"race", "claude", "--fresh", "--yes"})
 	}, func() {
-		if err := forkspace.WriteWorkerState(repo, "race", forkspace.WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}); err != nil {
+		if err := forkspace.WriteWorkerState(repo, "race", forkspace.WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
 			t.Fatal(err)
 		}
 	})

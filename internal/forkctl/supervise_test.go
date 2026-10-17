@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -688,6 +689,59 @@ if [ "$1" = ps ]; then printf '%s\n' box-perf; fi
 	}
 }
 
+// A record another operating system wrote names a pid this kernel cannot check, whether that pid is
+// missing here or belongs to a process here. Stop used to read either as a dead worker, reap the
+// fork's boxes and delete the record of a loop that may still run there; it now keeps both, touches
+// neither a process nor the runtime, and says where the loop can be stopped.
+func TestForkStopKeepsARecordFromAnotherSystem(t *testing.T) {
+	system := forkspace.ProcTokenSystem(starttoken.Foreign())
+	for _, pid := range []int{deadWorker.Pid, os.Getpid()} {
+		t.Run(strconv.Itoa(pid), func(t *testing.T) {
+			repo := filepath.Join(t.TempDir(), "repo")
+			if err := os.MkdirAll(forkspace.Workspace(repo, "perf"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: pid, Token: starttoken.Foreign()}); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(forkspace.PidPath(repo, "perf"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldSignal := forkspace.SignalPID
+			forkspace.SignalPID = func(pid int, sig syscall.Signal) error {
+				t.Errorf("signal %v sent to pid %d for another system's worker", sig, pid)
+				return nil
+			}
+			t.Cleanup(func() { forkspace.SignalPID = oldSignal })
+			a := &Control{
+				cfg: &config.Config{RepoOverride: repo},
+				host: Host{EnsureRuntime: func() (containerruntime.Runtime, error) {
+					t.Error("stop consulted the runtime for another system's worker")
+					return containerruntime.Runtime{}, errors.New("runtime must not be consulted")
+				}},
+			}
+			var code int
+			stderr := captureStderr(t, func() { code, err = a.ForkStop([]string{"perf"}) })
+			want := fmt.Sprintf("fork perf's background loop (pid %d) was started on %s, so Coop cannot tell from here whether it is still running and keeps its record — stop it on %s: coop fork stop perf. "+
+				"If no coop on %s can reach this folder any more, check that no box of this fork is running, then remove the record: %s; then run: coop fork stop perf",
+				pid, system, system, system, removeCommand(forkspace.PidPath(repo, "perf")))
+			if code != 1 || err == nil || err.Error() != want {
+				t.Fatalf("ForkStop over another system's record = (%d, %v), want (1, %q)", code, err, want)
+			}
+			if strings.Contains(stderr, "Stopping fork") {
+				t.Errorf("a refused stop narrated a stop it never made:\n%s", stderr)
+			}
+			if after, err := os.ReadFile(forkspace.PidPath(repo, "perf")); err != nil || !bytes.Equal(after, before) {
+				t.Fatalf("the refused stop changed the record = (%q, %v), want %q", after, err, before)
+			}
+		})
+	}
+}
+
 func TestForkStopReapsPidlessDetachedWorkerWithoutTouchingForegroundActivity(t *testing.T) {
 	dir := t.TempDir()
 	repo := filepath.Join(dir, "repo")
@@ -715,7 +769,7 @@ func TestForkStopReapsPidlessDetachedWorkerWithoutTouchingForegroundActivity(t *
 	stale := forkspace.ExecutionRecord{
 		Version: 1, ID: strings.Repeat("a", 32), Kind: forkspace.ExecutionForkLoop,
 		Role: forkspace.ExecutionRoleDetachedWorker, Workspace: workspace, Fork: &identity,
-		SourceID: "dead-worker", PID: 2147483646, Token: "linux-proc-v1:1:2", StartedAt: time.Now().UTC(),
+		SourceID: "dead-worker", PID: 2147483646, Token: starttoken.Stale(), StartedAt: time.Now().UTC(),
 	}
 	body, err := json.Marshal(stale)
 	if err != nil {
@@ -770,7 +824,7 @@ func TestForkStopRetiresProvablyDeadForegroundExecution(t *testing.T) {
 	stale := forkspace.ExecutionRecord{
 		Version: 1, ID: strings.Repeat("b", 32), Kind: forkspace.ExecutionForkInteractive,
 		Role: forkspace.ExecutionRoleSandbox, Workspace: workspace, Fork: &identity,
-		SourceID: "dead-foreground", PID: 2147483646, Token: "linux-proc-v1:1:2", StartedAt: time.Now().UTC(),
+		SourceID: "dead-foreground", PID: 2147483646, Token: starttoken.Stale(), StartedAt: time.Now().UTC(),
 	}
 	body, err := json.Marshal(stale)
 	if err != nil {
@@ -848,7 +902,7 @@ func TestForkStopRetiresStaleLoopSandboxBeforeSuccess(t *testing.T) {
 				t.Fatal(err)
 			}
 			stale := forkspace.ExecutionRecord{Version: 1, ID: strings.Repeat("c", 32), Kind: forkspace.ExecutionForkLoop, Role: forkspace.ExecutionRoleSandbox,
-				Workspace: workspace, Fork: &identity, PID: 2147483646, Token: "linux-proc-v1:1:2", StartedAt: time.Now().UTC()}
+				Workspace: workspace, Fork: &identity, PID: 2147483646, Token: starttoken.Stale(), StartedAt: time.Now().UTC()}
 			if tc.kind != "" {
 				stale.Kind = tc.kind
 			}
@@ -1130,10 +1184,10 @@ while :; do sleep 10 & wait $!; done
 	}
 }
 
-// deadWorker names a pid the kernel answers ESRCH for, with a stable token shape: the record a
-// crashed worker leaves behind. Its pid differs from the execution-record fixtures' 2147483646,
+// deadWorker names a pid the kernel answers ESRCH for, with this platform's token shape: the record
+// a crashed worker leaves behind. Its pid differs from the execution-record fixtures' 2147483646,
 // which some tests make unverifiable.
-var deadWorker = forkspace.WorkerState{Pid: 2147483645, Token: "linux-proc-v1:1:2"}
+var deadWorker = forkspace.WorkerState{Pid: 2147483645, Token: starttoken.Stale()}
 
 // runningForkNames is the destructive-operation guard: a live loop counts, as does a dead worker's
 // record that may still own an orphaned box; only an absent one does not.
@@ -1184,6 +1238,9 @@ func TestDetachForkLoopRefusesAnExistingRecord(t *testing.T) {
 		{name: "unverifiable record", write: func(repo string) error {
 			return forkspace.WritePid(repo, "perf", os.Getpid(), "")
 		}, unverifiable: true, want: "still has a background loop record — clean it up first: coop fork stop perf"},
+		{name: "another system's record", write: func(repo string) error {
+			return forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: os.Getpid(), Token: starttoken.Foreign()})
+		}, want: "was started on " + forkspace.ProcTokenSystem(starttoken.Foreign()) + ", so Coop cannot tell from here whether it is still running and keeps its record"},
 		{name: "malformed record", write: func(repo string) error {
 			return os.WriteFile(forkspace.PidPath(repo, "perf"), []byte("garbage\n"), 0o600)
 		}, want: "malformed"},

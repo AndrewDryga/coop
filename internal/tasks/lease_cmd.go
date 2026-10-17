@@ -138,10 +138,11 @@ func tasksFolderLease(root string, args []string) (int, error) {
 // so by the time the holder looks, its parent is already init and the ancestor walk finds nothing —
 // while the claim the same agent made a moment earlier (synchronous, its shell still alive) is
 // bound to that agent. Following the live claim keeps `done` and `block` able to stop the holder.
-// A person's claim, an absent record, or a claimant that is gone leaves the holder unbound.
+// A person's claim, an absent record, or a claimant that is gone leaves the holder unbound, and so
+// does a claimant on another operating system: this holder could never see that process exit.
 func bindLeaseToClaimant(root string, req leaseRequest) leaseRequest {
 	owner, owned, err := ReadTaskOwnerRecord(root, req.id)
-	if err != nil || !owned || owner.ActorPID == 0 || !ownerProcessLive(owner) {
+	if err != nil || !owned || owner.ActorPID == 0 || claimantElsewhere(owner) || !ownerProcessLive(owner) {
 		return req
 	}
 	req.actor.PID, req.actor.StartToken, req.claimant = owner.ActorPID, owner.ActorStart, true

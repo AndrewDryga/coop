@@ -23,6 +23,29 @@ func TestCurrentProcessIdentity(t *testing.T) {
 	}
 }
 
+// A token the other operating system wrote names a pid this kernel cannot check, so it is Foreign
+// whether that pid is live here or missing: never Gone, Mismatch or Match.
+func TestAnotherSystemsTokenIsForeign(t *testing.T) {
+	own := StartToken(os.Getpid())
+	foreign := map[string]string{"linux-proc-v1:": "darwin-kinfo-v1:1:1", "darwin-kinfo-v1:": "linux-proc-v1:boot:1"}[platformTokenPrefix]
+	if !Native(own) || Native(foreign) || !Stable(foreign) || Native("homemade-v9:1") {
+		t.Fatalf("native: own %q = %v, other platform's %q = %v", own, Native(own), foreign, Native(foreign))
+	}
+	for _, pid := range []int{os.Getpid(), 1 << 30} {
+		if got := Inspect(pid, foreign); got != Foreign {
+			t.Errorf("Inspect(%d, %q) = %v, want foreign", pid, foreign, got)
+		}
+	}
+	if got := Inspect(1<<30, own); got != Gone {
+		t.Errorf("Inspect(impossible pid, own token) = %v, want gone", got)
+	}
+	for token, want := range map[string]string{"linux-proc-v1:b:1": "Linux", "darwin-kinfo-v1:1:1": "macOS", "homemade-v9:1": ""} {
+		if got := System(token); got != want {
+			t.Errorf("System(%q) = %q, want %q", token, got, want)
+		}
+	}
+}
+
 func TestParentAndCommandOfTheCurrentProcess(t *testing.T) {
 	if got, want := Parent(os.Getpid()), os.Getppid(); got != want {
 		t.Fatalf("Parent(self) = %d, want %d", got, want)

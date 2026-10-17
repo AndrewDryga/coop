@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 
 	"time"
@@ -512,5 +513,43 @@ func TestLeaseBindsToTheTasksClaimantWhenItsOwnAncestryIsGone(t *testing.T) {
 	}
 	if req := bindLeaseToClaimant(root, leaseRequest{id: "human"}); req.actor.PID != 0 || req.claimant {
 		t.Fatalf("holder bound to a person's claim: %+v", req)
+	}
+}
+
+// A lease holder or a claimant that another operating system recorded names a pid this kernel
+// cannot check. done never signals such a holder, even one bound to the caller's own identity, and
+// a new holder never binds to such a claimant, whose exit it could never see.
+func TestLeaseNeverActsOnAnotherSystemsProcess(t *testing.T) {
+	root := t.TempDir()
+	me := selfActor(t, "codex")
+	bystander, _ := sleeperActor(t, "bystander") // the pid a wrong signal would reach
+
+	held := inProgressTask(t, root, "held")
+	if err := RewriteSubtasks(held.Dir, []Subtask{{Text: "required checks passed", Done: true}}); err != nil {
+		t.Fatal(err)
+	}
+	lease, _, err := TryTaskLease(root, held, TaskLeaseOwner{
+		RunID: leaseHolderRunPrefix + "codex", PID: bystander.PID, Provider: "codex", Target: "codex",
+		ControllerStart: starttoken.Foreign(), ActorPID: me.PID, ActorStart: me.StartToken,
+	})
+	if err != nil || lease == nil {
+		t.Fatalf("lease: %v", err)
+	}
+	defer lease.Release()
+	// A signal would be followed by a five-second wait for a release that never comes, and an error.
+	if stopped, err := stopOwnLeaseHolder(root, held, me); stopped || err != nil {
+		t.Fatalf("stopOwnLeaseHolder over another system's holder = %v, %v; want it left alone", stopped, err)
+	}
+	if code, err := tasksFolderMoveWith(root, []string{"held"}, StateDone, "done", "done", claimOptions{actor: me}); code == 0 || err == nil || !strings.Contains(err.Error(), "leased by another controller") {
+		t.Fatalf("done beside another system's holder = %d, %v; want a refusal", code, err)
+	}
+
+	inProgressTask(t, root, "far")
+	far := ClaimActor{Label: "codex", PID: bystander.PID, StartToken: starttoken.Foreign()}
+	if _, err := claimTaskOwnerRecord(root, "far", claimOptions{actor: far}); err != nil {
+		t.Fatal(err)
+	}
+	if req := bindLeaseToClaimant(root, leaseRequest{id: "far"}); req.actor.PID != 0 || req.claimant {
+		t.Fatalf("holder bound to another system's claimant: %+v", req)
 	}
 }

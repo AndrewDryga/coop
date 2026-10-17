@@ -403,6 +403,13 @@ func TaskOwnerLabel(record TaskOwnerRecord) string {
 	return taskOwnerLabel(record, true)
 }
 
+// claimantElsewhere reports whether a claim's process was started on another operating system, as a
+// coop in a Linux container sharing this folder with macOS: a pid this kernel cannot check. A claim
+// with no readable start token is not elsewhere, only unverified.
+func claimantElsewhere(record TaskOwnerRecord) bool {
+	return processidentity.Stable(record.ActorStart) && !processidentity.Native(record.ActorStart)
+}
+
 func taskOwnerLabel(record TaskOwnerRecord, includePID bool) string {
 	if record.Kind == TaskOwnerFork && record.Fork != nil {
 		return "assigned to fork " + record.Fork.Fork.Name + " (" + string(record.Fork.Phase) + ")"
@@ -416,7 +423,11 @@ func taskOwnerLabel(record TaskOwnerRecord, includePID bool) string {
 	}
 	label := "claimed by " + who
 	if includePID {
-		label += fmt.Sprintf(" (PID %d)", record.ActorPID)
+		where := ""
+		if claimantElsewhere(record) {
+			where = " on " + processidentity.System(record.ActorStart)
+		}
+		label += fmt.Sprintf(" (PID %d%s)", record.ActorPID, where)
 	}
 	if !ownerProcessLive(record) {
 		label += " · owner process has stopped"

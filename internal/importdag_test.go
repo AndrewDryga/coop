@@ -83,6 +83,7 @@ var allowedEdges = map[string][]string{
 	"testutil/nativeauth":   nil,
 	"testutil/nativedocker": {"gatewayimage", "runtime", "testutil/dockersock"},
 	"testutil/procharness":  nil,
+	"testutil/starttoken":   {"processidentity"},
 	"testutil/teststate":    nil,
 	"testutil/wait":         nil,
 	"testutil/workertls":    nil,

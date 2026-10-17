@@ -83,7 +83,8 @@ func claimActorLabel(s string) string {
 }
 
 // ownerProcessLive reports whether a process-bound claim's owner still exists. Unknown counts as
-// live: a claim is only ever released on proof of death, never on a failure to prove life.
+// live: a claim is only ever released on proof of death, never on a failure to prove life. So does
+// an owner another operating system recorded, whose pid this kernel cannot check.
 func ownerProcessLive(record TaskOwnerRecord) bool {
 	if record.ActorPID == 0 {
 		return true

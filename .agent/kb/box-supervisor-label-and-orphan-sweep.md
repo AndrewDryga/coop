@@ -29,6 +29,7 @@ The decision table (`box.SurveyOrphanBoxes`), applied per container:
 | pid gone, or pid reused (different token)       | reap — the ONLY reapable   |
 | alive and matching                              | untouched                  |
 | unreadable identity (`Inspect` → Unknown)       | untouched (fails closed)   |
+| another OS's start token (`Inspect` → Foreign)  | untouched (a pid this kernel cannot check) |
 | another workspace's scope                       | untouched                  |
 | no label (pre-upgrade), or a value this version can't parse | REPORTED, never reaped |
 | any value on a container carrying a Compose project label | REPORTED, never reaped |
@@ -190,6 +191,9 @@ Traps:
   live session's services and volumes.
 
 ## Changelog
+- 2026-10-17 — a supervisor label whose start token another operating system wrote (a Linux coop
+  sharing the daemon with macOS) reads as Foreign and is left alone; it was reaped as dead before
+  (task 2026-10-17-stop-judging-a-fork-pidfile-s-process-dead-becau).
 - 2026-10-17 — the daily sweep judges a run's folder only by the daemon its box started on: launches
   record the daemon ID in the folder at setup and again as the box starts (the bound one for native
   runs), the pass pins one daemon for its whole listing, the TMPDIR pass sweeps only kinds no box

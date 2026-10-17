@@ -64,6 +64,16 @@
   error that names it. Choosing the project already refused such a repository, and `COOP_REPO` can
   still name your home folder.
 
+- **Coop no longer treats a process recorded on another operating system as stopped.** A Linux
+  container that shares a project, or Coop's state folder, with macOS leaves records that name its
+  own processes: a fork's background loop, a task claim, a filtered run. Coop checked such a pid on
+  its own system, found it missing or taken by another process, and treated that process as
+  stopped: `coop fork stop` removed the fork's boxes and its record while the loop could still be
+  running, `coop loop --preflight` released the claim, and network cleanup removed the run's
+  containers and volumes. The same happened the other way round. Coop now keeps these records:
+  `coop fork stop` says which system started the loop and to stop it there, and `coop tasks ls`
+  shows a claim's pid as "PID 4242 on Linux".
+
 - **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
   `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a
   file in place. An agent in a box could swap that file's folder for a named pipe just as

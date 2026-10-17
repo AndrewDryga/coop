@@ -3,7 +3,7 @@ name: task-authority-model
 description: four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 subsystem: tasks
 sources: [internal/tasks/lease_cmd.go, internal/tasks/claimactor.go, internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/candidate.go, internal/tasks/queue.go, internal/forkctl/land.go, internal/loop/lock.go, internal/loop/loop.go]
-updated: 2026-09-27
+updated: 2026-10-17
 ---
 Coop has FOUR separate authorities over a task and its checkout. Each answers a different question,
 each is held a different length of time, and each fails differently — conflating any two of them is
@@ -60,7 +60,7 @@ and took it.
 
 ## How claim and lease interact — claim wins unconditionally
 
-An outside holder follows the claim, too: `coop tasks lease` binds to the agent above it, and when that ancestry is already gone (a backgrounded holder from a short-lived tool shell) it binds to the live process on the task's owner record, so the claim and the lease name the same agent and `done`/`block` by that agent can stop the holder (`stopOwnLeaseHolder`).
+An outside holder follows the claim, too: `coop tasks lease` binds to the agent above it, and when that ancestry is already gone (a backgrounded holder from a short-lived tool shell) it binds to the live process on the task's owner record, so the claim and the lease name the same agent and `done`/`block` by that agent can stop the holder (`stopOwnLeaseHolder`). A claim bound to a process another operating system recorded (a state folder shared with a Linux container) counts as live, because this kernel cannot check that pid (`processidentity.Foreign`): pre-flight keeps it, `coop tasks ls` shows "PID 4242 on Linux", and a holder never binds to it, since it could never see that process exit.
 
 `skipOwnedCandidate` (`internal/tasks/audit.go:3041`) checks the claim record BEFORE `TryTaskLease`
 even runs, for every in-progress AND todo candidate: an owned task is skipped like a busy lease, never
@@ -120,6 +120,10 @@ these authorities sit beside but never replace — the folder is still the only 
 lifecycle STATE; these four decide who may act on it.
 
 ## Changelog
+- 2026-10-17 — a claim whose start token is the other platform's shape is no longer judged gone:
+  `ownerProcessLive` counts it live, its label names the system, and `bindLeaseToClaimant` skips it.
+  Verified against claimactor.go, owner.go and lease_cmd.go (task
+  2026-10-17-stop-judging-a-fork-pidfile-s-process-dead-becau).
 - 2026-09-27 — deleted the uncalled trailer-based reconciliation path. Rechecked host completion,
   loop iteration and journaled fork landing; replaced the obsolete universal lock-order claim with
   their actual acquisition and release boundaries. Runtime locking is unchanged.

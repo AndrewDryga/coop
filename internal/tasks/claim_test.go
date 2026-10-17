@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/processidentity"
+	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 )
 
 func fakeClaimProbe(tree map[int]int, names, tokens map[int]string) claimActorProbe {
@@ -208,6 +209,40 @@ func TestReleaseGoneOwnersReleasesOnlyDeadProcessBoundClaims(t *testing.T) {
 	}
 	if ids, err := ReleaseGoneOwners([]string{root}); err != nil || len(ids) != 0 {
 		t.Fatalf("second pass = %v, %v; want nothing left to release", ids, err)
+	}
+}
+
+// A claim bound to a process another operating system recorded names a pid this kernel cannot
+// check, even when no process here has that pid. It counts as live wherever coop would otherwise
+// drop it: pre-flight keeps it, a new claim needs --force, and the listing says whose pid it is.
+func TestAClaimFromAnotherSystemIsKept(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "far", "task.md"), "# Far\n")
+	far := ClaimActor{Label: "codex", PID: 2147483646, StartToken: starttoken.Foreign()}
+	if code, err := tasksFolderMoveWith(root, []string{"far"}, StateInProgress, "claim", "claimed", claimOptions{actor: far}); code != 0 || err != nil {
+		t.Fatalf("claim = %d, %v", code, err)
+	}
+	if ids, err := ReleaseGoneOwners([]string{root}); err != nil || len(ids) != 0 {
+		t.Fatalf("ReleaseGoneOwners = %v, %v; want another system's claim kept", ids, err)
+	}
+	want := fmt.Sprintf("claimed by codex (PID 2147483646 on %s)", processidentity.System(far.StartToken))
+	if out := captureStdout(t, func() { _, _ = tasksFolderList(root, false) }); !strings.Contains(out, want) || strings.Contains(out, "has stopped") {
+		t.Fatalf("listing of another system's claim, want %q:\n%s", want, out)
+	}
+	if code, err := tasksFolderMoveWith(root, []string{"far"}, StateInProgress, "claim", "claimed", claimOptions{actor: selfActor(t, "claude")}); code != 1 || !errors.Is(err, errTaskClaimedByOther) {
+		t.Fatalf("claim over another system's claim = %d, %v; want a refusal", code, err)
+	}
+	if rec, ok := taskOwned(t, root, "far"); !ok || rec.ActorPID != far.PID || rec.ActorStart != far.StartToken {
+		t.Fatalf("owner after the refused claim = %+v, %t", rec, ok)
+	}
+	// Coop cannot tell whether that process still runs, so a release says how to take the task over.
+	take := "which Coop cannot check from here — take it over: coop tasks claim --force far"
+	if code, err := CmdTasksFolder("", root, []string{"release", "far"}); code == 0 || !errors.Is(err, errTaskClaimedByOther) || !strings.Contains(err.Error(), take) {
+		t.Fatalf("release of another system's claim = %d, %v; want %q", code, err, take)
+	}
+	// A pid without a readable start token is unverified, not another system's.
+	if label := TaskOwnerLabel(TaskOwnerRecord{Actor: "codex", ActorPID: 4242}); !strings.Contains(label, "(PID 4242)") {
+		t.Fatalf("label of a claim with no start token = %q, want no system named", label)
 	}
 }
 

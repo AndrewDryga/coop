@@ -933,8 +933,12 @@ func ReleaseTrustedTask(root string, t Item, actor ClaimActor) error {
 		)
 	}
 	if owned && competingClaim(record, actor) {
+		running := "which is still running"
+		if claimantElsewhere(record) {
+			running = "which Coop cannot check from here — take it over: coop tasks claim --force " + t.ID
+		}
 		return errors.Join(
-			fmt.Errorf("%w: %s is %s, which is still running", errTaskClaimedByOther, t.ID, TaskOwnerLabel(record)),
+			fmt.Errorf("%w: %s is %s, %s", errTaskClaimedByOther, t.ID, TaskOwnerLabel(record), running),
 			ownerLock.Close(), unlockLeaseFile(authority),
 		)
 	}
