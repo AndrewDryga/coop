@@ -2,8 +2,8 @@
 name: repository-source-copies
 description: skills and fallback copies retain rooted content authority and validate links only after relocation; a lead's own agents are copied without following any link
 subsystem: box
-sources: [internal/box/sourcecopies.go, internal/box/run.go, internal/box/services.go, internal/shadowpath/shadowpath.go, internal/safefile/safefile.go]
-updated: 2026-10-14
+sources: [internal/box/sourcecopies.go, internal/box/run.go, internal/box/services.go, internal/shadowpath/shadowpath.go, internal/safefile/safefile.go, internal/box/mounts_test.go]
+updated: 2026-10-17
 ---
 
 Skills and adapter fallback settings/hooks become writable provider-home copies. The source is
@@ -30,6 +30,15 @@ also cover supported external ACP links. Service callers pass the same configura
 snapshot and override creation; daemon teardown also excludes its projected session state.
 Cleanup retains a separate local list: returning nil named result slices
 before deferred cleanup would otherwise forget copies prepared before a later artifact failed.
+
+`runWithCompositionArtifacts` prepares a parent before any copy, so only tests pass an empty one,
+and `composedCopyDir` then falls back to TMPDIR. The temp sweep never removes a `coop-skills-*` or
+`coop-home-*` folder there, because neither prefix is in `tempPrefixes`. Eleven of the fourteen
+test callers call `pinTemp`, which gives each its own TMPDIR and fails one whose copy outlives its
+cleanup. The other three point TMPDIR at the folder under test themselves: the repository
+(`TestRepositoryCopiesRequirePrivateDestinations`), an exposed root
+(`TestPrivateCopiesAndComposeRejectExposedRoots`) or a folder checked for leftovers
+(`TestRepositoryCopiesCleanEarlierFallbackOnLaterFailure`).
 
 A preset box's generated native roles are mounted over the lead home's agents directory, so the
 definitions the user keeps there are copied in beside them (`ownAgentFiles`). That source is the
@@ -58,6 +67,11 @@ each temporary source after Run. Making those copies read-only changes native CL
 it is not an assertion repair. Instruction and MCP mounts have separate read-only contracts.
 
 ## Changelog
+- 2026-10-17 — the empty parent is test-only and falls back to TMPDIR, where the sweep removes no
+  `coop-skills-*` or `coop-home-*` folder; 11 of the 14 test callers now pin TMPDIR with `pinTemp`
+  and the other three set it themselves. Before 5bd92778 one dropped its copy list and left 168
+  `coop-skills-*` folders in one Mac's real TMPDIR. Verified against `runWithCompositionArtifacts`
+  (parent prepared before `synthSkillsMounts`) and `tempPrefixes` (neither prefix listed).
 - 2026-10-14 — verified private writable fallback mounts against current source; repaired exact
   provider/count/temporary-source cleanup assertions without adopting a stale read-only assumption.
 - 2026-09-23 — re-verified the raw no-follow source read, alias/target visibility union,

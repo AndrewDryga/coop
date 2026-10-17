@@ -2,7 +2,7 @@
 name: test-state-isolation
 description: every test binary that can reach Coop's per-user state calls teststate.Isolate in TestMain; Coop refuses the real roots in a test binary, children inherit the folder, and live suites opt back into the real config and network state; the cli unit tests run with failing stubs for the host provider CLIs and runtimes
 subsystem: development
-sources: [internal/testutil/teststate/teststate.go, internal/forkspace/execution.go, internal/forkspace/gitview.go, internal/tasks/lease.go, internal/config/config.go, internal/config/runfiles.go, internal/box/network_admission.go, internal/box/serviceapproval.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/acpproxy/trace.go, internal/cli/provider_live_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/box/reap.go, internal/cli/main_test.go, internal/cli/hostclis_test.go, internal/sessionsvc/main_test.go, internal/sessionsvc/acp.go]
+sources: [internal/testutil/teststate/teststate.go, internal/forkspace/execution.go, internal/forkspace/gitview.go, internal/tasks/lease.go, internal/config/config.go, internal/config/runfiles.go, internal/box/network_admission.go, internal/box/serviceapproval.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/acpproxy/trace.go, internal/cli/provider_live_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/box/reap.go, internal/cli/main_test.go, internal/cli/hostclis_test.go, internal/sessionsvc/main_test.go, internal/sessionsvc/acp.go, internal/box/isolated_mounts_test.go, internal/box/mounts_test.go]
 updated: 2026-10-17
 ---
 
@@ -52,6 +52,11 @@ the folders of its layout, and the host's network state when granted, and the gu
 When the helper replaces `XDG_CONFIG_HOME`, it pins `GOENV` to where `go` would have looked, so
 fixture builds on Linux keep the developer's go settings.
 
+**TMPDIR stays the developer's.** Box tests bind unix sockets under TMPDIR, within Darwin's 104-byte
+socket path limit: the full path of `coop-ipc-*/control.sock` is 81 bytes under the real 49-byte
+TMPDIR. A TMPDIR inside the state folder adds 31, and the bind fails with `invalid argument`. So a
+test that writes into TMPDIR pins its own instead; box's source-copy tests call `pinTemp`.
+
 **Live suites opt back in.** The providerlivee2e parents and the acpe2e `TestMain` drive the
 signed-in providers on purpose, so they set `teststate.LiveEnv` and point `XDG_CONFIG_HOME` at
 `teststate.DeveloperConfigHome()` before `config.Load()`. The parents hand filtered children
@@ -92,6 +97,9 @@ the two real roots, then read the denials with `/usr/bin/log show --predicate 's
 Nothing reaches the real folders, and every attempted write is named with its process.
 
 ## Changelog
+- 2026-10-17 — why Isolate leaves TMPDIR alone: with TMPDIR as long as one inside the state folder,
+  `TestIsolatedMountRefusesSocketsAndKernelSources` could not bind its socket; with the real one it
+  passes. Box's source-copy tests pin their own with `pinTemp`.
 - 2026-10-17 — the cli binary's untagged tests run under `guardHostCLIs`. A discovery run with
   recording stubs first on PATH found `codex debug models` and `docker info` from three
   `coop models` tests, and `docker info` from detection in every `coop init` test once Apple's

@@ -382,7 +382,7 @@ func snapshotPolicyMounts(repo string, mounts []Mount, artifacts compositionArti
 // the launch proves each mount is an owned descendant and exact-owned cleanup reaches it. The skills
 // and home-fallback copies were the exception: they went to the system temp dir, so a filtered box
 // refused ANY repository with shared skills ("generated network workload mount is not an owned
-// descendant"), for every agent. An empty parent keeps the ordinary run's private temp dir.
+// descendant"), for every agent. Only tests pass an empty parent; it falls back to TMPDIR.
 func composedCopyDir(repo, artifactParent, pattern string, exposedRoots ...string) (string, error) {
 	if artifactParent == "" {
 		return privateWorkspaceTempDir(repo, pattern, exposedRoots...)

@@ -3917,13 +3917,14 @@ func TestApplyProjectPolicy(t *testing.T) {
 
 func TestSynthSkillsMounts(t *testing.T) {
 	pinHome(t)
+	pinTemp(t)
 	repo := t.TempDir()
 	mkdir := func(p string) {
 		if err := os.MkdirAll(filepath.Join(repo, p), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Each synthesized mount is a copy in the system temp directory, which the test must remove.
+	// Each synthesized mount is a copy the test must remove, or pinTemp fails it.
 	synth := func() ([]extraMount, error) {
 		t.Helper()
 		mounts, temps, err := synthSkillsMounts(repo, "/home/node", "", []string{"claude", "codex", "gemini", "grok"})
@@ -3967,6 +3968,7 @@ func TestSynthSkillsMounts(t *testing.T) {
 
 func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
 	pinHome(t)
+	pinTemp(t)
 	repo := t.TempDir()
 	writeSkill := func(root, name string) {
 		t.Helper()
@@ -4049,6 +4051,7 @@ func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
 
 func TestSynthHomeFallbackMounts(t *testing.T) {
 	pinHome(t)
+	pinTemp(t)
 	const home = "/home/node"
 	const settingsBody = `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"$CLAUDE_CONFIG_DIR/hooks/commit-gate.sh"}]}]}}`
 	const hookBody = "#!/bin/sh\nexit 0\n"

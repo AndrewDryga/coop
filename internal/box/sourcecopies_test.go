@@ -16,6 +16,7 @@ import (
 
 func TestRepositoryCopiesContainSources(t *testing.T) {
 	pinHome(t)
+	pinTemp(t)
 	for _, artifact := range []struct {
 		name string
 		path string
@@ -108,6 +109,7 @@ func writeCopyFixture(t *testing.T, path, content string) {
 }
 
 func TestRepositoryCopiesRejectAncestorEscape(t *testing.T) {
+	pinTemp(t)
 	repo, outside := t.TempDir(), t.TempDir()
 	writeCopyFixture(t, filepath.Join(outside, "skills", "SKILL.md"), "outside-canary")
 	writeCopyFixture(t, filepath.Join(outside, "claude", "settings.json"), "outside-canary")
@@ -127,6 +129,7 @@ func TestRepositoryCopiesRejectAncestorEscape(t *testing.T) {
 
 func TestRepositoryCopiesValidateRelocatedLinks(t *testing.T) {
 	pinHome(t)
+	pinTemp(t)
 	for _, kind := range []string{"relative", "absolute", "outside", "dangling", "cyclic"} {
 		t.Run(kind, func(t *testing.T) {
 			repo := t.TempDir()
@@ -179,6 +182,7 @@ func TestRepositoryCopiesValidateRelocatedLinks(t *testing.T) {
 
 func TestRepositoryCopiesKeepProtectedDescendantsOutOfEverySyntheticHome(t *testing.T) {
 	pinHome(t)
+	pinTemp(t)
 	repo := t.TempDir()
 	skills := filepath.Join(repo, ".agent", "skills")
 	writeCopyFixture(t, filepath.Join(skills, "SKILL.md"), "public skill")
@@ -207,6 +211,7 @@ func TestRepositoryCopiesKeepProtectedDescendantsOutOfEverySyntheticHome(t *test
 
 func TestRepositoryCopiesApplyAliasAndTargetSecretRules(t *testing.T) {
 	pinHome(t)
+	pinTemp(t)
 	for _, policy := range []struct {
 		name, location, rule string
 	}{
@@ -243,6 +248,7 @@ func TestRepositoryCopiesApplyAliasAndTargetSecretRules(t *testing.T) {
 
 func TestRepositoryCopiesBoundAggregatePolicyInput(t *testing.T) {
 	pinHome(t)
+	pinTemp(t)
 	repo := t.TempDir()
 	skills := filepath.Join(repo, ".agent", "skills")
 	writeCopyFixture(t, filepath.Join(skills, "SKILL.md"), "public")
@@ -394,6 +400,7 @@ func TestRepositoryCopiesCleanEarlierFallbackOnLaterFailure(t *testing.T) {
 
 func TestRepositoryCopiesHandleCaseAliases(t *testing.T) {
 	pinHome(t)
+	pinTemp(t)
 	repo := filepath.Join(t.TempDir(), "repository")
 	writeCopyFixture(t, filepath.Join(repo, "source", "SKILL.md"), "inside")
 	alias := filepath.Join(filepath.Dir(repo), "REPOSITORY")
@@ -468,6 +475,7 @@ func TestPrivateCopiesAndComposeRejectExposedRoots(t *testing.T) {
 
 func TestRepositorySourcesAcceptRelativeRepository(t *testing.T) {
 	pinHome(t)
+	pinTemp(t)
 	parent := t.TempDir()
 	repo := filepath.Join(parent, "repo")
 	writeCopyFixture(t, filepath.Join(repo, ".agent", "skills", "SKILL.md"), "inside")

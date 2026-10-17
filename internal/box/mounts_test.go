@@ -29,6 +29,22 @@ func pinHome(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 }
 
+// pinTemp points TMPDIR at a fresh temp folder for a test that makes source copies without an
+// artifact parent, which land in TMPDIR. Tests that lost track of their copies left coop-skills-*
+// folders in the developer's real temp folder, where nothing removes them. Here they go with the
+// test, and one still there after the test's own cleanup fails it.
+func pinTemp(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	// Cleanups run last in, first out, so this check follows the copy removals registered later.
+	t.Cleanup(func() {
+		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+			t.Errorf("left in TMPDIR after the test's cleanup: %v, %v", entries, err)
+		}
+	})
+}
+
 // fixture builds a repo tree exercising every shadowing rule and returns its path.
 func fixture(t *testing.T) string {
 	t.Helper()
