@@ -546,63 +546,73 @@ func nightCommit(i int) string {
 	return hex.EncodeToString(sum[:])[:7]
 }
 
-// object is a JSON object whose keys keep the order they are written in.
-type object []pair
-
-type pair struct {
-	key   string
-	value any
+// nightState is the board at one part of the story, which orchestrator.js reads by its JSON keys.
+// Only the first Queued tasks exist yet (all of them when it is nil), and Tail shows the newest of
+// them, the ones just added. Tasks before Done in the queue are finished, except the one Waiting for
+// your answer and the one in hand (Now, Reopened when the final review sent it back); the rest wait
+// their turn. On is the account the task in hand runs on, Use how much of each account's usage limit
+// is spent; Handoff marks the step the next account took over; Review is the headline while the
+// final review runs; Last is a task that finished after the ones behind it in the queue; Ask opens
+// the decision in full, on the steps about it, where everywhere else it is one line. The optional
+// numbers are pointers because 0 is a real value: the script reads a missing Now, Waiting or Last
+// as no task and a missing Queued as all of them, so a zero must still be written.
+type nightState struct {
+	Clock    string      `json:"clock"`
+	Headline string      `json:"headline,omitempty"`
+	Done     int         `json:"done"`
+	Queued   *int        `json:"queued,omitempty"`
+	Tail     bool        `json:"tail,omitempty"`
+	Now      *int        `json:"now,omitempty"`
+	Reopened bool        `json:"reopened,omitempty"`
+	Waiting  *int        `json:"waiting,omitempty"`
+	Ask      bool        `json:"ask,omitempty"`
+	On       string      `json:"on,omitempty"`
+	Use      *nightUsage `json:"use,omitempty"`
+	Handoff  bool        `json:"handoff,omitempty"`
+	Review   string      `json:"review,omitempty"`
+	Last     *int        `json:"last,omitempty"`
 }
 
-func (o object) get(key string) any {
-	for _, p := range o {
-		if p.key == key {
-			return p.value
-		}
-	}
-	return nil
+// nightUsage is the percent of each account's usage limit spent. It is a struct, not a map, because
+// orchestrator.js draws the accounts in the order the JSON lists them, and a map would put home first.
+type nightUsage struct {
+	Work int `json:"work"`
+	Home int `json:"home"`
 }
 
-// One state per story part: the hero, then each step. Only the first "queued" tasks exist yet (all
-// of them unless it says), and "tail" shows the newest of them, the ones just added. Tasks before
-// "done" in the queue are finished, except the one "waiting" for your answer and the one in hand
-// ("now", "reopened" when the final review sent it back); the rest wait their turn. "on" is the
-// account the task in hand runs on, "use" how much of each account's usage limit is spent;
-// "handoff" marks the step the next account took over; "last" is a task that finished after the
-// ones behind it in the queue; "ask" opens the decision in full, on the steps about it, where
-// everywhere else it is one line.
-var nightTimeline = []object{
-	{{"clock", "22:00"}, {"headline", "118 tasks queued for tonight"}, {"done", 0}, {"queued", 118}},
-	{{"clock", "22:00"}, {"headline", "121 tasks queued for tonight"}, {"done", 0}, {"tail", true}},
-	{{"clock", "22:01"}, {"done", 0}, {"now", 0}, {"on", "work"}, {"use", object{{"work", 12}, {"home", 0}}}},
-	{{"clock", "22:14"}, {"done", 3}, {"now", 3}, {"on", "work"}, {"use", object{{"work", 24}, {"home", 0}}}},
-	{{"clock", "01:12"}, {"done", 42}, {"now", 42}, {"on", "home"}, {"use", object{{"work", 100}, {"home", 6}}}, {"handoff", true}},
-	{{"clock", "02:31"}, {"done", 59}, {"now", 59}, {"waiting", nightWaiting}, {"ask", true}, {"on", "home"},
-		{"use", object{{"work", 100}, {"home", 31}}}},
-	{{"clock", "05:44"}, {"done", nightN}, {"now", nightReopened}, {"reopened", true}, {"waiting", nightWaiting}, {"on", "home"},
-		{"use", object{{"work", 100}, {"home", 74}}}, {"review", "Final review of 120 tasks"}},
-	{{"clock", "07:00"}, {"headline", "120 tasks done. One decision for you."}, {"done", nightN}, {"waiting", nightWaiting},
-		{"ask", true}, {"last", nightReopened}},
+// One state per story part: the hero, then each step.
+var nightTimeline = []nightState{
+	{Clock: "22:00", Headline: "118 tasks queued for tonight", Queued: new(118)},
+	{Clock: "22:00", Headline: "121 tasks queued for tonight", Tail: true},
+	{Clock: "22:01", Now: new(0), On: "work", Use: &nightUsage{Work: 12}},
+	{Clock: "22:14", Done: 3, Now: new(3), On: "work", Use: &nightUsage{Work: 24}},
+	{Clock: "01:12", Done: 42, Now: new(42), On: "home", Use: &nightUsage{Work: 100, Home: 6}, Handoff: true},
+	{Clock: "02:31", Done: 59, Now: new(59), Waiting: new(nightWaiting), Ask: true, On: "home",
+		Use: &nightUsage{Work: 100, Home: 31}},
+	{Clock: "05:44", Done: nightN, Now: new(nightReopened), Reopened: true, Waiting: new(nightWaiting), On: "home",
+		Use: &nightUsage{Work: 100, Home: 74}, Review: "Final review of 120 tasks"},
+	{Clock: "07:00", Headline: "120 tasks done. One decision for you.", Done: nightN, Waiting: new(nightWaiting),
+		Ask: true, Last: new(nightReopened)},
 }
 
-func nightStatus(state object, i int) string {
-	queued, ok := state.get("queued").(int)
-	if !ok {
-		queued = nightN
+func nightStatus(state nightState, i int) string {
+	queued := nightN
+	if state.Queued != nil {
+		queued = *state.Queued
 	}
 	if i >= queued {
 		return "none"
 	}
-	if waiting, ok := state.get("waiting").(int); ok && i == waiting {
+	if state.Waiting != nil && i == *state.Waiting {
 		return "waiting"
 	}
-	if now, ok := state.get("now").(int); ok && i == now {
-		if state.get("reopened") == true {
+	if state.Now != nil && i == *state.Now {
+		if state.Reopened {
 			return "reopened"
 		}
 		return "active"
 	}
-	if i < state.get("done").(int) {
+	if i < state.Done {
 		return "done"
 	}
 	return "todo"
@@ -610,7 +620,7 @@ func nightStatus(state object, i int) string {
 
 // nightDot is a dot's state: the liveliest of its tasks, one coming back from the review, the one in
 // hand, the decision waiting, any still to do, else done (or, before a task is queued, nothing yet).
-func nightDot(state object, k int) string {
+func nightDot(state nightState, k int) string {
 	rank := []string{"none", "done", "todo", "waiting", "active", "reopened"}
 	liveliest := 0
 	for i := k * nightPerDot; i < min(nightN, (k+1)*nightPerDot); i++ {
@@ -658,13 +668,15 @@ func nightRow(i int, state string) string {
 // decision waiting, the newest commits and the strip of the whole queue.
 func nightBoard() (string, error) {
 	morning := nightTimeline[len(nightTimeline)-1]
-	last := morning.get("last").(int)
-	done := []int{last}
+	var done []int
+	if morning.Last != nil {
+		done = append(done, *morning.Last)
+	}
 	finished := 0
 	for i := nightN - 1; i >= 0; i-- {
 		if nightStatus(morning, i) == "done" {
 			finished++
-			if i != last {
+			if morning.Last == nil || i != *morning.Last {
 				done = append(done, i)
 			}
 		}
@@ -680,57 +692,30 @@ func nightBoard() (string, error) {
 	for _, i := range done[:3] {
 		newest += nightRow(i, "done")
 	}
-	titles, commits := object{}, object{}
-	for i := range nightN {
-		if title, ok := nightTitles[i]; ok {
-			titles = append(titles, pair{strconv.Itoa(i), title})
-			commits = append(commits, pair{strconv.Itoa(i), nightCommit(i)})
-		}
+	commits := make(map[int]string, len(nightTitles))
+	for i := range nightTitles {
+		commits[i] = nightCommit(i)
 	}
-	var timeline strings.Builder
-	writeJSON(&timeline, object{{"n", nightN}, {"per", nightPerDot}, {"titles", titles}, {"commits", commits}, {"states", nightTimeline}})
+	timeline, err := json.Marshal(struct {
+		N       int            `json:"n"`
+		Per     int            `json:"per"`
+		Titles  map[int]string `json:"titles"`
+		Commits map[int]string `json:"commits"`
+		States  []nightState   `json:"states"`
+	}{N: nightN, Per: nightPerDot, Titles: nightTitles, Commits: commits, States: nightTimeline})
+	if err != nil {
+		return "", err
+	}
 	return `<div class="board" data-day aria-hidden="true">` +
 		`<p class="board-head"><span class="board-title">coop loop</span>` +
-		`<span class="clock"><time>` + morning.get("clock").(string) + "</time></span></p>" +
+		`<span class="clock"><time>` + morning.Clock + "</time></span></p>" +
 		`<div class="night-track" style="--night: 1"><span class="sky"></span></div>` +
 		`<ol class="cells">` + dots + "</ol>" +
-		`<div class="focus"><p class="headline">` + html.EscapeString(morning.get("headline").(string)) + `</p><ol class="lane now"></ol></div>` +
+		`<div class="focus"><p class="headline">` + html.EscapeString(morning.Headline) + `</p><ol class="lane now"></ol></div>` +
 		`<ol class="lane waiting">` + nightRow(nightWaiting, "waiting") + "</ol>" +
 		`<ol class="lane next"></ol>` +
 		`<ol class="lane done">` + newest + `<li class="rest">… <span class="count">` + strconv.Itoa(len(done)-3) + "</span> more</li></ol>" +
 		"</div>" +
 		`<template id="night-task">` + nightRow(-1, "") + `</template><template id="night-agent">` + nightAgent + "</template>" +
-		`<script type="application/json" id="night-timeline">` + timeline.String() + "</script>", nil
-}
-
-// writeJSON writes the timeline with the ", " and ": " separators the page has always carried.
-func writeJSON(out *strings.Builder, value any) {
-	switch v := value.(type) {
-	case object:
-		out.WriteString("{")
-		for i, p := range v {
-			if i > 0 {
-				out.WriteString(", ")
-			}
-			writeJSON(out, p.key)
-			out.WriteString(": ")
-			writeJSON(out, p.value)
-		}
-		out.WriteString("}")
-	case []object:
-		out.WriteString("[")
-		for i, o := range v {
-			if i > 0 {
-				out.WriteString(", ")
-			}
-			writeJSON(out, o)
-		}
-		out.WriteString("]")
-	default:
-		encoded, err := json.Marshal(v)
-		if err != nil {
-			panic(err) // only strings, ints and bools reach here
-		}
-		out.Write(encoded)
-	}
+		`<script type="application/json" id="night-timeline">` + string(timeline) + "</script>", nil
 }

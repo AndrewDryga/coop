@@ -834,10 +834,19 @@ func TestOrchestratorBoardReadsWholeWithoutTheScript(t *testing.T) {
 	var timeline struct {
 		States []json.RawMessage `json:"states"`
 	}
-	if err := json.Unmarshal([]byte(html.UnescapeString(script[1])), &timeline); err != nil {
+	raw := html.UnescapeString(script[1])
+	if err := json.Unmarshal([]byte(raw), &timeline); err != nil {
 		t.Fatal(err)
 	}
 	if steps := strings.Count(page, `<li class="night-step">`); len(timeline.States) != 1+steps {
 		t.Errorf("%d timeline states for %d steps, want one for the hero and one per step", len(timeline.States), steps)
+	}
+	// orchestrator.js draws the accounts in the order the JSON lists them and reads a missing "now"
+	// as no task in hand, so both are contracts of the page that no Go type states.
+	if !strings.Contains(raw, `"use":{"work":`) {
+		t.Error("the timeline no longer lists the work account first")
+	}
+	if len(timeline.States) < 3 || !strings.Contains(string(timeline.States[2]), `"now":0`) {
+		t.Error("22:01 no longer writes task 0 as the task in hand")
 	}
 }

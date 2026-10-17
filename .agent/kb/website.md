@@ -29,8 +29,11 @@ through many tasks unattended; the homepage stays the sandbox story and the main
 `coop loop` board lives through one night, 22:00 to 07:00, beside its steps. `nightBoard()` in
 `tools/gendocs/scenes.go` draws it at morning, so the page reads whole without the script;
 `nightTimeline` holds one state for the hero and one per step (a site test keeps the counts equal:
-add a state with a step), written into the page as JSON with Python's `", "`/`": "` spacing the
-page always had. orchestrator.js plays a step forward in beats: the task in hand finishes in its card
+add a state with a step), typed `nightState` values that `encoding/json` writes into the page.
+The script reads them by key, with two traps: a missing task number means no task, so the optional
+numbers are pointers and task 0 is still written; and it draws the accounts in `use` in the order
+the JSON lists them, so `use` is a struct (work, then home), never a map, which would sort home
+first. orchestrator.js plays a step forward in beats: the task in hand finishes in its card
 (the ring closes, the tick draws, the commit types out), the decision folds or opens (`ask`), the
 night time-lapses (clock, dots, counts), then the step's own event (the account handoff, the review
 turning a finished task back). Scrolling back, or reduced motion, jumps straight to the step, and a
@@ -187,6 +190,10 @@ Orchestrator board at morning (`og-orchestrator.png`). They and the icons, drawn
 nothing. A site test checks each landing page names its committed card.
 
 ## Changelog
+- 2026-10-16 — the night timeline is typed structs written by `encoding/json`, replacing the
+  helpers that copied Python's spacing (task 2026-10-16-replace-the-website-generator-s-python-shaped-js).
+  The page's JSON is compact now and its titles and commits are keyed in string order; parsed, it
+  equals the old JSON (jq), and each state and `use` keep their key order.
 - 2026-10-16 — the generator and the site tests are Go in `tools/gendocs` (task
   2026-10-15-move-the-website-generator-to-go). Its three pages are byte-identical to the Python
   generator's (sha256 compared in the task log). The commit count became the template's number 3,457;
