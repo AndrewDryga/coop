@@ -622,6 +622,7 @@ func StableProcToken(token string) bool {
 	return processidentity.Stable(token)
 }
 
-// ProcTokenSystem names the operating system that wrote token, "Linux" or "macOS", so a refusal of
-// a foreign record can say where its worker can be checked.
-func ProcTokenSystem(token string) string { return processidentity.System(token) }
+// ProcTokenSystem names where token's process runs ("Linux", "macOS", or another container or host
+// for this system's token from another PID namespace), so a refusal of a foreign record can say
+// where its worker can be checked.
+func ProcTokenSystem(token string) string { return processidentity.Origin(token) }

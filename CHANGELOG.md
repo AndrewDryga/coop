@@ -41,6 +41,14 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **A fork worker started in a container is no longer judged dead by the host.** On Linux, Coop
+  identified a process by its pid and start time, and a pid means something only in the PID
+  namespace it was read in. So a Coop on the host reading a record that a Coop in a container wrote
+  (they share the project's fork folder), or the reverse, saw a live worker as gone and could stop
+  treating it as running. Coop now records the namespace with each process, and a record from
+  another one is refused with "started on another container or host", as a record from another
+  operating system already was. Records written by earlier versions are read as before.
+
 - **A network run started on another computer is left to that computer.** A filtered run's record
   named its supervising Coop process by pid only, so a Coop on another computer or in a container
   that shares the same state folder read that pid as gone and could seal the run as lost while it

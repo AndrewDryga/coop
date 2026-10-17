@@ -15,7 +15,7 @@ import (
 )
 
 func (s *Store) ownedExecution(record *Execution) error {
-	if len(s.key) != 32 || record.Supervisor.PID != os.Getpid() || record.Supervisor.StartToken != processidentity.StartToken(os.Getpid()) {
+	if len(s.key) != 32 || record.Supervisor.PID != os.Getpid() || !processidentity.Same(record.Supervisor.StartToken, processidentity.StartToken(os.Getpid())) {
 		return errors.New("network execution is not owned by this supervisor")
 	}
 	if record.Receipt != nil {

@@ -99,7 +99,10 @@ reaps the box through the dead worker's activity record. Skipping the check stay
 A live Match, an unreadable identity (Unknown: no stable token, or `/proc` and sysctl unreadable)
 and a token of the other platform's shape (Foreign, decided before any pid is probed: a Linux pid
 means nothing to macOS's kernel, nor the reverse; `processidentity.Native`) are all unproven and
-fail closed. `ProcessIdentityOf` is `processidentity.Inspect` asked through this package's
+fail closed. A Linux token names the PID namespace its pid was read in (`linux-proc-v2:<inode>:`),
+and one from another namespace, a container's sharing the folder with the host or the reverse, is
+Foreign too, refused as "started on another container or host"; a v1 token an earlier coop wrote
+names none and is judged as before (`processidentity.Same` compares the two shapes). `ProcessIdentityOf` is `processidentity.Inspect` asked through this package's
 `SignalPID` and `ReadProcStartToken` (`processidentity.Kernel`), so fork tests can stub liveness
 and the fork lifecycle, claims, leases, network records and the box sweep share one answer: a pid
 of 1 or below, or a token of no known shape, is Unknown before any pid is asked, never Gone. There
@@ -166,6 +169,8 @@ to a process or a container, or prints, it is supervision.
   not a regular file gets "remove it", not the permissions advice: a log only holds output.
 
 ## Changelog
+- 2026-10-18 — Linux start tokens name their PID namespace (v2), and a token from another namespace
+  is Foreign (task 2026-10-17-treat-a-linux-fork-record-written-in-another-pid).
 - 2026-10-17 — the task snapshot reads another system's record through the same check as
   `coop fork ls`, now `forkspace.WorkerElsewhere` (it was forkctl's `workerElsewhere`): the fork
   gets `DetachedSystem` and `CleanupPending` stays false, in the generation-bound and name-only

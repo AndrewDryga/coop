@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -595,7 +596,7 @@ func competingClaim(existing TaskOwnerRecord, actor ClaimActor) bool {
 	if existing.Kind != TaskOwnerHuman || existing.ActorPID == 0 || !ownerProcessLive(existing) {
 		return false
 	}
-	return existing.ActorPID != actor.PID || existing.ActorStart != actor.StartToken
+	return existing.ActorPID != actor.PID || !processidentity.Same(existing.ActorStart, actor.StartToken)
 }
 
 // claimTaskOwnerRecord writes durable evidence that a HUMAN — not a loop-adopted process — owns

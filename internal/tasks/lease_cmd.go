@@ -35,7 +35,7 @@ func stopOwnLeaseHolder(root string, item Item, actor ClaimActor) (bool, error) 
 	}
 	meta, ok := readLeaseAuthorityMetadata(root, item.ID)
 	if !ok || !strings.HasPrefix(meta.RunID, leaseHolderRunPrefix) ||
-		meta.ActorPID != actor.PID || meta.ActorStart != actor.StartToken ||
+		meta.ActorPID != actor.PID || !processidentity.Same(meta.ActorStart, actor.StartToken) ||
 		processidentity.Inspect(meta.ControllerPID, meta.ControllerStart) != processidentity.Match {
 		return false, nil
 	}

@@ -9,7 +9,11 @@ import (
 	"strings"
 )
 
-const platformTokenPrefix = "linux-proc-v1:"
+// A token names the PID namespace its pid was read in (v2), since a pid means something only there.
+// One without (v1), from an earlier coop, is read as before.
+const platformTokenPrefix = linuxTokenV2
+
+var nativePrefixes = []string{linuxTokenV2, linuxTokenV1}
 
 func platformStartToken(pid int) string {
 	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
@@ -24,7 +28,12 @@ func platformStartToken(pid int) string {
 	if !ok {
 		return ""
 	}
-	return platformTokenPrefix + strings.TrimSpace(string(boot)) + ":" + start
+	identity := strings.TrimSpace(string(boot)) + ":" + start
+	namespace, ok := namespaceInode(platformPIDNamespace())
+	if !ok {
+		return linuxTokenV1 + identity
+	}
+	return linuxTokenV2 + namespace + ":" + identity
 }
 
 // platformPIDNamespace is the kernel's name for this process's PID namespace, "pid:[<inode>]". The

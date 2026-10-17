@@ -10,6 +10,8 @@ import (
 
 const platformTokenPrefix = "darwin-kinfo-v1:"
 
+var nativePrefixes = []string{platformTokenPrefix}
+
 func platformStartToken(pid int) string {
 	kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil || int(kp.Proc.P_pid) != pid {

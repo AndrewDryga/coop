@@ -35,11 +35,18 @@ func StartToken(pid int) string { return platformStartToken(pid) }
 // Stable reports whether token has a supported, versioned kernel identity shape.
 func Stable(token string) bool { return System(token) != "" }
 
+// The Linux token shapes: v1 is "<boot id>:<start ticks>", v2 puts the inode of the PID namespace
+// the pid was read in first, "<namespace>:<boot id>:<start ticks>".
+const (
+	linuxTokenV1 = "linux-proc-v1:"
+	linuxTokenV2 = "linux-proc-v2:"
+)
+
 // System names the operating system whose kernel wrote token, "Linux" or "macOS", or returns ""
 // for a shape it does not know.
 func System(token string) string {
 	switch {
-	case strings.HasPrefix(token, "linux-proc-v1:"):
+	case strings.HasPrefix(token, linuxTokenV1), strings.HasPrefix(token, linuxTokenV2):
 		return "Linux"
 	case strings.HasPrefix(token, "darwin-kinfo-v1:"):
 		return "macOS"
@@ -47,9 +54,61 @@ func System(token string) string {
 	return ""
 }
 
-// Native reports whether token has the shape this platform's StartToken writes. A stable token that
-// is not native was written on another operating system, whose pids this kernel cannot check.
-func Native(token string) bool { return strings.HasPrefix(token, platformTokenPrefix) }
+// Native reports whether token has a shape this platform's StartToken writes, or an earlier coop
+// on it wrote. A stable token that is not native was written on another operating system, whose
+// pids this kernel cannot check.
+func Native(token string) bool {
+	for _, prefix := range nativePrefixes {
+		if strings.HasPrefix(token, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// Origin names where token's process runs, for a person to go there: the operating system that
+// wrote another system's token, "another container or host" for a token of this system from another
+// PID namespace, else this system.
+func Origin(token string) string {
+	if Native(token) {
+		if _, namespace := kernelIdentity(token); namespace != "" {
+			if inode, ok := namespaceInode(PIDNamespace()); !ok || inode != namespace {
+				return "another container or host"
+			}
+		}
+	}
+	return System(token)
+}
+
+// Same reports whether two tokens name one process, however each was written: a v2 Linux token and
+// the v1 token an earlier coop wrote for the same process name it alike, unless the v2 one names
+// another PID namespace.
+func Same(a, b string) bool {
+	identityA, namespaceA := kernelIdentity(a)
+	identityB, namespaceB := kernelIdentity(b)
+	return identityA != "" && identityA == identityB && (namespaceA == "" || namespaceB == "" || namespaceA == namespaceB)
+}
+
+// kernelIdentity splits a token into what stays the same for one process however its token was
+// written, and the PID namespace a v2 Linux token names ("" for any other token).
+func kernelIdentity(token string) (identity, namespace string) {
+	rest, v2 := strings.CutPrefix(token, linuxTokenV2)
+	if !v2 {
+		return token, ""
+	}
+	namespace, identity, ok := strings.Cut(rest, ":")
+	if !ok || namespace == "" {
+		return token, ""
+	}
+	return linuxTokenV1 + identity, namespace
+}
+
+// namespaceInode is the number in a PIDNamespace answer, "pid:[<inode>]".
+func namespaceInode(namespace string, ok bool) (string, bool) {
+	inode, found := strings.CutPrefix(namespace, "pid:[")
+	inode, closed := strings.CutSuffix(inode, "]")
+	return inode, ok && found && closed && inode != ""
+}
 
 // PIDNamespace names the PID namespace this process sees pids in; ok is false when it cannot be
 // read. A pid and its start token mean something only in the namespace they were read in: from any
@@ -75,6 +134,8 @@ func Inspect(pid int, token string) State {
 type Kernel struct {
 	Signal     func(pid int, sig syscall.Signal) error
 	StartToken func(pid int) string
+	// Namespace is PIDNamespace when nil.
+	Namespace func() (string, bool)
 }
 
 // Inspect answers as the package's Inspect does, asking k. A pid of 1 or below names no process a
@@ -88,6 +149,18 @@ func (k Kernel) Inspect(pid int, token string) State {
 	}
 	if !Native(token) {
 		return Foreign
+	}
+	// A v2 Linux token from another PID namespace, a container's or the host's seen from one, names
+	// a pid this namespace cannot check: here the same number is gone or another process.
+	recorded, namespace := kernelIdentity(token)
+	if namespace != "" {
+		here := k.Namespace
+		if here == nil {
+			here = PIDNamespace
+		}
+		if inode, ok := namespaceInode(here()); !ok || inode != namespace {
+			return Foreign
+		}
 	}
 	if err := k.Signal(pid, 0); errors.Is(err, syscall.ESRCH) {
 		return Gone
@@ -104,7 +177,7 @@ func (k Kernel) Inspect(pid int, token string) State {
 		}
 		return Unknown
 	}
-	if current != token {
+	if identity, _ := kernelIdentity(current); identity != recorded {
 		return Mismatch
 	}
 	return Match
