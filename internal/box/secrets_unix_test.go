@@ -11,6 +11,7 @@ import (
 )
 
 func TestNewShadowDeciderRefusesUnboundedOrBlockingPolicyFiles(t *testing.T) {
+	pinHome(t)
 	for _, tc := range []struct {
 		name  string
 		plant func(*testing.T, string)

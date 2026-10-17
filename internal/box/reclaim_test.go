@@ -404,6 +404,7 @@ func TestReclaimTakesOnlyThisProjectsOwnDerivedImages(t *testing.T) {
 
 // The tag a derived build writes and the label it carries are the ones the reclaim looks for.
 func TestDerivedImagesCarryTheLabelTheReclaimAsksFor(t *testing.T) {
+	pinHome(t)
 	tag := filteredProjectTag("/src/app", "sha256:"+strings.Repeat("e", 64))
 	project := derivedImageProject(tag)
 	if project == "" {
@@ -540,6 +541,7 @@ func TestBaseRebuildRemovesTheImageItReplaced(t *testing.T) {
 // the build only when Coop's own mark says Coop built it for this project: the tag is the project's
 // name, and an image someone built into it by hand stays theirs, never even weighed.
 func TestDerivedRebuildRemovesOnlyCoopsReplacedImage(t *testing.T) {
+	pinHome(t)
 	for name, coops := range map[string]bool{"coop's own": true, "someone else's": false} {
 		t.Run(name, func(t *testing.T) {
 			f, d, repo, _ := projectPreparationFixture(t)

@@ -174,7 +174,7 @@ func (s *repositorySources) visibility(aliasRel, realRel string, real *shadowpat
 		return v, nil
 	}
 	parent := filepath.Dir(aliasRel)
-	aliasDir, alias, err := shadowpath.OpenTree(s.dir, parent)
+	aliasDir, alias, err := shadowpath.OpenTree(s.dir, s.path, parent)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +223,7 @@ func (s *repositorySources) openTree(name string) (*os.File, *sourceVisibility, 
 	if err != nil {
 		return nil, nil, err
 	}
-	tree, real, err := shadowpath.OpenTree(s.dir, realRel)
+	tree, real, err := shadowpath.OpenTree(s.dir, s.path, realRel)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -249,7 +249,7 @@ func (s *repositorySources) readFile(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	parent, realPolicy, err := shadowpath.OpenTree(s.dir, filepath.Dir(resolved))
+	parent, realPolicy, err := shadowpath.OpenTree(s.dir, s.path, filepath.Dir(resolved))
 	if err != nil {
 		return nil, err
 	}

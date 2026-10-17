@@ -19,6 +19,7 @@ var hiddenAncestorCases = []struct {
 }
 
 func TestShadowDeciderHiddenAncestors(t *testing.T) {
+	pinHome(t)
 	for _, tc := range hiddenAncestorCases {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, _ := hiddenAncestorFixture(t, tc.policy, tc.rules, tc.parent)
@@ -52,6 +53,7 @@ func TestShadowDeciderHiddenAncestors(t *testing.T) {
 }
 
 func TestServiceShadowHiddenAncestors(t *testing.T) {
+	pinHome(t)
 	for _, tc := range hiddenAncestorCases {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, file := hiddenAncestorFixture(t, tc.policy, tc.rules, tc.parent)

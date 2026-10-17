@@ -150,6 +150,7 @@ func TestRunRepoWritable(t *testing.T) {
 }
 
 func TestRunSnapshotsCoopIgnorePoliciesForAnchoredProject(t *testing.T) {
+	pinHome(t)
 	spec, _ := anchoredProjectFixture(t)
 	nested := filepath.Join(spec.Repo, "nested")
 	if err := os.Mkdir(nested, 0o700); err != nil {
@@ -323,6 +324,7 @@ func TestRunCarriesValidatedServePortsIntoArguments(t *testing.T) {
 }
 
 func TestRunRepoWritableWithReadOnlyDescendant(t *testing.T) {
+	pinHome(t)
 	repo := t.TempDir()
 	queue := filepath.Join(repo, ".agent", "tasks")
 	if err := os.MkdirAll(queue, 0o755); err != nil {
@@ -357,6 +359,7 @@ func TestRunRepoWritableWithReadOnlyDescendant(t *testing.T) {
 }
 
 func TestReviewTaskQueueSnapshotPreservesSubjectEvidenceWithoutArchivedBulk(t *testing.T) {
+	pinHome(t)
 	repo := t.TempDir()
 	queue := filepath.Join(repo, ".agent", "tasks")
 	for _, rel := range []string{
@@ -2797,6 +2800,7 @@ func TestRunDeclaredCompositionArtifactFailuresStopBeforeProvider(t *testing.T) 
 }
 
 func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
+	pinHome(t)
 	sentinel := errors.New("fixture required artifact failure")
 	newFixture := func(t *testing.T, agent string) (*config.Config, RunSpec, compositionArtifactOps, string, runtime.Runtime) {
 		t.Helper()
@@ -3912,6 +3916,7 @@ func TestApplyProjectPolicy(t *testing.T) {
 }
 
 func TestSynthSkillsMounts(t *testing.T) {
+	pinHome(t)
 	repo := t.TempDir()
 	mkdir := func(p string) {
 		if err := os.MkdirAll(filepath.Join(repo, p), 0o755); err != nil {
@@ -3953,6 +3958,7 @@ func TestSynthSkillsMounts(t *testing.T) {
 }
 
 func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
+	pinHome(t)
 	repo := t.TempDir()
 	writeSkill := func(root, name string) {
 		t.Helper()
@@ -4034,6 +4040,7 @@ func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
 }
 
 func TestSynthHomeFallbackMounts(t *testing.T) {
+	pinHome(t)
 	const home = "/home/node"
 	const settingsBody = `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"$CLAUDE_CONFIG_DIR/hooks/commit-gate.sh"}]}]}}`
 	const hookBody = "#!/bin/sh\nexit 0\n"
@@ -4210,6 +4217,7 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 }
 
 func TestRunSynthesizesClaudeConfigForClaudeScope(t *testing.T) {
+	pinHome(t)
 	write := func(t *testing.T, repo, rel, body string, perm os.FileMode) {
 		t.Helper()
 		path := filepath.Join(repo, rel)

@@ -30,6 +30,19 @@
   `coop fork stop` says how to clear it, `coop fork logs` says how to remove it, and the other
   forks keep working.
 
+- **A `.coopignore` now covers repositories inside its folder.** An agent in a box could make any
+  folder of your project a repository of its own by creating a `.git` in it. A Coop command run
+  from inside that folder then took it for the project and read only the `.coopignore` files in
+  it, so a file your project's `.coopignore` hides there, `sub/secret.yml` say, was visible in the
+  next box. Coop now also applies the `.coopignore` of every folder above the project, up to but
+  not including your home folder (for a project outside your home folder, up to the folder just
+  below `/`). Starting Coop inside a submodule or a worktree kept in your project now also applies
+  your project's rules. A `.coopignore` in a folder above your projects, such as
+  `~/Projects/.coopignore`, now applies to each of them: boxes no longer see what it hides, `coop
+  fork merge` refuses a fork that changes such a file unless you pass `--force`, and an isolated
+  fork cannot publish one at all. `~/.coopignore` does not apply to the projects below it, and a
+  `.coopignore` in a folder another user owns, such as `/tmp`, is ignored.
+
 - **Coop no longer lets a box's Git settings choose the project folder.** Coop asked Git where your
   repository starts, and Git follows a setting in `.git/config` that an agent in a box can change. A
   box could point it at another folder, such as your home folder, and the next Coop command used that

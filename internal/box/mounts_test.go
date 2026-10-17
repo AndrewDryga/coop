@@ -17,6 +17,14 @@ func find(mounts []Mount, target string) *Mount {
 	return nil
 }
 
+// pinHome points HOME at a fresh temp folder. The .coopignore files of the folders above a
+// repository apply up to the home folder, so this keeps that walk inside the test's own temp
+// folders: a stray .coopignore above the machine's temp folder cannot change what a test sees.
+func pinHome(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+}
+
 // fixture builds a repo tree exercising every shadowing rule and returns its path.
 func fixture(t *testing.T) string {
 	t.Helper()
@@ -42,6 +50,7 @@ func fixture(t *testing.T) string {
 }
 
 func TestComputeMounts(t *testing.T) {
+	pinHome(t)
 	repo := fixture(t)
 	mounts, err := ComputeMounts(repo, "/workspace")
 	if err != nil {
@@ -104,6 +113,7 @@ func TestComputeMounts(t *testing.T) {
 // patterns (any depth), repo-relative path patterns (exact + glob), relocation-safe exact
 // basenames, a directory entry, comments/blanks, and that a template still wins.
 func TestComputeMountsCoopIgnore(t *testing.T) {
+	pinHome(t)
 	root := t.TempDir()
 	write := func(rel, body string) {
 		p := filepath.Join(root, rel)
@@ -161,6 +171,7 @@ func TestComputeMountsCoopIgnore(t *testing.T) {
 }
 
 func TestCoopIgnorePathSurvivesParentRename(t *testing.T) {
+	pinHome(t)
 	repo := t.TempDir()
 	write := func(rel, body string) {
 		path := filepath.Join(repo, rel)
@@ -202,6 +213,7 @@ func TestCoopIgnorePathSurvivesParentRename(t *testing.T) {
 // patterns apply at any depth under it, its path patterns are relative to it, and it
 // has no effect on siblings or the repo root.
 func TestComputeMountsSubdirCoopIgnore(t *testing.T) {
+	pinHome(t)
 	root := t.TempDir()
 	write := func(rel, body string) {
 		p := filepath.Join(root, rel)
@@ -287,6 +299,7 @@ func TestMatchesAny(t *testing.T) {
 // missed (task: strengthen secret-shadowing), without adding public-cert / ordinary-config
 // patterns that would break in-box TLS or hide config the agent needs.
 func TestSecretGlobsServiceCredentials(t *testing.T) {
+	pinHome(t)
 	shadowed := NewShadowDecider(t.TempDir()) // no .coopignore → just SecretGlobs/AllowGlobs
 	for _, p := range []string{
 		"credentials.json", "service_account.json", "gcp-sa.json", "config/app-sa.json",
@@ -323,6 +336,7 @@ func TestSecretGlobsServiceCredentials(t *testing.T) {
 // secret-named file (.env.example), but must NEVER un-shadow a private-key pattern — a real key
 // hiding behind a template name (id_rsa.example) would otherwise be readable in the box.
 func TestTemplateSuffixNeverUnshadowsKeys(t *testing.T) {
+	pinHome(t)
 	shadowed := NewShadowDecider(t.TempDir())
 	// Private keys under a template/sample suffix MUST stay shadowed.
 	for _, p := range []string{
@@ -345,6 +359,7 @@ func TestTemplateSuffixNeverUnshadowsKeys(t *testing.T) {
 // visible by default, but an explicit .coopignore entry re-hides it — .coopignore is the user's
 // final say. Ordinary secrets stay shadowed regardless.
 func TestCoopIgnoreOverridesAllowGlobs(t *testing.T) {
+	pinHome(t)
 	root := t.TempDir()
 	write := func(rel, body string) {
 		p := filepath.Join(root, rel)
@@ -383,6 +398,7 @@ func TestCoopIgnoreOverridesAllowGlobs(t *testing.T) {
 // Public CA bundles must stay visible — emptying a trusted bundle breaks in-box TLS verification —
 // while genuine keys/secrets still shadow.
 func TestPublicCABundlesNotShadowed(t *testing.T) {
+	pinHome(t)
 	shadowed := NewShadowDecider(t.TempDir())
 	for _, p := range []string{
 		"cacerts.pem", "server/deps/castore/priv/cacerts.pem", "ca-bundle.crt", "ca-certificates.crt", "cacert.pem",

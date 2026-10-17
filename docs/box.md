@@ -44,6 +44,20 @@ all, and a launch warns about it.
 An exact path entry keeps its final file or directory name hidden throughout that policy's scope.
 This stops a box from exposing the same secret later by renaming its parent directory.
 
+A `.coopignore` covers everything below its folder, even when you run Coop from a repository
+inside it, such as a submodule or a worktree kept in your project. Coop reads the `.coopignore` of
+every folder above the project, up to but not including your home folder (for a project outside
+your home folder, up to the folder just below `/`). So an agent that creates `sub/.git` cannot
+reveal `sub/secret.yml` to the next box started from `sub/`.
+
+A `.coopignore` in a folder above your projects, such as `~/Projects/.coopignore`, therefore
+applies to every project below it. Its path patterns start at its own folder, so they name the
+project first: `app/config/*.yml` there hides `config/*.yml` in the `app` project. Like the
+project's own `.coopignore`, it decides what boxes see, and `coop fork merge` refuses a fork that
+changes a file it hides unless you pass `--force` (an isolated fork has no override).
+`~/.coopignore` does not apply to the projects below it, and a `.coopignore` in a folder another
+user owns, such as `/tmp`, is ignored.
+
 The boundary is `.coopignore`, not `.gitignore`. A normal `coop run`, `coop loop` or `coop shell`
 binds your whole working tree. A file that Git ignores but that is on disk (a
 `serviceAccount.json`, say) is fully visible to the agent. Shadow it with `.coopignore`.

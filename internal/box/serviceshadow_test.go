@@ -12,6 +12,7 @@ import (
 // source is itself a secret (through a symlink alias too), and leaves public files, named
 // volumes, and binds with nothing to hide alone.
 func TestServiceShadowOverrideProjectsThePrimaryShadows(t *testing.T) {
+	pinHome(t)
 	repo := t.TempDir()
 	write := func(rel, body string) {
 		t.Helper()

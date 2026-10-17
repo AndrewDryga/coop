@@ -55,6 +55,7 @@ func TestStageBaseImageFilesKeepsSystemPathsReadableUnderPrivateUmask(t *testing
 // stageBuildContext must OMIT shadowed secrets (and .git) from the Docker build context — so a
 // .agent/Dockerfile COPY can't bake them into an image layer — while keeping every non-secret file.
 func TestStageBuildContext(t *testing.T) {
+	pinHome(t)
 	repo := t.TempDir()
 	write := func(rel, body string) {
 		t.Helper()
@@ -94,6 +95,7 @@ func TestStageBuildContext(t *testing.T) {
 }
 
 func TestStageBuildContextOmitsIgnoredOutputButKeepsAuthoredInputs(t *testing.T) {
+	pinHome(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}

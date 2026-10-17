@@ -50,6 +50,7 @@ func frozenProjectRuntime(t *testing.T, script string) runtime.Runtime {
 }
 
 func TestFilteredProjectReadinessNamesMissingAndChangedInputs(t *testing.T) {
+	pinHome(t)
 	f, d, repo, write := projectPreparationFixture(t)
 	candidate := fixtureCandidate()
 	definition, _, closure, err := lockedImageDefinition(agents.ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"})
@@ -132,6 +133,7 @@ func TestFilteredAdmissionRefusesProjectBuildBeforeQualification(t *testing.T) {
 }
 
 func TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot(t *testing.T) {
+	pinHome(t)
 	f, d, repo, write := projectPreparationFixture(t)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	write(".env", "SECRET=never staged\n")
@@ -191,6 +193,7 @@ func TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot(t *testing.T) {
 }
 
 func TestReviewedProjectBuildRejectsChangedSettingsBeforeExecuting(t *testing.T) {
+	pinHome(t)
 	_, _, repo, _ := projectPreparationFixture(t)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	prepared, err := PrepareFilteredProjectBuild(t.Context(), &config.Config{BoxHome: t.TempDir(), ConfigDir: t.TempDir()}, RunSpec{Repo: repo})
@@ -223,6 +226,7 @@ func TestFilteredProjectReadinessPreservesObservationFailures(t *testing.T) {
 }
 
 func TestReviewedProjectBuildSnapshotIsInspectableWhenCheckoutChanges(t *testing.T) {
+	pinHome(t)
 	_, _, repo, write := projectPreparationFixture(t)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	old := reusableDockerfile + "RUN echo snapshot-instructions\n"
@@ -249,6 +253,7 @@ func TestReviewedProjectBuildRejectsExposedSnapshotAuthority(t *testing.T) {
 }
 
 func TestReviewedProjectBuildRejectsEditedSavedFiles(t *testing.T) {
+	pinHome(t)
 	_, _, repo, _ := projectPreparationFixture(t)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	prepared, err := PrepareFilteredProjectBuild(t.Context(), &config.Config{BoxHome: t.TempDir(), ConfigDir: t.TempDir()}, RunSpec{Repo: repo})

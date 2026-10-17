@@ -15,6 +15,7 @@ import (
 // one that is easiest to wrap. Ordinary runs pass "" and keep the system temp
 // dir, including their existing cleanup.
 func TestRunComposesUnderExplicitParentWithoutChangingOrdinaryCleanup(t *testing.T) {
+	pinHome(t)
 	// Canonical, like a filtered run's artifact directory: its custody check requires every mount
 	// source to BE its own resolved path, so producers resolve the parent before allocating.
 	parent, err := filepath.EvalSymlinks(t.TempDir())

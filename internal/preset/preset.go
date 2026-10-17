@@ -321,7 +321,7 @@ func openPresetSource(repo, globalDir, name string) (*presetSource, error) {
 		var dir *os.File
 		var policy *shadowpath.Snapshot
 		if candidate.repoRel != "" {
-			dir, policy, err = shadowpath.OpenTree(root, candidate.rel)
+			dir, policy, err = shadowpath.OpenTree(root, canonical, candidate.rel)
 		} else {
 			dir, err = safefile.OpenDir(root, candidate.rel)
 		}

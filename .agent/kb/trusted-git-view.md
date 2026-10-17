@@ -2,7 +2,7 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go]
+sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go]
 updated: 2026-10-17
 ---
 
@@ -116,7 +116,9 @@ regular file of at most 64 KiB, never waiting on a FIFO). `rev-parse --show-topl
 workspace mount anywhere, the home folder included. The walk also refuses a repository another
 user owns (the folder or its `.git`), and never climbs to one at the home folder or above it;
 only `COOP_REPO` can name one of those. Outside any repository the working directory is still
-the project.
+the project. The nearest `.git` wins even when a box planted it inside the real project; the
+`.coopignore` rules of the folders above still apply there ([[secret-shadow-walk]]), and the
+home-folder check both walks share is `shadowpath.HomeOrAbove`.
 
 Session workspace clones use the view itself as their local transport source. A non-local,
 no-checkout clone plus an exact fetch of the validated commit avoids racing mutable loose-object
@@ -145,6 +147,8 @@ inline-diff positive control but never during production review. The loop's work
 keep their existing restrictions.
 
 ## Changelog
+- 2026-10-17 — a planted nested `.git` keeps the `.coopignore` rules above it; the home-folder check
+  moved to `shadowpath.HomeOrAbove`.
 - 2026-10-17 — the config parse runs in its scratch folder under a ceiling; the checkout settings
   query names the git dir instead of searching; one backlink check for views and approve, by folder
   identity (comparing the .git files let a symlinked or hard-linked .git through), with repair

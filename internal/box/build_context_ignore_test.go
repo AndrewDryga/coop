@@ -10,6 +10,7 @@ import (
 )
 
 func TestBuildContextHonorsDockerignore(t *testing.T) {
+	pinHome(t)
 	for _, tc := range []struct {
 		name, root, specific, config string
 		want                         []string
@@ -72,6 +73,7 @@ func TestBuildContextHonorsDockerignore(t *testing.T) {
 }
 
 func TestDockerignoredEditsDoNotChangeBuildInputs(t *testing.T) {
+	pinHome(t)
 	repo, write := gitProject(t, reusableDockerfile)
 	write(".agent/Dockerfile.dockerignore", "**\n!main.go\n")
 	write("docs/notes.txt", "before\n")
@@ -97,6 +99,7 @@ func TestDockerignoredEditsDoNotChangeBuildInputs(t *testing.T) {
 }
 
 func TestDockerignoreCannotRestoreSanitizedInputs(t *testing.T) {
+	pinHome(t)
 	repo, write := gitProject(t, reusableDockerfile)
 	write(".dockerignore", "**\n!main.go\n!.env\n!.git/**\n!build/**\n")
 	write(".env", "SECRET=hidden\n")

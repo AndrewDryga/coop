@@ -203,6 +203,79 @@ func TestResolveRepoFindsLinkedCheckoutsAndFallsBack(t *testing.T) {
 	}
 }
 
+// A box can make a folder of the project a repository by planting a .git in it, a folder or a
+// gitfile, and a command run from inside then takes that folder for the project. The root
+// .coopignore still hides what it names there, an exact path and a wildcard alike: the launch
+// decoys both, and a repository file linking to one is not copied out. A real submodule resolves
+// to itself as before and keeps the same rules.
+func TestNestedRepositoryKeepsTheRulesAboveIt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	module, _ := gitrepo.NewCommitted(t)
+	for _, tc := range []struct {
+		name string
+		nest func(t *testing.T, repo string, git func(...string))
+	}{
+		{"a planted .git folder", func(t *testing.T, repo string, _ func(...string)) {
+			mkdirs(t, filepath.Join(repo, "sub", ".git"))
+		}},
+		{"a planted gitfile", func(t *testing.T, repo string, _ func(...string)) {
+			mkdirs(t, filepath.Join(repo, "sub"))
+			if err := os.WriteFile(filepath.Join(repo, "sub", ".git"), []byte("gitdir: ../.git\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a real submodule", func(_ *testing.T, _ string, git func(...string)) {
+			git("-c", "protocol.file.allow=always", "submodule", "add", "-q", module, "sub")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			tc.nest(t, repo, git)
+			sub := filepath.Join(repo, "sub")
+			for path, body := range map[string]string{
+				filepath.Join(repo, CoopIgnoreFile):      "sub/secret.yml\nsub/config/*.yml\n",
+				filepath.Join(sub, "secret.yml"):         "token: hunter2\n",
+				filepath.Join(sub, "config", "prod.yml"): "token: hunter2\n",
+				filepath.Join(sub, "config", "app.json"): "{}\n",
+				filepath.Join(sub, "src", "main.go"):     "package main\n",
+			} {
+				mkdirs(t, filepath.Dir(path))
+				if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink("../config/prod.yml", filepath.Join(sub, "src", "notes.md")); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(filepath.Join(sub, "src"))
+			got, err := ResolveRepo("")
+			if err != nil || got != realPath(t, sub) {
+				t.Fatalf("ResolveRepo from inside the nested repository = %q, %v; want %s", got, err, realPath(t, sub))
+			}
+			mounts, err := ComputeMounts(got, "/workspace")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for target, hidden := range map[string]bool{
+				"/workspace/secret.yml": true, "/workspace/config/prod.yml": true,
+				"/workspace/config/app.json": false, "/workspace/src/main.go": false,
+			} {
+				if m := find(mounts, target); hidden && (m == nil || m.Kind != Decoy) || !hidden && m != nil {
+					t.Errorf("%s: mount %+v, want hidden=%t", target, m, hidden)
+				}
+			}
+			sources, err := openRepositorySources(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sources.Close()
+			if data, err := sources.readFile(filepath.Join("src", "notes.md")); err == nil || !strings.Contains(err.Error(), "hidden by Coop's secret policy") {
+				t.Fatalf("a link to a hidden file in the nested repository was read: %q, %v", data, err)
+			}
+		})
+	}
+}
+
 // A repository at the home folder or above is never chosen by walking up: a box that removes its
 // own .git would otherwise move the next launch's workspace there. The refusal names the
 // repository it found, and only the override can name it.

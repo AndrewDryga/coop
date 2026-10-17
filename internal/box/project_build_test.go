@@ -94,6 +94,7 @@ func projectContextDigest(t *testing.T, repo string) string {
 // authored files, empty directories, ignore rules — and nothing it cannot: a touched file, ignored
 // output and a shadowed secret leave it as it was.
 func TestContextDigestFollowsWhatTheBuildReads(t *testing.T) {
+	pinHome(t)
 	repo, write := gitProject(t, reusableDockerfile)
 	write(".env", "SECRET=1\n")
 	if err := os.Symlink("main.go", filepath.Join(repo, "link")); err != nil {
@@ -147,6 +148,7 @@ func TestContextDigestFollowsWhatTheBuildReads(t *testing.T) {
 // reads without copying, and each file with the repository's own mode — not the one the process
 // umask would have given the copy.
 func TestStagedContextIsWhatItsDigestSays(t *testing.T) {
+	pinHome(t)
 	repo, write := gitProject(t, reusableDockerfile)
 	write("shared.txt", "group-writable\n")
 	if err := os.Chmod(filepath.Join(repo, "shared.txt"), 0o666); err != nil {
@@ -171,8 +173,10 @@ func TestStagedContextIsWhatItsDigestSays(t *testing.T) {
 	if staged != checked {
 		t.Fatalf("the staged context hashed %s, the check %s", staged, checked)
 	}
-	if info, err := os.Lstat(filepath.Join(dir, "shared.txt")); err != nil || info.Mode().Perm() != 0o666 {
-		t.Fatalf("staged mode = %v (%v), want the repository's 0666", info.Mode().Perm(), err)
+	if info, err := os.Lstat(filepath.Join(dir, "shared.txt")); err != nil {
+		t.Fatal(err)
+	} else if info.Mode().Perm() != 0o666 {
+		t.Fatalf("staged mode = %v, want the repository's 0666", info.Mode().Perm())
 	}
 	if target, err := os.Readlink(filepath.Join(dir, "dangling")); err != nil || target != "../outside" {
 		t.Fatalf("a link was not staged as itself: %q (%v)", target, err)
@@ -214,6 +218,7 @@ func TestContextLeavesOutAFileDeletedSinceSelection(t *testing.T) {
 // selection cannot make the read pick up a file the selection never judged — ignored output here —
 // nor leave the repository: the first is left out, the second refuses the read.
 func TestContextReadsOnlyTheFilesTheSelectionJudged(t *testing.T) {
+	pinHome(t)
 	repo, write := gitProject(t, reusableDockerfile)
 	write("src/a.txt", "selected\n")
 	write("build/a.txt", "ignored output\n")
@@ -277,6 +282,7 @@ func TestProjectBuildNeedsRegularDockerfileAndIgnoreFiles(t *testing.T) {
 }
 
 func TestFilteredProjectBuildCancellationCleansStaging(t *testing.T) {
+	pinHome(t)
 	f, d := filteredFixture(t)
 	derivedImageFixture(t, d)
 	definition, _, _, err := lockedImageDefinition(agents.ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"})
@@ -338,6 +344,7 @@ func TestFilteredProjectBuildCancellationCleansStaging(t *testing.T) {
 // Only an explicit build executes instructions. Every reuse proves the exact built image; changed
 // inputs, lost images and missing host authority stop rather than restoring build networking.
 func TestFilteredProjectImageReusesAnUnchangedBuild(t *testing.T) {
+	pinHome(t)
 	projectBuildEndpoint(t)
 	f, d := filteredFixture(t)
 	derivedImageFixture(t, d)

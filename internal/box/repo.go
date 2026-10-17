@@ -5,13 +5,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 )
 
 // ResolveRepo returns the repository to operate on: the override if set, else the repository that
@@ -33,7 +33,9 @@ func ResolveRepo(override string) (string, error) {
 // whatever it names, the user's home folder say, as the workspace. Like git, it refuses a
 // repository another user owns. It also never climbs to a repository at the home folder or above
 // it: a box that deletes its own .git moves the walk up to whatever repository holds it, a home
-// folder kept in Git among them, and only the override can name one of those.
+// folder kept in Git among them, and only the override can name one of those. The nearest .git
+// wins even when a box planted it inside the real project; the .coopignore rules of the folders
+// above still hide what they name there (shadowpath).
 func FindRepo() (repo string, ok bool, err error) {
 	// The kernel's name for the working directory, never $PWD's: on a case-insensitive disk $PWD
 	// keeps the case the user typed, while everything keyed by the repository's path (leases,
@@ -49,7 +51,7 @@ func FindRepo() (repo string, ok bool, err error) {
 	if err := ownedRepository(root); err != nil {
 		return "", false, err
 	}
-	if home, above := homeOrAbove(root); above {
+	if home, above := shadowpath.HomeOrAbove(root); above {
 		return "", false, fmt.Errorf("the nearest Git repository to %s is %s, at your home folder %s or above it, and Coop never "+
 			"uses one of those as a project: run `git init` in your project folder, or set COOP_REPO to the folder to use", wd, root, home)
 	}
@@ -69,37 +71,6 @@ func ownedRepository(root string) error {
 		}
 	}
 	return nil
-}
-
-// homeOrAbove reports whether dir is the user's home folder or a folder above it, and names the
-// home folder. It compares folders, not spellings, so neither a case-insensitive disk nor a linked
-// home lets a repository at the home folder through. A HOME that is unset or relative falls back to
-// the account's home folder.
-func homeOrAbove(dir string) (string, bool) {
-	home, err := os.UserHomeDir()
-	if err != nil || !filepath.IsAbs(home) {
-		u, err := user.Current()
-		if err != nil || u.HomeDir == "" {
-			return "", false
-		}
-		home = u.HomeDir
-	}
-	target, err := os.Stat(dir)
-	if err != nil {
-		return home, false
-	}
-	walk := home
-	if real, err := filepath.EvalSymlinks(home); err == nil {
-		walk = real
-	}
-	for ; ; walk = filepath.Dir(walk) {
-		if info, err := os.Stat(walk); err == nil && os.SameFile(info, target) {
-			return home, true
-		}
-		if filepath.Dir(walk) == walk {
-			return home, false
-		}
-	}
 }
 
 // ServicesProject is the deterministic per-REPO base name: a lowercased, sanitized basename.

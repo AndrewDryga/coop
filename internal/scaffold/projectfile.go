@@ -280,7 +280,7 @@ func openVisibleDir(root *os.Root, rel, display string) (*os.Root, string, error
 	if err != nil {
 		return nil, "", fmt.Errorf("open %s: %w", display, err)
 	}
-	policy, err := heldPolicy(nil, "", dir)
+	policy, err := heldPolicy(nil, "", dir, repo)
 	if err != nil {
 		_ = dir.Close()
 		return nil, "", fmt.Errorf("read the .coopignore rules for %s: %w", display, err)
@@ -296,7 +296,7 @@ func openVisibleDir(root *os.Root, rel, display string) (*os.Root, string, error
 			dir, stored = next, append(stored, storedDir)
 			dirRel := path.Join(stored...)
 			afterDirHeld(dirRel)
-			if policy, err = heldPolicy(policy, dirRel, dir); err != nil {
+			if policy, err = heldPolicy(policy, dirRel, dir, repo); err != nil {
 				_ = dir.Close()
 				return nil, "", fmt.Errorf("read the .coopignore rules for %s: %w", display, err)
 			}
@@ -322,8 +322,9 @@ func openVisibleDir(root *os.Root, rel, display string) (*os.Root, string, error
 
 // heldPolicy adds the .coopignore of a directory this edit holds open, read through that same
 // handle. Rules read by path could come from a directory a box swapped in after this one was opened,
-// pairing the bytes of one directory with the rules of another. A nil policy starts at the root.
-func heldPolicy(policy *shadowpath.Snapshot, dirRel string, dir *os.Root) (*shadowpath.Snapshot, error) {
+// pairing the bytes of one directory with the rules of another. A nil policy starts at the root,
+// and carries the rules of the folders above repo, the way the box's mounts do.
+func heldPolicy(policy *shadowpath.Snapshot, dirRel string, dir *os.Root, repo string) (*shadowpath.Snapshot, error) {
 	held, err := dir.Open(".")
 	if err != nil {
 		return nil, err
@@ -334,7 +335,7 @@ func heldPolicy(policy *shadowpath.Snapshot, dirRel string, dir *os.Root) (*shad
 		next, err = policy.Extend(dirRel, held)
 	} else {
 		var tree *os.File
-		if tree, next, err = shadowpath.OpenTree(held, ""); err == nil {
+		if tree, next, err = shadowpath.OpenTree(held, repo, ""); err == nil {
 			_ = tree.Close()
 		}
 	}

@@ -197,7 +197,7 @@ export COOP_REVIEW_CMD='cd "$COOP_FORK_PATH" && lazygit'
 
 Set a merge gate with `gate: make check` in [`.agent/project.yaml`](configuration.md#project-settings-agentprojectyaml), which is committed and shared with your team. `COOP_GATE="make check"` sets one per machine, and it wins. Every merge then re-runs that gate in the box on the rebased tree, and rolls back if it goes red. The gate is the machine check behind your human review.
 
-A policy check also flags secret-looking or oversized files. It scans each changed file's content for real credentials: provider token shapes (AWS, OpenAI, Anthropic, GitHub, Slack and more) and high-entropy values on secret-named keys. A token committed inside an ordinary file is caught even when its filename looks innocent. Merge refuses while your own working tree is dirty.
+A policy check also flags oversized files and every file the box hides: secret-looking names and the paths a [`.coopignore`](box.md#your-own-paths-coopignore) names, one in a folder above the project included. It scans each changed file's content for real credentials: provider token shapes (AWS, OpenAI, Anthropic, GitHub, Slack and more) and high-entropy values on secret-named keys. A token committed inside an ordinary file is caught even when its filename looks innocent. Merge refuses while your own working tree is dirty.
 
 Merging lands the work and then offers to delete the fork, so it asks first. A non-interactive shell (CI, a pipe) has no one to answer, so merge refuses there instead of landing on the default.
 

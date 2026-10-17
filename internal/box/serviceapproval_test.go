@@ -298,6 +298,7 @@ func TestNewImageVolumeApprovalDoesNotInheritSecretAccess(t *testing.T) {
 // A secret-looking bind stays a decoy until a human approves the compose file's exact content;
 // the approval is content-keyed, so editing the file hides the path again.
 func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
+	pinHome(t)
 	t.Setenv(ServiceStateRootEnv, t.TempDir())
 	repo := t.TempDir()
 	write := func(rel, body string) {
@@ -495,6 +496,7 @@ func TestServiceApprovalCannotCrossRepositoriesOrCopiedMarkers(t *testing.T) {
 }
 
 func TestWritableSecretBindsAndSecretDirectoriesCannotBeApproved(t *testing.T) {
+	pinHome(t)
 	t.Setenv(ServiceStateRootEnv, t.TempDir())
 	for _, tc := range []struct{ name, bind, blocked string }{
 		{"direct writable file", `./tls.key:/key`, "tls.key"},
@@ -777,6 +779,7 @@ func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
 // the prompt, so a file nobody asked for stands out, and a file that appeared since the last yes is
 // called out even when a compose edit voided the approval that covered it.
 func TestReviewLabelsWhatTheRepoAsksForAndWhatIsNew(t *testing.T) {
+	pinHome(t)
 	t.Setenv(ServiceStateRootEnv, t.TempDir())
 	repo := t.TempDir()
 	write := func(rel, body string) {

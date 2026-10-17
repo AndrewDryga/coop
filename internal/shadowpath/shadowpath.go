@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/user"
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/safefile"
 )
@@ -50,12 +52,14 @@ type UserGlobs struct {
 	Path []string
 }
 
-// Snapshot is an immutable view of every .coopignore relevant to one pinned repository subtree.
-// It exists for paths that re-export repository bytes outside the normally shadowed checkout:
-// source bytes and their visibility rules must come from the same directory authority.
+// Snapshot is an immutable view of every .coopignore relevant to one pinned repository subtree,
+// those in the folders above the repository included. It exists for paths that re-export
+// repository bytes outside the normally shadowed checkout: source bytes and their visibility rules
+// must come from the same directory authority.
 type Snapshot struct {
-	policies map[string]UserGlobs
-	bytes    int64
+	enclosing []enclosingPolicy
+	policies  map[string]UserGlobs
+	bytes     int64
 }
 
 var ErrProtected = errors.New("path is protected by the repository secret policy")
@@ -67,8 +71,14 @@ const MaxSnapshotPolicyBytes = 16 << 20
 // traversing their actual pinned directory descriptors (Extend / ReadRegular), so swapping two
 // real child directories cannot pair bytes from one with visibility rules from the other. The
 // returned tree has an untouched read offset and remains valid after a repository path rename.
-func OpenTree(root *os.File, rel string) (*os.File, *Snapshot, error) {
+// repo is the path root was pinned from: the rules of the folders above it, outside the pinned
+// tree, are read by that path (enclosingPolicies), and one that cannot be read fails the open.
+func OpenTree(root *os.File, repo, rel string) (*os.File, *Snapshot, error) {
 	parts, err := cleanParts(rel)
+	if err != nil {
+		return nil, nil, err
+	}
+	enclosing, totalBytes, err := enclosingPolicies(repo)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -77,7 +87,6 @@ func OpenTree(root *os.File, rel string) (*os.File, *Snapshot, error) {
 		return nil, nil, err
 	}
 	policies := make(map[string]UserGlobs)
-	var totalBytes int64
 	dirRel := ""
 	if err := snapshotPolicy(current, dirRel, policies, &totalBytes); err != nil {
 		_ = current.Close()
@@ -100,7 +109,7 @@ func OpenTree(root *os.File, rel string) (*os.File, *Snapshot, error) {
 			return nil, nil, err
 		}
 	}
-	return current, &Snapshot{policies: policies, bytes: totalBytes}, nil
+	return current, &Snapshot{enclosing: enclosing, policies: policies, bytes: totalBytes}, nil
 }
 
 func (s *Snapshot) PolicyBytes() int64 { return s.bytes }
@@ -116,7 +125,7 @@ func (s *Snapshot) Extend(dirRel string, dir *os.File) (*Snapshot, error) {
 	if err := snapshotPolicy(dir, dirRel, policies, &totalBytes); err != nil {
 		return nil, err
 	}
-	return &Snapshot{policies: policies, bytes: totalBytes}, nil
+	return &Snapshot{enclosing: s.enclosing, policies: policies, bytes: totalBytes}, nil
 }
 
 // ReadRegular walks a path from one pinned subtree root, loading each descendant directory's
@@ -179,7 +188,7 @@ func (s *Snapshot) Shadowed(relSlash string) bool {
 		return true
 	}
 	relSlash = filepath.ToSlash(local)
-	return shadowed(relSlash, func(dirRel string) UserGlobs {
+	return shadowed(relSlash, s.enclosing, func(dirRel string) UserGlobs {
 		return s.policies[dirRel]
 	})
 }
@@ -199,6 +208,114 @@ func snapshotPolicy(dir *os.File, dirRel string, policies map[string]UserGlobs, 
 	}
 	policies[dirRel] = ParseUserGlobs(data)
 	return nil
+}
+
+// enclosingPolicy is the .coopignore of a folder above a repository. Its rules reach the folder's
+// whole subtree, so a path in the repository is matched as its path from that folder: prefix, the
+// repository's own path from there ending in "/", then the path in the repository.
+type enclosingPolicy struct {
+	prefix string
+	globs  UserGlobs
+}
+
+// enclosingPolicies reads the .coopignore of each folder above repo, stopping before the home
+// folder or a folder above it. A box can make any folder it writes a repository by planting a .git
+// there, and a command run from inside takes that folder for the project: without these rules,
+// what a .coopignore above it hides there would mount, copy and build like any other file. A real
+// submodule keeps them too. The walk does not stop at the repository around repo, since a box can
+// move that .git away; it cannot change a .coopignore, which every box mounts read-only. The owner
+// of the folder decides, not the file's: a .coopignore in a folder another user owns is skipped,
+// since anyone can create /tmp/.coopignore or hard-link one of your files there so it looks like
+// yours, while one saved with sudo in your own folder applies. Root's /tmp, /private and /Volumes
+// therefore count for nothing. It returns the rules it read, their size, and the first .coopignore
+// it could not read.
+func enclosingPolicies(repo string) ([]enclosingPolicy, int64, error) {
+	canonical, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		if canonical, err = filepath.Abs(repo); err != nil {
+			return nil, 0, err
+		}
+	}
+	var (
+		policies []enclosingPolicy
+		size     int64
+		unread   error
+	)
+	for child, dir := canonical, filepath.Dir(canonical); dir != child; child, dir = dir, filepath.Dir(dir) {
+		if _, above := HomeOrAbove(dir); above {
+			break
+		}
+		if _, err := os.Lstat(filepath.Join(dir, CoopIgnoreFile)); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if uid, known := ownerOf(dir); known && uid != os.Getuid() {
+			continue
+		}
+		root, err := safefile.OpenRoot(dir)
+		var data []byte
+		if err == nil {
+			data, err = safefile.ReadRegular(root, CoopIgnoreFile, MaxCoopIgnoreBytes)
+			_ = root.Close()
+		}
+		if err != nil {
+			if unread == nil {
+				unread = fmt.Errorf("read the %s in %s: %w", CoopIgnoreFile, dir, err)
+			}
+			continue
+		}
+		size += int64(len(data))
+		if g := ParseUserGlobs(data); len(g.Base) > 0 || len(g.Path) > 0 {
+			rel, _ := filepath.Rel(dir, canonical) // dir is above canonical, so this cannot fail
+			policies = append(policies, enclosingPolicy{prefix: filepath.ToSlash(rel) + "/", globs: g})
+		}
+	}
+	return policies, size, unread
+}
+
+// ownerOf is the user ID that owns path, by Lstat; known is false when that cannot be told. It is
+// a variable so tests can stand in owners that only root could set up.
+var ownerOf = func(path string) (uid int, known bool) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return 0, false
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return int(st.Uid), true
+}
+
+// HomeOrAbove reports whether dir is the user's home folder or a folder above it, and names the
+// home folder. box.FindRepo never picks one for a project, and the rules a project takes from the
+// folders above it stop below them. It compares folders, not spellings, so neither a
+// case-insensitive disk nor a linked home lets one through. A HOME that is unset or relative falls
+// back to the account's home folder.
+func HomeOrAbove(dir string) (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		u, err := user.Current()
+		if err != nil || u.HomeDir == "" {
+			return "", false
+		}
+		home = u.HomeDir
+	}
+	target, err := os.Stat(dir)
+	if err != nil {
+		return home, false
+	}
+	walk := home
+	if real, err := filepath.EvalSymlinks(home); err == nil {
+		walk = real
+	}
+	for ; ; walk = filepath.Dir(walk) {
+		if info, err := os.Stat(walk); err == nil && os.SameFile(info, target) {
+			return home, true
+		}
+		if filepath.Dir(walk) == walk {
+			return home, false
+		}
+	}
 }
 
 func cleanParts(rel string) ([]string, error) {
@@ -294,6 +411,8 @@ func NewDecider(repo string) func(string) bool {
 	if err != nil {
 		canonical, _ = filepath.Abs(repo)
 	}
+	// A .coopignore above the repository that cannot be read hides nothing, like one inside it.
+	enclosing, _, _ := enclosingPolicies(canonical)
 	cache := map[string]UserGlobs{}
 	loadDir := func(dirRel string) UserGlobs {
 		if g, ok := cache[dirRel]; ok {
@@ -321,11 +440,13 @@ func NewDecider(repo string) func(string) bool {
 		cache[dirRel] = g
 		return g
 	}
-	// The directories at and above dirRel whose .coopignore has rules, root first. Almost every
-	// chain is empty; a directory without rules can never match, so skipping it changes nothing.
+	// The directories at and above dirRel whose .coopignore has rules, the folders above the
+	// repository first. Almost every chain is empty; a directory without rules can never match, so
+	// skipping it changes nothing. A folder above the repository matches its path rules against
+	// prefix plus the path; one inside it, against the path below dir.
 	type policy struct {
-		dir   string
-		globs UserGlobs
+		dir, prefix string
+		globs       UserGlobs
 	}
 	chains := map[string][]policy{}
 	var policies func(string) []policy
@@ -336,9 +457,13 @@ func NewDecider(repo string) func(string) bool {
 		var chain []policy
 		if dirRel != "" {
 			chain = policies(parentSlash(dirRel))
+		} else {
+			for _, p := range enclosing {
+				chain = append(chain, policy{prefix: p.prefix, globs: p.globs})
+			}
 		}
 		if g := loadDir(dirRel); len(g.Base) > 0 || len(g.Path) > 0 {
-			chain = append(chain[:len(chain):len(chain)], policy{dirRel, g}) // never extend a shared chain
+			chain = append(chain[:len(chain):len(chain)], policy{dir: dirRel, globs: g}) // never extend a shared chain
 		}
 		chains[dirRel] = chain
 		return chain
@@ -356,7 +481,7 @@ func NewDecider(repo string) func(string) bool {
 			if p.dir != "" {
 				remaining = relSlash[len(p.dir)+1:]
 			}
-			if MatchesAny(name, p.globs.Base) || MatchesPath(remaining, p.globs.Path) {
+			if MatchesAny(name, p.globs.Base) || MatchesPath(p.prefix+remaining, p.globs.Path) {
 				return true
 			}
 		}
@@ -426,19 +551,19 @@ func parentSlash(relSlash string) string {
 }
 
 // shadowed hides a path when it, or any directory above it, is hidden on its own.
-func shadowed(relSlash string, loadDir func(string) UserGlobs) bool {
+func shadowed(relSlash string, enclosing []enclosingPolicy, loadDir func(string) UserGlobs) bool {
 	relSlash = cleanSlash(relSlash)
 	for i := 0; i < len(relSlash); i++ {
-		if relSlash[i] == '/' && shadowedHere(relSlash[:i], loadDir) {
+		if relSlash[i] == '/' && shadowedHere(relSlash[:i], enclosing, loadDir) {
 			return true
 		}
 	}
-	return shadowedHere(relSlash, loadDir)
+	return shadowedHere(relSlash, enclosing, loadDir)
 }
 
 // shadowedHere is one path's own verdict, its ancestors aside: a secret name no allow rule
-// rescues, or a .coopignore rule on the way down to it.
-func shadowedHere(relSlash string, loadDir func(string) UserGlobs) bool {
+// rescues, or a .coopignore rule on the way down to it, from the folders above the repository on.
+func shadowedHere(relSlash string, enclosing []enclosingPolicy, loadDir func(string) UserGlobs) bool {
 	name := relSlash
 	if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
 		name = relSlash[i+1:]
@@ -446,17 +571,22 @@ func shadowedHere(relSlash string, loadDir func(string) UserGlobs) bool {
 	lname := strings.ToLower(name)
 	allowed := MatchesAny(lname, AllowGlobs) ||
 		(MatchesAny(lname, allowTemplateGlobs) && !MatchesAny(lname, hardSecretGlobs))
-	return MatchesAny(lname, SecretGlobs) && !allowed || shadowedByCoopignore(relSlash, loadDir)
+	return MatchesAny(lname, SecretGlobs) && !allowed || shadowedByCoopignore(relSlash, enclosing, loadDir)
 }
 
 func cleanSlash(relSlash string) string {
 	return filepath.ToSlash(filepath.Clean(filepath.FromSlash(relSlash)))
 }
 
-func shadowedByCoopignore(relSlash string, loadDir func(string) UserGlobs) bool {
+func shadowedByCoopignore(relSlash string, enclosing []enclosingPolicy, loadDir func(string) UserGlobs) bool {
 	base := relSlash
 	if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
 		base = relSlash[i+1:]
+	}
+	for _, p := range enclosing {
+		if MatchesAny(base, p.globs.Base) || MatchesPath(p.prefix+relSlash, p.globs.Path) {
+			return true
+		}
 	}
 	dir, remaining := "", relSlash
 	for {

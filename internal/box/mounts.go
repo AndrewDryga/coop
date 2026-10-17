@@ -38,13 +38,16 @@ type Mount struct {
 //
 // A path is shadowed when its basename matches SecretGlobs (unless AllowGlobs whitelists
 // it — templates and public CA bundles stay visible by default), OR a .coopignore — in the
-// repo root or any ancestor directory of the path — matches it (its basename patterns apply
-// anywhere in that directory's subtree; its path patterns are relative to that directory). An
-// explicit .coopignore match is authoritative: it re-hides even an AllowGlobs-whitelisted name.
+// repo root, any ancestor directory of the path, or a folder above the repo short of the home
+// folder — matches it (its basename patterns apply anywhere in that directory's subtree; its
+// path patterns are relative to that directory). An explicit .coopignore match is
+// authoritative: it re-hides even an AllowGlobs-whitelisted name.
 //
-// Its only input is the repo tree plus the .coopignore files in it (no container
-// runtime, no temp files), so it can be exhaustively unit-tested — this is the
-// function that must never let a secret leak.
+// Its only inputs are the repo tree, the .coopignore files in it and in the folders above it
+// (shadowpath.enclosingPolicies), and $HOME, which bounds that walk (no container runtime, no
+// temp files), so it can be exhaustively unit-tested; the tests pin HOME so a stray .coopignore
+// above the machine's temp folder can't change their answers. This is the function that must
+// never let a secret leak.
 func ComputeMounts(repo, workdir string) ([]Mount, error) {
 	shadowed := NewShadowDecider(repo)
 	mounts := []Mount{{Kind: Bind, Source: repo, Target: workdir}}
@@ -86,12 +89,13 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 
 // NewShadowDecider returns a predicate reporting whether a repo-relative slash path is
 // shadowed from the box: its basename matches SecretGlobs (and AllowGlobs doesn't whitelist
-// it), or a .coopignore in the root or an ancestor directory matches it (AllowGlobs does NOT
-// override an explicit .coopignore — it's the user's final say). Each directory's .coopignore
-// is loaded once into the closure's cache. ComputeMounts and check-secrets share this
-// visibility decision; the scanner still checks hidden commit candidates because
-// hiding a file from the box does not prevent committing it. A hidden directory
-// hides every descendant, including names an allow rule would otherwise rescue.
+// it), or a .coopignore in the root, an ancestor directory or a folder above the repo short of
+// the home folder matches it (AllowGlobs does NOT override an explicit .coopignore — it's the
+// user's final say). Each directory's .coopignore is loaded once into the closure's cache.
+// ComputeMounts and check-secrets share this visibility decision; the scanner still checks
+// hidden commit candidates because hiding a file from the box does not prevent committing it.
+// A hidden directory hides every descendant, including names an allow rule would otherwise
+// rescue.
 func NewShadowDecider(repo string) func(relSlash string) bool {
 	return shadowpath.NewDecider(repo)
 }
