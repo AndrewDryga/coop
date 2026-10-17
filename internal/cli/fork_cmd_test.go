@@ -574,6 +574,63 @@ func TestForkFreshRefusesStateOnlyCleanup(t *testing.T) {
 	}
 }
 
+// A recreation's preview ends with a blank line. With --yes nothing is asked, so the new fork's
+// section follows it directly; an answered question is a section of its own, and so are a forced
+// stop's lines: exactly one blank line between any two of them.
+func TestForkFreshPrintsOneBlankLineBetweenSections(t *testing.T) {
+	const asked, stopped = "Recreate this fork? [y/N] y\n\n", "Stopping fork perf\n\n✓ Fork perf stopped\n\n"
+	for _, tc := range []struct {
+		name    string
+		yes     bool
+		running bool // a leftover worker record, so --force stops the fork first
+		between string
+	}{
+		{name: "--yes, nothing to stop", yes: true, between: ""},
+		{name: "--yes, a forced stop", yes: true, running: true, between: stopped},
+		{name: "answered, nothing to stop", between: asked},
+		{name: "answered, a forced stop", running: true, between: asked + stopped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			cfg := freshConfig(t)
+			cfg.RepoOverride = initRepo(t)
+			signInCred(t, cfg, "claude", "default")
+			if _, err := forkspace.Setup(cfg.RepoOverride, "perf"); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"perf", "claude", "--fresh"}
+			if tc.yes {
+				args = append(args, "--yes")
+			} else {
+				typedAnswers(t, "y") // the terminal the question is answered at
+			}
+			if tc.running {
+				if err := forkspace.WriteWorkerState(cfg.RepoOverride, "perf", forkspace.WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--force")
+			}
+			runtimeCLI := filepath.Join(t.TempDir(), "runtime")
+			if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			a := &app{cfg: cfg, rt: runtime.Runtime{Name: runtimeCLI}, rtSet: true}
+			// The launch after the recreation fails in box.Run (this config has no agent homes to mount);
+			// only the sections before it count.
+			out := captureStderr(t, func() { _, _ = a.forkCreate(args) })
+			start, end := strings.Index(out, "Will be permanently deleted:"), strings.Index(out, "Creating fork: perf\n")
+			if !strings.HasPrefix(out, "Recreate fork: perf\n") || start < 0 || end < start {
+				t.Fatalf("coop fork %s printed no preview or no new fork:\n%q", strings.Join(args, " "), out)
+			}
+			tail := out[start:end]
+			want := "Will be permanently deleted:\n  - Service containers, Docker volumes, and their stored data.\n\n" + tc.between
+			if tail != want {
+				t.Errorf("coop fork %s between the preview and the new fork:\n%q\nwant:\n%q", strings.Join(args, " "), tail, want)
+			}
+		})
+	}
+}
+
 func TestForkFreshRechecksLifecycleUnderLock(t *testing.T) {
 	dir := t.TempDir()
 	repo := initRepo(t)

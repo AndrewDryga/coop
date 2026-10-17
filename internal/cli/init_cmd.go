@@ -33,7 +33,8 @@ import (
 // first-run transcripts are reachable as byte-exact fixtures.
 var initInput io.Reader
 
-// askTerminal returns the reader for init's questions, and false when there is nobody to ask.
+// askTerminal returns the reader for init's questions, and for the confirmations of coop down and
+// coop fork --fresh, and false when there is nobody to ask.
 func askTerminal() (*bufio.Scanner, bool) {
 	if initInput != nil {
 		return bufio.NewScanner(initInput), true

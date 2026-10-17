@@ -72,6 +72,12 @@ is not proof the live helpers conform; regression tests must exercise all output
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-10-17 — `coop fork <name> --fresh` prints one blank line after an answered question and
+  one after a forced stop's own lines; the earlier check of `--fresh --yes` missed that a forced
+  stop's `✓ Fork <name> stopped` ran straight into `Creating fork:`. The question is read through
+  `askTerminal`, as `coop down` reads its own, so TestForkFreshPrintsOneBlankLineBetweenSections
+  pins all four cases (`--yes` or answered, with or without a forced stop). The same gap in
+  `coop fork rm`'s answered question before a forced stop is queued.
 - 2026-10-17 — applied the 2-versus-1 split to configuration: a `.agent/loop.yaml` or preset that
   does not load exits 1 (a command that could not do its job, as `config.Failure` already did), and
   only a preset name nothing defines exits 2. `presetLoadErr` draws both (UsageError /

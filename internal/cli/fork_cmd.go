@@ -531,14 +531,29 @@ func (a *app) forkCreate(args []string) (int, error) {
 			preview := forkctl.ForkDestroyDescription(needsStop, originalDirty, originalUnmerged, originalTaskState)
 			preview.Will = append(preview.Will, "Create a new fork from your current project branch.")
 			forkctl.PrintForkDestroyPreview("Recreate fork: "+fa.name, ws, preview)
-			if err := ui.DestroyGate("Recreate this fork", fa.yes); err != nil {
+			// The gate's own prompt reads os.Stdin, which no test can answer, so at a terminal the
+			// answer is read through askTerminal, as coop down reads its question; without one the
+			// gate refuses unless --yes was given.
+			var asks []func(string) bool
+			if ask, atTerminal := askTerminal(); atTerminal {
+				asks = append(asks, func(prompt string) bool {
+					answer, _ := askOneOK(ask, prompt+" [y/N] ")
+					return ui.ConfirmationResponse(answer, false)
+				})
+			}
+			if err := ui.DestroyGate("Recreate this fork", fa.yes, asks...); err != nil {
 				return 2, forkctl.ForkCancelled(err)
+			}
+			// An answered question is a section of its own; --yes asked nothing.
+			if !fa.yes {
+				ui.Note("")
 			}
 		}
 		if needsStop {
 			if code, err := fc.ForkStop([]string{fa.name}); err != nil {
 				return code, err
 			}
+			ui.Note("") // the stop's own lines are a section of their own too
 		}
 	}
 	// Keep established queue and destructive-work refusals first, but still reject a brand-new
