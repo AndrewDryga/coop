@@ -318,32 +318,34 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// Per-stage signoff/between rotations from .agent/loop.yaml — each runs on its OWN configured
 	// provider/model/effort/account and rotates its own fallback ladder on a limit (NOT a model name
 	// pasted onto the work provider). An unset stage falls back: between → signoff → the work loop.
+	// A stage with no account to run fails like the work rotation in cmdLoop: -1 lets the error set
+	// the exit code, 1 here, since neither a missing login nor an unreadable folder is rejected input.
 	signoffRot, err := c.reviewRotation(lc.Signoff.Agent, agent, rot)
 	if err != nil {
-		return 2, fmt.Errorf("signoff agent: %w", err)
+		return -1, fmt.Errorf("signoff agent: %w", err)
 	}
 	betweenRot, err := c.reviewRotation(lc.Between.Agent, agent, signoffRot)
 	if err != nil {
-		return 2, fmt.Errorf("between agent: %w", err)
+		return -1, fmt.Errorf("between agent: %w", err)
 	}
 	verifyEnabled := len(custom) == 0 && lc.Verify.Enabled
 	verifyRot, err := c.reviewRotation(lc.Verify.Agent, agent, signoffRot) // unset → the signoff model
 	if err != nil {
-		return 2, fmt.Errorf("verify agent: %w", err)
+		return -1, fmt.Errorf("verify agent: %w", err)
 	}
 	currentSignoffRot, currentBetweenRot, currentVerifyRot := signoffRot, betweenRot, verifyRot
 	if resumingCohort {
 		currentSignoffRot, err = c.reviewRotation(currentSignoff.Agent, agent, rot)
 		if err != nil {
-			return 2, fmt.Errorf("current signoff agent: %w", err)
+			return -1, fmt.Errorf("current signoff agent: %w", err)
 		}
 		currentBetweenRot, err = c.reviewRotation(lc.Between.Agent, agent, currentSignoffRot)
 		if err != nil {
-			return 2, fmt.Errorf("current between agent: %w", err)
+			return -1, fmt.Errorf("current between agent: %w", err)
 		}
 		currentVerifyRot, err = c.reviewRotation(currentVerify.Agent, agent, currentSignoffRot)
 		if err != nil {
-			return 2, fmt.Errorf("current verify agent: %w", err)
+			return -1, fmt.Errorf("current verify agent: %w", err)
 		}
 	}
 	currentVerifyEnabled := len(currentCustom) == 0 && currentVerify.Enabled

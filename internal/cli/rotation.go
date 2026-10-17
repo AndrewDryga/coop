@@ -54,7 +54,8 @@ func accountsFor(cfg *config.Config, agent string) []string {
 // when unset — a one-off ladder inherits the run's positional agent); a cross-provider lead
 // ladder rotates across agents. An empty ladder means defaultAgent's default model across all
 // accounts. Order preserved, deduped first-seen. Errors only when NOTHING in the ladder is
-// runnable, and name the exact credential repair where the ladder selected one.
+// runnable, and name the exact credential repair where the ladder selected one — unless a
+// provider's accounts could not all be listed, which is named instead (accountsUnlistedErr).
 func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target) ([]agents.Target, error) {
 	if len(rungs) == 0 {
 		rungs = []agents.Target{{}} // defaultAgent, default model, all accounts
@@ -67,7 +68,8 @@ func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target
 			out = append(out, t)
 		}
 	}
-	var missing []string // fan-out providers with no runnable account (reported only if NOTHING resolves)
+	var providers []string // every provider the ladder names, in ladder order
+	var missing []string   // fan-out providers with no runnable account (reported only if NOTHING resolves)
 	type repair struct {
 		target  string
 		relogin bool
@@ -91,11 +93,14 @@ func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target
 		if agent == "" {
 			agent = defaultAgent
 		}
+		if !slices.Contains(providers, agent) {
+			providers = append(providers, agent)
+		}
 		runnable := accountsFor(cfg, agent)
 		accounts := e.Accounts
 		if len(accounts) == 0 {
 			if len(runnable) == 0 {
-				// Only a repair hint: an account a listing error hides just goes unnamed.
+				// Only a repair hint: a failed listing is reported below, ahead of every repair.
 				profiles, _ := box.EffectiveProfiles(cfg, agent)
 				for _, account := range profiles {
 					recordRepair(agent, account, false)
@@ -116,6 +121,14 @@ func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target
 		}
 	}
 	if len(out) == 0 {
+		// A failed listing outranks every sign-in: the account a rung needs may be in what could not
+		// be read, or unreadable for the same reason, and signing in fixes neither. The listing is
+		// read again here so that a ladder that runs pays nothing for this check.
+		for _, agent := range providers {
+			if _, err := box.EffectiveProfiles(cfg, agent); err != nil {
+				return nil, accountsUnlistedErr(agent, err)
+			}
+		}
 		if len(repairs) == 1 {
 			state := "is not signed in"
 			if repairs[0].relogin {

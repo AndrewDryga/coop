@@ -258,7 +258,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 			}
 			leads, err := expandLadder(a.cfg, tool, rungs)
 			if err != nil {
-				return 2, err
+				return refusalExit(err), err
 			}
 			peers, err = a.resolvePeersForLeads("coop acp", peerVals, leads)
 			if err != nil {

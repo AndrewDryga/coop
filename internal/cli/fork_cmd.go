@@ -685,7 +685,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 			}
 			rot, err := a.buildRotation(fa.agent, ladder)
 			if err != nil {
-				return 2, err
+				return refusalExit(err), err
 			}
 			peers, err = a.resolvePeersForLeads("coop fork "+fa.name, fa.peers, rot.Targets())
 			if err != nil {

@@ -61,12 +61,16 @@
 - **An accounts folder Coop cannot read no longer looks like a missing account.** When Coop could
   not list an agent's accounts, such as a folder without read permission, a command that named one
   (`coop claude@work`, `coop acp`, `coop fork`, `coop eval` or `coop credentials`) said the account
-  did not exist and suggested `coop login`. `coop credentials` showed fewer accounts, offered a
-  sign-in to an agent that had some, or called its default account missing. Now each of these says
-  Coop could not list every account and names the folder and the reason. Launches, `coop acp`,
-  `coop fork` and `coop credentials` then exit 1 instead of 2; `coop eval` already exited 1.
-  `coop acp`, `coop fork` and `coop eval` also refuse an account that does not exist with the same
-  message as other commands.
+  did not exist and suggested `coop login`, which cannot fix that. `coop loop`, fork loops and
+  `coop acp --peer` suggested it too when they found no account to run, including for the loop's
+  review agents. `coop credentials` showed fewer accounts, offered a sign-in to an agent that had
+  some, or called its default account missing. Now each of these says Coop could not list every
+  account and names the folder and the reason. Launches, `coop acp`, `coop fork` and
+  `coop credentials` then exit 1 instead of 2, and `coop eval` and `coop loop` already exited 1.
+  When a review agent has no account it can run, a loop now exits 1 too, instead of 2, as it does
+  for its own agent. A loop with an account it can run still runs on it, and an account that does
+  not exist keeps its sign-in advice when Coop can read the folder. `coop acp`, `coop fork` and
+  `coop eval` also refuse an account that does not exist with the same message as other commands.
 
 - **Coop cleans up the helper containers and old images it left behind.** When a run was killed,
   its credential broker container stayed on the host, stopped, and Coop removed it only together

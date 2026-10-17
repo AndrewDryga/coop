@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -111,6 +112,118 @@ func TestExpandLadderSkipsCredentialsThatNeedRelogin(t *testing.T) {
 		!strings.Contains(err.Error(), `"claude@line\nnext"`) ||
 		!strings.Contains(err.Error(), `coop login $'claude@line\nnext'`) {
 		t.Fatalf("control-character credential recovery = %q, want escaped display and command", err)
+	}
+}
+
+// A ladder with an account to run still runs when another provider's accounts could not be listed:
+// the failed listing is named only when nothing in the ladder resolves.
+func TestExpandLadderRunsWhenAnotherProviderCannotBeListed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a directory regardless of its mode")
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	credentials := filepath.Join(cfg.ConfigDir, "claude", "credentials")
+	if err := os.MkdirAll(credentials, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(credentials, 0o100); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(credentials, 0o700) })
+	signInCred(t, cfg, "codex", "work")
+
+	got, err := expandLadder(cfg, "claude", []agents.Target{{}, {Provider: "codex"}})
+	if err != nil || !slices.Equal(members(got), []string{"codex@work"}) {
+		t.Fatalf("ladder = %v, %v; want [codex@work] and no error", members(got), err)
+	}
+	// Without the Codex rung nothing runs, and the refusal names Claude's folder.
+	if _, err := expandLadder(cfg, "claude", nil); err == nil || !strings.HasPrefix(err.Error(), "Could not list every Claude account") {
+		t.Fatalf("Claude-only ladder = %v, want the failed listing", err)
+	}
+}
+
+// A loop, or an editor session with peers, that finds no account to run while an agent's accounts
+// could not all be listed names that failure and its cause, as every command naming an account does
+// (TestAccountRefusalsNameAFailedListing), never a sign-in, and exits 1: the input was fine. Once the
+// folder lists again, a missing account keeps its sign-in advice and the exit code it always had.
+func TestLadderRefusalsNameAFailedListing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a directory regardless of its mode")
+	}
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cfg := freshConfig(t)
+	// No Claude account can run, and solo is in a credentials folder that can be searched and not
+	// listed. Each preset's lead pins one account.
+	credentials := filepath.Join(cfg.ConfigDir, "claude", "credentials")
+	if err := os.MkdirAll(filepath.Join(credentials, "solo"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(credentials, 0o100); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(credentials, 0o700) })
+	for _, account := range []string{"solo", "ghost"} {
+		writePresetFile(t, cfg.RepoOverride, "lead-"+account, "lead:\n  agent: [claude@"+account+"]\n")
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	// refuse runs one command on its own app and ends it the way the process does, returning the
+	// exit code, the refusal as one line, and everything the person saw.
+	refuse := func(t *testing.T, run func(*app, []string) (int, error), args []string) (exit int, refusal, stderr string) {
+		a := &app{cfg: cfg.Clone(), rt: recordingRuntime(t, recorder), rtSet: true,
+			acpSupervise: func([]string, *acpctl.Control) (int, error) {
+				t.Error("an editor session started with no account to run")
+				return 0, nil
+			}}
+		stderr = captureStderr(t, func() {
+			code, err := run(a, args)
+			switch usage := asUsage(err); {
+			case usage != nil:
+				refusal = usage.Error()
+			case err != nil:
+				refusal = err.Error()
+			}
+			exit = reportExit(code, err)
+		})
+		return exit, refusal, stderr
+	}
+	const (
+		anyAccount = "no signed-in account for claude. Run: coop login claude[@<account>]"
+		ghost      = "credential claude@ghost is not signed in — run: coop login claude@ghost"
+	)
+	cases := []struct {
+		name    string
+		run     func(*app, []string) (int, error)
+		args    func(account string) []string
+		advice  string // the refusal once the folder lists and the account is missing, unchanged
+		missing int    // and its exit code, unchanged too
+	}{
+		{"loop", (*app).cmdLoop, func(string) []string { return []string{"claude"} }, anyAccount, 1},
+		{"loop-account", (*app).cmdLoop, func(account string) []string { return []string{"claude@" + account} }, ghost, 1},
+		{"loop-preset", (*app).cmdLoop, func(account string) []string { return []string{"lead-" + account} }, ghost, 1},
+		{"acp-peer", (*app).cmdACP, func(string) []string { return []string{"claude", "--peer", "codex"} }, anyAccount, 2},
+		{"acp-peer-preset", (*app).cmdACP, func(account string) []string { return []string{"lead-" + account, "--peer", "codex"} }, ghost, 2},
+	}
+	want := "Could not list every Claude account — open " + credentials + ": permission denied"
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exit, refusal, stderr := refuse(t, tc.run, tc.args("solo"))
+			if exit != 1 || refusal != want || strings.Contains(stderr, "coop login") {
+				t.Fatalf("refusal = (exit %d, %q), want (1, %q) and no sign-in:\n%s", exit, refusal, want, stderr)
+			}
+		})
+	}
+	if err := os.Chmod(credentials, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+"-missing", func(t *testing.T) {
+			if exit, refusal, _ := refuse(t, tc.run, tc.args("ghost")); exit != tc.missing || refusal != tc.advice {
+				t.Fatalf("missing account = (exit %d, %q), want (%d, %q)", exit, refusal, tc.missing, tc.advice)
+			}
+		})
+	}
+	if pathExists(recorder) {
+		t.Fatal("a refused run reached the container runtime")
 	}
 }
 

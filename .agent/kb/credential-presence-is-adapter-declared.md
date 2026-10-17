@@ -2,8 +2,8 @@
 name: credential-presence-is-adapter-declared
 description: adapters own credential presence, selected env authority, and inspectable stored readiness
 subsystem: credentials
-sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/cli/target.go, internal/cli/cli.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-10-16
+sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/cli/target.go, internal/cli/cli.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/loop/review.go, internal/testutil/liveprovider/credentials.go]
+updated: 2026-10-17
 ---
 
 Adapters own six credential facts: `AuthMarker` names their login file and canonical primary env
@@ -62,13 +62,22 @@ every <Agent> account" with the folder and reason, no sign-in advice, exit 1. `r
 command's own positive code over the error's, so these paths return `refusalExit(err)`
 (internal/cli/cli.go), never a flat 2; it looks through wrapping, which a preset's first rung adds.
 Not through `requireProfile`: rotation ladders check their rungs' accounts in `expandLadder` with
-`ProfileCredentialReady` (`coop loop`, preset ladders in fork loops, the lead expansion behind
-`coop acp --peer` and filtered editor sessions) and still advise `coop login` when a listing
-fails; `coop usage provider@account` uses its own listing ([[usage-history-cache]]).
+`ProfileCredentialReady` (`coop loop` and its review stages, preset ladders in fork loops, the lead
+expansion behind `coop acp --peer` and filtered editor sessions). A ladder that runs rotates over
+the accounts that could be listed. One that resolves nothing names the first of its providers whose
+listing failed with `accountsUnlistedErr`, ahead of any sign-in repair, since the account it needs
+may be in what could not be read. Accepted trade-off: when a pinned login needs re-login and a
+folder cannot be listed, the folder message comes first and the re-login only once the folder lists
+again. The advice is late, never wrong. Every command that prints the refusal exits 1. `coop loop`,
+a fork loop's own rotation (`runForkLoop`, fork_cmd.go) and the loop's review stages
+(`Control.Run`, internal/loop/loop.go) return -1, which takes the error's code;
+`coop acp --peer` and a fork loop's peer check return `refusalExit`. Filtered editor sessions
+(acp_network.go) and the ACP control only use the error as a signal and fall back, so they print
+nothing from it. `coop usage provider@account` uses its own listing ([[usage-history-cache]]).
 `coop credentials` lists what it could read and ends that agent's block with
 `⚠ Could not list every <Agent> account` and the first cause; such a block offers no sign-in when
-empty and never calls the default missing. Best-effort callers (completion, rotation, hints) ignore
-listing errors.
+empty and never calls the default missing. Completion and hints ignore listing errors, and rotation
+ignores them while its ladder still has an account to run.
 
 The host privacy boundary is deliberately above provider-owned state. Configuration load and box
 home preparation require the shared credential root, provider root, `profiles/`, and selected
@@ -77,6 +86,15 @@ and the default MCP file are `0600`. Coop does not recursively chmod provider tr
 the private ancestors protect those descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-10-17 - the loop's review stages now return -1 like the work rotation (`rotationRefusal` is
+  gone); recorded `runForkLoop`'s -1, the late re-login trade-off and that rotation ignores a failed
+  listing only while its ladder can run; added acp_network.go, fork_cmd.go and loop.go to sources;
+  verified against internal/cli/rotation.go, fork_cmd.go, acp_network.go, internal/loop/loop.go,
+  review.go and internal/acpctl/control.go
+- 2026-10-16 - ladder expansion now names a failed listing instead of advising `coop login` when
+  nothing in the ladder can run, and the loop, its review stages, `coop acp --peer` and a fork
+  loop's peer check exit 1 for it; verified against internal/cli/rotation.go, acp_cmd.go,
+  acp_network.go, fork_cmd.go and internal/loop/loop.go and review.go
 - 2026-10-16 - added account checks: what goes through `requireProfile` and what does not, the
   failed-listing refusal (`accountsUnlistedErr`, exit 1 through `refusalExit`) and the
   `coop credentials` warning; verified against internal/cli/profiles.go, cli.go, rotation.go,
