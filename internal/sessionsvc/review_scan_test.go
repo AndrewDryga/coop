@@ -106,6 +106,24 @@ func TestReviewScanNamesAnUnreadableCoopignore(t *testing.T) {
 	}
 }
 
+// The review names a change to a .coopignore, which decides what every later box is shown, whether
+// it drops a rule or adds one.
+func TestReviewScanNamesAChangedCoopignore(t *testing.T) {
+	for _, rules := range []string{"notes/\n", "secrets/\nnotes/\nmore/\n"} {
+		repo, git := gitrepo.New(t)
+		sessionWorkspaceWrite(t, filepath.Join(repo, ".coopignore"), "secrets/\nnotes/\n")
+		git("add", ".")
+		git("commit", "-qm", "base")
+		parent := gitOut(repo, "rev-parse", "HEAD")
+		sessionWorkspaceWrite(t, filepath.Join(repo, ".coopignore"), rules)
+		git("commit", "-qam", "candidate")
+		findings, err := scanReviewCandidate(context.Background(), repo, parent, gitOut(repo, "rev-parse", "HEAD"))
+		if want := ".coopignore — the change edits a .coopignore, which decides what boxes are shown"; err != nil || !slices.Contains(findings, want) {
+			t.Fatalf("findings = %q, %v; want %q", findings, err, want)
+		}
+	}
+}
+
 // A file the readable rules hide is still named when another .coopignore above it cannot be read:
 // a rule in the root .coopignore, its own name or a folder's name above it. So the review never
 // reports only the .coopignore for a candidate that adds a db.prod.json or a .env; the file the

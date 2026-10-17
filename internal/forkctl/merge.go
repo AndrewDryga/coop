@@ -53,7 +53,21 @@ func PolicyScan(repo, ref string) ([]string, error) {
 	var warns []string
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
-		if len(f) < 2 || f[0] == "D" { // deletions are never a concern
+		if len(f) < 2 {
+			continue
+		}
+		// A .coopignore decides what every later box is shown, so a fork that adds, edits, removes
+		// or renames one waits for --force. One that is not a regular file is named below instead.
+		changed := ""
+		for _, p := range f[1:] {
+			if filepath.Base(p) == ".coopignore" {
+				changed = p
+			}
+		}
+		if changed != "" && (f[0] == "D" || !notRegularCoopignore(repo, ref, f[len(f)-1])) {
+			warns = append(warns, changed+" — the fork changes a .coopignore, which decides what boxes are shown")
+		}
+		if f[0] == "D" { // deleting any other file is never a concern
 			continue
 		}
 		path := f[len(f)-1]

@@ -41,6 +41,12 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **A fork that changes a `.coopignore` needs `--force` to merge.** A `.coopignore` decides what
+  every later box is shown, and a fork could edit one to drop a rule and merge without a word,
+  after which the next boxes saw the files that rule hid. `coop fork merge` now names any
+  `.coopignore` a fork adds, edits, removes or renames and waits for `--force`, and the session
+  review lists the same.
+
 - **`coop fork merge` no longer merges a fork it could not check.** Before merging, Coop checks
   the fork's changes for secrets, hooks and other risky files, and a git error while reading the
   fork read as "nothing found", so the merge went ahead. A fork's agent can cause that error, for

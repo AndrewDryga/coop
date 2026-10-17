@@ -69,6 +69,10 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 		}
 		path := strings.TrimSuffix(string(record), "\x00")
 		attributesChanged = attributesChanged || filepath.Base(path) == ".gitattributes"
+		// A .coopignore decides what every later box is shown. A link is named below as unreadable.
+		if filepath.Base(path) == ".coopignore" && fields[1] != "120000" {
+			add(path + " — the change edits a .coopignore, which decides what boxes are shown")
+		}
 		if fields[4] == "D" {
 			continue
 		}

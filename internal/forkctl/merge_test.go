@@ -1236,6 +1236,49 @@ func TestForkMergeRefusesAForkItsPolicyScanCannotRead(t *testing.T) {
 	}
 }
 
+// A .coopignore decides what every later box is shown, so a fork that changes one in any way waits
+// for --force, with the file named: an edit that drops a rule, one that adds a rule, a removal and
+// a rename alike.
+func TestPolicyScanFlagsAnyChangeToACoopignore(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(t *testing.T, repo string)
+		want   string
+	}{
+		{"an edit that drops a rule", func(t *testing.T, repo string) {
+			writeTaskFile(t, filepath.Join(repo, ".coopignore"), "notes/\n")
+		}, ".coopignore"},
+		{"an edit that adds a rule", func(t *testing.T, repo string) {
+			writeTaskFile(t, filepath.Join(repo, ".coopignore"), "secrets/\nnotes/\nmore/\n")
+		}, ".coopignore"},
+		{"a nested one added", func(t *testing.T, repo string) {
+			writeTaskFile(t, filepath.Join(repo, "web", ".coopignore"), "build/\n")
+		}, "web/.coopignore"},
+		{"a removal", func(t *testing.T, repo string) {
+			git(t, repo, "rm", "-q", ".coopignore")
+		}, ".coopignore"},
+		{"a rename", func(t *testing.T, repo string) {
+			git(t, repo, "mv", ".coopignore", "rules.txt")
+		}, ".coopignore"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initRepo(t)
+			writeTaskFile(t, filepath.Join(repo, ".coopignore"), "secrets/\nnotes/\n")
+			git(t, repo, "add", "-A")
+			git(t, repo, "commit", "-qm", "rules")
+			git(t, repo, "checkout", "-q", "-b", "candidate")
+			tc.change(t, repo)
+			git(t, repo, "add", "-A")
+			git(t, repo, "commit", "-qm", "change the rules")
+			git(t, repo, "checkout", "-q", "main")
+			want := tc.want + " — the fork changes a .coopignore, which decides what boxes are shown"
+			if got := mustPolicyScan(t, repo, "candidate"); !slices.Contains(got, want) {
+				t.Fatalf("PolicyScan = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestForkMergeYesPrintsOneBlankLineBetweenSections(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
