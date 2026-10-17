@@ -22,21 +22,24 @@ copy budgets bound untrusted trees.
 
 Temporary copies use canonical paths outside the repository, credential configuration, exact ACP
 transcript roots and companion mounts. Where they are made depends on the run: an ordinary run uses
-the stable protected BoxHome runfiles parent, and a filtered run uses its execution's artifact directory
-(`composedCopyDir` with `compositionArtifactOps.parent`), because a filtered launch accepts only
-mounts that are canonical descendants of that directory and exact-owned cleanup removes it. The
-exposed-roots check runs on both branches. Inode ancestry handles case aliases; exact transcript roots
+the stable protected BoxHome runfiles parent, and a filtered run uses its execution's artifact directory,
+because a filtered launch accepts only mounts that are canonical descendants of that directory and
+exact-owned cleanup removes it. Either way the copy goes through `composedCopyDir` into
+`compositionArtifactOps.parent`, every copy gets the exposed-roots check, and an empty parent is
+refused (`privateTempDirUnder`), never read as TMPDIR or the working directory. Inode ancestry handles case aliases; exact transcript roots
 also cover supported external ACP links. Service callers pass the same configuration roots through
 snapshot and override creation; daemon teardown also excludes its projected session state.
 Cleanup retains a separate local list: returning nil named result slices
 before deferred cleanup would otherwise forget copies prepared before a later artifact failed.
 
-`runWithCompositionArtifacts` prepares a parent before any copy, so only tests pass an empty one,
-and `composedCopyDir` then falls back to TMPDIR. The temp sweep never removes a `coop-skills-*` or
-`coop-home-*` folder there, because neither prefix is in `tempPrefixes`. Eleven of the fourteen
-test callers call `pinTemp`, which gives each its own TMPDIR and fails one whose copy outlives its
-cleanup. The other three point TMPDIR at the folder under test themselves: the repository
-(`TestRepositoryCopiesRequirePrivateDestinations`), an exposed root
+`runWithCompositionArtifacts` prepares a parent before any copy, and `composedCopyDir` refuses an
+empty one. It used to fall back to TMPDIR, where the temp sweep never removes a `coop-skills-*` or
+`coop-home-*` folder, because neither prefix is in `tempPrefixes`. The refusal is the guard, not
+just the missing fallback: `privateTempDirUnder("")` would allocate in the working directory. Eleven
+of the fourteen test callers pass `copyParent(t)`, a fresh folder that fails the test if anything is
+still in it after the test's own cleanup — the only check that catches a skills copy the helper
+leaves behind on refusal or does not report. The other three pass their own: an empty parent and
+the repository (`TestRepositoryCopiesRequirePrivateDestinations`), an exposed root
 (`TestPrivateCopiesAndComposeRejectExposedRoots`) or a folder checked for leftovers
 (`TestRepositoryCopiesCleanEarlierFallbackOnLaterFailure`).
 
@@ -67,6 +70,11 @@ each temporary source after Run. Making those copies read-only changes native CL
 it is not an assertion repair. Instruction and MCP mounts have separate read-only contracts.
 
 ## Changelog
+- 2026-10-17 — the TMPDIR fallback is gone: `composedCopyDir` refuses an empty parent, every test
+  caller passes one, and `pinTemp` is deleted. Mutation-checked through `go test -overlay`:
+  pinTemp's leftover check alone caught a refused skills copy left behind and an unreported copy,
+  so it moved to the parent (`copyParent`); restoring the fallback or deleting the refusal fails
+  `TestRepositoryCopiesRequirePrivateDestinations`.
 - 2026-10-17 — the empty parent is test-only and falls back to TMPDIR, where the sweep removes no
   `coop-skills-*` or `coop-home-*` folder; 11 of the 14 test callers now pin TMPDIR with `pinTemp`
   and the other three set it themselves. Before 5bd92778 one dropped its copy list and left 168

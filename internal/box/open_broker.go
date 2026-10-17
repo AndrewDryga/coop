@@ -267,9 +267,6 @@ func (b *openBroker) start(ctx context.Context, rt runtime.Runtime, repo, artifa
 	if err != nil {
 		return err
 	}
-	if artifactParent == "" {
-		return errors.New("prepare the MCP credential broker: private run artifact directory is unavailable")
-	}
 	if b.dir, err = privateTempDirUnder(artifactParent, repo, "coop-broker-", exposed...); err != nil {
 		return fmt.Errorf("prepare the MCP credential broker: %w", err)
 	}

@@ -3974,17 +3974,17 @@ func TestApplyProjectPolicy(t *testing.T) {
 
 func TestSynthSkillsMounts(t *testing.T) {
 	pinHome(t)
-	pinTemp(t)
+	copies := copyParent(t)
 	repo := t.TempDir()
 	mkdir := func(p string) {
 		if err := os.MkdirAll(filepath.Join(repo, p), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Each synthesized mount is a copy the test must remove, or pinTemp fails it.
+	// Each synthesized mount is a copy the test must remove, or copyParent fails it.
 	synth := func() ([]extraMount, error) {
 		t.Helper()
-		mounts, temps, err := synthSkillsMounts(repo, "/home/node", "", []string{"claude", "codex", "gemini", "grok"})
+		mounts, temps, err := synthSkillsMounts(repo, "/home/node", copies, []string{"claude", "codex", "gemini", "grok"})
 		for _, temp := range temps {
 			t.Cleanup(func() { _ = os.RemoveAll(temp) })
 		}
@@ -4025,7 +4025,7 @@ func TestSynthSkillsMounts(t *testing.T) {
 
 func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
 	pinHome(t)
-	pinTemp(t)
+	copies := copyParent(t)
 	repo := t.TempDir()
 	writeSkill := func(root, name string) {
 		t.Helper()
@@ -4056,7 +4056,7 @@ func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
 	}
 
 	writeSkill(".claude/skills", "claude-only")
-	mounts, temps, err := synthSkillsMounts(repo, "/home/node", "", []string{"claude", "codex", "gemini"})
+	mounts, temps, err := synthSkillsMounts(repo, "/home/node", copies, []string{"claude", "codex", "gemini"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4075,7 +4075,7 @@ func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
 	removeTemps(temps)
 
 	writeSkill(".agent/skills", "agent-first")
-	mounts, temps, err = synthSkillsMounts(repo, "/home/node", "", []string{"codex"})
+	mounts, temps, err = synthSkillsMounts(repo, "/home/node", copies, []string{"codex"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4101,14 +4101,14 @@ func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
 	if err := os.Symlink("../.project-skills", filepath.Join(symlinkRepo, ".claude", "skills")); err != nil {
 		t.Fatal(err)
 	}
-	if mounts, _, err := synthSkillsMounts(symlinkRepo, "/home/node", "", []string{"codex"}); err != nil || mounts != nil {
+	if mounts, _, err := synthSkillsMounts(symlinkRepo, "/home/node", copies, []string{"codex"}); err != nil || mounts != nil {
 		t.Errorf("symlinked .claude/skills should not become the shared source: %v", mounts)
 	}
 }
 
 func TestSynthHomeFallbackMounts(t *testing.T) {
 	pinHome(t)
-	pinTemp(t)
+	copies := copyParent(t)
 	const home = "/home/node"
 	const settingsBody = `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"$CLAUDE_CONFIG_DIR/hooks/commit-gate.sh"}]}]}}`
 	const hookBody = "#!/bin/sh\nexit 0\n"
@@ -4149,13 +4149,13 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 	t.Run("non-Claude scope skips synthesis", func(t *testing.T) {
 		repo := t.TempDir()
 		writeSource(t, repo)
-		if got, dirs, err := synthHomeFallbackMounts(repo, home, "", []string{"codex", "gemini"}); err != nil || got != nil || dirs != nil {
+		if got, dirs, err := synthHomeFallbackMounts(repo, home, copies, []string{"codex", "gemini"}); err != nil || got != nil || dirs != nil {
 			t.Fatalf("non-Claude run synthesized mounts=%v dirs=%v", got, dirs)
 		}
 	})
 
 	t.Run("absent source skips synthesis", func(t *testing.T) {
-		if got, dirs, err := synthHomeFallbackMounts(t.TempDir(), home, "", []string{"claude"}); err != nil || got != nil || dirs != nil {
+		if got, dirs, err := synthHomeFallbackMounts(t.TempDir(), home, copies, []string{"claude"}); err != nil || got != nil || dirs != nil {
 			t.Fatalf("absent source synthesized mounts=%v dirs=%v", got, dirs)
 		}
 	})
@@ -4163,7 +4163,7 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 	t.Run("source artifacts synthesize isolated user-level copies", func(t *testing.T) {
 		repo := t.TempDir()
 		writeSource(t, repo)
-		mounts, dirs, err := synthHomeFallbackMounts(repo, home, "", []string{"claude"})
+		mounts, dirs, err := synthHomeFallbackMounts(repo, home, copies, []string{"claude"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4214,14 +4214,14 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 		writeSource(t, repo)
 		write(t, repo, ".claude/settings.json", `{"project":true}`, 0o644)
 		write(t, repo, ".claude/hooks/commit-gate.sh", hookBody, 0o755)
-		if got, dirs, err := synthHomeFallbackMounts(repo, home, "", []string{"claude"}); err != nil || got != nil || dirs != nil {
+		if got, dirs, err := synthHomeFallbackMounts(repo, home, copies, []string{"claude"}); err != nil || got != nil || dirs != nil {
 			t.Fatalf("project artifacts should suppress synthesis, got mounts=%v dirs=%v", got, dirs)
 		}
 
 		settingsOnly := t.TempDir()
 		writeSource(t, settingsOnly)
 		write(t, settingsOnly, ".claude/settings.json", `{"project":true}`, 0o644)
-		got, dirs, err := synthHomeFallbackMounts(settingsOnly, home, "", []string{"claude"})
+		got, dirs, err := synthHomeFallbackMounts(settingsOnly, home, copies, []string{"claude"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4237,7 +4237,7 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 		hooksOnly := t.TempDir()
 		writeSource(t, hooksOnly)
 		write(t, hooksOnly, ".claude/hooks/commit-gate.sh", hookBody, 0o755)
-		got, dirs, err = synthHomeFallbackMounts(hooksOnly, home, "", []string{"claude"})
+		got, dirs, err = synthHomeFallbackMounts(hooksOnly, home, copies, []string{"claude"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4254,7 +4254,7 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 	t.Run("each source artifact can synthesize alone", func(t *testing.T) {
 		settingsOnly := t.TempDir()
 		write(t, settingsOnly, ".agent/claude/settings.json", settingsBody, 0o644)
-		got, dirs, err := synthHomeFallbackMounts(settingsOnly, home, "", []string{"claude"})
+		got, dirs, err := synthHomeFallbackMounts(settingsOnly, home, copies, []string{"claude"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4269,7 +4269,7 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 
 		hooksOnly := t.TempDir()
 		write(t, hooksOnly, ".agent/claude/hooks/commit-gate.sh", hookBody, 0o755)
-		got, dirs, err = synthHomeFallbackMounts(hooksOnly, home, "", []string{"claude"})
+		got, dirs, err = synthHomeFallbackMounts(hooksOnly, home, copies, []string{"claude"})
 		if err != nil {
 			t.Fatal(err)
 		}

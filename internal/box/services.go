@@ -323,6 +323,11 @@ func privateWorkspaceTempDir(workspace, pattern string, exposedRoots ...string) 
 // other exposed root. The check is the point: a copy the box mounts must not also be reachable, and
 // rewritable, through a mount the agent already holds.
 func privateTempDirUnder(base, workspace, pattern string, exposedRoots ...string) (string, error) {
+	// An empty base would resolve to the working directory; every caller that passes a run's
+	// artifact parent wants a refusal instead, never a copy beside wherever coop was started.
+	if base == "" {
+		return "", errors.New("private run artifact directory is unavailable")
+	}
 	absParent, err := filepath.Abs(base)
 	if err != nil {
 		return "", err

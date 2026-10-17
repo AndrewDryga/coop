@@ -55,7 +55,8 @@ fixture builds on Linux keep the developer's go settings.
 **TMPDIR stays the developer's.** Box tests bind unix sockets under TMPDIR, within Darwin's 104-byte
 socket path limit: the full path of `coop-ipc-*/control.sock` is 81 bytes under the real 49-byte
 TMPDIR. A TMPDIR inside the state folder adds 31, and the bind fails with `invalid argument`. So a
-test that writes into TMPDIR pins its own instead; box's source-copy tests call `pinTemp`.
+test that writes into TMPDIR pins its own instead. Box's source copies no longer fall back to
+TMPDIR: the copy helpers refuse an empty parent, and their tests pass `copyParent(t)`, a test folder.
 
 **Live suites opt back in.** The providerlivee2e parents and the acpe2e `TestMain` drive the
 signed-in providers on purpose, so they set `teststate.LiveEnv` and point `XDG_CONFIG_HOME` at
@@ -97,6 +98,8 @@ the two real roots, then read the denials with `/usr/bin/log show --predicate 's
 Nothing reaches the real folders, and every attempted write is named with its process.
 
 ## Changelog
+- 2026-10-17 — box's source-copy helpers lost their TMPDIR fallback, so their tests no longer pin
+  TMPDIR: they pass `copyParent(t)`, which keeps pinTemp's leftover check on that folder.
 - 2026-10-17 — the old-layout `.service-launch.lock` skip is gone after the owner-approved cleanup;
   the still-growing `service-locks/` folder is queued.
 - 2026-10-17 — why Isolate leaves TMPDIR alone: with TMPDIR as long as one inside the state folder,

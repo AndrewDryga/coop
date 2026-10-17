@@ -372,18 +372,16 @@ func snapshotPolicyMounts(repo string, mounts []Mount, artifacts compositionArti
 	return snapshots, nil
 }
 
-// composedCopyDir allocates a writable copy directory the box will mount. Every other generated mount
-// already lands in compositionArtifactOps.parent — a filtered run's private artifact directory, where
-// the launch proves each mount is an owned descendant and exact-owned cleanup reaches it. The skills
-// and home-fallback copies were the exception: they went to the system temp dir, so a filtered box
-// refused ANY repository with shared skills ("generated network workload mount is not an owned
-// descendant"), for every agent. Only tests pass an empty parent; it falls back to TMPDIR.
+// composedCopyDir allocates a writable copy directory the box will mount. Every generated mount lands
+// in compositionArtifactOps.parent, the run's private artifact directory: a filtered run's is its
+// execution's, where the launch proves each mount is an owned descendant and exact-owned cleanup
+// reaches it. The skills and home-fallback copies were the exception: they went to the system temp
+// dir, so a filtered box refused ANY repository with shared skills ("generated network workload
+// mount is not an owned descendant"), for every agent, and a copy a test lost stayed in TMPDIR, where
+// no sweep removes it. An empty parent is refused (privateTempDirUnder), never read as TMPDIR.
 func composedCopyDir(repo, artifactParent, pattern string, exposedRoots ...string) (string, error) {
-	if artifactParent == "" {
-		return privateWorkspaceTempDir(repo, pattern, exposedRoots...)
-	}
-	// The artifact parent is already proven outside every mount when the network store opens; the
-	// same check runs here anyway, so a future caller cannot hand this an exposed parent.
+	// The artifact parent is already proven outside every mount when it is prepared; the same check
+	// runs here anyway, so a future caller cannot hand this an exposed parent.
 	return privateTempDirUnder(artifactParent, repo, pattern, exposedRoots...)
 }
 

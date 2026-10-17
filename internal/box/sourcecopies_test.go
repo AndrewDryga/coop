@@ -16,7 +16,7 @@ import (
 
 func TestRepositoryCopiesContainSources(t *testing.T) {
 	pinHome(t)
-	pinTemp(t)
+	copies := copyParent(t)
 	for _, artifact := range []struct {
 		name string
 		path string
@@ -70,9 +70,9 @@ func TestRepositoryCopiesContainSources(t *testing.T) {
 				var dirs []string
 				var err error
 				if artifact.name == "skills" {
-					mounts, dirs, err = synthSkillsMounts(repo, "/home/node", "", []string{"codex"})
+					mounts, dirs, err = synthSkillsMounts(repo, "/home/node", copies, []string{"codex"})
 				} else {
-					mounts, dirs, err = synthHomeFallbackMounts(repo, "/home/node", "", []string{"claude"})
+					mounts, dirs, err = synthHomeFallbackMounts(repo, "/home/node", copies, []string{"claude"})
 				}
 				for _, dir := range dirs {
 					t.Cleanup(func() { _ = os.RemoveAll(dir) })
@@ -109,27 +109,27 @@ func writeCopyFixture(t *testing.T, path, content string) {
 }
 
 func TestRepositoryCopiesRejectAncestorEscape(t *testing.T) {
-	pinTemp(t)
+	copies := copyParent(t)
 	repo, outside := t.TempDir(), t.TempDir()
 	writeCopyFixture(t, filepath.Join(outside, "skills", "SKILL.md"), "outside-canary")
 	writeCopyFixture(t, filepath.Join(outside, "claude", "settings.json"), "outside-canary")
 	if err := os.Symlink(outside, filepath.Join(repo, ".agent")); err != nil {
 		t.Fatal(err)
 	}
-	if mounts, _, err := synthSkillsMounts(repo, "/home/node", "", []string{"codex"}); err == nil || len(mounts) != 0 {
+	if mounts, _, err := synthSkillsMounts(repo, "/home/node", copies, []string{"codex"}); err == nil || len(mounts) != 0 {
 		t.Fatalf("ancestor skills escape: %v, %v", mounts, err)
 	}
-	if mounts, _, err := synthHomeFallbackMounts(repo, "/home/node", "", []string{"claude"}); err == nil || len(mounts) != 0 {
+	if mounts, _, err := synthHomeFallbackMounts(repo, "/home/node", copies, []string{"claude"}); err == nil || len(mounts) != 0 {
 		t.Fatalf("ancestor fallback escape: %v, %v", mounts, err)
 	}
-	if mounts, _, err := synthHomeFallbackMounts(repo, "/home/node", "", []string{"codex"}); err != nil || len(mounts) != 0 {
+	if mounts, _, err := synthHomeFallbackMounts(repo, "/home/node", copies, []string{"codex"}); err != nil || len(mounts) != 0 {
 		t.Fatalf("inactive provider became a prerequisite: %v, %v", mounts, err)
 	}
 }
 
 func TestRepositoryCopiesValidateRelocatedLinks(t *testing.T) {
 	pinHome(t)
-	pinTemp(t)
+	copies := copyParent(t)
 	for _, kind := range []string{"relative", "absolute", "outside", "dangling", "cyclic"} {
 		t.Run(kind, func(t *testing.T) {
 			repo := t.TempDir()
@@ -154,7 +154,7 @@ func TestRepositoryCopiesValidateRelocatedLinks(t *testing.T) {
 			if err := os.Symlink(target, filepath.Join(source, "alias")); err != nil {
 				t.Fatal(err)
 			}
-			mounts, dirs, err := synthSkillsMounts(repo, "/home/node", "", []string{"codex", "gemini"})
+			mounts, dirs, err := synthSkillsMounts(repo, "/home/node", copies, []string{"codex", "gemini"})
 			for _, dir := range dirs {
 				t.Cleanup(func() { _ = os.RemoveAll(dir) })
 			}
@@ -182,7 +182,7 @@ func TestRepositoryCopiesValidateRelocatedLinks(t *testing.T) {
 
 func TestRepositoryCopiesKeepProtectedDescendantsOutOfEverySyntheticHome(t *testing.T) {
 	pinHome(t)
-	pinTemp(t)
+	copies := copyParent(t)
 	repo := t.TempDir()
 	skills := filepath.Join(repo, ".agent", "skills")
 	writeCopyFixture(t, filepath.Join(skills, "SKILL.md"), "public skill")
@@ -190,7 +190,7 @@ func TestRepositoryCopiesKeepProtectedDescendantsOutOfEverySyntheticHome(t *test
 	writeCopyFixture(t, filepath.Join(skills, "private", ".coopignore"), "token.txt\n")
 	writeCopyFixture(t, filepath.Join(skills, "private", "token.txt"), "private token")
 
-	mounts, dirs, err := synthSkillsMounts(repo, "/home/node", "", []string{"codex", "gemini"})
+	mounts, dirs, err := synthSkillsMounts(repo, "/home/node", copies, []string{"codex", "gemini"})
 	for _, dir := range dirs {
 		t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	}
@@ -211,7 +211,7 @@ func TestRepositoryCopiesKeepProtectedDescendantsOutOfEverySyntheticHome(t *test
 
 func TestRepositoryCopiesApplyAliasAndTargetSecretRules(t *testing.T) {
 	pinHome(t)
-	pinTemp(t)
+	copies := copyParent(t)
 	for _, policy := range []struct {
 		name, location, rule string
 	}{
@@ -229,7 +229,7 @@ func TestRepositoryCopiesApplyAliasAndTargetSecretRules(t *testing.T) {
 			if err := os.Symlink("../source", filepath.Join(repo, ".agent", "skills")); err != nil {
 				t.Fatal(err)
 			}
-			mounts, dirs, err := synthSkillsMounts(repo, "/home/node", "", []string{"codex"})
+			mounts, dirs, err := synthSkillsMounts(repo, "/home/node", copies, []string{"codex"})
 			for _, dir := range dirs {
 				t.Cleanup(func() { _ = os.RemoveAll(dir) })
 			}
@@ -248,7 +248,7 @@ func TestRepositoryCopiesApplyAliasAndTargetSecretRules(t *testing.T) {
 
 func TestRepositoryCopiesBoundAggregatePolicyInput(t *testing.T) {
 	pinHome(t)
-	pinTemp(t)
+	copies := copyParent(t)
 	repo := t.TempDir()
 	skills := filepath.Join(repo, ".agent", "skills")
 	writeCopyFixture(t, filepath.Join(skills, "SKILL.md"), "public")
@@ -256,7 +256,7 @@ func TestRepositoryCopiesBoundAggregatePolicyInput(t *testing.T) {
 		policy := filepath.Join(skills, fmt.Sprintf("dir-%02d", i), ".coopignore")
 		writeCopyFixture(t, policy, strings.Repeat("#", 1<<20-1))
 	}
-	if mounts, dirs, err := synthSkillsMounts(repo, "/home/node", "", []string{"codex"}); err == nil ||
+	if mounts, dirs, err := synthSkillsMounts(repo, "/home/node", copies, []string{"codex"}); err == nil ||
 		!strings.Contains(err.Error(), "policy exceeds") || len(mounts) != 0 || len(dirs) != 0 {
 		t.Fatalf("oversized policy tree = %v, %v, %v", mounts, dirs, err)
 	}
@@ -373,26 +373,35 @@ func TestRepositoryCopiesRequirePrivateDestinations(t *testing.T) {
 	repo := t.TempDir()
 	writeCopyFixture(t, filepath.Join(repo, ".agent", "skills", "SKILL.md"), "inside")
 	writeCopyFixture(t, filepath.Join(repo, ".agent", "claude", "settings.json"), "{}")
-	t.Setenv("TMPDIR", repo)
-	if mounts, _, err := synthSkillsMounts(repo, "/home/node", "", []string{"codex"}); err == nil || len(mounts) != 0 {
-		t.Fatalf("writable skills copy = %v, %v", mounts, err)
-	}
-	if mounts, _, err := synthHomeFallbackMounts(repo, "/home/node", "", []string{"claude"}); err == nil || len(mounts) != 0 {
-		t.Fatalf("writable settings copy = %v, %v", mounts, err)
+	for _, refused := range []struct{ parent, reason string }{
+		{"", "artifact directory is unavailable"}, // never TMPDIR, where no sweep removes a copy
+		{repo, "outside agent-exposed"},           // the box could rewrite the copy through its mount
+	} {
+		// A regression would make a copy somewhere; remove it, so the test that guards against the
+		// leak does not leak it.
+		mounts, dirs, err := synthSkillsMounts(repo, "/home/node", refused.parent, []string{"codex"})
+		removeCopies(t, dirs)
+		if err == nil || !strings.Contains(err.Error(), refused.reason) || len(mounts) != 0 {
+			t.Fatalf("skills copy under %q = %v, %v", refused.parent, mounts, err)
+		}
+		mounts, dirs, err = synthHomeFallbackMounts(repo, "/home/node", refused.parent, []string{"claude"})
+		removeCopies(t, dirs)
+		if err == nil || !strings.Contains(err.Error(), refused.reason) || len(mounts) != 0 {
+			t.Fatalf("settings copy under %q = %v, %v", refused.parent, mounts, err)
+		}
 	}
 }
 
 func TestRepositoryCopiesCleanEarlierFallbackOnLaterFailure(t *testing.T) {
-	repo, temporary, outside := t.TempDir(), t.TempDir(), t.TempDir()
+	repo, copies, outside := t.TempDir(), t.TempDir(), t.TempDir()
 	writeCopyFixture(t, filepath.Join(repo, ".agent", "claude", "settings.json"), "{}")
 	if err := os.Symlink(outside, filepath.Join(repo, ".agent", "claude", "hooks")); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TMPDIR", temporary)
-	if mounts, dirs, err := synthHomeFallbackMounts(repo, "/home/node", "", []string{"claude"}); err == nil || len(mounts) != 0 || len(dirs) != 0 {
+	if mounts, dirs, err := synthHomeFallbackMounts(repo, "/home/node", copies, []string{"claude"}); err == nil || len(mounts) != 0 || len(dirs) != 0 {
 		t.Fatalf("failed fallback exposed copies: %v %v %v", mounts, dirs, err)
 	}
-	entries, err := os.ReadDir(temporary)
+	entries, err := os.ReadDir(copies)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("earlier fallback leaked after later failure: %v, %v", entries, err)
 	}
@@ -400,7 +409,7 @@ func TestRepositoryCopiesCleanEarlierFallbackOnLaterFailure(t *testing.T) {
 
 func TestRepositoryCopiesHandleCaseAliases(t *testing.T) {
 	pinHome(t)
-	pinTemp(t)
+	copies := copyParent(t)
 	repo := filepath.Join(t.TempDir(), "repository")
 	writeCopyFixture(t, filepath.Join(repo, "source", "SKILL.md"), "inside")
 	alias := filepath.Join(filepath.Dir(repo), "REPOSITORY")
@@ -421,7 +430,7 @@ func TestRepositoryCopiesHandleCaseAliases(t *testing.T) {
 	if err := os.Symlink(filepath.Join(alias, "source", "SKILL.md"), filepath.Join(repo, "source", "alias")); err != nil {
 		t.Fatal(err)
 	}
-	mounts, dirs, err := synthSkillsMounts(repo, "/home/node", "", []string{"codex"})
+	mounts, dirs, err := synthSkillsMounts(repo, "/home/node", copies, []string{"codex"})
 	for _, dir := range dirs {
 		t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	}
@@ -449,13 +458,11 @@ func TestPrivateCopiesAndComposeRejectExposedRoots(t *testing.T) {
 			t.Fatalf("private allocation = %v", err)
 		}
 	}
-	_, _, err := synthSkillsMounts(repo, "/home/node", "", []string{"codex"}, exposed)
+	// An artifact parent that is itself exposed, or sits inside the workspace, must not receive a copy
+	// the box would also reach through its own mount.
+	_, _, err := synthSkillsMounts(repo, "/home/node", exposed, []string{"codex"}, exposed)
 	assertDenied(err)
-	_, _, err = synthHomeFallbackMounts(repo, "/home/node", "", []string{"claude"}, exposed)
-	assertDenied(err)
-	// The filtered branch keeps the same refusal: an artifact parent that is itself exposed, or sits
-	// inside the workspace, must not receive a copy the box would also reach through its own mount.
-	_, _, err = synthSkillsMounts(repo, "/home/node", exposed, []string{"codex"}, exposed)
+	_, _, err = synthHomeFallbackMounts(repo, "/home/node", exposed, []string{"claude"}, exposed)
 	assertDenied(err)
 	_, _, err = synthHomeFallbackMounts(repo, "/home/node", filepath.Join(repo, ".agent"), []string{"claude"})
 	assertDenied(err)
@@ -475,12 +482,12 @@ func TestPrivateCopiesAndComposeRejectExposedRoots(t *testing.T) {
 
 func TestRepositorySourcesAcceptRelativeRepository(t *testing.T) {
 	pinHome(t)
-	pinTemp(t)
+	copies := copyParent(t)
 	parent := t.TempDir()
 	repo := filepath.Join(parent, "repo")
 	writeCopyFixture(t, filepath.Join(repo, ".agent", "skills", "SKILL.md"), "inside")
 	t.Chdir(parent)
-	mounts, dirs, err := synthSkillsMounts("repo", "/home/node", "", []string{"codex"})
+	mounts, dirs, err := synthSkillsMounts("repo", "/home/node", copies, []string{"codex"})
 	for _, dir := range dirs {
 		t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	}
@@ -567,4 +574,14 @@ func TestPrivateCopiesIgnoreNonDirectoryInactiveACPRoot(t *testing.T) {
 		t.Fatalf("unused non-directory ACP root became a prerequisite: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+}
+
+// removeCopies removes the folders a copy helper made, once the test ends.
+func removeCopies(t *testing.T, dirs []string) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, dir := range dirs {
+			_ = os.RemoveAll(dir)
+		}
+	})
 }
