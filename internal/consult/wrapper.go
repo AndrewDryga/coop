@@ -409,10 +409,10 @@ if command -v flock >/dev/null 2>&1; then
 	lock_file_safe "$lockfile"
 	exec 8<>"$lockfile" || die "cannot open continuation lock: $lockfile"
 	lock_file_safe "$lockfile"
-	lock_fd=/dev/fd/8
-	[ -e "$lock_fd" ] || lock_fd=/proc/self/fd/8
+	# The descriptor's identity comes from fstat on it, never a /dev/fd lookup: macOS answers those
+	# with "Bad file descriptor" now and then while many processes resolve them at once.
 	lock_path_identity=$(stat -c 'gnu:%d:%i' "$lockfile" 2>/dev/null || stat -f 'bsd:%i' "$lockfile" 2>/dev/null || :)
-	lock_fd_identity=$(stat -Lc 'gnu:%d:%i' "$lock_fd" 2>/dev/null || stat -Lf 'bsd:%i' "$lock_fd" 2>/dev/null || :)
+	lock_fd_identity=$(stat -c 'gnu:%d:%i' - <&8 2>/dev/null || stat -f 'bsd:%i' <&8 2>/dev/null || :)
 	[ -n "$lock_path_identity" ] && [ "$lock_path_identity" = "$lock_fd_identity" ] || die "continuation lock changed while opening: $lockfile"
 	if [ "$lock_limit" -eq 0 ]; then
 		flock 8 || die "cannot take the continuation lock for $name"

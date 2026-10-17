@@ -92,7 +92,8 @@ the exact group and joins the command's output writer before inspecting its capt
 many processes resolve `/dev/fd` at once, as a full `go test ./...` makes them do (a CPU hog alone
 does not). stat on the descriptor itself never goes through devfs: `stat -c %i -` (GNU) or
 `stat -f %i` with no operand (BSD) reads stdin's inode, and `stat … <&8` another descriptor's.
-The consult and delegate lost-EOF stubs find their FIFO that way.
+The consult and delegate lost-EOF stubs find their FIFO that way, and the wrappers themselves
+check their lock's identity (fd 8) and the usage recorders their file (fd 9) the same way.
 
 **A persisted receipt is not a joined writer.** An asynchronous session operation records its
 failure before writing its diagnostic. Observing that terminal receipt does not make an injected
@@ -125,6 +126,8 @@ on failure and reap its resident group on every assertion path. The editor-stdin
 stable-leader assertions remain unchanged.
 
 ## Changelog
+- 2026-10-17 — the consult and delegate wrappers and both usage recorders read their descriptors
+  by fstat too (task 2026-10-17-read-the-consult-and-delegate-wrappers-descripto).
 - 2026-10-17 — the fetch-versus-lookup test moved to the worker connector with source refresh
   (0e7c5c45): it now asserts a deadline on the `ls-remote` context and none on the fetch's, so the
   deadline arithmetic and `internal/sessionsvc/source_test.go` are gone from the paragraph (sources

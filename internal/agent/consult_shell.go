@@ -23,12 +23,11 @@ func consultPeerRowShell(provider, usageFilter string) string {
 	peer_links=$(stat -c %h "$peer_file" 2>/dev/null || stat -f %l "$peer_file" 2>/dev/null || :)
 	peer_permissions=$(stat -c %a "$peer_file" 2>/dev/null || stat -f %Lp "$peer_file" 2>/dev/null || :)
 	[ "$peer_links" = 1 ] && [ "$peer_permissions" = 600 ] || { exec 9>&-; return 0; }
-	peer_fd=/dev/fd/9
-	[ -e "$peer_fd" ] || peer_fd=/proc/self/fd/9
+	# fstat on the descriptor, never a /dev/fd lookup, which macOS fails now and then under load.
 	peer_path_identity=$(stat -c 'gnu:%d:%i' "$peer_file" 2>/dev/null || stat -f 'bsd:%i' "$peer_file" 2>/dev/null || :)
-	peer_fd_identity=$(stat -Lc 'gnu:%d:%i' "$peer_fd" 2>/dev/null || stat -Lf 'bsd:%i' "$peer_fd" 2>/dev/null || :)
+	peer_fd_identity=$(stat -c 'gnu:%d:%i' - <&9 2>/dev/null || stat -f 'bsd:%i' <&9 2>/dev/null || :)
 	[ -n "$peer_path_identity" ] && [ "$peer_path_identity" = "$peer_fd_identity" ] && [ ! -L "$peer_file" ] || { exec 9>&-; return 0; }
-	peer_bytes=$(stat -Lc %s "$peer_fd" 2>/dev/null || stat -Lf %z "$peer_fd" 2>/dev/null || :)
+	peer_bytes=$(stat -c %s - <&9 2>/dev/null || stat -f %z <&9 2>/dev/null || :)
 	case "$peer_bytes" in '' | *[!0-9]*) exec 9>&-; return 0 ;; esac
 	peer_usage_limit=1048576
 	[ "$peer_bytes" -le $((peer_usage_limit - 4096)) ] || { exec 9>&-; return 0; }

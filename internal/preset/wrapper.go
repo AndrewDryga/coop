@@ -446,10 +446,9 @@ if [ ! -e "$lock" ]; then (set -C; : >"$lock") 2>/dev/null || :; fi
 lock_file_safe "$lock"
 exec 8<>"$lock" || die "cannot open delegate lock: $lock"
 lock_file_safe "$lock"
-lock_fd=/dev/fd/8
-[ -e "$lock_fd" ] || lock_fd=/proc/self/fd/8
+# fstat on the descriptor, never a /dev/fd lookup, which macOS fails now and then under load.
 lock_path_identity=$(stat -c 'gnu:%d:%i' "$lock" 2>/dev/null || stat -f 'bsd:%i' "$lock" 2>/dev/null || :)
-lock_fd_identity=$(stat -Lc 'gnu:%d:%i' "$lock_fd" 2>/dev/null || stat -Lf 'bsd:%i' "$lock_fd" 2>/dev/null || :)
+lock_fd_identity=$(stat -c 'gnu:%d:%i' - <&8 2>/dev/null || stat -f 'bsd:%i' <&8 2>/dev/null || :)
 [ -n "$lock_path_identity" ] && [ "$lock_path_identity" = "$lock_fd_identity" ] || die "delegate lock changed while opening: $lock"
 lock_limit=$(((delegate_timeout + 35) * total + 5))
 flock -w "$lock_limit" 8 || die "timed out waiting for another delegate to finish"

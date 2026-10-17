@@ -37,10 +37,9 @@ coop_role_health() {
 		 + (if $cause=="" then {} else {cause:($cause[0:300])} end)' 2>/dev/null) || return 0
 	[ "$(printf '%s' "$coop_role_row" | wc -c | tr -d '[:space:]')" -le 4096 ] || return 0
 	eval 'exec 9>>"$coop_role_file"' 2>/dev/null || return 0
-	coop_role_fd=/dev/fd/9
-	[ -e "$coop_role_fd" ] || coop_role_fd=/proc/self/fd/9
+	# fstat on the descriptor, never a /dev/fd lookup, which macOS fails now and then under load.
 	coop_role_path_identity=$(stat -c 'gnu:%d:%i' "$coop_role_file" 2>/dev/null || stat -f 'bsd:%i' "$coop_role_file" 2>/dev/null || :)
-	coop_role_fd_identity=$(stat -Lc 'gnu:%d:%i' "$coop_role_fd" 2>/dev/null || stat -Lf 'bsd:%i' "$coop_role_fd" 2>/dev/null || :)
+	coop_role_fd_identity=$(stat -c 'gnu:%d:%i' - <&9 2>/dev/null || stat -f 'bsd:%i' <&9 2>/dev/null || :)
 	[ -n "$coop_role_path_identity" ] && [ "$coop_role_path_identity" = "$coop_role_fd_identity" ] && [ ! -L "$coop_role_file" ] || { exec 9>&-; return 0; }
 	printf '%s\n' "$coop_role_row" >&9 2>/dev/null || true
 	exec 9>&-
