@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An agent's "Internal error" now says what failed.** When an agent's adapter hit an exception it
+  did not expect, it answered with the bare words "Internal error" and put the exception's own
+  message beside them. Coop kept the two words and dropped the message, so a turn that failed that
+  way was recorded as `ACP request was rejected: Internal error` and nothing else. A worker failed
+  ten turns that way in 40 minutes, and nothing on record said why. The turn's error now carries
+  the adapter's message after those words, as one bounded line.
+
 - **A large companion repository is ready in half a minute, not five.** Coop copied each companion
   repository a session reads into a new Git repository the way a clone over the network does: Git
   searched its large files for deltas again and checked every object once more. A 6 GB repository

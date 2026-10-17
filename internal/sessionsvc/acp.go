@@ -2638,15 +2638,52 @@ func sessionACPExitStatus(process *sessionACPProcess, exited bool) string {
 //
 // It is normalised to one line, stripped of control characters, and truncated: it reaches an
 // operator through a turn's error detail, and an adapter is not a trusted formatter.
+//
+// A bare "Internal error" is the one message that is not the diagnostic: the ACP SDKs answer
+// any exception a handler did not expect with it and carry the exception's message in `data`.
+// A worker failed ten turns in 40 minutes on 2026-10-17 with nothing on record but those two
+// words, so that rejection names its data as well.
 func sessionACPRejectionDetail(raw json.RawMessage) string {
 	const rejected = "ACP request was rejected"
+	const internal = "Internal error"
 	var payload struct {
-		Message string `json:"message"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return rejected
 	}
-	return sessionACPBoundedDetail(rejected, payload.Message)
+	cause := payload.Message
+	if strings.TrimSpace(cause) == internal {
+		if data := sessionACPErrorData(payload.Data); data != "" {
+			cause = internal + ": " + data
+		}
+	}
+	return sessionACPBoundedDetail(rejected, cause)
+}
+
+// sessionACPErrorData is the cause a JSON-RPC error's data names: its text, its `details` text
+// (codex-acp's shape for an exception), or else the data itself as compact JSON.
+func sessionACPErrorData(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return strings.TrimSpace(text)
+	}
+	var described struct {
+		Details string `json:"details"`
+	}
+	if json.Unmarshal(raw, &described) == nil && strings.TrimSpace(described.Details) != "" {
+		return described.Details
+	}
+	var compact bytes.Buffer
+	if len(raw) == 0 || json.Compact(&compact, raw) != nil {
+		return ""
+	}
+	switch compact.String() {
+	case "null", "{}", "[]":
+		return ""
+	}
+	return compact.String()
 }
 
 // sessionACPBoundedDetail appends a cause to a fixed prefix as one bounded, control-free line —

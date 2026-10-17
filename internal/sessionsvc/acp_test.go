@@ -1107,6 +1107,34 @@ func TestSessionACPRejectionDetailIsUsefulAndBounded(t *testing.T) {
 		"no message":    {`{"code":-32000}`, "ACP request was rejected"},
 		"not an object": {`"boom"`, "ACP request was rejected"},
 		"empty message": {`{"message":"   "}`, "ACP request was rejected"},
+		// The ACP SDKs answer an exception a handler did not expect with the bare JSON-RPC
+		// "Internal error" and put the exception's message in data: codex-acp as `details`,
+		// or parsed when the message was JSON. Ten turns on one worker failed on the bare
+		// words in 40 minutes on 2026-10-17, and nothing on record said why.
+		"an internal error names its details": {
+			`{"code":-32603,"message":"Internal error","data":{"details":"thread not found"}}`,
+			"ACP request was rejected: Internal error: thread not found",
+		},
+		"an internal error names its text": {
+			`{"code":-32603,"message":"Internal error","data":"ACP agent is not connected"}`,
+			"ACP request was rejected: Internal error: ACP agent is not connected",
+		},
+		"an internal error names its JSON cause": {
+			`{"code":-32603,"message":"Internal error","data":{"code": -32600, "message":"turn/start failed"}}`,
+			`ACP request was rejected: Internal error: {"code":-32600,"message":"turn/start failed"}`,
+		},
+		"an internal error with nothing in data": {
+			`{"code":-32603,"message":"Internal error","data":{}}`,
+			"ACP request was rejected: Internal error",
+		},
+		"an internal error with blank text": {
+			`{"code":-32603,"message":"Internal error","data":"  "}`,
+			"ACP request was rejected: Internal error",
+		},
+		"a named rejection keeps its own words": {
+			`{"code":-32000,"message":"Authentication required","data":{"details":"token"}}`,
+			"ACP request was rejected: Authentication required",
+		},
 	} {
 		if got := sessionACPRejectionDetail(json.RawMessage(expect.raw)); got != expect.want {
 			t.Fatalf("%s = %q, want %q", name, got, expect.want)
