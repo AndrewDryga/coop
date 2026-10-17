@@ -12,7 +12,11 @@ services](https://coop.dryga.com/docs.html#toolchain).
 
 Normal writable runs are trusted shared-checkout collaboration: the agent can alter Git/editor
 metadata that your native host tools later execute, including metadata in a new child repository.
-Coop hardens its own host Git calls, not arbitrary commands you run. Use
+Coop hardens its own host Git calls, not arbitrary commands you run. Those calls still follow the
+pointers in `.git` that lead to another repository, as Git does: `commondir`, a `.git` file that
+names another repository's Git folder, linked `objects` or `refs` folders, and
+`objects/info/alternates`. So the agent can make Coop's Git read another repository your user can
+open, and a reset or review can bring that repository's files into the box. Use
 [`coop fork <name> <target> --isolated`](forks.md#isolated-write-forks) for independent Git storage
 and controlled committed publication, or `--readonly` when the work needs no repository writes.
 

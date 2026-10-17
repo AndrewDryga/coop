@@ -81,6 +81,16 @@ other worktree's git dir. Not covered, because git keeps no backlink there: a `.
 another repository's own git dir (the separate-git-dir and submodule layout), and a `commondir`
 planted in a real `.git` folder, which views follow as git does.
 
+**Redirects into another repository are accepted.** The owner chose on 2026-10-17 to keep views
+following every pointer a box can write that leads git to another repository: `commondir`, a
+`.git` file naming another repository's git dir, symlinked `objects` or `refs`, and
+`objects/info/alternates`. The real git behind `GitRefCommand` follows them too. A box can
+therefore make host git read another repository the user can open, and a `reset --hard` or a
+review diff carries that content into the box; docs/box.md says so to users. Isolated forks refuse
+these (`ValidateIndependentGit`). `TestForkGenerationMigrationRefusesPoisonedCommonGitDirectory`
+relies on views following `commondir`. Refusing them was rejected because git worktrees,
+submodules and shared clones use the same pointers.
+
 Tests that deliberately invalidate repository configuration must restore the owned fixture's
 original bytes without repository discovery. Git 2.55 rejects a format-0 repository containing
 `extensions.refStorage=reftable`, including `git config --unset`; using that cleanup hides the
@@ -150,6 +160,8 @@ inline-diff positive control but never during production review. The loop's work
 keep their existing restrictions.
 
 ## Changelog
+- 2026-10-17 — redirects into another repository are an accepted, documented risk (owner decision
+  C on task 2026-10-17-decide-how-trusted-git-views-treat-redirects-a-b); docs/box.md names them.
 - 2026-10-17 — a planted nested `.git` keeps the `.coopignore` rules above it; the home-folder check
   moved to `shadowpath.HomeOrAbove`.
 - 2026-10-17 — the config parse runs in its scratch folder under a ceiling; the checkout settings
