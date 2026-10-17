@@ -2,8 +2,8 @@
 name: release-qualification
 description: "tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity"
 subsystem: release
-sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/releasenotes/main.go, release_test.go]
-updated: 2026-10-16
+sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/releasenotes/main.go, .github/release-notes.md, release_test.go]
+updated: 2026-10-17
 ---
 
 Release `ci` locally calls ci.yml from the event commit; its Make-owned broad checks, Docker
@@ -17,8 +17,10 @@ tests rerun. The publisher remains fresh, uncached and without imported CI artif
 [[ci-free-checks]].
 
 The preflight, `go run ./tools/releasenotes notes <tag>`, runs right after checkout and Go setup.
-It compares the event tag's peeled commit to HEAD and extracts the first real ATX H2 section of
-CHANGELOG.md. Its heading must exactly match the SemVer tag without `v`; Unreleased, empty notes,
+It compares the event tag's peeled commit to HEAD, requires CHANGELOG.md's first real ATX H2
+section to be the tag's, and prints the same section of `.github/release-notes.md`, the short
+summary the finalize commit carries, which becomes the whole release body. Each file's heading
+must exactly match the SemVer tag without `v`; Unreleased, empty notes,
 Setext release headings, raw HTML blocks and unclosed comments/fences refuse. Code examples stay
 literal, comments outside code are removed, and failures emit no partial notes. This is a
 release-format validator, not a general Markdown renderer.
@@ -37,6 +39,8 @@ hosted CI, signing or publication succeeded. Test refs/remotes are confined to t
 filesystem repositories.
 
 ## Changelog
+- 2026-10-17 — the published body is `.github/release-notes.md`'s section, not the CHANGELOG
+  section (owner decision); CHANGELOG.md is still checked, and both files share the parser.
 - 2026-10-16 — the preflight is Go (tools/releasenotes), so unit tests need no python3; it gives
   byte-identical notes for all 42 release tags. verify-remote accepts only LF-separated ls-remote
   lines.

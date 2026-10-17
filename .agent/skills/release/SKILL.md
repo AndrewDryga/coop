@@ -30,10 +30,12 @@ each time — this is the contract; follow it.
   entry under the release where the code actually shipped (`git tag --contains <commit>` shows
   which one already has it). Cutting a version for unchanged code misdates the feature.
 - The `## Unreleased` entries ARE the release. Empty ⇒ nothing to cut; say so and stop.
-- Write the GitHub release body as a short summary of the most important changes in plain
-  English, not every changelog item. Explain user benefits, keep essential upgrade warnings,
-  and link the complete changelog. Preserve every detailed entry since 10.1.2 in CHANGELOG.md;
-  older releases are kept at the v11.3.0 tag, which its last line links.
+- Write the GitHub release body in `.github/release-notes.md`, under `## <version>`: a short
+  summary of the most important changes in plain English, not every changelog item. Explain
+  user benefits, keep essential upgrade warnings, and end with the full-changelog compare link
+  against the previous published release. The release workflow publishes that section as is,
+  so the page is never edited by hand afterwards. Preserve every detailed entry since 10.1.2 in
+  CHANGELOG.md; older releases are kept at the v11.3.0 tag, which its last line links.
 - Public notes describe product changes, compatibility and user actions. Operator approvals,
   waivers, test/review diaries, spend details and CI troubleshooting belong in gitignored task
   records, never the public changelog or release body. Keep real functional limits accurate;
@@ -56,13 +58,16 @@ each time — this is the contract; follow it.
 - Rename `## Unreleased` → `## <version>` (NO date — house format is a bare `## X.Y.Z`) and
   delete the placeholder comment under it; it lives only under `## Unreleased`.
   Keep entries as `- **Bold headline.** explanation`.
-- Commit CHANGELOG-only: `changelog: finalize <version> (<one-line summary>)`.
+- Replace `.github/release-notes.md`'s section with the new `## <version>` summary (keep the
+  comment at its top).
+- Commit only those two files: `changelog: finalize <version> (<one-line summary>)`.
 - Annotated tag on THAT finalize commit: `git tag -a "v<version>" -m "v<version>"`
   (tags are annotated and point at the finalize commit, never the re-open commit).
 - Still on that commit, run the release workflow's own check:
-  `go run ./tools/releasenotes notes "v<version>"` prints the notes it will publish, or refuses
-  as the workflow would (tag not at HEAD; section unfinalized, empty or malformed). Fix and
-  re-tag locally rather than push a tag that fails publication.
+  `go run ./tools/releasenotes notes "v<version>"` prints the summary it will publish, or
+  refuses as the workflow would (tag not at HEAD; the changelog section or the summary
+  unfinalized, for another version, empty or malformed). Fix and re-tag locally rather than
+  push a tag that fails publication.
 - Re-open: add a fresh `## Unreleased` + the placeholder comment back; commit
   `changelog: open an Unreleased section after v<version>`.
 

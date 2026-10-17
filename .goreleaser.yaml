@@ -54,17 +54,18 @@ signs:
       - "--yes"
     output: true
 
-# Release notes are CHANGELOG.md's top section: the workflow extracts it and passes it via
-# `--release-notes`, which GoReleaser's changelog pipe reads and uses verbatim — it returns
-# before commit/PR-based generation, so a direct-commit repo can't leak dependabot-bump noise
-# like v3.0.0's page did. The pipe must stay ENABLED for that file to be read: do NOT add
-# `changelog.disable` — it skips the whole pipe (Skip() returns Disable), dropping the notes and
-# leaving only the footer. That was the v4.0.0 regression: an empty body but the compare link.
+# Release notes are .github/release-notes.md's section for the tag, the short summary the
+# release commit carries: the workflow extracts it and passes it via `--release-notes`, which
+# GoReleaser's changelog pipe reads and uses verbatim — it returns before commit/PR-based
+# generation, so a direct-commit repo can't leak dependabot-bump noise like v3.0.0's page did.
+# The pipe must stay ENABLED for that file to be read: do NOT add `changelog.disable` — it skips
+# the whole pipe (Skip() returns Disable), dropping the notes. That was the v4.0.0 regression: an
+# empty body under the footer this file then had. There is no footer: the summary ends with its
+# own compare link against the previous published release, which a git-tag {{ .PreviousTag }}
+# can get wrong, and a footer would add a second link to every page.
 
 release:
   github:
     owner: AndrewDryga
     name: coop
   prerelease: auto
-  footer: |
-    **Full Changelog**: https://github.com/AndrewDryga/coop/compare/{{ .PreviousTag }}...{{ .Tag }}

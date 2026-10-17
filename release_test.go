@@ -88,95 +88,132 @@ func TestReleaseNotesPreflight(t *testing.T) {
 		git("tag", tag)
 	}
 	for _, tc := range []struct {
-		name, tag, changelog, want string
+		name, tag, text, want string
+		multi                 bool // valid as a changelog, refused as the one-section summary
 	}{
-		{name: "normal", changelog: "# Changelog\n\n## 1.2.3\n\n- Fixed it.\n\n## 1.2.2\n- Old.\n", want: "- Fixed it.\n"},
-		{name: "prerelease build", tag: "v1.2.3-rc.1+build.007", changelog: "## 1.2.3-rc.1+build.007\nPreview.\n", want: "Preview.\n"},
-		{name: "zero", tag: "v0.0.0", changelog: "## 0.0.0\nFirst.\n", want: "First.\n"},
-		{name: "numeric prerelease zero", tag: "v1.2.3-0", changelog: "## 1.2.3-0\nFirst.\n", want: "First.\n"},
-		{name: "CRLF Unicode", changelog: "## 1.2.3\r\n\r\n- 修正: café.\r\n", want: "- 修正: café.\n"},
-		{name: "indented ATX", changelog: "   ## 1.2.3 ###\n### Fixed\n- Result.\n", want: "### Fixed\n- Result.\n"},
-		{name: "comments", changelog: "<!--\n## Unreleased\n-->\n## 1.2.3\n<!-- private\n## hidden\n-->\n- A <!-- hidden --> B.\n", want: "- A  B.\n"},
-		{name: "inline code", changelog: "## 1.2.3\nUse `<!-- literal -->`, `` `<!-- example -->` ``.\n", want: "Use `<!-- literal -->`, `` `<!-- example -->` ``.\n"},
-		{name: "multiline inline code", changelog: "## 1.2.3\nUse `<!--\nliteral -->`.\n", want: "Use `<!--\nliteral -->`.\n"},
-		{name: "multiline long inline code", changelog: "## 1.2.3\nUse `` `<!--\nliteral -->` `` <!-- remove -->.\n", want: "Use `` `<!--\nliteral -->` `` .\n"},
-		{name: "unmatched span before H2", changelog: "## 1.2.3\nLiteral `.\n## 1.2.2\nOlder `.\n", want: "Literal `.\n"},
-		{name: "span cannot cross H3", changelog: "## 1.2.3\nLiteral ` <!-- remove -->.\n### Example\nOther `.\n", want: "Literal ` .\n### Example\nOther `.\n"},
-		{name: "span cannot cross blank", changelog: "## 1.2.3\nLiteral ` <!-- remove -->.\n\nOther `.\n", want: "Literal ` .\n\nOther `.\n"},
-		{name: "span cannot cross fence", changelog: "## 1.2.3\nLiteral ` <!-- remove -->.\n~~~\nOther `.\n~~~\n", want: "Literal ` .\n~~~\nOther `.\n~~~\n"},
-		{name: "escaped backticks", changelog: "## 1.2.3\nUse \\` <!-- hidden --> \\`.\n", want: "Use \\`  \\`.\n"},
-		{name: "list and thematic break", changelog: "## 1.2.3\n- Fixed it.\n---\n", want: "- Fixed it.\n---\n"},
-		{name: "Unicode within line", changelog: "## 1.2.3\n- A\u2028B\u0085C\vD.\n", want: "- A\u2028B\u0085C\vD.\n"},
-		{name: "fenced heading", changelog: "## 1.2.3\n```md\n## example\n<!-- literal -->\n```\n## old\nIgnored.\n", want: "```md\n## example\n<!-- literal -->\n```\n"},
-		{name: "fenced HTML", changelog: "## 1.2.3\n```html\n<pre>\n## example\n</pre>\n```\n", want: "```html\n<pre>\n## example\n</pre>\n```\n"},
-		{name: "inline HTML", changelog: "## 1.2.3\nUse <code>example</code>.\n", want: "Use <code>example</code>.\n"},
-		{name: "autolink", changelog: "## 1.2.3\n<https://example.invalid/>\n", want: "<https://example.invalid/>\n"},
-		{name: "indented fenced notes", changelog: "## 1.2.3\n \n   ```md\n   literal\n   ```\n \n", want: "   ```md\n   literal\n   ```\n"},
-		{name: "long fence", changelog: "## 1.2.3\n````\n```\n## example\n`````\n", want: "````\n```\n## example\n`````\n"},
-		{name: "tilde fence", changelog: "## 1.2.3\n~~~text\n```\n## example\n~~~~\n", want: "~~~text\n```\n## example\n~~~~\n"},
-		{name: "unreleased", changelog: "## Unreleased\nChanges.\n## 1.2.3\nOlder.\n"},
-		{name: "wrong version", changelog: "## 1.2.4\nChanges.\n## 1.2.3\nOlder.\n"},
-		{name: "missing heading", changelog: "# Changelog\nChanges.\n"},
-		{name: "comment-made heading", changelog: "<!-- hidden -->## 1.2.3\nChanges.\n"},
-		{name: "comment-closure heading", changelog: "<!-- hidden\n-->## 1.2.3\nChanges.\n"},
-		{name: "HTML pre heading", changelog: "<pre>\n## 1.2.3\nExample only.\n</pre>\n"},
-		{name: "HTML script heading", changelog: "<script>\n## 1.2.3\nExample only.\n</script>\n"},
-		{name: "HTML div heading", changelog: "<div>\n## 1.2.3\nExample only.\n</div>\n"},
-		{name: "HTML custom heading", changelog: "<release-notes>\n## 1.2.3\nExample only.\n</release-notes>\n"},
-		{name: "HTML CDATA heading", changelog: "<![CDATA[\n## 1.2.3\nExample only.\n]]>\n"},
-		{name: "HTML processing instruction heading", changelog: "<?--\n## 1.2.3\nExample only.\n?>\n"},
-		{name: "Unicode-made heading", changelog: "prefix\u2028## 1.2.3\nChanges.\n"},
-		{name: "NEL-made heading", changelog: "prefix\u0085## 1.2.3\nChanges.\n"},
-		{name: "VT-made heading", changelog: "prefix\v## 1.2.3\nChanges.\n"},
-		{name: "prefixed heading", changelog: "## v1.2.3\nChanges.\n"},
-		{name: "heading date", changelog: "## 1.2.3 - 2026-09-05\nChanges.\n"},
-		{name: "empty", changelog: "## 1.2.3\n\n## 1.2.2\nOlder.\n"},
-		{name: "Unicode whitespace only", changelog: "## 1.2.3\n\u00a0\u2003\n"},
-		{name: "comment only", changelog: "## 1.2.3\n<!-- invisible\nbut nonempty\n-->\n"},
-		{name: "comment-only bullet", changelog: "## 1.2.3\n- <!-- TODO -->\n"},
-		{name: "empty numbered item", changelog: "## 1.2.3\n1. <!-- TODO -->\n"},
-		{name: "empty quote and task item", changelog: "## 1.2.3\n> - [ ] <!-- TODO -->\n"},
-		{name: "quoted heading only", changelog: "## 1.2.3\n> ### Changes\n"},
-		{name: "quoted separator only", changelog: "## 1.2.3\n> ---\n"},
-		{name: "nested quoted separator only", changelog: "## 1.2.3\n> > ___\n"},
-		{name: "link definition only", changelog: "## 1.2.3\n[reference]: https://example.invalid/\n"},
-		{name: "headings only", changelog: "## 1.2.3\n### Changes\n"},
-		{name: "empty code only", changelog: "## 1.2.3\n```go\n\n```\n"},
-		{name: "separators only", changelog: "## 1.2.3\n\n---\n\n***\n"},
-		{name: "Setext first", changelog: "Unreleased\n----------\nChanges.\n## 1.2.3\nOlder.\n"},
-		{name: "Setext selected", changelog: "## 1.2.3\nChanges.\n\n1.2.2\n-----\nOlder.\n"},
-		{name: "unclosed comment", changelog: "## 1.2.3\nChanges.\n<!--\n## 1.2.2\nOlder.\n"},
-		{name: "unclosed fence", changelog: "## 1.2.3\nChanges.\n```\n## 1.2.2\nOlder.\n"},
-		{name: "wrong closer", changelog: "## 1.2.3\n~~~\nChanges.\n```\n"},
-		{name: "short closer", changelog: "## 1.2.3\n````\nChanges.\n```\n"},
-		{name: "no v", tag: "1.2.3", changelog: "## 1.2.3\nChanges.\n"},
-		{name: "missing patch", tag: "v1.2", changelog: "## 1.2\nChanges.\n"},
-		{name: "leading major zero", tag: "v01.2.3", changelog: "## 01.2.3\nChanges.\n"},
-		{name: "leading minor zero", tag: "v1.02.3", changelog: "## 1.02.3\nChanges.\n"},
-		{name: "leading patch zero", tag: "v1.2.03", changelog: "## 1.2.03\nChanges.\n"},
-		{name: "leading prerelease zero", tag: "v1.2.3-01", changelog: "## 1.2.3-01\nChanges.\n"},
-		{name: "empty prerelease", tag: "v1.2.3-", changelog: "## 1.2.3-\nChanges.\n"},
-		{name: "empty build", tag: "v1.2.3+", changelog: "## 1.2.3+\nChanges.\n"},
-		{name: "empty identifier", tag: "v1.2.3-rc..1", changelog: "## 1.2.3-rc..1\nChanges.\n"},
-		{name: "shell metacharacters", tag: "v1.2.3;touch injected", changelog: "## 1.2.3;touch injected\nChanges.\n"},
+		{name: "normal", text: "# Changelog\n\n## 1.2.3\n\n- Fixed it.\n\n## 1.2.2\n- Old.\n", want: "- Fixed it.\n", multi: true},
+		{name: "H2 subheading", text: "## 1.2.3\nIntro.\n## Highlights\n- Point.\n", want: "Intro.\n", multi: true},
+		{name: "prerelease build", tag: "v1.2.3-rc.1+build.007", text: "## 1.2.3-rc.1+build.007\nPreview.\n", want: "Preview.\n"},
+		{name: "zero", tag: "v0.0.0", text: "## 0.0.0\nFirst.\n", want: "First.\n"},
+		{name: "numeric prerelease zero", tag: "v1.2.3-0", text: "## 1.2.3-0\nFirst.\n", want: "First.\n"},
+		{name: "CRLF Unicode", text: "## 1.2.3\r\n\r\n- 修正: café.\r\n", want: "- 修正: café.\n"},
+		{name: "indented ATX", text: "   ## 1.2.3 ###\n### Fixed\n- Result.\n", want: "### Fixed\n- Result.\n"},
+		{name: "comments", text: "<!--\n## Unreleased\n-->\n## 1.2.3\n<!-- private\n## hidden\n-->\n- A <!-- hidden --> B.\n", want: "- A  B.\n"},
+		{name: "inline code", text: "## 1.2.3\nUse `<!-- literal -->`, `` `<!-- example -->` ``.\n", want: "Use `<!-- literal -->`, `` `<!-- example -->` ``.\n"},
+		{name: "multiline inline code", text: "## 1.2.3\nUse `<!--\nliteral -->`.\n", want: "Use `<!--\nliteral -->`.\n"},
+		{name: "multiline long inline code", text: "## 1.2.3\nUse `` `<!--\nliteral -->` `` <!-- remove -->.\n", want: "Use `` `<!--\nliteral -->` `` .\n"},
+		{name: "unmatched span before H2", text: "## 1.2.3\nLiteral `.\n## 1.2.2\nOlder `.\n", want: "Literal `.\n", multi: true},
+		{name: "span cannot cross H3", text: "## 1.2.3\nLiteral ` <!-- remove -->.\n### Example\nOther `.\n", want: "Literal ` .\n### Example\nOther `.\n"},
+		{name: "span cannot cross blank", text: "## 1.2.3\nLiteral ` <!-- remove -->.\n\nOther `.\n", want: "Literal ` .\n\nOther `.\n"},
+		{name: "span cannot cross fence", text: "## 1.2.3\nLiteral ` <!-- remove -->.\n~~~\nOther `.\n~~~\n", want: "Literal ` .\n~~~\nOther `.\n~~~\n"},
+		{name: "escaped backticks", text: "## 1.2.3\nUse \\` <!-- hidden --> \\`.\n", want: "Use \\`  \\`.\n"},
+		{name: "list and thematic break", text: "## 1.2.3\n- Fixed it.\n---\n", want: "- Fixed it.\n---\n"},
+		{name: "Unicode within line", text: "## 1.2.3\n- A\u2028B\u0085C\vD.\n", want: "- A\u2028B\u0085C\vD.\n"},
+		{name: "fenced heading", text: "## 1.2.3\n```md\n## example\n<!-- literal -->\n```\n## old\nIgnored.\n", want: "```md\n## example\n<!-- literal -->\n```\n", multi: true},
+		{name: "fenced HTML", text: "## 1.2.3\n```html\n<pre>\n## example\n</pre>\n```\n", want: "```html\n<pre>\n## example\n</pre>\n```\n"},
+		{name: "inline HTML", text: "## 1.2.3\nUse <code>example</code>.\n", want: "Use <code>example</code>.\n"},
+		{name: "autolink", text: "## 1.2.3\n<https://example.invalid/>\n", want: "<https://example.invalid/>\n"},
+		{name: "indented fenced notes", text: "## 1.2.3\n \n   ```md\n   literal\n   ```\n \n", want: "   ```md\n   literal\n   ```\n"},
+		{name: "long fence", text: "## 1.2.3\n````\n```\n## example\n`````\n", want: "````\n```\n## example\n`````\n"},
+		{name: "tilde fence", text: "## 1.2.3\n~~~text\n```\n## example\n~~~~\n", want: "~~~text\n```\n## example\n~~~~\n"},
+		{name: "unreleased", text: "## Unreleased\nChanges.\n## 1.2.3\nOlder.\n"},
+		{name: "wrong version", text: "## 1.2.4\nChanges.\n## 1.2.3\nOlder.\n"},
+		{name: "missing heading", text: "# Changelog\nChanges.\n"},
+		{name: "comment-made heading", text: "<!-- hidden -->## 1.2.3\nChanges.\n"},
+		{name: "comment-closure heading", text: "<!-- hidden\n-->## 1.2.3\nChanges.\n"},
+		{name: "HTML pre heading", text: "<pre>\n## 1.2.3\nExample only.\n</pre>\n"},
+		{name: "HTML script heading", text: "<script>\n## 1.2.3\nExample only.\n</script>\n"},
+		{name: "HTML div heading", text: "<div>\n## 1.2.3\nExample only.\n</div>\n"},
+		{name: "HTML custom heading", text: "<release-notes>\n## 1.2.3\nExample only.\n</release-notes>\n"},
+		{name: "HTML CDATA heading", text: "<![CDATA[\n## 1.2.3\nExample only.\n]]>\n"},
+		{name: "HTML processing instruction heading", text: "<?--\n## 1.2.3\nExample only.\n?>\n"},
+		{name: "Unicode-made heading", text: "prefix\u2028## 1.2.3\nChanges.\n"},
+		{name: "NEL-made heading", text: "prefix\u0085## 1.2.3\nChanges.\n"},
+		{name: "VT-made heading", text: "prefix\v## 1.2.3\nChanges.\n"},
+		{name: "prefixed heading", text: "## v1.2.3\nChanges.\n"},
+		{name: "heading date", text: "## 1.2.3 - 2026-09-05\nChanges.\n"},
+		{name: "empty", text: "## 1.2.3\n\n## 1.2.2\nOlder.\n"},
+		{name: "Unicode whitespace only", text: "## 1.2.3\n\u00a0\u2003\n"},
+		{name: "comment only", text: "## 1.2.3\n<!-- invisible\nbut nonempty\n-->\n"},
+		{name: "comment-only bullet", text: "## 1.2.3\n- <!-- TODO -->\n"},
+		{name: "empty numbered item", text: "## 1.2.3\n1. <!-- TODO -->\n"},
+		{name: "empty quote and task item", text: "## 1.2.3\n> - [ ] <!-- TODO -->\n"},
+		{name: "quoted heading only", text: "## 1.2.3\n> ### Changes\n"},
+		{name: "quoted separator only", text: "## 1.2.3\n> ---\n"},
+		{name: "nested quoted separator only", text: "## 1.2.3\n> > ___\n"},
+		{name: "link definition only", text: "## 1.2.3\n[reference]: https://example.invalid/\n"},
+		{name: "headings only", text: "## 1.2.3\n### Changes\n"},
+		{name: "empty code only", text: "## 1.2.3\n```go\n\n```\n"},
+		{name: "separators only", text: "## 1.2.3\n\n---\n\n***\n"},
+		{name: "Setext first", text: "Unreleased\n----------\nChanges.\n## 1.2.3\nOlder.\n"},
+		{name: "Setext selected", text: "## 1.2.3\nChanges.\n\n1.2.2\n-----\nOlder.\n"},
+		{name: "unclosed comment", text: "## 1.2.3\nChanges.\n<!--\n## 1.2.2\nOlder.\n"},
+		{name: "unclosed fence", text: "## 1.2.3\nChanges.\n```\n## 1.2.2\nOlder.\n"},
+		{name: "wrong closer", text: "## 1.2.3\n~~~\nChanges.\n```\n"},
+		{name: "short closer", text: "## 1.2.3\n````\nChanges.\n```\n"},
+		{name: "no v", tag: "1.2.3", text: "## 1.2.3\nChanges.\n"},
+		{name: "missing patch", tag: "v1.2", text: "## 1.2\nChanges.\n"},
+		{name: "leading major zero", tag: "v01.2.3", text: "## 01.2.3\nChanges.\n"},
+		{name: "leading minor zero", tag: "v1.02.3", text: "## 1.02.3\nChanges.\n"},
+		{name: "leading patch zero", tag: "v1.2.03", text: "## 1.2.03\nChanges.\n"},
+		{name: "leading prerelease zero", tag: "v1.2.3-01", text: "## 1.2.3-01\nChanges.\n"},
+		{name: "empty prerelease", tag: "v1.2.3-", text: "## 1.2.3-\nChanges.\n"},
+		{name: "empty build", tag: "v1.2.3+", text: "## 1.2.3+\nChanges.\n"},
+		{name: "empty identifier", tag: "v1.2.3-rc..1", text: "## 1.2.3-rc..1\nChanges.\n"},
+		{name: "shell metacharacters", tag: "v1.2.3;touch injected", text: "## 1.2.3;touch injected\nChanges.\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tag := tc.tag
 			if tag == "" {
 				tag = "v1.2.3"
 			}
-			if err := os.WriteFile(filepath.Join(repo, "CHANGELOG.md"), []byte(tc.changelog), 0o600); err != nil {
-				t.Fatal(err)
+			// Each text is tried as the changelog beside a valid summary, and as the summary
+			// beside a valid changelog: the summary is what publishes, and both must parse.
+			valid := "## " + strings.TrimPrefix(tag, "v") + "\n"
+			summaryWant := tc.want
+			if tc.multi {
+				summaryWant = ""
 			}
-			out, diagnostic, err := runReleaseNotes(tool, repo, "notes", tag)
-			if tc.want != "" {
-				if err != nil || diagnostic != "" || out != tc.want {
-					t.Fatalf("out=%q stderr=%q err=%v; want %q", out, diagnostic, err, tc.want)
+			for _, files := range []struct{ changelog, summary, want, refuser string }{
+				{tc.text, valid + "Summary.\n", "Summary.\n", "CHANGELOG.md"},
+				{valid + "- Change.\n", tc.text, summaryWant, ".github/release-notes.md"},
+			} {
+				writeReleaseFiles(t, repo, files.changelog, files.summary)
+				out, diagnostic, err := runReleaseNotes(tool, repo, "notes", tag)
+				if tc.want != "" && files.want != "" {
+					if err != nil || diagnostic != "" || out != files.want {
+						t.Fatalf("out=%q stderr=%q err=%v; want %q", out, diagnostic, err, files.want)
+					}
+				} else if err == nil || out != "" || !strings.Contains(diagnostic, "refusing to publish") {
+					t.Fatalf("must refuse without partial notes: out=%q stderr=%q err=%v", out, diagnostic, err)
+				} else if tc.tag == "" && !strings.Contains(diagnostic, files.refuser+":") {
+					t.Fatalf("the refusal must name %s: stderr=%q", files.refuser, diagnostic)
 				}
-			} else if err == nil || out != "" || !strings.Contains(diagnostic, "refusing to publish") {
-				t.Fatalf("must refuse without partial notes: out=%q stderr=%q err=%v", out, diagnostic, err)
 			}
 		})
+	}
+	t.Run("missing summary", func(t *testing.T) {
+		writeReleaseFiles(t, repo, "## 1.2.3\n- Change.\n", "")
+		if err := os.Remove(filepath.Join(repo, ".github", "release-notes.md")); err != nil {
+			t.Fatal(err)
+		}
+		out, diagnostic, err := runReleaseNotes(tool, repo, "notes", "v1.2.3")
+		if err == nil || out != "" || !strings.Contains(diagnostic, "release-notes.md") {
+			t.Fatalf("must refuse without a summary: out=%q stderr=%q err=%v", out, diagnostic, err)
+		}
+	})
+}
+
+// writeReleaseFiles writes the two files the release preflight reads.
+func writeReleaseFiles(t *testing.T, repo, changelog, summary string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(repo, ".github"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{"CHANGELOG.md": changelog, ".github/release-notes.md": summary} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -248,9 +285,7 @@ func TestReleaseTagIdentity(t *testing.T) {
 			}
 			git("remote", "add", "origin", remote)
 			git("push", "origin", "refs/tags/v1.2.3") // only a hermetic filesystem remote
-			if err := os.WriteFile(filepath.Join(repo, "CHANGELOG.md"), []byte("## 1.2.3\nChanges.\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeReleaseFiles(t, repo, "## 1.2.3\nChanges.\n", "## 1.2.3\nSummary.\n")
 			check := func(command string, success bool) {
 				t.Helper()
 				out, diagnostic, err := runReleaseNotes(tool, repo, command, "v1.2.3")

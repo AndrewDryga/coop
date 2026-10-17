@@ -74,9 +74,11 @@ see every input that a child process builds or reads. The release publisher star
 that cache or imported artifacts.
 
 Before GoReleaser publishes a tag, the release job runs `go run ./tools/releasenotes notes <tag>`.
-It refuses a tag that is not the checked-out commit and prints the tag's finalized CHANGELOG.md
-section as the release notes. `go run ./tools/releasenotes verify-remote <tag>` then refuses if
-origin's tag changed since checkout. Run `notes` on a freshly tagged commit to preview the notes.
+It refuses a tag that is not the checked-out commit or whose CHANGELOG.md section is not
+finalized, and prints the tag's section of `.github/release-notes.md`, the short summary the
+release commit carries, as the release notes. `go run ./tools/releasenotes verify-remote <tag>`
+then refuses if origin's tag changed since checkout. Run `notes` on a freshly tagged commit to
+preview the notes.
 
 The gate needs `staticcheck`, `govulncheck`, `shellcheck` and `git-lfs`. The Makefile pins
 `govulncheck` and installs Staticcheck with `make install-staticcheck` from

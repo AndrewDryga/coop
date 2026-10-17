@@ -2,9 +2,9 @@
 name: public-release-notes-are-product-focused
 description: public release notes describe actual published releases and product changes, not internal engineering decisions
 scope: docs
-sources: [CHANGELOG.md, MIGRATING.md, README.md, .agent/skills/release/SKILL.md]
+sources: [CHANGELOG.md, MIGRATING.md, README.md, .agent/skills/release/SKILL.md, .github/release-notes.md, tools/releasenotes/main.go]
 check: none
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 
 # Keep public release notes focused on the product
@@ -21,16 +21,20 @@ Contributor instructions may explain how a check works without narrating a parti
 GitHub release notes are a short, plain-English summary of the most important user-facing
 changes, not a copy of every changelog entry. Explain what people can do and why it matters;
 avoid implementation jargon. Keep essential upgrade warnings and link the detailed changelog
-for everything else. CHANGELOG.md keeps every change and its attribution since 10.1.2; older
-releases stay in the copy at the v11.3.0 tag, which the file's last line links.
+for everything else. The release commit carries that summary in `.github/release-notes.md`
+under `## <version>`, and the release workflow publishes exactly that section, so the page is
+right when it goes out and nobody edits it by hand. CHANGELOG.md keeps every change and its
+attribution since 10.1.2; older releases stay in the copy at the v11.3.0 tag, which the file's
+last line links.
 
 Prioritize by product impact, not by how recently a fix landed. Major capabilities such as
 isolated networking deserve their own understandable highlight, not a generic security-fixes label.
 
 **Why:** the user explicitly rejected internal-process disclosures in public release notes.
 
-When correcting published copy, edit the existing release body and commit the documentation
-fix. Do not rebuild binaries, rewrite an immutable tag or cut a release for wording alone.
+When correcting published copy, edit the existing release body, and commit the same fix to
+`.github/release-notes.md` if that release is still its section. Do not rebuild binaries, rewrite
+an immutable tag or cut a release for wording alone.
 
 Numbered changelog entries represent published releases, not local or failed release attempts.
 Keep pending work under Unreleased; fold failed-attempt changes into the version that actually
@@ -45,6 +49,11 @@ to make the history look tidier. Upgrade instructions describe the actual public
 fictional intermediate releases.
 
 ## Changelog
+- 2026-10-17 — the owner chose that the release commit carries the short summary
+  (`.github/release-notes.md`) and the workflow publishes it; before, the workflow published the
+  whole CHANGELOG section and v11.3.0's body was trimmed by hand afterwards. Seeded the file with
+  v11.3.0's published body; swept the release skill, CONTRIBUTING.md, release-qualification and
+  .goreleaser.yaml, whose footer added a second compare link to every page and is gone.
 - 2026-10-15 — CHANGELOG.md now holds releases since 10.1.2; older sections (several of which the
   v10.1.2 copy still listed as releases that never shipped) stay in the v11.3.0 copy its last line
   links. The release skill says the same.

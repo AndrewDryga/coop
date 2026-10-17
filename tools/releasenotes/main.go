@@ -4,10 +4,12 @@
 //	go run ./tools/releasenotes notes <tag>
 //	go run ./tools/releasenotes verify-remote <tag>
 //
-// notes checks that the tag names HEAD, then prints the tag's CHANGELOG.md section. verify-remote
-// checks that origin's tag is still the one checked out, just before publication.
+// notes checks that the tag names HEAD and that CHANGELOG.md's first release section is the tag's,
+// then prints the tag's section of .github/release-notes.md: the short summary the release commit
+// carries, which is the whole release body. verify-remote checks that origin's tag is still the
+// one checked out, just before publication.
 //
-// It reads the release changelog format, not general Markdown. Release sections use ATX H2
+// Both files use the release changelog format, not general Markdown. Release sections use ATX H2
 // headings, with closed comments and fenced code blocks. Raw HTML blocks are unsupported; put HTML
 // examples in fenced code.
 package main
@@ -65,19 +67,35 @@ func run(command, tag string) error {
 	if command == "verify-remote" {
 		return verifyRemote(identity)
 	}
-	changelog, err := os.ReadFile("CHANGELOG.md")
-	if err != nil {
+	if _, err := releaseFile("CHANGELOG.md", tag[1:]); err != nil {
 		return err
 	}
-	if !utf8.Valid(changelog) {
-		return errors.New("CHANGELOG.md is not valid UTF-8")
-	}
-	notes, err := releaseNotes(string(changelog), tag[1:])
+	notes, err := releaseFile(summaryFile, tag[1:])
 	if err != nil {
 		return err
 	}
 	_, err = os.Stdout.WriteString(notes)
 	return err
+}
+
+// summaryFile is the release body: the release skill writes it in the finalize commit, so the
+// published page never needs editing by hand afterwards.
+const summaryFile = ".github/release-notes.md"
+
+// releaseFile returns the release section for version from the file at path.
+func releaseFile(path, version string) (string, error) {
+	text, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if !utf8.Valid(text) {
+		return "", errors.New(path + " is not valid UTF-8")
+	}
+	notes, err := releaseNotes(string(text), version, path == summaryFile)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
+	}
+	return notes, nil
 }
 
 // tagIdentity is what the event tag resolved to at checkout: its object, which is the commit itself
@@ -160,9 +178,11 @@ func verifyRemote(tag tagIdentity) error {
 	return nil
 }
 
-// releaseNotes returns the changelog's first release section, which must be headed ## version, with
-// the comments outside code removed and the blank lines around it trimmed.
-func releaseNotes(text, version string) (string, error) {
+// releaseNotes returns the first release section of text, which must be headed ## version, with
+// the comments outside code removed and the blank lines around it trimmed. A changelog's next H2 is
+// the previous release; the summary is one section, so only refuses another H2 there, where it
+// would cut the published notes short.
+func releaseNotes(text, version string, only bool) (string, error) {
 	lines := strings.Split(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), "\n")
 	var notes []string
 	var selected, substantive, comment, paragraph bool
@@ -254,11 +274,14 @@ func releaseNotes(text, version string) (string, error) {
 		}
 		if match != nil && len(match[1]) == 2 {
 			if selected {
+				if only {
+					return "", errors.New("holds a second H2; use ### for headings inside the release section")
+				}
 				break
 			}
 			title := strings.Trim(closingSequence.ReplaceAllString(match[2], ""), " \t")
 			if title != version {
-				return "", errors.New("CHANGELOG.md's first H2 must be finalized as ## " + version)
+				return "", errors.New("first H2 must be finalized as ## " + version)
 			}
 			selected, paragraph = true, false
 			continue
@@ -271,10 +294,10 @@ func releaseNotes(text, version string) (string, error) {
 	}
 
 	if comment || fenceRun != "" {
-		return "", errors.New("CHANGELOG.md has an unclosed comment or code fence")
+		return "", errors.New("has an unclosed comment or code fence")
 	}
 	if !selected || !substantive {
-		return "", errors.New("CHANGELOG.md needs a finalized first release section with substantive notes")
+		return "", errors.New("needs a finalized first release section with substantive notes")
 	}
 	for len(notes) > 0 && trimSpace(notes[0]) == "" {
 		notes = notes[1:]
