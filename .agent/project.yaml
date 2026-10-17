@@ -10,7 +10,7 @@
 
 # box: the posture every run in this repo inherits. An explicit COOP_* env/conf setting still
 # wins for a one-off, and a committed value can only TIGHTEN the default: "filtered" or "offline"
-# take effect as written, while "open" is a request a human approves with 'coop net approve'.
+# take effect as written, while "open" is a request a human approves with 'coop approve'.
 # box:
 #   egress: offline     # outbound network: "filtered" (provider + approved sites), "offline", or "open"
 #   auto_up: false      # auto-start .agent/compose.yml sibling services (default true)
