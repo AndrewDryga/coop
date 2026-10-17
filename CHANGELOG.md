@@ -26,6 +26,15 @@
   written in. Swapping that folder for a named pipe while `coop init` creates a file now stops it
   with an error instead of freezing it.
 
+- **`coop init` replaces an agent's skills link only in that agent's folder.** `coop init` points
+  `.claude/skills`, `.codex/skills` and `.gemini/skills` at the project's shared skills and replaces
+  a broken link it finds there. It looked the link's path up again to remove the old link, so an
+  agent in a box could swap `.claude` for a link to another folder just then, and `coop init` could
+  delete a file, link or empty folder named `skills` in that folder, such as `~/.claude/skills` or
+  one `.coopignore` hides from agents. Now the check, the removal and the new link all go through the
+  folder `coop init` checked. A link it cannot create is now reported like a file it cannot create:
+  "Could not create .claude/skills: permission denied."
+
 - **`coop models` no longer leaves your project's services running.** Coop lists an editor agent's
   models from a short-lived box, and that box also started the project's Compose services, which kept
   running after it until a later `coop loop`, `coop fork` or `coop build`. A model refresh now starts

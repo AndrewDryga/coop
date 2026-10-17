@@ -4,7 +4,7 @@ description: "`coop init` generates for the detected stack and stays neutral whe
 scope: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go, internal/scaffold/projectfile.go]
 check: "none"
-updated: 2026-10-15
+updated: 2026-10-16
 ---
 
 # coop init scaffolds what the repo uses — it never imposes a stack
@@ -56,6 +56,10 @@ blocks. Guessing wrong is worse than doing nothing.
   exception: preserve it and print chaining guidance.
 
 ## Changelog
+- 2026-10-16 — pass-through for the skills-link handle: a link that already resolves to a
+  directory is still kept (`linkSkillsIfAbsent`'s keep check, `TestInitSkillsSource`); only where
+  the replacement happens changed, now through one parent handle. Swept internal/scaffold: no
+  by-path removal or link creation left.
 - 2026-10-15 — pass-through for the concurrent-edit removal (audit decision 3.5): `RegisterSubprojects`
   no longer rechecks identity and content or retries before its rename, so the 2026-09-03 recheck
   below is gone; the edit now reads, stages and renames through one directory handle and refuses a

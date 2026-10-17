@@ -1,6 +1,6 @@
 ---
 name: init-preflight
-description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links and files hidden from the box, and new files are created and cleaned up through one parent handle
+description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links and files hidden from the box, and new files and agent links are created, checked and removed through one parent handle
 subsystem: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go]
 updated: 2026-10-17
@@ -79,7 +79,25 @@ and spells its open files `<dir>/./<name>`, so `repoPath` puts the path `coop in
 on those errors. The in-place reader above still opens its folder by name, so a FIFO swapped in
 for that folder blocks it the same way.
 
+Agent links use the same helper. `linkIfAbsent` (CLAUDE.md and GEMINI.md to AGENTS.md) and
+`linkSkillsIfAbsent` (each selected agent's `skills` to the shared source) replace a link, never a
+file or folder, and open the link's folder with `openRepoParent`, the helper `writeNewRepoFile`
+uses, then check, remove and create the link by name through that one handle, so a folder swapped
+for a link after the check cannot redirect the removal.
+`linkSkillsIfAbsent` still follows an existing link by path to keep one that leads to a folder,
+since that folder may be outside the repository; a swap there only changes whether the link stays.
+The handle reports a failed link by its bare name, so the link is returned as a `create`
+`*fs.PathError` on its path and init prints "Could not create .claude/skills: …" as for a file.
+
 ## Changelog
+- 2026-10-17 — agent links went by absolute path, so a box that swapped `.claude` for a link
+  between the check and the removal could have the host delete a `skills` entry wherever the link
+  pointed; they now go through one parent handle.
+- 2026-10-16 — agent links moved onto the parent handle: `linkIfAbsent` checks, removes and
+  creates through `openRepoParent` (shared with writeNewRepoFile) instead of by absolute path, and
+  a failed link names its path. Pinned by TestLinkIfAbsentIgnoresSwappedParent (a swap to an
+  in-repo folder and to one outside; both fail on the old by-path calls and on a by-path removal
+  alone) and TestLinkIfAbsentErrorsNameTheLink (fails on the handle's bare-name error).
 - 2026-10-17 — second review (same task). Any `.coopignore` the snapshot reader refuses now stops
   the edit as `UnreadableCoopignore`, naming that `.coopignore` and why, instead of a bare read
   error blamed on the edited file ("Fix .agent/compose.yml"); `coop init` gives it its own headline

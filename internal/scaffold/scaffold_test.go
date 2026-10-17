@@ -1095,6 +1095,75 @@ func TestWriteNewRepoFileErrorsNameTheRepoPath(t *testing.T) {
 	}
 }
 
+// linkSkillsIfAbsent follows a stale skills link to decide whether to keep it, and a box can swap
+// .claude for a link to another folder while it looks. Removing the stale link by path again
+// would then take the entry named skills from that folder: one .coopignore hides from the box, or
+// one outside the repository such as ~/.claude.
+func TestLinkIfAbsentIgnoresSwappedParent(t *testing.T) {
+	for _, outside := range []bool{false, true} {
+		t.Run(fmt.Sprintf("outside=%v", outside), func(t *testing.T) {
+			repo := t.TempDir()
+			folder, swap := filepath.Join(repo, "private"), "private"
+			if outside {
+				folder = t.TempDir()
+				swap = folder
+			}
+			entry := filepath.Join(folder, "skills")
+			if err := os.MkdirAll(folder, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(entry, []byte("hidden notes\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			parent, moved := filepath.Join(repo, ".claude"), filepath.Join(repo, ".claude-moved")
+			if err := os.Mkdir(parent, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../missing-skills", filepath.Join(parent, "skills")); err != nil {
+				t.Fatal(err)
+			}
+			s := &scaffolder{repo: repo}
+			err := s.linkIfAbsent("../.agent/skills", filepath.Join(parent, "skills"), func() bool {
+				if err := os.Rename(parent, moved); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(swap, parent); err != nil {
+					t.Fatal(err)
+				}
+				return false
+			})
+			if got, err := os.ReadFile(entry); err != nil || string(got) != "hidden notes\n" {
+				t.Errorf("the removal reached %s through the swapped parent: %q, %v", entry, got, err)
+			}
+			if err != nil {
+				t.Fatalf("linkIfAbsent: %v", err)
+			}
+			if got, err := os.Readlink(filepath.Join(moved, "skills")); err != nil || got != "../.agent/skills" {
+				t.Fatalf("the checked link = %q, %v; want it replaced where init checked it", got, err)
+			}
+		})
+	}
+}
+
+// The handle names a link by its bare name; a link coop cannot create names the path init prints.
+func TestLinkIfAbsentErrorsNameTheLink(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores folder permissions, so the link cannot be made to fail this way")
+	}
+	repo := t.TempDir()
+	parent := filepath.Join(repo, ".claude")
+	if err := os.Mkdir(parent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+	link := filepath.Join(parent, "skills")
+	err := (&scaffolder{repo: repo}).linkIfAbsent("../.agent/skills", link, nil)
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) || pathErr.Path != link || !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("link error = %v, want a permission failure naming %s", err, link)
+	}
+}
+
 func TestInitStack(t *testing.T) {
 	// --stack asdf with a .tool-versions → the asdf .agent/Dockerfile (NOT compose: sibling
 	// services are opt-in via `coop init`'s prompt / --services, so Init never adds db/redis).

@@ -112,7 +112,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string, services ...string)
 			continue
 		}
 		if instruction := ag.InstructionFile(); instruction != "" && instruction != "AGENTS.md" {
-			if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, instruction)); err != nil {
+			if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, instruction), nil); err != nil {
 				return s.notices, err
 			}
 		}
@@ -290,28 +290,12 @@ func writeAndSync(file *os.File, data []byte) error {
 // box that fails the write and then swaps a parent for a link cannot point the cleanup at a
 // same-named file elsewhere, such as one .coopignore hides from it.
 func writeNewRepoFile(repo, dest string, data []byte, perm os.FileMode, write scaffoldFileWrite) (bool, error) {
-	root, err := os.OpenRoot(repo)
-	if err != nil {
-		return false, fmt.Errorf("open scaffold root %s: %w", repo, err)
-	}
-	defer root.Close()
-	rel, err := repoRelativePath(repo, dest)
+	parent, rel, err := openRepoParent(repo, dest)
 	if err != nil {
 		return false, err
 	}
-	dir, name := filepath.Dir(rel), filepath.Base(rel)
-	if dir != "." {
-		if err := root.MkdirAll(dir, 0o755); err != nil {
-			return false, fmt.Errorf("create scaffold parent for %s: %w", dest, err)
-		}
-	}
-	// "<dir>/." makes os.Root open every folder on the way with O_DIRECTORY. Opening the folder
-	// itself would block on a FIFO a box swapped in after MkdirAll until something wrote to it.
-	parent, err := root.OpenRoot(dir + string(filepath.Separator) + ".")
-	if err != nil {
-		return false, fmt.Errorf("open scaffold parent for %s: %w", dest, repoPath(err, dir))
-	}
 	defer parent.Close()
+	name := filepath.Base(rel)
 	file, err := parent.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, perm)
 	if err != nil {
 		if info, statErr := parent.Lstat(name); statErr == nil {
@@ -347,6 +331,35 @@ func writeNewRepoFile(repo, dest string, data []byte, perm os.FileMode, write sc
 	return true, nil
 }
 
+// openRepoParent opens the folder that holds path once, inside repo, creating it if it is missing,
+// and returns that handle with path relative to repo. A caller that takes every later step on the
+// entry by name through the handle stays in one folder even if a box swaps a parent for a link in
+// between; walking the path again for a step could reach a same-named entry in another folder.
+func openRepoParent(repo, path string) (*os.Root, string, error) {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return nil, "", fmt.Errorf("open scaffold root %s: %w", repo, err)
+	}
+	defer root.Close()
+	rel, err := repoRelativePath(repo, path)
+	if err != nil {
+		return nil, "", err
+	}
+	dir := filepath.Dir(rel)
+	if dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return nil, "", fmt.Errorf("create scaffold parent for %s: %w", path, err)
+		}
+	}
+	// "<dir>/." makes os.Root open every folder on the way with O_DIRECTORY. Opening the folder
+	// itself would block on a FIFO a box swapped in after MkdirAll until something wrote to it.
+	parent, err := root.OpenRoot(dir + string(filepath.Separator) + ".")
+	if err != nil {
+		return nil, "", fmt.Errorf("open scaffold parent for %s: %w", path, repoPath(err, dir))
+	}
+	return parent, rel, nil
+}
+
 // repoPath puts the path a person knows on an error from a parent handle. The handle reports a
 // bare name when it cannot create a file, and spells the files it opened "<dir>/./<name>".
 func repoPath(err error, path string) error {
@@ -373,23 +386,38 @@ func repoRelativePath(repo, dest string) (string, error) {
 }
 
 // linkIfAbsent creates a symlink, replacing an existing symlink but never a real
-// file (which usually holds content a symlink would silently destroy).
-func (s *scaffolder) linkIfAbsent(target, link string) error {
-	fi, err := os.Lstat(link)
+// file (which usually holds content a symlink would silently destroy). An existing link also
+// stays when keepLink, if given, accepts it. The link is checked, removed and created by name
+// through one parent handle: a box that swaps the parent for a link after the check cannot point
+// the removal at a same-named entry elsewhere, such as ~/.claude/skills or one .coopignore hides.
+func (s *scaffolder) linkIfAbsent(target, link string, keepLink func() bool) error {
+	parent, rel, err := openRepoParent(s.repo, link)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	name := filepath.Base(rel)
+	fi, err := parent.Lstat(name)
 	isLink := err == nil && fi.Mode()&os.ModeSymlink != 0
 	current := ""
 	if isLink {
-		current, _ = os.Readlink(link)
+		current, _ = parent.Readlink(name)
 	}
 	switch {
-	case isLink && current == target:
-		// Already the symlink we'd create — a re-run is a no-op, so say so rather than report
-		// "linked" (an action verb that reads like a rewrite) on every subsequent init.
+	case isLink && (current == target || keepLink != nil && keepLink()):
+		// Already the symlink we'd create, or one the caller keeps — a re-run is a no-op, so say
+		// so rather than report "linked" (an action verb that reads like a rewrite) on every init.
 		s.keep()
 	case os.IsNotExist(err), isLink:
-		_ = os.Remove(link)
-		if err := os.Symlink(target, link); err != nil {
-			return err
+		_ = parent.Remove(name)
+		if err := parent.Symlink(target, name); err != nil {
+			// The handle names the link by its bare name. Shaped like the other create failures,
+			// so coop init says which link it could not make.
+			var linkErr *os.LinkError
+			if errors.As(err, &linkErr) {
+				err = linkErr.Err
+			}
+			return &fs.PathError{Op: "create", Path: link, Err: err}
 		}
 		s.changed = true
 	default:
@@ -400,13 +428,13 @@ func (s *scaffolder) linkIfAbsent(target, link string) error {
 
 // linkSkillsIfAbsent also preserves a symlink to another existing project skills directory.
 func (s *scaffolder) linkSkillsIfAbsent(target, link string) error {
-	if info, err := os.Lstat(link); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		if resolved, err := os.Stat(link); err == nil && resolved.IsDir() {
-			s.keep()
-			return nil
-		}
-	}
-	return s.linkIfAbsent(target, link)
+	return s.linkIfAbsent(target, link, func() bool {
+		// Following the link means walking its path, since the folder it names may be outside the
+		// repository. A parent a box swaps meanwhile can only change whether the link stays: the
+		// removal and the new link still go through linkIfAbsent's handle.
+		resolved, err := os.Stat(link)
+		return err == nil && resolved.IsDir()
+	})
 }
 
 func (s *scaffolder) copySkills() error {
