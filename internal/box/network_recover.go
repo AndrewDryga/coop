@@ -29,6 +29,9 @@ type NetworkRecovery struct {
 	// its identity could not be proved: nothing was touched because cleanup is
 	// that process's job, not because anything external is in the way.
 	Live bool
+	// Elsewhere is set with Live when the supervisor ran on another computer or
+	// in another container, where only that host's coop can check it.
+	Elsewhere bool
 	// The counts a report may state as fact, by the kind the record itself
 	// names. Removed counts only what this pass actually removed — a resource
 	// observed already absent was settled, not cleaned up — so a report can
@@ -187,6 +190,17 @@ func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.
 	}
 }
 
+// supervisorRecordedHere reports whether supervisor's pid was read where this coop runs, by the
+// rule the supervisor labels follow: a record that names a host must name this one, and a record
+// without one counts as this host's only for a coop on the host itself, outside any container.
+func supervisorRecordedHere(supervisor networkstate.Supervisor) bool {
+	if supervisor.Host == "" {
+		return legacyLabelsAreLocal()
+	}
+	host, err := thisHost()
+	return err == nil && supervisor.Host == host
+}
+
 // networkRecoveryOrder is the same order a live cleanup uses: consumers before
 // the volumes they mount, so a volume is only ever removed once nothing holds
 // it.
@@ -194,6 +208,13 @@ var networkRecoveryOrder = []string{"agent", "guard", "controller", "ipc", "obse
 
 func recoverNetworkRun(ctx context.Context, evidence *networkstate.Evidence, record networkstate.Execution, connect recoverConnect) (out NetworkRecovery) {
 	out = NetworkRecovery{RunID: record.ID}
+	// A pid read on another host or in another PID namespace looks gone from here while its coop
+	// still runs, and that coop's own seal would then fail. Such a run is its own host's to recover.
+	if !supervisorRecordedHere(record.Supervisor) {
+		out.Live, out.Elsewhere = true, true
+		out.Skipped = "it was started on another computer or container, and only the Coop there can tell whether it is still running"
+		return out
+	}
 	if !processidentity.Inspect(record.Supervisor.PID, record.Supervisor.StartToken).ProvesGone() {
 		out.Live = true
 		out.Skipped = "its supervisor (pid " + strconv.Itoa(record.Supervisor.PID) + ") is still running or its identity is uncertain"

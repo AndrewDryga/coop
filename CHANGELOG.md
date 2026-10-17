@@ -41,6 +41,12 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **A network run started on another computer is left to that computer.** A filtered run's record
+  named its supervising Coop process by pid only, so a Coop on another computer or in a container
+  that shares the same state folder read that pid as gone and could seal the run as lost while it
+  was still finishing. Each run now records which host started it, and cleanup skips a run from
+  another host and says so.
+
 - **A fork loop whose agent is not signed in stops before it makes the fork.** `coop fork <name>
   --loop` checked its own agent's sign-in only after cloning the fork, and with `-d` the error
   showed only in the fork's log. It now stops with the sign-in message before anything is made,

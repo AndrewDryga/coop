@@ -57,6 +57,34 @@ func rewriteSupervisorToken(t *testing.T, store *networkstate.Store, id string, 
 	}
 }
 
+// rewriteSupervisorHost replaces one retained run's recorded supervisor host, or removes it when
+// host is "", as a record written before the field existed has none.
+func rewriteSupervisorHost(t *testing.T, store *networkstate.Store, id, host string) {
+	t.Helper()
+	path := filepath.Join(store.Path(), "execution-"+id+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	supervisor, _ := record["supervisor"].(map[string]any)
+	if host == "" {
+		delete(supervisor, "host")
+	} else {
+		supervisor["host"] = host
+	}
+	updated, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, updated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func recoveryFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture, *networkstate.Evidence, recoverConnect) {
 	t.Helper()
 	f, d := filteredFixture(t)
@@ -291,6 +319,51 @@ func TestRecoverNetworkRunsLeavesAnotherSystemsRunAlone(t *testing.T) {
 	record, err := evidence.Execution(f.record.ID)
 	if err != nil || record.Receipt != nil {
 		t.Fatal("another system's run was sealed", err)
+	}
+}
+
+// A run records the host its supervisor ran on, and recovery judges the supervisor only where that
+// pid means something: a run from this host whose supervisor is gone is settled; one recorded on
+// another host is left alone however its pid looks from here, and said to be another host's; one
+// recorded before runs named their host is judged as before by a coop on the host itself.
+func TestRecoverNetworkRunsJudgesOnlyThisHostsSupervisors(t *testing.T) {
+	host, err := thisHost()
+	if err != nil {
+		t.Skip("this host cannot be named:", err)
+	}
+	for _, tc := range []struct {
+		name     string
+		recorded string // "" removes the field
+		settled  bool
+	}{
+		{"this host", host, true},
+		{"another host", strings.Repeat("a", 24), false},
+		{"no host recorded", "", legacyLabelsAreLocal()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, d, evidence, connect := recoveryFixture(t)
+			if f.record.Supervisor.Host != host {
+				t.Fatalf("run recorded host %q, want this host's %q", f.record.Supervisor.Host, host)
+			}
+			rewriteSupervisorHost(t, f.store, f.record.ID, tc.recorded)
+			departSupervisor(t, f.store, f.record.ID)
+			results, err := recoverNetworkRuns(context.Background(), evidence, "", connect)
+			if err != nil || len(results) != 1 {
+				t.Fatalf("recovery = %+v %v", results, err)
+			}
+			r := results[0]
+			if tc.settled != !r.Live || r.Elsewhere != !tc.settled || r.Sealed != tc.settled {
+				t.Fatalf("recovery of a run from %s = %+v, want settled %v", tc.name, r, tc.settled)
+			}
+			if !tc.settled {
+				d.mu.Lock()
+				kept := len(d.containers) != 0 && len(d.volumes) != 0
+				d.mu.Unlock()
+				if !kept || !strings.Contains(r.Skipped, "another computer or container") {
+					t.Fatalf("another host's run lost its resources or was not named as another host's: %+v", r)
+				}
+			}
+		})
 	}
 }
 

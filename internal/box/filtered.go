@@ -330,7 +330,8 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if f.image != candidate.ClientImage {
 		projectImage = f.image
 	}
-	executionSpec := networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
+	host, _ := thisHost() // "" when this coop cannot name its host; then no other coop judges the run
+	executionSpec := networkstate.ExecutionSpec{Host: host, Project: project, PolicyFingerprint: policy.Fingerprint,
 		QualificationID: capture.QualificationID, ClientImage: candidate.ClientImage, ProjectImage: projectImage,
 		Runtime: "docker", DaemonID: docker.Info().ID, Endpoint: docker.Endpoint(), GatewayImage: candidate.GatewayImage,
 		SessionID: capture.SessionID, AttemptID: capture.AttemptID, JobDigest: capture.JobDigest, Protected: protected}

@@ -38,9 +38,13 @@ var (
 	ErrEvidenceUnavailable = errors.New("network evidence is unavailable or expired")
 )
 
+// Supervisor is the coop process that runs an execution. Its pid means something only on the host
+// and in the PID namespace it was read in, which Host names as the supervisor labels do (empty when
+// that coop could not name its host, and in records written before the field existed).
 type Supervisor struct {
 	PID        int    `json:"pid"`
 	StartToken string `json:"start_token"`
+	Host       string `json:"host,omitempty"`
 }
 
 // Resource names exist in the intent before any runtime operation. An empty ID
@@ -94,6 +98,7 @@ type Execution struct {
 }
 
 type ExecutionSpec struct {
+	Host                                                                  string // the supervisor's host, as its labels name it
 	Project, PolicyFingerprint, Runtime, DaemonID, Endpoint, GatewayImage string
 	SessionID, AttemptID                                                  string
 	JobDigest                                                             string
@@ -198,7 +203,7 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, smoke *
 	if err != nil {
 		return Execution{}, err
 	}
-	owner := Supervisor{PID: os.Getpid(), StartToken: processidentity.StartToken(os.Getpid())}
+	owner := Supervisor{PID: os.Getpid(), StartToken: processidentity.StartToken(os.Getpid()), Host: spec.Host}
 	if !processidentity.Stable(owner.StartToken) {
 		return Execution{}, errors.New("network supervisor identity unavailable")
 	}

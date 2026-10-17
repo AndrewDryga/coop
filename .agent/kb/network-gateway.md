@@ -204,7 +204,10 @@ retention keeps an unsealed run forever, so the pass finishes that one from the 
 connects to the recorded daemon only for a resource still at the runtime (`recoverLeftovers`), so a
 stopped or replaced daemon cannot hold the seal back, and `coop net recover` and `coop net inspect`
 resolve a runtime only when cleanup is pending. `NetworkRecovery.Sealed` means THIS pass wrote the
-receipt, never an earlier one. It runs from `coop net recover`, from `coop net inspect` of a run
+receipt, never an earlier one. A record names its supervisor's host (`Supervisor.Host`, the
+supervisor labels' host field), and the pass judges only a supervisor recorded here
+(`supervisorRecordedHere`): another host's run is left alone with `Elsewhere` set, and a record with
+no host is judged only by a coop outside a container, as v1 labels are. It runs from `coop net recover`, from `coop net inspect` of a run
 owed either (scoped to that run), from the orphan sweep at a loop, fork or build start, and before
 every other filtered host launch — `runBox` in `cli/boxsweep.go`, and a fork or session review gate
 through `forkctl.Host.SettleFilteredRuns` — never before an open or offline one, because finding the
@@ -289,6 +292,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-17 — run records name the supervisor's host and recovery skips other hosts' runs (task
+  2026-10-17-record-the-host-in-network-run-supervisor-record).
 - 2026-10-17 — replaced every line-number citation with the function, constant or template it meant
   (`helperOptions`, `verifyContainer`, `initialRules`, `filteredProtectedAddresses`,
   `validServePorts`, `leaseRules`, `readOriginalDestination`, `Inspect`, `ProxyHeader`,

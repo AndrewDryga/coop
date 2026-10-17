@@ -142,7 +142,8 @@ func filteredFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := smoke.CreateExecution(ctx, networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
+	host, _ := thisHost() // as prepareFilteredExecution records it
+	record, err := smoke.CreateExecution(ctx, networkstate.ExecutionSpec{Host: host, Project: project, PolicyFingerprint: policy.Fingerprint,
 		Runtime: "docker", DaemonID: "fixture-daemon", Endpoint: "unix:///fixture.sock", GatewayImage: "sha256:" + strings.Repeat("a", 64), ClientImage: "sha256:" + strings.Repeat("b", 64)})
 	if err != nil {
 		t.Fatal(err)

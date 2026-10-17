@@ -165,6 +165,9 @@ func (a *app) cmdNetRecover(args []string) (int, error) {
 func writeNetRecovery(w io.Writer, p ui.Palette, result box.NetworkRecovery) {
 	id := networkreport.ShortID(result.RunID)
 	switch {
+	case result.Elsewhere:
+		fmt.Fprintf(w, "Network run %s was left alone.\n\n  %s\n", id,
+			"It was started on another computer or container. The Coop there cleans it up.")
 	case result.Live:
 		fmt.Fprintf(w, "Network run %s was left alone.\n\n  %s\n", id,
 			"Its supervising process is still running, or Coop could not verify that it stopped.")
