@@ -24,6 +24,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/ui"
+	"go.yaml.in/yaml/v3"
 )
 
 // The `coop net` reads answer from retained host evidence and nothing else: no
@@ -318,7 +319,19 @@ func (a *app) cmdNetAccess() (int, error) {
 func (a *app) netPendingNotice(repo string) {
 	access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
 	if err != nil {
-		ui.Warn("this project's network access could not be checked: %v", err)
+		// The error can quote project.yaml or the Compose file, and a box can write both, so it is
+		// shown escaped. yaml lists one problem a line: each keeps a line of its own, escaped by
+		// itself, so a newline inside a key a box chose cannot start a line of its own.
+		var problems *yaml.TypeError
+		if errors.As(err, &problems) {
+			head, _, _ := strings.Cut(err.Error(), "\n")
+			ui.Warn("this project's network access could not be checked: %s", ui.SafeInline(head))
+			for _, problem := range problems.Errors {
+				ui.Note("  %s", ui.SafeInline(problem))
+			}
+			return
+		}
+		ui.Warn("this project's network access could not be checked: %s", ui.SafeInline(err.Error()))
 		return
 	}
 	if access.Pending == nil {

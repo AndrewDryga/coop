@@ -568,6 +568,122 @@ func TestInitNamesAnUnreadableCoopignore(t *testing.T) {
 	}
 }
 
+// A box names the folders and files coop init reports, and can write project.yaml and the Git config
+// init quotes, so any of them can hold terminal controls: an escape sequence that clears the screen,
+// or a newline that starts a fake line of Coop's own. Init shows each one escaped.
+func TestInitEscapesNamesABoxChose(t *testing.T) {
+	hermeticGit(t)
+	// name as a folder holds it, the opening of a YAML double-quoted string that spells it (each use
+	// closes it after its own suffix), and name as init shows it.
+	const name, yamlName, shown = "evil\x1b[2J\nfake", `"evil\e[2J\nfake`, `evil\u001B[2J\u000Afake`
+	write := func(t *testing.T, repo, rel, body string) {
+		t.Helper()
+		path := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	member := func(t *testing.T, repo string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(repo, name, ".agent"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		what  string
+		args  []string
+		plant func(t *testing.T, repo string)
+		want  string
+	}{
+		{"a task queue it registers", nil, member, "Task queues registered: " + shown},
+		{"a task queue it cannot register", nil, func(t *testing.T, repo string) {
+			member(t, repo)
+			write(t, repo, ".agent/project.yaml", "subprojects: [docs]\n") // a flow-style list coop's line edit cannot extend
+		}, "Add " + shown + " to subprojects in .agent/project.yaml."},
+		{"the project's own Dockerfile", nil, func(t *testing.T, repo string) {
+			write(t, repo, name+"/Dockerfile", "FROM alpine\n")
+		}, "Dockerfile: " + shown + "/Dockerfile"},
+		{"box.dockerfile", nil, func(t *testing.T, repo string) {
+			write(t, repo, name+"/Dockerfile", "FROM alpine\n")
+			write(t, repo, ".agent/project.yaml", "box:\n  dockerfile: "+yamlName+"/Dockerfile\"\n")
+		}, "Review " + shown + "/Dockerfile, then run:"},
+		{"core.hooksPath", nil, func(t *testing.T, repo string) {
+			gitInit(t, repo)
+			if out, err := exec.Command("git", "-C", repo, "config", "core.hooksPath", name).CombinedOutput(); err != nil {
+				t.Fatalf("git config: %v\n%s", err, out)
+			}
+		}, "core.hooksPath points to " + shown + "."},
+		{"box.compose", []string{"--services", "postgres"}, func(t *testing.T, repo string) {
+			write(t, repo, ".agent/project.yaml", "box:\n  compose: "+yamlName+"/compose.yml\"\n")
+		}, "Service added to " + shown + "/compose.yml"},
+		{"a box.compose it refuses", []string{"--services", "postgres"}, func(t *testing.T, repo string) {
+			write(t, repo, name+"/compose.yml", "services: {}\n")
+			write(t, repo, ".coopignore", "compose.yml\n")
+			write(t, repo, ".agent/project.yaml", "box:\n  compose: "+yamlName+"/compose.yml\"\n")
+		}, "Could not add services to " + shown + "/compose.yml"},
+		{"a project.yaml it cannot check network access with", nil, func(t *testing.T, repo string) {
+			write(t, repo, ".agent/project.yaml", yamlName+"\": true\n")
+		}, "field " + shown + " not found"},
+		{"the project's own Compose file", nil, func(t *testing.T, repo string) {
+			write(t, repo, name+"/compose.yml", "services: {}\n")
+		}, "Services: " + shown + "/compose.yml"},
+		{"the project's own Compose file beside its Dockerfile", nil, func(t *testing.T, repo string) {
+			write(t, repo, name+"/Dockerfile", "FROM alpine\n")
+			write(t, repo, name+"/compose.yml", "services: {}\n")
+		}, "Services:   " + shown + "/compose.yml"},
+		{"a box.compose whose service name is taken", []string{"--services", "postgres"}, func(t *testing.T, repo string) {
+			write(t, repo, name+"/compose.yml", "services:\n  db:\n    image: mysql:8\n")
+			write(t, repo, ".agent/project.yaml", "box:\n  compose: "+yamlName+"/compose.yml\"\n")
+		}, "Review " + shown + "/compose.yml before adding"},
+		{"a box.compose that already has the service", []string{"--services", "postgres"}, func(t *testing.T, repo string) {
+			write(t, repo, ".agent/project.yaml", "box:\n  compose: "+yamlName+"/compose.yml\"\n")
+			repoApp, _ := initApp(t, repo)
+			if code, err := repoApp.cmdInit([]string{"--services", "postgres"}); code != 0 || err != nil {
+				t.Fatalf("first coop init --services = (%d, %v)", code, err)
+			}
+		}, "Services are already configured in " + shown + "/compose.yml."},
+		{"a box.compose it cannot read", []string{"--services", "postgres"}, func(t *testing.T, repo string) {
+			write(t, repo, name+"/compose.yml", "services: [\n")
+			write(t, repo, ".agent/project.yaml", "box:\n  compose: "+yamlName+"/compose.yml\"\n")
+		}, "Fix " + shown + "/compose.yml, then run coop init --services again."},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			repo := initializedProject(t)
+			tc.plant(t, repo)
+			a, _ := initApp(t, repo)
+			var code int
+			out := captureTerminal(t, func() { code, _ = a.cmdInit(tc.args) })
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("exited %d without %q:\n%s", code, tc.want, out)
+			}
+			if strings.Contains(out, "evil\x1b") || strings.Contains(out, "\nfake") {
+				t.Errorf("printed the name unescaped:\n%s", out)
+			}
+		})
+	}
+}
+
+// yaml.v3 lists one problem a line. An honest typo in project.yaml keeps its problem on a line of its
+// own under the network-access warning, not escaped onto the warning's line.
+func TestInitNetworkWarningKeepsEachYAMLProblemOnItsOwnLine(t *testing.T) {
+	hermeticGit(t)
+	repo := initializedProject(t)
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("fo: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := initApp(t, repo)
+	out := captureTerminal(t, func() { _, _ = a.cmdInit(nil) })
+	if !strings.Contains(out, "could not be checked: ") || !strings.Contains(out, "\n  line 1: field fo not found in type ") {
+		t.Errorf("the yaml problem is not on a line of its own:\n%s", out)
+	}
+	if strings.Contains(out, `\u000A`) {
+		t.Errorf("the warning escaped yaml's own line break:\n%s", out)
+	}
+}
+
 // initTreeChange names an entry that differs between two snapshots of a tree, or is "" when none does.
 func initTreeChange(before, after map[string]initTreeEntry) string {
 	for name := range after {

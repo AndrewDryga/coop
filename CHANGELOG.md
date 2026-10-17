@@ -11,6 +11,14 @@
   Git search that climbs there, but did not count the folders above that second path, such as
   `/System/Volumes/Data`, `/System` or `/data`; now it does.
 
+- **`coop init` now escapes control characters in the names a box chose.** An agent in a box can
+  name the task queue folders `coop init` registers and your project's own Dockerfile and Compose
+  file, and can set the `box.dockerfile`, `box.compose` and `core.hooksPath` values it quotes. Any
+  of them can hold terminal control characters that repaint the output with a fake line, hide text
+  or, on some terminals, write to the clipboard. `coop init` and `coop init --services` now show
+  those characters escaped, as `\u001B` for example, and so does the warning about network access
+  Coop could not check, which can quote `.agent/project.yaml` or the Compose file.
+
 - **A `.agent/loop.yaml` or preset that does not load now exits 1 instead of 2.** `coop loop`,
   `coop acp`, `coop fork`, `coop <preset>`, `coop presets <name>` and `coop help <name>` exited 2,
   the code for a mistyped command, when the loop's settings file or a preset's `preset.yaml` did

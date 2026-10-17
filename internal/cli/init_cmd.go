@@ -291,7 +291,9 @@ func (a *app) cmdInit(args []string) (int, error) {
 		ui.OK("Coop project updated")
 		ui.Note("  %s: existing files kept, missing files added", repo)
 		if len(registered) > 0 {
-			ui.Note("  Task queues registered: %s", strings.Join(registered, ", "))
+			// A box can name the member folders, so anything in a name that would act on the
+			// terminal is shown escaped.
+			ui.Note("  Task queues registered: %s", ui.SafeInline(strings.Join(registered, ", ")))
 		}
 	} else {
 		// One blank line between the questions (or the header, when nobody was asked) and the
@@ -318,11 +320,12 @@ func (a *app) cmdInit(args []string) (int, error) {
 		ui.Note("")
 		warnBlock(fmt.Sprintf("%s still need to be registered", countWord(len(unregistered), "task queue")),
 			project.File+" uses a subprojects list Coop could not update safely.",
-			fmt.Sprintf("Add %s to subprojects in %s.", joinAnd(unregistered), project.File))
+			fmt.Sprintf("Add %s to subprojects in %s.", ui.SafeInline(joinAnd(unregistered)), project.File))
 	}
 	for _, notice := range notices {
 		ui.Note("")
-		warnBlock(notice.Headline, notice.Reason, notice.Action)
+		// A notice can quote core.hooksPath, which a box can set.
+		warnBlock(notice.Headline, ui.SafeInline(notice.Reason), notice.Action)
 	}
 	a.reportUnfilteredRuntime(repo)
 	reportDockerSetup(repo)
@@ -409,6 +412,9 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 		return -1, err
 	}
 	rel := p.ComposeRel()
+	// box.compose comes from project.yaml, which a box can write, so the path and the errors that
+	// name it are shown escaped.
+	shown := ui.SafeInline(rel)
 	if len(services) == 0 {
 		ui.Note("")
 		ui.Note("No services added.")
@@ -418,25 +424,25 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 	if err != nil {
 		var collision *scaffold.ComposeCollision
 		if errors.As(err, &collision) {
-			return 1, reported(fmt.Sprintf("Could not add %s to %s", collision.Catalog, rel),
+			return 1, reported(fmt.Sprintf("Could not add %s to %s", collision.Catalog, shown),
 				sentence(collision.Error()),
-				fmt.Sprintf("Review %s before adding %s.", rel, titleName(collision.Catalog)),
+				fmt.Sprintf("Review %s before adding %s.", shown, titleName(collision.Catalog)),
 				"No services were changed.")
 		}
 		if refused := reportUnreadableCoopignore(err, "coop init --services", "No services were changed."); refused != nil {
 			return 1, refused
 		}
-		fix := fmt.Sprintf("Fix %s, then run coop init --services again.", rel)
+		fix := fmt.Sprintf("Fix %s, then run coop init --services again.", shown)
 		if errors.As(err, new(scaffold.HiddenFile)) {
 			// The box can write box.compose, so the path, not the hidden file, is what to fix.
 			fix = fmt.Sprintf("Point box.compose in %s at a file the box can see.", project.File)
 		}
-		return 1, reported("Could not add services to "+rel, sentence(firstLine(err)), fix,
+		return 1, reported("Could not add services to "+shown, sentence(ui.SafeInline(firstLine(err))), fix,
 			"No services were changed.")
 	}
 	if len(added.Added) == 0 {
 		ui.Note("")
-		ui.Note("Services are already configured in %s.", rel)
+		ui.Note("Services are already configured in %s.", shown)
 		for _, name := range added.Existing {
 			ui.Note("  %s → %s", name, scaffold.ServiceName(name))
 		}
@@ -445,7 +451,7 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 	ui.Note("")
 	// The names follow on their own lines, so a count in the headline would only restate what the
 	// reader is about to read. Plural, not "2 Services added".
-	ui.OK("%s added to %s", plural(len(added.Added), "Service"), rel)
+	ui.OK("%s added to %s", plural(len(added.Added), "Service"), shown)
 	for _, name := range added.Added {
 		ui.Note("  %s → %s", name, scaffold.ServiceName(name))
 	}
@@ -459,7 +465,8 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 }
 
 // reportDockerSetup points at the project's own Docker configuration when coop's box is not set
-// up yet. It suggests; it never adopts a file an application owns.
+// up yet. It suggests; it never adopts a file an application owns. A box can name those files, so
+// their paths are shown escaped.
 func reportDockerSetup(repo string) {
 	setup := scaffold.DetectDockerSetup(repo)
 	if setup == nil {
@@ -469,18 +476,18 @@ func reportDockerSetup(repo string) {
 	ui.Note("%s", ui.Bold("Use your project's Docker setup"))
 	switch {
 	case setup.Dockerfile != "" && setup.Compose != "":
-		ui.Note("  Dockerfile: %s", setup.Dockerfile)
-		ui.Note("  Services:   %s", setup.Compose)
+		ui.Note("  Dockerfile: %s", ui.SafeInline(setup.Dockerfile))
+		ui.Note("  Services:   %s", ui.SafeInline(setup.Compose))
 		ui.Note("")
 		ui.Note("  Set box.dockerfile or box.compose in %s to use these files.", project.File)
 		ui.Note("  Review the files before running coop build or coop up.")
 	case setup.Dockerfile != "":
-		ui.Note("  Dockerfile: %s", setup.Dockerfile)
+		ui.Note("  Dockerfile: %s", ui.SafeInline(setup.Dockerfile))
 		ui.Note("")
 		ui.Note("  Set box.dockerfile in %s to use this file.", project.File)
 		ui.Note("  Review the file before running coop build.")
 	default:
-		ui.Note("  Services: %s", setup.Compose)
+		ui.Note("  Services: %s", ui.SafeInline(setup.Compose))
 		ui.Note("")
 		ui.Note("  Set box.compose in %s to use this file.", project.File)
 		ui.Note("  Review the file before running coop up.")
@@ -532,8 +539,9 @@ func initActions(cfg *config.Config, repo string, services, agentDirs []string, 
 	if len(box.AuthedAgents(cfg)) == 0 {
 		out = append(out, initAction{title: "Sign in to an agent", actions: []string{"coop login " + loopTarget}})
 	}
+	// box.dockerfile comes from project.yaml, which a box can write.
 	if dfRel := project.DockerfilePath(repo); fileExists(filepath.Join(repo, dfRel)) {
-		out = append(out, initAction{title: "Build the box", note: "Review " + dfRel + ", then run:", actions: []string{"coop build"}})
+		out = append(out, initAction{title: "Build the box", note: "Review " + ui.SafeInline(dfRel) + ", then run:", actions: []string{"coop build"}})
 	}
 	if len(services) > 0 {
 		out = append(out, initAction{title: "Start " + joinAnd(services), actions: []string{"coop up"}})

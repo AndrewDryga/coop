@@ -1,8 +1,8 @@
 ---
 name: init-preflight
-description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links and files hidden from the box, and new files and agent links are created, checked and removed through one parent handle
+description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links and files hidden from the box, new files and agent links are created, checked and removed through one parent handle, and what it prints from the repository goes through ui.SafeInline
 subsystem: scaffold
-sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/scaffold/gates.go, internal/scaffold/docker.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go]
+sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/scaffold/gates.go, internal/scaffold/docker.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go, internal/cli/net_cmd.go]
 updated: 2026-10-17
 ---
 
@@ -92,7 +92,26 @@ since that folder may be outside the repository; a swap there only changes wheth
 The handle reports a failed link by its bare name, so the link is returned as a `create`
 `*fs.PathError` on its path and init prints "Could not create .claude/skills: …" as for a file.
 
+Init prints text a box chose through `ui.SafeInline`, so a name holding an escape sequence or a
+newline shows as `\u001B…` and cannot repaint the terminal: member folders (registered or left to
+register by hand), the project's own Dockerfile and Compose paths (`detectDocker` takes any
+`Dockerfile.*` in the root or a first-level folder), `box.dockerfile` and `box.compose` from
+project.yaml, the hooks notice's `core.hooksPath` (`.git` is read-write in a box), the reasons of
+setup and `--services` failures, and the network-access warning (`netPendingNotice`; yaml.v3
+errors quote project.yaml and Compose keys and values). Coop's fixed file names, its closed lists (agents,
+languages, services), the project folder's own path and the person's arguments print as they are.
+yaml.v3 lists one problem a line, so the network-access warning prints each `TypeError` entry on a
+line of its own, escaped by itself: an honest typo still reads as two lines, and a newline inside a
+key cannot start a line. An unreadable `.coopignore` is drawn by `reportUnreadableCoopignore`, which
+escapes its path too. A name that reaches the terminal through the dispatcher's fallback error line
+(`reportExit`) is not escaped (queued).
+
 ## Changelog
+- 2026-10-17 — escaped what init prints from the repository (task
+  2026-10-17-escape-the-subproject-names-coop-init-prints): member names, Docker setup paths,
+  `box.dockerfile`, `box.compose` in `--services`, the hooks notice and the network-access warning.
+  TestInitEscapesNamesABoxChose plants an ESC sequence and a newline in each; all thirteen cases
+  fail with the sites unescaped (negative control, 2026-10-17).
 - 2026-10-17 — the decider refuses an unreadable `.coopignore` too, so the in-place reader's
   refusal and the box's visibility rules agree; both report `shadowpath.UnreadableCoopignore`
   (task 2026-10-17-refuse-a-coopignore-the-secret-decider-cannot-re).
