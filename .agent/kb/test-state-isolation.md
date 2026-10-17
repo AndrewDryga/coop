@@ -1,8 +1,8 @@
 ---
 name: test-state-isolation
-description: every test binary that can reach Coop's per-user state calls teststate.Isolate in TestMain; Coop refuses the real roots in a test binary, children inherit the folder, and live suites opt back into the real config and network state
+description: every test binary that can reach Coop's per-user state calls teststate.Isolate in TestMain; Coop refuses the real roots in a test binary, children inherit the folder, and live suites opt back into the real config and network state; the cli unit tests run with failing stubs for the host provider CLIs and runtimes
 subsystem: development
-sources: [internal/testutil/teststate/teststate.go, internal/forkspace/execution.go, internal/forkspace/gitview.go, internal/tasks/lease.go, internal/config/config.go, internal/config/runfiles.go, internal/box/network_admission.go, internal/box/serviceapproval.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/acpproxy/trace.go, internal/cli/provider_live_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/box/reap.go, internal/cli/main_test.go, internal/sessionsvc/main_test.go, internal/sessionsvc/acp.go]
+sources: [internal/testutil/teststate/teststate.go, internal/forkspace/execution.go, internal/forkspace/gitview.go, internal/tasks/lease.go, internal/config/config.go, internal/config/runfiles.go, internal/box/network_admission.go, internal/box/serviceapproval.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/acpproxy/trace.go, internal/cli/provider_live_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/box/reap.go, internal/cli/main_test.go, internal/cli/hostclis_test.go, internal/sessionsvc/main_test.go, internal/sessionsvc/acp.go]
 updated: 2026-10-17
 ---
 
@@ -61,6 +61,21 @@ because its operator may keep the trial store outside the temporary folder. The 
 stay isolated: ACP children qualify a throwaway state tree, and the box runtime suites run with
 egress `none`.
 
+**Host programs.** The cli binary's untagged tests also stay off the developer's provider CLIs and
+container runtime. `guardHostCLIs` (`internal/cli/hostclis_test.go`) puts a failing stub for codex,
+claude, gemini, grok, gcloud (the Gemini usage report's token), docker and Apple's container first
+on PATH; a stub records its call, and the binary fails after its tests, listing the calls. Before
+it, three `coop models` tests ran the real `codex debug models` (which reads `~/.codex`) and
+`docker info`, and every `coop init` test left runtime detection to the host: Apple's container
+added a warning to the approved transcripts, and with both runtimes installed detection ran the
+real `docker info`. A test takes a seam instead: `modelsApp` (an empty PATH and a failing
+`a.acpModels`), `initAppOnDocker` (`rt` and `rtSet`), or a PATH of its own stubs, as
+`TestInitDetectsTheRuntimeWhenNoneIsChosen` uses for init's own detection. The container stub keeps
+detection visible: with both runtimes on PATH it asks Docker's daemon, so the guard sees it on
+every machine. A helper child started with the state
+folder shares the parent's stubs, and the parent reports. The tagged suites build without the guard
+(`hostclis_tagged_test.go`). The report names calls, not tests; narrow it with `-run`.
+
 **Leftovers.** A killed test binary leaves its folder. The daily temp sweep
 (`internal/box/reap.go`) removes `coop-test-state-*` entries older than an hour, and the
 `coop-test-task-leases-*` and `coop-gitview-*` folders that earlier builds' test binaries made for
@@ -77,6 +92,12 @@ the two real roots, then read the denials with `/usr/bin/log show --predicate 's
 Nothing reaches the real folders, and every attempted write is named with its process.
 
 ## Changelog
+- 2026-10-17 — the cli binary's untagged tests run under `guardHostCLIs`. A discovery run with
+  recording stubs first on PATH found `codex debug models` and `docker info` from three
+  `coop models` tests, and `docker info` from detection in every `coop init` test once Apple's
+  container was present; they now use `modelsApp` and `initAppOnDocker`, and init's detection with
+  no runtime chosen has its own PATH-stub test. gcloud is stubbed too. Negative control: the old
+  shapes pass alone and the binary fails, listing their calls.
 - 2026-10-17 — review round: one live mark (`teststate.LiveEnv`, set by the live harness) replaced
   the HOME-based keep rule, so Isolate replaces every other inherited XDG folder;
   `config.CheckTestFolder` accepts only temporary folders, for config, state and sessions alike;

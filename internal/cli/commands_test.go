@@ -1224,7 +1224,7 @@ func TestInitServicesSpellingsWithoutTerminal(t *testing.T) {
 				if err := os.Mkdir(repo, 0o700); err != nil {
 					t.Fatal(err)
 				}
-				a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
+				a := initAppOnDocker(repo, cfgDir)
 				if initialized {
 					captureStderr(t, func() {
 						if code, err := a.cmdInit(nil); code != 0 || err != nil {

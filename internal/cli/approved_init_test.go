@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -30,9 +31,17 @@ func initApp(t *testing.T, repo string) (*app, func(string) string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfgDir := t.TempDir()
-	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
+	a := initAppOnDocker(repo, t.TempDir())
 	return a, func(out string) string { return strings.ReplaceAll(out, repo, "/work/atlas") }
+}
+
+// initAppOnDocker is an app for coop init on Docker, the runtime the transcripts assume. Init only
+// asks a runtime it has whether it can filter network access, which runs nothing. Without one it
+// detected this machine's: Apple's container added a warning, and with both runtimes installed it
+// ran the real docker info.
+func initAppOnDocker(repo, cfgDir string) *app {
+	return &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")},
+		rt: runtime.Runtime{Name: "docker"}, rtSet: true}
 }
 
 // settledProject is the state the re-init transcripts were approved against: a Git repository

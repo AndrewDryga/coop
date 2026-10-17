@@ -80,7 +80,7 @@ func TestStdoutViewsNoANSI(t *testing.T) {
 		out, _ := io.ReadAll(r)
 		return string(out)
 	}
-	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	a := modelsApp(t)
 	views := map[string]func(){
 		"commandHelp": func() { printCommandHelp(commandHelp["tasks"]) },
 		"models":      func() { _, _ = a.cmdModels(nil) },
@@ -216,6 +216,8 @@ func TestHelpForHelpAndVersion(t *testing.T) {
 // error. Detect is lazy (a.ensureRuntime), not eager in Main — so install→init→browse the queue and
 // CI `coop tasks lint` don't require Docker.
 func TestRuntimeDetectIsLazy(t *testing.T) {
+	// No codex either: `coop models` refreshes a due catalog, and Codex's comes from its CLI.
+	t.Setenv("PATH", t.TempDir())
 	bogus := func() *app {
 		return &app{cfg: &config.Config{RuntimeName: "coop-no-such-runtime-xyz", ConfigDir: t.TempDir()}}
 	}
@@ -242,7 +244,8 @@ func TestRuntimeDetectIsLazy(t *testing.T) {
 // The exit-code contract is coop's machine interface (CI/scripts branch on it): 0 success · 1 failure
 // or findings · 2 usage. Pin representative cases so it can't drift silently (documented in docs/configuration.md).
 func TestExitCodeContract(t *testing.T) {
-	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}}
+	a := modelsApp(t)
+	a.cfg.RepoOverride = t.TempDir()
 	// 2 — usage: an unknown command, and bad arguments.
 	if code, _ := a.dispatch([]string{"nonesuch-xyz"}); code != 2 {
 		t.Errorf("unknown command exit = %d, want 2", code)

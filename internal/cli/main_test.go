@@ -27,6 +27,6 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
-		return m.Run()
+		return guardHostCLIs(m.Run)
 	}))
 }

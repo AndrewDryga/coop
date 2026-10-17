@@ -98,7 +98,7 @@ func TestAskGitInit(t *testing.T) {
 func TestInitWithoutTerminalAsksNothingAndNamesTheMissingStep(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir, cfgDir := t.TempDir(), t.TempDir()
-	a := &app{cfg: &config.Config{RepoOverride: dir, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
+	a := initAppOnDocker(dir, cfgDir)
 	out := captureStderr(t, func() {
 		if code, err := a.cmdInit([]string{"--services", "none", "--agents", "claude,codex"}); code != 0 || err != nil {
 			t.Fatalf("cmdInit = (%d, %v)", code, err)
@@ -199,6 +199,11 @@ func snapshotInitTree(t *testing.T, root string) map[string]initTreeEntry {
 	return entries
 }
 
+// cannotFilterWarning is the block init prints when its runtime cannot filter network access.
+var cannotFilterWarning = []string{"Apple container can't filter network access",
+	"This project filters network access, which needs Docker.",
+	"Start or install Docker. Online agents need Docker even with open networking."}
+
 // On Apple container a filtered project is refused at its first run (checkFilteredRuntime), so
 // init says so up front and directs the user to Docker. The committed policy stays filtered: a
 // teammate on Docker keeps it. On Docker, init says nothing extra.
@@ -217,10 +222,7 @@ func TestInitWarnsWhenTheRuntimeCannotFilter(t *testing.T) {
 					t.Fatalf("cmdInit = (%d, %v)", code, err)
 				}
 			})
-			warning := []string{"Apple container can't filter network access",
-				"This project filters network access, which needs Docker.",
-				"Start or install Docker. Online agents need Docker even with open networking."}
-			for _, line := range warning {
+			for _, line := range cannotFilterWarning {
 				if strings.Contains(out, line) != tc.warns {
 					t.Errorf("on %s, init output has %q = %t, want %t:\n%s", tc.runtime, line, !tc.warns, tc.warns, out)
 				}
@@ -231,6 +233,43 @@ func TestInitWarnsWhenTheRuntimeCannotFilter(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join(dir, ".agent", "project.yaml"))
 			if err != nil || !strings.Contains(string(data), "\n  egress: filtered\n") {
 				t.Errorf("the committed policy must stay filtered on %s: %v\n%s", tc.runtime, err, data)
+			}
+		})
+	}
+}
+
+// With no runtime chosen, init detects this machine's (reportUnfilteredRuntime). One runtime alone
+// is chosen from PATH without running it: Apple's container gets the warning, Docker none, and no
+// runtime at all is left to the install steps and coop doctor.
+func TestInitDetectsTheRuntimeWhenNoneIsChosen(t *testing.T) {
+	for _, tc := range []struct {
+		name, installed string
+		warns           bool
+	}{{"Apple container alone", "container", true}, {"Docker alone", "docker", false}, {"no runtime", "", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			bin, ran := t.TempDir(), filepath.Join(t.TempDir(), "runtime-ran")
+			if tc.installed != "" {
+				stub := "#!/bin/sh\n: > '" + ran + "'\nexit 1\n"
+				if err := os.WriteFile(filepath.Join(bin, tc.installed), []byte(stub), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("PATH", bin)
+			dir, cfgDir := t.TempDir(), t.TempDir()
+			a := &app{cfg: &config.Config{RepoOverride: dir, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
+			out := captureStderr(t, func() {
+				if code, err := a.cmdInit([]string{"--services", "none", "--agents", "claude"}); code != 0 || err != nil {
+					t.Fatalf("cmdInit = (%d, %v)", code, err)
+				}
+			})
+			for _, line := range cannotFilterWarning {
+				if strings.Contains(out, line) != tc.warns {
+					t.Errorf("init output has %q = %t, want %t:\n%s", line, !tc.warns, tc.warns, out)
+				}
+			}
+			if pathExists(ran) {
+				t.Errorf("detection ran %s, which PATH alone should have chosen", tc.installed)
 			}
 		})
 	}
@@ -279,7 +318,7 @@ func TestInitStackPreflightPreservesTree(t *testing.T) {
 					if failure == "asdf-missing-tools" {
 						stack = "asdf"
 					}
-					a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
+					a := initAppOnDocker(repo, cfgDir)
 					run := func() error {
 						if api == "scaffold" {
 							_, err := scaffold.Init(repo, stack, []string{"go"}, []string{"claude", "codex", "gemini"})
@@ -371,7 +410,7 @@ func TestInitReportsAPendingNetworkRequestOnlyWhenThereIsOne(t *testing.T) {
 	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v, %s", err, out)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
+	a := initAppOnDocker(repo, cfgDir)
 	initOutput := func() string {
 		t.Helper()
 		return captureStderr(t, func() {
