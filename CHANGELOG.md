@@ -25,6 +25,12 @@
   like `web`. Now Coop shows them as codes too. An emoji joined from several, such as a family,
   shows its parts with `\u200D` between them.
 
+- **`coop loop` exits 1, not 190 or 191, when an agent keeps leaving background work running.**
+  After an agent ended three times while work it had started in the background was still running,
+  `coop loop` stopped and exited 190 or 191, a status from inside the box that `coop help loop`
+  does not list. It now exits 1, like its other stops that leave a task in progress, and
+  `coop eval` no longer reports such a loop trial as a loop that could not start.
+
 - **Coop's home-folder checks also see your home folder through a second mount.** macOS reaches
   your home folder as `/System/Volumes/Data/Users/<you>` as well as `/Users/<you>`, also when it
   is on another disk, and a Linux bind mount, such as `/data/home` mounted at `/home`, reaches it

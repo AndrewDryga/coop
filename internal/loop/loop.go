@@ -1013,7 +1013,8 @@ reviewAgain:
 				if handoffs >= maxBackgroundHandoffs {
 					ui.Failure(fmt.Sprintf("Stopped after %d live-background handoffs", handoffs),
 						fmt.Sprintf("%s was returned to in progress.\nRun its checks and any peer work in the foreground before retrying.", active))
-					return code, ui.Reported(fmt.Errorf("provider ended with live background work %d times during recovery for task %s", handoffs, assigned.Item.ID))
+					// The box's 190 or 191 belongs to the stage record above, not to the loop's exit contract.
+					return 1, ui.Reported(fmt.Errorf("provider ended with live background work %d times during recovery for task %s", handoffs, assigned.Item.ID))
 				}
 				ui.Alert("The agent exited while its background work was still running",
 					fmt.Sprintf("The task was returned to in progress.\nBackground handoffs · %d of %d. Starting a fresh attempt.", handoffs, maxBackgroundHandoffs))
@@ -1066,7 +1067,8 @@ reviewAgain:
 					ui.Failure(fmt.Sprintf("Stopped after %d provider timeouts", timeouts),
 						fmt.Sprintf("%s is still in progress.\nThe last attempt recorded %s.", active, silenceDetail(classification)),
 						[2]string{"Continue:", continueCmd})
-					return code, ui.Reported(fmt.Errorf("provider attempt timed out %d times during recovery for task %s (%s)", timeouts, assigned.Item.ID, classification.outcome))
+					// The killed attempt's status belongs to the stage record above, not to the loop's exit contract.
+					return 1, ui.Reported(fmt.Errorf("provider attempt timed out %d times during recovery for task %s (%s)", timeouts, assigned.Item.ID, classification.outcome))
 				}
 				prev := rot.Active()
 				rot.AdvanceOnTimeout(time.Now())
@@ -1480,7 +1482,8 @@ reviewAgain:
 					ui.Failure("The loop stopped making progress",
 						fmt.Sprintf("No task finished, became blocked or produced a commit in %s.\nCurrent task: %s.", ui.Count(maxStalls, "attempt"), active),
 						[2]string{"Task:", "coop tasks path " + assigned.Item.ID})
-					return code, ui.Reported(stop)
+					// The stalled attempts exited 0, but the run did not finish its work.
+					return 1, ui.Reported(stop)
 				}
 			case actWait:
 				// A rate/usage limit is expected on long runs. With more than one target in

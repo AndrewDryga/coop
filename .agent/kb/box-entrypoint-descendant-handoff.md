@@ -3,7 +3,7 @@ name: box-entrypoint-descendant-handoff
 description: Supervised loop/review boxes authenticate forwarder exemptions and hand off live detached jobs
 subsystem: box
 sources: [internal/box/image.go, internal/box/run.go, internal/loop/loop.go, internal/loop/ratelimit.go]
-updated: 2026-08-10
+updated: 2026-10-17
 ---
 
 `RunSpec.SuperviseDescendants` is set only for loop and review iterations. In that mode
@@ -21,11 +21,15 @@ exit. The entrypoint remaps raw provider use of either reserved code to ordinary
 
 Host loop and review handling records the reserved codes separately as `background_drained` and
 `background_timeout`. It restores a premature work completion or discards a review receipt, then
-bounds consecutive fresh attempts at three without charging ordinary process-failure or no-progress
-strikes. Interactive boxes retain the normal entrypoint `exec` path.
+bounds such fresh attempts at three for the task (a provider timeout between them does not reset
+the count) without charging ordinary process-failure or no-progress strikes. At the bound the loop
+stops with exit 1, never the reserved code. Interactive boxes retain the normal entrypoint `exec`
+path.
 
 ## Changelog
 
+- 2026-10-17 — the handoff bound is not reset by a timeout in between, and the loop stops at it with
+  exit 1, not 190 or 191 (task 2026-10-17-exit-1-not-the-provider-s-own-code-when-coop-loo).
 - 2026-07-26 — created after adding supervised descendant handoff; verified against the listed sources.
 
 - 2026-08-10 — sources repointed: the loop engine moved out of `internal/cli` into `internal/loop` (`ratelimit.go` whole,

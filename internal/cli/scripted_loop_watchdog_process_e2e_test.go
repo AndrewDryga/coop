@@ -536,7 +536,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, target)
-		if result.ExitCode == 0 || !strings.Contains(result.Stderr, "Stopped after 3 provider timeouts") {
+		if result.ExitCode != 1 || !strings.Contains(result.Stderr, "Stopped after 3 provider timeouts") {
 			t.Fatalf("timeout cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		records := readLoopStageRecords(t, suite)
@@ -585,7 +585,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 				suite.reset(t, loopRecoveryScenario(taskID, attempts))
 				result := runLoopRecovery(t, suite, target)
 				output := visibleProcessText(result.Stdout + result.Stderr)
-				if result.Err != nil || result.ExitCode == 0 || !strings.Contains(output, tc.wantMessage) ||
+				if result.Err != nil || result.ExitCode != 1 || !strings.Contains(output, tc.wantMessage) ||
 					strings.Contains(output, "in a row") || strings.Contains(output, "consecutive") {
 					t.Fatalf("aggregate work budget = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 				}
