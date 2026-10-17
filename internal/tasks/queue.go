@@ -229,7 +229,9 @@ func TaskQueues(cfg *config.Config, repo string, flags []string) ([]string, erro
 	for _, g := range given {
 		rel := g
 		if filepath.IsAbs(g) {
-			r, err := filepath.Rel(repo, g)
+			// By folder: a COOP_TASKS written through the link a COOP_REPO names still lies in the
+			// folder ResolveRepo followed that link to.
+			r, err := box.RepoRelative(repo, g)
 			if err != nil {
 				return nil, err
 			}

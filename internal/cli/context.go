@@ -119,8 +119,9 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 	cwd, _ := os.Getwd()
 	// Current subproject: if cwd sits inside a declared subproject, that subproject dir is in scope.
 	// Members can nest, so a cwd under terraform/environments/va1/blitz-apps is inside two of them;
-	// the NEAREST one is the queue that path belongs to, and only it goes in scope.
-	if rel, err := filepath.Rel(repo, cwd); err == nil && !strings.HasPrefix(rel, "..") {
+	// the NEAREST one is the queue that path belongs to, and only it goes in scope. The shell's cwd
+	// may reach the repository through a link that repo never contains, so match it by folder.
+	if rel, err := box.RepoRelative(repo, cwd); err == nil && !strings.HasPrefix(rel, "..") {
 		if sub, ok := nearestSubproject(p.Subprojects, rel); ok {
 			add(sub)
 		}

@@ -70,7 +70,7 @@ func TestScriptedACPDirectedProviderSwitchMatrix(t *testing.T) {
 				continue
 			}
 			t.Run(source.name+"_to_"+destination.name, func(t *testing.T) {
-				tmp := t.TempDir()
+				tmp := scriptedTempDir(t)
 				repo := filepath.Join(tmp, "repo")
 				if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 					t.Fatal(err)
@@ -142,7 +142,7 @@ func TestScriptedACPProviderRateLimitAutoRecovery(t *testing.T) {
 	}
 	for _, provider := range matrixProviders {
 		t.Run(provider.name, func(t *testing.T) {
-			tmp := t.TempDir()
+			tmp := scriptedTempDir(t)
 			repo := filepath.Join(tmp, "repo")
 			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 				t.Fatal(err)
@@ -214,7 +214,7 @@ func TestScriptedACPProviderTargetReplayMatrix(t *testing.T) {
 			const initialModel = "model-initial"
 			const acceptedModel = "model-accepted"
 			const rejectedModel = "model-rejected"
-			tmp := t.TempDir()
+			tmp := scriptedTempDir(t)
 			repo := filepath.Join(tmp, "repo")
 			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 				t.Fatal(err)
@@ -311,7 +311,7 @@ func TestScriptedACPGrokModelAgentMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -480,7 +480,7 @@ func TestScriptedACPProviderScopedCooldownSurvivesReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -540,7 +540,7 @@ func TestScriptedACPFrontierRateLimitAndReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -615,7 +615,7 @@ func TestScriptedACPPresetWalksEveryProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -699,7 +699,7 @@ func TestScriptedACPRateLimitDenials(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tmp := t.TempDir()
+			tmp := scriptedTempDir(t)
 			repo := filepath.Join(tmp, "repo")
 			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 				t.Fatal(err)
@@ -752,7 +752,7 @@ func TestScriptedACPFailedDestinationSessionCanSwitchBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")

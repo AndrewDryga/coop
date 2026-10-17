@@ -118,7 +118,10 @@ user owns (the folder or its `.git`), and never climbs to one at the home folder
 only `COOP_REPO` can name one of those. Outside any repository the working directory is still
 the project. The nearest `.git` wins even when a box planted it inside the real project; the
 `.coopignore` rules of the folders above still apply there ([[secret-shadow-walk]]), and the
-home-folder check both walks share is `shadowpath.HomeOrAbove`.
+home-folder check both walks share is `shadowpath.HomeOrAbove`. `COOP_REPO` is followed through links to its folder (`EvalSymlinks`), so a linked
+override and a walk from inside the folder give one path, and the secret walk looks inside it (see
+[[secret-shadow-walk]]); an override that cannot be resolved is kept as given. `EvalSymlinks` keeps
+the case the override was typed in, so on a case-insensitive disk that spelling still differs.
 
 Session workspace clones use the view itself as their local transport source. A non-local,
 no-checkout clone plus an exact fetch of the validated commit avoids racing mutable loose-object
@@ -158,6 +161,8 @@ keep their existing restrictions.
 - 2026-10-16 — view metadata reads are bounded, non-blocking and regular-file only; refreshes run
   under a per-view lock; linked worktree pointers need a matching backlink (task
   2026-10-16-read-trusted-git-view-metadata-without-waiting-o).
+- 2026-10-16 — `ResolveRepo` follows a linked `COOP_REPO` to its folder (task
+  2026-10-16-resolve-links-in-coop-repo-so-secret-decoys-stil).
 - 2026-10-16 — choosing the project (`box.FindRepo`) walks to the nearest `.git` instead of asking git.
 - 2026-10-16 — the daily temp sweep removes views whose repository is gone (`SweepGitViews`).
 - 2026-10-10 — reproduced the pending-review fixture cleanup failure on actual Git 2.55 and

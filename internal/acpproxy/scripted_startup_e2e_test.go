@@ -32,7 +32,7 @@ func TestScriptedACPAutomaticStartup(t *testing.T) {
 		{name: "earlier provider unsigned", providers: []string{"grok", "gemini"}, lead: "gemini", switchTo: "grok"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tmp := t.TempDir()
+			tmp := scriptedTempDir(t)
 			repo := filepath.Join(tmp, "repo")
 			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 				t.Fatal(err)

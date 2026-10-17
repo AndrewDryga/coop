@@ -72,6 +72,58 @@ func TestProjectSnapshotIncludesExternalCanonicalQueueAndExactSandbox(t *testing
 	}
 }
 
+// A fork that took its task while COOP_REPO reached the project through a link above it recorded
+// the queue in that spelling, and a fork made after the update records the real one. The snapshot
+// behind coop tasks watch and coop fork ls still reads that queue once, lists each task once and
+// finds both owners in their reverse index.
+func TestProjectSnapshotKeysQueuesByFolder(t *testing.T) {
+	top, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, link := filepath.Join(top, "code", "project"), filepath.Join(top, "link")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(repo), link); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(link, "project")
+	root := filepath.Join(repo, ".agent", "tasks")
+	taskForLease(t, root, StateTodo, "before")
+	taskForLease(t, root, StateTodo, "after")
+	forks := map[string]forkspace.Identity{}
+	for _, assign := range []struct{ repo, fork string }{{linked, "old"}, {repo, "new"}} {
+		workspace, identity := testAssignmentFork(t, assign.repo, assign.fork)
+		assignment, err := AssignForkTask([]string{filepath.Join(assign.repo, ".agent", "tasks")}, ForkAssignmentRequest{
+			AuthorityRepo: assign.repo, Fork: identity, WorkspaceRoot: workspace,
+			BaselineHead: strings.Repeat("a", 40), LeaseOwner: testLeaseOwner(),
+		})
+		if err != nil || assignment.Outcome != ForkAssignmentSelected {
+			t.Fatalf("assign %s = %+v, %v", assign.fork, assignment, err)
+		}
+		if err := assignment.Lease.Release(); err != nil {
+			t.Fatal(err)
+		}
+		forks[assignment.Task.Item.ID] = identity
+	}
+	// coop fork ls passes no queue, coop tasks watch the configured one.
+	for _, roots := range [][]string{nil, {root}} {
+		snapshot := ReadProjectSnapshot(repo, roots)
+		if len(snapshot.Queues) != 1 || len(snapshot.Tasks) != 2 || len(snapshot.Problems) != 0 {
+			t.Fatalf("snapshot with queues %v: queues %+v, %d tasks, problems %v", roots, snapshot.Queues, len(snapshot.Tasks), snapshot.Problems)
+		}
+		if roots != nil && snapshot.Queues[0].Root != root {
+			t.Errorf("queue is named %s, want the configured %s", snapshot.Queues[0].Root, root)
+		}
+		for _, task := range snapshot.Tasks {
+			if task.Fork == nil || *task.Fork != forks[task.ID] {
+				t.Errorf("task %s owner = %v, want fork %v", task.ID, task.Fork, forks[task.ID])
+			}
+		}
+	}
+}
+
 func TestProjectSnapshotKeepsStaleExecutionVisibleWithoutCallingItActive(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "project")
 	workspace := t.TempDir()

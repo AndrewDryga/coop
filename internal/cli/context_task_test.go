@@ -184,6 +184,28 @@ func TestContextTaskSelectionPreservesScopeOrder(t *testing.T) {
 	}
 }
 
+// A COOP_REPO naming a link resolves to the folder it points to, while the shell's working
+// directory keeps the link's spelling; the subproject the shell is in still leads the scope.
+func TestContextScopeFindsTheSubprojectThroughALinkedRepo(t *testing.T) {
+	repo, a := contextTaskFixture(t, "", "")
+	if err := os.Mkdir(filepath.Join(repo, "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	a.cfg.RepoOverride = link
+	t.Chdir(filepath.Join(link, "a"))
+	var code int
+	var err error
+	out := captureStdout(t, func() { code, err = a.cmdContext([]string{"--json"}) })
+	var got ctxResult
+	if code != 0 || err != nil || json.Unmarshal([]byte(out), &got) != nil || !slices.Equal(got.Scope, []string{"a"}) {
+		t.Fatalf("context through a linked repository = (%d, %v) %s; want scope [a]", code, err, out)
+	}
+}
+
 func TestContextWithoutTaskIgnoresQueues(t *testing.T) {
 	repo, a := contextTaskFixture(t, "shared", "shared")
 	a.cfg.TasksFiles = []string{"../outside"}

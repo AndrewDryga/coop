@@ -1386,14 +1386,15 @@ func openNetRunEvidence(ref string) (*networkstate.Evidence, error) {
 	return evidence, err
 }
 
-// netProject is the project a scoped verb acts on: the override, else the
-// repository box.FindRepo finds, never git's answer, which follows a
-// box-written core.worktree. Outside a project there is no scope to guess, and
-// guessing the cwd would bind an approval to whatever directory the shell
-// happened to be in.
+// netProject is the project a scoped verb acts on: the override, resolved as
+// every other command resolves it so an approval binds the project a launch
+// uses, else the repository box.FindRepo finds, never git's answer, which
+// follows a box-written core.worktree. Outside a project there is no scope to
+// guess, and guessing the cwd would bind an approval to whatever directory the
+// shell happened to be in.
 func netProject(override string) (string, error) {
 	if override != "" {
-		return filepath.Abs(override)
+		return box.ResolveRepo(override)
 	}
 	repo, ok, err := box.FindRepo()
 	if err != nil {

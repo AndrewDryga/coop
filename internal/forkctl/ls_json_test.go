@@ -18,7 +18,11 @@ import (
 // each derived from project.HostPort of the WORKSPACE path — so host tooling discovers URLs without
 // reproducing the port hash.
 func TestForkLsJSON(t *testing.T) {
-	repo := t.TempDir()
+	// By its real path: the serve port is keyed by the path Coop names the project by.
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}

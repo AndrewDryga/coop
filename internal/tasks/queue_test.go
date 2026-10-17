@@ -137,6 +137,23 @@ func TestTaskQueues(t *testing.T) {
 	if _, err := TaskQueues(cfg, repo, []string{"../outside/tasks"}); err == nil {
 		t.Error("a path escaping the repo should error")
 	}
+	if _, err := TaskQueues(cfg, repo, []string{filepath.Join(t.TempDir(), ".agent", "tasks")}); err == nil {
+		t.Error("an absolute path outside the repo should error")
+	}
+
+	// A COOP_REPO naming a link resolves to the folder it points to, and an absolute COOP_TASKS
+	// written through that link, its queue not made yet, still names a queue inside that folder.
+	real, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := TaskQueues(cfg, real, []string{filepath.Join(link, ".agent", "tasks")}); err != nil || !slices.Equal(got, []string{filepath.Join(".agent", "tasks")}) {
+		t.Fatalf("absolute through a link = %v err %v", got, err)
+	}
 }
 
 func TestTasksQueuesRejectsArguments(t *testing.T) {

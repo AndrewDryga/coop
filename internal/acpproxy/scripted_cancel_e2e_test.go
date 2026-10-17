@@ -19,7 +19,7 @@ func TestScriptedACPCancelAndContinue(t *testing.T) {
 	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")
 	for _, provider := range matrixProviders {
 		t.Run(provider.name, func(t *testing.T) {
-			tmp := t.TempDir()
+			tmp := scriptedTempDir(t)
 			repo := filepath.Join(tmp, "repo")
 			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 				t.Fatal(err)
@@ -81,7 +81,7 @@ func TestScriptedACPCancelQuotaWaitThenSwitch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin, fixtureBin := filepath.Join(tmp, "coop"), filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
 	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")

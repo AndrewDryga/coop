@@ -88,7 +88,11 @@ func TestLaunchAgentBareRunsOutsideAnyRepository(t *testing.T) {
 // `coop claude --readonly` mounts the resolved repository read-only under the same profile.
 func TestLaunchAgentReadOnlyMountsRepoReadOnly(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir()) // network admission's authority root, never the real one
-	repo := t.TempDir()
+	// Coop mounts the folder by its real path, and macOS keeps temp folders under /var, a link.
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	a := restrictedApp(t, recorder)
 	a.cfg.RepoOverride = repo

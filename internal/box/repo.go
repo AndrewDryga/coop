@@ -16,15 +16,73 @@ import (
 
 // ResolveRepo returns the repository to operate on: the override if set, else the repository that
 // FindRepo finds, else the working directory.
+//
+// The override is followed through links to the folder they name. The secret scan walks the
+// repository from its root and never follows a link, so a linked override would be mounted whole
+// with no secret hidden; and the working directory never names a link, so everything keyed by the
+// repository's path would see two projects. An override that cannot be resolved, one that does not
+// exist say, is kept as given, for the command that uses it to report.
 func ResolveRepo(override string) (string, error) {
 	if override != "" {
-		return filepath.Abs(override)
+		abs, err := filepath.Abs(override)
+		if err != nil {
+			return "", err
+		}
+		return canonicalWorkspace(abs), nil
 	}
 	repo, ok, err := FindRepo()
 	if err != nil || ok {
 		return repo, err
 	}
 	return syscall.Getwd()
+}
+
+// RepoRelative is path relative to repo, matching folders rather than spellings. repo is the path
+// ResolveRepo gives, which normally holds no link, while a path the user hands Coop, the shell's
+// working directory or an absolute COOP_TASKS, may reach the same folder through one. The lexical
+// answer stands when it already lies inside repo, or when no folder at or above path is the
+// repository.
+func RepoRelative(repo, path string) (string, error) {
+	rel, err := filepath.Rel(repo, path)
+	if err != nil || filepath.IsLocal(rel) {
+		return rel, err
+	}
+	if dir, ok := folderAtOrAbove(path, repo); ok {
+		return filepath.Rel(dir, path)
+	}
+	return rel, nil
+}
+
+// SameFolder reports whether a and b name one folder, however each is spelled: through a link, or in
+// another case on a case-insensitive disk. A path Coop recorded keeps the spelling it was written
+// in, so it is matched to the one Coop derives now this way, never as a string.
+func SameFolder(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	return err == nil && os.SameFile(ai, bi)
+}
+
+// folderAtOrAbove returns the nearest folder at or above path that is the folder target names. It
+// compares folders, not spellings, so neither a link nor a case-insensitive disk hides a match.
+func folderAtOrAbove(path, target string) (string, bool) {
+	want, err := os.Stat(target)
+	if err != nil {
+		return "", false
+	}
+	for dir := path; ; dir = filepath.Dir(dir) {
+		if info, err := os.Stat(dir); err == nil && os.SameFile(info, want) {
+			return dir, true
+		}
+		if filepath.Dir(dir) == dir {
+			return "", false
+		}
+	}
 }
 
 // FindRepo returns the nearest folder at or above the working directory that holds a .git; ok is

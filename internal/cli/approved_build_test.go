@@ -126,5 +126,11 @@ func projectBoxConfig(t *testing.T, tracked bool) *config.Config {
 		git("add", ".agent/Dockerfile")
 		git("commit", "-qm", "box")
 	}
-	return &config.Config{RepoOverride: repo, BoxHome: t.TempDir(), BaseImage: "coop-box"}
+	// By its real path, the one Coop names the project by: macOS keeps temp folders under /var, a
+	// link to /private/var.
+	real, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &config.Config{RepoOverride: real, BoxHome: t.TempDir(), BaseImage: "coop-box"}
 }

@@ -1,6 +1,6 @@
 ---
 name: secret-shadow-walk
-description: every launch walks the whole checkout, gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs; the .coopignore files above the repository, short of home, apply too
+description: every launch walks the whole checkout from a real-folder root (a linked root is refused), gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs; the .coopignore files above the repository, short of home, apply too
 subsystem: box
 sources: [internal/box/mounts.go, internal/shadowpath/shadowpath.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, tools/lifecyclebench]
 updated: 2026-10-17
@@ -11,6 +11,14 @@ runs). It walks the whole repository, skipping only `.git` and directories it hi
 `shadowpath.NewDecider` about each path. Everything in the checkout is visible in the box,
 gitignored working state included, so `.agent/tasks` (artifacts, `tmp/` worktrees and clones) is
 walked too and can't be skipped. A secret in a task's scratch clone is still a secret.
+
+**The root must be a real folder.** `filepath.WalkDir` lstats its root and never follows a link,
+so a repository path that is itself a link was walked as one entry and bound whole: no decoy, no
+`.coopignore`, every secret readable in the box. A `COOP_REPO` naming a link did exactly that
+until 2026-10-16. `box.ResolveRepo` now follows a linked override to its folder (an unresolvable one
+is kept as given), and `ComputeMounts` refuses a root that is still a link or a file. A link in a
+parent folder (macOS `/var` → `/private/var`) is harmless: only the last component decides.
+`TestRunHidesTheSecretsOfALinkedRepository` launches through a linked override and checks both.
 
 **Cost follows local clutter, not the repo.** On 2026-10-04 this checkout held 44k files in 12k
 directories, 41k of them under `.agent/tasks`. The walk took 4.1 s, while a clean clone of the same
@@ -83,3 +91,5 @@ and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
   Checked against shadowpath.go, box/repo.go and box/sourcecopies.go. After review: the folder's
   owner decides, not the file's; the COOP_REPO case limit is noted; box tests that depend on what
   is hidden pin HOME, found by running the package under a temp folder holding a stray `*` rule.
+- 2026-10-16 — a linked repository root: ResolveRepo follows a linked `COOP_REPO`, ComputeMounts
+  refuses a root still a link or a file (task 2026-10-16-resolve-links-in-coop-repo-so-secret-decoys-stil).

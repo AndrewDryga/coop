@@ -1,6 +1,7 @@
 package box
 
 import (
+	"fmt"
 	"io/fs"
 	"path/filepath"
 
@@ -34,7 +35,8 @@ type Mount struct {
 // mount is always the repo bind; later mounts shadow a secret (DirDecoy for a
 // directory, Decoy for a file) or protect a .coopignore policy file. Secret directories
 // are not descended into, so a shadowed dir hides all of its contents at once. The repo's
-// .git is skipped.
+// .git is skipped. The repo itself must be a folder: a link or a file is refused, because
+// the walk would bind it without looking inside.
 //
 // A path is shadowed when its basename matches SecretGlobs (unless AllowGlobs whitelists
 // it — templates and public CA bundles stay visible by default), OR a .coopignore — in the
@@ -56,6 +58,13 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 			return walkErr
 		}
 		if p == repo {
+			// The walk never follows a link, so a linked root would be bound whole with not one
+			// secret in it hidden. ResolveRepo follows a linked override; one still a link here
+			// is one it could not follow.
+			if !d.IsDir() {
+				return fmt.Errorf("the repository %s is a link or a file, not a folder, so Coop cannot hide the secrets in it: "+
+					"set COOP_REPO to the project folder itself", repo)
+			}
 			return nil // never shadow the repo root itself
 		}
 		if d.IsDir() && d.Name() == ".git" {

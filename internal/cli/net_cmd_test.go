@@ -1346,8 +1346,29 @@ func TestNetProjectRefusesToGuessOutsideAProject(t *testing.T) {
 	if _, err := netProject(""); err == nil || !strings.Contains(err.Error(), "coop net runs --all-projects") {
 		t.Fatalf("netProject outside a project = %v, want a pointer at the explicit scope", err)
 	}
-	if got, err := netProject(dir); err != nil || got != dir {
-		t.Errorf("netProject(%q) = (%q, %v)", dir, got, err)
+	want, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := netProject(dir); err != nil || got != want {
+		t.Errorf("netProject(%q) = (%q, %v), want %s", dir, got, err, want)
+	}
+}
+
+// An approval binds the project a launch uses, so an override that is a link names the folder it
+// points to, as it does for every other command.
+func TestNetProjectFollowsALinkedOverride(t *testing.T) {
+	dir := t.TempDir()
+	want, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := netProject(link); err != nil || got != want {
+		t.Fatalf("netProject(%q) = (%q, %v), want %s", link, got, err, want)
 	}
 }
 

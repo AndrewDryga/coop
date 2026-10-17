@@ -38,7 +38,7 @@ func TestScriptedACPDriver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -112,7 +112,7 @@ func TestScriptedACPPresetTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -183,7 +183,7 @@ func TestScriptedACPCarryAcrossProviderSwitches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -276,7 +276,7 @@ func TestScriptedACPProviderSwitchIsServedWarm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -344,7 +344,7 @@ func TestScriptedACPSessionIdentityLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -455,7 +455,7 @@ func TestScriptedACPAuthenticationRecoveryRotatesAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -527,7 +527,7 @@ func TestScriptedACPAuthenticationRecoveryDuringRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -607,7 +607,7 @@ func TestScriptedACPGrokToClaudeAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
@@ -792,6 +792,18 @@ func buildTestBinary(t *testing.T, root, output, pkg string) {
 	if err := fixtureBinaries.Copy(t.Context(), root, output, pkg); err != nil {
 		t.Fatalf("build %s: %v", pkg, err)
 	}
+}
+
+// scriptedTempDir is t.TempDir by its real path. Coop follows a linked COOP_REPO to the folder it
+// names, so a script expecting the repository's path must spell it the same way, and macOS keeps
+// temp folders under /var, a link to /private/var.
+func scriptedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func startScriptedACP(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target string, providers ...string) *scriptedACP {
@@ -980,7 +992,7 @@ func TestScriptedACPColdReopenLoadsBoundProviderSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin := filepath.Join(tmp, "coop")
 	fixtureBin := filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")

@@ -24,6 +24,12 @@ import (
 // every machine.
 func initApp(t *testing.T, repo string) (*app, func(string) string) {
 	t.Helper()
+	// By its real path, the one Coop names the project by: macOS keeps temp folders under /var, a
+	// link to /private/var.
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfgDir := t.TempDir()
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
 	return a, func(out string) string { return strings.ReplaceAll(out, repo, "/work/atlas") }

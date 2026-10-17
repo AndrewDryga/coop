@@ -65,6 +65,20 @@
   smaller index. Coop now follows a linked worktree's `.git` file only when the repository it names
   records that worktree in return. If you moved a worktree by hand, run `git worktree repair` in it.
 
+- **Secrets stay hidden when `COOP_REPO` names a link.** When `COOP_REPO` named a link to your
+  project instead of the project folder, Coop mounted the project into the box without hiding
+  anything: the agent could read `.env` files, keys and every file `.coopignore` lists. Coop now
+  follows the link and uses the folder it points to, as it does when you run Coop inside that
+  folder, and refuses to launch a box for a project folder that is still a link it could not
+  follow. If your `COOP_REPO` is a link or passes through one, Coop now keeps your project's state
+  under the folder's real path: agents work in that path, so conversations started under the old
+  path are not offered to resume, and `serve.ports` publish on new localhost ports. If
+  `COOP_REPO` itself is the link, merge or remove your forks with `coop fork merge` or
+  `coop fork rm` before you update: they live in `<link>-forks`, where the new version no longer
+  looks, so afterwards Coop cannot find them or return the tasks they took to the queue. If your
+  project has a box Dockerfile, run `coop build` after updating: Coop now names its image after the
+  folder, not the link.
+
 - **`coop init` removes a partial file only where it wrote it.** When `coop init` could not finish
   writing a file, for example because the disk was full, it looked the file's path up again to
   remove what it had written. An agent in a box could swap a folder on that path for a link just

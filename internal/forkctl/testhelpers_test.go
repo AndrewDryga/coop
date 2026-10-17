@@ -87,7 +87,13 @@ func initRepo(t *testing.T) string {
 	// writes into the same isolated file those helpers then read.
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	repo := filepath.Join(t.TempDir(), "myrepo")
+	// By its real path, as Coop names a repository, even one COOP_REPO reaches through a link:
+	// macOS keeps temp folders under /var, a link to /private/var.
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(tmp, "myrepo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}

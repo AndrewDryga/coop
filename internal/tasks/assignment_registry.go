@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
@@ -147,7 +148,7 @@ func RegisterForkAssignmentIndex(repo string, record ForkAssignmentIndex) error 
 	defer root.Close()
 	name := record.AssignmentID + ".json"
 	if current, err := readForkAssignmentIndexFile(root, name); err == nil {
-		if current == record {
+		if sameForkAssignmentIndex(current, record) {
 			return nil
 		}
 		return errors.New("fork assignment index identity collision")
@@ -175,6 +176,17 @@ func RegisterForkAssignmentIndex(repo string, record ForkAssignmentIndex) error 
 		_ = root.Remove(name)
 	}
 	return writeErr
+}
+
+// sameForkAssignmentIndex reports whether next replays current. The queue root matches by folder:
+// an assignment made while COOP_REPO reached the project through a link above it recorded that
+// spelling, and resuming it names the queue by its real path.
+func sameForkAssignmentIndex(current, next ForkAssignmentIndex) bool {
+	if !box.SameFolder(current.CanonicalRoot, next.CanonicalRoot) {
+		return false
+	}
+	current.CanonicalRoot = next.CanonicalRoot
+	return current == next
 }
 
 // IndexedForkAssignments enumerates the exact generation registry. Per-record corruption is

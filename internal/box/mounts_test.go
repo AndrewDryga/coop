@@ -4,7 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 // find returns the mount targeting target, or nil.
@@ -254,6 +258,65 @@ func TestComputeMountsSubdirCoopIgnore(t *testing.T) {
 	}
 	if policy := find(mounts, "/workspace/sub/"+CoopIgnoreFile); policy == nil || policy.Kind != Policy || !policy.RO {
 		t.Errorf("nested %s must be visible through a read-only policy mount: %+v", CoopIgnoreFile, policy)
+	}
+}
+
+// A COOP_REPO that names a link launches the folder the link points to, its secrets hidden as they
+// are for that folder. The walk that finds them never follows a link, so a linked repository used
+// to reach the box whole, every secret in it readable. A root still a link when the mounts are
+// computed, one ResolveRepo could not follow, or a file, stops the launch instead.
+func TestRunHidesTheSecretsOfALinkedRepository(t *testing.T) {
+	t.Setenv(forkspace.TestExecutionRegistryRootEnv, t.TempDir()) // the launch's service lock, never the real one
+	repo := realPath(t, t.TempDir())
+	for rel, body := range map[string]string{
+		".env": "SECRET=1", "config/prod.yml": "password: 1", CoopIgnoreFile: "prod.yml\n", "src/app.js": "ok",
+	} {
+		mkdirs(t, filepath.Dir(filepath.Join(repo, rel)))
+		if err := os.WriteFile(filepath.Join(repo, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none", RepoOverride: link}
+	resolved, err := ResolveRepo(cfg.RepoOverride)
+	if err != nil || resolved != repo {
+		t.Fatalf("ResolveRepo(%s) = %q, %v; want %s", link, resolved, err, repo)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	spec := RunSpec{Image: "i", Repo: resolved, Cmd: []string{"true"}, Batch: true, Quiet: true}
+	if code, err := Run(cfg, dockerRecorder(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v", code, err)
+	}
+	got := recordedRun(t, recorder)
+	binds := map[string]string{} // box path → host path
+	for i, arg := range got[:len(got)-1] {
+		if arg == "-v" {
+			parts := strings.Split(got[i+1], ":")
+			binds[parts[1]] = parts[0]
+		}
+	}
+	if w := slices.Index(got, "-w"); binds[repo] != repo || w < 0 || got[w+1] != repo {
+		t.Fatalf("the box does not work in %s:\n%q", repo, got)
+	}
+	for _, secret := range []string{".env", "config/prod.yml"} {
+		target := filepath.Join(repo, filepath.FromSlash(secret))
+		if source, ok := binds[target]; !ok || source == target {
+			t.Errorf("%s is not hidden behind a decoy in the box (bound from %q):\n%q", secret, source, got)
+		}
+	}
+	if _, ok := binds[filepath.Join(repo, "src", "app.js")]; ok {
+		t.Errorf("ordinary source was hidden:\n%q", got)
+	}
+
+	file := filepath.Join(repo, "src", "app.js")
+	for _, root := range []string{link, file} {
+		if mounts, err := ComputeMounts(root, "/workspace"); err == nil || !strings.Contains(err.Error(), "not a folder") ||
+			!strings.Contains(err.Error(), "set COOP_REPO") {
+			t.Errorf("ComputeMounts(%s) = %+v, %v; want a refusal", root, mounts, err)
+		}
 	}
 }
 

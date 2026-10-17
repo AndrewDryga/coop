@@ -17,6 +17,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
@@ -283,7 +284,12 @@ func forkProjectionRel(authorityRepo string, owner ForkTaskOwner) (string, error
 	}
 	workspace := forkspace.Workspace(authorityRepo, owner.Fork.Name)
 	rel := filepath.Join(".coop", "task-executions", string(owner.Fork.Generation), owner.AssignmentID, "tasks")
-	if filepath.Clean(owner.Projection) != filepath.Join(workspace, rel) {
+	// The parts below the workspace are box-writable, so they are matched as text and never
+	// followed; only the host-owned workspace is matched by folder, since an assignment made while
+	// COOP_REPO reached the project through a link above it recorded that spelling. Callers open rel
+	// under the workspace they derive, never this path.
+	recorded, ok := strings.CutSuffix(filepath.Clean(owner.Projection), string(filepath.Separator)+rel)
+	if !ok || !box.SameFolder(recorded, workspace) {
 		return "", errors.New("fork projection path does not match its host-owned assignment")
 	}
 	return rel, nil

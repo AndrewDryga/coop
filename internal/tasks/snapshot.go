@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
@@ -115,10 +116,26 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 	}
 	indexByID := make(map[string]ForkAssignmentIndex, len(indexes))
 	identitySet := map[forkspace.Identity]bool{}
-	rootSet := map[string]bool{}
+	// Queues are keyed by folder: an assignment made while COOP_REPO reached the project through a
+	// link above it recorded its queue in that spelling. A configured queue's spelling wins.
+	var queueRoots []string
+	spellings := map[string]bool{}
+	addQueueRoot := func(root string) {
+		root = filepath.Clean(root)
+		if spellings[root] {
+			return
+		}
+		spellings[root] = true
+		for _, known := range queueRoots {
+			if box.SameFolder(known, root) {
+				return
+			}
+		}
+		queueRoots = append(queueRoots, root)
+	}
 	for _, root := range roots {
 		if root != "" {
-			rootSet[filepath.Clean(root)] = true
+			addQueueRoot(root)
 		}
 	}
 	for _, index := range indexes {
@@ -128,7 +145,7 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 		}
 		indexByID[index.AssignmentID] = index
 		identitySet[index.Fork] = true
-		rootSet[index.CanonicalRoot] = true
+		addQueueRoot(index.CanonicalRoot)
 	}
 
 	observations, executionProblems := forkspace.Executions(repo)
@@ -162,10 +179,6 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 		currentGeneration[identity.Name] = identity
 	}
 
-	queueRoots := make([]string, 0, len(rootSet))
-	for root := range rootSet {
-		queueRoots = append(queueRoots, root)
-	}
 	sort.Strings(queueRoots)
 	taskIndexesByDurableKey := map[string][]int{}
 	taskIndexesByReadableID := map[string][]int{}
@@ -215,7 +228,7 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 				view.ownerRecord = &owner
 				if owner.Fork != nil {
 					index, indexed := indexByID[owner.Fork.AssignmentID]
-					exact := indexed && index.Fork == owner.Fork.Fork && index.CanonicalRoot == root &&
+					exact := indexed && index.Fork == owner.Fork.Fork && box.SameFolder(index.CanonicalRoot, root) &&
 						index.Task.Ref.ID == item.ID && owner.Task != nil && sameTaskInstance(index.Task, *owner.Task)
 					if !exact {
 						appendSnapshotProblem(&snapshot, "task "+item.ID+" assignment", errors.New("owner does not match its host reverse index"))

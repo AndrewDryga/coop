@@ -173,7 +173,7 @@ func TestResolveRepoIgnoresAPlantedWorktree(t *testing.T) {
 
 // A linked worktree and a submodule keep .git as a file and resolve to their own checkout, the
 // nearest .git winning over the repository around it; outside any repository the working directory
-// is the project, and FindRepo says there is none; an explicit override is taken as given.
+// is the project, and FindRepo says there is none; an explicit override names its own folder.
 func TestResolveRepoFindsLinkedCheckoutsAndFallsBack(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo, git := gitrepo.NewCommitted(t)
@@ -198,7 +198,7 @@ func TestResolveRepoFindsLinkedCheckoutsAndFallsBack(t *testing.T) {
 	if got, ok, err := FindRepo(); err != nil || ok {
 		t.Fatalf("FindRepo outside a repository = %q, %v, %v", got, ok, err)
 	}
-	if got, err := ResolveRepo(linked); err != nil || got != linked {
+	if got, err := ResolveRepo(linked); err != nil || got != realPath(t, linked) {
 		t.Fatalf("ResolveRepo(override) = %q, %v", got, err)
 	}
 }
@@ -276,6 +276,93 @@ func TestNestedRepositoryKeepsTheRulesAboveIt(t *testing.T) {
 	}
 }
 
+// An override that is a link, or passes through one, names the folder the link points to by the
+// path a walk from inside that folder gives, so the secret scan looks inside it and everything
+// keyed by the repository's path sees one project however it was named. An override that does
+// not exist, or a link to nothing, is kept as given for the command using it to report.
+func TestResolveRepoFollowsALinkedOverride(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo, _ := gitrepo.New(t)
+	real := realPath(t, repo)
+	mkdirs(t, filepath.Join(repo, "sub"))
+	links := t.TempDir()
+	link, dangling, missing := filepath.Join(links, "project"), filepath.Join(links, "gone"), filepath.Join(links, "missing")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(links, "nowhere"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(links)
+	for override, want := range map[string]string{
+		link:                       real,
+		"project":                  real,
+		filepath.Join(link, "sub"): filepath.Join(real, "sub"),
+		missing:                    missing,
+		dangling:                   dangling,
+	} {
+		if got, err := ResolveRepo(override); err != nil || got != want {
+			t.Errorf("ResolveRepo(%q) = %q, %v; want %s", override, got, err, want)
+		}
+	}
+	t.Chdir(repo)
+	if got, err := ResolveRepo(""); err != nil || got != real {
+		t.Fatalf("ResolveRepo from inside the repository = %q, %v; want the same %s the linked override names", got, err, real)
+	}
+}
+
+// A path that reaches the repository through a link, a shell's working directory say, is placed by
+// the folder it reaches. A path already under repo keeps its lexical answer, a link inside it
+// included, and a path outside stays outside.
+func TestRepoRelativeMatchesFoldersNotSpellings(t *testing.T) {
+	repo := realPath(t, t.TempDir())
+	outside := realPath(t, t.TempDir())
+	mkdirs(t, filepath.Join(repo, "a", "b"))
+	link := filepath.Join(t.TempDir(), "project")
+	for target, name := range map[string]string{repo: link, outside: filepath.Join(repo, "out")} {
+		if err := os.Symlink(target, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, want := range map[string]string{
+		filepath.Join(repo, "a", "b"):      filepath.Join("a", "b"),
+		filepath.Join(link, "a", "b"):      filepath.Join("a", "b"),
+		filepath.Join(link, "not-yet"):     "not-yet",
+		link:                               ".",
+		filepath.Join(repo, "out", "file"): filepath.Join("out", "file"),
+	} {
+		if got, err := RepoRelative(repo, path); err != nil || got != want {
+			t.Errorf("RepoRelative(%s) = %q, %v; want %q", path, got, err, want)
+		}
+	}
+	if got, err := RepoRelative(repo, filepath.Join(outside, "x")); err != nil || filepath.IsLocal(got) {
+		t.Errorf("RepoRelative(a path outside) = %q, %v; want it outside", got, err)
+	}
+}
+
+// A recorded path spelled through a link names the same folder as the one Coop derives now; a
+// different folder, or a missing one spelled differently, does not.
+func TestSameFolderMatchesFoldersNotSpellings(t *testing.T) {
+	dir, other := realPath(t, t.TempDir()), realPath(t, t.TempDir())
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{dir, dir + string(filepath.Separator), true},
+		{link, dir, true},
+		{dir, other, false},
+		{filepath.Join(link, "missing"), filepath.Join(dir, "missing"), false},
+	} {
+		if got := SameFolder(c.a, c.b); got != c.want {
+			t.Errorf("SameFolder(%s, %s) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 // A repository at the home folder or above is never chosen by walking up: a box that removes its
 // own .git would otherwise move the next launch's workspace there. The refusal names the
 // repository it found, and only the override can name it.
@@ -288,7 +375,7 @@ func TestResolveRepoNeverChoosesTheHomeFolder(t *testing.T) {
 	if got, err := ResolveRepo(""); err == nil || !strings.Contains(err.Error(), "is "+realPath(t, home)+", at your home folder") {
 		t.Fatalf("ResolveRepo below a home-folder repository = %q, %v; want a refusal naming it", got, err)
 	}
-	if got, err := ResolveRepo(home); err != nil || got != home {
+	if got, err := ResolveRepo(home); err != nil || got != realPath(t, home) {
 		t.Fatalf("ResolveRepo(override home) = %q, %v", got, err)
 	}
 

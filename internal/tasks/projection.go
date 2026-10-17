@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"golang.org/x/sys/unix"
 )
@@ -1371,9 +1372,18 @@ func snapshotForkProjection(authorityRepo, root, id string, expected ForkTaskOwn
 	return before, snapshot, nil
 }
 
+// ProjectionQueueRel is a recorded projection's path inside the fork workspace, as
+// forkProjectionRel checks it. Below the workspace a projection is
+// .coop/task-executions/<generation>/<assignment>/<leaf>: those box-writable parts are taken as
+// text and never followed, and only the host-owned workspace above them is matched, by folder.
 func ProjectionQueueRel(workspace, projection string) (string, error) {
-	rel, err := filepath.Rel(workspace, projection)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	recorded, rel := filepath.Clean(projection), ""
+	for range 5 {
+		rel = filepath.Join(filepath.Base(recorded), rel)
+		recorded = filepath.Dir(recorded)
+	}
+	if !strings.HasPrefix(rel, filepath.Join(".coop", "task-executions")+string(filepath.Separator)) ||
+		!box.SameFolder(recorded, workspace) {
 		return "", errors.New("task projection is outside its fork workspace")
 	}
 	return rel, nil

@@ -15,7 +15,7 @@ func TestScriptedACPOneOffOfflineOverridesAmbientOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := t.TempDir()
+	tmp := scriptedTempDir(t)
 	coopBin, fixtureBin := filepath.Join(tmp, "coop"), filepath.Join(tmp, "acpfixture")
 	buildTestBinary(t, root, coopBin, ".")
 	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")

@@ -411,6 +411,155 @@ func TestForkCandidateFinalizesExactCanonicalTask(t *testing.T) {
 	}
 }
 
+// A fork that took its task while COOP_REPO reached the project through a link in a folder above
+// it recorded the link's spelling of the queue and projection. Coop now names the project by its
+// real path, and that fork still resumes, merges, lands and can be removed; a queue or projection
+// recorded under another folder is still refused.
+func TestForkAssignedThroughAParentLinkStillResumesAndLands(t *testing.T) {
+	top, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, link := filepath.Join(top, "code", "project"), filepath.Join(top, "link")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(repo), link); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(link, "project")
+	root, linkedRoot := filepath.Join(repo, ".agent", "tasks"), filepath.Join(linked, ".agent", "tasks")
+	taskWithCompletedChecklist(t, root, StateTodo, "land-me")
+	taskWithCompletedChecklist(t, root, StateTodo, "remove-me")
+	assignThroughLink := func(name string) ForkAssignment {
+		t.Helper()
+		workspace, identity := testAssignmentFork(t, linked, name)
+		assignment, err := AssignForkTask([]string{linkedRoot}, ForkAssignmentRequest{
+			AuthorityRepo: linked, Fork: identity, WorkspaceRoot: workspace,
+			BaselineHead: strings.Repeat("a", 40), LeaseOwner: testLeaseOwner(),
+		})
+		if err != nil || assignment.Outcome != ForkAssignmentSelected {
+			t.Fatalf("assign %s through the link = %+v, %v", name, assignment, err)
+		}
+		if err := assignment.Lease.Release(); err != nil {
+			t.Fatal(err)
+		}
+		return assignment
+	}
+	landing, removed := assignThroughLink("lander"), assignThroughLink("remover")
+
+	// After the update every command names the project by its real path.
+	identity, workspace := landing.Owner.Fork, forkspace.Workspace(repo, "lander")
+	resumed, err := AssignForkTask([]string{root}, ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: workspace,
+		BaselineHead: strings.Repeat("a", 40), LeaseOwner: testLeaseOwner(),
+	})
+	if err != nil || resumed.Outcome != ForkAssignmentSelected || resumed.Owner.AssignmentID != landing.Owner.AssignmentID {
+		t.Fatalf("resume = %+v, %v", resumed, err)
+	}
+	if err := resumed.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	indexes, problems := IndexedForkAssignments(repo, identity)
+	if len(indexes) != 1 || len(problems) != 0 {
+		t.Fatalf("assignment indexes = %+v, %v", indexes, problems)
+	}
+	elsewhere := indexes[0]
+	elsewhere.CanonicalRoot = filepath.Join(top, "other", ".agent", "tasks")
+	if err := os.MkdirAll(elsewhere.CanonicalRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterForkAssignmentIndex(repo, elsewhere); err == nil || !strings.Contains(err.Error(), "collision") {
+		t.Fatalf("an index naming another queue folder = %v, want a collision", err)
+	}
+	if err := PrepareForkProjectionForRun(repo, root, resumed.Task.Item.ID, resumed.Owner); err != nil {
+		t.Fatal(err)
+	}
+	queueRel, err := ProjectionQueueRel(workspace, resumed.Owner.Projection)
+	if want := projectionPath(workspace, identity, resumed.Owner.AssignmentID); err != nil || filepath.Join(workspace, queueRel) != want {
+		t.Fatalf("queue = %q, %v; want %s", queueRel, err, want)
+	}
+	if outbox, err := ForkProposalOutboxRel(workspace, resumed.Owner); err != nil || outbox != filepath.Join(filepath.Dir(queueRel), "proposals") {
+		t.Fatalf("proposal outbox = %q, %v", outbox, err)
+	}
+	queue := filepath.Join(workspace, queueRel)
+	projected, _ := mustCurrentTask(t, queue, resumed.Task.Item.ID)
+	if err := MoveTaskDir(queue, projected, StateDone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AcceptForkProjection(repo, root, resumed.Task.Item.ID, resumed.Owner); err != nil {
+		t.Fatal(err)
+	}
+	candidate, published, err := reviewAndPublishForkCandidate(t, repo, identity, strings.Repeat("b", 40), strings.Repeat("c", 40))
+	if err != nil || !published {
+		t.Fatalf("publish = %+v, %v, %v", candidate, published, err)
+	}
+	if err := ValidateForkCandidateLocked(repo, candidate, candidate.Head, candidate.Tree); err != nil {
+		t.Fatal(err)
+	}
+	if err := FinalizeForkCandidateTask(repo, candidate, candidate.Assignments[0]); err != nil {
+		t.Fatal(err)
+	}
+	if landed, ok := mustCurrentTask(t, root, resumed.Task.Item.ID); !ok || landed.State != StateDone {
+		t.Fatalf("landed task = %+v, ok=%v", landed, ok)
+	}
+	if err := MarkForkCandidateLandedLocked(repo, candidate); err != nil {
+		t.Fatal(err)
+	}
+
+	// coop fork rm reads what the fork holds before it hands the task back.
+	if summary, err := ReadForkTaskStateSummary(repo, removed.Owner.Fork); err != nil || summary.Assignments != 1 {
+		t.Fatalf("state of the fork to remove = %+v, %v", summary, err)
+	}
+	if err := DiscardForkTaskStateLocked(repo, removed.Owner.Fork); err != nil {
+		t.Fatal(err)
+	}
+	if back, ok := mustCurrentTask(t, root, removed.Task.Item.ID); !ok || back.State != StateTodo {
+		t.Fatalf("task of the removed fork = %+v, ok=%v; want it back in todo", back, ok)
+	}
+
+	other := forkspace.Workspace(filepath.Join(top, "other"), "lander")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	forged := resumed.Owner
+	forged.Projection = projectionPath(other, identity, forged.AssignmentID)
+	if _, err := forkProjectionRel(repo, forged); err == nil {
+		t.Error("a projection recorded under another folder was accepted")
+	}
+}
+
+// The parts of a recorded projection below the fork workspace are box-writable, so they are taken
+// as text: a box that swaps its assignment folder for a link to the workspace does not move the
+// queue its loop gets. Neither the workspace itself nor a path outside the projection layout is a
+// queue.
+func TestProjectionQueueRelTakesTheBoxWritablePartsAsText(t *testing.T) {
+	top, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, link := filepath.Join(top, "code", "project-forks", "w"), filepath.Join(top, "link")
+	rel := filepath.Join(".coop", "task-executions", "generation", "assignment", "tasks")
+	swapped := filepath.Join(workspace, filepath.Dir(rel))
+	if err := os.MkdirAll(filepath.Dir(swapped), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for target, name := range map[string]string{workspace: swapped, filepath.Join(top, "code"): link} {
+		if err := os.Symlink(target, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorded := filepath.Join(link, "project-forks", "w", rel)
+	if got, err := ProjectionQueueRel(workspace, recorded); err != nil || got != rel {
+		t.Errorf("ProjectionQueueRel(%s) = %q, %v; want %s", recorded, got, err, rel)
+	}
+	for _, path := range []string{workspace, filepath.Join(workspace, "elsewhere"), filepath.Join(top, "other", rel)} {
+		if got, err := ProjectionQueueRel(workspace, path); err == nil {
+			t.Errorf("ProjectionQueueRel(%s) = %q, want a refusal", path, got)
+		}
+	}
+}
+
 func TestPublishedForkCandidateFreezesGenerationBeforeAnotherAssignment(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tasks")
 	taskWithCompletedChecklist(t, root, StateTodo, "a-first")
