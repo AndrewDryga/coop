@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop doctor` no longer uses your git config for its test project.** `coop doctor` builds a
+  throwaway project, commits it and clones it with git. With commit signing turned on in your git
+  config, that commit was signed with your key, or failed where gpg was missing so doctor reported
+  a problem that was not there. Your global git hooks ran in it too, and a failing one failed the
+  check. Its git commands now run without your git config or git environment variables, as
+  Coop's other throwaway repositories already do.
+
 - **Coop's home-folder checks also see your home folder through a second mount.** macOS reaches
   your home folder as `/System/Volumes/Data/Users/<you>` as well as `/Users/<you>`, also when it
   is on another disk, and a Linux bind mount, such as `/data/home` mounted at `/home`, reaches it

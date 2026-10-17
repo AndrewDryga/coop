@@ -546,7 +546,7 @@ func answered(refusedExec, refusedShell bool) []string {
 // doctorCheckClone proves the fork handoff: a clone of the fixture carries the tracked source and
 // none of the shadowed secrets, and has nowhere to push to.
 func doctorCheckClone(s *doctorSection, fixture, clone string) {
-	if err := exec.Command("git", "clone", "-q", fixture, clone).Run(); err != nil {
+	if err := fixtureGit("clone", "-q", fixture, clone).Run(); err != nil {
 		s.probeFailed("Could not check the fork handoff", sentence(err.Error()), len(doctorCloneChecks))
 		return
 	}
@@ -563,7 +563,7 @@ func doctorCheckClone(s *doctorSection, fixture, clone string) {
 		case "clone.secret_value":
 			s.record(def, !treeContains(clone, "hunter2"))
 		case "clone.origin":
-			origin, _ := exec.Command("git", "-C", clone, "remote", "get-url", "origin").Output()
+			origin, _ := fixtureGit("-C", clone, "remote", "get-url", "origin").Output()
 			s.record(def, strings.HasPrefix(strings.TrimSpace(string(origin)), "/"))
 		default:
 			s.record(def, !present[def.id])
@@ -820,12 +820,21 @@ func buildFixture() (string, error) {
 		{"-c", "user.email=d@d", "-c", "user.name=d", "commit", "-qm", "init"},
 	}
 	for _, c := range cmds {
-		cmd := exec.Command("git", append([]string{"-C", dir}, c...)...)
-		if err := cmd.Run(); err != nil {
+		if err := fixtureGit(append([]string{"-C", dir}, c...)...).Run(); err != nil {
 			return "", fmt.Errorf("could not prepare the temporary project with git %v: %v", c, err)
 		}
 	}
 	return dir, nil
+}
+
+// fixtureGit runs git on doctor's own throwaway repositories, the fixture and its clone. Only PATH
+// comes from the person's environment, deliberately: their git config would sign the fixture's
+// commit with their key (or fail it where gpg is missing) and run their global hooks, and their
+// GIT_* variables (an author, GIT_DIR, extra config) would change what doctor builds and checks.
+func fixtureGit(args ...string) *exec.Cmd {
+	cmd := exec.Command("git", args...)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1"}
+	return cmd
 }
 
 func treeContains(root, needle string) bool {

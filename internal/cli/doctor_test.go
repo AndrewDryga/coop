@@ -265,6 +265,50 @@ func TestDoctorCoopignoreCheckNeedsCoopignore(t *testing.T) {
 	}
 }
 
+// The fixture and its clone are coop's own throwaway repositories, so the person's git config never
+// reaches them: a global config that signs commits with a gpg that is missing, runs hooks that fail
+// every commit and checkout, and renames a clone's remote would otherwise fail coop doctor's checks
+// (or sign the fixture with the person's key).
+func TestBuildFixtureIgnoresThePersonsGitConfig(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	hooks := t.TempDir()
+	for _, hook := range []string{"pre-commit", "post-checkout"} {
+		if err := os.WriteFile(filepath.Join(hooks, hook), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	hostile := "[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = " + filepath.Join(t.TempDir(), "no-gpg") +
+		"\n[core]\n\thooksPath = " + hooks + "\n[clone]\n\tdefaultRemoteName = upstream\n"
+	if err := os.WriteFile(global, []byte(hostile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	t.Setenv("GIT_CONFIG_SYSTEM", global)
+	dir, err := buildFixture()
+	if err != nil {
+		t.Fatalf("buildFixture with the person's signing and hook config: %v", err)
+	}
+	defer os.RemoveAll(dir)
+	cmd := exec.Command("git", "-C", dir, "log", "-1", "--format=%G?")
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := cmd.Output(); err != nil || strings.TrimSpace(string(out)) != "N" {
+		t.Errorf("the fixture's commit is not a plain unsigned one: %q, %v", out, err)
+	}
+	s := &doctorSection{}
+	doctorCheckClone(s, dir, filepath.Join(t.TempDir(), "clone"))
+	for _, row := range s.rows {
+		if row.outcome != doctorPass {
+			t.Errorf("the clone check %q did not pass with the person's config in place: %s", row.label, row.reason)
+		}
+	}
+	if len(s.rows) != len(doctorCloneChecks) {
+		t.Errorf("the clone check recorded %d rows, want %d", len(s.rows), len(doctorCloneChecks))
+	}
+}
+
 // The doctor mounts its fixture into a box that runs the probe as a uid which may not own it;
 // under --cap-drop ALL (no CAP_DAC_OVERRIDE) the box reaches it only if it's world-readable. Guard
 // that buildFixture leaves the tree world-traversable/readable — MkdirTemp defaults to 0700, which
