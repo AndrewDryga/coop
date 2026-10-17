@@ -218,7 +218,12 @@ func TestApprovedServiceStart(t *testing.T) {
 		if code != 1 {
 			t.Errorf("an exposed TMPDIR exited %d, want 1", code)
 		}
-		assertApprovedOutput(t, "28q-snapshot-unsafe", out)
+		// The refusal names the folder it refused; the fixture names it the same way for every run.
+		resolved, err := filepath.EvalSymlinks(inside)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertApprovedOutput(t, "28q-snapshot-unsafe", strings.ReplaceAll(out, resolved, "/work/shop/tmp"))
 	})
 
 	t.Run("28h-runtime-has-no-compose", func(t *testing.T) {
