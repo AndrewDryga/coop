@@ -116,7 +116,7 @@ func leadTargets(node *yaml.Node) ([]agents.Target, []string) {
 // targetDetail turns a rejected target inside a preset into the loader's own sentences: what the
 // file says, then the parser's constraint — which internal/agent already states as a sentence.
 func targetDetail(what, raw string, err error) []string {
-	detail := []string{fmt.Sprintf("%s %q is not a valid target.", what, agents.DisplayTarget(raw))}
+	detail := []string{fmt.Sprintf("%s %q is not a valid target.", what, raw)}
 	var te *agents.TargetError
 	if errors.As(err, &te) && te.Cause != "" {
 		return append(detail, strings.Split(te.Cause, "\n")...)

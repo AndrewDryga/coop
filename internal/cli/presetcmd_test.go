@@ -441,12 +441,15 @@ func TestCmdPresetsListsAControlCharacterNameAsBroken(t *testing.T) {
 // A box can also write a preset's preset.yaml, and the target parser takes a model name as it is,
 // so the lead model's cell is escaped like the name: an OSC 52 sequence in it would otherwise write
 // the person's clipboard just by listing presets.
+// A lead model holding an escape sequence is refused when the preset loads (agent.ParseTarget), and
+// coop presets shows that refusal with the target escaped, never the raw sequence.
 func TestCmdPresetsEscapesTheLeadModel(t *testing.T) {
 	cfg := freshConfig(t)
 	writePresetFile(t, cfg.RepoOverride, "team", "lead: {agent: \"claude:x\\e]52;c;SGk=\\a\"}\n")
 	out := captureStdout(t, func() { _, _ = (&app{cfg: cfg}).cmdPresets(nil) })
-	if strings.ContainsAny(out, "\x1b\x07") || !strings.Contains(out, `claude:x\u001B]52;c;SGk=\u0007`) {
-		t.Fatalf("the lead model printed raw or not at all:\n%q", out)
+	if strings.ContainsAny(out, "\x1b\x07") || !strings.Contains(out, `"claude:x\x1b]52;c;SGk=\a" is not a valid target`) ||
+		!strings.Contains(out, "A model name cannot contain control or invisible characters.") {
+		t.Fatalf("the lead model printed raw, or its refusal is missing:\n%q", out)
 	}
 }
 

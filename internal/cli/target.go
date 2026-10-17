@@ -38,7 +38,7 @@ func targetUsage(err error, command, usage string) error {
 // commands that resolve it — the agent's accounts, and signing this one in.
 func noAccountErr(agent, account string) error {
 	return &ui.UsageError{
-		Headline: fmt.Sprintf("No %s account named %q", titleName(agent), agents.DisplayTarget(account)),
+		Headline: fmt.Sprintf("No %s account named %q", titleName(agent), account),
 		Rows: [][2]string{
 			{"Accounts:", "coop credentials " + agent},
 			{"Sign in:", agents.LoginCommand(agent + "@" + account)},

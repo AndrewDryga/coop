@@ -115,7 +115,7 @@ func ParseTarget(s string) (Target, error) {
 		return Target{}, &TargetError{Target: DisplayTarget(raw), Headline: headline, Cause: cause, Help: help}
 	}
 	invalid := func(cause string) (Target, error) {
-		return bad(fmt.Sprintf("Invalid agent target %q", DisplayTarget(raw)), cause, "models")
+		return bad(fmt.Sprintf("Invalid agent target %q", raw), cause, "models")
 	}
 	if raw == "" {
 		return Target{}, &TargetError{Kind: TargetEmpty, Headline: "Missing agent target", Cause: "Name an agent, such as " + Names()[0] + ".", Help: "models"}
@@ -135,7 +135,7 @@ func ParseTarget(s string) (Target, error) {
 			Kind:     TargetUnknownProvider,
 			Target:   DisplayTarget(raw),
 			Provider: DisplayTarget(provider),
-			Headline: fmt.Sprintf("Unknown agent %q", DisplayTarget(raw)),
+			Headline: fmt.Sprintf("Unknown agent %q", raw),
 			Cause:    "Choose " + list(Names(), "or") + ".",
 			Help:     "models",
 		}
@@ -184,7 +184,7 @@ func ParseTarget(s string) (Target, error) {
 			// An account becomes a profile DIRECTORY name, so it must be a single path-safe
 			// segment — no separators or traversal, and no leading '-' (would look like a flag).
 			if strings.ContainsAny(a, ":@/\\") || a == "." || a == ".." || strings.HasPrefix(a, "-") {
-				return bad(fmt.Sprintf("Invalid account name %q", DisplayTarget(a)),
+				return bad(fmt.Sprintf("Invalid account name %q", a),
 					"Use one name, without \":\", \"@\", \"/\", or \"\\\\\".\nThe name cannot be \".\", \"..\", or start with \"-\".", "login")
 			}
 			t.Accounts = append(t.Accounts, a)

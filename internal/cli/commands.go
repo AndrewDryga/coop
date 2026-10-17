@@ -669,7 +669,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	// name like "../../x" can't escape the vault and fails the same way piped or at a tty.
 	if !validProfileName(profile) {
 		return 2, &ui.UsageError{
-			Headline: fmt.Sprintf("Invalid account name %q", agents.DisplayTarget(profile)),
+			Headline: fmt.Sprintf("Invalid account name %q", profile),
 			Cause:    "Use one name, without \":\", \"@\", \"/\", or \"\\\\\".\nThe name cannot be \".\", \"..\", or start with \"-\".",
 			Rows:     [][2]string{{"Help:", "coop help login"}},
 		}
