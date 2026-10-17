@@ -4,6 +4,26 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A large companion repository is ready in half a minute, not five.** Coop copied each companion
+  repository a session reads into a new Git repository the way a clone over the network does: Git
+  searched its large files for deltas again and checked every object once more. A 6 GB repository
+  took five of the six minutes a Work session waited before its agent started. Coop now writes the
+  pinned commit's history straight from the worker's copy, as it is stored: the same repository
+  takes about half a minute. Only that commit's history is copied; other branches and objects no
+  commit reaches stay behind. Submodules of a session's repositories are copied the same way.
+
+- **Coop records what each prompt it sends carried.** A controller showing its own prompt showed
+  only part of what the model got: Coop's output contract, its correction messages and the
+  output-folder note were not recorded anywhere. Each send now leaves a `prompt.sent` session event
+  with Coop's text as sent, the caller's prompt and output schema by digest, and the digest of the
+  whole text, so a controller can rebuild the text and check it. Workers forward the event to their
+  controller; a part that looks like it holds a secret goes as its digest and size only.
+
+- **A session with many companion repositories starts sooner.** Coop prepared a session's
+  companion repositories one after another, so a Work session with sixteen of them waited about six
+  minutes before its agent started. Now it prepares up to four at once. A failure still stops the
+  others and names the repository that failed.
+
 - **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
   `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a
   file in place. An agent in a box could swap that file's folder for a named pipe just as
