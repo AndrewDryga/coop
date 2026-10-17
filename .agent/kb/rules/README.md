@@ -172,6 +172,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [full-product-audits-use-every-feature](full-product-audits-use-every-feature.md) — a full audit manually exercises each advertised supported feature on claimed platforms and labels unrun paths honestly
 - [audit-findings-need-practical-impact](audit-findings-need-practical-impact.md) — audit realistic agent access and practical impact; avoid speculative machinery and unproven product-defect claims
 - [batch-delegated-editorial-decisions](batch-delegated-editorial-decisions.md) — finish delegated editorial work in coherent batches; ask only about material choices
+- [blocked-decisions-are-plain-and-long-term](blocked-decisions-are-plain-and-long-term.md) — a decision.md says in plain English why it is blocked and what to decide, and recommends the option best for the product long term
 - [batch-slow-gates-when-requested](batch-slow-gates-when-requested.md) — validation matches the changed surface; unrelated slow suites run only when the requested outcome needs them
 - [requested-outcome-controls-stopping](requested-outcome-controls-stopping.md) — full implementation requests continue past verified slices through the requested final acceptance criteria
 - [run-the-real-invocation-last](run-the-real-invocation-last.md) — a green gate is not proof a feature works; the last check is the user’s own command, in a real repo, after the last commit
