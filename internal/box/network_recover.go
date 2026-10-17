@@ -20,9 +20,11 @@ type NetworkRecovery struct {
 	RunID    string
 	Removed  []string
 	Pending  []string
-	Sealed   bool
 	Skipped  string
 	Failures []error
+	// Sealed is set when this pass wrote the run's final receipt. One sealed
+	// earlier is not this pass's doing, so a report never claims it.
+	Sealed bool
 	// Live is set with Skipped when the run's supervisor is still running or
 	// its identity could not be proved: nothing was touched because cleanup is
 	// that process's job, not because anything external is in the way.
@@ -61,9 +63,10 @@ type recoverConnect func(ctx context.Context, endpoint string) (recoverDocker, s
 // then seals an honest `supervisor_lost` receipt. It is the only path that
 // finishes an interrupted run's custody, and it never touches a live one.
 //
-// runID selects one run; empty means every cleanup-pending run this host kept,
-// and that pass also removes the records networkstate.ExecutionRetention lets go
-// and the policy snapshots nothing uses any more.
+// runID selects one run; empty means every run this host kept that is still owed
+// cleanup or a sealed receipt, and that pass also removes the records
+// networkstate.ExecutionRetention lets go and the policy snapshots nothing uses
+// any more.
 func RecoverNetworkRuns(ctx context.Context, rt runtime.Runtime, runID string) ([]NetworkRecovery, error) {
 	root, err := NetworkStatePath()
 	if err != nil {
@@ -128,11 +131,13 @@ type networkRunInventory struct {
 }
 
 // pendingNetworkRuns lists the runs recovery may settle: an explicit id, or
-// every retained run whose cleanup is still pending. A page it could not read
-// whole is an error — recovery must not report "nothing pending" from a partial
-// inventory. The unscoped pass also names the finished runs retention may remove,
-// from every page, including after such an error, and every policy a listed run
-// names, but only from a listing read whole.
+// every retained run whose cleanup is still pending or whose receipt was never
+// sealed — a supervisor that died between its own cleanup and its seal leaves
+// only the receipt, and retention never removes an unsealed run. A page it could
+// not read whole is an error — recovery must not report "nothing pending" from a
+// partial inventory. The unscoped pass also names the finished runs retention
+// may remove, from every page, including after such an error, and every policy a
+// listed run names, but only from a listing read whole.
 func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.Time) (networkRunInventory, error) {
 	var out networkRunInventory
 	if runID != "" {
@@ -159,7 +164,7 @@ func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.
 			if summary.Expired(now) {
 				out.expired = append(out.expired, summary.ID)
 			}
-			if !summary.CleanupPending || partial != nil {
+			if summary.Final && !summary.CleanupPending || partial != nil {
 				continue
 			}
 			record, err := evidence.Execution(summary.ID)
@@ -196,15 +201,47 @@ func recoverNetworkRun(ctx context.Context, evidence *networkstate.Evidence, rec
 		out.Skipped = "its supervisor (pid " + strconv.Itoa(record.Supervisor.PID) + ") is still running or its identity is uncertain"
 		return out
 	}
+	// Only a resource still at the runtime needs its daemon. A supervisor that died after removing
+	// its containers and volumes leaves at most its files and its receipt, and neither needs it.
+	if slices.ContainsFunc(record.Resources, func(r networkstate.Resource) bool { return r.State != "gone" }) {
+		if record = recoverLeftovers(ctx, evidence, record, connect, &out); out.Skipped != "" {
+			return out
+		}
+	}
+	if record.Artifact.State != "gone" && !slices.ContainsFunc(record.Resources, func(r networkstate.Resource) bool {
+		return r.Kind == "container" && r.State != "gone"
+	}) {
+		next, err := evidence.CleanupArtifacts(ctx, record.ID, record.Revision)
+		if err != nil {
+			out.Failures = appendError(out.Failures, fmt.Errorf("artifacts: %w", err))
+		} else {
+			record = next
+		}
+	}
+	// The receipt is sealed LAST, so its cleanup outcome describes what this
+	// pass actually settled rather than what it was about to attempt.
+	sealed, err := evidence.RecoverInterrupted(ctx, record.ID, record.Revision)
+	if err != nil {
+		out.Failures = appendError(out.Failures, fmt.Errorf("receipt: %w", err))
+		return out
+	}
+	out.Sealed = record.Receipt == nil && sealed.Receipt != nil
+	return out
+}
+
+// recoverLeftovers removes what the run left at its runtime, on the daemon it
+// recorded and only there. A daemon it cannot use is reported as Skipped, with
+// nothing touched.
+func recoverLeftovers(ctx context.Context, evidence *networkstate.Evidence, record networkstate.Execution, connect recoverConnect, out *NetworkRecovery) networkstate.Execution {
 	docker, daemon, err := connect(ctx, record.Endpoint)
 	if err != nil {
 		out.Skipped = "the runtime it ran on is unavailable: " + err.Error()
-		return out
+		return record
 	}
 	defer func() { out.Failures = appendError(out.Failures, docker.Close()) }()
 	if daemon != record.DaemonID {
 		out.Skipped = "the runtime at " + record.Endpoint + " is a different daemon than the one this run used"
-		return out
+		return record
 	}
 	for _, role := range networkRecoveryOrder {
 		resource := recoveredResource(record, role)
@@ -234,25 +271,7 @@ func recoverNetworkRun(ctx context.Context, evidence *networkstate.Evidence, rec
 			out.countPending(resource.Kind)
 		}
 	}
-	if record.Artifact.State != "gone" && !slices.ContainsFunc(record.Resources, func(r networkstate.Resource) bool {
-		return r.Kind == "container" && r.State != "gone"
-	}) {
-		next, err := evidence.CleanupArtifacts(ctx, record.ID, record.Revision)
-		if err != nil {
-			out.Failures = appendError(out.Failures, fmt.Errorf("artifacts: %w", err))
-		} else {
-			record = next
-		}
-	}
-	// The receipt is sealed LAST, so its cleanup outcome describes what this
-	// pass actually settled rather than what it was about to attempt.
-	sealed, err := evidence.RecoverInterrupted(ctx, record.ID, record.Revision)
-	if err != nil {
-		out.Failures = appendError(out.Failures, fmt.Errorf("receipt: %w", err))
-		return out
-	}
-	out.Sealed = sealed.Receipt != nil
-	return out
+	return record
 }
 
 func recoveredResource(record networkstate.Execution, role string) networkstate.Resource {

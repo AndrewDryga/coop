@@ -584,7 +584,8 @@ another project's.
 
 A filtered run's gateway containers, volumes and receipt are owned by the `coop` process that
 started it. If that process is killed (`SIGKILL`, a crash, a reboot), the run stays
-`cleanup pending` until co:op settles it. co:op does that on its own:
+`cleanup pending` until co:op settles it, or `final record missing` if it was killed after its own
+cleanup. co:op does that on its own:
 
 - `coop net inspect` of that run makes one bounded recovery attempt before it says anything about
   cleanup.

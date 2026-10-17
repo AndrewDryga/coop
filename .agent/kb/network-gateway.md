@@ -2,8 +2,8 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
-updated: 2026-10-16
+sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
+updated: 2026-10-17
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -192,8 +192,15 @@ then seal the receipt. Every exit runs the deferred containment, which removes t
 attempts both named volumes once nothing can still mount them (`filtered_cleanup.go:160`) — an
 early return on lost host storage used to leak a volume pair per interrupted run. Missing terminal
 evidence makes the receipt partial; it never blocks containment. When the supervising PROCESS dies
-instead, nothing local can finish it: `box.RecoverNetworkRuns` (`box/network_recover.go:64`) is the
-only path that settles such a run. It runs from `coop net recover`, from the orphan sweep at a loop,
+instead, nothing local can finish it: `box.RecoverNetworkRuns` is the only path that settles such a
+run, and it takes every run still owed cleanup OR a receipt. A death after the teardown removed the
+containers and volumes leaves at most the artifact and no receipt, and retention keeps an unsealed
+run forever, so the pass finishes that one from the record alone: it connects to the recorded daemon
+only for a resource still at the runtime (`recoverLeftovers`), so a stopped or replaced daemon cannot
+hold the seal back, and `coop net recover` and `coop net inspect` resolve a runtime only when cleanup
+is pending. `NetworkRecovery.Sealed` means THIS pass wrote the receipt, never an earlier one.
+It runs from `coop net recover`, from `coop net inspect` of a run owed either (scoped to that run),
+from the orphan sweep at a loop,
 fork or build start, and before every other filtered host launch — `runBox` in `cli/boxsweep.go`,
 and a fork or session review gate through `forkctl.Host.SettleFilteredRuns` — never before an open
 or offline one, because finding the pending runs reads every retained record.
@@ -275,6 +282,15 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-17 — recovery also takes an unsealed run whose cleanup is complete (a supervisor killed
+  between its artifact cleanup and its seal) and seals it `supervisor_lost` without contacting the
+  daemon, which it now binds only for a resource still at the runtime, so a run left with only its
+  artifact is finished with Docker down too. `coop net recover` runs a pass for such a run instead
+  of reporting nothing to clean, and `coop net inspect` attempts one; both skip runtime detection
+  when only the seal is owed. `NetworkRecovery.Sealed` now means this pass wrote the receipt, and
+  recover adds `Wrote its final record.` under `already cleaned up`. Dropped the stale line
+  reference to `RecoverNetworkRuns`; re-verified the paragraph against `filtered_cleanup.go`,
+  `network_recover.go` and `cli/net_cmd.go`.
 - 2026-10-16 — the output chain refuses the agent's 127.0.0.11 (Docker's resolver) before the
   loopback accepts; the order paragraph names `initialRules` instead of a stale line number.
 - 2026-10-16 — the tar carries its own go.mod and go.sum, narrowed to coop-net's three modules, and

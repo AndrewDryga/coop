@@ -70,6 +70,14 @@
   also refuse a queue `README.md` that is a symbolic link: replace the link with a copy of the file,
   or delete it to use the built-in template.
 
+- **A filtered run killed as it finished no longer shows `final record missing` forever.** If the
+  `coop` running a filtered box was killed after it removed the run's containers, volumes and files
+  but before it wrote the run's final record, nothing wrote that record later: Coop finished only
+  runs still waiting for cleanup. `coop net runs` kept the run marked `final record missing`, and
+  Coop never removed its record. The next filtered launch, or loop, fork or build start, now writes
+  the record as it does for other interrupted runs. `coop net recover`, or `coop net inspect` of that
+  run, writes it at once, even when Docker is not running.
+
 - **Coop no longer lets a box's Git settings choose the project folder.** Coop asked Git where your
   repository starts, and Git follows a setting in `.git/config` that an agent in a box can change. A
   box could point it at another folder, such as your home folder, and the next Coop command used that

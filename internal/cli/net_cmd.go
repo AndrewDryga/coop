@@ -113,23 +113,29 @@ func (a *app) cmdNetRecover(args []string) (int, error) {
 			return 1, err
 		}
 	}
-	needsRuntime, found := page.Incomplete, runID == ""
+	// A run is owed a pass while its cleanup is pending or its receipt is unsealed:
+	// a coop killed between its own cleanup and its seal leaves only the receipt.
+	// Only the cleanup needs a container runtime; the record alone can seal.
+	needsRuntime, owed, found := page.Incomplete, page.Incomplete, runID == ""
 	for _, run := range page.Executions {
 		if runID != "" && run.ID != runID {
 			continue
 		}
 		found = true
 		needsRuntime = needsRuntime || run.CleanupPending
+		owed = owed || run.CleanupPending || !run.Final
 	}
 	if !found && !page.Incomplete {
 		return 1, netUnknownRunErr(ref)
 	}
-	if !needsRuntime {
+	if !owed {
 		ui.Note("No interrupted network runs need cleanup.")
 		return 0, nil
 	}
-	if err := a.ensureRuntime(); err != nil {
-		return -1, err
+	if needsRuntime {
+		if err := a.ensureRuntime(); err != nil {
+			return -1, err
+		}
 	}
 	results, err := box.RecoverNetworkRuns(context.Background(), a.rt, runID)
 	if err != nil {
@@ -173,6 +179,9 @@ func writeNetRecovery(w io.Writer, p ui.Palette, result box.NetworkRecovery) {
 		writeNetCleanupIncomplete(w, p, id, netCleanupCauses(result), "Full details: coop net inspect "+id+" --json")
 	case len(result.Removed) == 0:
 		fmt.Fprintf(w, "Network run %s is already cleaned up.\n", id)
+		if result.Sealed {
+			fmt.Fprintln(w, "  Wrote its final record.")
+		}
 	default:
 		fmt.Fprintf(w, "%s %s\n  %s\n", p.Green("✓"), p.Bold("Cleaned up network run "+id), netRemovedText(result))
 		fmt.Fprintf(w, "\nView the record\n  %s\n", p.Cyan("coop net inspect "+id))
@@ -1014,12 +1023,13 @@ func (a *app) cmdNetRun(verb string, args []string) (int, error) {
 		return 0, netWriteJSON(os.Stdout, inspection)
 	}
 	view := networkreport.View{ID: id}
-	// A run whose cleanup is still owed and that nothing is observing is what
-	// recovery exists for. Coop tries once itself, then reads the run again, so
-	// a dead supervisor's leftovers are reported only when something external
-	// kept coop from settling them.
-	if inspection.Cleanup == "pending" && !networkreport.RunLive(inspection) {
-		view.Cleanup = a.netSettleCleanup(id)
+	// A run still owed its cleanup or its final record that nothing is observing
+	// is what recovery exists for. Coop tries once itself, then reads the run
+	// again, so a dead supervisor's leftovers are reported only when something
+	// external kept coop from settling them. Recovery proves the supervisor gone
+	// before it touches anything; a live one keeps its run.
+	if (inspection.Cleanup == "pending" || inspection.Receipt == nil) && !networkreport.RunLive(inspection) {
+		view.Cleanup = a.netSettleCleanup(id, inspection.Cleanup == "pending")
 		if again, err := evidence.Inspect(id, time.Now(), true); err == nil {
 			inspection = again
 		}
@@ -1031,11 +1041,15 @@ func (a *app) cmdNetRun(verb string, args []string) (int, error) {
 // netSettleCleanup is coop's one bounded recovery attempt for a run. It goes
 // through the same ownership-checked path as `coop net recover` — a departed
 // supervisor, the exact daemon the run used, removals by recorded id — and
-// reports what it learned in the operator's terms. There is no retry loop here:
-// the next inspect, loop or fork start makes the next attempt.
-func (a *app) netSettleCleanup(id string) networkreport.Cleanup {
-	if err := a.ensureRuntime(); err != nil {
-		return networkreport.Cleanup{Blocker: err.Error(), Remedy: "Coop will retry automatically once a container runtime is available"}
+// reports what it learned in the operator's terms. Only cleanup needs a
+// container runtime: a run owed just its final record is sealed from the record.
+// There is no retry loop here: the next inspect, loop or fork start makes the
+// next attempt.
+func (a *app) netSettleCleanup(id string, needsRuntime bool) networkreport.Cleanup {
+	if needsRuntime {
+		if err := a.ensureRuntime(); err != nil {
+			return networkreport.Cleanup{Blocker: err.Error(), Remedy: "Coop will retry automatically once a container runtime is available"}
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
 	defer cancel()

@@ -3,6 +3,7 @@ package box
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -103,6 +104,138 @@ func TestRecoverNetworkRunsSettlesADepartedSupervisor(t *testing.T) {
 	again, err := recoverNetworkRuns(context.Background(), evidence, "", connect)
 	if err != nil || len(again) != 0 {
 		t.Fatalf("second pass = %+v %v", again, err)
+	}
+}
+
+// cleanUpWithoutSeal runs a launched run's own teardown and has only its last step, the seal, fail:
+// what a supervisor killed between its cleanup and its seal leaves behind. Every resource and the
+// artifact are confirmed gone, and there is no receipt.
+func cleanUpWithoutSeal(t *testing.T, f *filteredExecution, d *filteredDaemonFixture) {
+	t.Helper()
+	// "killed" is no workload outcome SealExecution accepts, so teardown stops exactly at the seal.
+	if gone, err := f.cleanup("killed"); !gone || err == nil || !strings.Contains(err.Error(), "unknown network workload outcome") {
+		t.Fatalf("teardown = %v, %v; want everything removed and only the seal refused", gone, err)
+	}
+	record, err := f.store.Execution(f.record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Receipt != nil || record.Artifact.State != "gone" || slices.ContainsFunc(record.Resources, func(r networkstate.Resource) bool { return r.State != "gone" }) {
+		t.Fatalf("after teardown: receipt %+v, artifact %s, resources %+v; want everything gone and no receipt",
+			record.Receipt, record.Artifact.State, record.Resources)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.containers) != 0 || len(d.volumes) != 0 {
+		t.Fatalf("teardown left %d container(s) and %d volume(s)", len(d.containers), len(d.volumes))
+	}
+}
+
+// noDaemon is a runtime that does not answer, as when Docker is stopped.
+func noDaemon(context.Context, string) (recoverDocker, string, error) {
+	return nil, "", errors.New("Docker is not running")
+}
+
+// A supervisor killed after its cleanup but before its seal leaves a run with nothing to remove and
+// no receipt, which retention would keep forever. Recovery seals it as supervisor_lost with cleanup
+// complete from the record alone, so a daemon that is stopped or replaced cannot keep it open, and
+// retention removes it once its window has passed.
+func TestRecoverNetworkRunsSealsARunWhoseCleanupFinishedBeforeItsSeal(t *testing.T) {
+	f, d, evidence, _ := recoveryFixture(t)
+	cleanUpWithoutSeal(t, f, d)
+	departSupervisor(t, f.store, f.record.ID)
+	now := time.Now()
+	results, err := recoverNetworkRunsAt(context.Background(), evidence, "", noDaemon, now)
+	if err != nil || len(results) != 1 || results[0].RunID != f.record.ID {
+		t.Fatalf("recovery = %+v %v, want the unsealed run", results, err)
+	}
+	if r := results[0]; !r.Sealed || r.Skipped != "" || len(r.Removed) != 0 || len(r.Pending) != 0 || len(r.Failures) != 0 {
+		t.Fatalf("recovery result = %+v, want the run sealed with nothing removed", r)
+	}
+	record, err := evidence.Execution(f.record.ID)
+	if err != nil || record.Receipt == nil {
+		t.Fatal("the run was not sealed", err)
+	}
+	if receipt := record.Receipt; receipt.Workload != "supervisor_lost" || receipt.Finality != "final" ||
+		receipt.Completeness != "partial" || receipt.Cleanup != "complete" {
+		t.Fatalf("receipt = %+v, want a final partial supervisor_lost receipt with cleanup complete", receipt)
+	}
+
+	// Sealed, the run is settled: the next pass has nothing to do, and the first one past the
+	// retention window removes the record.
+	if again, err := recoverNetworkRunsAt(context.Background(), evidence, "", noDaemon, now); err != nil || len(again) != 0 {
+		t.Fatalf("second pass = %+v %v, want nothing left to settle", again, err)
+	}
+	if _, err := recoverNetworkRunsAt(context.Background(), evidence, "", noDaemon, now.Add(networkstate.ExecutionRetention+time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := evidence.Execution(f.record.ID); !errors.Is(err, networkstate.ErrEvidenceUnavailable) {
+		t.Fatalf("the sealed run outlived retention: %v", err)
+	}
+}
+
+// The same run with its supervisor still running is that process's to seal. Recovery, scoped or
+// not, leaves it unsealed, and retention, which removes only a sealed run, keeps it.
+func TestRecoverNetworkRunsLeavesAnUnsealedRunToItsLiveSupervisor(t *testing.T) {
+	f, d, evidence, connect := recoveryFixture(t)
+	cleanUpWithoutSeal(t, f, d)
+	later := time.Now().Add(networkstate.ExecutionRetention + time.Hour)
+	for _, scope := range []string{"", f.record.ID} {
+		results, err := recoverNetworkRunsAt(context.Background(), evidence, scope, connect, later)
+		if err != nil || len(results) != 1 || !results[0].Live || results[0].Sealed {
+			t.Fatalf("recovery scoped to %q = %+v %v, want the run left to its live supervisor", scope, results, err)
+		}
+		record, err := evidence.Execution(f.record.ID)
+		if err != nil || record.Receipt != nil {
+			t.Fatalf("a live supervisor's run was sealed or removed: %+v %v", record.Receipt, err)
+		}
+	}
+}
+
+// A supervisor killed after it removed its containers and volumes but before it removed the run's
+// files leaves those files and no receipt. Neither is at the runtime, so recovery finishes both with
+// the daemon down: it removes the files and seals the run with cleanup complete.
+func TestRecoverNetworkRunsRemovesTheArtifactAndSealsWithTheDaemonDown(t *testing.T) {
+	f, d, evidence, _ := recoveryFixture(t)
+	// The teardown's own removals, in its order, and nothing after them.
+	for _, role := range networkRecoveryOrder {
+		if err := f.removeResource(evidence, role); err != nil {
+			t.Fatalf("remove %s: %v", role, err)
+		}
+	}
+	d.mu.Lock()
+	containers, volumes := len(d.containers), len(d.volumes)
+	d.mu.Unlock()
+	before, err := evidence.Execution(f.record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containers != 0 || volumes != 0 || before.Receipt != nil || before.Artifact.State == "gone" ||
+		slices.ContainsFunc(before.Resources, func(r networkstate.Resource) bool { return r.State != "gone" }) {
+		t.Fatalf("before recovery: %d container(s), %d volume(s), receipt %+v, artifact %s, resources %+v; want only the files and the receipt owed",
+			containers, volumes, before.Receipt, before.Artifact.State, before.Resources)
+	}
+	if _, err := os.Stat(f.runfiles); err != nil {
+		t.Fatal("the run's files are already gone:", err)
+	}
+	departSupervisor(t, f.store, f.record.ID)
+
+	results, err := recoverNetworkRuns(context.Background(), evidence, "", noDaemon)
+	if err != nil || len(results) != 1 || results[0].RunID != f.record.ID {
+		t.Fatalf("recovery = %+v %v, want the interrupted run", results, err)
+	}
+	if r := results[0]; !r.Sealed || r.Skipped != "" || len(r.Removed) != 0 || len(r.Pending) != 0 || len(r.Failures) != 0 {
+		t.Fatalf("recovery result = %+v, want the files removed and the run sealed without the daemon", r)
+	}
+	if _, err := os.Stat(f.runfiles); !os.IsNotExist(err) {
+		t.Fatal("recovery kept the run's files:", err)
+	}
+	record, err := evidence.Execution(f.record.ID)
+	if err != nil || record.Receipt == nil || record.Artifact.State != "gone" {
+		t.Fatalf("after recovery: receipt %+v, artifact %s, %v; want the run sealed and its files gone", record.Receipt, record.Artifact.State, err)
+	}
+	if receipt := record.Receipt; receipt.Workload != "supervisor_lost" || receipt.Finality != "final" || receipt.Cleanup != "complete" {
+		t.Fatalf("receipt = %+v, want a final supervisor_lost receipt with cleanup complete", receipt)
 	}
 }
 
@@ -250,8 +383,8 @@ func TestRecoverNetworkRunsRetriesAPendingOrphanOnALaterPass(t *testing.T) {
 	departSupervisor(t, f.store, f.record.ID)
 	d.refuseRemoval = "controller"
 	first, err := recoverNetworkRuns(context.Background(), evidence, "", connect)
-	if err != nil || len(first) != 1 || !slices.Contains(first[0].Pending, "controller") {
-		t.Fatalf("first pass = %+v %v, want the controller left pending", first, err)
+	if err != nil || len(first) != 1 || !slices.Contains(first[0].Pending, "controller") || !first[0].Sealed {
+		t.Fatalf("first pass = %+v %v, want the controller left pending and the run sealed", first, err)
 	}
 
 	// The next start finds the same run still owed and settles what the last one
@@ -261,8 +394,9 @@ func TestRecoverNetworkRunsRetriesAPendingOrphanOnALaterPass(t *testing.T) {
 	if err != nil || len(second) != 1 || second[0].RunID != f.record.ID {
 		t.Fatalf("second pass = %+v %v, want the same pending run retried", second, err)
 	}
-	if !slices.Contains(second[0].Removed, "controller") || len(second[0].Pending) != 0 || len(second[0].Failures) != 0 {
-		t.Fatalf("second pass = %+v, want the retry to finish the cleanup", second[0])
+	// The first pass wrote the receipt, so this one must not claim it did.
+	if !slices.Contains(second[0].Removed, "controller") || len(second[0].Pending) != 0 || len(second[0].Failures) != 0 || second[0].Sealed {
+		t.Fatalf("second pass = %+v, want the retry to finish the cleanup and leave the receipt to the first", second[0])
 	}
 	d.mu.Lock()
 	containers, volumes := len(d.containers), len(d.volumes)

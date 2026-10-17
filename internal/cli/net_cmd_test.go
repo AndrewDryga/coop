@@ -817,6 +817,83 @@ func TestNetRecoverStillRequiresRuntimeForPendingCleanup(t *testing.T) {
 	}
 }
 
+// netCleanUpWithoutSeal settles a recorded run's resources and files the way its own teardown
+// does, and stops before the seal: what a coop killed between its cleanup and its seal leaves.
+func netCleanUpWithoutSeal(t *testing.T, store *networkstate.Store, record networkstate.Execution) networkstate.Execution {
+	t.Helper()
+	evidence, err := networkstate.OpenEvidence(store.Path(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer evidence.Close()
+	ctx := context.Background()
+	for _, resource := range record.Resources {
+		if record, err = evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, resource.Name, resource.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if record, err = evidence.CleanupArtifacts(ctx, record.ID, record.Revision); err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
+// A coop killed between its own cleanup and its seal leaves a run whose cleanup is complete and
+// whose receipt is missing. `coop net recover` seals it, and needs no container runtime to do so,
+// instead of reporting that nothing needs cleanup and leaving it unsealed.
+func TestNetRecoverSealsARunWhoseCleanupFinishedBeforeItsSeal(t *testing.T) {
+	store := netHostFixture(t)
+	record := netCleanUpWithoutSeal(t, store, netRecordRun(t, store, netFixtureProject(t)))
+	netDepartSupervisor(t, store, record.ID)
+	a := &app{cfg: &config.Config{RuntimeName: "definitely-not-a-runtime"}}
+	var code int
+	var err error
+	out := captureStdout(t, func() { code, err = a.cmdNetRecover(nil) })
+	want := "Network run " + networkreport.ShortID(record.ID) + " is already cleaned up.\n  Wrote its final record.\n"
+	if code != 0 || err != nil || out != want {
+		t.Fatalf("recover = (%d, %v, %q), want the run sealed: %q", code, err, out, want)
+	}
+	sealed, err := store.Execution(record.ID)
+	if err != nil || sealed.Receipt == nil || sealed.Receipt.Workload != "supervisor_lost" || sealed.Receipt.Cleanup != "complete" {
+		t.Fatalf("receipt = %+v, %v; want a supervisor_lost receipt with cleanup complete", sealed.Receipt, err)
+	}
+}
+
+// The same run is `final record missing` in `coop net runs`, and inspecting it makes the same
+// bounded attempt as for a pending cleanup, again without a container runtime. Recovery's own proof
+// that the supervisor is gone decides: while it runs the run stays unsealed; once it is gone,
+// inspect seals it.
+func TestInspectSettlesADeadRunWhoseCleanupFinishedBeforeItsSeal(t *testing.T) {
+	store := netHostFixture(t)
+	project := netFixtureProject(t)
+	record := netCleanUpWithoutSeal(t, store, netRecordRun(t, store, project))
+	a := &app{cfg: &config.Config{RepoOverride: project, RuntimeName: "definitely-not-a-runtime"}}
+	inspect := func() string {
+		t.Helper()
+		return captureStdout(t, func() {
+			if code, err := a.cmdNetRun("inspect", []string{record.ID}); code != 0 || err != nil {
+				t.Fatalf("coop net inspect = (%d, %v)", code, err)
+			}
+		})
+	}
+	// This test is the run's supervisor, and it is still running.
+	inspect()
+	if again, err := store.Execution(record.ID); err != nil || again.Receipt != nil {
+		t.Fatalf("inspect sealed a run its live supervisor owns: %+v %v", again.Receipt, err)
+	}
+	netDepartSupervisor(t, store, record.ID)
+	out := inspect()
+	sealed, err := store.Execution(record.ID)
+	if err != nil || sealed.Receipt == nil || sealed.Receipt.Workload != "supervisor_lost" || sealed.Receipt.Cleanup != "complete" {
+		t.Fatalf("receipt = %+v, %v; want inspect to seal a supervisor_lost receipt with cleanup complete:\n%s", sealed.Receipt, err, out)
+	}
+	for _, forbidden := range []string{"Cleanup incomplete", "no final record was sealed", "Live"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("inspect printed %q for the run it sealed:\n%s", forbidden, out)
+		}
+	}
+}
+
 // Acceptance: inspect without a run selects the newest recorded run of the
 // current project only; watch selects the sole active one and refuses to pick
 // among several.
