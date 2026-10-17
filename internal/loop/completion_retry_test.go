@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -203,6 +205,54 @@ func TestNoChangeCompletionKeepsFirstAttemptEvidence(t *testing.T) {
 				if err != nil || string(body) != "attempt work\n" {
 					t.Fatalf("denial lost work: %q %v", body, err)
 				}
+			}
+		})
+	}
+}
+
+// A .coopignore the secret decider cannot read refuses every launch the same way, and a box can plant
+// one mid-run. The loop stops at the first refusal and returns it, so coop loop names the file,
+// instead of retrying it as a failed task attempt and ending on "Stopped after 5 failed attempts".
+// Nothing ran in the box, so the refusal leaves no completion window for the next run to recover.
+func TestAnUnreadableCoopignoreStopsTheRunAtItsFirstLaunch(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	for _, stage := range []string{"pre-flight", "task attempt"} {
+		t.Run(stage, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			repo, git := gitrepo.New(t)
+			writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+			git("add", ".gitignore")
+			git("commit", "-m", "base")
+			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "work", "task.md"), "# Work\n")
+			if stage == "pre-flight" {
+				writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), "preflight:\n  enabled: true\n  prompt: tidy the queue\n")
+			}
+			cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
+			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+			refusal := box.UnreadableCoopignore{File: "src/.coopignore", Reason: "is a folder"}
+			attempts := 0
+			c.boxRun = func(box.RunSpec) (int, error) {
+				attempts++
+				return -1, fmt.Errorf("prepare the box: %w", refusal) // as box.Run refuses before any launch
+			}
+			var code int
+			var runErr error
+			output := captureStderr(t, func() {
+				code, runErr = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
+					Preflight: stage == "pre-flight", Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
+			})
+			var got box.UnreadableCoopignore
+			if code != 1 || !errors.As(runErr, &got) || got != refusal {
+				t.Fatalf("run = (%d, %v), want exit 1 with the unreadable .coopignore\n%s", code, runErr, output)
+			}
+			if attempts != 1 || strings.Contains(output, "Task attempt failed") {
+				t.Errorf("launches = %d, want the run to stop at the first refusal\n%s", attempts, output)
+			}
+			// Left open, the window would outlive this process, and the next loop would try to recover
+			// it, failing if a task was completed on the host meanwhile.
+			if index, err := tasks.ReadCompletionWindowIndex(filepath.Join(repo, tasksRoot)); err != nil || len(index.Windows) != 0 {
+				t.Errorf("the refused launch left completion windows %v (%v)", index.Windows, err)
 			}
 		})
 	}

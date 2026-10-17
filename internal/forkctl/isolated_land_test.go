@@ -914,6 +914,37 @@ func TestIsolatedPublicationRetainsAllImmutableRiskPolicy(t *testing.T) {
 	}
 }
 
+// A .coopignore the parent cannot read leaves unknown whether a published file is hidden, so the
+// isolated publication refuses it, naming the .coopignore, and --force does not change that.
+func TestIsolatedPublicationRefusesUnderAnUnreadableCoopignore(t *testing.T) {
+	repo := initRepo(t)
+	// A folder named .coopignore, committed so the parent stays clean.
+	writeTaskFile(t, filepath.Join(repo, "config", ".coopignore", "keep"), "x\n")
+	git(t, repo, "add", "config")
+	git(t, repo, "commit", "-qm", "a folder where config's rules belong")
+	repo, ws, _, c := isolatedTestForkFromRepo(t, repo)
+	isolatedTestCommit(t, ws, "config/a.go", "package config\n")
+	before, err := captureIsolatedParent(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, force := range []bool{false, true} {
+		result, err := c.mergeOne(repo, "", "isolated", force)
+		// --force is refused before the scan, as for every isolated policy.
+		want := "--force cannot bypass"
+		if !force {
+			want = "cannot tell what config/.coopignore hides"
+		}
+		if err == nil || result.landed || !strings.Contains(err.Error(), want) {
+			t.Fatalf("publication under an unreadable .coopignore (force=%v) = %v; want %q", force, err, want)
+		}
+		after, err := captureIsolatedParent(repo)
+		if err != nil || !sameIsolatedParent(before, after) {
+			t.Fatal("the refusal changed the parent", err)
+		}
+	}
+}
+
 func TestIsolatedDirtyParentAllowsCommittedReviewButNotPublication(t *testing.T) {
 	repo, ws, identity, c := isolatedTestFork(t)
 	isolatedTestCommit(t, ws, "safe.txt", "committed review\n")

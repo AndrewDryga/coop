@@ -536,6 +536,9 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			ui.Failure("Candidate review interrupted", "No approval from the review was recorded.", [2]string{"Continue:", continueCmd})
 			return LoopInterruptedExitCode, ui.Reported(reviewErr)
 		}
+		if errors.As(reviewErr, new(box.UnreadableCoopignore)) {
+			return 1, reviewErr // drawn by the CLI, the folder names a box chose escaped
+		}
 		if reviewErr != nil {
 			ui.Failure("Candidate review did not pass", reviewErr.Error(), [2]string{"Continue:", continueCmd})
 			return 1, ui.Reported(reviewErr)
@@ -579,8 +582,9 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming, agentCommand := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
 			pfCode, _, _, pfClassification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, agentCommand, hosts, completionWindowReview, nil, nil, false, sink, peers, "preflight", "", nil)
-			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
-				return runErr
+			if stopsTheRun(runErr) {
+				// Nothing ran in the box, so its completion window has nothing to audit.
+				return errors.Join(runErr, windows.Close())
 			}
 			if _, err := windows.FinishReview(); err != nil {
 				return fmt.Errorf("pre-flight changed task completion ownership: %w", err)
@@ -864,8 +868,9 @@ reviewAgain:
 			if runErr == nil && serviceFingerprint != "" {
 				preparedServices = serviceFingerprint
 			}
-			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
-				return 1, errors.Join(runErr, lease.Release())
+			if stopsTheRun(runErr) {
+				// Nothing ran in the box, so its completion window has nothing to audit.
+				return 1, errors.Join(runErr, lease.Release(), windows.Close())
 			}
 			// A normal provider exit with its task still in progress is usually a missed or
 			// rejected terminal tool call, not a reason to discard its context and start another
@@ -1428,7 +1433,7 @@ reviewAgain:
 						if errors.Is(rerr, errReviewInterrupted) {
 							break
 						}
-						if errors.Is(rerr, tasks.ErrCompletionWindowSetup) || errors.Is(rerr, tasks.ErrCompletionWindowAudit) || errors.Is(rerr, errReviewVerdict) {
+						if stopsTheRun(rerr) || errors.Is(rerr, tasks.ErrCompletionWindowAudit) || errors.Is(rerr, errReviewVerdict) {
 							return 1, rerr
 						}
 						if rerr != nil && !protectedAudit {
@@ -1649,6 +1654,9 @@ reviewAgain:
 			c.closeWith(func() { printInterrupted(cf, continueCmd, true) })
 			return LoopInterruptedExitCode, nil
 		}
+		if errors.As(serr, new(box.UnreadableCoopignore)) {
+			return 1, serr // drawn by the CLI, the folder names a box chose escaped
+		}
 		if serr != nil {
 			ui.Failure("Could not complete the final review", serr.Error(), [2]string{"Continue:", continueCmd})
 			return 1, ui.Reported(serr)
@@ -1835,7 +1843,7 @@ reviewAgain:
 				c.closeWith(func() { printInterrupted(cf, continueCmd, true) })
 				return LoopInterruptedExitCode, nil
 			}
-			if errors.Is(verr, tasks.ErrCompletionWindowSetup) || errors.Is(verr, tasks.ErrCompletionWindowAudit) {
+			if stopsTheRun(verr) || errors.Is(verr, tasks.ErrCompletionWindowAudit) {
 				return 1, verr
 			}
 			if verr != nil {

@@ -343,14 +343,6 @@ func (e HiddenFile) Error() string {
 	return "coop will not edit " + e.File + " because it is hidden from the box"
 }
 
-// UnreadableCoopignore is an in-place edit refused because a .coopignore on the way to the file is
-// not a regular file of at most 1 MiB that coop can read, so coop cannot tell what it hides. File is
-// that .coopignore's repository-relative path. Exported so coop init names it, and how to fix it,
-// rather than the file it was editing.
-type UnreadableCoopignore struct{ File, Reason string }
-
-func (e UnreadableCoopignore) Error() string { return e.File + " " + e.Reason }
-
 // Injectable only in tests that swap a held directory before its .coopignore is read.
 var afterDirHeld = func(dirRel string) {}
 
@@ -448,42 +440,9 @@ func heldPolicy(policy *shadowpath.Snapshot, dirRel string, dir *os.Root, repo s
 		}
 	}
 	if err != nil {
-		return nil, unreadableCoopignore(dir, dirRel, err)
+		return nil, err // a .coopignore coop cannot read is a shadowpath.UnreadableCoopignore naming it
 	}
 	return next, nil
-}
-
-// unreadableCoopignore names the .coopignore whose rules a held directory could not supply, and why,
-// from what the directory holds under that name; a failure with no .coopignore there is returned as
-// it is. The box's own visibility rules skip a .coopignore that is not a regular file, so for one
-// the reason says it hides nothing from the box.
-func unreadableCoopignore(dir *os.Root, dirRel string, err error) error {
-	info, statErr := dir.Lstat(shadowpath.CoopIgnoreFile)
-	if errors.Is(statErr, os.ErrNotExist) {
-		return err
-	}
-	reason := ""
-	if statErr == nil {
-		switch mode := info.Mode(); {
-		case mode&os.ModeSymlink != 0:
-			reason = "is a link, so it hides nothing from the box"
-		case mode.IsDir():
-			reason = "is a folder, so it hides nothing from the box"
-		case !mode.IsRegular():
-			reason = "is not a regular file, so it hides nothing from the box"
-		case info.Size() > shadowpath.MaxCoopIgnoreBytes:
-			reason = "is larger than 1 MiB"
-		}
-	}
-	// Anything else, such as a file without read permission, is named by what made the read fail.
-	if reason == "" {
-		cause := err
-		for errors.Unwrap(cause) != nil {
-			cause = errors.Unwrap(cause)
-		}
-		reason = "cannot be read: " + cause.Error()
-	}
-	return UnreadableCoopignore{File: path.Join(dirRel, shadowpath.CoopIgnoreFile), Reason: reason}
 }
 
 // openRealDir opens the real directory Lstat finds at name inside dir and returns the name dir

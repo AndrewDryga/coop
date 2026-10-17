@@ -85,6 +85,15 @@
   as before. A session created in a removed mode stays readable but can't run again; close and
   discard it.
 
+- **A `.coopignore` Coop cannot read now stops the box instead of hiding nothing.** When a
+  `.coopignore` in your project was a link, a folder, a named pipe, a file over 1 MiB or one Coop
+  had no permission to read, Coop dropped its rules, so the files it named were visible in the box.
+  Now starting or building a box refuses and names that `.coopignore` and why, and so do
+  `coop up`, `coop check-secrets`, `coop init` and a preset stored under it; `coop loop` stops at
+  the first launch that meets one instead of retrying it. `coop fork merge` asks for `--force` and
+  still names every file under it whose name, or a folder's name above it, marks it as a secret,
+  such as `.env` or anything in `secrets/` or `.aws/`, and session reviews report it.
+
 - **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
   `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a
   file in place. An agent in a box could swap that file's folder for a named pipe just as
@@ -147,8 +156,9 @@
   your project's rules. A `.coopignore` in a folder above your projects, such as
   `~/Projects/.coopignore`, now applies to each of them: boxes no longer see what it hides, `coop
   fork merge` refuses a fork that changes such a file unless you pass `--force`, and an isolated
-  fork cannot publish one at all. `~/.coopignore` does not apply to the projects below it, and a
-  `.coopignore` in a folder another user owns, such as `/tmp`, is ignored.
+  fork cannot publish one at all. One of these Coop cannot read stops the box, as one inside the
+  project does. `~/.coopignore` does not apply to the projects below it, and a `.coopignore` in a
+  folder another user owns, such as `/tmp`, is ignored.
 
 - **The task tools in a box refuse a task queue reached through a link.** In `coop loop` and
   `coop fork`, the agent manages its tasks through task tools that Coop runs outside the box. Coop
@@ -306,8 +316,7 @@
   and leaves that file untouched. A `.gitignore` it cannot edit now stops `coop init` before it
   writes anything. Point `box.compose` at a file the box can see, or stop hiding the file in
   `.coopignore`. `coop init` also stops, and names the `.coopignore`, when a `.coopignore` on the
-  way to one of these files is a link, a folder, unreadable or over 1 MiB. The box skips one that
-  is a link or a folder, so it hides nothing.
+  way to one of these files is a link, a folder, unreadable or over 1 MiB.
 
 - **A running box keeps working when a sign-in renewal fails for a few minutes.** Coop renewed an
   agent's sign-in during a run only two minutes before its access expired. When the provider did not

@@ -61,6 +61,9 @@ changes a file it hides unless you pass `--force` (an isolated fork has no overr
 `~/.coopignore` does not apply to the projects below it, and a `.coopignore` in a folder another
 user owns, such as `/tmp`, is ignored.
 
+A `.coopignore` must be a regular file of at most 1 MiB that Coop can read. If one is a link, a
+folder or anything else, Coop cannot tell what it hides, so starting a box refuses and names it.
+
 The boundary is `.coopignore`, not `.gitignore`. A normal `coop run`, `coop loop` or `coop shell`
 binds your whole working tree. A file that Git ignores but that is on disk (a
 `serviceAccount.json`, say) is fully visible to the agent. Shadow it with `.coopignore`.

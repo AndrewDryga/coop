@@ -53,10 +53,10 @@ is read through the handle the edit holds (`heldPolicy`: `shadowpath.OpenTree`, 
 for one without rules would otherwise pair the real file's bytes with the newcomer's empty rules.
 That reader accepts only a regular `.coopignore` of at most 1 MiB that coop can read. Any other (a
 link, a folder, a FIFO, one without read permission or one over 1 MiB) stops the edit as
-`UnreadableCoopignore`, which names that `.coopignore` repository-relative (`.coopignore` at the
-root) and why; `coop init` reports it as "Could not read <that file>" with its own fix line. The
-box's visibility rules (`NewDecider`) skip such a file, so for a link, a folder or a FIFO the reason
-says it hides nothing from the box.
+`shadowpath.UnreadableCoopignore`, which names that `.coopignore` repository-relative (`.coopignore`
+at the root) and why; `coop init` reports it as "Could not read <that file>" with its own fix line.
+The box's visibility rules (`NewDecider`) refuse the same file the same way, so a launch, a review
+scan and check-secrets stop on it too ([[secret-shadow-walk]]).
 
 The refusal is `HiddenFile`; it names the file, plus the hidden path a link or another spelling
 leads to. `coop init` says to stop hiding the file in `.coopignore`, or to fix the path when a link
@@ -93,6 +93,9 @@ The handle reports a failed link by its bare name, so the link is returned as a 
 `*fs.PathError` on its path and init prints "Could not create .claude/skills: …" as for a file.
 
 ## Changelog
+- 2026-10-17 — the decider refuses an unreadable `.coopignore` too, so the in-place reader's
+  refusal and the box's visibility rules agree; both report `shadowpath.UnreadableCoopignore`
+  (task 2026-10-17-refuse-a-coopignore-the-secret-decider-cannot-re).
 - 2026-10-17 — the remaining reads went the same way. `.tool-versions` (toolVersions, CheckStack,
   DetectStacks) and the Compose service list (`ComposeServiceNames`, now repo + path) read through
   `readRegular`: no FIFO wait, a regular file of at most 1 MiB, and a link only if it stays in the

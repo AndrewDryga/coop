@@ -211,8 +211,8 @@ func TestUnscannedIgnoredCount(t *testing.T) {
 	run("add", ".gitignore", "tracked.go")
 	run("commit", "-qm", "add")
 
-	if n := unscannedIgnoredCount(repo); n != 1 {
-		t.Errorf("unscannedIgnoredCount = %d, want 1 (only secret.txt; .env shadowed, .agent/* now scanned by default, tracked.go committed)", n)
+	if n, err := unscannedIgnoredCount(repo); n != 1 || err != nil {
+		t.Errorf("unscannedIgnoredCount = %d, %v; want 1 (only secret.txt; .env shadowed, .agent/* now scanned by default, tracked.go committed)", n, err)
 	}
 }
 

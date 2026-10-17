@@ -227,7 +227,11 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 			if reason, automatic := hostsurface.Classify("M", isolatedHostSurfacePath(entry.path)); automatic {
 				return fmt.Errorf("isolated publication refuses %q: %s; --force cannot bypass this boundary", entry.path, reason)
 			}
-			if shadowed(isolatedPathKey(entry.path)) {
+			hidden, err := shadowed(isolatedPathKey(entry.path))
+			if err != nil {
+				return fmt.Errorf("isolated publication refuses %q: %w; --force cannot bypass this boundary", entry.path, err)
+			}
+			if hidden {
 				return fmt.Errorf("isolated publication refuses secret-like file %q; --force cannot bypass this boundary", entry.path)
 			}
 			sizeText, err := observed(repo, "cat-file", "-s", entry.object)

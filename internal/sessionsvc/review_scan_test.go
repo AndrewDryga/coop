@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -78,6 +79,64 @@ func TestReviewScanUsesPinnedDeltaAndDoesNotBlockOrdinaryLargeFiles(t *testing.T
 	}
 	if _, err := scanReviewCandidate(context.Background(), repo, strings.Repeat("f", 40), candidate); err == nil {
 		t.Fatal("missing parent was treated as safe")
+	}
+}
+
+// A candidate whose .coopignore coop cannot read leaves unknown which of its files are hidden, so
+// the review says so once, naming it, which keeps the candidate from publishing; it does not call
+// the files secret.
+func TestReviewScanNamesAnUnreadableCoopignore(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "base")
+	parent := gitOut(repo, "rev-parse", "HEAD")
+	if err := os.Mkdir(filepath.Join(repo, "config"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"config/a.go", "config/b.go"} {
+		sessionWorkspaceWrite(t, filepath.Join(repo, path), "package config\n")
+	}
+	if err := os.Symlink("rules", filepath.Join(repo, ".coopignore")); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-qm", "candidate")
+	findings, err := scanReviewCandidate(context.Background(), repo, parent, gitOut(repo, "rev-parse", "HEAD"))
+	if want := "coop cannot tell what .coopignore hides, because it is a link"; err != nil || len(findings) != 1 || findings[0] != want {
+		t.Fatalf("findings = %q, %v; want only %q", findings, err, want)
+	}
+}
+
+// A file whose name alone makes it a secret is still named when the .coopignore above it cannot be
+// read, so the review never reports only the .coopignore for a candidate that adds a .env.
+func TestReviewScanNamesASecretUnderAnUnreadableCoopignore(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "base")
+	parent := gitOut(repo, "rev-parse", "HEAD")
+	// A secret folder hides what it holds whatever the file is called, so those files count too.
+	secrets := []string{"config/sub/.env", "config/sub/secrets/token.txt", "config/sub/.aws/config"}
+	for _, path := range secrets {
+		if err := os.MkdirAll(filepath.Join(repo, filepath.Dir(filepath.FromSlash(path))), 0700); err != nil {
+			t.Fatal(err)
+		}
+		sessionWorkspaceWrite(t, filepath.Join(repo, filepath.FromSlash(path)), "TOKEN=x\n")
+	}
+	sessionWorkspaceWrite(t, filepath.Join(repo, "config", "sub", "app.yml"), "name: app\n")
+	if err := os.Symlink("rules", filepath.Join(repo, "config", ".coopignore")); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-qm", "candidate")
+	findings, err := scanReviewCandidate(context.Background(), repo, parent, gitOut(repo, "rev-parse", "HEAD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range secrets {
+		if !slices.Contains(findings, "secret-like file: "+path) {
+			t.Errorf("findings = %q; want %s named beside the unreadable config/.coopignore", findings, path)
+		}
+	}
+	if slices.Contains(findings, "secret-like file: config/sub/app.yml") {
+		t.Errorf("findings = %q; app.yml is not a secret by its names", findings)
 	}
 }
 

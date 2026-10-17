@@ -45,6 +45,21 @@ func pinTemp(t *testing.T) {
 	})
 }
 
+// mustDecide is NewShadowDecider(repo) for a repository whose .coopignore files all read: a refusal
+// fails the test.
+func mustDecide(t *testing.T, repo string) func(string) bool {
+	t.Helper()
+	decide := NewShadowDecider(repo)
+	return func(rel string) bool {
+		t.Helper()
+		hidden, err := decide(rel)
+		if err != nil {
+			t.Fatalf("decide %s: %v", rel, err)
+		}
+		return hidden
+	}
+}
+
 // fixture builds a repo tree exercising every shadowing rule and returns its path.
 func fixture(t *testing.T) string {
 	t.Helper()
@@ -379,7 +394,7 @@ func TestMatchesAny(t *testing.T) {
 // patterns that would break in-box TLS or hide config the agent needs.
 func TestSecretGlobsServiceCredentials(t *testing.T) {
 	pinHome(t)
-	shadowed := NewShadowDecider(t.TempDir()) // no .coopignore → just SecretGlobs/AllowGlobs
+	shadowed := mustDecide(t, t.TempDir()) // no .coopignore → just SecretGlobs/AllowGlobs
 	for _, p := range []string{
 		"credentials.json", "service_account.json", "gcp-sa.json", "config/app-sa.json",
 		"kubeconfig", "config/database.yml",
@@ -416,7 +431,7 @@ func TestSecretGlobsServiceCredentials(t *testing.T) {
 // hiding behind a template name (id_rsa.example) would otherwise be readable in the box.
 func TestTemplateSuffixNeverUnshadowsKeys(t *testing.T) {
 	pinHome(t)
-	shadowed := NewShadowDecider(t.TempDir())
+	shadowed := mustDecide(t, t.TempDir())
 	// Private keys under a template/sample suffix MUST stay shadowed.
 	for _, p := range []string{
 		"id_rsa.example", "id_ed25519.sample", "config/id_ecdsa.template", "id_dsa.example",
@@ -478,7 +493,7 @@ func TestCoopIgnoreOverridesAllowGlobs(t *testing.T) {
 // while genuine keys/secrets still shadow.
 func TestPublicCABundlesNotShadowed(t *testing.T) {
 	pinHome(t)
-	shadowed := NewShadowDecider(t.TempDir())
+	shadowed := mustDecide(t, t.TempDir())
 	for _, p := range []string{
 		"cacerts.pem", "server/deps/castore/priv/cacerts.pem", "ca-bundle.crt", "ca-certificates.crt", "cacert.pem",
 	} {

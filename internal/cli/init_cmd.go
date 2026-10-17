@@ -372,21 +372,6 @@ func setupFailure(repo string, err error) error {
 		initFix(err), "Files already created have been kept.")
 }
 
-// reportUnreadableCoopignore reports an edit refused over a .coopignore coop init could not read,
-// and returns nil for any other error. Its headline and fix name that .coopignore, not the file
-// being edited, because the .coopignore is what to fix. rerun is the command to run afterwards and
-// kept says what was left as it was.
-func reportUnreadableCoopignore(err error, rerun, kept string) error {
-	var unreadable scaffold.UnreadableCoopignore
-	if !errors.As(err, &unreadable) {
-		return nil
-	}
-	// Only a period: the reason starts with the path, whose case sentence would change.
-	return reported("Could not read "+unreadable.File, unreadable.Error()+".",
-		fmt.Sprintf("Make %s a readable regular file of at most 1 MiB, then run %s again.", unreadable.File, rerun),
-		kept)
-}
-
 // initFix is the action after coop init refused a path. A file .coopignore hides from the box is
 // fixed by no longer hiding it; one reached through a link, or an entry that is not a regular file,
 // by fixing the path. Neither is a permissions problem, and telling someone to chmod their way out

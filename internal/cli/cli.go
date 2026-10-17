@@ -238,6 +238,11 @@ func asUsage(err error) *ui.UsageError {
 		return ui.CommandFailed("Final review cannot continue", commits.Cause(),
 			[2]string{"", commits.Remedy() + ", then run the loop again."})
 	}
+	var policy box.UnreadableCoopignore
+	if errors.As(err, &policy) {
+		headline, reason, fix := unreadableCoopignoreBlock(policy, "")
+		return ui.CommandFailed(headline, reason, [2]string{"", fix})
+	}
 	return nil
 }
 

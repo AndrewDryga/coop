@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/safefile"
+	"golang.org/x/sys/unix"
 )
 
 var SecretGlobs = []string{
@@ -43,9 +44,18 @@ var hardSecretGlobs = []string{
 
 const (
 	CoopIgnoreFile = ".coopignore"
-	// MaxCoopIgnoreBytes is the largest .coopignore read here, exported so a refusal can say so.
-	MaxCoopIgnoreBytes = 1 << 20
+	ignoreLimit    = 1 << 20
 )
+
+// UnreadableCoopignore is a .coopignore that is there but is not a regular file of at most 1 MiB
+// that coop can read, so coop cannot tell what it hides. Everything that decides what a box sees
+// refuses it rather than drop its rules. File is its path from the repository, or its full path in
+// a folder above the repository; Reason follows "it".
+type UnreadableCoopignore struct{ File, Reason string }
+
+func (e UnreadableCoopignore) Error() string {
+	return "coop cannot tell what " + e.File + " hides, because it " + e.Reason
+}
 
 type UserGlobs struct {
 	Base []string
@@ -194,13 +204,13 @@ func (s *Snapshot) Shadowed(relSlash string) bool {
 }
 
 func snapshotPolicy(dir *os.File, dirRel string, policies map[string]UserGlobs, totalBytes *int64) error {
-	data, err := safefile.ReadRegular(dir, CoopIgnoreFile, MaxCoopIgnoreBytes)
-	if errors.Is(err, os.ErrNotExist) {
+	data, err := readCoopignore(dir, path.Join(dirRel, CoopIgnoreFile))
+	if errors.Is(err, fs.ErrNotExist) {
 		policies[dirRel] = UserGlobs{}
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path.Join(dirRel, CoopIgnoreFile), err)
+		return err
 	}
 	*totalBytes += int64(len(data))
 	if *totalBytes > MaxSnapshotPolicyBytes {
@@ -227,8 +237,8 @@ type enclosingPolicy struct {
 // of the folder decides, not the file's: a .coopignore in a folder another user owns is skipped,
 // since anyone can create /tmp/.coopignore or hard-link one of your files there so it looks like
 // yours, while one saved with sudo in your own folder applies. Root's /tmp, /private and /Volumes
-// therefore count for nothing. It returns the rules it read, their size, and the first .coopignore
-// it could not read.
+// therefore count for nothing. It returns the rules it read and their size, or the first
+// .coopignore it cannot read as an UnreadableCoopignore naming its full path.
 func enclosingPolicies(repo string) ([]enclosingPolicy, int64, error) {
 	canonical, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -239,29 +249,29 @@ func enclosingPolicies(repo string) ([]enclosingPolicy, int64, error) {
 	var (
 		policies []enclosingPolicy
 		size     int64
-		unread   error
 	)
 	for child, dir := canonical, filepath.Dir(canonical); dir != child; child, dir = dir, filepath.Dir(dir) {
 		if _, above := HomeOrAbove(dir); above {
 			break
 		}
-		if _, err := os.Lstat(filepath.Join(dir, CoopIgnoreFile)); errors.Is(err, fs.ErrNotExist) {
+		file := filepath.Join(dir, CoopIgnoreFile)
+		if _, err := os.Lstat(file); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if uid, known := ownerOf(dir); known && uid != os.Getuid() {
 			continue
 		}
 		root, err := safefile.OpenRoot(dir)
-		var data []byte
-		if err == nil {
-			data, err = safefile.ReadRegular(root, CoopIgnoreFile, MaxCoopIgnoreBytes)
-			_ = root.Close()
+		if err != nil {
+			return nil, 0, unreadableCoopignore(nil, file, err)
+		}
+		data, err := readCoopignore(root, file)
+		_ = root.Close()
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // removed since the Lstat
 		}
 		if err != nil {
-			if unread == nil {
-				unread = fmt.Errorf("read the %s in %s: %w", CoopIgnoreFile, dir, err)
-			}
-			continue
+			return nil, 0, err
 		}
 		size += int64(len(data))
 		if g := ParseUserGlobs(data); len(g.Base) > 0 || len(g.Path) > 0 {
@@ -269,7 +279,44 @@ func enclosingPolicies(repo string) ([]enclosingPolicy, int64, error) {
 			policies = append(policies, enclosingPolicy{prefix: filepath.ToSlash(rel) + "/", globs: g})
 		}
 	}
-	return policies, size, unread
+	return policies, size, nil
+}
+
+// readCoopignore reads the .coopignore in dir; file is the path a refusal names it by. Nothing there
+// is fs.ErrNotExist. Anything else that is not a regular file of at most ignoreLimit coop can read
+// is an UnreadableCoopignore saying why.
+func readCoopignore(dir *os.File, file string) ([]byte, error) {
+	data, err := safefile.ReadRegular(dir, CoopIgnoreFile, ignoreLimit)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, unreadableCoopignore(dir, file, err)
+	}
+	return data, err
+}
+
+// unreadableCoopignore says why the .coopignore in dir could not be read, from what dir holds under
+// that name; dir is nil when its folder could not be opened. Anything else, such as a file without
+// read permission, is named by what made the read fail.
+func unreadableCoopignore(dir *os.File, file string, err error) UnreadableCoopignore {
+	for errors.Unwrap(err) != nil {
+		err = errors.Unwrap(err)
+	}
+	reason := "cannot be read: " + err.Error()
+	var st unix.Stat_t
+	if dir != nil && unix.Fstatat(int(dir.Fd()), CoopIgnoreFile, &st, unix.AT_SYMLINK_NOFOLLOW) == nil {
+		switch st.Mode & unix.S_IFMT {
+		case unix.S_IFLNK:
+			reason = "is a link"
+		case unix.S_IFDIR:
+			reason = "is a folder"
+		case unix.S_IFREG:
+			if st.Size > ignoreLimit {
+				reason = "is larger than 1 MiB"
+			}
+		default:
+			reason = "is not a regular file"
+		}
+	}
+	return UnreadableCoopignore{File: file, Reason: reason}
 }
 
 // ownerOf is the user ID that owns path, by Lstat; known is false when that cannot be told. It is
@@ -391,7 +438,7 @@ func RepoCommentedEntries(repo string) []string {
 		return nil
 	}
 	defer root.Close()
-	data, err := safefile.ReadRegular(root, CoopIgnoreFile, MaxCoopIgnoreBytes)
+	data, err := safefile.ReadRegular(root, CoopIgnoreFile, ignoreLimit)
 	if err != nil {
 		return nil
 	}
@@ -406,101 +453,133 @@ func RepoCommentedEntries(repo string) []string {
 // directories above the path whose .coopignore has rules are consulted, instead of every level
 // (0.4 s of a 0.6 s walk over 40,000 paths on 2026-10-06). The answers are shadowed's, which stays
 // the reference (TestDeciderMatchesShadowed).
-func NewDecider(repo string) func(string) bool {
+//
+// A .coopignore that is there but cannot be read, in the repository or a folder above it, leaves
+// the paths it covers undecided: for those the predicate returns its UnreadableCoopignore, as
+// OpenTree does, and reports them hidden, so even a caller that cannot refuse hides them.
+func NewDecider(repo string) func(string) (bool, error) {
 	canonical, err := filepath.EvalSymlinks(repo)
 	if err != nil {
 		canonical, _ = filepath.Abs(repo)
 	}
-	// A .coopignore above the repository that cannot be read hides nothing, like one inside it.
-	enclosing, _, _ := enclosingPolicies(canonical)
-	cache := map[string]UserGlobs{}
-	loadDir := func(dirRel string) UserGlobs {
-		if g, ok := cache[dirRel]; ok {
-			return g
-		}
-		var g UserGlobs
-		rel := CoopIgnoreFile
-		if dirRel != "" {
-			rel = filepath.Join(filepath.FromSlash(dirRel), CoopIgnoreFile)
-		}
-		// Almost no directory has a .coopignore, and one lstat says so; the safe read below opens
-		// the root and every component. Only "nothing there" skips it: anything else, a link or an
-		// error included, gets the safe read, which alone decides what counts.
-		if _, statErr := os.Lstat(filepath.Join(canonical, rel)); errors.Is(statErr, fs.ErrNotExist) {
-			cache[dirRel] = g
-			return g
-		}
-		root, openErr := safefile.OpenRoot(canonical)
-		if openErr == nil {
-			if data, readErr := safefile.ReadRegular(root, rel, MaxCoopIgnoreBytes); readErr == nil {
-				g = ParseUserGlobs(data)
-			}
-			_ = root.Close()
-		}
-		cache[dirRel] = g
-		return g
-	}
+	enclosing, _, unread := enclosingPolicies(canonical)
 	// The directories at and above dirRel whose .coopignore has rules, the folders above the
 	// repository first. Almost every chain is empty; a directory without rules can never match, so
 	// skipping it changes nothing. A folder above the repository matches its path rules against
-	// prefix plus the path; one inside it, against the path below dir.
+	// prefix plus the path; one inside it, against the path below dir. A chain that meets a
+	// .coopignore it cannot read carries that error instead.
 	type policy struct {
 		dir, prefix string
 		globs       UserGlobs
 	}
-	chains := map[string][]policy{}
-	var policies func(string) []policy
-	policies = func(dirRel string) []policy {
-		if chain, ok := chains[dirRel]; ok {
-			return chain
+	type chain struct {
+		policies []policy
+		err      error
+	}
+	chains := map[string]chain{}
+	var policies func(string) ([]policy, error)
+	policies = func(dirRel string) ([]policy, error) {
+		if c, ok := chains[dirRel]; ok {
+			return c.policies, c.err
 		}
-		var chain []policy
+		var c chain
 		if dirRel != "" {
-			chain = policies(parentSlash(dirRel))
+			c.policies, c.err = policies(parentSlash(dirRel))
 		} else {
 			for _, p := range enclosing {
-				chain = append(chain, policy{prefix: p.prefix, globs: p.globs})
+				c.policies = append(c.policies, policy{prefix: p.prefix, globs: p.globs})
+			}
+			c.err = unread
+		}
+		if c.err == nil {
+			var data []byte
+			data, c.err = readRepoPolicy(canonical, dirRel)
+			if g := ParseUserGlobs(data); len(g.Base) > 0 || len(g.Path) > 0 {
+				c.policies = append(c.policies[:len(c.policies):len(c.policies)], policy{dir: dirRel, globs: g}) // never extend a shared chain
 			}
 		}
-		if g := loadDir(dirRel); len(g.Base) > 0 || len(g.Path) > 0 {
-			chain = append(chain[:len(chain):len(chain)], policy{dir: dirRel, globs: g}) // never extend a shared chain
-		}
-		chains[dirRel] = chain
-		return chain
+		chains[dirRel] = c
+		return c.policies, c.err
 	}
 	secret, allow := compileGlobs(SecretGlobs), compileGlobs(AllowGlobs)
 	template, hard := compileGlobs(allowTemplateGlobs), compileGlobs(hardSecretGlobs)
-	here := func(relSlash string) bool { // shadowedHere, with the same answers
+	here := func(relSlash string) (bool, error) { // shadowedHere, with the same answers
 		name := relSlash[strings.LastIndexByte(relSlash, '/')+1:]
 		lname := strings.ToLower(name)
 		if secret.matches(lname) && !(allow.matches(lname) || template.matches(lname) && !hard.matches(lname)) {
-			return true
+			return true, nil
 		}
-		for _, p := range policies(parentSlash(relSlash)) {
+		chain, err := policies(parentSlash(relSlash))
+		if err != nil {
+			return true, err
+		}
+		for _, p := range chain {
 			remaining := relSlash
 			if p.dir != "" {
 				remaining = relSlash[len(p.dir)+1:]
 			}
 			if MatchesAny(name, p.globs.Base) || MatchesPath(p.prefix+remaining, p.globs.Path) {
-				return true
+				return true, nil
 			}
 		}
-		return false
+		return false, nil
 	}
-	dirs := map[string]bool{"": false} // the repository root is never hidden
-	var dirShadowed func(string) bool
-	dirShadowed = func(dirRel string) bool {
-		if hidden, ok := dirs[dirRel]; ok {
-			return hidden
+	type verdict struct {
+		hidden bool
+		err    error
+	}
+	dirs := map[string]verdict{"": {}} // the repository root is never hidden
+	var dirShadowed func(string) (bool, error)
+	dirShadowed = func(dirRel string) (bool, error) {
+		v, ok := dirs[dirRel]
+		if !ok {
+			if v.hidden, v.err = dirShadowed(parentSlash(dirRel)); !v.hidden {
+				v.hidden, v.err = here(dirRel)
+			}
+			dirs[dirRel] = v
 		}
-		hidden := dirShadowed(parentSlash(dirRel)) || here(dirRel)
-		dirs[dirRel] = hidden
-		return hidden
+		return v.hidden, v.err
 	}
-	return func(relSlash string) bool {
+	return func(relSlash string) (bool, error) {
 		relSlash = cleanSlash(relSlash)
-		return dirShadowed(parentSlash(relSlash)) || here(relSlash)
+		if hidden, err := dirShadowed(parentSlash(relSlash)); hidden {
+			return true, err
+		}
+		return here(relSlash)
 	}
+}
+
+// readRepoPolicy reads the .coopignore of the folder dirRel in the repository at root through
+// descriptors that never follow a link. A folder reached through a link or a file has none of its
+// own: the walks that ask about paths never enter one, and the folder the link reaches is judged
+// by its own path.
+func readRepoPolicy(root, dirRel string) ([]byte, error) {
+	file := path.Join(dirRel, CoopIgnoreFile)
+	// Almost no directory has a .coopignore, and one lstat says so; the safe read below opens the
+	// root and every component. Only "nothing there" skips it: anything else, a link or an error
+	// included, gets the safe read, which alone decides what counts.
+	if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(file))); errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return nil, nil
+	}
+	dir, err := safefile.OpenRoot(root)
+	if err == nil && dirRel != "" {
+		var sub *os.File
+		sub, err = safefile.OpenDir(dir, filepath.FromSlash(dirRel))
+		_ = dir.Close()
+		if errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENOTDIR) {
+			return nil, nil
+		}
+		dir = sub
+	}
+	if err != nil {
+		return nil, unreadableCoopignore(nil, file, err)
+	}
+	defer dir.Close()
+	data, err := readCoopignore(dir, file)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil // removed since the lstat
+	}
+	return data, err
 }
 
 // globSet is MatchesAny over a fixed list of patterns, for a caller that asks about many names.
@@ -568,10 +647,16 @@ func shadowedHere(relSlash string, enclosing []enclosingPolicy, loadDir func(str
 	if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
 		name = relSlash[i+1:]
 	}
+	return secretName(name) || shadowedByCoopignore(relSlash, enclosing, loadDir)
+}
+
+// secretName is the verdict on one file or folder name by itself: a secret glob no allow rule
+// rescues.
+func secretName(name string) bool {
 	lname := strings.ToLower(name)
 	allowed := MatchesAny(lname, AllowGlobs) ||
 		(MatchesAny(lname, allowTemplateGlobs) && !MatchesAny(lname, hardSecretGlobs))
-	return MatchesAny(lname, SecretGlobs) && !allowed || shadowedByCoopignore(relSlash, enclosing, loadDir)
+	return MatchesAny(lname, SecretGlobs) && !allowed
 }
 
 func cleanSlash(relSlash string) string {
@@ -605,6 +690,18 @@ func shadowedByCoopignore(relSlash string, enclosing []enclosingPolicy, loadDir 
 		}
 		remaining = remaining[i+1:]
 	}
+}
+
+// BuiltinSecret reports whether the file at relSlash, or a folder above it, is a secret by its name
+// alone, as `secrets/` or `.aws/` is: what the decider checks for each before any .coopignore. A scan
+// that cannot read a .coopignore still names such a file instead of only the .coopignore.
+func BuiltinSecret(relSlash string) bool {
+	for name := range strings.SplitSeq(cleanSlash(relSlash), "/") {
+		if secretName(name) {
+			return true
+		}
+	}
+	return false
 }
 
 func MatchesAny(name string, globs []string) bool {

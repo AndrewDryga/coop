@@ -90,10 +90,16 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 				continue // a source that does not exist yet has nothing to hide
 			}
 			_, writable := serviceVolumeTargetAccess(entry)
-			if rel != "." && shadowed(filepath.ToSlash(rel)) {
-				decoys[name] = append(decoys[name], serviceDecoy{target: target, dir: info.IsDir(), source: filepath.ToSlash(rel), writable: writable})
-				hidden[filepath.ToSlash(rel)] = true
-				continue
+			if rel != "." {
+				secret, err := shadowed(filepath.ToSlash(rel))
+				if err != nil {
+					return nil, nil, err
+				}
+				if secret {
+					decoys[name] = append(decoys[name], serviceDecoy{target: target, dir: info.IsDir(), source: filepath.ToSlash(rel), writable: writable})
+					hidden[filepath.ToSlash(rel)] = true
+					continue
+				}
 			}
 			if !info.IsDir() {
 				if filepath.Base(real) == CoopIgnoreFile && info.Mode().IsRegular() {
@@ -123,8 +129,8 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 					decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), source: filepath.ToSlash(relRepo), bindSource: p})
 					return nil
 				}
-				if !shadowed(filepath.ToSlash(relRepo)) {
-					return nil
+				if secret, err := shadowed(filepath.ToSlash(relRepo)); err != nil || !secret {
+					return err
 				}
 				decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), dir: d.IsDir(), source: filepath.ToSlash(relRepo), writable: writable})
 				hidden[filepath.ToSlash(relRepo)] = true

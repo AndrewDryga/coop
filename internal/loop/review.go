@@ -172,8 +172,8 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 			sessionID = ""
 		}
 		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target, concurrent: concurrent, sessionID: sessionID}
-		if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
-			return last, runErr
+		if stopsTheRun(runErr) {
+			return last, errors.Join(runErr, windows.Close()) // nothing ran in the box to audit
 		}
 		observed, completionErr := windows.FinishReview()
 		if len(observed) > 0 {
@@ -440,8 +440,8 @@ func (c *Control) runReviewCorrection(ctx context.Context, repo, img string, rev
 		outcome: classification.outcome, exit: code, retries: previous.retries + 1,
 		target: previous.target, sessionID: previous.sessionID, concurrent: slices.Clone(previous.concurrent),
 	}
-	if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
-		return result, runErr
+	if stopsTheRun(runErr) {
+		return result, errors.Join(runErr, windows.Close()) // nothing ran in the box to audit
 	}
 	observed, completionErr := windows.FinishReview()
 	result.concurrent = slices.Compact(slices.Sorted(slices.Values(append(result.concurrent, observed...))))

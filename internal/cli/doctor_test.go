@@ -251,8 +251,8 @@ func TestDoctorCoopignoreCheckNeedsCoopignore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	if !shadowpath.NewDecider(dir)(rel) {
-		t.Fatalf("the fixture's .coopignore does not hide %s", rel)
+	if hidden, err := shadowpath.NewDecider(dir)(rel); !hidden || err != nil {
+		t.Fatalf("the fixture's .coopignore does not hide %s: %v", rel, err)
 	}
 	if data, err := os.ReadFile(filepath.Join(dir, rel)); err != nil || len(data) == 0 {
 		t.Fatalf("%s must have content, or the in-box empty check passes on the real file: %v", rel, err)
@@ -260,8 +260,8 @@ func TestDoctorCoopignoreCheckNeedsCoopignore(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, shadowpath.CoopIgnoreFile)); err != nil {
 		t.Fatal(err)
 	}
-	if shadowpath.NewDecider(dir)(rel) {
-		t.Errorf("%s stays hidden without .coopignore, so the check cannot fail when .coopignore breaks", rel)
+	if hidden, err := shadowpath.NewDecider(dir)(rel); hidden || err != nil {
+		t.Errorf("%s stays hidden without .coopignore (%v), so the check cannot fail when .coopignore breaks", rel, err)
 	}
 }
 

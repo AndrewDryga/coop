@@ -511,8 +511,8 @@ func TestInitNamesAnUnreadableCoopignore(t *testing.T) {
 			}
 		}, true, []string{
 			"Could not read .coopignore",
-			".coopignore is a link, so it hides nothing from the box.",
-			"Make .coopignore a readable regular file of at most 1 MiB, then run coop init again.",
+			"Coop cannot tell what .coopignore hides, because it is a link.",
+			"Remove .coopignore if you did not create it; otherwise make it a readable regular file of at most 1 MiB. Then run coop init again.",
 			"No files were changed.",
 		}},
 		{"coop init --services with a FIFO .coopignore", []string{"--services", "postgres"}, func(t *testing.T, repo string) {
@@ -527,8 +527,8 @@ func TestInitNamesAnUnreadableCoopignore(t *testing.T) {
 			}
 		}, true, []string{
 			"Could not read config/.coopignore",
-			"config/.coopignore is not a regular file, so it hides nothing from the box.",
-			"Make config/.coopignore a readable regular file of at most 1 MiB, then run coop init --services again.",
+			"Coop cannot tell what config/.coopignore hides, because it is not a regular file.",
+			"Remove config/.coopignore if you did not create it; otherwise make it a readable regular file of at most 1 MiB. Then run coop init --services again.",
 			"No services were changed.",
 		}},
 		{"task queue registration with a .coopignore over 1 MiB", nil, func(t *testing.T, repo string) {
@@ -541,8 +541,8 @@ func TestInitNamesAnUnreadableCoopignore(t *testing.T) {
 			}
 		}, false, []string{
 			"Could not read .agent/.coopignore",
-			".agent/.coopignore is larger than 1 MiB.",
-			"Make .agent/.coopignore a readable regular file of at most 1 MiB, then run coop init again.",
+			"Coop cannot tell what .agent/.coopignore hides, because it is larger than 1 MiB.",
+			"Remove .agent/.coopignore if you did not create it; otherwise make it a readable regular file of at most 1 MiB. Then run coop init again.",
 			"Files already created have been kept.",
 		}},
 	} {

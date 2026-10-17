@@ -45,6 +45,7 @@ func PolicyScan(repo, ref string) []string {
 	// so the merge gate can't drift from the shadow denylist (it used to be a separate hand-rolled
 	// regex that missed kubeconfig/.npmrc/.netrc/service_account.json/*.kdbx/… that SecretGlobs covers).
 	shadowed := box.NewShadowDecider(repo)
+	unreadable := map[string]bool{} // each .coopignore coop cannot read is one warning, not one per file
 	var warns []string
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
@@ -52,8 +53,21 @@ func PolicyScan(repo, ref string) []string {
 			continue
 		}
 		path := f[len(f)-1]
-		if shadowed(filepath.ToSlash(path)) {
+		switch hidden, err := shadowed(filepath.ToSlash(path)); {
+		case err != nil: // coop cannot tell whether the file is hidden, so the merge waits for --force
+			if !unreadable[err.Error()] {
+				unreadable[err.Error()] = true
+				warns = append(warns, err.Error()+" — remove it if you did not create it, or make it a readable regular file of at most 1 MiB, then merge again")
+			}
+			if box.BuiltinSecret(filepath.ToSlash(path)) {
+				warns = append(warns, "secret-like file: "+path) // named by itself, whatever the .coopignore says
+			}
+		case hidden:
 			warns = append(warns, "secret-like file: "+path)
+		}
+		// The fork's own policy file must stay one coop can read, or every later launch refuses.
+		if notRegularCoopignore(repo, ref, path) {
+			warns = append(warns, path+" — the fork makes a .coopignore something other than a regular file, which Coop cannot read")
 		}
 		// Files that change what runs on the HOST the moment a human touches the merged tree — a
 		// hook on their next commit, a settings file their editor session runs, a compose file
@@ -79,6 +93,20 @@ func PolicyScan(repo, ref string) []string {
 		}
 	}
 	return warns
+}
+
+// notRegularCoopignore reports whether the fork's change at path leaves a .coopignore that is not a
+// regular file: a link named .coopignore, or anything inside a folder named .coopignore.
+func notRegularCoopignore(repo, ref, path string) bool {
+	slash := filepath.ToSlash(path)
+	if strings.HasPrefix(slash, ".coopignore/") || strings.Contains(slash, "/.coopignore/") {
+		return true
+	}
+	if filepath.Base(slash) != ".coopignore" {
+		return false
+	}
+	mode, _, _ := strings.Cut(gitOut(repo, "ls-tree", ref, "--", path), " ")
+	return mode != "" && mode != "100644" && mode != "100755"
 }
 
 func gitBlobSize(repo, ref, path string) int64 {

@@ -86,9 +86,21 @@ therefore drop out. Only root can give a file away, so `TestRulesAboveFollowTheF
 through the `ownerOf` variable. Nothing else carries: neither the built-in secret names of the
 folders above (a project under `~/work/secrets/` must not vanish) nor a rule that hides the project
 folder itself (the root is never hidden). A box cannot plant a `.git` in a folder it sees only as a
-read-only decoy. An unreadable `.coopignore` above the repository hides nothing in the decider and
-fails a snapshot, as one inside does. `TestNestedRepositoryKeepsTheRulesAboveIt` (box) covers a
-planted `.git` folder, a gitfile and a real submodule through the mount plan and a source copy.
+read-only decoy. A `.coopignore` that is there but is not a regular file of at most 1 MiB coop
+can read (a link, a folder, a FIFO, no read permission, too large), above the repository or inside
+it, is `shadowpath.UnreadableCoopignore`: the decider (`NewDecider`, now `(bool, error)`) answers
+every path it covers "hidden" with that error, as a snapshot does. Launches, service binds and the
+build context refuse it; every command draws it the same way (`asUsage`, `reportUnreadableCoopignore`,
+and through it `buildFailure`, `updateBoxFailure` and `coop up`'s `composeRefusal`): "Could not read
+<file>", escaped, with "Remove it if you did not create it" first in the fix. The loop stops at the
+first launch that meets one (`stopsTheRun`) rather than retry it into "Stopped after 5 failed
+attempts", which would hide the file's name. `coop fork merge` warns (needs --force) and still
+names a file whose name, or a folder name above it, alone marks it as a secret (`BuiltinSecret`,
+the decider's own per-name check, `secretName`); the isolated publication refuses; session review
+scans report it once; a preset file under it fails naming the .coopignore, not the preset, escaped
+in `coop presets` too. `TestNestedRepositoryKeepsTheRulesAboveIt`
+(box) covers a planted `.git` folder, a gitfile and a real submodule through the mount plan and a
+source copy.
 
 The prefix keeps the spelling of the repository path it was given. FindRepo uses the disk's own
 spelling, but a `COOP_REPO` typed in another case on a case-insensitive disk (`~/work/App` for
@@ -107,6 +119,12 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-10-17 — an unreadable `.coopignore` no longer drops its rules: the decider returns
+  `UnreadableCoopignore` for the paths it covers and every caller refuses, warns or reports it
+  (task 2026-10-17-refuse-a-coopignore-the-secret-decider-cannot-re). Checked against
+  shadowpath.go, box/mounts.go, box/serviceshadow.go, cli/checksecrets.go. Second review round: the
+  loop stops at the first refusal, `coop up` and `coop presets` draw it escaped, and `BuiltinSecret`
+  checks folder names too.
 - 2026-10-04 — created with the decider memo and lstat precheck (task 2026-10-04-find-why-a-warm-start-takes-8-s-in-a-checkout-wi).
 - 2026-10-06 — the remaining cost was glob matching, not directory reads: globSet and policy chains (same task).
 - 2026-10-16 — `make lifecycle-bench` runs the Go port, tools/lifecyclebench (task

@@ -53,7 +53,16 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	}
 
 	scan, err := scanVisibleTree(repo, includeIgnored)
+	// The default scan's blind spot is counted before anything is printed: a .coopignore coop cannot
+	// read leaves it unknown, and stops the command as it stops the scan.
+	unscanned := 0
+	if err == nil && !includeIgnored {
+		unscanned, err = unscannedIgnoredCount(repo)
+	}
 	if err != nil {
+		if refused := reportUnreadableCoopignore(err, retry, ""); refused != nil {
+			return 1, refused
+		}
 		return 1, reported("Could not check project files", pathReason(repo, "read", err),
 			"Fix the path or permissions, then run "+retry+" again.")
 	}
@@ -109,17 +118,15 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	// A clean default scan can be false assurance: a box bind-mounts the WHOLE tree, so a
 	// gitignored-but-not-shadowed file is still readable by the agent yet skipped here. Say how
 	// many such files --include-ignored would add, so the default's blind spot is visible.
-	if !includeIgnored {
-		if n := unscannedIgnoredCount(repo); n > 0 {
-			verb, object := "were", "them"
-			if n == 1 {
-				verb, object = "was", "it"
-			}
-			blankBefore(&said)
-			warnBlock(fmt.Sprintf("%s %s not checked", ui.Count(n, "Git-ignored file"), verb),
-				fmt.Sprintf("The box can read %s.", object),
-				fmt.Sprintf("Check %s with coop check-secrets --include-ignored.", object))
+	if n := unscanned; n > 0 {
+		verb, object := "were", "them"
+		if n == 1 {
+			verb, object = "was", "it"
 		}
+		blankBefore(&said)
+		warnBlock(fmt.Sprintf("%s %s not checked", ui.Count(n, "Git-ignored file"), verb),
+			fmt.Sprintf("The box can read %s.", object),
+			fmt.Sprintf("Check %s with coop check-secrets --include-ignored.", object))
 	}
 	// Independent of secrets: which files changed since the last commit alter what runs on YOUR
 	// machine — a hook, a settings file, a compose file, the Makefile. The sandbox contains the
@@ -224,12 +231,13 @@ type treeScan struct {
 // unscannedIgnoredCount counts files the box can read but the default scan skipped — gitignored
 // files (in the full visible tree but not the commit-candidate set) that aren't shadowed. It tells
 // the user how much surface --include-ignored would add, so a clean default scan isn't false
-// assurance. Returns 0 when git is unavailable (both sets fall back to the same full walk).
-func unscannedIgnoredCount(repo string) int {
+// assurance. Returns 0 when git is unavailable (both sets fall back to the same full walk), and the
+// refusal of a .coopignore that coop cannot read, which leaves the count unknown.
+func unscannedIgnoredCount(repo string) (int, error) {
 	all, _, err1 := candidateFiles(repo, true)
 	scanned, _, err2 := candidateFiles(repo, false)
 	if err1 != nil || err2 != nil {
-		return 0
+		return 0, nil
 	}
 	inScan := make(map[string]bool, len(scanned))
 	for _, r := range scanned {
@@ -238,12 +246,18 @@ func unscannedIgnoredCount(repo string) int {
 	shadowed := box.NewShadowDecider(repo)
 	n := 0
 	for _, r := range all {
-		if inScan[r] || shadowed(r) {
-			continue // already scanned by default (incl. coop's .agent/ state), or secret-shadowed
+		if inScan[r] {
+			continue // already scanned by default (incl. coop's .agent/ state)
 		}
-		n++ // box-visible, user-gitignored, unprotected → a real blind spot
+		hidden, err := shadowed(r)
+		if err != nil {
+			return 0, err
+		}
+		if !hidden {
+			n++ // box-visible, user-gitignored, unprotected → a real blind spot
+		}
 	}
-	return n
+	return n, nil
 }
 
 // scanVisibleTree scans candidateFiles, skipping only hidden noncandidates. It shares
@@ -273,7 +287,10 @@ func scanVisibleTree(repo string, includeIgnored bool) (treeScan, error) {
 		// Every commit candidate is scanned; only an exact reviewed finding may be excused.
 		// A shadowed file git would not commit
 		// (gitignored, or coop's own .agent/ state) is protected on both sides and skipped.
-		hidden := shadowed(rel)
+		hidden, err := shadowed(rel)
+		if err != nil {
+			return treeScan{}, err // a .coopignore coop cannot read: the box would not start either
+		}
 		if hidden && !committable[rel] {
 			continue
 		}

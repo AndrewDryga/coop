@@ -178,6 +178,10 @@ func askServiceVolumes(review *box.ServiceStartReview, rel string, ask *bufio.Sc
 // Compose file (the violation names itself), or TMPDIR resolves somewhere an agent can see. Both
 // name the file that did not run and the command to repeat once it is fixed.
 func composeRefusal(headline, rel string, err error, retry string) error {
+	// The .coopignore is what to fix, not the Compose file, and a box can name its folder.
+	if refused := reportUnreadableCoopignore(err, retry, ""); refused != nil {
+		return refused
+	}
 	if errors.Is(err, box.ErrExposedTempDir) {
 		return reported(headline, "The temporary directory is inside a folder exposed to an agent.",
 			"Set TMPDIR to a directory outside those folders, then run "+retry+" again.")

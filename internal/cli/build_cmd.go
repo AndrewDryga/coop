@@ -142,6 +142,9 @@ func warnUntrackedBuild(plan box.BuildPlan) {
 // buildFailure separates the three ways a build ends badly, because the fix differs: no runtime
 // to build on, a context coop could not assemble (nothing ran), and a build that ran and failed.
 func buildFailure(headline string, err error, runtimeName, retry string) error {
+	if refused := reportUnreadableCoopignore(err, retry, ""); refused != nil {
+		return refused
+	}
 	var stage *box.StageError
 	switch {
 	case errors.As(err, &stage):
@@ -357,6 +360,9 @@ func selfUpdateFailure(err error, retry string) error {
 // updateBoxFailure keeps a successful binary installation visible: a failed rebuild does not undo
 // the new binary, and saying nothing about it would read as a whole update rolled back.
 func updateBoxFailure(err error, runtimeName string, selfFailed bool) error {
+	if refused := reportUnreadableCoopignore(err, "coop update --box-only", ""); refused != nil {
+		return refused
+	}
 	actions := []string{"Fix the build error, then run coop update --box-only."}
 	reason := sentence(firstLine(err))
 	var stage *box.StageError

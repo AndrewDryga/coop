@@ -809,14 +809,21 @@ func buildContextSelection(ctx context.Context, repo string) ([]contextEntry, er
 			return nil
 		}
 		slash := filepath.ToSlash(rel)
+		if d.IsDir() && d.Name() == ".git" {
+			return fs.SkipDir
+		}
+		hidden, err := shadowed(slash)
+		if err != nil {
+			return err
+		}
 		if d.IsDir() {
-			if d.Name() == ".git" || shadowed(slash) || ignored(slash) {
+			if hidden || ignored(slash) {
 				return fs.SkipDir // source control, secrets, and generated output never enter the context
 			}
 			entries = append(entries, contextEntry{rel: rel, mode: fs.ModeDir})
 			return nil
 		}
-		if shadowed(slash) || ignored(slash) {
+		if hidden || ignored(slash) {
 			return nil // a COPY fails loudly instead of baking a secret or depending on generated output
 		}
 		info, err := d.Info()

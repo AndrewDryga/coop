@@ -330,6 +330,9 @@ func openPresetSource(repo, globalDir, name string) (*presetSource, error) {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
+			if detail := unreadablePolicyDetail(err); detail != nil {
+				return nil, &LoadError{Name: name, Path: filepath.Join(candidate.path, "preset.yaml"), Detail: detail}
+			}
 			return nil, brokenPresetError(name, filepath.Join(candidate.path, "preset.yaml"))
 		}
 		if candidate.repoRel != "" {
@@ -360,6 +363,20 @@ func brokenPresetError(name, path string) error {
 		"Coop could not safely read this preset.",
 		"Use regular files no larger than 1 MiB inside the preset folder.",
 	}}
+}
+
+// unreadablePolicyDetail names the .coopignore on the way to a preset file that coop cannot read,
+// and how to fix it, so the refusal does not blame the preset; nil for any other error.
+func unreadablePolicyDetail(err error) []string {
+	var unreadable shadowpath.UnreadableCoopignore
+	if !errors.As(err, &unreadable) {
+		return nil
+	}
+	// The same sentences every command shows for it; the CLI escapes them before printing.
+	return []string{
+		fmt.Sprintf("Coop cannot tell what %s hides, because it %s.", unreadable.File, unreadable.Reason),
+		fmt.Sprintf("Remove %s if you did not create it; otherwise make it a readable regular file of at most 1 MiB.", unreadable.File),
+	}
 }
 
 func protectedPresetError(name, path, rel string) error {
@@ -600,6 +617,9 @@ func promptText(rel string, readFile func(string) ([]byte, error)) (string, []st
 		}
 		if errors.Is(err, os.ErrNotExist) {
 			return "", []string{fmt.Sprintf("Prompt file %q was not found.", rel)}
+		}
+		if detail := unreadablePolicyDetail(err); detail != nil {
+			return "", detail
 		}
 		return "", []string{
 			fmt.Sprintf("Prompt file %q could not be read safely.", rel),

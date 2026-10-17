@@ -7,9 +7,40 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
+
+// reportUnreadableCoopignore reports a command refused over a .coopignore coop could not read, and
+// returns nil for any other error. Its headline and fix name that .coopignore, not the file being
+// edited or checked, because the .coopignore is what to fix. rerun is the command to run afterwards
+// and kept, when not empty, says what was left as it was.
+func reportUnreadableCoopignore(err error, rerun, kept string) error {
+	var unreadable box.UnreadableCoopignore
+	if !errors.As(err, &unreadable) {
+		return nil
+	}
+	headline, reason, fix := unreadableCoopignoreBlock(unreadable, rerun)
+	actions := []string{fix}
+	if kept != "" {
+		actions = append(actions, kept)
+	}
+	return reported(headline, reason, actions...)
+}
+
+// unreadableCoopignoreBlock is how every command shows a .coopignore it cannot read. A box can plant
+// one, and its folder names, so they are escaped, and removing it comes first in the fix; rerun is
+// the command to run afterwards, or "" for "try again".
+func unreadableCoopignoreBlock(unreadable box.UnreadableCoopignore, rerun string) (headline, reason, fix string) {
+	file := ui.SafeInline(unreadable.File)
+	then := "Then try again."
+	if rerun != "" {
+		then = "Then run " + rerun + " again."
+	}
+	return "Could not read " + file, sentence(ui.SafeInline(unreadable.Error())),
+		fmt.Sprintf("Remove %s if you did not create it; otherwise make it a readable regular file of at most 1 MiB. %s", file, then)
+}
 
 // The column-zero twin of ui.Fail/ui.Caution: a command's OWN outcome block, as opposed to a
 // result inside a launch section (which ui indents by two). Shape, identical for both marks:

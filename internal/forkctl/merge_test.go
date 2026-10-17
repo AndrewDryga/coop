@@ -1478,6 +1478,94 @@ func TestPolicyScanHiddenAncestors(t *testing.T) {
 	}
 }
 
+// A .coopignore coop cannot read leaves unknown which changed files it hides, so the scan says so
+// once, naming it, and the merge waits for --force; it does not call the changed files secret.
+func TestPolicyScanNamesAnUnreadableCoopignore(t *testing.T) {
+	repo := initRepo(t)
+	git(t, repo, "checkout", "-q", "-b", "candidate")
+	for _, rel := range []string{"config/a.go", "config/b.go"} {
+		writeTaskFile(t, filepath.Join(repo, rel), "package fixture\n")
+	}
+	git(t, repo, "add", "config")
+	git(t, repo, "commit", "-qm", "public synthetic files")
+	git(t, repo, "checkout", "-q", "main")
+	if err := os.Mkdir(filepath.Join(repo, ".coopignore"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := "coop cannot tell what .coopignore hides, because it is a folder — remove it if you did not create it, " +
+		"or make it a readable regular file of at most 1 MiB, then merge again"
+	if got := strings.Join(PolicyScan(repo, "candidate"), "\n"); got != want {
+		t.Fatalf("PolicyScan = %q; want one warning naming the .coopignore", got)
+	}
+}
+
+// A file whose name alone makes it a secret is still named when the .coopignore above it cannot be
+// read: forcing the merge past the unreadable .coopignore must not land a .env nobody saw.
+func TestPolicyScanNamesASecretUnderAnUnreadableCoopignore(t *testing.T) {
+	repo := initRepo(t)
+	git(t, repo, "checkout", "-q", "-b", "candidate")
+	// A secret folder hides what it holds whatever the file is called, so those files count too.
+	secrets := []string{"config/sub/.env", "config/sub/secrets/token.txt", "config/sub/.aws/config"}
+	for _, path := range secrets {
+		writeTaskFile(t, filepath.Join(repo, filepath.FromSlash(path)), "TOKEN=x\n")
+	}
+	writeTaskFile(t, filepath.Join(repo, "config", "sub", "app.yml"), "name: app\n")
+	git(t, repo, "add", "config")
+	git(t, repo, "commit", "-qm", "secrets under config")
+	git(t, repo, "checkout", "-q", "main")
+	if err := os.MkdirAll(filepath.Join(repo, "config", ".coopignore"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := PolicyScan(repo, "candidate")
+	for _, path := range secrets {
+		if !slices.Contains(got, "secret-like file: "+path) {
+			t.Errorf("PolicyScan = %q; want %s named beside the unreadable .coopignore", got, path)
+		}
+	}
+	if slices.Contains(got, "secret-like file: config/sub/app.yml") {
+		t.Errorf("PolicyScan = %q; app.yml is not a secret by its names", got)
+	}
+}
+
+// A fork that turns a .coopignore into a link or a folder would make every later launch in the
+// project refuse, so the merge names it and waits for --force.
+func TestPolicyScanFlagsAForkThatLinksItsCoopignore(t *testing.T) {
+	for _, tc := range []struct {
+		name, flagged string
+		replace       func(path string) error
+	}{
+		{"a link", ".coopignore", func(path string) error { return os.Symlink("elsewhere", path) }},
+		{"a folder", ".coopignore/rules", func(path string) error { return os.WriteFile(filepath.Join(path, "rules"), []byte("x\n"), 0o644) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initRepo(t)
+			writeTaskFile(t, filepath.Join(repo, ".coopignore"), "secrets/\n")
+			git(t, repo, "add", ".coopignore")
+			git(t, repo, "commit", "-qm", "rules")
+			git(t, repo, "checkout", "-q", "-b", "candidate")
+			path := filepath.Join(repo, ".coopignore")
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "a folder" {
+				if err := os.Mkdir(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tc.replace(path); err != nil {
+				t.Fatal(err)
+			}
+			git(t, repo, "add", "-A")
+			git(t, repo, "commit", "-qm", "move the rules away")
+			git(t, repo, "checkout", "-q", "main")
+			want := tc.flagged + " — the fork makes a .coopignore something other than a regular file, which Coop cannot read"
+			if got := PolicyScan(repo, "candidate"); !slices.Contains(got, want) {
+				t.Fatalf("PolicyScan = %q; want %q", got, want)
+			}
+		})
+	}
+}
+
 // A fork's in-tree .gitattributes + a fork-local smudge filter must not run on the land rebase's
 // checkout. Includes a positive control (a raw re-checkout fires the smudge) so a green test means
 // the neutralizer worked, not that the filter is dead.

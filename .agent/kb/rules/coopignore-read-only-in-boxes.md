@@ -2,7 +2,7 @@
 name: coopignore-read-only-in-boxes
 description: keep .coopignore readable but read-only in boxes, preserve ordinary host editing, and avoid a separate policy-approval workflow
 scope: security
-sources: [internal/box/mounts.go, internal/box/secrets.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/image.go, internal/box/mounts_test.go]
+sources: [internal/box/mounts.go, internal/box/secrets.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/image.go, internal/box/mounts_test.go, internal/shadowpath/shadowpath.go]
 check: none
 updated: 2026-10-17
 ---
@@ -30,6 +30,12 @@ does not by itself freeze the parent path, and read-only policy mounts alone do 
 on the next launch or build. Do not treat a mount-plan unit test as the complete runtime proof.
 
 ## Changelog
+- 2026-10-17 — the box's own decider now fails safe too: a `.coopignore` it cannot read (link,
+  folder, FIFO, no permission, over 1 MiB), in the repository or a folder above it, stops launches
+  and is reported by name instead of becoming an empty rule set (task
+  2026-10-17-refuse-a-coopignore-the-secret-decider-cannot-re). Swept every NewDecider and
+  NewShadowDecider caller: mounts, service binds, image build context, check-secrets, init, fork
+  merge, isolated publication, session review scan, presets.
 
 - 2026-10-17 — dropped internal/box/restricted.go from sources: the read-only and bare launches are
   gone, so the ordinary launch is the only one that calls ComputeMounts.

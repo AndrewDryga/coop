@@ -31,7 +31,7 @@ func TestShadowDeciderHiddenAncestors(t *testing.T) {
 			if parent == nil || parent.Kind != DirDecoy || !parent.RO {
 				t.Fatal("control: primary box must hide the parent directory")
 			}
-			shadowed := NewShadowDecider(repo)
+			shadowed := mustDecide(t, repo)
 			for _, child := range []string{"notes.txt", "sub/notes.txt", "cacerts.pem", ".env.example"} {
 				if !shadowed(tc.parent + "/" + child) {
 					t.Errorf("%s: descendant of a hidden directory must stay hidden", child)

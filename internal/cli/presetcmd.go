@@ -95,16 +95,18 @@ func (a *app) listPresets(repo string) (int, error) {
 	} else {
 		fmt.Println(pal.Bold("Presets"))
 	}
+	// A box can name a preset's folders, and the detail can quote them, so anything in them that
+	// would act on the terminal is shown escaped, as presetLoadErr shows it.
 	for _, le := range broken {
-		fmt.Printf("\n%s\n", pal.Bold(le.Name))
+		fmt.Printf("\n%s\n", pal.Bold(ui.SafeInline(le.Name)))
 		fmt.Printf("  %s\n\n", pal.Red("✗ Could not load this preset"))
-		fmt.Printf("      %s\n", presetDisplayPath(repo, le.Path))
+		fmt.Printf("      %s\n", ui.SafeInline(presetDisplayPath(repo, le.Path)))
 		for _, line := range le.Detail {
-			fmt.Printf("      %s\n", line)
+			fmt.Printf("      %s\n", ui.SafeInline(line))
 		}
 	}
 	if len(broken) > 0 {
-		fmt.Printf("\n%s\n  %s\n", pal.Bold("Show the problem"), pal.Cyan("coop presets "+broken[0].Name))
+		fmt.Printf("\n%s\n  %s\n", pal.Bold("Show the problem"), pal.Cyan("coop presets "+ui.SafeInline(broken[0].Name)))
 	}
 	if len(rows) > 0 {
 		// The runnable example is a preset that actually loads: offering a broken one would
@@ -243,7 +245,12 @@ func presetLoadErr(repo, name string, err error) error {
 			},
 		}
 	}
-	cause := append([]string{presetDisplayPath(repo, le.Path)}, le.Detail...)
+	// The detail can name folders a box created, so anything in it that would act on the terminal is
+	// shown escaped.
+	cause := []string{ui.SafeInline(presetDisplayPath(repo, le.Path))}
+	for _, line := range le.Detail {
+		cause = append(cause, ui.SafeInline(line))
+	}
 	return ui.CommandFailed(fmt.Sprintf("Could not load preset %q", name), strings.Join(cause, "\n"),
 		[2]string{"Help:", "coop help presets"})
 }

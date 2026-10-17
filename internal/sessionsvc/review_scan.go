@@ -40,6 +40,7 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 	}
 	reader := bufio.NewReaderSize(output, 16<<10)
 	shadowed := box.NewShadowDecider(repository)
+	unreadable := map[string]bool{} // each .coopignore coop cannot read is one finding, not one per file
 	var findings []string
 	attributesChanged := false
 	add := func(finding string) {
@@ -71,7 +72,16 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 		if fields[4] == "D" {
 			continue
 		}
-		if shadowed(path) {
+		switch hidden, policyErr := shadowed(path); {
+		case policyErr != nil:
+			if !unreadable[policyErr.Error()] {
+				unreadable[policyErr.Error()] = true
+				add(policyErr.Error())
+			}
+			if box.BuiltinSecret(path) {
+				add("secret-like file: " + path) // named by itself, whatever the .coopignore says
+			}
+		case hidden:
 			add("secret-like file: " + path)
 		}
 		if reason, automatic := hostsurface.Classify(fields[4], path); automatic {

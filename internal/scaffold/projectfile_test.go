@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 )
 
 // TestDetectSubprojectsAndWriteProject: depth-1 dirs with a .agent/ are members (hidden dirs and
@@ -524,34 +525,34 @@ func TestHiddenCheckReadsRulesFromHeldDirectories(t *testing.T) {
 
 // The rules come from every .coopignore on the way to the file, and coop reads only a regular file
 // of at most 1 MiB. Any other .coopignore stops the edit, since coop cannot tell what it hides, and
-// the refusal names that .coopignore and why, not the file being edited. The box's own visibility
-// rules skip one that is not a regular file, so then the reason says it hides nothing from the box.
+// the refusal names that .coopignore and why, not the file being edited, as the box's own refusal
+// of the same file does.
 func TestInPlaceEditsRefuseAnUnreadableCoopignore(t *testing.T) {
 	for _, tc := range []struct {
 		name, at, want string
 		plant          func(t *testing.T, path string)
 	}{
-		{"a link", ".coopignore", ".coopignore is a link, so it hides nothing from the box", func(t *testing.T, path string) {
+		{"a link", ".coopignore", "coop cannot tell what .coopignore hides, because it is a link", func(t *testing.T, path string) {
 			// Followed, the link's rules would hide the Compose file and give a different refusal.
 			writeComposeFixture(t, filepath.Join(filepath.Dir(path), "rules"), "config/compose.yml\n")
 			if err := os.Symlink("rules", path); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"a folder", "config/.coopignore", "config/.coopignore is a folder, so it hides nothing from the box", func(t *testing.T, path string) {
+		{"a folder", "config/.coopignore", "coop cannot tell what config/.coopignore hides, because it is a folder", func(t *testing.T, path string) {
 			if err := os.Mkdir(path, 0o755); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"a FIFO", "config/.coopignore", "config/.coopignore is not a regular file, so it hides nothing from the box", func(t *testing.T, path string) {
+		{"a FIFO", "config/.coopignore", "coop cannot tell what config/.coopignore hides, because it is not a regular file", func(t *testing.T, path string) {
 			if err := syscall.Mkfifo(path, 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"a file over 1 MiB", ".coopignore", ".coopignore is larger than 1 MiB", func(t *testing.T, path string) {
+		{"a file over 1 MiB", ".coopignore", "coop cannot tell what .coopignore hides, because it is larger than 1 MiB", func(t *testing.T, path string) {
 			writeComposeFixture(t, path, strings.Repeat("# padding\n", 1<<20/10+1))
 		}},
-		{"a file without read permission", "config/.coopignore", "config/.coopignore cannot be read: permission denied", func(t *testing.T, path string) {
+		{"a file without read permission", "config/.coopignore", "coop cannot tell what config/.coopignore hides, because it cannot be read: permission denied", func(t *testing.T, path string) {
 			if os.Geteuid() == 0 {
 				t.Skip("root reads a file without read permission")
 			}
@@ -570,7 +571,7 @@ func TestInPlaceEditsRefuseAnUnreadableCoopignore(t *testing.T) {
 			tc.plant(t, filepath.Join(repo, filepath.FromSlash(tc.at)))
 			before := repoTree(t, repo)
 			_, err := AddComposeServices(repo, "config/compose.yml", []string{"postgres"})
-			var unreadable UnreadableCoopignore
+			var unreadable shadowpath.UnreadableCoopignore
 			if !errors.As(err, &unreadable) || unreadable.File != tc.at || unreadable.Error() != tc.want {
 				t.Fatalf("edit = %v, want %q", err, tc.want)
 			}
@@ -578,6 +579,32 @@ func TestInPlaceEditsRefuseAnUnreadableCoopignore(t *testing.T) {
 				t.Fatalf("refused edit changed the repository:\nbefore %q\nafter  %q", before, after)
 			}
 		})
+	}
+}
+
+// A .coopignore above the repository that coop cannot read is the one the refusal names, by its full
+// path, even when the repository has a readable .coopignore of its own; that one was blamed before.
+func TestInPlaceEditsNameAnUnreadableCoopignoreAboveTheRepository(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	outer := filepath.Join(home, "work")
+	repo := filepath.Join(outer, "app")
+	if err := os.MkdirAll(filepath.Join(repo, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeComposeFixture(t, filepath.Join(repo, ".coopignore"), "secret.txt\n")
+	writeComposeFixture(t, filepath.Join(repo, "config", "compose.yml"), "services: {}\n")
+	if err := os.Mkdir(filepath.Join(outer, ".coopignore"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err = AddComposeServices(repo, "config/compose.yml", []string{"postgres"})
+	want := shadowpath.UnreadableCoopignore{File: filepath.Join(outer, ".coopignore"), Reason: "is a folder"}
+	var got shadowpath.UnreadableCoopignore
+	if !errors.As(err, &got) || got != want {
+		t.Fatalf("edit = %v, want %q", err, want)
 	}
 }
 
