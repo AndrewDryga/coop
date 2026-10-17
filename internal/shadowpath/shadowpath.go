@@ -251,7 +251,7 @@ func enclosingPolicies(repo string) ([]enclosingPolicy, int64, error) {
 		size     int64
 	)
 	for child, dir := canonical, filepath.Dir(canonical); dir != child; child, dir = dir, filepath.Dir(dir) {
-		if _, above := HomeOrAbove(dir); above {
+		if homeOnRealPath(dir) {
 			break
 		}
 		file := filepath.Join(dir, CoopIgnoreFile)
@@ -333,34 +333,90 @@ var ownerOf = func(path string) (uid int, known bool) {
 	return int(st.Uid), true
 }
 
-// HomeOrAbove reports whether dir is the user's home folder or a folder above it, and names the
-// home folder. box.FindRepo never picks one for a project, a trusted git view refuses one its
-// walk climbed to (forkspace), and the rules a project takes from the folders above it stop below
-// them. It compares folders, not spellings, so neither a case-insensitive disk nor a linked home
-// lets one through. A HOME that is unset or relative falls back to the account's home folder.
+// HomeOrAbove reports whether dir is the user's home folder or a folder that holds it, and names
+// the home folder. box.FindRepo never picks one for a project, box.ResolveRepo refuses a link to
+// one, and a trusted git view refuses one its walk climbed to (forkspace). It compares folders, not
+// spellings, so neither a case-insensitive disk, a linked home nor a second mount of home's
+// filesystem lets one through. A HOME that is unset or relative falls back to the account's home
+// folder.
 func HomeOrAbove(dir string) (string, bool) {
+	home, real, target, ok := homeAndFolder(dir)
+	if !ok {
+		return home, false
+	}
+	if onPath(real, target) {
+		return home, true
+	}
+	// A folder can also hold home through a path the walk up real never passes: a filesystem
+	// mounted at a second place, whole or one folder of it, reaches home there too, as macOS reaches
+	// /Users/me as /System/Volumes/Data/Users/me. Those paths come from the mount table, never from
+	// dir, so nothing a box plants below dir can add one.
+	homeInfo, err := os.Stat(real)
+	if err != nil {
+		return home, false
+	}
+	for _, other := range otherHomePaths(real, homeInfo) {
+		if onPath(other, target) {
+			return home, true
+		}
+	}
+	return home, false
+}
+
+// homeOnRealPath reports whether dir is the home folder or a folder on its real path above it, where
+// the walk for the .coopignore files above a project stops (docs/box.md: up to the home folder, or
+// to the folder just below /). It leaves out the folders above home's other mounted paths that
+// HomeOrAbove counts: for the walk, counting more folders would read fewer .coopignore files.
+func homeOnRealPath(dir string) bool {
+	_, real, target, ok := homeAndFolder(dir)
+	return ok && onPath(real, target)
+}
+
+// homeAndFolder names the home folder and its real path, and stats dir.
+func homeAndFolder(dir string) (home, real string, target os.FileInfo, ok bool) {
 	home, err := os.UserHomeDir()
 	if err != nil || !filepath.IsAbs(home) {
 		u, err := user.Current()
 		if err != nil || u.HomeDir == "" {
-			return "", false
+			return "", "", nil, false
 		}
 		home = u.HomeDir
 	}
-	target, err := os.Stat(dir)
-	if err != nil {
-		return home, false
+	if target, err = os.Stat(dir); err != nil {
+		return home, "", nil, false
 	}
-	walk := home
-	if real, err := filepath.EvalSymlinks(home); err == nil {
-		walk = real
+	real = home
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		real = resolved
 	}
-	for ; ; walk = filepath.Dir(walk) {
+	return home, real, target, true
+}
+
+// folderThrough reports whether dir joined with parts, every part a real folder and not a link, is
+// the folder want.
+func folderThrough(dir string, parts []string, want os.FileInfo) bool {
+	path := dir
+	info, err := os.Lstat(path)
+	for _, part := range parts {
+		if err != nil || !info.IsDir() {
+			return false
+		}
+		if part != "" && part != "." {
+			path = filepath.Join(path, part)
+			info, err = os.Lstat(path)
+		}
+	}
+	return err == nil && info.IsDir() && os.SameFile(info, want)
+}
+
+// onPath reports whether target is the folder at path or one above it.
+func onPath(path string, target os.FileInfo) bool {
+	for walk := path; ; walk = filepath.Dir(walk) {
 		if info, err := os.Stat(walk); err == nil && os.SameFile(info, target) {
-			return home, true
+			return true
 		}
 		if filepath.Dir(walk) == walk {
-			return home, false
+			return false
 		}
 	}
 }

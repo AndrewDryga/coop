@@ -2,7 +2,7 @@
 name: secret-shadow-walk
 description: every launch walks the whole checkout from a real-folder root (a linked root and a link to home are refused, though a box that writes the root's parent can still swap it), gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs; the .coopignore files above the repository, short of home, apply too
 subsystem: box
-sources: [internal/box/mounts.go, internal/shadowpath/shadowpath.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, tools/lifecyclebench]
+sources: [internal/box/mounts.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, tools/lifecyclebench]
 updated: 2026-10-17
 ---
 
@@ -29,6 +29,23 @@ An override spelled as `HOME` spells the home folder, or as a folder above it, i
 a link in that spelling changes its path (macOS `/var`, `/home` on some Linux systems); one that
 reaches the home folder through any other link is refused.
 `TestResolveRepoRefusesALinkToTheHomeFolder` covers both.
+
+"Above" counts every path to the home folder, not only its real one: `HomeOrAbove` also walks up
+the paths a second mount gives. On macOS that is the mount point of each volume holding home's
+real path or a folder above it, followed by that path, through real folders, so the data volume
+counts (`/System/Volumes/Data`, `/System/Volumes` and `/System`) for a home under `/Users` and for
+one on a volume mounted under `/Volumes` or inside home; no other volume is touched, so a stalled
+disk image elsewhere cannot hang a launch. On Linux it is every other mount of home's filesystem
+in /proc/self/mountinfo, a bind mount's source included (with `/data/home` bound at `/home`,
+`/data` counts). Those paths come from the mount table, never from the folder asked about, so
+nothing a box plants below that folder can add one. Known limits: a copy of home served by another
+filesystem (bindfs or sshfs, an NFS export with its own cache, an overlay layer) never counts, and
+NFS reports `/` as every mount's root, so a second mount of the same NFS export that holds home is
+not seen either; a box can make none of these. The walk for the `.coopignore` files above a project
+(`enclosingPolicies`) stops on home's real path only (`homeOnRealPath`): there, counting more
+folders would read fewer `.coopignore` files. `TestHomeOrAboveCountsTheMacOSDataVolume`,
+`TestMountedPathsFollowsHomesFilesystemToItsOtherMounts` and `TestParseMountinfoReadsDevicesRootsAndEscapedPoints`
+pin it.
 
 **The limit: the root guard does not protect a root whose parent a box can write.** The guards
 check the root by path, and the runtime binds that path later: Coop hands `docker run -v` a path,
@@ -119,6 +136,10 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-10-17 — `HomeOrAbove` also walks up the other paths the mount table gives to home: every
+  local macOS volume's mount point plus home's real path (the data volume) and Linux mounts of
+  home's filesystem from /proc/self/mountinfo; the `.coopignore` walk keeps the real-path check
+  (task 2026-10-17-count-a-folder-that-holds-home-through-another-m).
 - 2026-10-17 — an unreadable `.coopignore` no longer drops its rules: the decider returns
   `UnreadableCoopignore` for the paths it covers and every caller refuses, warns or reports it
   (task 2026-10-17-refuse-a-coopignore-the-secret-decider-cannot-re). Checked against

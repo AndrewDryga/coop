@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"math/rand/v2"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
@@ -505,5 +506,60 @@ func TestGlobSetMatchesFilepathMatch(t *testing.T) {
 	}
 	if matched < 1000 {
 		t.Fatalf("only %d matching names: the corpus no longer exercises the patterns", matched)
+	}
+}
+
+// A folder counts as the home folder or above it only when it holds home: a folder beside home does
+// not, and neither does one that reaches home through a link, which a box can plant.
+func TestHomeOrAboveCountsOnlyFoldersThatHoldHome(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "real", "Users", "me")
+	for _, dir := range []string{home, filepath.Join(root, "real", "Users", "you"), filepath.Join(root, "other")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(root, "real", "Users"), filepath.Join(root, "other", "Users")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	for dir, want := range map[string]bool{
+		home:                                 true,
+		filepath.Join(root, "real", "Users"): true,
+		filepath.Join(root, "real"):          true,
+		filepath.Join(root, "real", "Users", "you"): false, // beside home
+		filepath.Join(root, "other"):                false, // other/Users/me is home only through a link
+	} {
+		if _, got := HomeOrAbove(dir); got != want {
+			t.Errorf("HomeOrAbove(%s) = %t, want %t", dir, got, want)
+		}
+	}
+}
+
+// macOS reaches every home folder through the data volume too: /Users/me is also
+// /System/Volumes/Data/Users/me, so the volume's mount point and every folder above it hold home.
+func TestHomeOrAboveCountsTheMacOSDataVolume(t *testing.T) {
+	u, err := user.Current()
+	if err != nil || u.HomeDir == "" {
+		t.Skip("no account home folder")
+	}
+	real, err := filepath.EvalSymlinks(u.HomeDir)
+	if err != nil {
+		t.Skip("account home folder cannot be resolved")
+	}
+	const data = "/System/Volumes/Data"
+	if info, err := os.Lstat(filepath.Join(data, real)); err != nil || !info.IsDir() {
+		t.Skip("no data volume path to the home folder (not macOS)")
+	}
+	t.Setenv("HOME", real)
+	for dir, want := range map[string]bool{
+		data:                           true,
+		"/System/Volumes":              true,
+		"/System":                      true,
+		filepath.Join(data, "private"): false, // on the volume, beside the folders that hold home
+	} {
+		if _, got := HomeOrAbove(dir); got != want {
+			t.Errorf("HomeOrAbove(%s) = %t, want %t: home %s is also %s", dir, got, want, real, filepath.Join(data, real))
+		}
 	}
 }

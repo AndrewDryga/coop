@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Coop's home-folder checks also see your home folder through a second mount.** macOS reaches
+  your home folder as `/System/Volumes/Data/Users/<you>` as well as `/Users/<you>`, also when it
+  is on another disk, and a Linux bind mount, such as `/data/home` mounted at `/home`, reaches it
+  under a second folder too. Coop refuses a `COOP_REPO` link to your home folder or above, and a
+  Git search that climbs there, but did not count the folders above that second path, such as
+  `/System/Volumes/Data`, `/System` or `/data`; now it does.
+
 - **A `.agent/loop.yaml` or preset that does not load now exits 1 instead of 2.** `coop loop`,
   `coop acp`, `coop fork`, `coop <preset>`, `coop presets <name>` and `coop help <name>` exited 2,
   the code for a mistyped command, when the loop's settings file or a preset's `preset.yaml` did
