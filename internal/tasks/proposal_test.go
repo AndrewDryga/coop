@@ -141,6 +141,37 @@ func TestImportForkProposalReadsAHardLinkedTemplateAndRefusesASymlink(t *testing
 	}
 }
 
+// A box can write the canonical queue, so it can swap the folder an import writes into, or the one
+// it stages in, for a link. The import then fails and writes nothing where the link points, also
+// when the swap comes after the import checked the queue: publishing goes through folder handles.
+func TestImportForkProposalRefusesAQueueFolderSwappedForALink(t *testing.T) {
+	for _, folder := range []string{StateTodo, ".coop-proposal-staging"} {
+		t.Run(folder, func(t *testing.T) {
+			repo, root, assignment := proposalAssignment(t, "proposal-link")
+			outside := t.TempDir()
+			path := filepath.Join(root, folder)
+			if err := os.RemoveAll(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, path); err != nil {
+				t.Fatal(err)
+			}
+			writeForkProposal(t, assignment.Owner, testForkProposal(strings.Repeat("e", 32), "Fix the planted link"))
+			if _, err := ImportForkProposals(repo, assignment.Owner.Fork); err == nil {
+				t.Fatalf("import through a linked %s succeeded", folder)
+			}
+			files := map[string]string{"task.md": "# Planted\n", TaskIdentityFile: "{}\n"}
+			if err := publishProposalTask(root, StateTodo, strings.Repeat("e", 32), "2026-01-01-planted", files); err == nil ||
+				!strings.Contains(err.Error(), "is a link or not a real directory") {
+				t.Fatalf("publishing through a linked %s = %v, want a refusal", folder, err)
+			}
+			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+				t.Fatalf("import wrote where the link points: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
 func TestImportForkProposalReplaysCrashAfterCanonicalCreate(t *testing.T) {
 	repo, root, assignment := proposalAssignment(t, "proposal-crash")
 	proposal := testForkProposal(strings.Repeat("b", 32), "Recover proposal import")

@@ -891,12 +891,18 @@ func moveProjectedTask(root *os.Root, fromState, toState, id string) error {
 		return err
 	}
 	defer to.Close()
-	before, err := from.Lstat(id)
+	return renameFolderBetween(from, id, to, id)
+}
+
+// renameFolderBetween moves the real folder fromName in from to toName in to, through the two
+// folders' own handles, so a link swapped in for either folder's path cannot redirect it.
+func renameFolderBetween(from *os.Root, fromName string, to *os.Root, toName string) error {
+	before, err := from.Lstat(fromName)
 	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
-		return errors.Join(err, errors.New("projected task source is not a real directory"))
+		return errors.Join(err, errors.New("task folder to move is not a real directory"))
 	}
-	if _, err := to.Lstat(id); err == nil {
-		return errors.New("projected task destination already exists")
+	if _, err := to.Lstat(toName); err == nil {
+		return errors.New("task folder destination already exists")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -910,12 +916,12 @@ func moveProjectedTask(root *os.Root, fromState, toState, id string) error {
 		return err
 	}
 	defer toDir.Close()
-	if err := unix.Renameat(int(fromDir.Fd()), id, int(toDir.Fd()), id); err != nil {
+	if err := unix.Renameat(int(fromDir.Fd()), fromName, int(toDir.Fd()), toName); err != nil {
 		return err
 	}
-	after, err := to.Lstat(id)
+	after, err := to.Lstat(toName)
 	if err != nil || !os.SameFile(before, after) {
-		return errors.Join(err, errors.New("projected task changed during state transition"))
+		return errors.Join(err, errors.New("task folder changed while it was moved"))
 	}
 	return nil
 }

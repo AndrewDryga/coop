@@ -41,6 +41,12 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **A task a fork proposes can no longer be written outside the queue.** When `coop fork merge`
+  imported a task a fork's agent proposed, it wrote the task's files and moved its folder into the
+  queue by path. A box working in the same project can write the queue, and a folder it swapped
+  for a link made the import write where the link pointed. The import now writes and moves
+  through the queue's folders themselves and fails on a link, as `coop tasks add` already did.
+
 - **An error Coop prints no longer passes terminal codes through.** When a command failed with an
   error Coop does not draw as its own block, the error was printed as it was, and it can quote
   text a box wrote: a project.yaml key or value, a file name, git's output. An escape sequence in

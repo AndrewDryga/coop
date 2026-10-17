@@ -1885,6 +1885,30 @@ func TestWriteTaskFilesRefusesAFileAlreadyThere(t *testing.T) {
 	}
 }
 
+// A box can swap the new task folder for a link between its creation and its files. The files are
+// then not written, neither where the link points nor anywhere else, and the link is removed.
+func TestWriteTaskFilesRefusesAFolderSwappedForALink(t *testing.T) {
+	stateDirPath, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(stateDirPath, "2026-01-01-swapped")); err != nil {
+		t.Fatal(err)
+	}
+	stateDir, err := os.OpenRoot(stateDirPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateDir.Close()
+	files := map[string]string{"log.md": "new\n", "state.md": "new\n", "task.md": "new\n"}
+	if err := writeTaskFiles(stateDir, "2026-01-01-swapped", files); err == nil || !strings.Contains(err.Error(), "is a link or not a real directory") {
+		t.Fatalf("writeTaskFiles into a swapped folder = %v, want a refusal", err)
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Fatalf("task files written where the link points: %v, %v", entries, err)
+	}
+	if _, err := os.Lstat(filepath.Join(stateDirPath, "2026-01-01-swapped")); !os.IsNotExist(err) {
+		t.Errorf("the planted link is still there: %v", err)
+	}
+}
+
 // A task file that cannot be written leaves no half-made folder behind, so retrying the same title
 // is not refused as a duplicate. A name in a missing subfolder cannot be opened, so it stands in for
 // a write that fails after another file was written, such as on a full disk.

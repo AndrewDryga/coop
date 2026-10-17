@@ -2,7 +2,7 @@
 name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
-sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go]
+sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go]
 updated: 2026-10-17
 ---
 
@@ -87,7 +87,9 @@ parent and refuses one that is a link. Two kinds of use follow:
   link, writes the new files `O_EXCL` through the handle, and removes what it wrote if a write
   fails. A hard-linked README.md is read: the template is only read, and a box can hard-link only
   files in its own mount. `coop tasks add` shares that creator; the fork proposal import shares the
-  README reader (`readTaskTemplate`).
+  README reader (`readTaskTemplate`) and publishes through handles too (`publishProposalTask`): it
+  stages the files in a fresh real folder under `.coop-proposal-staging` and moves it into its state
+  folder with `renameFolderBetween`, a `renameat` between the two folders' own handles.
 - As a check only: `tasks_list` and every tool that names a task read the queue with
   `tasks.ReadTaskTreeBelow`, which runs the walk down to the queue root (a missing folder still
   reads as empty), then `ReadTaskTree` by name, which refuses a linked state or task folder. The
@@ -148,6 +150,8 @@ held one, finds no coop binary), which fails, never skips, without a runtime or 
 `coop-box:<definition>` image ([[box-base-image-tags]]).
 
 ## Changelog
+- 2026-10-17 — the fork proposal import stages and publishes through folder handles
+  (`publishProposalTask`, internal/tasks/proposal.go), not by path.
 - 2026-10-17 — corrected the MCP-only claim: a work box mounts `.agent/tasks` writable (only review
   stages get `RepoReadOnlyPaths`), so the tools are what its prompt allows, not the only thing that
   can move a folder; the host's `rejectUnownedCompletions` undoes an unleased move. Renamed

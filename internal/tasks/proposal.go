@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -466,48 +468,21 @@ func materializeForkProposal(record ForkProposalRecord) (ForkProposalRecord, boo
 	if err != nil {
 		return record, false, err
 	}
-	if err := ScaffoldStateDirs(record.CanonicalRoot); err != nil {
-		return record, false, err
-	}
-	staging := filepath.Join(record.CanonicalRoot, ".coop-proposal-staging")
-	if err := ensureRealDirectory(staging, 0o700); err != nil {
-		return record, false, err
-	}
-	tmp, err := os.MkdirTemp(staging, "."+record.ProposalID+"-")
-	if err != nil {
-		return record, false, err
-	}
-	defer os.RemoveAll(tmp)
-	opened, err := OpenTaskMetadataRoot(tmp)
-	if err != nil {
-		return record, false, err
-	}
-	for name, content := range files {
-		if err := AtomicWriteTaskFile(opened, name, []byte(content)); err != nil {
-			opened.Close()
-			return record, false, err
-		}
-	}
 	identityBody, err := json.Marshal(proposalTaskIdentity(record))
-	if err == nil {
-		err = AtomicWriteTaskFile(opened, TaskIdentityFile, append(identityBody, '\n'))
-	}
-	if err := errors.Join(err, opened.Close()); err != nil {
+	if err != nil {
 		return record, false, err
 	}
+	files[TaskIdentityFile] = string(identityBody) + "\n"
 	destinationState := StateTodo
 	if record.Proposal.Kind == ForkProposalBacklog {
 		destinationState = StateBacklog
-		if err := ensureRealDirectory(filepath.Join(record.CanonicalRoot, StateBacklog), 0o755); err != nil {
-			return record, false, err
-		}
 	}
-	target := filepath.Join(record.CanonicalRoot, destinationState, record.Task.Ref.ID)
-	if err := os.Rename(tmp, target); err != nil {
+	if err := publishProposalTask(record.CanonicalRoot, destinationState, record.ProposalID, record.Task.Ref.ID, files); err != nil {
 		if _, imported, inspectErr := exactImportedProposal(record); inspectErr != nil || !imported {
 			return record, false, errors.Join(err, inspectErr)
 		}
 	}
+	target := filepath.Join(record.CanonicalRoot, destinationState, record.Task.Ref.ID)
 	item := Item{ID: record.Task.Ref.ID, State: destinationState, Dir: target}
 	instance, err := ReadTaskInstance(record.CanonicalRoot, item)
 	if err != nil || instance.Ref != record.Task.Ref {
@@ -518,6 +493,60 @@ func materializeForkProposal(record ForkProposalRecord) (ForkProposalRecord, boo
 	next.Phase = ForkProposalImported
 	next.UpdatedAt = time.Now().UTC()
 	return next, true, nil
+}
+
+// publishProposalTask writes an imported proposal's files into a folder staged in the canonical
+// queue, then moves it into its state folder. A box can write that queue, so every step goes
+// through a handle on a folder checked to be real, never by path: a link planted for the queue's
+// folders or the staged one makes the import fail and writes nothing outside the queue.
+func publishProposalTask(canonicalRoot, state, proposalID, id string, files map[string]string) error {
+	queue, err := OpenTaskMetadataRoot(canonicalRoot)
+	if err != nil {
+		return err
+	}
+	defer queue.Close()
+	for _, st := range append(slices.Clone(TaskStates), state) {
+		dir, err := ensureRealSubroot(queue, st, 0o755)
+		if err != nil {
+			return err
+		}
+		dir.Close()
+	}
+	staging, err := ensureRealSubroot(queue, ".coop-proposal-staging", 0o700)
+	if err != nil {
+		return err
+	}
+	defer staging.Close()
+	var name string
+	for attempt := 0; ; attempt++ {
+		name = fmt.Sprintf(".%s-%d-%d-%d", proposalID, os.Getpid(), time.Now().UnixNano(), attempt)
+		if err = staging.Mkdir(name, 0o700); err == nil || !errors.Is(err, os.ErrExist) || attempt == 99 {
+			break
+		}
+	}
+	if err != nil {
+		return err
+	}
+	defer staging.RemoveAll(name)
+	staged, err := openRealSubroot(staging, name)
+	if err != nil {
+		return err
+	}
+	for _, file := range slices.Sorted(maps.Keys(files)) {
+		if err := AtomicWriteTaskFile(staged, file, []byte(files[file])); err != nil {
+			staged.Close()
+			return err
+		}
+	}
+	if err := staged.Close(); err != nil {
+		return err
+	}
+	destination, err := openRealSubroot(queue, state)
+	if err != nil {
+		return err
+	}
+	defer destination.Close()
+	return renameFolderBetween(staging, name, destination, id)
 }
 
 func removeImportedProposalSource(authorityRepo string, owner ForkTaskOwner, record ForkProposalRecord) error {
