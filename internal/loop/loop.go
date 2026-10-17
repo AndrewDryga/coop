@@ -1479,9 +1479,8 @@ reviewAgain:
 				var stop error
 				prevHead, settledBaseline, stalls, stop = c.advanceStall(repo, hosts, prevHead, settledBaseline, stalls, active)
 				if stop != nil {
-					ui.Failure("The loop stopped making progress",
-						fmt.Sprintf("No task finished, became blocked or produced a commit in %s.\nCurrent task: %s.", ui.Count(maxStalls, "attempt"), active),
-						[2]string{"Task:", "coop tasks path " + assigned.Item.ID})
+					headline, cause := stallNotice(stop, active)
+					ui.Failure(headline, cause, [2]string{"Task:", "coop tasks path " + assigned.Item.ID})
 					// The stalled attempts exited 0, but the run did not finish its work.
 					return 1, ui.Reported(stop)
 				}
@@ -2110,12 +2109,12 @@ func pruneNudge(done int) string {
 func (c *Control) advanceStall(repo string, hosts []string, prevHead string, settledBaseline, stalls int, active string) (string, int, int, error) {
 	after, _, err := tasks.QueueProgress(hosts)
 	if err != nil {
-		return prevHead, settledBaseline, stalls, err
+		return prevHead, settledBaseline, stalls, &progressReadError{what: "the task queue", err: err}
 	}
 	settled := after.Done + after.Blocked
 	head, err := gitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil {
-		return prevHead, settledBaseline, stalls, fmt.Errorf("read HEAD of %s after the iteration: %w — the loop cannot tell a committing iteration from a stalled one without it; fix the repo, then re-run `coop loop` (in-progress work is resumed, nothing is lost)", repo, err)
+		return prevHead, settledBaseline, stalls, &progressReadError{what: "HEAD of " + repo, err: err}
 	}
 	if head != prevHead {
 		return head, settled, 0, nil
@@ -2125,6 +2124,30 @@ func (c *Control) advanceStall(repo string, hosts []string, prevHead string, set
 		return prevHead, settledBaseline, stalls, fmt.Errorf("no task finished, blocked, or committed in %d iterations — stopping (stuck on %q?)", maxStalls, active)
 	}
 	return prevHead, newBase, newStalls, nil
+}
+
+// progressReadError is advanceStall failing to read what it measures progress by. That is not a
+// stall, so the loop says what it could not read instead of "no task finished".
+type progressReadError struct {
+	what string // "the task queue", or "HEAD of <repo>"
+	err  error
+}
+
+func (e *progressReadError) Error() string {
+	return fmt.Sprintf("read %s after the iteration: %v — the loop cannot tell progress from a stall without it; fix it, then re-run `coop loop` (in-progress work is resumed, nothing is lost)", e.what, e.err)
+}
+
+func (e *progressReadError) Unwrap() error { return e.err }
+
+// stallNotice is the failure block for advanceStall's stop: a progress check that could not read the
+// queue or HEAD says so; only a real stall says no task moved.
+func stallNotice(stop error, active string) (headline, cause string) {
+	if unread := (*progressReadError)(nil); errors.As(stop, &unread) {
+		return "The loop could not check its progress",
+			fmt.Sprintf("Coop could not read %s after the attempt: %s.\nFix that, then run coop loop again; in-progress work resumes.", ui.SafeInline(unread.what), ui.SafeInline(firstLine(unread.err.Error())))
+	}
+	return "The loop stopped making progress",
+		fmt.Sprintf("No task finished, became blocked or produced a commit in %s.\nCurrent task: %s.", ui.Count(maxStalls, "attempt"), active)
 }
 
 // builtinPreflight is the host-side pre-loop tidy: no box, no model, no tokens. It returns blocked

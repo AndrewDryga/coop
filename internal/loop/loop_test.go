@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -88,6 +89,9 @@ func TestAdvanceStallHeadRead(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "HEAD") || !strings.Contains(err.Error(), "coop loop") {
 		t.Errorf("head-read failure %q should name what failed and how to recover", err)
+	}
+	if unread := (*progressReadError)(nil); !errors.As(err, &unread) {
+		t.Errorf("head-read failure %v is not a progress read error, so the loop would call it a stall", err)
 	}
 }
 
@@ -403,5 +407,29 @@ func TestLoopRecordsItsStartAtTheFirstRuntimeLaunch(t *testing.T) {
 	}
 	if plain.OnRuntimeLaunch != nil {
 		t.Error("a loop outside coop eval got a launch hook nobody asked for")
+	}
+}
+
+// A progress check that cannot read the queue or HEAD is not a stall: it stops the loop with its own
+// headline naming what it could not read, and only five quiet attempts say no task moved.
+func TestStallNoticeTellsAReadFailureFromAStall(t *testing.T) {
+	c := &Control{cfg: &config.Config{}}
+	queue := filepath.Join(t.TempDir(), "queue")
+	if err := os.WriteFile(queue, []byte("not a folder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := c.advanceStall(t.TempDir(), []string{queue}, "base", 0, 0, "task-x")
+	var unread *progressReadError
+	if !errors.As(err, &unread) || unread.what != "the task queue" {
+		t.Fatalf("advanceStall over an unreadable queue = %v, want a progress read error for the queue", err)
+	}
+	if headline, cause := stallNotice(err, "task-x"); headline != "The loop could not check its progress" ||
+		!strings.Contains(cause, "could not read the task queue") || strings.Contains(cause, "No task finished") {
+		t.Errorf("read failure notice = %q / %q", headline, cause)
+	}
+	stall := errors.New("no task finished, blocked, or committed in 5 iterations — stopping")
+	if headline, cause := stallNotice(stall, "task-x"); headline != "The loop stopped making progress" ||
+		!strings.Contains(cause, "No task finished, became blocked or produced a commit in 5 attempts") {
+		t.Errorf("stall notice = %q / %q", headline, cause)
 	}
 }
