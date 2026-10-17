@@ -457,3 +457,44 @@ func TestGitViewRootRefusesATestBinaryWithoutItsOwnRoot(t *testing.T) {
 		t.Fatalf("the refused command wrote under HOME: %v, %v", entries, err)
 	}
 }
+
+// With no repository above the folder, GitCommand runs plain git, and git must not search for one
+// when it starts: a box that makes a .git with a filter driver after coop's check would otherwise
+// have host git read its config and run the driver. Here the .git appears between building the
+// commands and running them.
+func TestGitCommandOutsideARepositoryNeverFindsALaterGit(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "driver-ran")
+	read, err := GitCommand(context.Background(), dir, "config", "--get", "coop.planted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := GitCommand(context.Background(), dir, "hash-object", "--path=file.txt", "file.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("plant a repository: %v\n%s", err, out)
+	}
+	config := "[coop]\n\tplanted = yes\n[filter \"evil\"]\n\tclean = touch " + marker + "\n"
+	f, err := os.OpenFile(filepath.Join(dir, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(config); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	for name, body := range map[string]string{".gitattributes": "* filter=evil\n", "file.txt": "x\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, err := read.CombinedOutput(); err == nil || strings.Contains(string(out), "yes") {
+		t.Fatalf("git config after a planted .git = %v, %q; want git to find no repository", err, out)
+	}
+	_, _ = hash.CombinedOutput()
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("host git ran the planted filter driver: %v", err)
+	}
+}

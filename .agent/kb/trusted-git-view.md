@@ -142,8 +142,11 @@ audit reads history from the project folder that holds its queue (`auditProjectD
 a literal `.agent/tasks`) instead of from inside the queue. Two queues in a home-folder project
 still climb and are refused: a subproject's `<member>/.agent/tasks` and a `--tasks`/COOP_TASKS
 queue elsewhere in it, so a task the audit reopened there cannot be completed or unblocked
-(queued). The error is never `errNoRepository`, on which `GitCommand` and `GitRefCommand` run
-plain git, and plain git climbs there by itself. `GitRefCommand` lets git search for the
+(queued). The error is never `errNoRepository`, on which `GitRefCommand` runs plain git, and
+plain git climbs there by itself. On `errNoRepository` `GitCommand` runs git with `GIT_DIR` at a
+folder that cannot exist (`/dev/null/coop-no-repository`) and a ceiling at the folder's parent, so a
+`.git` a box makes after the check, with a filter driver in its config, is never found
+(`TestGitCommandOutsideARepositoryNeverFindsALaterGit`). `GitRefCommand` lets git search for the
 repository, so `checkRefRepository` first makes sure the search stops at the one a view uses:
 `gitDirsOf` refuses the climb in the same words, and the git dir it finds must pass git's own test
 (`is_git_directory`: `objects` and `refs` in the common dir, a HEAD that names a ref or a commit),
@@ -212,6 +215,8 @@ no checkout config or origin resolution. Test-only Git setup is outside the sour
 against accidental bypass, not a proof about arbitrary shell programs or mutations to exec.Cmd.
 
 ## Changelog
+- 2026-10-17 — GitCommand's no-repository fallback runs git with a git dir that cannot exist, so git
+  never searches (task 2026-10-17-stop-gitcommand-s-plain-git-fallback-from-findin).
 - 2026-10-17 — `GitRefCommand` refuses the climb too (`checkRefRepository`): `gitDirsOf`'s
   refusal in the same words, plus git's own test of the git dir it found, since a review showed
   git climbing past an emptied, objectless or empty-HEAD `.git` to the home repository (task

@@ -89,9 +89,12 @@ func GitCommand(ctx context.Context, dir string, args ...string) (*exec.Cmd, err
 func GitCommandWithEnv(ctx context.Context, dir string, env []string, args ...string) (*exec.Cmd, error) {
 	_, viewEnv, err := openGitView(ctx, dir, env)
 	if errors.Is(err, errNoRepository) {
-		// Nothing to shield: with no repository above dir, git itself finds no config to read
-		// (the repository-locating variables are stripped) and reports that in its own words.
-		cmd := TrustedGitCommand(ctx, dir, withoutGitEnv(env), args...)
+		// No repository above dir, so git reports that in its own words. It must not look for one
+		// itself when it starts: a box that made a .git, with a filter driver in its config, after
+		// this check would have host git run that driver. A git dir that cannot exist stops the
+		// search, and the ceiling keeps it below dir's parent.
+		noRepository := append(withoutGitEnv(env), "GIT_DIR="+noGitDir, "GIT_CEILING_DIRECTORIES="+filepath.Dir(filepath.Clean(dir)))
+		cmd := TrustedGitCommand(ctx, dir, noRepository, args...)
 		return cmd, nil
 	}
 	if err != nil {
@@ -102,6 +105,9 @@ func GitCommandWithEnv(ctx context.Context, dir string, env []string, args ...st
 }
 
 var errNoRepository = errors.New("not inside a git repository")
+
+// noGitDir is a git dir no one can create: nothing can be made below /dev/null, which is a file.
+const noGitDir = "/dev/null/coop-no-repository"
 
 // GitRefCommand builds a hardened git command on the REAL git dir, for the few operations that
 // replace a top-level git-dir entry by rename and so cannot run under the view: pack-refs and the
