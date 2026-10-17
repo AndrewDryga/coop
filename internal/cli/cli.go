@@ -335,14 +335,14 @@ func (a *app) dispatch(argv []string) (int, error) {
 	// after its usage and config validation (cmdLoop), so a bad flag, target, or loop.yaml is
 	// reported as such rather than as a missing runtime.
 	switch sub {
-	case "run", "shell", "login", "acp", "up", "down", "build":
+	case "run", "shell", "acp", "up", "down", "build":
 		if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
 			return -1, err
 		}
 		if err := a.ensureRuntime(); err != nil {
 			return -1, err
 		}
-	case "doctor":
+	case "login", "doctor": // they need no project, so a folder that is not one cannot stop them
 		if err := a.ensureRuntime(); err != nil {
 			return -1, err
 		}

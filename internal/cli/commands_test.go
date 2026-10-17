@@ -16,6 +16,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
@@ -1451,6 +1452,43 @@ func TestRequireLaunchImageBlamesTheDaemonNotTheImage(t *testing.T) {
 				t.Errorf("launch image check = %q, want it to mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// Sign-in needs no project: from a home folder that is a Git repository, which Coop refuses as a
+// project, coop login still starts the provider's sign-in, and its box mounts no folder of the
+// person's — the home folder least of all.
+func TestLoginRunsFromAHomeFolderRepositoryWithoutMountingIt(t *testing.T) {
+	home, _ := gitrepo.New(t)
+	t.Setenv("HOME", home)
+	t.Chdir(home)
+	oldTTY := loginInputIsTerminal
+	loginInputIsTerminal = func() bool { return true }
+	defer func() { loginInputIsTerminal = oldTTY }()
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: filepath.Join(t.TempDir(), "coop"), BaseImage: "coop-box", BoxHome: t.TempDir(), Homes: true}
+	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+	var err error
+	captureStderr(t, func() { _, err = a.loginTo("claude", config.DefaultProfile) })
+	if err != nil && strings.Contains(err.Error(), "home folder") {
+		t.Fatalf("login refused the home folder: %v", err)
+	}
+	data, _ := os.ReadFile(recorder)
+	var run string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "run ") {
+			run = line
+		}
+	}
+	if run == "" || !strings.HasSuffix(run, "claude auth login") {
+		t.Fatalf("login did not start the provider's sign-in:\n%s", data)
+	}
+	resolved, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(run, "source="+home) || strings.Contains(run, "source="+resolved) || strings.Contains(run, " -v "+home) || strings.Contains(run, " -v "+resolved) {
+		t.Fatalf("the sign-in box mounts the home folder:\n%s", run)
 	}
 }
 

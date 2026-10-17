@@ -2,14 +2,18 @@
 name: repository-path-keys
 description: what Coop keys by the repository's path, which keys resolve links first and which take the spelling as given, what a spelling change moves (forks, images, serve ports, agent history), and why paths recorded in fork state match by folder
 subsystem: box
-sources: [internal/box/repo.go, internal/forkspace/forkspace.go, internal/box/image.go, internal/box/derived_image.go, internal/box/run.go, internal/box/history.go, internal/project/project.go, internal/tasks/lease.go, internal/tasks/identity.go, internal/tasks/queue.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/dir.go, internal/tasks/snapshot.go, internal/loop/lock.go, internal/networkstate/authority.go, internal/cli/commands.go, internal/cli/context.go]
+sources: [internal/box/repo.go, internal/forkspace/forkspace.go, internal/box/image.go, internal/box/derived_image.go, internal/box/run.go, internal/box/history.go, internal/project/project.go, internal/tasks/lease.go, internal/tasks/identity.go, internal/tasks/queue.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/dir.go, internal/tasks/snapshot.go, internal/loop/lock.go, internal/networkstate/authority.go, internal/cli/commands.go, internal/cli/context.go, internal/cli/doctor.go]
 updated: 2026-10-17
 ---
 
 `box.ResolveRepo` names the project for nearly every command: the folder `FindRepo` walks to from
 the kernel's working directory, which never names a link, or `COOP_REPO` followed through links
 (`EvalSymlinks`; an override that cannot be resolved is kept as given, and one a link takes to the
-home folder or above it is refused, see [[secret-shadow-walk]]). That string feeds two kinds of key.
+home folder or above it is refused, see [[secret-shadow-walk]]). Outside any repository it is the
+kernel's working directory, never the home folder or a folder above it (`homeProjectRefusal` ends
+both refusals). `coop login` and `coop doctor` need no project: login's box works in an empty folder
+of its sign-in stage and mounts none, and doctor (`doctorProject`) falls back to the shared image
+and skips the box survey, saying why. That string feeds two kinds of key.
 
 **Resolved before use**, so a different spelling of the same folder keeps them: Compose project and
 network names and sidecar port scopes (`ComposeProject`, `canonicalWorkspace` in repo.go), native
@@ -51,6 +55,8 @@ repository through `COOP_REPO` must resolve it first on macOS, where `/var` link
 `/private/var`, or each expectation built from it spells the project differently from Coop.
 
 ## Changelog
+- 2026-10-17 — the working-directory fallback refuses the home folder and above; login and doctor
+  run without a project (task 2026-10-16-let-coop-login-and-coop-doctor-run-without-a-pro).
 - 2026-10-16 — created from a survey of every `ResolveRepo` consumer (task
   2026-10-16-resolve-links-in-coop-repo-so-secret-decoys-stil).
 - 2026-10-17 — added serve ports and `box.RepoRelative`, found by the macOS test run (same task).

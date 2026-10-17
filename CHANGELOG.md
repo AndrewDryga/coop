@@ -41,6 +41,14 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **Coop no longer makes your home folder a project.** Outside a Git repository Coop used the
+  current folder as the project, so `coop init` or `coop shell` run from your home folder set it
+  up or mounted it read-write into a box, and so did a folder reached through a link that leads
+  there. Such a folder is now refused, as a repository at your home folder already was. `coop login`
+  and `coop doctor` need no project, so they now run from any folder, including a home folder that
+  is a Git repository: sign-in mounts no folder of yours, and doctor checks the shared image and
+  says it looked for no project's abandoned boxes.
+
 - **A blocked task's decision now says why it is blocked.** `coop tasks block` takes `--why`,
   what happened and why the task cannot go on, and the agent's block tool asks for the same. It is
   written under the task it blocks, and the question becomes the decision's heading, so

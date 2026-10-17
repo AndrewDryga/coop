@@ -51,8 +51,20 @@ func ResolveRepo(override string) (string, error) {
 	if err != nil || ok {
 		return repo, err
 	}
-	return syscall.Getwd()
+	// The kernel's name for the working folder, as in FindRepo: a shell that entered a folder through
+	// a link a box planted is in the folder the link leads to, which may be the home folder.
+	wd, err := syscall.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("find the working folder: %w", err)
+	}
+	if home, above := shadowpath.HomeOrAbove(wd); above {
+		return "", fmt.Errorf("the working folder %s is your home folder %s or above it, and %s", wd, home, homeProjectRefusal)
+	}
+	return wd, nil
 }
+
+// homeProjectRefusal ends both refusals of a home folder, or a folder above it, as the project.
+const homeProjectRefusal = "Coop never uses one of those as a project: run `git init` in your project folder, or set COOP_REPO to the folder to use"
 
 // RepoRelative is path relative to repo, matching folders rather than spellings. repo is the path
 // ResolveRepo gives, which normally holds no link, while a path the user hands Coop, the shell's
@@ -127,8 +139,7 @@ func FindRepo() (repo string, ok bool, err error) {
 		return "", false, err
 	}
 	if home, above := shadowpath.HomeOrAbove(root); above {
-		return "", false, fmt.Errorf("the nearest Git repository to %s is %s, at your home folder %s or above it, and Coop never "+
-			"uses one of those as a project: run `git init` in your project folder, or set COOP_REPO to the folder to use", wd, root, home)
+		return "", false, fmt.Errorf("the nearest Git repository to %s is %s, at your home folder %s or above it, and %s", wd, root, home, homeProjectRefusal)
 	}
 	return root, true, nil
 }

@@ -438,6 +438,31 @@ func TestResolveRepoNeverChoosesTheHomeFolder(t *testing.T) {
 	}
 }
 
+// Outside any repository the working folder is the project, but never the home folder or a folder
+// above it, however the shell got there: a link a box planted in a project that leads to the home
+// folder takes the shell into the home folder itself.
+func TestResolveRepoRefusesTheHomeFolderAsAFallbackProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	notes := filepath.Join(home, "notes")
+	link := filepath.Join(t.TempDir(), "docs")
+	mkdirs(t, notes)
+	if err := os.Symlink(home, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{home, filepath.Dir(home), link} {
+		t.Chdir(dir)
+		if got, err := ResolveRepo(""); err == nil || !strings.Contains(err.Error(), "at your home folder") && !strings.Contains(err.Error(), "is your home folder") ||
+			!strings.Contains(err.Error(), "Coop never uses one of those as a project") {
+			t.Fatalf("ResolveRepo from %s = %q, %v; want the home-folder refusal", dir, got, err)
+		}
+	}
+	t.Chdir(notes)
+	if got, err := ResolveRepo(""); err != nil || got != realPath(t, notes) {
+		t.Fatalf("ResolveRepo from a folder in the home folder = %q, %v; want that folder", got, err)
+	}
+}
+
 // A box can make .git anything. One that is neither a folder nor a regular file, a FIFO or a
 // device, is passed over as git passes it, and the walk never waits on it; a .git too large to be
 // a pointer to a git dir is refused rather than read.

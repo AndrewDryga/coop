@@ -60,7 +60,11 @@ echo "RESULT PIDS $(cat /sys/fs/cgroup/pids.max 2>/dev/null || cat /sys/fs/cgrou
 // real reports whether one of coop's images was found — the stand-in lacks coop's non-root USER
 // and toolchain, so the caller says so instead of printing a clean bill of health.
 func doctorImage(repo string, cfg *config.Config, exists func(string) bool) (img string, real bool) {
-	for _, candidate := range []string{box.ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride), cfg.BaseImage} {
+	projectImage := box.SharedImage(cfg.BaseImage, cfg.ImageOverride)
+	if repo != "" {
+		projectImage = box.ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride)
+	}
+	for _, candidate := range []string{projectImage, cfg.BaseImage} {
 		if candidate != "" && exists(candidate) {
 			return candidate, true
 		}
@@ -82,7 +86,7 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 			fmt.Sprintf("%s is unavailable.", runtimeTitle(a.rt.Name)),
 			fmt.Sprintf("Start %s, then run coop doctor again.", runtimeTitle(a.rt.Name)))
 	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	repo, withoutProject, err := doctorProject(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
@@ -164,7 +168,7 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	defer os.RemoveAll(clone)
 	doctorCheckClone(cloneSection, fixture, clone)
 
-	code := a.doctorReportOrphanBoxes(report)
+	code := a.doctorReportOrphanBoxes(report, repo, withoutProject)
 	if verdict := report.print(); verdict != 0 {
 		code = verdict
 	}
@@ -228,14 +232,35 @@ func probeReason(errOut string, runErr error, fallback string) string {
 	return sentence(strings.TrimSpace(why[strings.LastIndex(why, "\n")+1:]))
 }
 
+// doctorProject is the project whose image and boxes doctor looks at: COOP_REPO's, else the Git
+// repository around the working folder. Doctor attacks its own fixture, so it needs no project:
+// outside one, or in a folder Coop refuses as one, such as a home folder that is a repository, it
+// checks the shared image, and withoutProject says why it looked at no project's boxes.
+func doctorProject(override string) (repo, withoutProject string, err error) {
+	if override != "" {
+		repo, err := box.ResolveRepo(override)
+		return repo, "", err
+	}
+	repo, ok, err := box.FindRepo()
+	switch {
+	case err != nil:
+		return "", sentence(err.Error()), nil
+	case !ok:
+		return "", "This folder is not in a Git repository.", nil
+	}
+	return repo, "", nil
+}
+
 // doctorReportOrphanBoxes reports this repo's boxes whose supervising coop process is provably gone
 // — the count, the ids, and the label each finding rests on. It only ever LOOKS: doctor diagnoses,
 // and removing a container is the sweep's job at the entry points that start work. It stays OUT of
 // the pass/fail tally too — an orphan is host hygiene, not a hole in the isolation doctor attacks.
-// A healthy survey prints nothing: there is no finding to report.
-func (a *app) doctorReportOrphanBoxes(report *doctorReport) int {
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
+// A healthy survey prints nothing: there is no finding to report. Outside a project there is no
+// survey, and doctor says so.
+func (a *app) doctorReportOrphanBoxes(report *doctorReport, repo, withoutProject string) int {
+	if repo == "" {
+		report.section("Running boxes").add(doctorRow{outcome: doctorNote,
+			label: "Not run in a project, so Coop did not look for its abandoned boxes", reason: withoutProject})
 		return 0
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)

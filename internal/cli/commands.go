@@ -701,6 +701,13 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	// Sign-in needs no project and gets none: the box works in an empty folder of its own, so a
+	// login run from the home folder, or from a folder Coop refuses as a project, mounts neither.
+	workspace := filepath.Join(stagingRoot, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		return -1, err
+	}
+	stagingConfig.RepoOverride = workspace
 	a.cfg = stagingConfig
 	a.loginProvider = tool
 	defer func() { a.loginProvider, a.cfg = previousLogin, originalConfig }()

@@ -12,6 +12,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	containerruntime "github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 // sweepRuntime is a container runtime holding one unlabeled coop box, recording every call. The
@@ -76,7 +77,7 @@ func TestDoctorReportsOrphanBoxesWithoutReaping(t *testing.T) {
 	repo := t.TempDir()
 	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: rt, rtSet: true}
 	report := &doctorReport{}
-	a.doctorReportOrphanBoxes(report)
+	a.doctorReportOrphanBoxes(report, repo, "")
 	out := captureStderr(t, func() { report.print() })
 	for _, want := range []string{"Running boxes", "Could not identify the supervisor for 1 box", "legacy-box", "removing it manually"} {
 		if !strings.Contains(out, want) {
@@ -90,6 +91,39 @@ func TestDoctorReportsOrphanBoxesWithoutReaping(t *testing.T) {
 	}
 	if strings.Contains(sweepEvents(t, events), "rm ") {
 		t.Fatalf("doctor removed a container:\n%s", sweepEvents(t, events))
+	}
+}
+
+// Doctor attacks its own fixture, so it runs outside a project, and in a home folder that is a Git
+// repository, which Coop refuses as one: it checks the shared image, never an image the working
+// folder's .agent/Dockerfile names, and says it looked for no project's abandoned boxes.
+func TestDoctorRunsWithoutAProject(t *testing.T) {
+	home, _ := gitrepo.New(t)
+	t.Setenv("HOME", home)
+	t.Chdir(home)
+	writeTaskFile(t, filepath.Join(home, ".agent", "Dockerfile"), "FROM scratch\n")
+	repo, withoutProject, err := doctorProject("")
+	if err != nil || repo != "" || !strings.Contains(withoutProject, "at your home folder") {
+		t.Fatalf("doctor's project from a home-folder repository = %q, %q, %v", repo, withoutProject, err)
+	}
+	cfg := &config.Config{BaseImage: "coop-box"}
+	if img, _ := doctorImage(repo, cfg, func(string) bool { return true }); img != "coop-box" {
+		t.Fatalf("doctor outside a project probes %q, want the shared image", img)
+	}
+	rt, events := sweepRuntime(t)
+	a := &app{cfg: cfg, rt: rt, rtSet: true}
+	report := &doctorReport{}
+	a.doctorReportOrphanBoxes(report, repo, withoutProject)
+	out := captureStderr(t, func() { report.print() })
+	if !strings.Contains(out, "Not run in a project, so Coop did not look for its abandoned boxes") || !strings.Contains(out, "at your home folder") {
+		t.Fatalf("doctor did not say it skipped the box survey:\n%s", out)
+	}
+	if got := sweepEvents(t, events); got != "" {
+		t.Fatalf("doctor surveyed boxes outside a project:\n%s", got)
+	}
+	t.Chdir(t.TempDir())
+	if _, withoutProject, err := doctorProject(""); err != nil || withoutProject != "This folder is not in a Git repository." {
+		t.Fatalf("doctor's project outside any repository = %q, %v", withoutProject, err)
 	}
 }
 
