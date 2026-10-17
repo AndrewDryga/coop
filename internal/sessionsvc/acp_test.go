@@ -2104,6 +2104,34 @@ func TestSessionTurnRunnerReportsSafeChildLaunchDiagnostic(t *testing.T) {
 	}
 }
 
+// A child that fails fast can exit before the session writes its first frame. On a loaded host
+// (2026-10-16) the missing-image turn then said "ACP frame could not be written" instead of the
+// guidance. Waiting for the exit before the session speaks makes that order certain: cmd.Wait has
+// then also closed the session's end of the child's stdin, so the first write must fail.
+func TestSessionACPChildExitBeforeFirstFrameKeepsLaunchDiagnostic(t *testing.T) {
+	fixture := newSessionACPFixture(t, "missing-image")
+	turn := fixture.submit(t, "launch failure")
+	ctx := contextWithTurnDeadline(t)
+	process, err := fixture.runner.startChildWithRunID(ctx, fixture.session, sessionTurnRunID(fixture.session.ID, turn.ID), fixture.private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.stop()
+	timer := time.NewTimer(wait.Deadline)
+	defer timer.Stop()
+	select {
+	case <-process.waitDone:
+	case <-timer.C:
+		t.Fatalf("missing-image child did not exit within %s", wait.Deadline)
+	}
+	_, _, _, err = fixture.runner.runACP(ctx, process, fixture.session, turn, turn.Prompt, false)
+	var failure *sessionACPFailure
+	if !errors.As(err, &failure) || failure.code != sessionACPProcessError ||
+		!strings.Contains(failure.detail, "Coop box image is not built; run 'coop build'") {
+		t.Fatalf("first frame to an exited child = %v", err)
+	}
+}
+
 func TestSessionACPChildClosedFailureWaitsForExitStderr(t *testing.T) {
 	process := &sessionACPProcess{stderr: &sessionACPStderr{}, waitDone: make(chan struct{})}
 	go func() {

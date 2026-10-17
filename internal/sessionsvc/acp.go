@@ -2868,7 +2868,7 @@ func (r *sessionTurnRunner) runACP(
 			return acpFailure(sessionACPProtocolError, "outgoing ACP frame exceeded its bound")
 		}
 		line = append(line, '\n')
-		return writeSessionACP(ctx, process.stdin, line)
+		return writeSessionACP(ctx, process, line)
 	}
 	handle := func(frame []byte, expectedSession string) (json.RawMessage, string, error) {
 		var envelope struct {
@@ -2937,12 +2937,12 @@ func (r *sessionTurnRunner) runACP(
 						option, permOptionKind(params.Options, option),
 					)
 				}
-				if err := writeSessionACPResponse(ctx, process.stdin, envelope.ID, map[string]any{"outcome": outcome}); err != nil {
+				if err := writeSessionACPResponse(ctx, process, envelope.ID, map[string]any{"outcome": outcome}); err != nil {
 					return nil, "", err
 				}
 				return nil, "", nil
 			}
-			if err := writeSessionACPError(ctx, process.stdin, envelope.ID, -32601, "no capability"); err != nil {
+			if err := writeSessionACPError(ctx, process, envelope.ID, -32601, "no capability"); err != nil {
 				return nil, "", err
 			}
 			return nil, "", nil
@@ -2956,7 +2956,7 @@ func (r *sessionTurnRunner) runACP(
 	cancelSession := func(sessionID string) {
 		cancelCtx, cancel := context.WithTimeout(context.Background(), sessionACPTermGrace)
 		defer cancel()
-		if err := writeSessionACPJSON(cancelCtx, process.stdin, map[string]any{
+		if err := writeSessionACPJSON(cancelCtx, process, map[string]any{
 			"jsonrpc": "2.0",
 			"method":  "session/cancel",
 			"params":  map[string]any{"sessionId": sessionID},
@@ -3406,10 +3406,10 @@ func readSessionACPLine(reader *bufio.Reader) ([]byte, error) {
 	}
 }
 
-func writeSessionACP(ctx context.Context, writer io.Writer, line []byte) error {
+func writeSessionACP(ctx context.Context, process *sessionACPProcess, line []byte) error {
 	result := make(chan error, 1)
 	go func() {
-		n, err := writer.Write(line)
+		n, err := process.stdin.Write(line)
 		if err == nil && n != len(line) {
 			err = io.ErrShortWrite
 		}
@@ -3418,7 +3418,10 @@ func writeSessionACP(ctx context.Context, writer io.Writer, line []byte) error {
 	select {
 	case err := <-result:
 		if err != nil {
-			return acpFailure(sessionACPProcessError, "ACP frame could not be written")
+			// A child that fails fast, such as one whose box image is missing, can exit before
+			// this frame reaches it. The write then fails on a pipe the child no longer reads, or
+			// one cmd.Wait has already closed, and only the child's exit says why.
+			return sessionACPChildClosedFailure(process)
 		}
 		return nil
 	case <-ctx.Done():
@@ -3426,20 +3429,20 @@ func writeSessionACP(ctx context.Context, writer io.Writer, line []byte) error {
 	}
 }
 
-func writeSessionACPResponse(ctx context.Context, writer io.Writer, id json.RawMessage, result any) error {
-	return writeSessionACPJSON(ctx, writer, map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+func writeSessionACPResponse(ctx context.Context, process *sessionACPProcess, id json.RawMessage, result any) error {
+	return writeSessionACPJSON(ctx, process, map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 }
 
-func writeSessionACPError(ctx context.Context, writer io.Writer, id json.RawMessage, code int, message string) error {
-	return writeSessionACPJSON(ctx, writer, map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": code, "message": message}})
+func writeSessionACPError(ctx context.Context, process *sessionACPProcess, id json.RawMessage, code int, message string) error {
+	return writeSessionACPJSON(ctx, process, map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": code, "message": message}})
 }
 
-func writeSessionACPJSON(ctx context.Context, writer io.Writer, value any) error {
+func writeSessionACPJSON(ctx context.Context, process *sessionACPProcess, value any) error {
 	line, err := json.Marshal(value)
 	if err != nil || len(line)+1 > sessionACPFrameLimit {
 		return acpFailure(sessionACPProtocolError, "ACP response exceeded its bound")
 	}
-	return writeSessionACP(ctx, writer, append(line, '\n'))
+	return writeSessionACP(ctx, process, append(line, '\n'))
 }
 
 func validACPSessionID(id string) bool {

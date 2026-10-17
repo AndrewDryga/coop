@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A session whose box image is missing says so even when it fails fast.** When the model process
+  of a session exited before Coop sent it anything, the turn failed with "ACP frame could not be
+  written" instead of the advice to run `coop build`. Coop now reports such a failure the same way
+  as one it notices while reading, with the same safe diagnostic.
+
 - **Coop no longer lets a box's Git settings choose the project folder.** Coop asked Git where your
   repository starts, and Git follows a setting in `.git/config` that an agent in a box can change. A
   box could point it at another folder, such as your home folder, and the next Coop command used that
