@@ -46,13 +46,19 @@ func ForkContainerOwner(repo, name string, generation ...forkspace.Generation) s
 	return fmt.Sprintf("%s-%x", version, sum[:12])
 }
 
+// forkLoopStopSteps tells a person how to stop fork name's background loop when Coop cannot. The
+// worker's command line names no repository, so the check is by its working directory.
+func forkLoopStopSteps(name string) string {
+	return fmt.Sprintf("list this fork's loops with: pgrep -fl -- '[f]ork %s .*--_detached'; stop only one whose working directory is this repository (lsof -a -d cwd -p <pid>) with: kill -TERM -<pid>, or kill -KILL -<pid> if it stays", name)
+}
+
 func workerStateFormatError(repo, name string, err error) error {
 	path := forkspace.PidPath(repo, name)
 	// A record Coop cannot own may be a start or cleanup record of Coop 11.3.0 or earlier, or whatever
 	// replaced a real one. Either can leave a worker that still runs, so the file may go only once no
 	// loop for the fork remains. The worker's command line names no repository, so the check is by
 	// its working directory.
-	recovery := fmt.Sprintf("To clear it, list this fork's loops with: pgrep -fl -- '[f]ork %s .*--_detached'; stop only one whose working directory is this repository (lsof -a -d cwd -p <pid>) with: kill -TERM -<pid>, or kill -KILL -<pid> if it stays; then remove the file: %s; then run: coop fork stop %s", name, removeCommand(path), name)
+	recovery := fmt.Sprintf("To clear it, %s; then remove the file: %s; then run: coop fork stop %s", forkLoopStopSteps(name), removeCommand(path), name)
 	switch {
 	case errors.Is(err, forkspace.ErrUnsupportedWorkerStateVersion):
 		return fmt.Errorf("fork %s uses an unsupported detached-worker state version at %q — Coop left the exact file unchanged; use the Coop version that wrote it and do not edit its header", name, path)
@@ -466,7 +472,7 @@ func (c *Control) ForkStop(args []string) (int, error) {
 					if observation.Foreign {
 						return 1, forkForeignActivity(name, observation)
 					}
-					return 1, fmt.Errorf("fork %s has detached-worker activity %s without worker state; its process identity is still live or unverified", name, observation.Record.ID)
+					return 1, fmt.Errorf("fork %s has detached-worker activity %s without worker state; its process identity is still live or unverified. To stop it, %s; then run: coop fork stop %s", name, observation.Record.ID, forkLoopStopSteps(name), name)
 				}
 				if observation.Stale {
 					stale = append(stale, observation)

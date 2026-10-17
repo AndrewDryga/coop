@@ -380,8 +380,14 @@ func TestRemovedOldRecordStaysGuardedWhileItsWorkerRuns(t *testing.T) {
 			return containerruntime.Runtime{}, errors.New("runtime must not be consulted")
 		}},
 	}
-	if code, err := c.ForkStop([]string{"perf"}); code != 1 || err == nil || !strings.Contains(err.Error(), "still live or unverified") {
+	code, err := c.ForkStop([]string{"perf"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "still live or unverified") {
 		t.Fatalf("stop without a record beside a live worker = (%d, %v), want a refusal", code, err)
+	}
+	for _, step := range []string{"pgrep -fl -- '[f]ork perf .*--_detached'", "lsof -a -d cwd -p <pid>", "kill -TERM -<pid>", "then run: coop fork stop perf"} {
+		if !strings.Contains(err.Error(), step) {
+			t.Errorf("refusal %q does not give the step %q", err, step)
+		}
 	}
 	if runtimeCalls != 0 {
 		t.Fatal("stop reached the runtime while the worker still runs")
