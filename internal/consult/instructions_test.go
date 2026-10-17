@@ -42,6 +42,19 @@ func TestConsultWrapperShellcheck(t *testing.T) {
 	}
 }
 
+// writeConsultWrapper writes the wrapper as an executable at path. The wrapper reads provider
+// replies with jq, which the box ships. A host without jq skips every test built on this, the ones
+// that refuse before dispatch and never reach jq included; CI's race runners, which ship jq, run them.
+func writeConsultWrapper(t *testing.T, path string) {
+	t.Helper()
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not installed; the consult wrapper reads replies with it")
+	}
+	if err := os.WriteFile(path, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func shellcheckPath(t *testing.T) string {
 	t.Helper()
 	sc, err := exec.LookPath("shellcheck")
@@ -88,9 +101,7 @@ func TestConsultCmds(t *testing.T) {
 func TestConsultRoleDoesNotInheritAdHocPeerModel(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	argsLog := filepath.Join(dir, "args")
 	codex := `#!/bin/sh
 printf '%s\n' "$@" > "$ARGS_LOG"
@@ -153,9 +164,7 @@ func TestConsultWrapperContinuityIsolated(t *testing.T) {
 func TestConsultWrapperInterruptedPublicationKeepsPriorRecord(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	for name, body := range map[string]string{
 		"claude": `#!/bin/sh
 case " $* " in
@@ -243,9 +252,7 @@ exec "$REAL_MV" "$@"
 func TestConsultWrapperLockSerializesAndRecoversAfterOwnerExit(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	// Gated arms record $$ so the test can reap the provider's setsid group by
 	// identity: the wrapper detaches providers into their own session, so killing a
 	// dead wrapper's process group never reaches them. The CRASH provider never
@@ -345,9 +352,7 @@ echo '{"type":"result","is_error":false,"result":"REPLY"}'
 func TestConsultWrapperLockBudgetCoversEveryAdmittedRung(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	scripts := map[string]string{
 		"flock":   "#!/bin/sh\nprintf '%s\\n' \"$*\" >\"$FLOCK_ARGS\"\n",
 		"claude":  "#!/bin/sh\necho 'usage limit reached' >&2\nexit 9\n",
@@ -518,9 +523,7 @@ func TestConsultWrapperRefusesUnlistedPeer(t *testing.T) {
 	}
 	dir := t.TempDir()
 	f := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(f, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, f)
 	// A listed peer must reach provider dispatch without ever launching a real host credential.
 	// This test used to assume Claude was absent; on a development host it could start the real
 	// unlimited consult and hang until the package timeout.
@@ -561,9 +564,7 @@ func runConsultWrapperStub(t *testing.T, role, peer, providerBody, timeoutBody, 
 	t.Helper()
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	write := func(name, body string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
@@ -765,9 +766,7 @@ dd if=/dev/zero bs=%d count=1 2>/dev/null | tr '\000' X >&2`, consultStreamLimit
 func TestConsultWrapperCodexUnusableResumeClearsContinuation(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	write := func(name, body string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
@@ -908,9 +907,7 @@ exec "$@"`
 func TestConsultWrapperFailedResumeRestartsFromTranscriptOnNextContinue(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	state := filepath.Join(dir, "provider-state")
 	calls := filepath.Join(dir, "calls")
 	provider := `printf '%s\n' "$*" >>"$CALLS"
@@ -982,9 +979,7 @@ fi`
 func TestConsultWrapperDirectCodexTelemetryUsesProviderIdentity(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	for name, body := range map[string]string{
 		"codex": `#!/bin/sh
 printf '%s\n' \
@@ -1114,9 +1109,7 @@ printf '"}\n{"type":"result","status":"success"}\n'`, size)
 						t.Fatal(err)
 					}
 				}
-				if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-					t.Fatal(err)
-				}
+				writeConsultWrapper(t, wrapper)
 				role := "capture-failure"
 				cmd := exec.Command(wrapper, role, "--fresh", "question")
 				cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
@@ -1140,9 +1133,7 @@ printf '"}\n{"type":"result","status":"success"}\n'`, size)
 	t.Run("transcript overflow delivers reply then clears continuity", func(t *testing.T) {
 		dir := t.TempDir()
 		wrapper := filepath.Join(dir, "coop-consult")
-		if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writeConsultWrapper(t, wrapper)
 		for name, body := range map[string]string{
 			"gemini": `#!/bin/sh
 printf '{"type":"message","role":"assistant","content":"'
@@ -1311,9 +1302,7 @@ func TestConsultWrapperRejectsUnsafeContinuationRecordBeforeDispatch(t *testing.
 					t.Fatal(err)
 				}
 			}
-			if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			writeConsultWrapper(t, wrapper)
 			stateDir := filepath.Join(dir, "coop-consult-state")
 			if err := os.Mkdir(stateDir, 0o700); err != nil {
 				t.Fatal(err)
@@ -1354,9 +1343,7 @@ echo '{"type":"result","status":"success"}'
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	run := func(ladder, mode string) (string, int) {
 		t.Helper()
 		cmd := exec.Command(wrapper, "reorder", mode, "question")
@@ -1395,9 +1382,7 @@ echo '{"type":"result","status":"success"}'
 func TestConsultWrapperRoleFallsBackAndContinuesSelectedRung(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	calls := filepath.Join(dir, "calls")
 	writeStub := func(name, body string) {
 		t.Helper()
@@ -1488,9 +1473,7 @@ echo '{"type":"result","status":"success"}'
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	run := func(mode, question string) (string, int) {
 		t.Helper()
 		cmd := exec.Command(wrapper, "fallback-recovery", mode, question)
@@ -1555,9 +1538,7 @@ echo '{"type":"result","status":"success"}'
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	run := func(mode, question string) (string, int) {
 		t.Helper()
 		cmd := exec.Command(wrapper, "resume-fallback", mode, question)
@@ -1589,9 +1570,7 @@ echo '{"type":"result","status":"success"}'
 func TestConsultWrapperContinueFallbackReplaysTranscript(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	state := filepath.Join(dir, "claude-state")
 	geminiArgs := filepath.Join(dir, "gemini-args")
 	write := func(name, body string) {
@@ -1695,9 +1674,7 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			wrapper := filepath.Join(dir, "coop-consult")
-			if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			writeConsultWrapper(t, wrapper)
 			write := func(name, body string) {
 				if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
 					t.Fatal(err)
@@ -1744,9 +1721,7 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 func TestConsultWrapperQuarantinesPermanentTargetForRun(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	calls := filepath.Join(dir, "calls")
 	for name, body := range map[string]string{
 		"claude":  `echo "claude $*" >>"$CALLS"; echo "File name too long" >&2; exit 7`,
@@ -1847,9 +1822,7 @@ func TestConsultWrapperSkipsTheRetryWhenALoginIsRefused(t *testing.T) {
 			}
 			dir := t.TempDir()
 			wrapper := filepath.Join(dir, "coop-consult")
-			if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			writeConsultWrapper(t, wrapper)
 			calls := filepath.Join(dir, "calls")
 			for name, body := range map[string]string{tc.provider: tc.body, fallback: fallbackOK[fallback], "timeout": `shift 3; exec "$@"`} {
 				if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
@@ -1879,9 +1852,7 @@ func TestConsultWrapperSkipsTheRetryWhenALoginIsRefused(t *testing.T) {
 func TestConsultWrapperValidatesEveryRungBeforeDispatch(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	calls := filepath.Join(dir, "calls")
 	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte("#!/bin/sh\necho called >\"$CALLS\"\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1905,9 +1876,7 @@ func TestConsultWrapperValidatesEveryRungBeforeDispatch(t *testing.T) {
 func TestConsultWrapperSkipsRungWithoutMountedCredentials(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")
-	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, wrapper)
 	for name, body := range map[string]string{
 		"claude":  "#!/bin/sh\necho '{\"type\":\"result\",\"is_error\":false,\"result\":\"AVAILABLE_OK\"}'\n",
 		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",

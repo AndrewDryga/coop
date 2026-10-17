@@ -213,6 +213,11 @@ func TestInstallVerifyChecksum(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not available")
 	}
+	if _, err := exec.LookPath("sha256sum"); err != nil {
+		if _, err := exec.LookPath("shasum"); err != nil {
+			t.Skip("no SHA-256 utility (sha256sum or shasum) available")
+		}
+	}
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "coop.tar.gz")
 	payload := []byte("the release archive bytes")

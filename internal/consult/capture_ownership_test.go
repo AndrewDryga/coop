@@ -237,9 +237,7 @@ func freezeReaders(t *testing.T, pgid int) []int {
 func consultStubDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "coop-consult"), []byte(ConsultWrapper()), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeConsultWrapper(t, filepath.Join(dir, "coop-consult"))
 	writeStub(t, dir, "timeout", "shift 3\nexec \"$@\"")
 	writeStub(t, dir, "setsid", "exec \"$@\"")
 	if err := os.MkdirAll(filepath.Join(dir, ".agent", "runs"), 0o755); err != nil {

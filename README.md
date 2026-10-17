@@ -238,8 +238,8 @@ See [evaluations](docs/evals.md).
 ## Build and test
 
 co:op is one static Go binary. `make install` builds it into `~/.local/bin`, and `make check` runs
-the gate CI runs, less the plain unit pass its race tests repeat. [CONTRIBUTING.md](CONTRIBUTING.md)
-covers the source layout and the test layers.
+the gate CI runs, less the plain unit pass whose tests its race tests repeat, but not its minimal
+PATH. [CONTRIBUTING.md](CONTRIBUTING.md) covers the source layout and the test layers.
 
 ## License
 

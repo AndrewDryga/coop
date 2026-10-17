@@ -79,6 +79,11 @@ func newDelegateHarness(t *testing.T) *delegateHarness {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	// The wrapper reads replies with jq, which the box ships. Without it every delegate test skips,
+	// the ones that never reach jq included; CI's race runners, which ship jq, run them.
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not installed; the delegate wrapper reads replies with it")
+	}
 	// Both config doors shut before the first git command, and in the process environment: h.env
 	// below is built from it, so the wrapper under test — which runs `git status`, `git rev-parse`,
 	// and `git config` to decide whether the delegate committed — sees the same empty config as the

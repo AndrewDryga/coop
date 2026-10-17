@@ -62,8 +62,10 @@ do not repeat unchanged broad proof after every small edit. A pending check is n
 log under `.agent/gate/` (a pass is one line, a failure shows the log's tail), with a Go build
 cache of its own. It leaves out `check-unit`: the race owners run the same packages and tests
 under the race detector. CI runs every owner in the Makefile's `CI_OWNERS` on its own runner,
-`check-unit` included: the race suite's slowest package, `internal/sessionsvc`, and the scripted
-provider suite each run as two shards whose `-run` and `-skip` share one pattern, so no test
+`check-unit` included, whose minimal-PATH run (below) is the one check the race owners cannot
+repeat locally: run `make test-minimal-path` by hand when a test starts using a program. The race
+suite's slowest package, `internal/sessionsvc`, and the scripted provider suite each run as two
+shards whose `-run` and `-skip` share one pattern, so no test
 falls outside both. Each main push, pull request and release tag runs all of them. The required
 `check` status waits for every owner, doctor and review-writes; a failed, cancelled, skipped or
 missing job cannot pass it. The two runtime jobs stay out of `make check` because they need Docker.
@@ -79,6 +81,14 @@ finalized, and prints the tag's section of `.github/release-notes.md`, the short
 release commit carries, as the release notes. `go run ./tools/releasenotes verify-remote <tag>`
 then refuses if origin's tag changed since checkout. Run `notes` on a freshly tagged commit to
 preview the notes.
+
+The unit tests need Go, `git`, `git-lfs`, a POSIX `sh` and the standard utilities listed in
+the Makefile's `TEST_HOST_PROGRAMS`, which macOS and Linux ship. Some tests also use `jq`,
+`node`, `shellcheck`, `ssh-keygen`, `bash`, `zsh`, `expect`, `script`, `flock`, `cloc`,
+`sha256sum` or `shasum` when installed, and skip, naming the program, when it is missing; the
+services bench's tests read the load average with `sysctl` on macOS and pass without it. CI's
+`check-unit` runs them with only the required programs on PATH (`make test-minimal-path`), so
+a test that needs another program without skipping fails there.
 
 The gate needs `staticcheck`, `govulncheck`, `shellcheck` and `git-lfs`. The Makefile pins
 `govulncheck` and installs Staticcheck with `make install-staticcheck` from
@@ -102,7 +112,7 @@ These test layers apply to a source checkout.
 | Layer | Targets | What they prove |
 |---|---|---|
 | Local iteration | `make check-local SCOPE=<owner>` | actual docs/rules or owner and reverse-consumer checks; unknown scope takes the broad path |
-| Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, govulncheck, unit tests under `-race` (CI also runs them plain), deterministic provider process E2E, tagged process-control races, generated docs, rules cards, maintenance tools, and comment alignment; no runtime or credentials |
+| Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, govulncheck, unit tests under `-race` (CI also runs them plain, with only the required host programs on PATH), deterministic provider process E2E, tagged process-control races, generated docs, rules cards, maintenance tools, and comment alignment; no runtime or credentials |
 | Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork policy, ACP switching/recovery, and live-harness contracts with fixtures |
 | Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` · `make network-runtime-e2e` · `make task-channel-e2e` | real box isolation, process reaping/signal forwarding, report-only review mounts, filtered networking, and the in-box task channel (in the image `coop build` makes); requires Docker (or Apple `container` for doctor) |
 | Pinned clients, offline | `make native-roles-e2e` · `make skills-e2e` · `make mcp-e2e` | each pinned client's own role, skill and MCP handling, with no network, in the locked image `coop net setup` builds; no credentials or model calls |

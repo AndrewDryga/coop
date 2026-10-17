@@ -23,6 +23,11 @@ type candidateRoundFixture struct {
 
 func newCandidateRoundFixture(t *testing.T, ids ...string) candidateRoundFixture {
 	t.Helper()
+	// Both config doors shut in the process environment, which git() and the fork code under test
+	// both run git with: a developer's commit.gpgsign would sign these commits with their key
+	// (.agent/kb/rules/hermetic-git-tests.md).
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo := filepath.Join(t.TempDir(), "project")
 	workspace, identity := testAssignmentFork(t, repo, "rounds")
 	git(t, workspace, "init", "-q", "-b", "main")

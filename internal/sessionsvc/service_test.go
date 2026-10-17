@@ -5145,6 +5145,9 @@ func waitForSessionTest(t *testing.T, condition func() bool) {
 // session; teardown steers nothing, and refusing it leaves workspaces nobody
 // can ever reclaim — cleanup retried into permanent failure while forks leaked.
 func TestSessionServiceDiscardsFrozenJobsAfterRestart(t *testing.T) {
+	// The fork workspace's commit below runs git with the process environment, not gitrepo's.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	repo, err := filepath.EvalSymlinks(repo)

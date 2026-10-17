@@ -38,7 +38,9 @@ CI runs the Make-owned broad owners (`CI_OWNERS`) on isolated runners ([[ci-free
 `make check` runs the static owner, then the others but `check-unit` four at a time, each into
 its own log under `.agent/gate/`, with a Go build cache of its own (another session once cleared
 the shared one under a running gate). The race owners stand in for `check-unit` there: no Go file
-has a race build constraint, and a release test holds that along with the owner lists.
+has a race build constraint, and a release test holds that along with the owner lists. What they
+do not stand in for is `check-unit`'s minimal PATH: run `make test-minimal-path` after adding a
+test that runs a host program outside `TEST_HOST_PROGRAMS`.
 Module/build caches reuse compilation, not behavioral test results: child-built or read inputs
 can be invisible to Go's result cache, so unit, race and scoped tests use `-count=1`.
 
@@ -59,6 +61,9 @@ owners still build their real inputs. Pure log cap/rune tests avoid full review 
 large-output pager, HTTP, session custody and failed-review owners remain.
 
 ## Changelog
+- 2026-10-17 — `check-unit` runs the unit tests with only `TEST_HOST_PROGRAMS` on PATH; the race
+  owners do not stand in for that part, so the card names the by-hand `make test-minimal-path`
+  (task 2026-10-16-inventory-the-host-programs-untagged-unit-tests).
 - 2026-10-17 — runtime_selection_test.go holds every runtime-tagged test to a target's -run pattern.
   Its first run found three no target ran: two took an existing prefix, and the task-channel test,
   which fits none, got `make task-channel-e2e`. A target counts only for files its own -tags build

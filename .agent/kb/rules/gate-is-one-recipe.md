@@ -4,7 +4,7 @@ description: "Make owns the broad check union and its CI partitions, never a sec
 scope: agent-workflow
 sources: [Makefile, .github/workflows/ci.yml, release_test.go]
 check: "go test ./. -run 'TestReleaseModuleHygiene|TestReleaseLocalGateRunsEveryCIOwner|TestReleaseShardPatternsSplitTheirSuites|TestReleaseWorkflowQualification|TestReleaseCIAggregateRejectsFalseGreenDependencyStates'"
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 # There is ONE gate recipe: `make check`
@@ -39,7 +39,13 @@ on the machine where the code was written, and main rotted red with no local gat
   other, so no test can fall outside both; a release test keeps each side non-empty.
 - `make check` may leave out `check-unit` only while no Go file has a race build constraint
   (a release test holds that). Never drop a check from CI to speed up the local gate.
-- Needs a container runtime? That's the one exception: its own CI job, plus a Makefile comment on
+- The one part of `check-unit` the race owners cannot stand in for is its minimal-PATH run
+  (`test-minimal-path`: only `TEST_HOST_PROGRAMS` on PATH, `CGO_ENABLED=0`): on Linux `-race`
+  needs cgo, and the race owners keep the full PATH so the tests of optional programs still run
+  somewhere. It stays CI-only, named in the Makefile comment
+  on `check` and in CONTRIBUTING.md; run `make test-minimal-path` by hand when a test starts
+  using a program.
+- Needs a container runtime? That's the one separate CI job: its own job, plus a Makefile comment on
   `check` saying it's CI-only and why — `make check` stays runtime-independent.
 - Pin a tool's version ONCE, in the Makefile or its dedicated dependency graph, and have CI use
   the Makefile install target instead of repeating the literal. If compatibility requires a
@@ -52,6 +58,9 @@ route narrows it. Never reuse low-privilege caches or artifacts in the signing p
 Related: [[ci-free-checks]], [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-10-17 — `check-unit` now also runs the unit tests with only the required host programs on
+  PATH and without cgo (task 2026-10-16-inventory-the-host-programs-untagged-unit-tests). The race
+  owners cannot repeat that locally, so it is named as CI-only, with the by-hand command.
 - 2026-10-16 — Coop's box images dropped their Go tools stage, so the analyzer module moved to
   `tools/staticcheck.mod`. Swept the pins: the Makefile owns both and CI still installs through
   `make install-staticcheck` and `make -s govulncheck-version`. One mirror remains:

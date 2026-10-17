@@ -3,11 +3,12 @@ name: ci-free-checks
 description: Make-owned CI partitions, per-owner caches and a status-only required check
 subsystem: development
 sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, release_test.go]
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 
-CI runs each Make owner in the Makefile's `CI_OWNERS` on its own runner: static, unit, the
-scripted provider suite as two shards (loop tests and the rest, with process control), and the
+CI runs each Make owner in the Makefile's `CI_OWNERS` on its own runner: static, unit (with only
+`TEST_HOST_PROGRAMS` and go on PATH, `make test-minimal-path`, so a test that needs jq, node,
+shellcheck or any other program must skip and name it), the scripted provider suite as two shards (loop tests and the rest, with process control), and the
 race suite as three (every package but `internal/sessionsvc`, then that package in two shards).
 A shard pair's `-run` and `-skip` share one pattern, so no test falls outside both; a release
 test keeps each side non-empty. Ordinary unit and race package batches stay capped at four.
@@ -29,6 +30,11 @@ CI artifacts. Local tests prove workflow shape and refusal behavior, not hosted 
 publication. Related: [[local-development-checks]], [[release-qualification]].
 
 ## Changelog
+- 2026-10-17 — `check-unit` runs the unit tests with only the required host programs on PATH and
+  CGO_ENABLED=0, the release's build (`make test-minimal-path`); the race owners keep the full
+  PATH, so optional-program tests still run there. The owner kept CI's plain pass for testing the
+  build users run (decision on 2026-10-15-stop-running-every-unit-test-twice-in-make-check).
+  Inventory and lists: CONTRIBUTING.md, the Makefile's `TEST_HOST_PROGRAMS`.
 - 2026-10-15 — deleted the CHANGELOG-only path (scope job, tools/ci_scope.py, metadata job,
   `make check-metadata`): it never fired, since a release pushes its finalize and reopen commits
   together, and CI is free. The Python aggregate became shell over needs.*.result. The Make

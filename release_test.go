@@ -370,7 +370,9 @@ func makeVariable(t *testing.T, name string) string {
 
 // TestReleaseLocalGateRunsEveryCIOwner holds what lets `make check` leave check-unit to CI: the
 // gate runs every other CI owner, and the race owners run check-unit's tests only while no Go file
-// builds differently under the race detector.
+// builds differently under the race detector. check-unit's minimal-PATH run has no local stand-in
+// (on Linux -race needs cgo, and the race owners keep the full PATH); the Makefile comment on check
+// says so.
 func TestReleaseLocalGateRunsEveryCIOwner(t *testing.T) {
 	raceConstraint := regexp.MustCompile(`(?m)^(//go:build|// \+build) .*\brace\b`)
 	ci := strings.Fields(makeVariable(t, "CI_OWNERS"))

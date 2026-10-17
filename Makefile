@@ -29,6 +29,21 @@ test: require-git-lfs ## Run unit tests (no container runtime needed)
 	@# timing assertions remain tight, as in the race target.
 	@go test -count=1 -p 4 -timeout 20m ./...
 
+# The host programs a unit test may run without skipping, besides go. A test that needs any other
+# program (jq, node, shellcheck, ssh-keygen, bash, zsh, expect, script, cloc, sha256sum, ...) skips
+# and names it when it is missing; CONTRIBUTING.md lists both sets. `which`, not `command -v`,
+# because true and false are shell builtins and the tests need the programs. CGO_ENABLED=0 builds
+# the tests the way the release builds coop, which no C compiler on PATH would force anyway.
+TEST_HOST_PROGRAMS := git git-lfs sh awk basename cat chmod cmp cp cut dd dirname env false find grep gzip head install ln mkdir mkfifo mktemp mv od ps rm rmdir sed sleep stat tail tar tee touch tr true uname wc
+
+test-minimal-path: require-git-lfs ## Run unit tests with only TEST_HOST_PROGRAMS and go on PATH
+	@bin="$$(mktemp -d)" && trap 'rm -rf "$$bin"' EXIT && ln -s "$$(go env GOROOT)/bin/go" "$$bin/go" && \
+	for p in $(TEST_HOST_PROGRAMS); do \
+	  src="$$(which "$$p")" || { echo "test-minimal-path: $$p is not installed"; exit 1; }; \
+	  ln -s "$$src" "$$bin/$$p" || exit 1; \
+	done && \
+	CGO_ENABLED=0 PATH="$$bin" "$$bin/go" test -count=1 -p 4 -timeout 20m ./...
+
 cover: require-git-lfs ## Run unit tests with a coverage summary
 	@go test -cover ./...
 
@@ -167,7 +182,11 @@ check-race-sessionsvc-2: require-git-lfs ## Race-detector tests of internal/sess
 # hard-fail with their install line — a soft skip is how a check silently stops running.
 # Locally the race owners stand in for check-unit: they run the same packages and tests under the
 # race detector, since no Go file has a race build constraint (release_test.go holds that), and
-# the plain pass took a quarter of the 52-minute local gate. CI runs both.
+# the plain pass took a quarter of the 52-minute local gate. CI runs both. One part of check-unit
+# has no local stand-in: it runs the tests with only TEST_HOST_PROGRAMS on PATH and CGO_ENABLED=0
+# (test-minimal-path), which the race owners cannot do: on Linux -race needs cgo, and they keep the
+# full PATH so the tests of optional programs still run somewhere. Run 'make test-minimal-path' by
+# hand after a test starts using a program.
 # CI-only by necessity: the doctor runtime matrix and the review-writes job need a real container
 # runtime, so they stay separate CI jobs and this target stays runtime-independent. Run them by
 # hand with 'make doctor', 'make box-runtime-e2e', and 'make review-writes-e2e'.
@@ -197,7 +216,7 @@ gate-%: FORCE
 FORCE:
 
 check-static: mod-check gateway-sources-check lint shellcheck build-all vuln align docs-check rules-check ## Free source, analyzer, build, docs and tool checks
-check-unit: test ## Free ordinary unit tests
+check-unit: test-minimal-path ## Free ordinary unit tests, with only the host programs CONTRIBUTING.md requires
 check-process: check-process-loop check-process-rest ## Free scripted-provider and process-control tests
 check-process-loop: provider-scripted-loop-e2e ## The scripted provider suite's loop tests
 check-process-rest: provider-scripted-other-e2e live-process-control ## The rest of the scripted provider suite and process-control tests
@@ -347,7 +366,7 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
+.PHONY: build install test test-minimal-path cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: check-local bench-tools-test services-bench require-services-workspace
 .PHONY: check-static check-unit check-process check-race
