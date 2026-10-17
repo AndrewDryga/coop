@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An agent's "Internal error" now says what failed.** When an agent's adapter hit an exception it
+  did not expect, it answered with the bare words "Internal error" and put the exception's own
+  message beside them. Coop kept the two words and dropped the message, so a turn that failed that
+  way was recorded as `ACP request was rejected: Internal error` and nothing else. A worker failed
+  ten turns that way in 40 minutes, and nothing on record said why. The turn's error now carries
+  the adapter's message after those words, as one bounded line.
+
 - **`coop doctor` no longer uses your git config for its test project.** `coop doctor` builds a
   throwaway project, commits it and clones it with git. With commit signing turned on in your git
   config, that commit was signed with your key, or failed where gpg was missing so doctor reported
