@@ -41,6 +41,12 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **A subproject folder with an odd name no longer breaks project.yaml.** `coop init` wrote each
+  subproject's folder name into `.agent/project.yaml` as it was, so a name holding a colon and a
+  space, a `#`, a quote or a control character made the file read a different value, or not load
+  at all, for every later command. Such a name is now written in quotes and reads back exactly;
+  one that cannot, such as a name that is not UTF-8, is refused with the name shown.
+
 - **`coop tasks block` no longer asks for a decision that is already written.** Blocking a task
   whose decision.md an agent had already filled in still said to write the question, options and
   recommendation, and blocking a task that was already blocked said "Blocked task" as if it had

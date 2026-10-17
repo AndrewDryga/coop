@@ -227,6 +227,40 @@ func TestRegisterSubprojectsEditsInPlace(t *testing.T) {
 	})
 }
 
+// A box can name a member folder anything. Init writes each name so project.yaml still loads and
+// reads back exactly that name, whether it starts the list or joins it later, and refuses a name
+// that would not read back.
+func TestSubprojectNamesReadBackExactly(t *testing.T) {
+	names := []string{"esc\x1b[2Jape", "key: value", `say "hi"`, "# not a comment", "plain"}
+	for _, register := range []bool{false, true} {
+		repo := t.TempDir()
+		var err error
+		if register {
+			if _, err = WriteProject(repo, nil); err == nil {
+				_, err = RegisterSubprojects(repo, names)
+			}
+		} else {
+			_, err = WriteProject(repo, names)
+		}
+		if err != nil {
+			t.Fatalf("writing the members (registered later: %v): %v", register, err)
+		}
+		pj, err := project.Parse([]byte(readProjectYAML(t, repo)))
+		if err != nil {
+			t.Fatalf("project.yaml no longer loads (registered later: %v): %v\n%s", register, err, readProjectYAML(t, repo))
+		}
+		if !slices.Equal(slices.Sorted(slices.Values(pj.Subprojects)), slices.Sorted(slices.Values(names))) {
+			t.Errorf("subprojects read back %q, want %q", pj.Subprojects, names)
+		}
+		if out := readProjectYAML(t, repo); !strings.Contains(out, "  - plain\n") || strings.ContainsRune(out, '\x1b') {
+			t.Errorf("a plain name is quoted, or a control character was written as is:\n%s", out)
+		}
+	}
+	if _, err := WriteProject(t.TempDir(), []string{"bad\xffname"}); err == nil || !strings.Contains(err.Error(), `"bad\xffname"`) {
+		t.Fatalf("a name that is not UTF-8 = %v, want a refusal naming it", err)
+	}
+}
+
 func TestWriteProjectNoClobberBoundaries(t *testing.T) {
 	t.Run("concurrent creators produce one complete file", func(t *testing.T) {
 		repo := t.TempDir()

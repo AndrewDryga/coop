@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/safefile"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"github.com/AndrewDryga/coop/internal/taskstate"
+	"go.yaml.in/yaml/v3"
 )
 
 // InitSubproject scaffolds the MINIMAL coop set for a monorepo member: just its own task queue.
@@ -128,8 +130,35 @@ var subprojectSkipDirs = map[string]bool{
 // the filtered service rules the generated Compose file needs. It never clobbers an existing file
 // (so re-running init keeps your edits — cmdInit notes any newly-detected members instead).
 func WriteProject(dir string, subprojects []string, services ...string) (bool, error) {
+	entries, err := subprojectEntries(subprojects)
+	if err != nil {
+		return false, err
+	}
 	dest := filepath.Join(dir, project.File)
-	return writeNewRepoFile(dir, dest, []byte(projectYAML(subprojects, services...)), 0o644, writeAndSync)
+	return writeNewRepoFile(dir, dest, []byte(projectYAML(entries, services...)), 0o644, writeAndSync)
+}
+
+// subprojectEntries are the subprojects list's items for names, each written so YAML reads back
+// exactly the folder's name: plain where YAML reads it so, else double-quoted. A box can name a
+// member folder, and one name YAML misreads, or cannot read, breaks project.yaml for every command.
+// A name that does not read back even quoted, such as one that is not UTF-8, is refused.
+func subprojectEntries(names []string) ([]string, error) {
+	entries := make([]string, 0, len(names))
+	for _, name := range names {
+		entry := ""
+		for _, scalar := range []string{name, strconv.Quote(name)} {
+			var got []string
+			if !strings.ContainsAny(scalar, "\r\n") && yaml.Unmarshal([]byte("- "+scalar+"\n"), &got) == nil && len(got) == 1 && got[0] == name {
+				entry = "  - " + scalar
+				break
+			}
+		}
+		if entry == "" {
+			return nil, fmt.Errorf("the subproject folder name %q cannot be written to %s so that it reads back the same; rename the folder", name, project.File)
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
 }
 
 // RegisterSubprojects adds any detected member missing from an EXISTING project.yaml's
@@ -174,9 +203,9 @@ func registerSubprojects(repo string, detected []string, write scaffoldFileWrite
 	}
 
 	lines := strings.Split(strings.TrimSuffix(string(before.data), "\n"), "\n")
-	entries := make([]string, 0, len(missing))
-	for _, s := range missing {
-		entries = append(entries, "  - "+s)
+	entries, err := subprojectEntries(missing)
+	if err != nil {
+		return nil, err
 	}
 
 	// Case 1: a real `subprojects:` block — append after its last item, keeping the list sorted.
@@ -575,15 +604,15 @@ func indexOfLine(lines []string, want string) int {
 // default, so the file itself is the reference. The prose stays short because `coop help init`
 // and the command pages carry the explanation — a config comment that repeats a help page goes
 // stale on its own schedule. A re-init never rewrites an existing file.
-func projectYAML(subprojects []string, services ...string) string {
+func projectYAML(subprojectEntries []string, services ...string) string {
 	var b strings.Builder
 	b.WriteString("# Coop project settings. Commit this file with your project.\n")
 	b.WriteString("# Help: coop help init\n\n")
-	if len(subprojects) > 0 {
+	if len(subprojectEntries) > 0 {
 		b.WriteString("# Include each subproject's task queue.\n")
 		b.WriteString("subprojects:\n")
-		for _, s := range subprojects {
-			b.WriteString("  - " + s + "\n")
+		for _, entry := range subprojectEntries {
+			b.WriteString(entry + "\n")
 		}
 	} else {
 		b.WriteString("# Include task queues from subprojects that have their own .agent/ folder.\n")
