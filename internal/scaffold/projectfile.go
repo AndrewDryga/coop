@@ -58,9 +58,10 @@ func InitSubproject(repo, dir string) error {
 // opened from the one above it without following a link or waiting on a FIFO, so the walk stays in
 // the repository's real folders, a member's .agent must be a real folder too, and a folder that is
 // no longer one when opened stops the walk at once with an error naming it. A folder coop cannot
-// open or list for another reason is skipped: it holds no member coop could use.
+// open or list for another reason is skipped: it holds no member coop could use. The repository
+// folder itself must be a real folder too, opened without waiting.
 func DetectSubprojects(repo string) ([]string, error) {
-	root, err := os.Open(repo)
+	root, err := safefile.OpenRoot(repo)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +112,8 @@ func DetectSubprojects(repo string) ([]string, error) {
 // 1024 bytes is macOS's PATH_MAX: no later command could open a member deeper than that anyway.
 const maxWalkPath = 1024
 
-// Injectable only in tests that swap a folder after the walk listed the folder holding it.
+// Injectable only in tests that swap a folder after the subproject walk or Docker detection listed
+// the folder holding it.
 var afterListed = func(dirRel string) {}
 
 // subprojectSkipDirs are directories the member walk never descends into: dependency and build

@@ -92,6 +92,17 @@ since that folder may be outside the repository; a swap there only changes wheth
 The handle reports a failed link by its bare name, so the link is returned as a `create`
 `*fs.PathError` on its path and init prints "Could not create .claude/skills: …" as for a file.
 
+The two read-only walks, `DetectSubprojects` and `detectDocker` (the pointer to the project's own
+Dockerfile and Compose file), list a folder and then open each folder in it from its parent with
+`safefile.OpenDir`, which follows no link and never waits on a FIFO. A folder swapped after the
+listing stops the subproject walk with an error naming it, because the walk decides which queues
+get registered; Docker detection skips it, because it only names a file for init to point at. Both
+call the `afterListed` test seam after each listing. `os.ReadDir`, and so `filepath.WalkDir`,
+already opens each folder with `O_DIRECTORY` and fails at once on a FIFO, but it follows a link
+swapped in for a folder. `(*os.File).ReadDir`, unlike `os.ReadDir`, returns entries in the order
+the volume keeps them, which on APFS is not name order, so `detectDocker` sorts them: init points
+at the first file found.
+
 Init prints text a box chose through `ui.SafeInline`, so a name holding an escape sequence or a
 newline shows as `\u001B…` and cannot repaint the terminal: member folders (registered or left to
 register by hand), the project's own Dockerfile and Compose paths (`detectDocker` takes any
@@ -107,6 +118,15 @@ escapes its path too. A name that reaches the terminal through the dispatcher's 
 (`reportExit`) is not escaped (queued).
 
 ## Changelog
+- 2026-10-17 — `detectDocker` walked with `filepath.WalkDir`, which opens each folder by path
+  and follows a link a box swaps in after the listing, so init's pointer could name a Dockerfile
+  from a folder outside the project. It now opens each first-level folder from the root with
+  `safefile.OpenDir`, skips one swapped after the listing, and sorts entries to keep WalkDir's
+  name order. A FIFO swap never froze it: a probe and the old WalkDir with the seam both got
+  ENOTDIR at once. Pinned by TestDetectDockerSkipsAFolderSwappedAfterItsListing (its link case
+  fails on the old WalkDir; its FIFO case hits the 60 s deadline when the open is a plain
+  `os.Open`) and TestDetectDockerFindsInNameOrder (fails without the sort; TestDetectDocker sorts
+  before comparing, so it cannot catch an order change).
 - 2026-10-17 — escaped what init prints from the repository (task
   2026-10-17-escape-the-subproject-names-coop-init-prints): member names, Docker setup paths,
   `box.dockerfile`, `box.compose` in `--services`, the hooks notice and the network-access warning.

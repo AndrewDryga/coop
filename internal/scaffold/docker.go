@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
 // toolSystemDeps maps a tool a repo can pin in .tool-versions to the Debian packages its asdf
@@ -135,34 +136,48 @@ var dockerSkipDirs = map[string]bool{
 }
 
 // detectDocker scans the repo (root + its immediate subdirs) for Dockerfiles and compose
-// files, skipping coop's own and heavy/irrelevant dirs.
+// files, skipping coop's own and heavy/irrelevant dirs. It takes entries in name order, whatever
+// order the volume lists them in, because coop init points at the first file it finds.
+//
+// A box can swap a folder it can write for a FIFO or a link after the scan lists the root. Each
+// folder is opened from the root without following a link or waiting on a FIFO, so the scan
+// stays in the project's real folders. A folder that is no longer one, or that coop cannot open
+// or list, is skipped: it holds nothing coop init could point at. The project folder is opened
+// the same way, since a box can write the folder above a checkout kept inside its project.
 func detectDocker(repo string) dockerFinds {
 	var f dockerFinds
-	root := filepath.Clean(repo)
-	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	root, err := safefile.OpenRoot(repo)
+	if err != nil {
+		return f
+	}
+	defer root.Close()
+	var scan func(dir *os.File, rel string)
+	scan = func(dir *os.File, rel string) {
+		entries, err := dir.ReadDir(-1)
 		if err != nil {
-			return nil
+			return
 		}
-		if d.IsDir() {
-			if p == root {
-				return nil
+		afterListed(rel)
+		slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+		for _, e := range entries {
+			name := e.Name()
+			switch {
+			case e.IsDir():
+				if rel != "" || strings.HasPrefix(name, ".") || dockerSkipDirs[name] {
+					continue // one level down only, and never into hidden or heavy folders
+				}
+				if child, err := safefile.OpenDir(dir, name); err == nil {
+					scan(child, name)
+					_ = child.Close()
+				}
+			case isDockerfile(name):
+				f.dockerfiles = append(f.dockerfiles, filepath.Join(rel, name))
+			case isComposeFile(name):
+				f.composes = append(f.composes, filepath.Join(rel, name))
 			}
-			rel, _ := filepath.Rel(root, p)
-			// Skip hidden dirs, known heavy dirs, and anything below the first level.
-			if strings.HasPrefix(d.Name(), ".") || dockerSkipDirs[d.Name()] || strings.Contains(rel, string(filepath.Separator)) {
-				return fs.SkipDir
-			}
-			return nil
 		}
-		rel, _ := filepath.Rel(root, p)
-		switch {
-		case isDockerfile(d.Name()):
-			f.dockerfiles = append(f.dockerfiles, rel)
-		case isComposeFile(d.Name()):
-			f.composes = append(f.composes, rel)
-		}
-		return nil
-	})
+	}
+	scan(root, "")
 	return f
 }
 

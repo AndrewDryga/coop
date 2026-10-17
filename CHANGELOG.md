@@ -73,6 +73,15 @@
   files `coop init` edits in place, `.agent/project.yaml`, the Compose file and `.gitignore`, are
   refused over 1 MiB too, so a box cannot make it read a huge file into memory.
 
+  `.tool-versions` and Coop's `prepare-commit-msg` hook, and `coop help` reads the Compose file for
+  its service list. An agent in a box could leave a named pipe at any of them, and the command
+  waited forever. Now none of them waits: `coop init` refuses a `.tool-versions` that is not a
+  regular file of at most 1 MiB and names it, and `coop help` leaves the service list out. A
+  `.tool-versions` or Compose file that links to another file in the project still works. `coop
+  init`'s search for subprojects, and for the project's own Dockerfile and Compose file, also no
+  longer follows a link a box swaps in for a folder: the subproject search stops and names that
+  folder, a subproject's `.agent` must be a real folder, and the Docker search skips it.
+
 - **Coop's own search for a project's `.git` no longer ends in your home folder.** Before running
   Git in a project or fork, Coop looks for the nearest `.git`, starting in that folder and moving
   up. If an agent in a box deleted the project's own `.git` while your home folder, or a folder
