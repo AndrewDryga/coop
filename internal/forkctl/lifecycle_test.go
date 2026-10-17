@@ -2,6 +2,7 @@ package forkctl
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -313,17 +314,19 @@ func TestForkRmGate(t *testing.T) {
 	}
 }
 
-// At a terminal the delete confirmation is a section of its own, with a blank line on either side.
-// --yes asks nothing, so those two blank lines must not stack: `coop fork rm --yes` keeps exactly
-// one blank line between the preview and the result. A forced stop prints its own lines before the
-// result, and one blank line still separates them.
-func TestForkRmYesPrintsOneBlankLineBetweenSections(t *testing.T) {
+// Exactly one blank line separates every two sections of `coop fork rm`. At a terminal the answered
+// delete question is a section of its own; --yes asks nothing, so the preview's closing blank line
+// is the only one before what follows. A forced stop prints its own lines, a section too, before the
+// result. A declined question keeps the fork and says so after one blank line.
+func TestForkRmPrintsOneBlankLineBetweenSections(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		running bool // a leftover worker record, so --force stops the fork before deleting it
-		want    string
+		name     string
+		answer   string // typed at the terminal; "" passes --yes instead
+		running  bool   // a leftover worker record, so --force stops the fork before deleting it
+		wantCode int
+		want     string
 	}{
-		{name: "one fork", want: "" +
+		{name: "--yes", want: "" +
 			"Delete fork \"a\"\n" +
 			"\n" +
 			"  <ws>\n" +
@@ -332,7 +335,7 @@ func TestForkRmYesPrintsOneBlankLineBetweenSections(t *testing.T) {
 			"  - Service containers, Docker volumes, and their stored data.\n" +
 			"\n" +
 			"✓ Deleted fork a\n"},
-		{name: "a running fork with --force", running: true, want: "" +
+		{name: "--yes on a running fork", running: true, want: "" +
 			"Delete fork \"a\"\n" +
 			"\n" +
 			"  <ws>\n" +
@@ -348,6 +351,46 @@ func TestForkRmYesPrintsOneBlankLineBetweenSections(t *testing.T) {
 			"✓ Fork a stopped\n" +
 			"\n" +
 			"✓ Deleted fork a\n"},
+		{name: "answered", answer: "y", want: "" +
+			"Delete fork \"a\"\n" +
+			"\n" +
+			"  <ws>\n" +
+			"\n" +
+			"Will be permanently deleted:\n" +
+			"  - Service containers, Docker volumes, and their stored data.\n" +
+			"\n" +
+			"Delete this fork? [y/N] y\n" +
+			"\n" +
+			"✓ Deleted fork a\n"},
+		{name: "answered on a running fork", answer: "y", running: true, want: "" +
+			"Delete fork \"a\"\n" +
+			"\n" +
+			"  <ws>\n" +
+			"\n" +
+			"Coop will:\n" +
+			"  - Stop its running worker.\n" +
+			"\n" +
+			"Will be permanently deleted:\n" +
+			"  - Service containers, Docker volumes, and their stored data.\n" +
+			"\n" +
+			"Delete this fork? [y/N] y\n" +
+			"\n" +
+			"Stopping fork a\n" +
+			"\n" +
+			"✓ Fork a stopped\n" +
+			"\n" +
+			"✓ Deleted fork a\n"},
+		{name: "declined", answer: "n", wantCode: 2, want: "" +
+			"Delete fork \"a\"\n" +
+			"\n" +
+			"  <ws>\n" +
+			"\n" +
+			"Will be permanently deleted:\n" +
+			"  - Service containers, Docker volumes, and their stored data.\n" +
+			"\n" +
+			"Delete this fork? [y/N] n\n" +
+			"\n" +
+			"Cancelled. The fork was kept.\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := initRepo(t)
@@ -355,26 +398,38 @@ func TestForkRmYesPrintsOneBlankLineBetweenSections(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"a", "--yes"}
-			if tc.running {
-				if err := forkspace.WriteWorkerState(repo, "a", deadWorker); err != nil {
-					t.Fatal(err)
-				}
-				args = append(args, "--force")
-			}
 			// A runtime that does nothing, so only rm's and stop's own lines reach stderr.
 			runtimeCLI := filepath.Join(t.TempDir(), "runtime")
 			if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: runtimeCLI}}
+			args := []string{"a"}
+			if tc.answer == "" {
+				args = append(args, "--yes")
+			} else {
+				// What the terminal shows: the question, then the answer typed after it, echoed.
+				c.askDelete = func(question string) bool {
+					fmt.Fprintf(os.Stderr, "%s [y/N] %s\n", question, tc.answer)
+					return tc.answer == "y"
+				}
+			}
+			if tc.running {
+				if err := forkspace.WriteWorkerState(repo, "a", deadWorker); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--force")
+			}
 			var code int
 			stderr := captureStderr(t, func() { code, err = c.ForkRm(args) })
-			if code != 0 || err != nil {
-				t.Fatalf("ForkRm(a --yes) = (%d, %v), want (0, nil)\n%s", code, err, stderr)
+			if code != tc.wantCode || (err != nil) != (tc.wantCode != 0) {
+				t.Fatalf("ForkRm(%s) = (%d, %v), want exit %d\n%s", strings.Join(args, " "), code, err, tc.wantCode, stderr)
 			}
 			if got := strings.ReplaceAll(stderr, ws, "<ws>"); got != tc.want {
 				t.Errorf("coop fork rm %s printed:\n%q\nwant:\n%q", strings.Join(args, " "), got, tc.want)
+			}
+			if kept := pathExists(ws); kept != (tc.wantCode != 0) {
+				t.Errorf("coop fork rm %s: fork kept = %t, want %t", strings.Join(args, " "), kept, tc.wantCode != 0)
 			}
 		})
 	}

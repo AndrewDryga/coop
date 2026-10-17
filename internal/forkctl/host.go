@@ -79,6 +79,9 @@ type Control struct {
 
 	// gateOK is the merge-gate test seam: nil runs the real gate in the box.
 	gateOK func(gateRepo, treeDir, img string) bool
+	// askDelete is the test seam for rm's delete question: a test answers it as a person at the
+	// terminal would. nil asks the terminal, through ui.DestroyGate's own prompt.
+	askDelete func(question string) bool
 	// afterLandFastForward injects a crash-shaped failure after parent Git authority moved but
 	// before the land journal advances. Production leaves it nil; replay tests prove exact recovery.
 	afterLandFastForward func() error

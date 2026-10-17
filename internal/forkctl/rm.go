@@ -142,6 +142,14 @@ func ForkCancelled(err error) error {
 	return err
 }
 
+// destroyGate is ui.DestroyGate, answered by askDelete when a test set it.
+func (c *Control) destroyGate(what string, yes bool) error {
+	if c.askDelete == nil {
+		return ui.DestroyGate(what, yes)
+	}
+	return ui.DestroyGate(what, yes, c.askDelete)
+}
+
 // ForkDestroyPreview is what a deletion will actually do, grouped the way a person decides:
 // what Coop is about to DO, what is gone for good, and what survives. Only present consequences
 // appear — a group with nothing in it is omitted, never rendered as an empty promise.
@@ -333,13 +341,20 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	// from --force above, which overrides the unmerged/dirty guard, not this prompt.
 	PrintForkDestroyPreview(fmt.Sprintf("Delete fork %q", name), ws,
 		ForkDestroyDescription(needsStop, initialDirty, initialUnmerged, initialTaskState))
-	if err := ui.DestroyGate("Delete this fork", hasYes(args)); err != nil {
+	if err := c.destroyGate("Delete this fork", hasYes(args)); err != nil {
 		return 2, ForkCancelled(err)
+	}
+	// One blank line closes every section, so the result below needs none of its own: the preview
+	// closed with one, an answered question gets one here (--yes asked nothing), and a forced stop's
+	// lines get one after them.
+	if !hasYes(args) {
+		ui.Note("")
 	}
 	if needsStop {
 		if code, err := c.ForkStop([]string{name}); err != nil {
 			return code, err
 		}
+		ui.Note("")
 	}
 	unlock, err := forkspace.LockState(repo, name)
 	if err != nil {
@@ -406,11 +421,6 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		if err := forkspace.RemoveGenerationIfMatchesLocked(repo, identity); err != nil {
 			return -1, fmt.Errorf("remove fork %s generation: %w", name, err)
 		}
-	}
-	// --yes asked nothing, so there is no answered question to separate from the result, unless a
-	// forced stop printed its own lines in between.
-	if !hasYes(args) || needsStop {
-		ui.Note("")
 	}
 	ui.OK("Deleted fork %s", name)
 	return 0, nil

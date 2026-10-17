@@ -72,6 +72,15 @@ is not proof the live helpers conform; regression tests must exercise all output
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-10-17 — at a terminal, `coop fork rm <name> --force` ran its answered question straight
+  into the forced stop's `Stopping fork <name>`. rm now prints one blank line after an answered
+  question (`if !yes`) and one after the stop's lines, and none before `✓ Deleted fork`.
+  TestForkRmYesPrintsOneBlankLineBetweenSections, now TestForkRmPrintsOneBlankLineBetweenSections,
+  pins --yes and an answered question, each with and without a forced stop, and a declined one; a
+  test answers through `Control.askDelete`, as forkctl cannot reach `ui.confirmInput`. Only the
+  stop and two service-teardown warnings print between the question and the result; those
+  warnings now sit directly above `✓ Deleted fork` on every path, as they did before only with
+  `--yes` and no stop (queued: 2026-10-17-separate-the-service-teardown-warnings-from-coop).
 - 2026-10-17 — `coop fork <name> --fresh` prints one blank line after an answered question and
   one after a forced stop's own lines; the earlier check of `--fresh --yes` missed that a forced
   stop's `✓ Fork <name> stopped` ran straight into `Creating fork:`. The question is read through
