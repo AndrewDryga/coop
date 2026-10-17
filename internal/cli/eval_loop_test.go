@@ -364,6 +364,13 @@ wait
 		}
 		t.Fatal("canceled trial waited for a descendant's output pipe")
 	}
+	// runLoopTrial's last step SIGKILLs the trial's process group and returns at once, so the
+	// TERM-ignoring descendant may still be finishing an append. Wait until it is gone (reparented
+	// and reaped, so signalling its pid answers ESRCH); a trial that stopped sending that SIGKILL
+	// leaves it running and fails here.
+	wait.For(t, "the killed loop descendant to exit", func() bool {
+		return errors.Is(syscall.Kill(childPID, 0), syscall.ESRCH)
+	})
 	before, err := os.Stat(heartbeat)
 	if err != nil {
 		t.Fatal(err)
