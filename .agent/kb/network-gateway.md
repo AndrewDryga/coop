@@ -30,9 +30,11 @@ the initiating credential-free diagnostic with a later lifecycle reason.
 port the policy grants TLS on — `tcp dport { 443, 853, … }` — to the
 guard's `:15443`, and 53 tcp+udp to its `:15353`; a filter/output chain drops by default. A policy
 with no `tls` grant renders NO redirect rule at all (an empty nft set is a syntax error, and a
-default one would be an invention). Its order is the contract (`controller.go:368`): the agent's OWN loopback is
-accepted first (`oifname "lo"` plus `ip daddr 127.0.0.0/8`, so a test server on 127.0.0.1:3000 is
-not an attempt on a protected address), then an approved `service:` grant's one container address,
+default one would be an invention). Its order is the contract (`initialRules` in `controller.go`):
+Docker's resolver address 127.0.0.11 is refused first, counted as `protected_agent` (port 53 there
+never reaches the filter, because the capture rewrote it to the guard; see restricted-networking),
+then the agent's OWN loopback is accepted (`oifname "lo"` plus `ip daddr 127.0.0.0/8`, so a test
+server on 127.0.0.1:3000 is not an attempt on a protected address), then an approved `service:` grant's one container address,
 THEN the `protected4` interval set, then every other grant, then the deny. `protected4` is host
 addresses, loopback, link-local, metadata AND every subnet/gateway the Docker daemon reports at
 launch (`box/filtered.go:273`) — without that half, a granted `cidr: 172.17.0.0/16` would reach
@@ -273,6 +275,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-16 — the output chain refuses the agent's 127.0.0.11 (Docker's resolver) before the
+  loopback accepts; the order paragraph names `initialRules` instead of a stale line number.
 - 2026-10-16 — the tar carries its own go.mod and go.sum, narrowed to coop-net's three modules, and
   `Pack` moved into gatewayimage so the source-dir list lives once instead of three times. Verified:
   a real golang.org/x/text bump keeps `gateway-sources-check` green while an x/crypto bump that pulls

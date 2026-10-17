@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go]
+sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go]
 updated: 2026-10-16
 ---
 
@@ -238,6 +238,24 @@ Traps:
   never from the client, and a dial straight at the guard listener is refused. A raw `tcp` grant
   on a captured TLS port, a raw grant on 53, `tls` on 53, and a published `serve` port on a
   captured port are refused (`SupportedRule`, `egress/snapshot.go:485`).
+- Docker's own resolver is not a way out. A run with services joins a user-defined network, so
+  Docker answers names at 127.0.0.11 in the namespace the box shares. Its port 53 reaches the guard,
+  because the gateway's capture (nat output, priority -110) runs before Docker's own redirect
+  (-100). Docker also listens on two high ports there and forwards a name it cannot answer to the
+  engine's resolver. `ExtServers: [host(...)]` in the box's resolv.conf means it sends from the
+  engine's own namespace (OrbStack, or a loopback host resolver such as systemd-resolved), where no
+  gateway rule applies; otherwise it sends from this namespace as uid 0 and the output chain drops
+  it. Live on 2026-10-16 (OrbStack, a sniffer in the engine's namespace): a lookup on a high port
+  left on eth0 for 0.250.250.200, while dockerd's reply to the agent was dropped by
+  `ip daddr @protected4 … denied_service drop` (127/8 is protected), a one-way channel for data. So
+  the output chain rejects the agent's traffic to 127.0.0.11 before the loopback accepts, counted as
+  `protected_agent` (`initialRules` in `controller.go`). `TestRestrictedNetworkTransports/
+  compose-embedded-dns` fails if any port there but 53 can be reached, requires the protected count,
+  and runs a sniffer that must see its own lookups leave before and after the case and reports
+  kernel drops. Service containers sit only on the internal network, where Docker 26+ forwards
+  nothing and answers SERVFAIL (checked live the same day). Engines without the CVE-2024-29018 fix
+  (26.0.0, with backports in the 25.0 and 23.0 lines) forwarded internal-network lookups from the
+  host namespace, and coop checks no engine version yet.
 - IPv6 is refused everywhere on this runtime — address, CIDR or `icmpv6`
   (`egress/snapshot.go:469`) — because the reference Docker bridge has none.
 - A provider bundle is FUNCTION, not everything the client asks for. Claude's core is
@@ -300,6 +318,10 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-10-16 — Docker's embedded resolver: a box's lookup on its high port left the host, so the
+  gateway now refuses the agent's 127.0.0.11 as a protected address; the live case fails on any
+  reachable port there and sniffs the engine namespace; services rely on a CVE-2024-29018-fixed
+  engine (task 2026-10-15-check-whether-docker-s-embedded-dns-bypasses-the).
 - 2026-10-16 — layer 2 says which published snapshots retention removes and names `snapshot-lock`;
   the mechanism is in [[network-consumers]].
 - 2026-10-16 — project staging/readiness share Docker-compatible exclusions, preserving Dockerfile

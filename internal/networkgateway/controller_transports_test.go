@@ -186,6 +186,28 @@ func TestRenderedRulesEnforceEveryAcceptedTransport(t *testing.T) {
 	}
 }
 
+// Docker's resolver at 127.0.0.11 can forward a name it cannot answer from outside the namespace,
+// so the agent's loopback accepts must never reach it, and an attempt counts as one on a protected
+// address; its port 53 still goes to the guard, because the capture rewrites that before this
+// filter runs.
+func TestTheAgentCannotAskDockersEmbeddedResolver(t *testing.T) {
+	rules := transportController(t, transportPolicy(t), nil, nil).initialRules(netip.MustParseAddr("1.1.1.1"))
+	refused := strings.Index(rules, "  meta skuid 1000 ip daddr 127.0.0.11 counter name protected_agent reject with icmpx type admin-prohibited\n")
+	if refused < 0 {
+		t.Fatalf("the agent's traffic to Docker's resolver is not refused:\n%s", rules)
+	}
+	for _, accept := range []string{`  meta skuid 1000 oifname "lo" accept`, "  meta skuid 1000 ip daddr 127.0.0.0/8 accept"} {
+		if at := strings.Index(rules, accept); at < refused {
+			t.Errorf("a loopback accept precedes the refusal of Docker's resolver: %s", accept)
+		}
+	}
+	for _, capture := range []string{"meta skuid 1000 udp dport 53 redirect to :15353", "meta skuid 1000 tcp dport 53 redirect to :15353"} {
+		if !strings.Contains(rules, capture) {
+			t.Errorf("the agent's lookups no longer reach the guard: %s", capture)
+		}
+	}
+}
+
 // A policy with no address grant must render exactly the TLS-only ruleset it
 // always did: the new sections are empty, not "empty-ish".
 func TestATLSOnlyPolicyRendersNoPacketFilterGrants(t *testing.T) {

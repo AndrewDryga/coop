@@ -273,7 +273,8 @@ that list, so it loads no MCP at all. A bare session has none.
 A `service:` grant is a request like any other: a human approves it, and it names one service. For a
 filtered run, co:op recreates that service and its dependencies on a project-owned internal network
 before starting them. Those services can talk to each other directly, but the network has no direct
-internet route.
+internet route. With Docker Engine 26 or later, Docker's name server on that network answers only
+the services' own names, and a filtered box asks only co:op's guard.
 
 Standard HTTPS proxy variables point the services at the existing co:op guard. The guard accepts
 only approved TLS names and verifies the real ClientHello name before forwarding. Removing the proxy
@@ -309,7 +310,8 @@ and a `serve` port may not collide with a captured one.
 
 Inside the box, localhost is yours. A test server on `127.0.0.1:3000` and a `curl` to it never touch
 the boundary, because the box's loopback is its own namespace, not a host surface. Only what leaves
-the box meets the gateway.
+the box meets the gateway. The one exception is `127.0.0.11`, where Docker runs its own name server:
+a filtered box can't reach that address, so its lookups go only to co:op's guard.
 
 ## Your project's image
 

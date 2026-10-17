@@ -9,6 +9,16 @@
   written" instead of the advice to run `coop build`. Coop now reports such a failure the same way
   as one it notices while reading, with the same safe diagnostic.
 
+- **A filtered box can no longer send names out through Docker's own name server.** When a
+  filtered run has Compose services, Docker answers names inside the box's network at 127.0.0.11.
+  Coop sent the box's lookups on the usual port to its own guard, but Docker also listens there on
+  other ports and passed a name it did not know on to your Docker engine's resolver. On OrbStack,
+  and on Linux hosts whose resolver runs on the machine itself, it did so from outside the box's
+  network: the box never saw an answer, but the name left your computer, so an agent could carry
+  data out in the names it looked up. A filtered box can no longer reach 127.0.0.11, so its only
+  name server is Coop's guard. With Docker Engine 26 or later, the Compose services were not
+  affected: on their network Docker answers only their own names.
+
 - **Coop no longer lets a box's Git settings choose the project folder.** Coop asked Git where your
   repository starts, and Git follows a setting in `.git/config` that an agent in a box can change. A
   box could point it at another folder, such as your home folder, and the next Coop command used that

@@ -430,6 +430,12 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
 		fmt.Fprintf(&serviceIngress, "  ip saddr %s tcp dport %d ct state new,established accept\n", client.Address, ServiceProxyPort)
 		fmt.Fprintf(&serviceEgress, "  ip daddr %s tcp sport %d ct state established accept\n", client.Address, ServiceProxyPort)
 	}
+	// A run with services joins a user-defined network, so Docker answers names at 127.0.0.11 in
+	// this namespace and forwards those it cannot answer to the engine's resolver, from the engine's
+	// own namespace when that resolver is local to it, where no rule here applies. The agent's port
+	// 53 is captured to the guard before Docker's own redirect; every other port at that address is
+	// refused before the loopback accepts, as the runtime-owned address it is, or a lookup there
+	// could leave the host even though its reply is dropped.
 	rules := fmt.Sprintf(`table inet coop_net {
  counter denied_agent { }
  counter protected_agent { }
@@ -452,6 +458,7 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
   type filter hook output priority 0; policy drop;
   meta skuid AGENT_UID meta nfproto ipv6 counter name denied_agent reject with icmpx type admin-prohibited
   meta skuid AGENT_UID ct state invalid counter name denied_agent drop
+  meta skuid AGENT_UID ip daddr 127.0.0.11 counter name protected_agent reject with icmpx type admin-prohibited
   meta skuid AGENT_UID oifname "lo" accept
   meta skuid AGENT_UID ip daddr 127.0.0.0/8 accept
   meta skuid 65532 oifname "lo" ct state established accept

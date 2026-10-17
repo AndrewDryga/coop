@@ -286,6 +286,84 @@ exit $failed
 `
 		runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script, compose: compose})
 	})
+
+	// A services run attaches the gateway's namespace, which the box shares, to a user-defined
+	// network, so Docker answers names at 127.0.0.11 in it: on 53, which the guard captures first,
+	// and on high ports, from where Docker forwards a name it cannot answer to the engine's
+	// resolver, from the engine's own namespace when that resolver is local to it, which no gateway
+	// rule sees. The reply never came back, but the name left the host, which is enough to carry
+	// data out. The probe asks for an unapproved name on 53 and on every port at 127.0.0.11, over
+	// UDP and TCP, and fails if any port but 53 can be reached at all; a sniffer in the engine's
+	// namespace watches for the name wherever the engine would send it.
+	t.Run("compose-embedded-dns", func(t *testing.T) {
+		compose := fmt.Sprintf(`services:
+  web:
+    image: %s
+    entrypoint: ["sleep", "300"]
+`, candidate.ClientImage)
+		rules := []egress.Rule{{To: egress.Destination{Service: "web"}, Protocol: "tcp", Ports: []int{80}}}
+		stamp := fmt.Sprintf("%x", time.Now().UnixNano())
+		probe := "coopdnsprobe" + stamp
+		leaks, stopSniffer := startDNSSniffer(t, docker, candidate.ClientImage, probe, "coopdnscontrol"+stamp, "coopdnslate"+stamp)
+		defer stopSniffer()
+		script := transportProbe + `
+embedded_dns() { python3 -c '
+import random, socket, struct, sys
+query = struct.pack("!HHHHHH", random.randint(0, 65535), 0x0100, 1, 0, 0, 0)
+for label in sys.argv[1].split("."):
+    query += bytes([len(label)]) + label.encode()
+query += b"\x00" + struct.pack("!HH", 1, 1)
+others = set()
+for table in ("/proc/net/udp", "/proc/net/tcp"):
+    try:
+        for row in open(table).read().splitlines()[1:]:
+            address, port = row.split()[1].split(":")
+            if address == "0B00007F" and int(port, 16) != 53:
+                others.add(int(port, 16))
+    except OSError:
+        pass
+print("listening at 127.0.0.11: 53 and", sorted(others), file=sys.stderr)
+if not others:
+    print("NO-LISTENER")
+    sys.exit()
+reached = False
+for port in [53] + sorted(others):
+    try:
+        u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        u.settimeout(3)
+        u.sendto(query, ("127.0.0.11", port))
+        reached |= port != 53
+        reply = u.recvfrom(512)[0]
+        reached |= struct.unpack("!H", reply[6:8])[0] > 0
+    except Exception:
+        pass
+    try:
+        t = socket.create_connection(("127.0.0.11", port), timeout=3)
+        reached |= port != 53
+        t.sendall(struct.pack("!H", len(query)) + query)
+        reply = t.recv(514)[2:]
+        reached |= len(reply) >= 8 and struct.unpack("!H", reply[6:8])[0] > 0
+    except Exception:
+        pass
+print("ALLOWED" if reached else "REFUSED")
+' "$@"; }
+cat /etc/resolv.conf >&2
+expect REFUSED  "Docker's resolver is out of reach"       "$(embedded_dns ` + probe + `.example.org)"
+exit $failed
+`
+		record := runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script, compose: compose})
+		if !slices.ContainsFunc(record.Receipt.Snapshot.Denials, func(d networkview.Denial) bool {
+			return d.Source == "guard" && d.Kind == "dns_denied" && d.Reason == "unapproved_name" && d.Name == probe+".example.org"
+		}) {
+			t.Fatalf("the guard counted no refused lookup on port 53: %+v", record.Receipt.Snapshot.Denials)
+		}
+		if counters := record.Receipt.Snapshot.Counters; counters == nil || counters.ProtectedPackets == nil || *counters.ProtectedPackets == 0 {
+			t.Fatal("the gateway counted no refused packet to Docker's resolver")
+		}
+		if seen := leaks(); seen != "" {
+			t.Fatalf("an unapproved lookup left the run through Docker's resolver, or the sniffer missed packets:\n%s", seen)
+		}
+	})
 }
 
 func qualifiedClients(t *testing.T, candidate networkstate.CandidateSpec) []networkstate.QualifiedClient {
@@ -549,6 +627,128 @@ func startTransportFixture(t *testing.T, docker *runtime.Docker, image string) (
 	}
 	return address, remove
 }
+
+// startDNSSniffer runs a host-network container this suite owns that watches every interface of
+// the engine's own namespace, where Docker's resolver sends what it forwards, for a packet that
+// carries probe. It sees its own lookup of control leave before the case and of late after it, and
+// reports any packet the kernel dropped before it could look, so silence means nothing left, not a
+// sniffer that saw nothing. leaks returns each sighting of probe and each report of drops.
+func startDNSSniffer(t *testing.T, docker *runtime.Docker, image, probe, control, late string) (leaks func() string, stop func()) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	ref := runtime.DockerRef{Name: "coop-net-e2e-dns-sniffer", Labels: map[string]string{"coop.network.test": "transports"}}
+	_ = docker.RemoveContainer(ctx, ref)
+	id, err := docker.CreateContainer(ctx, runtime.DockerCreate{Ref: ref, Image: image,
+		Options: []string{"--network", "host", "--cap-add", "NET_RAW", "--user", "0:0", "--entrypoint", "python3"},
+		Command: []string{"-c", dnsSnifferScript, probe, control, late}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref.ID = id
+	stop = func() {
+		remove, done := context.WithTimeout(context.Background(), time.Minute)
+		defer done()
+		if err := docker.RemoveContainer(remove, ref); err != nil {
+			t.Errorf("DNS sniffer cleanup failed: %v", err)
+		}
+	}
+	if err := docker.StartContainer(ctx, ref); err != nil {
+		stop()
+		t.Fatal(err)
+	}
+	sightings := func() (string, error) {
+		read, done := context.WithTimeout(context.Background(), 30*time.Second)
+		defer done()
+		data, err := docker.ExecRead(read, ref, 1<<16, "cat", "/tmp/sightings")
+		return string(data), err
+	}
+	seen := func(name string) error {
+		deadline := time.Now().Add(wait.Deadline)
+		for {
+			got, err := sightings()
+			if err == nil && strings.Contains(got, name+" ") {
+				return nil
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("the DNS sniffer never saw its own %s lookup leave, so its silence would prove nothing (last read: %v)", name, err)
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+	if err := seen("control"); err != nil {
+		stop()
+		t.Fatal(err)
+	}
+	leaks = func() string {
+		lookup, done := context.WithTimeout(context.Background(), 30*time.Second)
+		defer done()
+		_, _ = docker.ExecRead(lookup, ref, 4096, "python3", "-c", dnsSnifferLookup, late)
+		if err := seen("late"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := sightings()
+		if err != nil {
+			t.Fatalf("the DNS sniffer stopped watching, so it proves nothing: %v", err)
+		}
+		var bad []string
+		for _, line := range strings.Split(got, "\n") {
+			if strings.HasPrefix(line, "probe ") || strings.HasPrefix(line, "dropped ") {
+				bad = append(bad, line)
+			}
+		}
+		return strings.Join(bad, "\n")
+	}
+	return leaks, stop
+}
+
+// dnsSnifferScript records the interface each packet carrying a label crossed, and how many
+// packets the kernel dropped before the script read them. A kernel filter passes it only IPv4
+// UDP and TCP on port 53, where every forwarded lookup goes, so a busy engine's other traffic
+// cannot crowd the probe out. It opens the socket before its own first lookup, so that lookup's
+// packets are already queued for it.
+const dnsSnifferScript = `
+import ctypes, socket, struct, sys, time
+labels = (("probe", sys.argv[1]), ("control", sys.argv[2]), ("late", sys.argv[3]))
+labels = [(name, label.encode()) for name, label in labels]
+sniffer = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(0x0800))
+port53 = [(0x30, 0, 0, 9), (0x15, 1, 0, 6), (0x15, 0, 8, 17), (0x28, 0, 0, 6), (0x45, 6, 0, 0x1fff),
+    (0xb1, 0, 0, 0), (0x48, 0, 0, 0), (0x15, 2, 0, 53), (0x48, 0, 0, 2), (0x15, 0, 1, 53),
+    (0x06, 0, 0, 0x40000), (0x06, 0, 0, 0)]
+program = ctypes.create_string_buffer(b"".join(struct.pack("HBBI", *op) for op in port53))
+sniffer.setsockopt(socket.SOL_SOCKET, 26, struct.pack("HL", len(port53), ctypes.addressof(program)))
+sniffer.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
+sniffer.settimeout(1)
+out = open("/tmp/sightings", "a", buffering=1)
+try:
+    socket.getaddrinfo(sys.argv[2] + ".example.org", 80)
+except OSError:
+    pass
+end, read = time.time() + 600, 0
+while time.time() < end:
+    try:
+        data, address = sniffer.recvfrom(65535)
+        read += 1
+    except socket.timeout:
+        data = b""
+    if not data or read % 256 == 0:
+        dropped = struct.unpack("II", sniffer.getsockopt(263, 6, 8))[1]
+        if dropped:
+            out.write("dropped %d\n" % dropped)
+    data = data.lower()
+    for name, label in labels:
+        if data and label in data:
+            out.write("%s %s\n" % (name, address[0]))
+`
+
+// dnsSnifferLookup asks the engine's own resolver for one name from the sniffer's namespace.
+const dnsSnifferLookup = `
+import socket, sys
+try:
+    socket.getaddrinfo(sys.argv[1] + ".example.org", 80)
+except OSError:
+    pass
+`
 
 // hostPrefixAround returns the bridge network's own prefix, so the CIDR case
 // grants a range that provably contains a protected host address.
