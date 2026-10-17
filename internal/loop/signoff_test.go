@@ -78,6 +78,20 @@ func TestBlockReopenedTasksLeavesUnrelatedActionableWork(t *testing.T) {
 	}
 }
 
+// A block that fails parked nothing, so nothing may report the review limit or point at decisions;
+// the caller fails the run with the error instead of exit 3, which promises only decisions remain.
+func TestParkCappedReviewReportsNothingWhenTheBlockFails(t *testing.T) {
+	root := t.TempDir()
+	var err error
+	out := captureStderr(t, func() { err = parkCappedReview([]string{root}, []string{"2026-01-01-gone"}, 3) })
+	if err == nil || !strings.Contains(err.Error(), "capped review task 2026-01-01-gone") {
+		t.Fatalf("failed block = %v, want the task's error", err)
+	}
+	if out != "" {
+		t.Errorf("a failed block still reported:\n%s", out)
+	}
+}
+
 func TestBlockReopenedTasksUsesCompletionAuthority(t *testing.T) {
 	q := filepath.Join(t.TempDir(), ".agent", "tasks")
 	task := taskForLease(t, q, stateDone, "review-reopen")

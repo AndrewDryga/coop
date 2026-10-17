@@ -41,6 +41,13 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **`coop loop` exits 1 when the work it leaves is not finished.** A loop that stopped because
+  another agent holds the rest of the queue exited 0, the code for a queue that passed review,
+  though that work was not done. When the final review hit its round limit and Coop could not
+  move the reopened tasks to blocked, the loop exited 3, the code for a run that stopped for your
+  decision, though nothing was blocked. Both now exit 1, as `coop help loop` says for work that
+  remains.
+
 - **`coop loop` exits 1, not 190 or 191, when an agent keeps leaving background work running.**
   After an agent ended three times while work it had started in the background was still running,
   `coop loop` stopped and exited 190 or 191, a status from inside the box that `coop help loop`

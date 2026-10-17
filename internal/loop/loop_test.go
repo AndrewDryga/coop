@@ -226,6 +226,38 @@ func TestLoopAcceptsFolderQueue(t *testing.T) {
 	}
 }
 
+// A queue whose only work another agent holds is not a finished queue: the loop stops before any
+// box, says who has the work, and exits 1 — the help's "work remains" — never 0.
+func TestLoopExitsOneWhenAnotherAgentHoldsTheRemainingWork(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo, _ := gitrepo.NewCommitted(t)
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
+	if code, err := tasks.CmdTasksFolder(repo, filepath.Join(repo, tasksRoot), []string{"claim", "2026-01-01-x"}); code != 0 || err != nil {
+		t.Fatalf("claim = (%d, %v)", code, err)
+	}
+	cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
+	writeTaskFile(t, filepath.Join(cfg.AgentProfileDir("claude", "default"), ".credentials.json"),
+		`{"claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference"]}}`)
+	c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+	c.boxRun = func(box.RunSpec) (int, error) {
+		t.Error("a box launched for work another agent holds")
+		return 0, nil
+	}
+
+	var code int
+	var err error
+	out := captureStderr(t, func() {
+		code, err = c.Run(RunSpec{Repo: repo, Image: "img", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
+			Rotation: ladder.NewRotation([]agents.Target{target("claude", "default")})})
+	})
+	if code != 1 || err != nil {
+		t.Fatalf("held queue = (%d, %v), want exit 1 without an error", code, err)
+	}
+	if !strings.Contains(out, "The remaining work is reserved by another agent.") {
+		t.Errorf("held queue did not say who has the work:\n%s", out)
+	}
+}
+
 // A subproject folder that is a link, or a link an earlier box left on the way to a queue, passes a
 // check by name, and then the box's task tools, which refuse such a queue, fail every call. The loop
 // refuses the queue before it starts, naming it and the link.

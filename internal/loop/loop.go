@@ -766,8 +766,9 @@ reviewAgain:
 			if assignment.Outcome == tasks.AssignmentUnavailable {
 				// Foreign-held work is not a drained queue. Do not sign off a batch another live
 				// controller still owns; its kernel lock will make the task adoptable on death.
+				// The work remains, so the run does not succeed.
 				printBusyQueue(assignment.Busy)
-				return 0, nil
+				return 1, nil
 			}
 			if assignment.Outcome == tasks.AssignmentDrained {
 				if limit.scope() != "" {
@@ -1755,13 +1756,9 @@ reviewAgain:
 		case signoffCapReached:
 			// The work loop couldn't get these tasks to a state the signoff accepts within the cap —
 			// park them for a human rather than spin or claim a false "done" (exit 3 via loopExitCode).
-			stuck := titlesOf(hosts, reopenedIDs)
-			if err := blockReopenedTasks(hosts, reopenedIDs, maxReviewRounds); err != nil {
-				return 3, err
+			if err := parkCappedReview(hosts, reopenedIDs, maxReviewRounds); err != nil {
+				return 1, err
 			}
-			// Only after the host transition succeeded may the report say the work is blocked.
-			printReviewLimit(stuck, maxReviewRounds)
-			ui.Note("%s coop tasks decisions -i", decisionsLabel(len(reopenedIDs)))
 			doneNow, err := doneTaskDirs(hosts)
 			if err != nil {
 				return 1, err
@@ -1900,12 +1897,9 @@ reviewAgain:
 						signoffRound++
 						goto reviewAgain
 					case signoffCapReached:
-						stuck := titlesOf(hosts, reopenedIDs)
-						if err := blockReopenedTasks(hosts, reopenedIDs, maxReviewRounds); err != nil {
-							return 3, err
+						if err := parkCappedReview(hosts, reopenedIDs, maxReviewRounds); err != nil {
+							return 1, err
 						}
-						printReviewLimit(stuck, maxReviewRounds)
-						ui.Note("%s coop tasks decisions -i", decisionsLabel(len(reopenedIDs)))
 						reviewCapped = true
 					case signoffAccepted:
 						return 1, errors.New("internal review decision accepted a non-empty verification reopen")

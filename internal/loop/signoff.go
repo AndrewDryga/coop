@@ -9,6 +9,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func shouldRunBetweenAudit(iterationSucceeded, auditAvailable, protected bool) bool {
@@ -106,12 +107,24 @@ func signoffRounds(lc *loopcfg.Config) int {
 	return defaultSignoffRounds
 }
 
+// parkCappedReview blocks the tasks the final review kept reopening past its round cap, then says
+// so. Only after the host transition succeeded may the report say the work is blocked: a failed
+// block parked nothing, so the caller fails the run (1) instead of stopping for a decision (3).
+func parkCappedReview(hosts, reopened []string, rounds int) error {
+	stuck := titlesOf(hosts, reopened)
+	if err := blockReopenedTasks(hosts, reopened, rounds); err != nil {
+		return err
+	}
+	printReviewLimit(stuck, rounds)
+	ui.Note("%s coop tasks decisions -i", decisionsLabel(len(reopened)))
+	return nil
+}
+
 // blockReopenedTasks parks the exact tasks reopened by the capped review round into 50_blocked/
 // with a decision.md; unrelated actionable work is left untouched, and the capped loop exits 3
 // (blocked on a human) instead of spinning or claiming a false "done".
 // The loop runs on the host, where coop's own task helpers are available, so it moves the folders
-// directly. Best-effort: a move/write failure is surfaced and skipped, never fatal — the closing
-// banner still reports the honest count.
+// directly, all or none: a move or write that fails is returned and fails the run.
 func blockReopenedTasks(hosts, reopened []string, rounds int) error {
 	moves := make([]tasks.TrustedTaskMove, 0, len(reopened))
 	for _, id := range reopened {
