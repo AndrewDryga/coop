@@ -108,7 +108,7 @@ func TestDecisionBrowserParksWithB(t *testing.T) {
 		}
 	}
 	var out bytes.Buffer
-	if code, err := runDecisionBrowser(decisionRefs(root, "", decisions), strings.NewReader(":b\n"), &out); code != 0 || err != nil {
+	if code, err := runDecisionBrowser("", decisionRefs(root, "", decisions), strings.NewReader(":b\n"), &out); code != 0 || err != nil {
 		t.Fatalf("browser: code=%d err=%v", code, err)
 	}
 	if !strings.Contains(out.String(), ":b park in backlog") {

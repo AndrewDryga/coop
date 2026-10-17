@@ -218,7 +218,7 @@ func TestPendingAwareReviewWindowEnrollsConcurrentCompletionBeforeRetirement(t *
 	repo := initRepo(t)
 	root := filepath.Join(repo, TasksRoot)
 	subject := taskWithCompletedChecklist(t, root, StateDone, "review-subject")
-	if err := CompleteTrustedTask(root, subject); err != nil {
+	if err := CompleteTrustedTask("", root, subject); err != nil {
 		t.Fatal(err)
 	}
 	foreign := taskWithCompletedChecklist(t, root, StateTodo, "foreign-completion")
@@ -231,7 +231,7 @@ func TestPendingAwareReviewWindowEnrollsConcurrentCompletionBeforeRetirement(t *
 	writeTaskFile(t, filepath.Join(repo, "foreign.txt"), "completed elsewhere\n")
 	git(t, repo, "add", "foreign.txt")
 	git(t, repo, "commit", "-qm", "finish foreign task\n\nCoop-Task: "+foreign.ID)
-	if err := CompleteTrustedTask(root, foreign); err != nil {
+	if err := CompleteTrustedTask("", root, foreign); err != nil {
 		t.Fatal(err)
 	}
 	if record, ok, err := readPendingReviewRecord(root, foreign.ID); err != nil || !ok || record.Prepared {
@@ -251,7 +251,7 @@ func TestPendingAwareReviewWindowRecoveryEnrollsBeforeJournalRetirement(t *testi
 	repo := initRepo(t)
 	root := filepath.Join(repo, TasksRoot)
 	subject := taskWithCompletedChecklist(t, root, StateDone, "review-subject")
-	if err := CompleteTrustedTask(root, subject); err != nil {
+	if err := CompleteTrustedTask("", root, subject); err != nil {
 		t.Fatal(err)
 	}
 	foreign := taskWithCompletedChecklist(t, root, StateTodo, "legacy-concurrent")
@@ -346,7 +346,7 @@ func TestPendingReviewAnchorsAHostCompletionFromBeforeTheRun(t *testing.T) {
 	reviewing := func(t *testing.T, root string) []string {
 		t.Helper()
 		subject := taskWithCompletedChecklist(t, root, StateDone, "review-subject")
-		if err := CompleteTrustedTask(root, subject); err != nil {
+		if err := CompleteTrustedTask("", root, subject); err != nil {
 			t.Fatal(err)
 		}
 		return []string{subject.ID}
@@ -358,7 +358,7 @@ func TestPendingReviewAnchorsAHostCompletionFromBeforeTheRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := CompleteTrustedTask(root, host); err != nil {
+		if err := CompleteTrustedTask("", root, host); err != nil {
 			t.Fatalf("host completion during the review = %v", err)
 		}
 		if concurrent, err := windows.FinishReview(); err != nil || len(concurrent) != 1 || concurrent[0] != host.ID {
@@ -369,7 +369,7 @@ func TestPendingReviewAnchorsAHostCompletionFromBeforeTheRun(t *testing.T) {
 
 	t.Run("between reviews", func(t *testing.T) {
 		repo, root, host, plan := earlyHostTask(t, 1)
-		if err := CompleteTrustedTask(root, host); err != nil {
+		if err := CompleteTrustedTask("", root, host); err != nil {
 			t.Fatal(err)
 		}
 		if err := EnrollExistingPendingReviews(repo, []string{root}, []string{host.ID}, plan); err != nil {
@@ -420,7 +420,7 @@ func TestPendingReviewRefusesAHostCompletionWithoutOneCommit(t *testing.T) {
 	for _, commits := range []int{0, 2} {
 		t.Run(fmt.Sprintf("%d commits", commits), func(t *testing.T) {
 			repo, root, host, plan := earlyHostTask(t, commits)
-			if err := CompleteTrustedTask(root, host); err != nil {
+			if err := CompleteTrustedTask("", root, host); err != nil {
 				t.Fatal(err)
 			}
 			err := EnrollExistingPendingReviews(repo, []string{root}, []string{host.ID}, plan)
@@ -445,7 +445,7 @@ func TestPendingReviewRefusesAHostCompletionBesideAPlantedCommit(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, "planted.txt"), "a box's commit naming the task\n")
 	git(t, repo, "add", "planted.txt")
 	git(t, repo, "commit", "-qm", "unrelated work\n\nCoop-Task: "+host.ID)
-	if err := CompleteTrustedTask(root, host); err != nil {
+	if err := CompleteTrustedTask("", root, host); err != nil {
 		t.Fatal(err)
 	}
 	err := EnrollExistingPendingReviews(repo, []string{root}, []string{host.ID}, plan)
@@ -473,7 +473,7 @@ func TestPendingReviewExplicitImportIsExactAndIdempotent(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, "import.txt"), "legacy completion\n")
 	git(t, repo, "add", "import.txt")
 	git(t, repo, "commit", "-qm", "finish legacy import\n\nCoop-Task: "+item.ID)
-	if err := CompleteTrustedTask(root, item); err != nil {
+	if err := CompleteTrustedTask("", root, item); err != nil {
 		t.Fatal(err)
 	}
 	plan := pendingReviewTestPlan(t, repo, root, base)
@@ -670,7 +670,7 @@ func TestPendingReviewSearchesOnlyTheRecordedRange(t *testing.T) {
 		writeTaskFile(t, filepath.Join(repo, "range.txt"), "the task's work\n")
 		git(t, repo, "add", "range.txt")
 		git(t, repo, "commit", "-qm", "the task's work\n\nCoop-Task: "+item.ID)
-		if err := CompleteTrustedTask(root, item); err != nil {
+		if err := CompleteTrustedTask("", root, item); err != nil {
 			t.Fatal(err)
 		}
 		plan := pendingReviewTestPlan(t, repo, root, base)
@@ -775,7 +775,7 @@ func TestPendingReviewReadsVersion1Records(t *testing.T) {
 func TestPendingReviewAnchorsAVersion1RecordFromBeforeTheRun(t *testing.T) {
 	repo, root, host, plan := earlyHostTask(t, 1)
 	anchor := gitOut(repo, "rev-parse", "HEAD~2")
-	if err := CompleteTrustedTask(root, host); err != nil {
+	if err := CompleteTrustedTask("", root, host); err != nil {
 		t.Fatal(err)
 	}
 	if err := EnrollExistingPendingReviews(repo, []string{root}, []string{host.ID}, plan); err != nil {
@@ -1166,7 +1166,7 @@ func TestPendingReviewVerdictCoversTheTreeTheRunStartsFrom(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, "change.txt"), "the task's work\n")
 	git(t, repo, "add", "change.txt")
 	git(t, repo, "commit", "-qm", "the task's work\n\nCoop-Task: "+item.ID)
-	if err := CompleteTrustedTask(root, item); err != nil {
+	if err := CompleteTrustedTask("", root, item); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := NewPendingReviewPlan(repo, []string{root}, base, "abc123", "coop loop",
@@ -1264,7 +1264,7 @@ func TestPendingReviewVerdictCoversTheCommitsAfterTheTasksOwn(t *testing.T) {
 		git(t, repo, "add", "change.txt")
 		git(t, repo, "commit", "-qm", "repair the review subject")
 		reopened, _ := mustCurrentTask(t, root, done.ID)
-		if err := CompleteTrustedTask(root, reopened); err != nil {
+		if err := CompleteTrustedTask("", root, reopened); err != nil {
 			t.Fatal(err)
 		}
 		// Round 2 accepts the task and its repair.
@@ -1426,7 +1426,7 @@ func TestTrustedRecompletionReturnsReopenedTaskToPendingSignoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	reopened, _ := mustCurrentTask(t, root, done.ID)
-	if err := CompleteTrustedTask(root, reopened); err != nil {
+	if err := CompleteTrustedTask("", root, reopened); err != nil {
 		t.Fatal(err)
 	}
 	record, ok, err := readPendingReviewRecord(root, done.ID)
@@ -1478,13 +1478,13 @@ func TestPendingReviewKeepsEarlierDebtAcrossLaterTaskRework(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, "earlier.txt"), "earlier\n")
 	git(t, repo, "add", "earlier.txt")
 	git(t, repo, "commit", "-qm", "earlier implementation\n\nCoop-Task: "+earlier.ID)
-	if err := CompleteTrustedTask(root, earlier); err != nil {
+	if err := CompleteTrustedTask("", root, earlier); err != nil {
 		t.Fatal(err)
 	}
 	writeTaskFile(t, filepath.Join(repo, "later.txt"), "later\n")
 	git(t, repo, "add", "later.txt")
 	git(t, repo, "commit", "-qm", "later implementation\n\nCoop-Task: "+later.ID)
-	if err := CompleteTrustedTask(root, later); err != nil {
+	if err := CompleteTrustedTask("", root, later); err != nil {
 		t.Fatal(err)
 	}
 	plan := pendingReviewTestPlan(t, repo, root, base)
@@ -1711,7 +1711,7 @@ func TestPendingReviewResumesInterruptedReworkForItsSiblings(t *testing.T) {
 		writeTaskFile(t, filepath.Join(repo, id+".txt"), id+"\n")
 		git(t, repo, "add", id+".txt")
 		git(t, repo, "commit", "-qm", id+" implementation\n\nCoop-Task: "+id)
-		if err := CompleteTrustedTask(root, task); err != nil {
+		if err := CompleteTrustedTask("", root, task); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1823,7 +1823,7 @@ func TestPendingReviewCrashWindowEnrollsConcurrentCompletionBeforeRetiring(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := CompleteTrustedTask(root, foreign); err != nil {
+	if err := CompleteTrustedTask("", root, foreign); err != nil {
 		t.Fatal(err)
 	}
 	if err := unlockLeaseFile(windows.windows[0].live); err != nil {

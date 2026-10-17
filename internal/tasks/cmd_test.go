@@ -166,7 +166,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	// unblock WITH an answer → todo (available again; the in_progress lock is taken by claim), the
 	// resolved decision.md rides along. (A no-answer unblock of an unresolved decision is refused —
 	// covered by TestUnblockRequiresResolution.)
-	if code, err := tasksFolderUnblock(root, []string{id, "A — go with it"}); code != 0 || err != nil {
+	if code, err := tasksFolderUnblock("", root, []string{id, "A — go with it"}); code != 0 || err != nil {
 		t.Fatalf("unblock: code=%d err=%v", code, err)
 	}
 	if mustReadTaskTree(t, root)[0].State != StateTodo {
@@ -179,7 +179,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 		t.Error("unblock must leave the owner record cleared (idempotent — block already cleared it)")
 	}
 	// unblocking a non-blocked task is an error (it's in todo now), not a silent reopen.
-	if code, err := tasksFolderUnblock(root, []string{id}); code == 0 || err == nil {
+	if code, err := tasksFolderUnblock("", root, []string{id}); code == 0 || err == nil {
 		t.Errorf("unblock of a non-blocked task should error, got (%d, %v)", code, err)
 	}
 
@@ -1479,14 +1479,14 @@ func TestUnblockRequiresResolution(t *testing.T) {
 		t.Fatalf("block: %d %v", code, err)
 	}
 	// No answer + placeholder Resolution → refuse, stay blocked (don't create a lint-rejected todo).
-	if code, err := tasksFolderUnblock(root, []string{"pick"}); code != 2 || err == nil {
+	if code, err := tasksFolderUnblock("", root, []string{"pick"}); code != 2 || err == nil {
 		t.Fatalf("unblock with no resolution: got (%d, %v), want (2, err)", code, err)
 	}
 	if mustReadTaskTree(t, root)[0].State != StateBlocked {
 		t.Fatal("a refused unblock must leave the task blocked")
 	}
 	// With an inline answer → resolves the decision and unblocks to todo.
-	if code, err := tasksFolderUnblock(root, []string{"pick", "Postgres"}); code != 0 || err != nil {
+	if code, err := tasksFolderUnblock("", root, []string{"pick", "Postgres"}); code != 0 || err != nil {
 		t.Fatalf("unblock with answer: %d %v", code, err)
 	}
 	tk := mustReadTaskTree(t, root)[0]
@@ -1533,7 +1533,7 @@ func TestTasksFolderUnblockRecordsInlineAnswer(t *testing.T) {
 	if code, err := tasksFolderBlock(root, []string{id}); code != 0 || err != nil {
 		t.Fatalf("block: code=%d err=%v", code, err)
 	}
-	if code, err := tasksFolderUnblock(root, []string{id, "B", "—", "go", "SQLite"}); code != 0 || err != nil {
+	if code, err := tasksFolderUnblock("", root, []string{id, "B", "—", "go", "SQLite"}); code != 0 || err != nil {
 		t.Fatalf("unblock+answer: code=%d err=%v", code, err)
 	}
 	if mustReadTaskTree(t, root)[0].State != StateTodo {
@@ -1576,7 +1576,7 @@ func TestTasksFolderUnblockRejectsUnknownFlagBeforeMutation(t *testing.T) {
 			}
 			decision := filepath.Join(root, StateBlocked, id, "decision.md")
 			before := readFileString(decision)
-			code, err := tasksFolderUnblock(root, append([]string{id}, tc.args...))
+			code, err := tasksFolderUnblock("", root, append([]string{id}, tc.args...))
 			if code != 2 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("Unknown option %q for \"coop tasks unblock\"", tc.flag)) {
 				t.Fatalf("unknown flag = code %d err=%v", code, err)
 			}
@@ -1630,7 +1630,7 @@ func TestRunDecisionBrowser(t *testing.T) {
 	}
 	in := strings.NewReader(":n\nSQLite it is\n")
 	var out bytes.Buffer
-	if code, err := runDecisionBrowser(decisionRefs(root, "", decisions), in, &out); code != 0 || err != nil {
+	if code, err := runDecisionBrowser("", decisionRefs(root, "", decisions), in, &out); code != 0 || err != nil {
 		t.Fatalf("browser: code=%d err=%v", code, err)
 	}
 	if strings.Contains(out.String(), " · · ") {
@@ -1697,7 +1697,7 @@ func TestRunDecisionBrowserDelete(t *testing.T) {
 	}
 	in := strings.NewReader(":d\ny\n:d\ny\n") // delete both, each behind a y confirm
 	var out bytes.Buffer
-	if code, err := runDecisionBrowser(decisionRefs(root, "", decisions), in, &out); code != 0 || err != nil {
+	if code, err := runDecisionBrowser("", decisionRefs(root, "", decisions), in, &out); code != 0 || err != nil {
 		t.Fatalf("browser: code=%d err=%v", code, err)
 	}
 	for _, d := range decisions {
@@ -1746,7 +1746,7 @@ func TestRunDecisionBrowserDeleteDeclined(t *testing.T) {
 	}
 	in := strings.NewReader(":d\n\n:q\n") // :d, then a bare Enter declines (default No), then quit
 	var out bytes.Buffer
-	if code, err := runDecisionBrowser(decisionRefs(root, "", decisions), in, &out); code != 0 || err != nil {
+	if code, err := runDecisionBrowser("", decisionRefs(root, "", decisions), in, &out); code != 0 || err != nil {
 		t.Fatalf("browser: code=%d err=%v", code, err)
 	}
 	got, err := FindTask(root, decisions[0].ID)
@@ -1776,7 +1776,7 @@ func TestRunDecisionBrowserSpansQueues(t *testing.T) {
 	}
 	in := strings.NewReader("go with A\ngo with B\n")
 	var out bytes.Buffer
-	if code, err := runDecisionBrowser(refs, in, &out); code != 0 || err != nil {
+	if code, err := runDecisionBrowser("", refs, in, &out); code != 0 || err != nil {
 		t.Fatalf("browser: code=%d err=%v", code, err)
 	}
 	for i, root := range []string{rootA, rootB} {
@@ -1793,7 +1793,7 @@ func TestRunDecisionBrowserSpansQueues(t *testing.T) {
 }
 
 func TestDecisionsUnknownFlag(t *testing.T) {
-	if code, err := tasksFolderDecisions(t.TempDir(), []string{"--bogus"}); code != 2 || err == nil {
+	if code, err := tasksFolderDecisions("", t.TempDir(), []string{"--bogus"}); code != 2 || err == nil {
 		t.Errorf("unknown decisions flag should be a usage error (2), got (%d, %v)", code, err)
 	}
 }

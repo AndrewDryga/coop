@@ -721,7 +721,7 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 		if !ui.IsTerminal(os.Stdin) {
 			return 2, errors.New("coop tasks decisions -i needs an interactive terminal")
 		}
-		code, err := runDecisionBrowser(refs, os.Stdin, os.Stdout)
+		code, err := runDecisionBrowser(repo, refs, os.Stdin, os.Stdout)
 		printAnsweredDecisions(p, answered, true)
 		return code, err
 	}
@@ -762,7 +762,7 @@ func tasksDecisionsRollup(repo string, rels []string) (int, error) {
 		}
 		first = false
 		fmt.Println(banner(p, rel))
-		if _, err := tasksFolderDecisions(root, nil); err != nil {
+		if _, err := tasksFolderDecisions(repo, root, nil); err != nil {
 			return -1, err
 		}
 	}

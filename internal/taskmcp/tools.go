@@ -629,7 +629,7 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		}
 		// Another task: the host's own trusted completion — its lease, receipt, and normalization —
 		// so the loop's completion audit sees a controller-owned move, not an unowned one.
-		if err := tasks.CompleteTrustedTask(loc.root, loc.item); err != nil {
+		if err := tasks.CompleteTrustedTask(s.authority.Workspace, loc.root, loc.item); err != nil {
 			if errors.Is(err, tasks.ErrTaskLeased) {
 				return heldRefusal(loc.item.ID, "complete", "leased")
 			}

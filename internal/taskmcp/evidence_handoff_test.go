@@ -64,7 +64,7 @@ func TestCompletionEvidenceHandoff(t *testing.T) {
 						t.Fatalf("assigned move removed scratch before host finalization: %v", err)
 					}
 				}
-				if err := tasks.CompleteTrustedTask(root, item); err != nil {
+				if err := tasks.CompleteTrustedTask("", root, item); err != nil {
 					t.Fatalf("host finalization: %v", err)
 				}
 				done := filepath.Join(root, tasks.StateDone, "t1")

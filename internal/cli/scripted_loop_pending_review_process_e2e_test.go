@@ -529,7 +529,7 @@ func TestProviderScriptedLoopExplicitPendingReviewImport(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("current import task = %+v, %v, %v", item, ok, err)
 	}
-	if err := taskpkg.CompleteTrustedTask(root, item); err != nil {
+	if err := taskpkg.CompleteTrustedTask(suite.layout.Repo, root, item); err != nil {
 		t.Fatal(err)
 	}
 

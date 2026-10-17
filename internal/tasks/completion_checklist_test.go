@@ -98,7 +98,7 @@ func TestTrustedCompletionRequiresCurrentChecklist(t *testing.T) {
 			writeTaskFile(t, filepath.Join(item.Dir, "task.md"), test.body)
 			writeTaskFile(t, filepath.Join(item.Dir, "state.md"), "resume snapshot\n")
 			writeTaskFile(t, filepath.Join(item.Dir, "tmp", "evidence"), "retain\n")
-			err := CompleteTrustedTask(root, item)
+			err := CompleteTrustedTask("", root, item)
 			if test.want == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -132,7 +132,7 @@ func TestUnfinishedCompletionPreservesExistingReceipt(t *testing.T) {
 	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
 	root := t.TempDir()
 	item := taskWithCompletedChecklist(t, root, StateInProgress, "receipt")
-	if err := CompleteTrustedTask(root, item); err != nil {
+	if err := CompleteTrustedTask("", root, item); err != nil {
 		t.Fatal(err)
 	}
 	done, _ := mustCurrentTask(t, root, item.ID)
@@ -143,7 +143,7 @@ func TestUnfinishedCompletionPreservesExistingReceipt(t *testing.T) {
 	if err := RewriteSubtasks(done.Dir, []Subtask{{Text: "required follow-up"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := CompleteTrustedTask(root, done); !errors.Is(err, ErrIncompleteChecklist) {
+	if err := CompleteTrustedTask("", root, done); !errors.Is(err, ErrIncompleteChecklist) {
 		t.Fatalf("completion = %v", err)
 	}
 	after, ok := taskCompletionReceipt(root, done)

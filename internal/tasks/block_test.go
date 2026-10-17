@@ -330,7 +330,7 @@ func TestDecisionsShowTheQuestionOfANewAndAnOldDecision(t *testing.T) {
 	writeTaskFile(t, filepath.Join(oldDir, "task.md"), "# Pick region\n")
 	writeTaskFile(t, filepath.Join(oldDir, "decision.md"), "# Decision: Pick region?\n\n**Blocks:** this task (pick-region).\n\n"+
 		"**The decision:** Which region?\n\n**Options:**\n\n- A — eu-west\n\n**Recommendation:** A — closest to users.\n\n---\n\n"+decisionResolutionLine)
-	list := captureStdout(t, func() { _, _ = tasksFolderDecisions(root, nil) })
+	list := captureStdout(t, func() { _, _ = tasksFolderDecisions("", root, nil) })
 	for _, want := range []string{"Where should uploads be stored?", "Recommendation: B — more than one machine.", "Pick region?", "Recommendation: A — closest to users."} {
 		if !strings.Contains(list, want) {
 			t.Errorf("coop tasks decisions lacks %q:\n%s", want, list)
@@ -367,7 +367,7 @@ func TestAnAnsweredBlockedTaskIsShownAsAnswered(t *testing.T) {
 		strings.Contains(list, "Answer blocked tasks") {
 		t.Fatalf("an answered blocked task is listed as a question:\n%s", list)
 	}
-	decisions := captureStdout(t, func() { _, _ = tasksFolderDecisions(root, nil) })
+	decisions := captureStdout(t, func() { _, _ = tasksFolderDecisions("", root, nil) })
 	if strings.Contains(decisions, "Questions waiting for your answer") || !strings.Contains(decisions, "Answered, still blocked · 1") ||
 		!strings.Contains(decisions, "Answer: Postgres.") || !strings.Contains(decisions, "Finish it: coop tasks unblock answered") {
 		t.Fatalf("decisions counted an answered task as waiting:\n%s", decisions)
@@ -376,7 +376,7 @@ func TestAnAnsweredBlockedTaskIsShownAsAnswered(t *testing.T) {
 	openDir := filepath.Join(root, StateBlocked, "open")
 	writeTaskFile(t, filepath.Join(openDir, "task.md"), "# Choose a region\n")
 	writeTaskFile(t, filepath.Join(openDir, "decision.md"), "# Decision: Which region?\n")
-	decisions = captureStdout(t, func() { _, _ = tasksFolderDecisions(root, nil) })
+	decisions = captureStdout(t, func() { _, _ = tasksFolderDecisions("", root, nil) })
 	if !strings.Contains(decisions, "Questions waiting for your answer · 1") || !strings.Contains(decisions, "Answered, still blocked · 1") {
 		t.Fatalf("decisions miscounted one open and one answered task:\n%s", decisions)
 	}

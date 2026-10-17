@@ -140,19 +140,20 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "block":
 		return tasksFolderBlock(root, args)
 	case "unblock":
-		return tasksFolderUnblock(root, args)
+		return tasksFolderUnblock(repo, root, args)
 	case "park":
 		return tasksFolderPark(root, args)
 	case "done":
 		return tasksFolderMoveWith(root, args, StateDone, "done", "done", claimOptions{
-			actor: captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{}),
+			actor:   captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{}),
+			project: repo,
 		})
 	case "path":
 		return tasksFolderPath(root, args)
 	case "rm":
 		return tasksFolderRemove(root, args)
 	case "decisions":
-		return tasksFolderDecisions(root, args)
+		return tasksFolderDecisions(repo, root, args)
 	default:
 		return 2, unknownSubcommandErr("tasks", sub, TasksVerbs)
 	}
@@ -580,10 +581,12 @@ func taskOwnerIdentity() (user, host string) {
 
 // claimOptions is what `coop tasks claim` learned from its flags and its own process tree: the
 // actor the claim binds to (zero for a person at a terminal) and whether a live competing claim
-// may be taken over.
+// may be taken over. Done takes the same actor, plus the project folder whose history the audit
+// of a reopened task reads.
 type claimOptions struct {
-	actor ClaimActor
-	force bool
+	actor   ClaimActor
+	force   bool
+	project string
 }
 
 var errTaskClaimedByOther = errors.New("task is claimed by another live process")
@@ -750,7 +753,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 	if t.State == newState {
 		switch newState {
 		case StateDone:
-			if err := CompleteTrustedTask(root, t); err != nil {
+			if err := CompleteTrustedTask(opts.project, root, t); err != nil {
 				return -1, trustedCompletionError(err, t.ID)
 			}
 			ui.Note("%s is already done.", t.Title)
@@ -785,7 +788,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		if _, err := stopOwnLeaseHolder(root, t, opts.actor); err != nil {
 			return -1, err
 		}
-		if err := CompleteTrustedTask(root, t); err != nil {
+		if err := CompleteTrustedTask(opts.project, root, t); err != nil {
 			return -1, trustedCompletionError(err, t.ID)
 		}
 	} else {
@@ -1072,7 +1075,7 @@ func parkTask(root string, t Item, reason string) error {
 
 // tasksFolderUnblock moves a task out of 50_blocked/ back to 00_todo/ — but only if it's
 // actually blocked, so a fat-fingered id can't silently reopen a done (or todo) task.
-func tasksFolderUnblock(root string, args []string) (int, error) {
+func tasksFolderUnblock(project, root string, args []string) (int, error) {
 	id, answer, parseErr := parseTaskUnblockArgs(args)
 	if parseErr != nil {
 		return 2, parseErr
@@ -1099,7 +1102,7 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 					)
 				}
 			}
-			committed, err := finishPendingAuditUnblock(root, t, record)
+			committed, err := finishPendingAuditUnblock(project, root, t, record)
 			if err != nil && committed {
 				return -1, fmt.Errorf(
 					"interrupted audit unblock for %s activated and the task remains todo, but releasing its authority lock failed: %w — do not retry; inspect the current task path: coop tasks path %s",
@@ -1138,7 +1141,7 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 	if answer == "" && t.HasDecision && !resolved {
 		return 2, fmt.Errorf("%s has no resolution yet — write the **Resolution:** in its decision.md, or pass it inline: coop tasks unblock %s \"<answer>\"", t.ID, args[0])
 	}
-	if err := resolveAndUnblock(root, t, answer); err != nil {
+	if err := resolveAndUnblock(project, root, t, answer); err != nil {
 		return -1, unblockRetryError(t.ID, answer != "", err)
 	}
 	ui.OK("Unblocked task: %s", t.Title)
@@ -1273,8 +1276,8 @@ func unblockRetryError(id string, hasAnswer bool, err error) error {
 // task to 00_todo/ — NOT 10_in_progress/: in_progress is the "an agent is on this" lock taken by
 // `claim`, so a just-unblocked task with nobody on it belongs in the queue as available work; the
 // resolved decision.md rides along as the audit trail. Shared by `unblock` and the -i browser.
-func resolveAndUnblock(root string, t Item, answer string) error {
-	transition, err := prepareBlockedAuditReopenUnblock(root, t)
+func resolveAndUnblock(project, root string, t Item, answer string) error {
+	transition, err := prepareBlockedAuditReopenUnblock(project, root, t)
 	if err != nil {
 		return &unblockStageError{stage: "audit authority validation", state: StateBlocked, err: err}
 	}
@@ -2534,7 +2537,7 @@ func leaseReservation(o TaskLeaseObservation) string {
 	}
 }
 
-func tasksFolderDecisions(root string, args []string) (int, error) {
+func tasksFolderDecisions(project, root string, args []string) (int, error) {
 	interactive := false
 	for _, a := range args {
 		switch a {
@@ -2564,7 +2567,7 @@ func tasksFolderDecisions(root string, args []string) (int, error) {
 		return 0, nil
 	}
 	if interactive {
-		code, err := decisionsInteractive(root, decisions)
+		code, err := decisionsInteractive(project, root, decisions)
 		printAnsweredDecisions(p, answered, true)
 		return code, err
 	}
@@ -2634,16 +2637,17 @@ func decisionRefs(root, label string, decisions []Item) []decisionRef {
 // each is shown in full, an answer is read and recorded (unblocking the task), and :n / :p move
 // between them, :q stops. It needs a real terminal — in a pipe or the unattended loop there's
 // nobody to answer, so it errors instead of hanging.
-func decisionsInteractive(root string, decisions []Item) (int, error) {
+func decisionsInteractive(project, root string, decisions []Item) (int, error) {
 	if !ui.IsTerminal(os.Stdin) {
 		return 2, errors.New("coop tasks decisions -i needs an interactive terminal")
 	}
-	return runDecisionBrowser(decisionRefs(root, "", decisions), os.Stdin, os.Stdout)
+	return runDecisionBrowser(project, decisionRefs(root, "", decisions), os.Stdin, os.Stdout)
 }
 
 // runDecisionBrowser is the interactive loop with its I/O injected, so it can be driven in a
-// test. Each ref carries its own queue root, so one session can span several queues.
-func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, error) {
+// test. Each ref carries its own queue root, so one session can span several queues of the one
+// project whose history an answer's unblock audits.
+func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io.Writer) (int, error) {
 	p := ui.For(os.Stdout)
 	sc := bufio.NewScanner(in)
 	answered, parked, deleted := 0, 0, 0
@@ -2753,7 +2757,7 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 			i++
 		default:
 			if t.State == StateBlocked {
-				if err := resolveAndUnblock(ref.root, t, line); err != nil {
+				if err := resolveAndUnblock(project, ref.root, t, line); err != nil {
 					return -1, unblockRetryError(t.ID, true, err)
 				}
 				answered++

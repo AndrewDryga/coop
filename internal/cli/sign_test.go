@@ -540,7 +540,7 @@ func TestSignUnpushedCarriesAReopenedTaskAuthority(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("task = %+v, %v, %v", item, ok, err)
 	}
-	if err := tasks.CompleteTrustedTask(root, item); err != nil {
+	if err := tasks.CompleteTrustedTask(repo, root, item); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := tasks.NewPendingReviewPlan(repo, hosts, base, "digest", "coop loop",

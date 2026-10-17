@@ -266,7 +266,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 		written := writeRawAuditReopenRecord(t, root, task.ID, body)
-		code, err := tasksFolderUnblock(root, []string{task.ID, "must not be recorded"})
+		code, err := tasksFolderUnblock("", root, []string{task.ID, "must not be recorded"})
 		if code != -1 || err == nil || !strings.Contains(err.Error(), "unsupported audit reopen record version 1") {
 			t.Fatalf("unsupported unblock = code %d err=%v", code, err)
 		}
@@ -311,7 +311,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 		if got := leaseAuthorityBytes(t, root, task.ID); !slices.Equal(got, receiptBytes) {
 			t.Fatalf("pending lease changed completion receipt: %q, want %q", got, receiptBytes)
 		}
-		err = CompleteTrustedTask(root, task)
+		err = CompleteTrustedTask("", root, task)
 		if err == nil || !strings.Contains(err.Error(), "pending audit authority") ||
 			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID) {
 			t.Fatalf("pending completion error = %v", err)
@@ -467,7 +467,7 @@ func TestTrustedManualCompletionConsumesAuditReopenGeneration(t *testing.T) {
 	if err := WriteAuditReopenRecord(root, record); err != nil {
 		t.Fatal(err)
 	}
-	if err := CompleteTrustedTask(root, task); err != nil {
+	if err := CompleteTrustedTask(repo, root, task); err != nil {
 		t.Fatal(err)
 	}
 	done, _ := mustCurrentTask(t, root, task.ID)

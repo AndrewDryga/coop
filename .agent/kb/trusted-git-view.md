@@ -3,7 +3,7 @@ name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
 sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
@@ -138,11 +138,11 @@ observation snapshots too): a box that deleted the `.git` of a folder Coop later
 (a loop's commit, sign or review step, a fork merge, a session clone) moved the view, and host
 git's reads and writes, to a home folder kept in Git. Only a climb is refused. A folder holding the
 `.git` itself keeps its repository, so a `COOP_REPO` at the home folder still has views; the task
-audit reads history from the project folder that holds its queue (`auditProjectDir`, which strips
-a literal `.agent/tasks`) instead of from inside the queue. Two queues in a home-folder project
-still climb and are refused: a subproject's `<member>/.agent/tasks` and a `--tasks`/COOP_TASKS
-queue elsewhere in it, so a task the audit reopened there cannot be completed or unblocked
-(queued). The error is never `errNoRepository`, on which `GitRefCommand` runs plain git, and
+audit reads history from the project folder its caller resolved (`auditHistory`: `coop tasks`'
+project, the task tools' workspace), never from inside a queue, so every queue of a home-folder
+project — its own, a subproject's `<member>/.agent/tasks`, a `--tasks`/COOP_TASKS queue — still
+completes and unblocks the tasks the audit reopened
+(`TestAuditReadsHistoryWhenTheHomeFolderIsTheProject`). The error is never `errNoRepository`, on which `GitRefCommand` runs plain git, and
 plain git climbs there by itself. On `errNoRepository` `GitCommand` runs git with `GIT_DIR` at a
 folder that cannot exist (`/dev/null/coop-no-repository`) and a ceiling at the folder's parent, so a
 `.git` a box makes after the check, with a filter driver in its config, is never found
@@ -225,6 +225,9 @@ prompt) is left to run. `GlobalGitConfig` reads `git config --global` from `/` w
 cannot exist, so it never searches a box's repository from coop's working folder.
 
 ## Changelog
+- 2026-10-18 — the task audit reads history from the project its caller resolved, so member and
+  --tasks queues of a home-folder project complete and unblock reopened tasks
+  (task 2026-10-17-let-the-task-audit-read-history-for-every-queue).
 - 2026-10-18 — host git commands without a deadline stop at gitStallLimit; global config reads go
   through GlobalGitConfig (task 2026-10-17-bound-stalls-in-the-git-commands-coop-runs-on-bo).
 - 2026-10-17 — GitCommand's no-repository fallback runs git with a git dir that cannot exist, so git

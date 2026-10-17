@@ -101,7 +101,7 @@ func TestForkAssignmentProjectsOneCanonicalTaskAndDefersCompletion(t *testing.T)
 	if err != nil || !ok || record.Fork.Phase != ForkAssignmentReviewing || record.Fork.ProjectionDigest == "" {
 		t.Fatalf("accepted owner = %#v, ok=%v err=%v", record, ok, err)
 	}
-	if err := CompleteTrustedTask(root, canonical); !errors.Is(err, ErrTaskSandboxOwned) {
+	if err := CompleteTrustedTask("", root, canonical); !errors.Is(err, ErrTaskSandboxOwned) {
 		t.Fatalf("ordinary completion = %v, want sandbox-owned refusal", err)
 	}
 	canonical, _ = mustCurrentTask(t, root, "first")
@@ -815,7 +815,7 @@ func TestUnblockedForkAssignmentRestoresBlockedProjectionForSameGeneration(t *te
 	if canonical.State != StateBlocked {
 		t.Fatalf("canonical state = %s, want blocked", canonical.State)
 	}
-	if err := resolveAndUnblock(root, canonical, ""); err != nil {
+	if err := resolveAndUnblock("", root, canonical, ""); err != nil {
 		t.Fatal(err)
 	}
 	resumed, err := AssignForkTask([]string{root}, request)
@@ -853,7 +853,7 @@ func TestForkUnblockReplaysPausedOwnerWhileCanonicalStillBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	canonical, _ := mustCurrentTask(t, root, "assigned")
-	if err := resolveAndUnblock(root, canonical, ""); err != nil {
+	if err := resolveAndUnblock("", root, canonical, ""); err != nil {
 		t.Fatal(err)
 	}
 	canonical, _ = mustCurrentTask(t, root, "assigned")
@@ -969,7 +969,7 @@ func TestForkUnblockRecoversTodoWithBlockedOwner(t *testing.T) {
 	if err := MoveTaskDir(root, canonical, StateTodo); err != nil {
 		t.Fatal(err)
 	}
-	code, err := tasksFolderUnblock(root, []string{"assigned"})
+	code, err := tasksFolderUnblock("", root, []string{"assigned"})
 	if err != nil || code != 0 {
 		t.Fatalf("todo+blocked-owner recovery = code %d err %v", code, err)
 	}

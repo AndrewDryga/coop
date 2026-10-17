@@ -66,13 +66,13 @@ func TestApprovedTaskOutput(t *testing.T) {
 		writeTaskFile(t, filepath.Join(dir, "task.md"), "# Choose how long sessions last\n")
 		writeTaskFile(t, filepath.Join(dir, "decision.md"),
 			"# Decision: How long should a session last?\n\n**Recommendation:** 30 days, with renewal while active.\n")
-		assertApprovedOutput(t, "41-decisions-listing", captureStdout(t, func() { _, _ = tasksFolderDecisions(root, nil) }))
+		assertApprovedOutput(t, "41-decisions-listing", captureStdout(t, func() { _, _ = tasksFolderDecisions("", root, nil) }))
 	})
 
 	t.Run("41-decisions-empty", func(t *testing.T) {
 		root := t.TempDir()
 		writeTaskFile(t, filepath.Join(root, StateTodo, "2026-09-11-add-password-reset", "task.md"), "# Add a password reset link\n")
-		assertApprovedOutput(t, "41-decisions-empty", captureStderr(t, func() { _, _ = tasksFolderDecisions(root, nil) }))
+		assertApprovedOutput(t, "41-decisions-empty", captureStderr(t, func() { _, _ = tasksFolderDecisions("", root, nil) }))
 	})
 }
 

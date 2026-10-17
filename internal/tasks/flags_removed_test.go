@@ -59,7 +59,7 @@ func TestRemovedTaskFlagsRecordsAreInert(t *testing.T) {
 
 	// Completing every task still works, writes no new record, and leaves the historical files alone.
 	for _, task := range []Item{stale, broken, plain} {
-		if err := CompleteTrustedTask(root, task); err != nil {
+		if err := CompleteTrustedTask("", root, task); err != nil {
 			t.Fatalf("complete %s: %v", task.ID, err)
 		}
 	}

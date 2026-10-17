@@ -291,22 +291,24 @@ func taskIDDuplicates(hosts []string, requireLive bool) ([]string, error) {
 	return duplicates, nil
 }
 
-// auditProjectDir is where the audit reads repository history for the queue at root: the project
-// folder holding the queue's .agent, whose own .git a trusted git view takes without climbing. From
-// inside the queue the search climbs, and a view refuses a climb that reaches the home folder, as it
-// would when the home folder itself is the project (COOP_REPO=~). A queue kept anywhere else
-// (--tasks) is read from where it is.
-func auditProjectDir(root string) string {
-	if filepath.Base(root) == "tasks" && filepath.Base(filepath.Dir(root)) == ".agent" {
-		return filepath.Dir(filepath.Dir(root))
+// auditHistory reads the repository and HEAD commit the audit checks a reopen record against, from
+// the project folder the caller resolved — the same history the record was captured from. Read from
+// a queue folder instead (a member's .agent/tasks, a --tasks queue), git searches upward for the
+// repository, and a trusted git view refuses a search that reaches the home folder, as it does when
+// the home folder itself is the project (COOP_REPO=~). No project means no history: the audit
+// refuses rather than let `git -C ""` read whatever repository holds the working directory.
+func auditHistory(project string) (repo, head string) {
+	if project == "" {
+		return "", ""
 	}
-	return root
+	return gitOut(project, "rev-parse", "--show-toplevel"), gitOut(project, "rev-parse", "--verify", "HEAD^{commit}")
 }
 
 // completeTrustedTask is the host equivalent of the provider completion boundary. It holds the
 // task authority lock across move, finalization, and receipt creation so a concurrent loop can
-// observe either the old state or an accepted done inode, never a transient.
-func CompleteTrustedTask(root string, task Item) (retErr error) {
+// observe either the old state or an accepted done inode, never a transient. project is the
+// project folder whose history a reopened task's audit reads.
+func CompleteTrustedTask(project, root string, task Item) (retErr error) {
 	windows, err := BeginCompletionWindows([]string{root})
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrCompletionWindowSetup, err)
@@ -349,9 +351,7 @@ func CompleteTrustedTask(root string, task Item) (retErr error) {
 		return err
 	}
 	if reopened {
-		project := auditProjectDir(root)
-		repo := gitOut(project, "rev-parse", "--show-toplevel")
-		head := gitOut(project, "rev-parse", "--verify", "HEAD^{commit}")
+		repo, head := auditHistory(project)
 		if reopen.UnblockPending {
 			return &auditCompletionStateError{message: fmt.Sprintf(
 				"task %s has non-authorizing pending audit authority from an interrupted unblock; "+
@@ -2207,7 +2207,7 @@ func (u *blockedAuditUnblock) finish(operationErr error) error {
 // prepareBlockedAuditReopenUnblock validates a blocked task and computes any required authority rebase
 // of the same host generation. The returned transaction holds the authority flock; before moving,
 // it persists a non-authorizing pending form that makes a crash safe and recoverable.
-func prepareBlockedAuditReopenUnblock(root string, task Item) (*blockedAuditUnblock, error) {
+func prepareBlockedAuditReopenUnblock(project, root string, task Item) (*blockedAuditUnblock, error) {
 	observed, ok, err := ReadAuditReopenRecord(root, task.ID)
 	if err != nil {
 		return nil, fmt.Errorf("read blocked audit reopen authority for task %s: %w", task.ID, err)
@@ -2227,10 +2227,10 @@ func prepareBlockedAuditReopenUnblock(root string, task Item) (*blockedAuditUnbl
 		}
 		return transition, nil
 	}
-	return lockBlockedAuditReopenUnblock(root, task, observed)
+	return lockBlockedAuditReopenUnblock(project, root, task, observed)
 }
 
-func lockBlockedAuditReopenUnblock(root string, task Item, observed AuditReopenRecord) (*blockedAuditUnblock, error) {
+func lockBlockedAuditReopenUnblock(project, root string, task Item, observed AuditReopenRecord) (*blockedAuditUnblock, error) {
 	authority, err := lockLeaseAuthority(root, task.ID, false, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
 		return nil, fmt.Errorf("lock blocked audit reopen authority for task %s: %w", task.ID, err)
@@ -2253,9 +2253,7 @@ func lockBlockedAuditReopenUnblock(root string, task Item, observed AuditReopenR
 	if !ok || current.State != StateBlocked || current.Dir != task.Dir {
 		return fail(fmt.Errorf("task %s changed state while its blocked audit authority was locked", task.ID))
 	}
-	project := auditProjectDir(root)
-	repo := gitOut(project, "rev-parse", "--show-toplevel")
-	head := gitOut(project, "rev-parse", "HEAD")
+	repo, head := auditHistory(project)
 	if repo == "" || head == "" {
 		return fail(fmt.Errorf("resolve repository history for blocked audit task %s", task.ID))
 	}
@@ -2288,7 +2286,7 @@ func lockBlockedAuditReopenUnblock(root string, task Item, observed AuditReopenR
 
 // finishPendingAuditUnblock is the explicit host recovery for a crash after the authorized folder
 // move. Pending authority never self-activates from queue state or lease acquisition.
-func finishPendingAuditUnblock(root string, task Item, observed AuditReopenRecord) (bool, error) {
+func finishPendingAuditUnblock(project, root string, task Item, observed AuditReopenRecord) (bool, error) {
 	authority, err := lockLeaseAuthority(root, task.ID, false, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
 		return false, fmt.Errorf("lock pending audit unblock authority for task %s: %w", task.ID, err)
@@ -2310,9 +2308,7 @@ func finishPendingAuditUnblock(root string, task Item, observed AuditReopenRecor
 	if !ok || current.State != StateTodo || current.Dir != task.Dir {
 		return fail(fmt.Errorf("task %s is no longer the todo task from its pending audit unblock", task.ID))
 	}
-	project := auditProjectDir(root)
-	repo := gitOut(project, "rev-parse", "--show-toplevel")
-	head := gitOut(project, "rev-parse", "HEAD")
+	repo, head := auditHistory(project)
 	replacement := record
 	replacement.Version = auditReopenVersion
 	replacement.UnblockPending = false
