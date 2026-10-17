@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -196,6 +198,89 @@ func TestForkRunningPid(t *testing.T) {
 	}
 	if pid, held := StateOwner(repo, "live"); pid != os.Getpid() || !held {
 		t.Errorf("StateOwner(live) = (%d, %v), want (%d, true)", pid, held, os.Getpid())
+	}
+}
+
+// plantSocket leaves a Unix socket at path. t.TempDir holds the long test name, past Darwin's
+// 104-byte socket path limit, so the socket is bound in a short folder and moved into place.
+func plantSocket(path string) error {
+	dir, err := os.MkdirTemp("", "coop-sock-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	bound := filepath.Join(dir, "s")
+	listener, err := net.Listen("unix", bound)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	return os.Rename(bound, path)
+}
+
+// A box whose mount holds a fork's .coop folder can put anything at a lifecycle record's name. Every
+// reader of the record refuses what Coop never writes there, at once, and says what it found: none
+// waits on a FIFO, reads a device or reads past the limit, and the fork stays held until
+// `coop fork stop`.
+func TestWorkerStateReadersRefuseWhatIsNotARecord(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		found string
+		plant func(path string) error
+	}{
+		{name: "FIFO with no writer", found: "a named pipe", plant: func(path string) error { return syscall.Mkfifo(path, 0o600) }},
+		{name: "link to dev zero", found: "a link", plant: func(path string) error { return os.Symlink("/dev/zero", path) }},
+		{name: "dangling link", found: "a link", plant: func(path string) error { return os.Symlink(path+".gone", path) }},
+		{name: "folder", found: "a folder", plant: func(path string) error { return os.Mkdir(path, 0o700) }},
+		{name: "socket", found: "a socket", plant: plantSocket},
+		{name: "oversized file", found: fmt.Sprintf("%d bytes, larger than any record", workerStateLimit+1), plant: func(path string) error {
+			record := OwnerStateV1 + "2147483646\nlinux-proc-v1:1:2\n"
+			return os.WriteFile(path, []byte(record+strings.Repeat(" ", workerStateLimit+1-len(record))), 0o600)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := filepath.Join(t.TempDir(), "proj")
+			if err := EnsureStateDir(repo); err != nil {
+				t.Fatal(err)
+			}
+			path := PidPath(repo, "perf")
+			if err := tc.plant(path); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				if _, err := ReadWorkerState(repo, "perf"); !errors.Is(err, ErrNotAStateFile) || err.Error() != path+" is "+tc.found {
+					t.Errorf("ReadWorkerState = %v, want %s is %s", err, path, tc.found)
+				}
+				if pid := RunningPid(repo, "perf"); pid != 0 {
+					t.Errorf("RunningPid = %d, want 0", pid)
+				}
+				if pid, held := StateOwner(repo, "perf"); pid != 0 || !held {
+					t.Errorf("StateOwner = (%d, %v), want (0, true)", pid, held)
+				}
+				if !NeedsStop(repo, "perf") {
+					t.Error("a record Coop cannot read must keep the destructive-operation guard held")
+				}
+				if _, err := ConfirmWorker(repo, "perf"); !errors.Is(err, ErrNotAStateFile) {
+					t.Errorf("ConfirmWorker = %v, want %s is %s", err, path, tc.found)
+				}
+				ClearPidIfMine(repo, "perf", "")
+			}()
+			select {
+			case <-done:
+			case <-time.After(wait.Deadline):
+				t.Fatalf("the readers of a %s did not return within %v", tc.name, wait.Deadline)
+			}
+			after, err := os.Lstat(path)
+			if err != nil || !os.SameFile(before, after) || after.Mode() != before.Mode() || after.Size() != before.Size() {
+				t.Fatalf("the refused record changed: %v, %v", after, err)
+			}
+		})
 	}
 }
 

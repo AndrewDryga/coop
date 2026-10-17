@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -342,6 +343,210 @@ func TestForkStopRejectsMalformedStateWithoutSignaling(t *testing.T) {
 	}
 	if err := worker.Process.Signal(syscall.Signal(0)); err != nil {
 		t.Errorf("malformed state must not signal a possibly live worker: %v", err)
+	}
+}
+
+// nonRecords is what a box whose mount holds a fork's .coop folder could leave at a lifecycle
+// record's name in place of a file Coop wrote, and how Coop names what it found.
+var nonRecords = []struct {
+	name  string
+	found string
+	plant func(path string) error
+}{
+	{name: "FIFO with no writer", found: "a named pipe", plant: func(path string) error { return syscall.Mkfifo(path, 0o600) }},
+	{name: "link to dev zero", found: "a link", plant: func(path string) error { return os.Symlink("/dev/zero", path) }},
+	{name: "dangling link", found: "a link", plant: func(path string) error { return os.Symlink(path+".gone", path) }},
+	{name: "folder", found: "a folder", plant: func(path string) error { return os.Mkdir(path, 0o700) }},
+	{name: "socket", found: "a socket", plant: plantSocket},
+	{name: "oversized file", found: fmt.Sprintf("%d bytes, larger than any record", 1<<20), plant: func(path string) error {
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			return err
+		}
+		return os.Truncate(path, 1<<20) // sparse zeros, far past any record
+	}},
+}
+
+// plantSocket leaves a Unix socket at path. t.TempDir holds the long test name, past Darwin's
+// 104-byte socket path limit, so the socket is bound in a short folder and moved into place.
+func plantSocket(path string) error {
+	dir, err := os.MkdirTemp("", "coop-sock-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	bound := filepath.Join(dir, "s")
+	listener, err := net.Listen("unix", bound)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	return os.Rename(bound, path)
+}
+
+// plantNonRecord leaves one of nonRecords at path and returns what it left, to show it unchanged.
+func plantNonRecord(t *testing.T, path string, plant func(string) error) os.FileInfo {
+	t.Helper()
+	if err := plant(path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
+
+func assertUnchanged(t *testing.T, path string, before os.FileInfo) {
+	t.Helper()
+	after, err := os.Lstat(path)
+	if err != nil || !os.SameFile(before, after) || after.Mode() != before.Mode() || after.Size() != before.Size() {
+		t.Fatalf("%s changed: %v, %v", path, after, err)
+	}
+}
+
+// finishesWithin runs fn and fails the test when it has not returned within wait.Deadline: a read
+// that waits on a FIFO never returns. fn hands its results back through its closure.
+func finishesWithin(t *testing.T, what string, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+	case <-time.After(wait.Deadline):
+		t.Fatalf("%s did not return within %v", what, wait.Deadline)
+	}
+}
+
+// A fork's lifecycle record that Coop never wrote stops `coop fork stop` for that fork at once, with
+// the guarded recovery and an inspection that cannot hang, and nothing is touched. `coop fork ls`
+// still lists every fork, and stop still works for the others.
+func TestForkStopAndLsRefuseStateThatIsNotARecord(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal")) // status runs git
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	oldSignal := forkspace.SignalPID
+	t.Cleanup(func() { forkspace.SignalPID = oldSignal })
+	for _, tc := range nonRecords {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			repo := filepath.Join(dir, "repo")
+			for _, name := range []string{"perf", "other"} {
+				if err := os.MkdirAll(forkspace.Workspace(repo, name), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := forkspace.WriteWorkerState(repo, "other", deadWorker); err != nil {
+				t.Fatal(err)
+			}
+			path := forkspace.PidPath(repo, "perf")
+			before := plantNonRecord(t, path, tc.plant)
+			signals := 0
+			forkspace.SignalPID = func(pid int, sig syscall.Signal) error {
+				signals++
+				return oldSignal(pid, sig)
+			}
+			runtimeCalls := 0
+			c := &Control{
+				cfg: &config.Config{RepoOverride: repo},
+				host: Host{EnsureRuntime: func() (containerruntime.Runtime, error) {
+					runtimeCalls++
+					return containerruntime.Runtime{}, errors.New("runtime must not be consulted")
+				}},
+			}
+			var code int
+			var err error
+			finishesWithin(t, "coop fork stop perf", func() { code, err = c.ForkStop([]string{"perf"}) })
+			if code != 1 || err == nil {
+				t.Fatalf("stop over a %s = (%d, %v), want (1, error)", tc.name, code, err)
+			}
+			if !errors.Is(err, forkspace.ErrNotAStateFile) {
+				t.Errorf("stop error %v does not match forkspace.ErrNotAStateFile", err)
+			}
+			remove := "rm"
+			if tc.found == "a folder" {
+				remove = "rmdir" // rm refuses a folder
+			}
+			steps := []string{
+				fmt.Sprintf("fork perf state: %s is %s — Coop left it unchanged", path, tc.found),
+				fmt.Sprintf("inspect it with: ls -ld %q", path),
+				"pgrep -fl -- '[f]ork perf .*--_detached'",
+				"stop only one whose working directory is this repository",
+				fmt.Sprintf("then remove the file: %s -- %q", remove, path),
+				"then run: coop fork stop perf",
+			}
+			last := -1
+			for _, step := range steps {
+				at := strings.Index(err.Error(), step)
+				if at <= last {
+					t.Fatalf("stop error %q lacks %q after the previous step", err, step)
+				}
+				last = at
+			}
+			if strings.Contains(err.Error(), "sed -n") {
+				t.Errorf("stop error suggests reading a file that may never end: %v", err)
+			}
+			if runtimeCalls != 0 || signals != 0 {
+				t.Fatalf("the refused stop had side effects: runtime=%d signals=%d", runtimeCalls, signals)
+			}
+			assertUnchanged(t, path, before)
+
+			var notes []string
+			ui.SetLiveSink(func(line string) { notes = append(notes, line) })
+			t.Cleanup(func() { ui.SetLiveSink(nil) })
+			out := captureStdout(t, func() {
+				finishesWithin(t, "coop fork ls", func() { code, err = c.ForkLs(nil) })
+			})
+			if code != 0 || err != nil {
+				t.Fatalf("ls beside a %s = (%d, %v), want success", tc.name, code, err)
+			}
+			for _, name := range []string{"perf", "other"} {
+				if !strings.Contains(out, "\n  "+name+" · ") {
+					t.Errorf("ls did not list fork %s:\n%s", name, out)
+				}
+			}
+			if problem := fmt.Sprintf("fork perf worker: %s is %s", path, tc.found); !strings.Contains(strings.Join(notes, "\n"), problem) {
+				t.Errorf("ls did not report %q:\n%s", problem, strings.Join(notes, "\n"))
+			}
+
+			runtimeCLI := filepath.Join(dir, "runtime")
+			if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			other := &Control{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}}
+			finishesWithin(t, "coop fork stop other", func() { code, err = other.ForkStop([]string{"other"}) })
+			if code != 0 || err != nil {
+				t.Fatalf("stop of the other fork = (%d, %v), want success", code, err)
+			}
+			if pathExists(forkspace.PidPath(repo, "other")) {
+				t.Fatal("the other fork's stop kept its record")
+			}
+			assertUnchanged(t, path, before)
+		})
+	}
+}
+
+// Stop reads the record again under the lifecycle lock. One that a box swaps in after the unlocked
+// preflight is refused there just as fast.
+func TestForkStopRefusesStateThatIsNotARecordUnderTheLock(t *testing.T) {
+	for _, tc := range nonRecords {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := filepath.Join(t.TempDir(), "repo")
+			if err := os.MkdirAll(forkspace.Workspace(repo, "perf"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := forkspace.PidPath(repo, "perf")
+			var before os.FileInfo
+			c := &Control{cfg: &config.Config{RepoOverride: repo}}
+			got := runForkCommandAcrossLockedMutation(t, repo, "perf", func() (int, error) {
+				return c.ForkStop([]string{"perf"})
+			}, func() { before = plantNonRecord(t, path, tc.plant) })
+			if got.code != 1 || !errors.Is(got.err, forkspace.ErrNotAStateFile) || !strings.Contains(got.err.Error(), path+" is "+tc.found) {
+				t.Fatalf("stop across a planted %s = (%d, %v), want the refusal", tc.name, got.code, got.err)
+			}
+			assertUnchanged(t, path, before)
+		})
 	}
 }
 
@@ -973,6 +1178,29 @@ func TestDetachForkLoopRefusesAnExistingRecord(t *testing.T) {
 	}
 }
 
+// A detached start refuses a record Coop never wrote at once, with the guarded recovery, and leaves
+// it as it was.
+func TestDetachForkLoopRefusesStateThatIsNotARecord(t *testing.T) {
+	for _, tc := range nonRecords {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := detachFixture(t)
+			path := forkspace.PidPath(repo, "perf")
+			before := plantNonRecord(t, path, tc.plant)
+			a := &Control{cfg: &config.Config{}}
+			var code int
+			var err error
+			finishesWithin(t, "a detached start", func() {
+				code, err = a.DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil)
+			})
+			if code != 1 || !errors.Is(err, forkspace.ErrNotAStateFile) || !strings.Contains(err.Error(), path+" is "+tc.found) ||
+				!strings.Contains(err.Error(), "then run: coop fork stop perf") {
+				t.Fatalf("start over a %s = (%d, %v), want the refusal and its recovery", tc.name, code, err)
+			}
+			assertUnchanged(t, path, before)
+		})
+	}
+}
+
 // The start checks for a record under the lifecycle lock: a worker recorded while the start waited
 // for that lock is refused, not overwritten.
 func TestDetachForkLoopChecksUnderTheLifecycleLock(t *testing.T) {
@@ -1061,6 +1289,85 @@ func TestStreamLog(t *testing.T) {
 	if opened, err := streamLog(dir, "", false, &buf, &mu); err == nil || !opened {
 		t.Fatalf("directory log = (opened %v, %v), want read error", opened, err)
 	}
+	// A box can leave a FIFO no one writes or a link to an endless device at a log's name. Either
+	// is refused at once, followed or not, and nothing is printed.
+	fifo, link := filepath.Join(dir, "fifo.log"), filepath.Join(dir, "link.log")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/dev/zero", link); err != nil {
+		t.Fatal(err)
+	}
+	buf.Reset()
+	for path, found := range map[string]string{fifo: "a named pipe", link: "a link"} {
+		for _, follow := range []bool{false, true} {
+			var err error
+			finishesWithin(t, fmt.Sprintf("streamLog(%s, follow=%v)", path, follow), func() {
+				_, err = streamLog(path, "", follow, &buf, &mu)
+			})
+			if !errors.Is(err, forkspace.ErrNotAStateFile) || err.Error() != path+" is "+found {
+				t.Errorf("streamLog(%s, follow=%v) = %v, want the refusal naming %s", path, follow, err, found)
+			}
+		}
+	}
+	if buf.Len() != 0 {
+		t.Errorf("refused logs printed %q", buf.String())
+	}
+}
+
+// largestWrite records output and the largest single write streamLog made.
+type largestWrite struct {
+	bytes.Buffer
+	largest int
+}
+
+func (w *largestWrite) Write(p []byte) (int, error) {
+	w.largest = max(w.largest, len(p))
+	return w.Buffer.Write(p)
+}
+
+// A log line that never ends prints in pieces, so streamLog never holds more than logChunkLimit of
+// it. A log as such has no limit: every byte still prints, unchanged.
+func TestStreamLogHoldsAtMostOneChunkOfALine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.log")
+	content := append(bytes.Repeat([]byte("x"), 3*logChunkLimit+5), "\nend\n"...)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	w := &largestWrite{}
+	if opened, err := streamLog(path, "", false, w, &mu); err != nil || !opened {
+		t.Fatalf("streamLog = (opened %v, %v), want success", opened, err)
+	}
+	if !bytes.Equal(w.Bytes(), content) {
+		t.Fatalf("streamLog printed %d bytes, want the log's %d unchanged", w.Len(), len(content))
+	}
+	if w.largest > logChunkLimit {
+		t.Fatalf("streamLog wrote %d bytes at once, want at most %d", w.largest, logChunkLimit)
+	}
+}
+
+// In the view of every fork, each piece of a line too long to hold, and a last line with no newline
+// yet, prints as a line of its own, so the next fork's prefix never lands mid-line.
+func TestStreamLogEndsEveryPrefixedPiece(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.log")
+	long := strings.Repeat("x", 2*logChunkLimit+5)
+	if err := os.WriteFile(path, []byte(long+"\nunfinished"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var buf bytes.Buffer
+	if opened, err := streamLog(path, "perf", false, &buf, &mu); err != nil || !opened {
+		t.Fatalf("streamLog = (opened %v, %v), want success", opened, err)
+	}
+	want := "perf | " + long[:logChunkLimit] + "\n" +
+		"perf | " + long[logChunkLimit:2*logChunkLimit] + "\n" +
+		"perf | " + long[2*logChunkLimit:] + "\n" +
+		"perf | unfinished\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("streamLog printed %d bytes in %d lines, want %d bytes in %d prefixed lines",
+			len(got), strings.Count(got, "\n"), len(want), strings.Count(want, "\n"))
+	}
 }
 
 func TestForkLogsNamedMissingIsExplicit(t *testing.T) {
@@ -1109,6 +1416,50 @@ func TestForkLogsAllKeepsReadableOutputAndReturnsFailures(t *testing.T) {
 	}
 }
 
+// A FIFO or a link at one fork's log fails that fork at once with how to remove it, since no
+// permission change makes it a log; every other fork's log still prints.
+func TestForkLogsAllSurvivesALogThatIsNotAFile(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	for _, name := range []string{"fifo", "good", "link"} {
+		if err := os.MkdirAll(forkspace.Workspace(repo, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(forkspace.StateDir(repo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(forkspace.LogPath(repo, "good"), []byte("kept\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(forkspace.LogPath(repo, "fifo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/dev/zero", forkspace.LogPath(repo, "link")); err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	var code int
+	var runErr error
+	out := captureStdout(t, func() {
+		finishesWithin(t, "coop fork logs", func() { code, runErr = c.ForkLogs(nil) })
+	})
+	if code != 1 || runErr == nil {
+		t.Fatalf("ForkLogs(all) = (%d, %v), want both refused logs named", code, runErr)
+	}
+	for name, found := range map[string]string{"fifo": "a named pipe", "link": "a link"} {
+		path := forkspace.LogPath(repo, name)
+		if want := fmt.Sprintf("fork %s log: %s is %s — remove it: rm -- %q", name, path, found, path); !strings.Contains(runErr.Error(), want) {
+			t.Errorf("ForkLogs(all) error lacks %q:\n%v", want, runErr)
+		}
+	}
+	if strings.Contains(runErr.Error(), "permissions") {
+		t.Errorf("ForkLogs(all) suggests a permission change for what is not a log: %v", runErr)
+	}
+	if out != "good | kept\n" {
+		t.Fatalf("ForkLogs(all) printed %q, want only the readable log", out)
+	}
+}
+
 func TestForkLogsFollowReportsStreamFailure(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(forkspace.Workspace(repo, "broken"), 0o755); err != nil {
@@ -1128,7 +1479,8 @@ func TestForkLogsFollowReportsStreamFailure(t *testing.T) {
 	if code != 1 || err == nil {
 		t.Fatalf("ForkLogs(--follow) = (%d, %v), want stream failure", code, err)
 	}
-	if got := strings.Join(lines, "\n"); !strings.Contains(got, "fork broken log") || !strings.Contains(got, "fix ownership or permissions") {
-		t.Fatalf("follow failure output = %q", got)
+	path := forkspace.LogPath(repo, "broken")
+	if got, want := strings.Join(lines, "\n"), fmt.Sprintf("fork broken log: %s is a folder — remove it: rmdir -- %q", path, path); !strings.Contains(got, want) {
+		t.Fatalf("follow failure output = %q, want %q", got, want)
 	}
 }

@@ -201,7 +201,7 @@ func runForkCommandAcrossLockedMutation(t *testing.T, repo, name string, command
 	select {
 	case got := <-result:
 		return got
-	case <-time.After(2 * time.Second):
+	case <-time.After(wait.Deadline): // a fixture guard, not the behavior under test
 		t.Fatal("fork command remained blocked after lifecycle unlock")
 		return forkCommandResult{}
 	}

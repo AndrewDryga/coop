@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,10 +24,18 @@ const (
 	GenerationTag = "generation="
 )
 
+// workerStateLimit caps a lifecycle record read. A real record is about 150 bytes.
+const workerStateLimit = 4 << 10
+
 var (
 	// ErrUnsupportedWorkerStateVersion keeps a future writer's state fail-closed until that version
 	// can interpret its own lifecycle contract.
 	ErrUnsupportedWorkerStateVersion = errors.New("unsupported detached-worker state version")
+	// ErrNotAStateFile matches an error that says what Coop found at a fork state file's name in place
+	// of a file it wrote: a link, a named pipe, a folder, a socket, a device, or a lifecycle record
+	// larger than any Coop writes. A box whose mount holds the .coop folder can put any of them there,
+	// and reading one could wait forever or never end.
+	ErrNotAStateFile = errors.New("not a file Coop wrote")
 	// Injectable only inside this package to qualify first-create parent-directory barriers.
 	syncForkDirectoryEntry = func(dir *os.File) error { return dir.Sync() }
 )
@@ -322,12 +331,90 @@ func (state WorkerState) Marshal() ([]byte, error) {
 	return []byte(fmt.Sprintf("%s%d\n%s\n", prefix, state.Pid, state.Token)), nil
 }
 
+// ReadWorkerState reads and parses a fork's lifecycle record. A failure to read it is an
+// *os.PathError, os.ErrNotExist when there is no record. Any other error means a record is there
+// that Coop cannot own: ErrNotAStateFile, or bytes ParseWorkerState refuses.
 func ReadWorkerState(repo, name string) (WorkerState, error) {
-	data, err := os.ReadFile(PidPath(repo, name))
+	data, err := readWorkerRecord(PidPath(repo, name))
 	if err != nil {
 		return WorkerState{}, err
 	}
 	return ParseWorkerState(string(data))
+}
+
+// OpenStateFile opens a file in a fork's .coop folder for reading. A box whose mount holds that
+// folder can put anything at a name there, so the open neither follows a link nor waits on a named
+// pipe, and anything but a regular file is refused with an error that matches ErrNotAStateFile and
+// says what is there. Any other failure, a missing file included, is an *os.PathError.
+func OpenStateFile(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		// O_NOFOLLOW refuses a link with ELOOP, and open(2) refuses a socket with ENXIO on Linux and
+		// EOPNOTSUPP on macOS. Lstat names what is there; if that changed meanwhile, the open's error
+		// stands.
+		if errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENXIO) || errors.Is(err, syscall.EOPNOTSUPP) {
+			if info, statErr := os.Lstat(path); statErr == nil && !info.Mode().IsRegular() {
+				return nil, &notAStateFile{path, fileKind(info.Mode())}
+			}
+		}
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = &notAStateFile{path, fileKind(info.Mode())}
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// notAStateFile says what Coop found at a fork state file's name. It is deliberately not an
+// *os.PathError: callers tell a failed read from a file Coop cannot own by that type.
+type notAStateFile struct{ path, found string }
+
+func (e *notAStateFile) Error() string        { return e.path + " is " + e.found }
+func (e *notAStateFile) Is(target error) bool { return target == ErrNotAStateFile }
+
+// fileKind names the type of a file that is not a regular file, in plain words.
+func fileKind(mode os.FileMode) string {
+	switch {
+	case mode&os.ModeSymlink != 0:
+		return "a link"
+	case mode&os.ModeNamedPipe != 0:
+		return "a named pipe"
+	case mode.IsDir():
+		return "a folder"
+	case mode&os.ModeSocket != 0:
+		return "a socket"
+	case mode&os.ModeDevice != 0:
+		return "a device"
+	default:
+		return "not a regular file"
+	}
+}
+
+// readWorkerRecord returns a lifecycle record's bytes, opened by OpenStateFile and never more than
+// workerStateLimit of them.
+func readWorkerRecord(path string) ([]byte, error) {
+	f, err := OpenStateFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, workerStateLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > workerStateLimit {
+		size := int64(len(data))
+		if info, err := f.Stat(); err == nil {
+			size = max(size, info.Size())
+		}
+		return nil, &notAStateFile{path, fmt.Sprintf("%d bytes, larger than any record", size)}
+	}
+	return data, nil
 }
 
 // WriteWorkerState atomically replaces the record, so a reader sees either the previous complete
@@ -420,7 +507,7 @@ func ClearPidIfMine(repo, name string, generation Generation) {
 		return
 	}
 	defer unlock()
-	data, err := os.ReadFile(PidPath(repo, name))
+	data, err := readWorkerRecord(PidPath(repo, name))
 	if err != nil {
 		return
 	}

@@ -19,6 +19,17 @@
   name server is Coop's guard. With Docker Engine 26 or later, the Compose services were not
   affected: on their network Docker answers only their own names.
 
+- **A box can no longer freeze fork commands through a fork's state files.** Coop keeps each
+  fork's loop record and log in `<project>-forks/.coop`. A box started in a folder that contains
+  it, such as a parent folder of the project, could put a named pipe there, which froze
+  `coop fork ls`, `coop fork stop`, `coop fork logs`, `coop tasks watch` and `coop prompt`, or a
+  link to an endless device, which they read until memory ran out. Now Coop opens these files
+  without following a link or waiting on a pipe, reads only ordinary files, refuses a loop record
+  far larger than any it writes, and prints a very long log line in pieces. Anything else is
+  refused at once, and Coop says what it found: `coop fork ls` warns about that fork,
+  `coop fork stop` says how to clear it, `coop fork logs` says how to remove it, and the other
+  forks keep working.
+
 - **Coop no longer lets a box's Git settings choose the project folder.** Coop asked Git where your
   repository starts, and Git follows a setting in `.git/config` that an agent in a box can change. A
   box could point it at another folder, such as your home folder, and the next Coop command used that

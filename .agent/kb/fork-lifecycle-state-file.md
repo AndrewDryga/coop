@@ -3,7 +3,7 @@ name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
 sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 A fork's detached loop is recorded in ONE small file, `<repo>-forks/.coop/<name>.pid`, read and
 written only through `forkspace.WorkerState` (`internal/forkspace/state.go`). It has one shape:
@@ -12,6 +12,22 @@ reused after a crash or a reboot belongs to another process) and the fork genera
 `owner-v1` (no generation) is still parsed so an old worker can be stopped. The file exists only
 while a worker runs or after one died; there is no start or cleanup state, because the per-fork
 flock already covers both windows.
+
+## Reading it
+
+Every read of its bytes goes through `ReadWorkerState`, forkctl's included; `ClearPidIfMine`
+compares the same bounded bytes, and `NeedsStop` only asks whether the name exists. A box whose
+mount holds this `.coop` folder (another project's, through a nested repository or a non-git parent
+folder) can put anything at the name, so `OpenStateFile` opens it with `O_NOFOLLOW|O_NONBLOCK`: a
+link fails with ELOOP, a socket with ENXIO (Linux) or EOPNOTSUPP (macOS), and fstat must say
+regular. The record read then stops past 4 KiB (a real record is about 150 bytes). Each refusal
+matches `ErrNotAStateFile` and names what Coop found ("… is a named pipe", "… is 1048576 bytes,
+larger than any record"); it is deliberately not an `*os.PathError`. The fork stays held
+(`RunningPid` is 0, `StateOwner` and `NeedsStop` hold it), and commands print the guarded recovery
+below with `ls -ld` as the inspection: `sed` would wait on a FIFO, and `ls -l` lists a folder's
+contents. Its remove step is `rmdir` for a folder, `rm` otherwise. An I/O failure stays an
+`*os.PathError`, which is how `CheckWorkerStateFormat`, `requireNoWorkerLocked` and `ForkStop` tell
+it from a record Coop cannot own.
 
 ## Start: the parent writes, the child confirms
 
@@ -108,8 +124,18 @@ to a process or a container, or prints, it is supervision.
   default-No `DestroyGate`, and `--yes` does not override changed work.
 - A missing fork log is an ordinary not-yet-produced state. Multi-fork reads keep every readable
   stream and fail for any unreadable one; a follower's failure prints at once while the others run.
+  `streamLog` opens a log through the same `OpenStateFile` but caps no size: it holds at most
+  64 KiB of a line (`logChunkLimit`), so a longer line prints in pieces, and in the prefixed
+  multi-fork view each piece ends with a newline so another fork never lands mid-line. A log that is
+  not a regular file gets "remove it", not the permissions advice: a log only holds output.
 
 ## Changelog
+- 2026-10-17 — the record and the fork log open through `forkspace.OpenStateFile` (no link
+  followed, no FIFO waited on, a regular file only), and the record read stops past 4 KiB; anything
+  else is `ErrNotAStateFile`, named by what Coop found. forkctl stopped reading the record's bytes
+  itself, so "read only through `WorkerState`" holds. The refusal's inspection is `ls -ld`, never
+  `sed`. Re-verified against state.go and supervise.go
+  (task 2026-10-16-read-a-fork-s-worker-pidfile-without-waiting-on).
 - 2026-10-15 — replaced the four lifecycle states (worker, reap-pending, start reservation,
   launched reservation) with the worker record alone (audit EDGE-11, owner decision 3.5). The flock
   already spanned claim, start and record, so the reservations only guarded a parent dying in that

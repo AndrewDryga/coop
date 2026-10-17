@@ -48,14 +48,20 @@ func ForkContainerOwner(repo, name string, generation ...forkspace.Generation) s
 
 func workerStateFormatError(repo, name string, err error) error {
 	path := forkspace.PidPath(repo, name)
+	// A record Coop cannot own may be a start or cleanup record of Coop 11.3.0 or earlier, or whatever
+	// replaced a real one. Either can leave a worker that still runs, so the file may go only once no
+	// loop for the fork remains. The worker's command line names no repository, so the check is by
+	// its working directory.
+	recovery := fmt.Sprintf("To clear it, list this fork's loops with: pgrep -fl -- '[f]ork %s .*--_detached'; stop only one whose working directory is this repository (lsof -a -d cwd -p <pid>) with: kill -TERM -<pid>, or kill -KILL -<pid> if it stays; then remove the file: %s; then run: coop fork stop %s", name, removeCommand(path), name)
 	switch {
 	case errors.Is(err, forkspace.ErrUnsupportedWorkerStateVersion):
 		return fmt.Errorf("fork %s uses an unsupported detached-worker state version at %q — Coop left the exact file unchanged; use the Coop version that wrote it and do not edit its header", name, path)
+	case errors.Is(err, forkspace.ErrNotAStateFile):
+		// sed would wait forever on a named pipe and never finish a device, and ls -l lists a
+		// folder's contents, so the inspection is ls -ld.
+		return fmt.Errorf("fork %s state: %w — Coop left it unchanged (inspect it with: ls -ld %q). %s", name, err, path, recovery)
 	default:
-		// This includes the start and cleanup records of Coop 11.3.0 and earlier. One of those can
-		// name a worker that still runs, so the file may go only once no loop for the fork remains.
-		// The worker's command line names no repository, so the check is by its working directory.
-		return fmt.Errorf("fork %s state at %q is malformed — Coop left the exact file unchanged and will not infer a process identity from it (inspect it with: sed -n '1,4p' %q). To clear it, list this fork's loops with: pgrep -fl -- '[f]ork %s .*--_detached'; stop only one whose working directory is this repository (lsof -a -d cwd -p <pid>) with: kill -TERM -<pid>, or kill -KILL -<pid> if it stays; then remove the file: rm -- %q; then run: coop fork stop %s", name, path, path, name, path, name)
+		return fmt.Errorf("fork %s state at %q is malformed — Coop left the exact file unchanged and will not infer a process identity from it (inspect it with: sed -n '1,4p' %q). %s", name, path, path, recovery)
 	}
 }
 
@@ -63,17 +69,16 @@ func workerStateFormatError(repo, name string, err error) error {
 // paths call it before runtime probes, prompts, or workspace/metadata changes; locked start and stop
 // still parse again so a state replacement after this read cannot bypass the lifecycle authority.
 func CheckWorkerStateFormat(repo, name string) error {
-	data, err := os.ReadFile(forkspace.PidPath(repo, name))
-	if errors.Is(err, os.ErrNotExist) {
+	_, err := forkspace.ReadWorkerState(repo, name)
+	var pathErr *os.PathError
+	switch {
+	case err == nil || errors.Is(err, os.ErrNotExist):
 		return nil
-	}
-	if err != nil {
+	case errors.As(err, &pathErr):
 		return fmt.Errorf("read fork %s state: %w", name, err)
-	}
-	if _, err := forkspace.ParseWorkerState(string(data)); err != nil {
+	default:
 		return workerStateFormatError(repo, name, err)
 	}
-	return nil
 }
 
 // requireNoWorkerLocked refuses a detached start while the fork has a lifecycle record: a live
@@ -340,39 +345,64 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 }
 
 func forkLogReadError(repo, name string, err error) error {
-	return fmt.Errorf("fork %s log %s: %w — fix ownership or permissions under %s and retry", name, forkspace.LogPath(repo, name), err, forkspace.StateDir(repo))
+	path := forkspace.LogPath(repo, name)
+	if errors.Is(err, forkspace.ErrNotAStateFile) {
+		// No permission change turns it into a log, and a log only holds a worker's output, so
+		// removing whatever is there loses nothing Coop needs.
+		return fmt.Errorf("fork %s log: %w — remove it: %s", name, err, removeCommand(path))
+	}
+	return fmt.Errorf("fork %s log %s: %w — fix ownership or permissions under %s and retry", name, path, err, forkspace.StateDir(repo))
 }
 
-// streamLog prints a log file (optionally prefixed and followed) to w under mu.
+// removeCommand is the shell command that removes what is at path; rm refuses a folder.
+func removeCommand(path string) string {
+	if info, err := os.Lstat(path); err == nil && info.IsDir() {
+		return fmt.Sprintf("rmdir -- %q", path)
+	}
+	return fmt.Sprintf("rm -- %q", path)
+}
+
+// logChunkLimit bounds how much of one log line streamLog holds. A longer line prints in pieces, so
+// a line that never ends cannot use up memory.
+const logChunkLimit = 64 << 10
+
+// streamLog prints a log file (optionally prefixed and followed) to w under mu, and reports whether
+// there was a log; a missing one is not an error. forkspace.OpenStateFile opens it, and its size is
+// not capped: a log is printed as it is read. With a prefix, a piece that does not end its line
+// gets a newline, so another fork's output never starts mid-line.
 func streamLog(path, prefix string, follow bool, w io.Writer, mu *sync.Mutex) (bool, error) {
-	f, err := os.Open(path)
+	f, err := forkspace.OpenStateFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil // no output yet
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil // no output yet
-		}
-		return false, err
+		return true, err
 	}
 	defer f.Close()
-	r := bufio.NewReader(f)
+	r := bufio.NewReaderSize(f, logChunkLimit)
 	for {
-		line, err := r.ReadString('\n')
+		line, err := r.ReadSlice('\n')
 		if len(line) > 0 {
 			mu.Lock()
 			if prefix != "" {
-				fmt.Fprintf(w, "%s | %s", prefix, line)
+				end := ""
+				if line[len(line)-1] != '\n' {
+					end = "\n"
+				}
+				fmt.Fprintf(w, "%s | %s%s", prefix, line, end)
 			} else {
-				fmt.Fprint(w, line)
+				_, _ = w.Write(line)
 			}
 			mu.Unlock()
 		}
-		if err == io.EOF {
+		switch {
+		case err == nil || errors.Is(err, bufio.ErrBufferFull):
+		case err == io.EOF:
 			if !follow {
 				return true, nil
 			}
 			time.Sleep(300 * time.Millisecond)
-			continue
-		}
-		if err != nil {
+		default:
 			return true, err
 		}
 	}
@@ -412,7 +442,7 @@ func (c *Control) ForkStop(args []string) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("read fork %s generation before stop: %w", name, err)
 	}
-	data, err := os.ReadFile(forkspace.PidPath(repo, name))
+	state, err := forkspace.ReadWorkerState(repo, name)
 	if errors.Is(err, os.ErrNotExist) {
 		// Stop owns detached workers, not live foreground/ACP sessions. It does, however, own stale
 		// cleanup evidence for this exact generation: a dead foreground supervisor cannot reap its
@@ -493,10 +523,10 @@ func (c *Control) ForkStop(args []string) (int, error) {
 		ui.Note("Fork %s is not running.", name)
 		return 0, nil
 	}
-	if err != nil {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
 		return -1, fmt.Errorf("read fork %s state: %w — check permissions on %s, then retry: coop fork stop %s", name, err, forkspace.PidPath(repo, name), name)
 	}
-	state, err := forkspace.ParseWorkerState(string(data))
 	if err != nil {
 		return 1, workerStateFormatError(repo, name, err)
 	}
