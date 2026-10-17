@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -446,5 +447,31 @@ func TestCmdPresetsEscapesTheLeadModel(t *testing.T) {
 	out := captureStdout(t, func() { _, _ = (&app{cfg: cfg}).cmdPresets(nil) })
 	if strings.ContainsAny(out, "\x1b\x07") || !strings.Contains(out, `claude:x\u001B]52;c;SGk=\u0007`) {
 		t.Fatalf("the lead model printed raw or not at all:\n%q", out)
+	}
+}
+
+// A box can write a preset folder's preset.yaml, so presetDetail escapes every value it prints from
+// one: no escape sequence, bidirectional override or zero-width character reaches the terminal.
+func TestPresetDetailEscapesWhatThePresetNames(t *testing.T) {
+	repo := t.TempDir()
+	p := &preset.Preset{
+		Name: "plain", Dir: filepath.Join(repo, ".agent", "presets", "plain\u202e"),
+		LeadTargets:    []agents.Target{{Provider: "claude"}},
+		LeadPromptPath: "roles/lead\u200b.md",
+		Roles: []preset.Role{{
+			Name: "rev\x1b[2Jiewer", Mode: "native", Targets: []agents.Target{{Provider: "codex"}},
+			When: []string{"\x1b]52;c;cGF5bG9hZA==\a"}, Subagent: "sub\u202eagent", PromptPath: "roles/\x1b[31mred.md",
+		}},
+	}
+	out := presetDetail(p, repo, ui.Palette{})
+	for _, r := range out {
+		if r != '\n' && (r < 0x20 || r == 0x7f || r == '\u202e' || r == '\u200b') {
+			t.Fatalf("presetDetail printed the raw character %U:\n%q", r, out)
+		}
+	}
+	for _, want := range []string{`\u202E`, `\u200B`, `\u001B]52`, `rev\u001B[2Jiewer`, `sub\u202Eagent`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("presetDetail does not show %s escaped:\n%s", want, out)
+		}
 	}
 }

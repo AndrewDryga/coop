@@ -341,15 +341,20 @@ func presetManualPages(cfg *config.Config) string {
 // way the reader can use it — project-relative inside the repo, ~-shortened for a global preset
 // (see .agent/kb/rules/no-color-in-width-fields.md, entity-blocks-with-labeled-fields.md).
 func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
-	path, global := presetPaths(repo, p.Dir)
+	rawPath, global := presetPaths(repo, p.Dir)
+	// A box can create a preset folder and write its preset.yaml, so every value printed from them
+	// is escaped before it is measured or styled.
+	safe := ui.SafeInline
+	path := func(rel string) string { return safe(rawPath(rel)) }
+	name := safe(p.Name)
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n", pal.Bold(p.Name+": "+presetSummary(p)))
+	fmt.Fprintf(&b, "%s\n\n", pal.Bold(name+": "+safe(presetSummary(p))))
 
 	fmt.Fprintf(&b, "%s\n", pal.Bold("RUN IT"))
 	runs := [][2]string{
-		{"coop " + p.Name, "start an interactive session with the lead agent"},
-		{"coop loop " + p.Name, "work through tasks with this preset"},
-		{"coop acp " + p.Name, "use this preset in your editor"},
+		{"coop " + name, "start an interactive session with the lead agent"},
+		{"coop loop " + name, "work through tasks with this preset"},
+		{"coop acp " + name, "use this preset in your editor"},
 	}
 	w := 0
 	for _, r := range runs {
@@ -366,7 +371,7 @@ func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
 	fmt.Fprintf(&b, "\n%s\n", pal.Bold(lead))
 	targets := make([]string, len(p.LeadTargets))
 	for i, t := range p.LeadTargets {
-		targets[i] = t.String()
+		targets[i] = safe(t.String())
 	}
 	// A long ladder wraps under its own value: the continuation lines are still the Agent field,
 	// not unlabeled model rows someone has to guess the meaning of. Agent and Prompt share one
@@ -388,7 +393,7 @@ func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
 		// every block, so the labels read as a column instead of a ragged edge.
 		gutter := 0
 		for _, r := range p.Roles {
-			if n := utf8.RuneCountInString(r.Name); n > gutter {
+			if n := utf8.RuneCountInString(safe(r.Name)); n > gutter {
 				gutter = n
 			}
 		}
@@ -397,21 +402,21 @@ func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
 			if i > 0 {
 				fmt.Fprintln(&b)
 			}
-			mode := pal.Dim("Mode:") + " " + r.Mode
+			mode := pal.Dim("Mode:") + " " + safe(r.Mode)
 			if meaning := presetModeMeaning(r.Mode); meaning != "" {
 				mode += pal.Dim(" — " + meaning)
 			}
-			fmt.Fprintf(&b, "  %s   %s\n", pal.Bold(padRight(r.Name, gutter)), mode)
+			fmt.Fprintf(&b, "  %s   %s\n", pal.Bold(padRight(safe(r.Name), gutter)), mode)
 			roleTargets := make([]string, len(r.Targets))
 			for j, t := range r.Targets {
-				roleTargets[j] = t.String()
+				roleTargets[j] = safe(t.String())
 			}
 			fmt.Fprintf(&b, "%s%s %s\n", indent, pal.Dim("Agent:"), strings.Join(roleTargets, ", "))
 			if r.Subagent != "" {
-				fmt.Fprintf(&b, "%s%s %s\n", indent, pal.Dim("Subagent:"), r.Subagent)
+				fmt.Fprintf(&b, "%s%s %s\n", indent, pal.Dim("Subagent:"), safe(r.Subagent))
 			}
 			if len(r.When) > 0 {
-				fmt.Fprintf(&b, "%s%s %s\n", indent, pal.Dim("When:"), presetWhen(r.When))
+				fmt.Fprintf(&b, "%s%s %s\n", indent, pal.Dim("When:"), safe(presetWhen(r.When)))
 			}
 			if r.PromptPath != "" {
 				fmt.Fprintf(&b, "%s%s %s\n", indent, pal.Dim("Prompt:"), path(r.PromptPath))
