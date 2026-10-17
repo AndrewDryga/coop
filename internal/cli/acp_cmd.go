@@ -288,7 +288,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		presets, skipped := a.acpPresetNames(repo)
 		for _, err := range skipped {
-			ui.Warn("%v — left out of the editor's preset list", err) // stderr: stdout carries ACP
+			// The error quotes the preset's folder name, which a box can choose. stderr: stdout carries ACP.
+			ui.Warn("%s — left out of the editor's preset list", ui.SafeInline(err.Error()))
 		}
 		ctrl := acpctl.New(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, presets, serveURLs, acpHost())
 		if a.acpCapture != nil {

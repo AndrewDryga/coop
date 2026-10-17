@@ -417,3 +417,34 @@ func TestManualEndsWithThisProjectsPresets(t *testing.T) {
 		t.Error("RenderManual is the tool's documentation — a project's preset must not be in it")
 	}
 }
+
+// A preset folder a box named with an escape sequence is not a preset, even with a preset.yaml
+// that would load: coop presets lists it among the broken ones, its name escaped, and never prints
+// the raw sequence.
+func TestCmdPresetsListsAControlCharacterNameAsBroken(t *testing.T) {
+	cfg := freshConfig(t)
+	writePresetFile(t, cfg.RepoOverride, "team\x1b[2J", "lead: {agent: claude}\n")
+	writePresetFile(t, cfg.RepoOverride, "frontier", "lead: {agent: claude}\n")
+	out := captureStdout(t, func() { _, _ = (&app{cfg: cfg}).cmdPresets(nil) })
+	if strings.Contains(out, "\x1b[2J") || !strings.Contains(out, `team\u001B[2J`) {
+		t.Fatalf("the list printed the name raw or not at all:\n%q", out)
+	}
+	if !strings.Contains(out, "Could not load this preset") || !strings.Contains(out, "frontier") {
+		t.Errorf("the list should keep the good preset and show the other as broken:\n%s", out)
+	}
+	if strings.Contains(out, "Show the problem") {
+		t.Errorf("the list points at a name coop presets cannot show:\n%s", out)
+	}
+}
+
+// A box can also write a preset's preset.yaml, and the target parser takes a model name as it is,
+// so the lead model's cell is escaped like the name: an OSC 52 sequence in it would otherwise write
+// the person's clipboard just by listing presets.
+func TestCmdPresetsEscapesTheLeadModel(t *testing.T) {
+	cfg := freshConfig(t)
+	writePresetFile(t, cfg.RepoOverride, "team", "lead: {agent: \"claude:x\\e]52;c;SGk=\\a\"}\n")
+	out := captureStdout(t, func() { _, _ = (&app{cfg: cfg}).cmdPresets(nil) })
+	if strings.ContainsAny(out, "\x1b\x07") || !strings.Contains(out, `claude:x\u001B]52;c;SGk=\u0007`) {
+		t.Fatalf("the lead model printed raw or not at all:\n%q", out)
+	}
+}

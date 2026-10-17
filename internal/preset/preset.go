@@ -16,6 +16,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/safefile"
@@ -245,13 +247,15 @@ func (e *LoadError) Error() string {
 func (e *LoadError) Is(target error) bool { return target == ErrNotFound && e.NotFound }
 
 // ValidName reports whether name can be a preset: a single folder-name segment, not a
-// verb of the presets command itself (a preset named "init" could never be shown).
+// verb of the presets command itself (a preset named "init" could never be shown), and no
+// control character, which a folder a box created could carry to the person's terminal.
 func ValidName(name string) bool {
 	switch name {
 	case "", ".", "..", "init", "ls":
 		return false
 	}
-	return !strings.ContainsAny(name, "/\\") && !strings.HasPrefix(name, "-")
+	return utf8.ValidString(name) && !strings.ContainsAny(name, "/\\") && !strings.HasPrefix(name, "-") &&
+		strings.IndexFunc(name, unicode.IsControl) < 0
 }
 
 // Load reads and validates a named preset's preset.yaml — the repo's .agent/presets/

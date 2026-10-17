@@ -583,3 +583,22 @@ func TestGlobalPresets(t *testing.T) {
 		t.Error("repo-only Load must not find a global preset")
 	}
 }
+
+// A preset is a folder name a box can create in the project, so a name with a control character
+// is never a preset: shown as one, it would carry the character to the person's terminal.
+func TestValidNameRefusesControlCharacters(t *testing.T) {
+	for name, want := range map[string]bool{
+		"frontier":      true,
+		"café-team":     true,
+		"team\x1b[2J":   false,
+		"team\x07":      false,
+		"team\nfake":    false,
+		"team\u0085bad": false, // a C1 control
+		"team\x7f":      false,
+		"team\x9b2J":    false, // a raw C1 byte, not valid UTF-8
+	} {
+		if got := ValidName(name); got != want {
+			t.Errorf("ValidName(%q) = %t, want %t", name, got, want)
+		}
+	}
+}

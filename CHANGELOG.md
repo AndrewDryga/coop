@@ -11,6 +11,12 @@
   check. Its git commands now run without your git config or git environment variables, as
   Coop's other throwaway repositories already do.
 
+- **A preset folder whose name holds a control character is no longer a preset.** An agent in a
+  box can create folders under `.agent/presets`, and `coop presets` printed a preset's folder name
+  as it was, so an escape sequence in it reached your terminal. Such a name is now refused like
+  any other unusable preset name, listed as a preset that could not load, with the name shown
+  escaped, and every name `coop presets` lists is escaped.
+
 - **Coop's home-folder checks also see your home folder through a second mount.** macOS reaches
   your home folder as `/System/Volumes/Data/Users/<you>` as well as `/Users/<you>`, also when it
   is on another disk, and a Linux bind mount, such as `/data/home` mounted at `/home`, reaches it
