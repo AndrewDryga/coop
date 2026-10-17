@@ -196,7 +196,9 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 	script := "#!/bin/sh\n{ echo \"ARGS=$*\"; echo \"PWD=$PWD\"; " +
 		"echo \"COOP_REPO=$COOP_REPO\"; echo \"COOP_TASKS=[$COOP_TASKS]\"; echo \"COOP_IMAGE=$COOP_IMAGE\"; " +
 		"echo \"COOP_MCP_FILE=[$COOP_MCP_FILE]\"; echo \"COOP_RUN_ARGS=[$COOP_RUN_ARGS]\"; echo \"COOP_CACHE=$COOP_CACHE\"; " +
-		"echo \"COOP_EVAL_DISABLE_WEB_TOOLS=$COOP_EVAL_DISABLE_WEB_TOOLS\"; } > " + dump + "\nexit 0\n"
+		"echo \"COOP_EVAL_DISABLE_WEB_TOOLS=$COOP_EVAL_DISABLE_WEB_TOOLS\"; " +
+		"echo \"COOP_EVAL_LOOP_STARTED_FILE=$COOP_EVAL_LOOP_STARTED_FILE\"; } > " + dump + "\n" +
+		": > \"$COOP_EVAL_LOOP_STARTED_FILE\"\nexit 0\n" // a loop that launched a box
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -209,6 +211,7 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 	t.Setenv("COOP_TASKS", "/the/operators/real/queue")
 	t.Setenv("COOP_RUN_ARGS", "-v /the/operators/real/checkout:/leak")
 	t.Setenv("COOP_EVAL_DISABLE_WEB_TOOLS", "0")
+	t.Setenv("COOP_EVAL_LOOP_STARTED_FILE", "/the/operators/real/started")
 
 	out, err := r.runLoopTrial(context.Background(), eval.Trial{
 		Case: suite.Cases[0], Config: eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex"},
@@ -229,6 +232,8 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 		"COOP_RUN_ARGS=[]", // no ambient runtime binds inside a trial
 		"COOP_CACHE=0",
 		"COOP_EVAL_DISABLE_WEB_TOOLS=1",
+		// The start record sits beside the workspace, outside anything a box mounts.
+		"COOP_EVAL_LOOP_STARTED_FILE=" + filepath.Join(filepath.Dir(ws), "loop-started") + "\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("child environment missing %q:\n%s", want, got)
@@ -485,30 +490,41 @@ func TestStagePresetCanceledBeforeCopyLeavesNoReusableTree(t *testing.T) {
 
 // The loop's exit code is context, not the verdict. A run that finished with work remaining, or
 // stopped on a human decision, is a real result about the configuration — exactly what a loop eval
-// measures — so it still gets graded. Only "cut off" and "never ran" do not.
+// measures — so it still gets graded. Only "cut off" and "never ran" do not, and "never ran" is the
+// loop's missing start record, since a loop that could not start exits 1 too.
 func TestLoopOutcomeDecidesWhatIsGradable(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		code      int
+		started   bool
 		ctxErr    error
 		wantGrade bool
 	}{
-		{"queue drained", loopExitDrained, nil, true},
-		{"work remained", loopExitWorkRemains, nil, true},
-		{"blocked on a human decision", loopExitBlocked, nil, true},
-		{"interrupted", loop.LoopInterruptedExitCode, nil, false},
-		{"refused to start", 2, nil, false},
-		{"killed by a signal", -1, nil, false},
-		{"deadline wins over any exit code", loopExitDrained, context.DeadlineExceeded, false},
+		{"queue drained", loopExitDrained, true, nil, true},
+		{"work remained", loopExitWorkRemains, true, nil, true},
+		{"blocked on a human decision", loopExitBlocked, true, nil, true},
+		{"could not start, with the exit a run that left work has", loopExitWorkRemains, false, nil, false},
+		{"no box launched, whatever the exit", loopExitDrained, false, nil, false},
+		{"rejected input", 2, false, nil, false},
+		{"gave up after it ran, without a queue result", 143, true, nil, false},
+		{"interrupted", loop.LoopInterruptedExitCode, true, nil, false},
+		{"killed by a signal", -1, true, nil, false},
+		{"deadline wins over any exit code", loopExitDrained, true, context.DeadlineExceeded, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := loopOutcome(tc.code, tc.ctxErr)
+			err := loopOutcome(tc.code, tc.started, tc.ctxErr)
 			if gradable := err == nil; gradable != tc.wantGrade {
 				t.Errorf("gradable = %v, want %v (err %v)", gradable, tc.wantGrade, err)
 			}
 		})
 	}
-	if err := loopOutcome(-1, nil); err == nil || !strings.Contains(err.Error(), "killed") {
+	if err := loopOutcome(-1, false, nil); err == nil || !strings.Contains(err.Error(), "killed") {
 		t.Errorf("a signalled loop was reported as a start refusal: %v", err)
+	}
+	if err := loopOutcome(loopExitWorkRemains, false, nil); err == nil || err.Error() != "the loop exited 1 without launching a box" {
+		t.Errorf("a loop that never launched a box = %v, want it reported as not started", err)
+	}
+	if err := loopOutcome(143, true, nil); err == nil || strings.Contains(err.Error(), "without launching a box") {
+		t.Errorf("a loop that ran was reported as never started: %v", err)
 	}
 }

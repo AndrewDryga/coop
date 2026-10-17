@@ -13,6 +13,8 @@ package loop
 
 import (
 	"io"
+	"os"
+	"syscall"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -21,6 +23,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // The package's API is New, Host, Preparation, Control, RunSpec, Run, and WorkspaceCost. Six more
@@ -107,6 +110,7 @@ type Control struct {
 	streamSeq      int    // streaming box attempt sequence within runID
 	streamOff      bool   // an open failure disables best-effort tracing for the rest of the run
 	reuseServices  bool   // the current work box may inspect the unchanged run-owned stack without another Compose up
+	startRecorded  bool   // the first box launch has created the start record coop eval asked for (or tried to)
 
 	// capture is the run's frozen network policy, admitted ONCE at the top of Run
 	// (nil outside filtered mode); net accumulates what each box could not reach.
@@ -119,15 +123,47 @@ type Control struct {
 
 // runBox launches one of this run's boxes. Every loop launch goes through here,
 // which is what makes "admit once, run many" a property of the code rather than
-// a convention: the frozen capture and the report hook are attached in ONE place.
+// a convention: the frozen capture and the report hook are attached in ONE place,
+// and so is the start record coop eval reads.
 func (c *Control) runBox(spec box.RunSpec) (int, error) {
 	spec.CapturedEgress = c.capture
 	spec.OnNetworkReport = c.net.record
 	spec.ReuseServices = spec.ReuseServices || c.reuseServices
+	if path := c.cfg.EvalLoopStartedFile; path != "" {
+		launch := spec.OnRuntimeLaunch
+		spec.OnRuntimeLaunch = func() {
+			c.recordStart(path)
+			if launch != nil {
+				launch()
+			}
+		}
+	}
 	if c.boxRun != nil {
 		return c.boxRun(spec)
 	}
 	return box.Run(c.cfg, c.rt, spec)
+}
+
+// recordStart creates the file coop eval named, once, when the run's first box reaches its runtime
+// launch: after host setup, right before the container starts. A loop that stops before that — no
+// queue, no image, no runtime, no signed-in account — exits 1 just like a run that left work, and
+// the missing file is how eval tells the two apart. Eval puts the file beside the trial workspace,
+// outside every box mount, so the agent under test can neither create nor remove it. A failure only
+// warns: the box still runs, and eval records the trial as never started, an error rather than a
+// grade.
+func (c *Control) recordStart(path string) {
+	if c.startRecorded {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	if err == nil {
+		err = f.Close()
+	}
+	if err != nil {
+		ui.Warn("Could not save the start record coop eval asked for: %v", err)
+		return // the next box tries again
+	}
+	c.startRecorded = true
 }
 
 // New binds the engine to the caller's config, its runtime as detected so far, the running coop's

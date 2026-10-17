@@ -464,6 +464,48 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		assertLoopAttemptContracts(t, suite, trace, taskID, []loopProcessAttempt{attempt})
 		assertProcessTraceGone(t, trace)
 	})
+	// coop eval tells a loop that could not start from one that ran and left work by the start
+	// record the loop creates when its first box launches. Both runs here exit 1.
+	t.Run("records its start for coop eval only once a box launches", func(t *testing.T) {
+		started := filepath.Join(t.TempDir(), "loop-started")
+		env := append(slices.Clone(suite.env), "COOP_EVAL_LOOP_STARTED_FILE="+started)
+		target := "codex:loop-model/high@work"
+		loopRun := func() procharness.Result {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			return procharness.Run(ctx, procharness.Command{
+				Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
+				Dir: suite.layout.Repo, Env: env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+			})
+		}
+
+		resetLoopProcessRepo(t, suite) // no task queue at all
+		suite.reset(t, loopProcessScenario{Version: 6, Provider: "codex", ProviderHomes: agents.Names()})
+		refused := loopRun()
+		if refused.ExitCode != 1 || !strings.Contains(refused.Stderr, "no task queue found") {
+			t.Fatalf("loop without a queue = exit %d err %v\nstdout:\n%s\nstderr:\n%s", refused.ExitCode, refused.Err, refused.Stdout, refused.Stderr)
+		}
+		if _, err := os.Lstat(started); !os.IsNotExist(err) {
+			t.Fatalf("a loop that never launched a box left a start record: %v", err)
+		}
+
+		taskID := "loop-eval-started"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		seedLoopProcessTask(t, suite.layout.Repo, taskID+"-extra")
+		attempt := loopProcessAttempt{Target: target, Stage: "work", Result: "unbound-extra-finalized"}
+		suite.reset(t, loopProcessScenario{
+			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
+			Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{attempt}},
+		})
+		ran := loopRun()
+		if ran.ExitCode != 1 || !strings.Contains(ran.Stderr, "completion rejected for task(s) "+taskID) {
+			t.Fatalf("loop that left work = exit %d err %v\nstdout:\n%s\nstderr:\n%s", ran.ExitCode, ran.Err, ran.Stdout, ran.Stderr)
+		}
+		if info, err := os.Lstat(started); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("a loop that launched a box left no start record: %v", err)
+		}
+		assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
 }
 
 func assertLoopOutputOrder(t *testing.T, output string, parts ...string) {

@@ -27,6 +27,14 @@
   exits 2. `coop eval` now refuses a loop recipe that does not parse before it starts any trial,
   instead of scoring each trial's failed start. `coop help loop` lists the exit codes as they are.
 
+- **`coop eval` no longer grades a loop trial whose loop never started.** A loop that stops before
+  its first box, for example because the image is missing or the account is not signed in, exits 1
+  just like a loop that ran and left work. `coop eval` could grade such a trial against the
+  configuration, and otherwise said the agent had changed nothing. The loop now records when its
+  first box starts, somewhere the agent under test cannot reach, and a trial without that record is
+  an error that says the loop exited without launching a box, followed by the loop's own message. A
+  loop that ran and left work is still graded.
+
 - **A large companion repository is ready in half a minute, not five.** Coop copied each companion
   repository a session reads into a new Git repository the way a clone over the network does: Git
   searched its large files for deltas again and checked every object once more. A 6 GB repository

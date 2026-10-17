@@ -2,8 +2,8 @@
 name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
-sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_runtime_profile.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/compare.go, internal/eval/execute.go, internal/eval/fixtures.go, internal/eval/suite.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/runtime_profile.go, internal/eval/stage_profile.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go, examples/evals/maintenance/suite.yaml, examples/evals/maintenance/qualification.sh, examples/evals/maintenance/runtime-qualification.sh]
-updated: 2026-10-16
+sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_runtime_profile.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/loop/host.go, internal/eval/compare.go, internal/eval/execute.go, internal/eval/fixtures.go, internal/eval/suite.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/runtime_profile.go, internal/eval/stage_profile.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go, examples/evals/maintenance/suite.yaml, examples/evals/maintenance/qualification.sh, examples/evals/maintenance/runtime-qualification.sh]
+updated: 2026-10-17
 ---
 
 `coop eval` measures configurations against each other, so its whole value rests on two trials
@@ -103,6 +103,17 @@ authentication refusal and exhausted rate/output retries return loop failure (1)
 status remains in attempt telemetry. A custom `make loop-iter` can exit 2 after changing source, and
 that attempted work must reach grading rather than be mistaken for startup refusal.
 
+Whether a loop trial started at all is settled before this shortcut, by the loop's start record. A
+loop that never launched a box (no queue, image, runtime or account) exits 1 like one that left
+work, and a signature cannot compare an unreadable or oversized workspace. `runLoopTrial` passes
+`COOP_EVAL_LOOP_STARTED_FILE`, a file beside the trial workspace and outside every box mount, and
+`loop.Control.runBox` creates it at the first box's `OnRuntimeLaunch` (`internal/loop/host.go`).
+No record means the loop exited without launching a box, a harness error whatever the exit code,
+unless the trial timed out, was interrupted or was killed, which are reported as such first; a
+started loop then meets the rules here. Stage telemetry cannot stand in: rows are written after a stage, best
+effort, inside the candidate's workspace, and some exits after a real attempt (a rejected
+completion) write no row at all.
+
 A loop stopped on a human decision bypasses this shortcut: its only work may be a task move and
 decision under `.agent/tasks`, which signatures intentionally ignore. Exit 3 alone is insufficient:
 the queue must agree with the subprocess status. The exception requires a readable, confined queue
@@ -160,6 +171,9 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-10-17 — a loop trial's start is the loop's start record, created at its first box's runtime
+  launch; checked against eval_loop.go, eval_trial.go and loop/host.go. A scripted run that launched
+  a box and exited 1 on a rejected completion wrote no telemetry file, so telemetry was not used.
 - 2026-10-16 — the YAML module moved to go.yaml.in/yaml/v3 v3.0.5, which keeps a leading newline in
   a block scalar; the instruction field stays flow style for the indentation half.
 - 2026-10-09 — replaced the old shared writable credential-home map with complete trial-local homes

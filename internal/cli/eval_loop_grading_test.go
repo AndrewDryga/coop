@@ -5,18 +5,66 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/eval"
 )
 
+// A shim line that does what a real loop does when its first box launches: create the start record
+// coop eval named. A shim without it is a loop that never started.
+const loopShimStarted = ": > \"$COOP_EVAL_LOOP_STARTED_FILE\"\n"
+
+// A loop that could not start exits 1, the same code as a loop that ran and left work, so only the
+// loop's start record can tell them apart. Both shims change the workspace, so the check for an
+// attempt that changed nothing cannot decide for it.
+func TestLoopTrialGradesOnlyALoopThatStarted(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	restore := loopExecutable
+	t.Cleanup(func() { loopExecutable = restore })
+	for _, tc := range []struct {
+		name    string
+		started bool
+		want    eval.TrialStatus
+	}{
+		{"a loop that ran and left work is graded", true, eval.TrialFailed},
+		{"a loop that could not start is a harness error", false, eval.TrialError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := "#!/bin/sh\nset -eu\nprintf 'package main\\nfunc main() { println(1) }\\n' > main.go\n"
+			if tc.started {
+				script += loopShimStarted
+			}
+			shim := filepath.Join(t.TempDir(), "coop-shim")
+			if err := os.WriteFile(shim, []byte(script+"exit 1\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			loopExecutable = func() (string, error) { return shim, nil }
+			suite := loopSuite(t)
+			graded := false
+			r := newTrialRunner(t, suite, func(spec box.RunSpec) (int, error) {
+				graded = true
+				return 1, nil // the verifier rejects the unfinished work
+			})
+			res := r.run(context.Background(), trialFor(suite))
+			if graded != tc.started || res.Status != tc.want {
+				t.Fatalf("graded=%v status=%s detail=%s; want graded=%v status=%s", graded, res.Status, res.Detail, tc.started, tc.want)
+			}
+			if !tc.started && !strings.Contains(res.Detail, "the loop exited 1 without launching a box") {
+				t.Errorf("a loop that never started is not reported as such: %s", res.Detail)
+			}
+		})
+	}
+}
+
 func TestLoopTrialGradesBlockedQueueWithoutCodeChanges(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	shim := filepath.Join(t.TempDir(), "coop-shim")
 	const decision = "Choose the public flag spelling before implementation."
-	script := "#!/bin/sh\nset -eu\n" +
+	script := "#!/bin/sh\nset -eu\n" + loopShimStarted +
 		"mkdir -p .agent/tasks/50_blocked\n" +
 		"mv .agent/tasks/00_todo/add-a-flag .agent/tasks/50_blocked/\n" +
 		"printf '%s\\n' '" + decision + "' > .agent/tasks/50_blocked/add-a-flag/decision.md\n" +
@@ -73,22 +121,27 @@ func TestTrialRunnerKeepsIncompleteAttemptsUngraded(t *testing.T) {
 	restore := loopExecutable
 	t.Cleanup(func() { loopExecutable = restore })
 	for _, tc := range []struct {
-		name   string
-		isLoop bool
-		code   int
+		name    string
+		isLoop  bool
+		started bool
+		code    int
 	}{
-		{"unchanged agent exit 3 is not a blocked loop", false, 3},
-		{"unchanged loop failure", true, 1},
-		{"custom loop command exits 3 without blocking", true, 3},
-		{"loop startup refusal", true, 2},
-		{"interrupted loop", true, 130},
+		{"unchanged agent exit 3 is not a blocked loop", false, false, 3},
+		{"unchanged loop failure", true, true, 1},
+		{"custom loop command exits 3 without blocking", true, true, 3},
+		{"loop startup refusal", true, false, 2},
+		{"interrupted loop", true, true, 130},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			suite := trialSuite(t)
 			if tc.isLoop {
 				suite = loopSuite(t)
+				script := "#!/bin/sh\n"
+				if tc.started {
+					script += loopShimStarted
+				}
 				shim := filepath.Join(t.TempDir(), "coop-shim")
-				if err := os.WriteFile(shim, []byte(fmt.Sprintf("#!/bin/sh\nexit %d\n", tc.code)), 0o755); err != nil {
+				if err := os.WriteFile(shim, []byte(fmt.Sprintf("%sexit %d\n", script, tc.code)), 0o755); err != nil {
 					t.Fatal(err)
 				}
 				loopExecutable = func() (string, error) { return shim, nil }
@@ -131,7 +184,7 @@ func TestLoopTrialExitThreeNeedsBlockedOutcome(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			shim := filepath.Join(t.TempDir(), "coop-shim")
-			if err := os.WriteFile(shim, []byte("#!/bin/sh\nset -eu\n"+tc.script+"exit 3\n"), 0o755); err != nil {
+			if err := os.WriteFile(shim, []byte("#!/bin/sh\nset -eu\n"+loopShimStarted+tc.script+"exit 3\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			loopExecutable = func() (string, error) { return shim, nil }

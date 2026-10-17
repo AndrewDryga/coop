@@ -356,3 +356,52 @@ func TestLoopCustomPreflightRunsTheActiveRung(t *testing.T) {
 		t.Errorf("pre-flight launched before applyTarget: active codex account = %q, want work", got)
 	}
 }
+
+// coop eval tells a loop that never started from one that ran and left work (both exit 1) by the
+// start record the loop creates when its first box reaches the runtime launch. A box whose host
+// setup failed launched nothing, the box's own launch hook still runs, and a record that cannot be
+// written warns without stopping the box.
+func TestLoopRecordsItsStartAtTheFirstRuntimeLaunch(t *testing.T) {
+	launches := func(c *Control, reach bool, hook func()) {
+		t.Helper()
+		c.boxRun = func(s box.RunSpec) (int, error) {
+			if reach {
+				s.OnRuntimeLaunch()
+			}
+			return 1, nil
+		}
+		if _, err := c.runBox(box.RunSpec{Image: "img", OnRuntimeLaunch: hook}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	started := filepath.Join(t.TempDir(), "loop-started")
+	c := &Control{cfg: &config.Config{EvalLoopStartedFile: started}}
+	launches(c, false, nil)
+	if _, err := os.Lstat(started); !os.IsNotExist(err) {
+		t.Fatalf("a box that never reached its runtime launch recorded a start: %v", err)
+	}
+	armed := 0
+	launches(c, true, func() { armed++ })
+	if info, err := os.Lstat(started); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("the first runtime launch left no start record: %v", err)
+	}
+	if armed != 1 {
+		t.Errorf("the box's own launch hook ran %d times, want 1", armed)
+	}
+
+	unwritable := &Control{cfg: &config.Config{EvalLoopStartedFile: filepath.Join(t.TempDir(), "gone", "loop-started")}}
+	armed = 0
+	out := captureStderr(t, func() { launches(unwritable, true, func() { armed++ }) })
+	if armed != 1 || !strings.Contains(out, "Could not save the start record coop eval asked for") {
+		t.Errorf("an unwritable start record: launch hook ran %d times, stderr %q", armed, out)
+	}
+
+	var plain box.RunSpec
+	outside := &Control{cfg: &config.Config{}, boxRun: func(s box.RunSpec) (int, error) { plain = s; return 0, nil }}
+	if _, err := outside.runBox(box.RunSpec{Image: "img"}); err != nil {
+		t.Fatal(err)
+	}
+	if plain.OnRuntimeLaunch != nil {
+		t.Error("a loop outside coop eval got a launch hook nobody asked for")
+	}
+}

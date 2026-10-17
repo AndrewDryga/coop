@@ -47,6 +47,10 @@ type Config struct {
 	// EvalDisableWebTools is internal trial state, also carried to a loop subprocess.
 	// It disables ordinary native search/fetch, not arbitrary authenticated requests.
 	EvalDisableWebTools bool
+	// EvalLoopStartedFile is internal trial state too (COOP_EVAL_LOOP_STARTED_FILE): the file a
+	// loop subprocess creates when it launches its first box, so coop eval can tell a loop that
+	// never started from one that ran and left work. Both exit 1.
+	EvalLoopStartedFile string
 
 	ServicesNet    string   // COOP_SERVICES_NET — override the services network name
 	ACPCarryTokens int      // COOP_ACP_CARRY_TOKENS — per-session budget (≈tokens, ~4 bytes each) for the conversation carried across an ACP provider switch (default 200000)
@@ -260,6 +264,7 @@ func Load() (*Config, error) {
 		StreamTrace:         streamTrace,
 		ACPWarm:             acpWarm,
 		EvalDisableWebTools: os.Getenv("COOP_EVAL_DISABLE_WEB_TOOLS") == "1",
+		EvalLoopStartedFile: os.Getenv("COOP_EVAL_LOOP_STARTED_FILE"),
 
 		ServicesNet:    get("COOP_SERVICES_NET", ""),
 		ACPCarryTokens: carryTokens,

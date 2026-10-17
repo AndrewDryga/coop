@@ -129,6 +129,10 @@ work. `coop help eval inspect` explains what results mean.
 | `error` | Execution or grading didn't produce a verdict, so grading is incomplete. It doesn't mean the model failed the task. |
 | A timeout, or a trial that never started | Grading is incomplete here too. |
 
+A loop trial starts when its loop launches its first box. If the loop stops before that, for
+example because the image is missing or the account isn't signed in, the trial is an error, not a
+graded failure.
+
 An incomplete comparison has no definitive winner. A sealed run with complete grading exits 0, even
 with graded failures. A run with incomplete grading exits 1 and keeps its record for inspection. A
 dry run exits 0 after previewing without trials. Code-size changes are a review signal, not a

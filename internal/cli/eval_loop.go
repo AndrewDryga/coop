@@ -29,8 +29,9 @@ import (
 // its box on cancellation, then stops descendants that survive its exit.
 //
 // The loop's exit code is CONTEXT, never the verdict. Whether the work is good is the verifier's
-// call, made afterwards on the snapshot, exactly as for an agent case. The exit code only separates
-// "the run happened" from "the run could not start" and "the run was cut off".
+// call, made afterwards on the snapshot, exactly as for an agent case. The exit code separates a run
+// that was cut off from one that ended on its own. Whether the run happened at all is the loop's
+// start record: a loop that never launched a box exits 1, just like one that ran and left work.
 
 // Loop exit codes, from the engine's own banners: what each means for a trial.
 const (
@@ -96,6 +97,9 @@ func (r *trialRunner) runLoopTrial(ctx context.Context, t eval.Trial, workspace 
 	// The configuration is the loop's positional: a preset name or a target. This is where a loop
 	// suite differs from an agent suite — a preset is exactly what it evaluates.
 	args := []string{"loop", t.Config.Label, "--no-preflight", "--no-mcp"}
+	// The loop creates this file when its first box launches. It sits in the trial directory beside
+	// the workspace, outside every box mount, so the agent under test cannot create or remove it.
+	started := filepath.Join(filepath.Dir(workspace), "loop-started")
 
 	out, errOut := &tailBuffer{max: 256 << 10}, &tailBuffer{max: 64 << 10}
 	group, err := startLoopTrialGroup(ctx)
@@ -127,6 +131,7 @@ func (r *trialRunner) runLoopTrial(ctx context.Context, t eval.Trial, workspace 
 		"COOP_RUN_ARGS=",       // no ambient host mounts or unrecorded runtime flags
 		"COOP_NO_UPDATE_CHECK=1",
 		"COOP_EVAL_DISABLE_WEB_TOOLS=1",
+		"COOP_EVAL_LOOP_STARTED_FILE="+started,
 	)
 
 	if err := ctx.Err(); err != nil {
@@ -165,7 +170,9 @@ func (r *trialRunner) runLoopTrial(ctx context.Context, t eval.Trial, workspace 
 	if ctx.Err() == nil && errors.Is(runErr, exec.ErrWaitDelay) {
 		return attemptOutcome{detail: detail, code: code}, fmt.Errorf("the loop left a process holding its output open: %w", runErr)
 	}
-	return attemptOutcome{detail: detail, code: code}, loopOutcome(code, ctx.Err())
+	info, statErr := os.Lstat(started)
+	ran := statErr == nil && info.Mode().IsRegular()
+	return attemptOutcome{detail: detail, code: code}, loopOutcome(code, ran, ctx.Err())
 }
 
 // Keep an owned member in the loop's process group until the final signal. Cmd.Wait reaps the
@@ -244,8 +251,8 @@ func startLoopTrialGroup(ctx context.Context) (*loopTrialGroup, error) {
 //
 // nil means "grade it": the scenario ran, and how well it went is the verifier's call. An error
 // means there is nothing to grade, and the trial is recorded as a timeout or a harness error rather
-// than as anything about the configuration.
-func loopOutcome(code int, ctxErr error) error {
+// than as anything about the configuration. started says whether the loop launched a box at all.
+func loopOutcome(code int, started bool, ctxErr error) error {
 	switch {
 	case ctxErr != nil:
 		return ctxErr // the deadline; the caller reports it as a timeout
@@ -253,17 +260,20 @@ func loopOutcome(code int, ctxErr error) error {
 		return errors.New("the loop was interrupted before it finished")
 	case code < 0:
 		return fmt.Errorf("the loop was killed before it finished (exit %d)", code)
+	case !started:
+		// No box ever launched, so the configuration never got to work and there is nothing to say
+		// about it. Rejected input, such as an unknown target or preset, exits 2; a missing queue,
+		// image, runtime or account exits 1, the same code as a run that left work. evalRun refuses
+		// a recipe or preset that does not load before any trial. A loop that found nothing to work
+		// on launches no box either, which is why this names what happened, not a cause.
+		return fmt.Errorf("the loop exited %d without launching a box", code)
 	case code == loopExitDrained || code == loopExitWorkRemains || code == loopExitBlocked:
 		// It ran. Work left over, or a task blocked on a human decision, is a real result about the
 		// configuration — a loop that finishes less of the queue is exactly what we are measuring —
 		// so it goes to the verifier like any other.
 		return nil
 	default:
-		// 2 is rejected input, such as an unknown target or preset: the scenario never ran, so
-		// there is nothing to grade and nothing to say about the configuration. A loop that could
-		// not start for another reason (no queue, a missing image, an unusable runtime) exits 1
-		// like one that left work, and reaches the verifier above; evalRun refuses a recipe or
-		// preset that does not load before any trial.
-		return fmt.Errorf("the loop could not start (exit %d)", code)
+		// It ran, then gave up without a queue result, such as after repeated provider timeouts.
+		return fmt.Errorf("the loop stopped with exit %d before it finished", code)
 	}
 }
