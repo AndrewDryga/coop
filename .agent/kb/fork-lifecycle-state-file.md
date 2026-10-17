@@ -2,7 +2,7 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
-sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
+sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
 updated: 2026-10-17
 ---
 A fork's detached loop is recorded in ONE small file, `<repo>-forks/.coop/<name>.pid`, read and
@@ -58,6 +58,15 @@ record is the retry handle, so a new start refuses it and the next stop finishes
 other-system, foreign-generation and foreground/editor records stay held. With no file, stop still
 reaps provably dead execution records of the exact generation. Nothing else clears a dead worker's
 record: it may still own an orphaned box.
+
+`coop fork ls` (`gatherForkStatus`, `internal/forkctl/status.go`) lists a fork whose record another
+system wrote as `elsewhere`, "background loop started on Linux", ahead of `unknown` and `cleanup`:
+the loop's own sandbox record reads as unverifiable here too, and stop cleans nothing while the
+record stands. Its `--json` names the system in `detached_system` (present only then); the record
+itself never makes `cleanup_pending` true, though a dead local sandbox of the same fork still does,
+and the listing shows `elsewhere` until the record goes. Trap: the task snapshot's `CleanupPending` (`internal/tasks/snapshot.go`) still counts such a
+record as left for cleanup, so `gatherForkStatus` sets it aside, while `coop tasks watch` and its
+`--json` still report it as cleanup-pending.
 
 ## Unsupported state never becomes an identity
 
@@ -146,6 +155,12 @@ to a process or a container, or prints, it is supervision.
   not a regular file gets "remove it", not the permissions advice: a log only holds output.
 
 ## Changelog
+- 2026-10-17 — `coop fork ls` lists a fork whose record another system wrote as `elsewhere`,
+  naming that system in its words and in `--json`'s `detached_system`, never as cleanup or
+  running; it ranks above unknown and cleanup. Before, it read "cleanup needed", or "status
+  unavailable" beside the loop's own sandbox record, with `cleanup_pending` true. Recorded the task
+  snapshot's `CleanupPending`, which `coop tasks watch` still reports, as a trap. Re-verified against
+  status.go, ls.go and snapshot.go (task 2026-10-17-show-a-fork-whose-loop-record-another-os-wrote-a).
 - 2026-10-17 — a record whose start token is the other platform's shape is
   `ProcessIdentityForeign`, decided before any pid is probed, and never provably dead: `ForkStop`
   and a detached start refuse it by name and keep it, and `killGroup`/`waitForExit` proceed only on

@@ -13,6 +13,7 @@ import (
 type forkStatus struct {
 	Name, Agent, Branch, Updated string
 	Running                      bool
+	Elsewhere                    string // the system that started the background loop, when another OS did
 	Cleanup                      bool
 	Active                       int
 	Parked                       int
@@ -70,7 +71,10 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 		}
 	}
 	running := forkspace.RunningPid(repo, name) != 0
-	cleanup := !running && pathExists(forkspace.PidPath(repo, name))
+	// A record another operating system wrote names a pid this kernel cannot check, so it is neither
+	// running nor left for cleanup: coop fork stop refuses it and says where to stop the loop.
+	elsewhere := workerElsewhere(repo, name)
+	cleanup := !running && elsewhere == "" && pathExists(forkspace.PidPath(repo, name))
 	active, parked, cleanupSandboxes, unverifiedSandboxes := 0, 0, 0, 0
 	reserved, ready, landing := false, false, false
 	projectSnapshot := tasks.ReadProjectSnapshot(repo, nil)
@@ -90,7 +94,8 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 		reserved = reserved || observed.Reservation != nil
 		ready = ready || observed.Candidate
 		landing = landing || observed.PendingLand
-		cleanup = cleanup || observed.CleanupPending || executionCleanup > 0
+		// The snapshot reads the same record, and counts another system's as left for cleanup.
+		cleanup = cleanup || (observed.CleanupPending && elsewhere == "") || executionCleanup > 0
 	}
 	cost, _ := c.host.forkCost(ws)
 	return forkStatus{
@@ -99,6 +104,7 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 		Branch:              forkBranch(ws),
 		Updated:             forkUpdated(repo, ws),
 		Running:             running,
+		Elsewhere:           elsewhere,
 		Cleanup:             cleanup,
 		Active:              active,
 		Parked:              parked,
@@ -121,6 +127,16 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 	}
 }
 
+// workerElsewhere names the operating system that started the fork's background loop when another
+// one wrote its record, as a coop in a Linux container sharing this folder with macOS does, or "".
+func workerElsewhere(repo, name string) string {
+	state, err := forkspace.ReadWorkerState(repo, name)
+	if err != nil || forkspace.ProcessIdentityOf(state.Pid, state.Token) != forkspace.ProcessIdentityForeign {
+		return ""
+	}
+	return forkspace.ProcTokenSystem(state.Token)
+}
+
 func summarizeForkExecutions(observations []forkspace.ExecutionObservation) (active, parked, cleanup, unverified int, problems []string) {
 	for _, observation := range observations {
 		switch {
@@ -139,6 +155,12 @@ func summarizeForkExecutions(observations []forkspace.ExecutionObservation) (act
 }
 
 func (s forkStatus) stateCell() string {
+	// Only the system that started this loop can check or stop it. Its own sandbox record reads as
+	// unverifiable here, and coop fork stop cleans nothing up while its record stands, so name that
+	// system rather than "unknown" or "cleanup"; the problems still print below.
+	if s.Elsewhere != "" {
+		return "elsewhere"
+	}
 	if s.UnverifiedSandboxes > 0 {
 		return "unknown"
 	}
@@ -177,11 +199,13 @@ func (s forkStatus) stateCell() string {
 
 // stateWords translates one machine state into what it MEANS. The machine value is the JSON
 // projection's contract and never changes; this is the sentence a person reads instead of
-// decoding a one-word enum.
-func stateWords(state string) string {
+// decoding a one-word enum. system is where an "elsewhere" loop was started.
+func stateWords(state, system string) string {
 	switch state {
 	case "running":
 		return "background loop running"
+	case "elsewhere":
+		return "background loop started on " + system
 	case "active":
 		return "agent running"
 	case "session":

@@ -68,7 +68,7 @@ func (c *Control) ForkLs(args []string) (int, error) {
 	listing("Forks")
 	for _, s := range statuses {
 		listing("")
-		heading := "  " + s.Name + " · " + stateWords(s.stateCell())
+		heading := "  " + s.Name + " · " + stateWords(s.stateCell(), s.Elsewhere)
 		if s.Updated != "" {
 			heading += " · updated " + s.Updated
 		}
@@ -189,6 +189,7 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 		CleanupSandboxes    int              `json:"cleanup_sandboxes"`
 		UnverifiedSandboxes int              `json:"unverified_sandboxes"`
 		DetachedRunning     bool             `json:"detached_running"`
+		DetachedSystem      string           `json:"detached_system,omitempty"` // set only for a loop another OS started
 		WorkspaceReserved   bool             `json:"workspace_reserved"`
 		Candidate           bool             `json:"candidate"`
 		Landing             bool             `json:"landing"`
@@ -229,7 +230,8 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 			State: s.stateCell(), Tasks: s.Counts, ActiveSandboxes: s.Active,
 			ParkedSandboxes: s.Parked, CleanupSandboxes: s.CleanupSandboxes,
 			UnverifiedSandboxes: s.UnverifiedSandboxes,
-			DetachedRunning:     s.Running, WorkspaceReserved: s.Reserved, Candidate: s.Ready,
+			DetachedRunning:     s.Running, DetachedSystem: s.Elsewhere,
+			WorkspaceReserved: s.Reserved, Candidate: s.Ready,
 			Landing: s.Landing, CleanupPending: s.Cleanup, Legacy: s.Legacy, Problems: s.Problems,
 		}
 		out = append(out, workspace{Name: n, Path: ws, Serve: serveURLs(ws), Services: svcURLs(ws), Status: status})

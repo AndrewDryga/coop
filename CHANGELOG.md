@@ -103,6 +103,11 @@
   still names every file under it whose name, or a folder's name above it, marks it as a secret,
   such as `.env` or anything in `secrets/` or `.aws/`, and session reviews report it.
 
+  `coop fork stop` says which system started the loop and to stop it there, `coop fork ls` lists
+  the fork as "background loop started on Linux" (in `--json`, the state `elsewhere`, with the
+  system in `detached_system`, present only then), and `coop tasks ls` shows a claim's pid as
+  "PID 4242 on Linux".
+
 - **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
   `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a
   file in place. An agent in a box could swap that file's folder for a named pipe just as
