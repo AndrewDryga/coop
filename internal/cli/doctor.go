@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -240,11 +241,18 @@ func (a *app) doctorReportOrphanBoxes(report *doctorReport) int {
 	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
 	defer cancel()
 	survey, err := box.SurveyOrphanBoxes(ctx, a.rt, repo)
+	reportOrphanSurvey(report, a.rt.Name, survey, err)
+	return 0
+}
+
+// reportOrphanSurvey adds a survey's findings to the report; rtName is the command that removes
+// containers by hand. The approved transcripts render through it too.
+func reportOrphanSurvey(report *doctorReport, rtName string, survey box.OrphanSurvey, err error) {
 	if err != nil {
 		// Fail closed and say so: an unanswerable runtime is not evidence that nothing is orphaned.
 		report.section("Running boxes").add(doctorRow{outcome: doctorNote,
 			label: "Could not check for abandoned boxes", reason: sentence(firstLine(err))})
-		return 0
+		return
 	}
 	if len(survey.Orphans) > 0 {
 		ids := make([]string, 0, len(survey.Orphans))
@@ -256,13 +264,39 @@ func (a *app) doctorReportOrphanBoxes(report *doctorReport) int {
 			details: ids,
 			footer:  "They will be cleaned up when Coop next starts work or builds an image."})
 	}
+	// Coop says nothing else when it cannot name this computer: its runs' boxes simply stay.
+	if err := survey.HostError; err != nil {
+		row := doctorRow{outcome: doctorNote,
+			label:  "Coop cannot tell which boxes this computer started, so it removes none of them",
+			reason: sentence(firstLine(err))}
+		var problem *box.HostIDError
+		if errors.As(err, &problem) {
+			row.footer = problem.Fix
+		}
+		report.section("Box cleanup").add(row)
+	}
 	if n := len(survey.Unattributed); n > 0 {
 		report.section("Running boxes").add(doctorRow{outcome: doctorNote,
 			label:   fmt.Sprintf("Could not identify the supervisor for %s", ui.Count(n, "box", "boxes")),
 			details: survey.Unattributed,
 			footer:  "Check that the box is no longer needed before removing it manually."})
 	}
-	return 0
+	// Another computer's pids mean nothing here, so no sweep removes these; a person can.
+	if n := len(survey.OtherHost); n > 0 {
+		commands := []string{rtName + " rm -f " + strings.Join(survey.OtherHost, " ")}
+		for _, project := range survey.OtherHostProjects {
+			commands = append(commands, fmt.Sprintf("%s volume rm $(%s volume ls -q --filter label=com.docker.compose.project=%s)", rtName, rtName, project))
+		}
+		them := "the command above"
+		if len(commands) > 1 {
+			them = "the commands above"
+		}
+		report.section("Boxes from other computers").add(doctorRow{outcome: doctorNote,
+			label:   fmt.Sprintf("%s started by Coop on another computer or in another container", ui.Count(n, "container was", "containers were")),
+			details: survey.OtherHost,
+			reason:  strings.Join(commands, "\n"),
+			footer:  "Coop never removes them. If the Coop that started them no longer runs, remove them with " + them + "."})
+	}
 }
 
 // doctorCheckUID interprets the box's uid. Only the real box image carries coop's non-root USER

@@ -160,6 +160,21 @@
   the record as it does for other interrupted runs. `coop net recover`, or `coop net inspect` of that
   run, writes it at once, even when Docker is not running.
 
+- **Coop no longer removes boxes that another computer is running.** Coop removes a box once the
+  Coop process that started it is gone. When two computers, or a computer and a dev container, used
+  one Docker with the project at the same path, neither could see the other's Coop processes and
+  took them for gone, so the next `coop loop`, `coop fork` or `coop build` on one removed the boxes
+  the other was running. Each box, and each loop's or editor session's services, now records which
+  computer or container started it, and Coop removes only its own. Coop keeps a random id for the
+  computer in `~/.local/state/coop/host-id.json`. Update Coop on every computer and dev container
+  that uses the same Docker: a box that an older Coop starts does not record where it runs, so
+  another computer's Coop can still remove it. A Coop running inside a container leaves such boxes
+  alone, since it cannot tell whose they are. When a container that runs Coop restarts, what its
+  crashed runs left before the restart now counts as another container's, so Coop no longer removes
+  it on its own. `coop doctor` now lists the boxes and services that another computer or container
+  started for the project, with the commands to remove them once that Coop is gone, and says how to
+  fix the id file when Coop cannot read it.
+
 - **Coop no longer lets a box's Git settings choose the project folder.** Coop asked Git where your
   repository starts, and Git follows a setting in `.git/config` that an agent in a box can change. A
   box could point it at another folder, such as your home folder, and the next Coop command used that

@@ -27,6 +27,15 @@ func platformStartToken(pid int) string {
 	return platformTokenPrefix + strings.TrimSpace(string(boot)) + ":" + start
 }
 
+// platformPIDNamespace is the kernel's name for this process's PID namespace, "pid:[<inode>]". The
+// host's own namespace keeps one fixed inode across reboots. A container's has another, unique among
+// the namespaces alive on this kernel; the kernel may hand that number to a new namespace once the
+// old one is gone.
+func platformPIDNamespace() (string, bool) {
+	link, err := os.Readlink("/proc/self/ns/pid")
+	return link, err == nil && strings.HasPrefix(link, "pid:[")
+}
+
 func linuxStartTicks(stat []byte) (string, bool) {
 	// comm is parenthesized and may contain spaces or ')', so fields begin after the final ')'.
 	endComm := strings.LastIndexByte(string(stat), ')')

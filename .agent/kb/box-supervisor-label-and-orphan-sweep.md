@@ -2,7 +2,7 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/cli/acp_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/box/restricted.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go]
+sources: [internal/cli/acp_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/box/restricted.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go]
 updated: 2026-10-17
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
@@ -13,24 +13,52 @@ container's labels said who would have removed it.
 
 `internal/box/run.go` now stamps every launch with
 
-    coop.host = v1:<workspace-scope>:<pid>:<start-token>
+    coop.host = v2:<workspace-scope>:<host>:<pid>:<start-token>
 
 - **workspace-scope** — `sha256(canonical path)[:12]`, of `spec.PolicyRepo` when set, else
   `spec.Repo`. The policy repo comes first because a review/gate box mounts a *disposable* candidate
   tree that no later run could ever scan; scoping it to the durable repo keeps its orphan reachable.
+- **host** — `thisHost` (`box/hostid.go`): `sha256(id + "\n" + PID namespace)[:12]`. A pid means
+  something only where it was read. Before v2, one Docker daemon serving two hosts, or a host and a
+  devcontainer, at the same repository path let each side's sweep read the other's live supervisors
+  as gone and remove their boxes and service volumes. The id is random, made once in
+  `~/.local/state/coop/host-id.json` (`{"version":1,"id":…}`; a test binary uses `serviceStateRoot`'s
+  temp root), written in full and then linked into place so racing first runs agree, and never
+  replaced. It is not `/etc/machine-id` or `IOPlatformUUID`: x/sys has no `gethostuuid`, so macOS
+  would need IOKit or an `ioreg` subprocess, and images often lack or share a machine id. Its folder
+  already holds the task leases, whose pids assume one host, and `authorityProtection` keeps it out
+  of every box. It is read with `safefile.ReadRegular` (at most 4 KiB, never through a link, never
+  blocking on a FIFO). The namespace is `/proc/self/ns/pid` on Linux (`processidentity.PIDNamespace`),
+  none on macOS. No id or no namespace → an **empty label**, and a `HostIDError` (its file or folder
+  and a one-sentence fix) that `coop doctor` shows; nothing else would.
 - **pid + start-token** — `os.Getpid()` and `processidentity.StartToken`, i.e. the process that runs
-  `docker run`. No stable token → **no label at all**: a label nobody can verify later is worse than
+  `docker run`. No stable token → an **empty label**: a label nobody can verify later is worse than
   none.
+
+`ownerLabels` sets `coop.host` even when it is empty, as `runServiceLabels` does: an agent can write
+`.agent/Dockerfile`, and Docker keeps a label the image bakes in unless the run sets it. The native
+broker takes only the owner labels with a value (`nativeBrokerLabels`): an exact `DockerRef` refuses
+an empty one, and coop builds that image itself.
+
+A v1 label (`v1:<scope>:<pid>:<token>`, written by builds before this change) is still read. A coop
+on a host (macOS, or Linux in the initial PID namespace, `processidentity.InitialPIDNamespace`)
+judges it as before, since it has no host field, unless its token is another platform's
+(`processidentity.Native`), which only another host could have written. A coop inside a container
+judges none (`legacyLabelsAreLocal`): it cannot tell its own v1 labels from another container's on
+the same daemon, whose live pids look gone from its namespace, so it lists them as another host's.
+The reader retires on the "Box supervisor label" row of [[one-upgrade-for-old-state]], taking
+`legacyLabelsAreLocal` with it.
 
 The decision table (`box.SurveyOrphanBoxes`), applied per container:
 
 | recorded supervisor                            | action                     |
 |------------------------------------------------|----------------------------|
-| pid gone, or pid reused (different token)       | reap — the ONLY reapable   |
+| this host's pid gone, or reused (different token) | reap — the ONLY reapable |
 | alive and matching                              | untouched                  |
 | unreadable identity (`Inspect` → Unknown)       | untouched (fails closed)   |
-| another OS's start token (`Inspect` → Foreign)  | untouched (a pid this kernel cannot check) |
 | another workspace's scope                       | untouched                  |
+| another host or PID namespace: a v2 host field, another OS's start token, or a v1 label seen by a coop inside a container | untouched; doctor lists it under "Boxes from other computers" |
+| a v2 label while this coop cannot name its host (`thisHost` failed) | REPORTED, never reaped |
 | no label (pre-upgrade), or a value this version can't parse | REPORTED, never reaped |
 | any value on a container carrying a Compose project label | REPORTED, never reaped |
 
@@ -57,7 +85,11 @@ but not counted in the launch's "Removed N boxes" line, and a broker with a Comp
 removed. The open broker's private directory (`coop-broker-*`, holding the run's real credentials)
 is a `tempPrefixes` entry, so `ReapOrphanTempEntries` clears one a kill left behind.
 `SurveyOrphanBoxes` returns the dead supervisors' brokers beside the boxes; `coop doctor` reports
-the boxes only. It runs from `app.sweepOrphanBoxes` (memoized once per repo per process) at the entry
+the boxes only. The same listing yields `OtherHost`: this workspace's boxes, brokers and per-run
+services that another host supervises, which no sweep will ever remove, with `OtherHostProjects`
+for their volumes. Doctor (`reportOrphanSurvey`, which the approved transcripts 18n and 18o render
+through) lists them with the exact `rm -f` and `volume rm` commands, and `HostError` under "Box
+cleanup". It runs from `app.sweepOrphanBoxes` (memoized once per repo per process) at the entry
 points that already reap: loop start, fork start, and `coop build`/`update`'s recycle. Failure there
 is deliberately silent — the
 command's own box work reports a broken runtime loudly, and Apple's `container` CLI has no label
@@ -167,6 +199,10 @@ A true no-match is success; query or partial-removal failure makes `build`/`upda
 already-built image called out explicitly. Do not reintroduce best-effort count/kill helpers there.
 
 Traps:
+- "Inside a container" means any Linux PID namespace but the initial one (`pid:[4026531836]`).
+  OrbStack's Docker engine itself runs in a child namespace, so even a `--pid=host` container there
+  reads another; Coop on OrbStack machines, WSL2 or LXC counts as containerized and judges no v1
+  label, which only leaves more for doctor to list.
 - The sweep adds TWO runtime `ps` listings to loop/fork/build (every coop container for boxes and
   brokers, then project services). The
   scripted process E2Es pin exact runtime call counts, so those suites pass `sweepsOrphanBoxes` (see
@@ -189,8 +225,23 @@ Traps:
   labels into each service's configuration, so a label that changes between an editor session's
   inner children recreates the services on every start, and a child's exit would let a sweep take a
   live session's services and volumes.
+- The host field fails closed, not open. A coop in a container gets a new PID namespace, so a new
+  field, each time the container starts, and nothing ever removes what a run killed before that
+  restart left behind; doctor lists it as another host's. A coop with another `$HOME` has another id
+  and leaves this one's leftovers alone too. Two hosts sharing one state folder (a network home, a
+  cloned disk) share the id, so only the PID namespace still tells their containers apart; two such
+  hosts in their initial namespaces collide, as their task leases already do.
+- `thisHost` runs once per process, so a test cannot swap its id; the sweeps take the host as an
+  argument (`surveyOrphanBoxes`, `reapOrphanServices`, `supervisorLabelFor`) for the no-id tests.
+  Test binaries keep the id under `ServiceStateRootEnv`, which the box, cli and forkctl `TestMain`s
+  point at a fresh temp root.
 
 ## Changelog
+- 2026-10-17 — v2 labels name the host and PID namespace (`thisHost`); a sweep never judges another
+  host's pid, and v1 labels keep their meaning for a coop on a host while a coop in a container
+  judges none. Doctor lists another host's containers and a host id
+  it cannot read; the id is read bounded and link-free; `coop.host` is always set (task
+  2026-10-16-name-the-host-in-the-supervisor-label-so-a-share).
 - 2026-10-17 — a supervisor label whose start token another operating system wrote (a Linux coop
   sharing the daemon with macOS) reads as Foreign and is left alone; it was reaped as dead before
   (task 2026-10-17-stop-judging-a-fork-pidfile-s-process-dead-becau).

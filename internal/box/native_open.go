@@ -43,17 +43,7 @@ func startNativeOpen(ctx context.Context, rt runtime.Runtime, run *nativeRun, ne
 	if err != nil {
 		return nil, err
 	}
-	labels := map[string]string{LabelKey: LabelBroker, labelBrokerID: run.runID}
-	for i := 0; i+1 < len(owner); i++ {
-		if owner[i] == "--label" {
-			key, value, ok := strings.Cut(owner[i+1], "=")
-			if ok {
-				labels[key] = value
-			}
-			i++
-		}
-	}
-	labels[LabelKey] = LabelBroker
+	labels := nativeBrokerLabels(run.runID, owner)
 	result := &nativeOpenOwner{docker: docker, ref: runtime.DockerRef{Name: "coop-native-" + run.runID[:16], Labels: labels}, done: make(chan error, 1)}
 	image, _, err := docker.Image(ctx, tag)
 	if err != nil {
@@ -114,6 +104,24 @@ func startNativeOpen(ctx context.Context, rt runtime.Runtime, run *nativeRun, ne
 	case <-timer.C:
 		return result, errors.New("native broker readiness timed out")
 	}
+}
+
+// nativeBrokerLabels are the native broker's own labels plus its box's ownerLabels. It takes only
+// owner labels with a value: an empty one only clears a label the image carries, coop builds this
+// image itself, and an exact Docker reference refuses empty values.
+func nativeBrokerLabels(runID string, owner []string) map[string]string {
+	labels := map[string]string{labelBrokerID: runID}
+	for i := 0; i+1 < len(owner); i++ {
+		if owner[i] == "--label" {
+			key, value, ok := strings.Cut(owner[i+1], "=")
+			if ok && value != "" {
+				labels[key] = value
+			}
+			i++
+		}
+	}
+	labels[LabelKey] = LabelBroker
+	return labels
 }
 
 func (o *nativeOpenOwner) close() error {

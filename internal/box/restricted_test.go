@@ -104,7 +104,6 @@ func TestRunBareMountsOnlyScratchAndTheSeed(t *testing.T) {
 	seed := seedFrom(t, got)
 	want := []string{
 		"run", "--rm", "--init",
-		// No workspace, so no host scope: an unlabeled box is reported by a sweep, never reaped.
 		"-e", "TZ=America/Merida",
 		"--cap-drop", "ALL",
 		"--read-only",
@@ -113,6 +112,9 @@ func TestRunBareMountsOnlyScratchAndTheSeed(t *testing.T) {
 		"--tmpfs", "/workspace:" + ownedScratch + ",mode=0700",
 		"-e", "COOP_CONFIG_PUBLICATION=",
 		"--label", "coop=box",
+		// No workspace, so no host scope: an unlabeled box is reported by a sweep, never reaped. The
+		// empty value still replaces a label the image carries.
+		"--label", "coop.host=",
 		"-e", "COOP_BOX=1",
 		"--network", "none",
 		"-w", "/workspace",
@@ -272,7 +274,8 @@ func TestRunReadOnlyHoldsAuthorityMountWindowThroughRuntime(t *testing.T) {
 
 // The ACP form the session daemon launches: the same bare profile, the adapter's own command left
 // exactly as it is (its switches ride the session/new the client sends), stdin attached without a
-// tty, and the run label the daemon's receipt reaps by. No activity record and no fork label.
+// tty, and the run label the daemon's receipt reaps by. No activity record and no fork label, and an
+// empty supervisor label: a bare run has no workspace for a sweep to scope it to.
 func TestRunBareACPKeepsTheAdapterCommandAndRunLabel(t *testing.T) {
 	t.Setenv("TZ", "America/Merida")
 	cfg := restrictedConfig(t)
@@ -298,6 +301,7 @@ func TestRunBareACPKeepsTheAdapterCommandAndRunLabel(t *testing.T) {
 		"--tmpfs", "/workspace:" + ownedScratch + ",mode=0700",
 		"-e", "COOP_CONFIG_PUBLICATION=",
 		"--label", "coop=box",
+		"--label", "coop.host=",
 		"--label", "coop.run=" + spec.RunID,
 		"-e", "COOP_BOX=1",
 		"--network", "none",

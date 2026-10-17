@@ -2,9 +2,9 @@
 name: one-upgrade-for-old-state
 description: an old on-disk format is read for one upgrade step, then refused with the state version that converts it; check a worker with the new build before swapping it
 scope: architecture
-sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md]
+sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md]
 check: "go test ./internal -run TestOneUpgradeWaypoints"
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 # Read old on-disk state for one upgrade step, then refuse it by name
@@ -76,13 +76,21 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 | Isolated fork generation | `<repo>-forks/.coop/<name>.generation.json` | 4 | 4 | none exist | none |
 | Service approval | `~/.local/state/coop/service-approvals/` | 5 | 4 | read; a new approval writes 5 | `coop up` re-approves |
 | Workspace checkpoint bundle | kept by Ryker's controller | 2 | 1 | read | none needed |
+| Box supervisor label | `coop.host` on boxes, their brokers and per-run services | 2 | 1 | judged as before by a Coop on a host, by none inside a container; an older Coop sharing the Docker daemon still writes them | none: labels are never rewritten |
 
 `<state>` is the session state root (`--state`, default `~/.local/state/coop/sessions`). A worker's
 job forks live under it too, in `<state>/job-sources/<key>/repository-forks/`. The `check:` test
 pins each row's Current and Oldest read to the constants named in `waypointConstants` in
 `internal/oneupgrade_test.go`. A row whose oldest version has no constant yet pins only Current.
+The box supervisor label's versions are the string prefixes `v2` and `v1` (`internal/box/sweep.go`),
+so its row pins neither. Its waypoint is every Coop that shares a Docker daemon, not a store:
+retire v1 once those all write v2. Retiring it also removes `legacyLabelsAreLocal`, and a v1
+label then reads as unknown: reported, never removed.
 
 ## Changelog
+- 2026-10-17 — row for the box supervisor label (v2, still reads v1; task
+  2026-10-16-name-the-host-in-the-supervisor-label-so-a-share). Its versions are string prefixes,
+  so `waypointConstants` lists it with empty pins; swept the table with TestOneUpgradeWaypoints.
 - 2026-10-16 — review fixes: a state root with neither a database nor a lock is refused (a mistyped
   volume name makes an empty one); -wal/-shm must be regular files; a record declaring version 0 is
   damaged, not old; a format change must update the check; rows for isolated fork generations, service

@@ -19,6 +19,9 @@ func platformStartToken(pid int) string {
 	return fmt.Sprintf("%s%d:%d", platformTokenPrefix, start.Sec, start.Usec)
 }
 
+// macOS has no PID namespaces: every process on the host sees the same pids.
+func platformPIDNamespace() (string, bool) { return "", true }
+
 func platformParent(pid int) int {
 	kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil || int(kp.Proc.P_pid) != pid {

@@ -51,7 +51,7 @@ const (
 	LabelExecution      = "coop.execution"       // exact host activity record; runtime cleanup never guesses by kind/name
 	LabelNetworkRun     = "coop.network.run"     // a filtered run's gateway containers and volumes: value=<network run id>
 	// LabelHost records the HOST PROCESS supervising this box, as
-	// v1:<workspace-scope>:<pid>:<start-token> — the versioned form parseSupervisorLabel reads
+	// v2:<workspace-scope>:<host>:<pid>:<start-token> — the versioned form parseSupervisorLabel reads
 	// back. Every other label above names a LOGICAL owner (a run, a supervisor id, a fork); none of
 	// them says which process would have removed the box, so nothing could decide whether a box left
 	// behind by a SIGKILLed coop is an orphan. Cleanup is pull-only (--rm never fires on SIGKILL),
@@ -3305,21 +3305,17 @@ func cachePrivateDirs(cfg *config.Config, spec RunSpec) []string {
 	return dirs
 }
 
-// hostTimezone resolves the host's IANA zone name ("America/Merida"): $TZ when set,
-// else the /etc/localtime symlink, else Debian-style /etc/timezone. Empty when none
-// resolve — the box then keeps the image default (UTC).
 // ownerLabels say who owns a box, for everything that reaps one: its supervisor, run, execution and
 // fork. A helper Coop starts beside the box carries them too, so it goes wherever its box goes.
 func ownerLabels(spec RunSpec) []string {
 	var args []string
-	// Who supervises this box: THIS process, scoped to the workspace it runs for. A host coop killed
-	// by SIGKILL never fires --rm and leaves nobody watching, so a later invocation in the same
-	// workspace reaps the box by proving this identity dead. Omitted when the host cannot produce a
-	// stable identity — an unverifiable label is worse than none, and an unlabeled box is reported,
-	// never reaped.
-	if host := supervisorLabelValue(supervisorScope(spec), os.Getpid()); host != "" {
-		args = append(args, "--label", LabelHost+"="+host)
-	}
+	// Who supervises this box: THIS process, on this host, scoped to the workspace it runs for. A
+	// host coop killed by SIGKILL never fires --rm and leaves nobody watching, so a later invocation
+	// in the same workspace on the same host reaps the box by proving this identity dead. Empty when
+	// the host cannot name itself or produce a stable identity — an unverifiable label is worse than
+	// none, and an unlabeled box is reported, never reaped. Set even then, as runServiceLabels does:
+	// an agent can write .agent/Dockerfile, and a coop.host its image bakes in must not stay.
+	args = append(args, "--label", LabelHost+"="+supervisorLabelValue(supervisorScope(spec), os.Getpid()))
 	if spec.RunID != "" {
 		args = append(args, "--label", LabelRun+"="+spec.RunID)
 	}
@@ -3346,6 +3342,9 @@ func ownerLabels(spec RunSpec) []string {
 	return args
 }
 
+// hostTimezone resolves the host's IANA zone name ("America/Merida"): $TZ when set,
+// else the /etc/localtime symlink, else Debian-style /etc/timezone. Empty when none
+// resolve — the box then keeps the image default (UTC).
 func hostTimezone() string {
 	if tz := os.Getenv("TZ"); tz != "" {
 		return tz

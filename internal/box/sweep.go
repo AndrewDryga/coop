@@ -10,16 +10,26 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-// supervisorLabelVersion prefixes every LabelHost value. The label is a contract between a coop
-// that launched a box and a LATER, possibly different, coop that decides whether to remove it, so
-// the shape it was written in has to be readable from the value itself. An unrecognized version
+// supervisorLabelVersion prefixes every LabelHost value coop writes. The label is a contract between
+// a coop that launched a box and a LATER, possibly different, coop that decides whether to remove it,
+// so the shape it was written in has to be readable from the value itself. An unrecognized version
 // reads as unattributable — reported, never reaped.
-const supervisorLabelVersion = "v1"
+//
+// v2 added the host field (thisHost). v1 labels, written before it, are still read, and a coop on a
+// host judges them as it always did, so what a run killed before an upgrade left behind is still
+// removed; a coop inside a container judges none (legacyLabelsAreLocal). The v1 reader retires on
+// the schedule of .agent/kb/rules/one-upgrade-for-old-state.md (row "Box supervisor label"), and
+// legacyLabelsAreLocal goes with it.
+const (
+	supervisorLabelVersion       = "v2"
+	legacySupervisorLabelVersion = "v1"
+)
 
 // OrphanBox is one coop box, or a box's broker helper, whose supervising host process is provably
 // gone: the pid it recorded is dead, or that pid now belongs to a different process than the one
@@ -36,6 +46,15 @@ type OrphanSurvey struct {
 	Orphans      []OrphanBox // in THIS workspace's scope AND provably dead: the only reapable boxes
 	Brokers      []OrphanBox // credential broker helpers orphaned the same way, with or without their box
 	Unattributed []string    // box ids coop cannot attribute (no supervisor label, or one it can't read)
+	// OtherHost lists this workspace's containers (boxes, their brokers and its runs' services) that
+	// a coop on another host, or in another PID namespace, supervises. Their pids mean nothing here,
+	// so no sweep ever judges or removes them; doctor lists them for a person to remove by hand.
+	// OtherHostProjects names those services' per-run Compose projects, whose volumes go with them.
+	OtherHost         []string
+	OtherHostProjects []string
+	// HostError is why this coop cannot name its host, when it cannot: a *HostIDError (thisHost).
+	// It then judges no v2 label, so its own boxes count as unattributed and none of them is removed.
+	HostError error
 }
 
 // SurveyOrphanBoxes classifies every coop box, and every broker helper, for workspace without
@@ -44,8 +63,9 @@ type OrphanSurvey struct {
 // The judgment is the fork lifecycle's (internal/forkspace.OwnerProvablyDead), applied to an identity
 // carried by the container instead of a pidfile: a box is an orphan only when its recorded
 // supervisor's pid is gone, or that pid has been reused by a different process. Everything else is
-// left alone — a live supervisor, an identity the kernel won't confirm, a box from another
-// workspace, and a box launched before this label existed. Never age, never image, never name.
+// left alone — a live supervisor, an identity the kernel won't confirm, a box from another workspace
+// or from another host or PID namespace sharing the runtime, and a box launched before this label
+// existed. Never age, never image, never name.
 //
 // A broker is judged the same way, on its own label, because it can outlive its box: when its coop
 // is killed the box goes with --rm, while the native broker has no --rm and stays, stopped and
@@ -55,6 +75,17 @@ type OrphanSurvey struct {
 // A query failure is an error, never an empty survey: a runtime that cannot be asked what is
 // running must not read as "nothing is running" to a caller that removes what it doesn't see.
 func SurveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace string) (OrphanSurvey, error) {
+	host, hostErr := thisHost()
+	survey, err := surveyOrphanBoxes(ctx, rt, workspace, host)
+	if err != nil {
+		return OrphanSurvey{}, err
+	}
+	survey.HostError = hostErr
+	return survey, nil
+}
+
+// surveyOrphanBoxes is SurveyOrphanBoxes for a coop on host, which is "" when it cannot name it.
+func surveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace, host string) (OrphanSurvey, error) {
 	containers, err := rt.ContainerLabels(ctx, LabelKey, "", LabelKey, LabelHost, composeProjectLabel)
 	if err != nil {
 		return OrphanSurvey{}, err
@@ -62,16 +93,26 @@ func SurveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace string
 	scope := workspaceScope(workspace)
 	var survey OrphanSurvey
 	for _, container := range containers {
-		kind := container.Labels[LabelKey]
-		if kind != LabelBox && kind != LabelBroker {
-			continue // a project service or a task channel: other sweeps judge those
+		kind, label, project := container.Labels[LabelKey], container.Labels[LabelHost], container.Labels[composeProjectLabel]
+		ref, ok := parseSupervisorLabel(label)
+		if kind == LabelService {
+			// ReapOrphanServices judges this workspace's run services; the survey only notes another
+			// host's, which no sweep ever removes.
+			if ok && ref.scope == scope && runProject(workspace, project) && ref.origin(host) == originElsewhere {
+				survey.OtherHost = append(survey.OtherHost, container.ID)
+				if !slices.Contains(survey.OtherHostProjects, project) {
+					survey.OtherHostProjects = append(survey.OtherHostProjects, project)
+				}
+			}
+			continue
 		}
-		host := container.Labels[LabelHost]
-		ref, ok := parseSupervisorLabel(host)
+		if kind != LabelBox && kind != LabelBroker {
+			continue // a task channel or another helper: other sweeps judge those
+		}
 		// Coop never puts a Compose label on a box or a broker. One that carries it is a development
 		// service whose file planted coop's labels with a dead supervisor of this workspace, or a box
 		// whose image carries the label; either way it is never removed.
-		ok = ok && container.Labels[composeProjectLabel] == ""
+		ok = ok && project == ""
 		if kind == LabelBox {
 			survey.Checked++
 			if !ok {
@@ -82,10 +123,24 @@ func SurveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace string
 				continue
 			}
 		}
-		if !ok || ref.scope != scope || !supervisorProvablyDead(ref.pid, ref.token) {
+		if !ok || ref.scope != scope {
 			continue
 		}
-		orphan := OrphanBox{ID: container.ID, PID: ref.pid, Evidence: host}
+		switch ref.origin(host) {
+		case originElsewhere:
+			survey.OtherHost = append(survey.OtherHost, container.ID)
+			continue
+		case originUnknown:
+			// This coop cannot name its host, so it cannot tell its own boxes from another host's.
+			if kind == LabelBox {
+				survey.Unattributed = append(survey.Unattributed, container.ID)
+			}
+			continue
+		}
+		if !supervisorProvablyDead(ref, host) {
+			continue
+		}
+		orphan := OrphanBox{ID: container.ID, PID: ref.pid, Evidence: label}
 		if kind == LabelBox {
 			survey.Orphans = append(survey.Orphans, orphan)
 		} else {
@@ -144,47 +199,113 @@ func supervisorLabelValues(orphans []OrphanBox) []string {
 	return values
 }
 
-// supervisorLabelValue is the LabelHost value for pid supervising a box in scope. It returns "" when
-// the host cannot produce a stable kernel identity for pid: without one, no later run could ever
-// prove the process dead, so the box is better left unlabeled (and thus untouchable) than labeled
-// with something unverifiable.
+// supervisorLabelValue is the LabelHost value for pid supervising a box in scope:
+// v2:<workspace-scope>:<host>:<pid>:<start-token>. It returns "" when this host cannot name itself
+// (thisHost) or produce a stable kernel identity for pid: without both, no later run could ever prove
+// the process dead, so the box is better left unlabeled (and thus untouchable) than labeled with
+// something unverifiable. Callers set the empty value too, which replaces a label the image carries.
 func supervisorLabelValue(scope string, pid int) string {
+	host, _ := thisHost()
+	return supervisorLabelFor(scope, host, pid)
+}
+
+// supervisorLabelFor is supervisorLabelValue for a coop on host: "" when host is.
+func supervisorLabelFor(scope, host string, pid int) string {
 	token := processidentity.StartToken(pid)
-	if pid <= 1 || scope == "" || !processidentity.Stable(token) {
+	if pid <= 1 || scope == "" || host == "" || !processidentity.Stable(token) {
 		return ""
 	}
-	return fmt.Sprintf("%s:%s:%d:%s", supervisorLabelVersion, scope, pid, token)
+	return fmt.Sprintf("%s:%s:%s:%d:%s", supervisorLabelVersion, scope, host, pid, token)
 }
 
 // supervisorRef is a parsed LabelHost value.
 type supervisorRef struct {
 	scope string
+	host  string // the writer's thisHost; "" in a v1 label, which has no host field
 	pid   int
 	token string
 }
 
 // parseSupervisorLabel reads a LabelHost value back. ok is false for anything this version cannot
-// fully verify — no label, another version, a malformed field, or a start token whose shape it does
-// not recognize — and every such box is reported rather than reaped. The token itself contains
+// fully verify — no label, an unknown version, a malformed field, or a start token whose shape it
+// does not recognize — and every such box is reported rather than reaped. The token itself contains
 // colons, so it takes the whole remainder of the value.
 func parseSupervisorLabel(value string) (supervisorRef, bool) {
-	parts := strings.SplitN(value, ":", 4)
-	if len(parts) != 4 || parts[0] != supervisorLabelVersion || parts[1] == "" {
+	var ref supervisorRef
+	var pid string
+	if rest, ok := strings.CutPrefix(value, supervisorLabelVersion+":"); ok {
+		parts := strings.SplitN(rest, ":", 4)
+		if len(parts) != 4 || !isHostField(parts[1]) {
+			return supervisorRef{}, false
+		}
+		ref.scope, ref.host, pid, ref.token = parts[0], parts[1], parts[2], parts[3]
+	} else if rest, ok := strings.CutPrefix(value, legacySupervisorLabelVersion+":"); ok {
+		parts := strings.SplitN(rest, ":", 3)
+		if len(parts) != 3 {
+			return supervisorRef{}, false
+		}
+		ref.scope, pid, ref.token = parts[0], parts[1], parts[2]
+	} else {
 		return supervisorRef{}, false
 	}
-	pid, err := strconv.Atoi(parts[2])
-	if err != nil || pid <= 1 || !processidentity.Stable(parts[3]) {
+	var err error
+	ref.pid, err = strconv.Atoi(pid)
+	if ref.scope == "" || err != nil || ref.pid <= 1 || !processidentity.Stable(ref.token) {
 		return supervisorRef{}, false
 	}
-	return supervisorRef{scope: parts[1], pid: pid, token: parts[3]}, true
+	return ref, true
 }
 
-// supervisorProvablyDead is the one test that authorizes removing a box: the kernel says the
-// recorded pid is gone, or that pid now belongs to a different process than the one that launched
-// the box. A live match and — deliberately — an identity coop could not read are both unproven, so
-// both fail closed. Identity is pid + start token or nothing: no container age, no elapsed time.
-func supervisorProvablyDead(pid int, token string) bool {
-	switch processidentity.Inspect(pid, token) {
+// labelOrigin says where a supervisor label's pid was read, as a coop on some host sees it.
+type labelOrigin uint8
+
+const (
+	originHere      labelOrigin = iota // this host and PID namespace: the pid can be checked
+	originElsewhere                    // another host or PID namespace: the pid means nothing here
+	originUnknown                      // a v2 label, while this coop cannot name its own host
+)
+
+// origin says whether ref's pid names a process a coop on host can check at all. A v2 label must
+// come from this host and PID namespace; from any other, a live supervisor's pid would look gone or
+// reused. A v1 label has no host field: a coop on a host gives it the meaning it always had, a coop
+// inside a container reads it as another host's (legacyLabelsAreLocal), and so does anyone when its
+// start token is another platform's, which no coop on this host could have written. A coop with no
+// host of its own (host "") cannot tell whose a v2 label is.
+func (ref supervisorRef) origin(host string) labelOrigin {
+	switch {
+	case !processidentity.Native(ref.token):
+		return originElsewhere
+	case ref.host == "" && !legacyLabelsAreLocal():
+		return originElsewhere
+	case ref.host == "" || ref.host == host:
+		return originHere
+	case host == "":
+		return originUnknown
+	default:
+		return originElsewhere
+	}
+}
+
+// legacyLabelsAreLocal reports whether this coop may judge a v1 label's pid. A v1 label names no host
+// or PID namespace, and coop on a host (macOS, or Linux in the host's own PID namespace) judges it as
+// it always did. A coop inside a container cannot tell its own v1 labels from those of another
+// container sharing the Docker daemon, and that one's live pids look gone from here, so it judges
+// none of them: they are listed as another host's.
+var legacyLabelsAreLocal = sync.OnceValue(func() bool {
+	namespace, ok := processidentity.PIDNamespace()
+	return ok && (namespace == "" || namespace == processidentity.InitialPIDNamespace)
+})
+
+// supervisorProvablyDead is the one test that authorizes removing a box or a run's services: the
+// label's pid was read on host, and the kernel says it is gone, or that it now belongs to a different
+// process than the one that launched the box. A live match, a pid of another host or PID namespace
+// and — deliberately — an identity coop could not read are all unproven, so all fail closed.
+// Identity is pid + start token or nothing: no container age, no elapsed time.
+func supervisorProvablyDead(ref supervisorRef, host string) bool {
+	if ref.origin(host) != originHere {
+		return false
+	}
+	switch processidentity.Inspect(ref.pid, ref.token) {
 	case processidentity.Gone, processidentity.Mismatch:
 		return true
 	default:
@@ -227,31 +348,37 @@ func runProject(workspace, project string) bool {
 // session in workspace whose supervisor is provably dead, and reports how many containers it removed:
 // a killed run leaves them behind, since only a clean exit tears them down. The proof is
 // SurveyOrphanBoxes': the supervisor label coop's own override wrote (runServiceLabels), a scope of
-// this workspace and the kernel's word that the pid is gone or reused. The project must also be one
-// of this workspace's per-run ones, whose labels coop's override always replaces. A service with no
-// provable label is left alone, and the network goes with ReapOrphanNetworks once nothing is
-// attached.
+// this workspace, a pid of this host and PID namespace, and the kernel's word that the pid is gone or
+// reused. The project must also be one of this workspace's per-run ones, whose labels coop's override
+// always replaces. A service with no provable label is left alone, and the network goes with
+// ReapOrphanNetworks once nothing is attached.
 func ReapOrphanServices(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
+	host, _ := thisHost()
+	return reapOrphanServices(ctx, rt, workspace, host)
+}
+
+// reapOrphanServices is ReapOrphanServices for a coop on host, which is "" when it cannot name it.
+func reapOrphanServices(ctx context.Context, rt runtime.Runtime, workspace, host string) (int, error) {
 	containers, err := rt.ContainerLabels(ctx, LabelKey, LabelService, LabelHost, composeProjectLabel)
 	if err != nil {
 		return 0, err
 	}
 	scope := workspaceScope(workspace)
-	type run struct{ project, host string }
+	type run struct{ project, label string }
 	var dead []run
 	for _, container := range containers {
-		project, host := container.Labels[composeProjectLabel], container.Labels[LabelHost]
-		ref, ok := parseSupervisorLabel(host)
+		project, label := container.Labels[composeProjectLabel], container.Labels[LabelHost]
+		ref, ok := parseSupervisorLabel(label)
 		if !ok || ref.scope != scope || !runProject(workspace, project) ||
-			slices.Contains(dead, run{project, host}) || !supervisorProvablyDead(ref.pid, ref.token) {
+			slices.Contains(dead, run{project, label}) || !supervisorProvablyDead(ref, host) {
 			continue
 		}
-		dead = append(dead, run{project, host})
+		dead = append(dead, run{project, label})
 	}
 	removed := 0
 	var errs []error
 	for _, r := range dead {
-		n, err := rt.RemoveByLabels(ctx, map[string]string{LabelKey: LabelService, LabelHost: r.host, composeProjectLabel: r.project})
+		n, err := rt.RemoveByLabels(ctx, map[string]string{LabelKey: LabelService, LabelHost: r.label, composeProjectLabel: r.project})
 		removed += n
 		if err == nil {
 			_, err = rt.RemoveVolumesByLabel(ctx, composeProjectLabel, r.project)

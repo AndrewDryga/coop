@@ -45,6 +45,17 @@ func System(token string) string {
 // is not native was written on another operating system, whose pids this kernel cannot check.
 func Native(token string) bool { return strings.HasPrefix(token, platformTokenPrefix) }
 
+// PIDNamespace names the PID namespace this process sees pids in; ok is false when it cannot be
+// read. A pid and its start token mean something only in the namespace they were read in: from any
+// other, the same number is gone or another process. macOS has no PID namespaces, so there the
+// answer is "" and true.
+func PIDNamespace() (namespace string, ok bool) { return platformPIDNamespace() }
+
+// InitialPIDNamespace is PIDNamespace's answer in a Linux host's own PID namespace: the kernel gives
+// the initial namespace a fixed inode (PROC_PID_INIT_INO), the same on every boot. A container's
+// namespace has another.
+const InitialPIDNamespace = "pid:[4026531836]"
+
 // Inspect separates liveness from authority to signal. Unknown is fail-closed: the process appears
 // live, but its identity cannot be proved. A reused pid is Mismatch, not Match, and another
 // operating system's token is Foreign before any pid here is asked.

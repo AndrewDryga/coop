@@ -248,28 +248,68 @@ func deadSupervisorLabel(workspace string) string {
 // goneSupervisorLabel names a process that has exited.
 func goneSupervisorLabel(t *testing.T, workspace string) string {
 	t.Helper()
+	return supervisorLabel(workspace, gonePID(t))
+}
+
+// gonePID is the pid of a process that has exited.
+func gonePID(t *testing.T) int {
+	t.Helper()
 	cmd := exec.Command("sh", "-c", "exit 0")
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
 	}
-	return supervisorLabel(workspace, cmd.Process.Pid)
+	return cmd.Process.Pid
 }
 
-// supervisorLabel builds a well-formed label for pid carrying a start token that is NOT pid's, so
-// the identity test can only ever answer "gone" or "reused" — never a live match.
+// supervisorLabel builds a well-formed label of this host for pid carrying a start token that is NOT
+// pid's, so the identity test can only ever answer "gone" or "reused" — never a live match.
 func supervisorLabel(workspace string, pid int) string {
-	return supervisorLabelVersion + ":" + workspaceScope(workspace) + ":" + strconv.Itoa(pid) + ":" + starttoken.Stale()
+	return supervisorLabelOn(localHost(), workspace, pid)
 }
+
+// localHost is this test binary's host field; TestHostFieldNamesTheHostAndTheNamespace proves the
+// binary has one, so an empty one fails there and not as a puzzle in every sweep test.
+func localHost() string {
+	host, _ := thisHost()
+	return host
+}
+
+// supervisorLabelOn is supervisorLabel as a coop on host wrote it.
+func supervisorLabelOn(host, workspace string, pid int) string {
+	return supervisorLabelVersion + ":" + workspaceScope(workspace) + ":" + host + ":" + strconv.Itoa(pid) + ":" + starttoken.Stale()
+}
+
+// judgeLegacyLabels makes the test run as a coop on a host (true) or inside a container (false),
+// whatever PID namespace the test binary itself runs in: a loop box or a dev container is not the
+// host's.
+func judgeLegacyLabels(t *testing.T, onHost bool) {
+	t.Helper()
+	saved := legacyLabelsAreLocal
+	legacyLabelsAreLocal = func() bool { return onHost }
+	t.Cleanup(func() { legacyLabelsAreLocal = saved })
+}
+
+// legacySupervisorLabel is a v1 label, as coop wrote it before labels named their host.
+func legacySupervisorLabel(workspace string, pid int, token string) string {
+	return legacySupervisorLabelVersion + ":" + workspaceScope(workspace) + ":" + strconv.Itoa(pid) + ":" + token
+}
+
+// otherHost is the host field of a coop on another host, or in another PID namespace.
+const otherHost = "0123456789abcdef01234567"
 
 // The whole decision table, in one place: only a box of THIS workspace whose recorded supervisor is
-// provably dead may be removed. Everything else — a live supervisor, another workspace's box, a box
-// with no supervisor label, and a label this version cannot read — is left alone, and the ones coop
-// cannot attribute at all are reported so an operator can see them.
+// provably dead may be removed. Everything else — a live supervisor, another workspace's box, another
+// host's box, a box with no supervisor label, and a label this version cannot read — is left alone,
+// and the ones coop cannot attribute at all are reported so an operator can see them. So are this
+// workspace's containers that another host supervises, services included, which nobody else would
+// ever report.
 func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
+	judgeLegacyLabels(t, true)
 	rt, boxes := fakeRuntime(t)
 	workspace, foreign := t.TempDir(), t.TempDir()
 	dead := deadSupervisorLabel(workspace)
 	gone := goneSupervisorLabel(t, workspace)
+	scope, host := workspaceScope(workspace), localHost()
 	addFakeBox(t, boxes, "dead-in-scope", map[string]string{LabelHost: dead})
 	addFakeBox(t, boxes, "gone-in-scope", map[string]string{LabelHost: gone})
 	addFakeBox(t, boxes, "live-in-scope", map[string]string{LabelHost: liveSupervisorLabel(t, workspace)})
@@ -277,10 +317,18 @@ func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
 	addFakeBox(t, boxes, "dead-other-fork", map[string]string{
 		LabelHost: deadSupervisorLabel(filepath.Join(foreign, "-forks", "perf")), LabelForkOwner: "v1-someone-else",
 	})
+	// Another host's pids, or another PID namespace's, mean nothing here: someone else's box, not an
+	// unreadable one. A v1 label has no host field and is judged as it always was, unless its token is
+	// another platform's.
+	addFakeBox(t, boxes, "gone-other-host", map[string]string{LabelHost: supervisorLabelOn(otherHost, workspace, gonePID(t))})
+	addFakeBox(t, boxes, "gone-other-host-other-repo", map[string]string{LabelHost: supervisorLabelOn(otherHost, foreign, gonePID(t))})
+	addFakeBox(t, boxes, "gone-in-scope-v1", map[string]string{LabelHost: legacySupervisorLabel(workspace, gonePID(t), starttoken.Stale())})
+	addFakeBox(t, boxes, "gone-other-platform-v1", map[string]string{LabelHost: legacySupervisorLabel(workspace, gonePID(t), starttoken.Foreign())})
 	addFakeBox(t, boxes, "unlabeled", map[string]string{})
-	addFakeBox(t, boxes, "malformed-version", map[string]string{LabelHost: "v0:" + workspaceScope(workspace) + ":2:linux-proc-v1:1"})
-	addFakeBox(t, boxes, "malformed-pid", map[string]string{LabelHost: supervisorLabelVersion + ":" + workspaceScope(workspace) + ":nope:linux-proc-v1:1"})
-	addFakeBox(t, boxes, "malformed-token", map[string]string{LabelHost: supervisorLabelVersion + ":" + workspaceScope(workspace) + ":2:homemade-v9:1"})
+	addFakeBox(t, boxes, "malformed-version", map[string]string{LabelHost: "v0:" + scope + ":2:" + starttoken.Stale()})
+	addFakeBox(t, boxes, "malformed-host", map[string]string{LabelHost: supervisorLabelVersion + ":" + scope + ":not-a-host:2:" + starttoken.Stale()})
+	addFakeBox(t, boxes, "malformed-pid", map[string]string{LabelHost: supervisorLabelVersion + ":" + scope + ":" + host + ":nope:" + starttoken.Stale()})
+	addFakeBox(t, boxes, "malformed-token", map[string]string{LabelHost: supervisorLabelVersion + ":" + scope + ":" + host + ":2:homemade-v9:1"})
 	// A development service whose Compose file planted a box's labels is no box at all.
 	addFakeBox(t, boxes, "planted-dev-service", map[string]string{LabelHost: gone, composeProjectLabel: ComposeProject(workspace)})
 	// Broker helpers are judged by the same proof, on their own label, and are never reported: they
@@ -288,18 +336,36 @@ func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
 	addFakeContainer(t, boxes, "broker-dead-in-scope", LabelBroker, map[string]string{LabelHost: gone})
 	addFakeContainer(t, boxes, "broker-live-in-scope", LabelBroker, map[string]string{LabelHost: liveSupervisorLabel(t, workspace)})
 	addFakeContainer(t, boxes, "broker-dead-other-repo", LabelBroker, map[string]string{LabelHost: deadSupervisorLabel(foreign)})
+	addFakeContainer(t, boxes, "broker-gone-other-host", LabelBroker, map[string]string{LabelHost: supervisorLabelOn(otherHost, workspace, gonePID(t))})
 	addFakeContainer(t, boxes, "broker-unlabeled", LabelBroker, map[string]string{})
 	addFakeContainer(t, boxes, "broker-planted", LabelBroker, map[string]string{LabelHost: gone, composeProjectLabel: ComposeProject(workspace)})
-	// Every other coop container is another sweep's, however dead its supervisor.
+	// Every other coop container is another sweep's, however dead its supervisor. Only a run service
+	// of this workspace that another host supervises is reported, beside that host's boxes: no sweep
+	// would ever remove it.
 	addFakeContainer(t, boxes, "dead-service", LabelService, map[string]string{LabelHost: gone})
 	addFakeContainer(t, boxes, "dead-task-channel", LabelTaskChannel, map[string]string{LabelHost: gone})
+	theirRun := ComposeProjectFor(workspace, "their-loop")
+	addFakeService(t, boxes, "service-other-host", theirRun, supervisorLabelOn(otherHost, workspace, gonePID(t)))
+	addFakeService(t, boxes, "service-other-host-dev-project", ComposeProject(workspace), supervisorLabelOn(otherHost, workspace, gonePID(t)))
+	addFakeService(t, boxes, "service-other-host-other-repo", ComposeProjectFor(foreign, "their-loop"), supervisorLabelOn(otherHost, foreign, gonePID(t)))
 
 	survey, err := SurveyOrphanBoxes(context.Background(), rt, workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if survey.Checked != 10 {
-		t.Errorf("checked %d boxes, want 10", survey.Checked)
+	if survey.Checked != 15 {
+		t.Errorf("checked %d boxes, want 15", survey.Checked)
+	}
+	if survey.HostError != nil {
+		t.Errorf("survey host error = %v, want none: every test binary can name its host", survey.HostError)
+	}
+	otherHosts := append([]string(nil), survey.OtherHost...)
+	slices.Sort(otherHosts)
+	if want := []string{"broker-gone-other-host", "gone-other-host", "gone-other-platform-v1", "service-other-host"}; !slices.Equal(otherHosts, want) {
+		t.Errorf("another host's containers = %v, want %v", otherHosts, want)
+	}
+	if want := []string{theirRun}; !slices.Equal(survey.OtherHostProjects, want) {
+		t.Errorf("another host's run projects = %v, want %v", survey.OtherHostProjects, want)
 	}
 	var brokers []string
 	for _, broker := range survey.Brokers {
@@ -319,12 +385,12 @@ func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
 		}
 	}
 	slices.Sort(orphans)
-	if want := []string{"dead-in-scope", "gone-in-scope"}; !slices.Equal(orphans, want) {
+	if want := []string{"dead-in-scope", "gone-in-scope", "gone-in-scope-v1"}; !slices.Equal(orphans, want) {
 		t.Errorf("orphans = %v, want %v", orphans, want)
 	}
 	unattributed := append([]string(nil), survey.Unattributed...)
 	slices.Sort(unattributed)
-	want := []string{"malformed-pid", "malformed-token", "malformed-version", "planted-dev-service", "unlabeled"}
+	want := []string{"malformed-host", "malformed-pid", "malformed-token", "malformed-version", "planted-dev-service", "unlabeled"}
 	if !slices.Equal(unattributed, want) {
 		t.Errorf("unattributed = %v, want %v", unattributed, want)
 	}
@@ -384,6 +450,208 @@ func TestReapOrphanBoxesRemovesOnlyProvablyDeadOwnScope(t *testing.T) {
 		if strings.Contains(events, "rm -f "+id) {
 			t.Errorf("reap removed %s, which it must never touch:\n%s", id, events)
 		}
+	}
+}
+
+// One Docker daemon can serve two hosts, or a host and a container, at the same repository path, and
+// a pid recorded on one of them is gone or another process on the other. So both sweeps remove only
+// what this host's own label names, or a v1 label, which has no host field and keeps its old meaning;
+// another host's boxes, brokers and services stay, and so does a v1 label carrying another platform's
+// start token.
+func TestSweepsJudgeOnlyThisHostsSupervisors(t *testing.T) {
+	judgeLegacyLabels(t, true)
+	workspace := t.TempDir()
+	labels := map[string]string{
+		"this-host":             supervisorLabel(workspace, gonePID(t)),
+		"other-host":            supervisorLabelOn(otherHost, workspace, gonePID(t)),
+		"old-v1":                legacySupervisorLabel(workspace, gonePID(t), starttoken.Stale()),
+		"old-v1-other-platform": legacySupervisorLabel(workspace, gonePID(t), starttoken.Foreign()),
+	}
+	t.Run("boxes", func(t *testing.T) {
+		rt, boxes := fakeRuntime(t)
+		for name, label := range labels {
+			addFakeBox(t, boxes, name, map[string]string{LabelHost: label})
+			addFakeContainer(t, boxes, name+"-broker", LabelBroker, map[string]string{LabelHost: label})
+		}
+		survey, err := SurveyOrphanBoxes(context.Background(), rt, workspace)
+		if err != nil || len(survey.Unattributed) != 0 {
+			t.Fatalf("survey = %+v, %v: another host's box is someone else's, not an unreadable one", survey, err)
+		}
+		want := []string{"old-v1-other-platform", "old-v1-other-platform-broker", "other-host", "other-host-broker"}
+		reported := append([]string(nil), survey.OtherHost...)
+		slices.Sort(reported)
+		if !slices.Equal(reported, want) {
+			t.Fatalf("survey reports %v as another host's, want %v", reported, want)
+		}
+		if n, err := ReapOrphanBoxes(context.Background(), rt, workspace); err != nil || n != 2 {
+			t.Fatalf("ReapOrphanBoxes = (%d, %v), want this host's and the v1 box", n, err)
+		}
+		if got := remainingFakeEntries(t, boxes); !slices.Equal(got, want) {
+			t.Fatalf("containers left = %v, want %v", got, want)
+		}
+	})
+	t.Run("services", func(t *testing.T) {
+		rt, boxes := fakeRuntime(t)
+		for name, label := range labels {
+			project := ComposeProjectFor(workspace, name)
+			addFakeService(t, boxes, name+"-db", project, label)
+			addFakeVolume(t, name+"_pgdata", project)
+		}
+		survey, err := SurveyOrphanBoxes(context.Background(), rt, workspace)
+		reported := append([]string(nil), survey.OtherHost...)
+		slices.Sort(reported)
+		if err != nil || !slices.Equal(reported, []string{"old-v1-other-platform-db", "other-host-db"}) || len(survey.OtherHostProjects) != 2 {
+			t.Fatalf("survey = %+v, %v; want another host's two run services and their projects", survey, err)
+		}
+		if n, err := ReapOrphanServices(context.Background(), rt, workspace); err != nil || n != 2 {
+			t.Fatalf("ReapOrphanServices = (%d, %v), want this host's and the v1 run", n, err)
+		}
+		if got, want := remainingFakeEntries(t, boxes), []string{"old-v1-other-platform-db", "other-host-db"}; !slices.Equal(got, want) {
+			t.Fatalf("services left = %v, want %v", got, want)
+		}
+		if got, want := remainingFakeEntries(t, os.Getenv("COOP_TEST_VOLUMES")), []string{"old-v1-other-platform_pgdata", "other-host_pgdata"}; !slices.Equal(got, want) {
+			t.Fatalf("volumes left = %v, want %v", got, want)
+		}
+	})
+}
+
+// A coop that cannot name its host (thisHost failed) writes an empty label, and cannot tell its own
+// v2 labels from another host's: it removes none of them and reports their boxes as unattributed.
+// A v1 label has no host field and is judged as before, and one with another platform's start
+// token is still provably another host's.
+func TestSweepsWithoutAHostJudgeOnlyV1Labels(t *testing.T) {
+	judgeLegacyLabels(t, true)
+	workspace := t.TempDir()
+	if label := supervisorLabelFor(workspaceScope(workspace), "", os.Getpid()); label != "" {
+		t.Fatalf("supervisorLabelFor with no host = %q, want no label", label)
+	}
+	labels := map[string]string{
+		"v2-this-host":          supervisorLabel(workspace, gonePID(t)), // written while the id was readable
+		"v2-other-host":         supervisorLabelOn(otherHost, workspace, gonePID(t)),
+		"old-v1":                legacySupervisorLabel(workspace, gonePID(t), starttoken.Stale()),
+		"old-v1-other-platform": legacySupervisorLabel(workspace, gonePID(t), starttoken.Foreign()),
+	}
+	ids := func(orphans []OrphanBox) []string {
+		var ids []string
+		for _, orphan := range orphans {
+			ids = append(ids, orphan.ID)
+		}
+		return ids
+	}
+	t.Run("boxes", func(t *testing.T) {
+		rt, boxes := fakeRuntime(t)
+		for name, label := range labels {
+			addFakeBox(t, boxes, name, map[string]string{LabelHost: label})
+			addFakeContainer(t, boxes, name+"-broker", LabelBroker, map[string]string{LabelHost: label})
+		}
+		survey, err := surveyOrphanBoxes(context.Background(), rt, workspace, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.Sort(survey.Unattributed)
+		slices.Sort(survey.OtherHost)
+		for _, check := range []struct {
+			group     string
+			got, want []string
+		}{
+			{"orphans", ids(survey.Orphans), []string{"old-v1"}},
+			{"brokers", ids(survey.Brokers), []string{"old-v1-broker"}},
+			{"unattributed", survey.Unattributed, []string{"v2-other-host", "v2-this-host"}},
+			{"another host's", survey.OtherHost, []string{"old-v1-other-platform", "old-v1-other-platform-broker"}},
+		} {
+			if !slices.Equal(check.got, check.want) {
+				t.Errorf("%s = %v, want %v", check.group, check.got, check.want)
+			}
+		}
+	})
+	t.Run("services", func(t *testing.T) {
+		rt, boxes := fakeRuntime(t)
+		for name, label := range labels {
+			project := ComposeProjectFor(workspace, name)
+			addFakeService(t, boxes, name+"-db", project, label)
+			addFakeVolume(t, name+"_pgdata", project)
+		}
+		if n, err := reapOrphanServices(context.Background(), rt, workspace, ""); err != nil || n != 1 {
+			t.Fatalf("reapOrphanServices with no host = (%d, %v), want only the v1 run", n, err)
+		}
+		want := []string{"old-v1-other-platform-db", "v2-other-host-db", "v2-this-host-db"}
+		if got := remainingFakeEntries(t, boxes); !slices.Equal(got, want) {
+			t.Fatalf("services left = %v, want %v", got, want)
+		}
+		want = []string{"old-v1-other-platform_pgdata", "v2-other-host_pgdata", "v2-this-host_pgdata"}
+		if got := remainingFakeEntries(t, os.Getenv("COOP_TEST_VOLUMES")); !slices.Equal(got, want) {
+			t.Fatalf("volumes left = %v, want %v", got, want)
+		}
+	})
+}
+
+// Inside a container, a v1 label could be another container's: it names no PID namespace, and a
+// live supervisor there looks gone from here. So a containerized coop removes no v1 box, broker or
+// run service, and lists them as another host's; a v2 label of its own is still judged.
+func TestAContainerJudgesNoV1Label(t *testing.T) {
+	judgeLegacyLabels(t, false)
+	workspace := t.TempDir()
+	labels := map[string]string{
+		"own-v2": supervisorLabel(workspace, gonePID(t)),
+		"old-v1": legacySupervisorLabel(workspace, gonePID(t), starttoken.Stale()),
+	}
+	t.Run("boxes", func(t *testing.T) {
+		rt, boxes := fakeRuntime(t)
+		for name, label := range labels {
+			addFakeBox(t, boxes, name, map[string]string{LabelHost: label})
+			addFakeContainer(t, boxes, name+"-broker", LabelBroker, map[string]string{LabelHost: label})
+		}
+		survey, err := surveyOrphanBoxes(context.Background(), rt, workspace, localHost())
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.Sort(survey.OtherHost)
+		var orphans, brokers []string
+		for _, orphan := range survey.Orphans {
+			orphans = append(orphans, orphan.ID)
+		}
+		for _, broker := range survey.Brokers {
+			brokers = append(brokers, broker.ID)
+		}
+		if !slices.Equal(orphans, []string{"own-v2"}) || !slices.Equal(brokers, []string{"own-v2-broker"}) ||
+			!slices.Equal(survey.OtherHost, []string{"old-v1", "old-v1-broker"}) {
+			t.Fatalf("orphans %v, brokers %v, another host's %v; want only own-v2 judged and old-v1 listed", orphans, brokers, survey.OtherHost)
+		}
+	})
+	t.Run("services", func(t *testing.T) {
+		rt, boxes := fakeRuntime(t)
+		for name, label := range labels {
+			project := ComposeProjectFor(workspace, name)
+			addFakeService(t, boxes, name+"-db", project, label)
+			addFakeVolume(t, name+"_pgdata", project)
+		}
+		if n, err := reapOrphanServices(context.Background(), rt, workspace, localHost()); err != nil || n != 1 {
+			t.Fatalf("reapOrphanServices in a container = (%d, %v), want only its own v2 run", n, err)
+		}
+		if got, want := remainingFakeEntries(t, boxes), []string{"old-v1-db"}; !slices.Equal(got, want) {
+			t.Fatalf("services left = %v, want %v", got, want)
+		}
+		if got, want := remainingFakeEntries(t, os.Getenv("COOP_TEST_VOLUMES")), []string{"old-v1_pgdata"}; !slices.Equal(got, want) {
+			t.Fatalf("volumes left = %v, want %v", got, want)
+		}
+	})
+}
+
+// Every box sets coop.host, empty when coop cannot name its supervisor: an agent can write
+// .agent/Dockerfile, and Docker keeps a label the image carries unless the run sets it. The native
+// broker runs coop's own image, so it takes only the owner labels that have a value; an exact
+// Docker reference refuses an empty one.
+func TestOwnerLabelsAlwaysSetTheSupervisorLabel(t *testing.T) {
+	owner := ownerLabels(RunSpec{Image: "i"})
+	if !containsSeq(owner, []string{"--label", LabelHost + "="}) {
+		t.Fatalf("ownerLabels with no workspace = %q, want an empty %s label", owner, LabelHost)
+	}
+	labels := nativeBrokerLabels("0123456789abcdef0123456789abcdef", owner)
+	if _, ok := labels[LabelHost]; ok || labels[LabelKey] != LabelBroker {
+		t.Fatalf("native broker labels = %v, want the broker's own and no empty %s", labels, LabelHost)
+	}
+	if labels := nativeBrokerLabels("0123456789abcdef0123456789abcdef", ownerLabels(RunSpec{Image: "i", Repo: t.TempDir()})); labels[LabelHost] == "" {
+		t.Fatalf("native broker labels = %v, want its box's supervisor", labels)
 	}
 }
 
@@ -447,9 +715,9 @@ func TestAssembleArgsSupervisorLabel(t *testing.T) {
 		t.Fatalf("no %s label on an ordinary box", LabelHost)
 	}
 	ref, ok := parseSupervisorLabel(value)
-	if !ok || ref.pid != os.Getpid() || ref.scope != workspaceScope("/r") ||
-		ref.token != processidentity.StartToken(os.Getpid()) {
-		t.Fatalf("%s=%q parsed to %#v, want this process in /r's scope", LabelHost, value, ref)
+	if !ok || ref.pid != os.Getpid() || ref.scope != workspaceScope("/r") || ref.host != localHost() ||
+		ref.token != processidentity.StartToken(os.Getpid()) || ref.origin(localHost()) != originHere {
+		t.Fatalf("%s=%q parsed to %#v, want this process on this host in /r's scope", LabelHost, value, ref)
 	}
 	// A review/gate box mounts a disposable candidate; scope it to the repo that will still exist.
 	review := args(RunSpec{Image: "i", Repo: "/tmp/candidate", PolicyRepo: "/r"})

@@ -93,7 +93,7 @@ func (b *bench) list(kind string, args ...string) (set, error) {
 }
 
 // labels decide a leftover's owner: the coop process supervising a box (coop.host,
-// v1:<scope>:<pid>:<token>), the network run, and the sample label.
+// v2:<scope>:<host>:<pid>:<token>), the network run, and the sample label.
 type labels struct{ host, network, sample string }
 
 // labels inspects one resource; false when the runtime says it no longer has it. Any other failure

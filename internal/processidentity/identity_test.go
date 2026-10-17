@@ -3,6 +3,7 @@ package processidentity
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -42,6 +43,29 @@ func TestAnotherSystemsTokenIsForeign(t *testing.T) {
 	for token, want := range map[string]string{"linux-proc-v1:b:1": "Linux", "darwin-kinfo-v1:1:1": "macOS", "homemade-v9:1": ""} {
 		if got := System(token); got != want {
 			t.Errorf("System(%q) = %q, want %q", token, got, want)
+		}
+	}
+}
+
+// Linux names this process's PID namespace, the same way every time; macOS has one pid space per
+// host and answers with an empty name.
+func TestPIDNamespace(t *testing.T) {
+	namespace, ok := PIDNamespace()
+	if !ok {
+		t.Fatal("the PID namespace of this process is unreadable")
+	}
+	again, _ := PIDNamespace()
+	if again != namespace {
+		t.Fatalf("PID namespace changed from %q to %q", namespace, again)
+	}
+	switch runtime.GOOS {
+	case "linux":
+		if !strings.HasPrefix(namespace, "pid:[") || !strings.HasSuffix(namespace, "]") {
+			t.Fatalf("PID namespace = %q, want pid:[<inode>]", namespace)
+		}
+	case "darwin":
+		if namespace != "" {
+			t.Fatalf("PID namespace = %q, want none on macOS", namespace)
 		}
 	}
 }

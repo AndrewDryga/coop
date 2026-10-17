@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	boxruntime "github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -29,8 +30,7 @@ type doctorEvidence struct {
 	verdicts   map[string]string
 	sandboxErr string // the sandbox probe produced nothing; this is why
 	taskErr    string // the task-channel probe produced nothing; this is why
-	orphans    []string
-	unattached []string
+	boxes      box.OrphanSurvey
 	surveyErr  string
 }
 
@@ -104,23 +104,14 @@ func (e doctorEvidence) render(t *testing.T) string {
 	})
 }
 
-// survey adds the read-only abandoned-box findings, which sit outside the check tally.
+// survey adds the read-only abandoned-box findings, which sit outside the check tally, through the
+// same renderer a real run uses.
 func (e doctorEvidence) survey(report *doctorReport) {
-	switch {
-	case e.surveyErr != "":
-		report.section("Running boxes").add(doctorRow{outcome: doctorNote,
-			label: "Could not check for abandoned boxes", reason: e.surveyErr})
-	case len(e.orphans) > 0:
-		report.section("Abandoned boxes").add(doctorRow{outcome: doctorNote,
-			label:   "2 boxes have no running supervisor",
-			details: e.orphans,
-			footer:  "They will be cleaned up when Coop next starts work or builds an image."})
-	case len(e.unattached) > 0:
-		report.section("Running boxes").add(doctorRow{outcome: doctorNote,
-			label:   "Could not identify the supervisor for 1 box",
-			details: e.unattached,
-			footer:  "Check that the box is no longer needed before removing it manually."})
+	var err error
+	if e.surveyErr != "" {
+		err = errors.New(e.surveyErr)
 	}
+	reportOrphanSurvey(report, "docker", e.boxes, err)
 }
 
 func TestApprovedDoctorReports(t *testing.T) {
@@ -159,12 +150,27 @@ func TestApprovedDoctorReports(t *testing.T) {
 		}},
 		{"18g-doctor-abandoned-boxes", func() doctorEvidence {
 			e := allPassed()
-			e.orphans = []string{"42c96f112acd", "978b8129d20a"}
+			e.boxes.Orphans = []box.OrphanBox{{ID: "42c96f112acd"}, {ID: "978b8129d20a"}}
 			return e
 		}},
 		{"18h-doctor-unattributed-box", func() doctorEvidence {
 			e := allPassed()
-			e.unattached = []string{"42c96f112acd"}
+			e.boxes.Unattributed = []string{"42c96f112acd"}
+			return e
+		}},
+		{"18n-doctor-other-host-boxes", func() doctorEvidence {
+			e := allPassed()
+			e.boxes.OtherHost = []string{"5d1e0a7c93b2", "8f3b61c2d4e7"}
+			e.boxes.OtherHostProjects = []string{"coop-shop-1a2b3c4d-run-5e6f7a8b"}
+			return e
+		}},
+		{"18o-doctor-host-id-unreadable", func() doctorEvidence {
+			e := allPassed()
+			path := "/Users/me/.local/state/coop/host-id.json"
+			e.boxes.HostError = &box.HostIDError{Err: errors.New(path + " holds no host id this Coop can read"),
+				// The fix a real run gives for a file that exists but holds no id (readOrCreateHostID).
+				Fix: "Once no Coop runs on this computer, delete " + path + ". Coop then makes a new id."}
+			e.boxes.Unattributed = []string{"42c96f112acd"}
 			return e
 		}},
 		{"18i-doctor-orphan-survey-failed", func() doctorEvidence {
