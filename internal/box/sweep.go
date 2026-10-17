@@ -86,7 +86,7 @@ func SurveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace string
 
 // surveyOrphanBoxes is SurveyOrphanBoxes for a coop on host, which is "" when it cannot name it.
 func surveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace, host string) (OrphanSurvey, error) {
-	containers, err := rt.ContainerLabels(ctx, LabelKey, "", LabelKey, LabelHost, composeProjectLabel)
+	containers, err := rt.ContainerLabels(ctx, LabelKey, "", LabelKey, LabelHost, composeProjectLabel, LabelRun)
 	if err != nil {
 		return OrphanSurvey{}, err
 	}
@@ -95,6 +95,11 @@ func surveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace, host 
 	for _, container := range containers {
 		kind, label, project := container.Labels[LabelKey], container.Labels[LabelHost], container.Labels[composeProjectLabel]
 		ref, ok := parseSupervisorLabel(label)
+		// A session-service run works in a remote fork's workspace, which is often gone by the time
+		// anything sweeps, so no sweep from its own workspace would ever reach what it left. Its boxes
+		// and brokers are judged from any workspace, by the same proof: this host's supervisor, dead.
+		ownRun := ok && ref.scope == scope
+		sessionRun := strings.HasPrefix(container.Labels[LabelRun], "session-")
 		if kind == LabelService {
 			// ReapOrphanServices judges this workspace's run services; the survey only notes another
 			// host's, which no sweep ever removes.
@@ -123,16 +128,18 @@ func surveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace, host 
 				continue
 			}
 		}
-		if !ok || ref.scope != scope {
+		if !ok || !ownRun && !sessionRun {
 			continue
 		}
 		switch ref.origin(host) {
 		case originElsewhere:
-			survey.OtherHost = append(survey.OtherHost, container.ID)
+			if ownRun {
+				survey.OtherHost = append(survey.OtherHost, container.ID)
+			}
 			continue
 		case originUnknown:
 			// This coop cannot name its host, so it cannot tell its own boxes from another host's.
-			if kind == LabelBox {
+			if kind == LabelBox && ownRun {
 				survey.Unattributed = append(survey.Unattributed, container.ID)
 			}
 			continue

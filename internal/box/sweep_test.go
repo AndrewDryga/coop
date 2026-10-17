@@ -453,6 +453,46 @@ func TestReapOrphanBoxesRemovesOnlyProvablyDeadOwnScope(t *testing.T) {
 	}
 }
 
+// A session-service run works in a remote fork's workspace, often gone before any sweep runs there,
+// so its boxes and brokers are judged from any workspace: removed when this host's supervisor of the
+// run is provably dead, kept when it lives or when another host's coop supervises the run. Another
+// workspace's ordinary run is still left to its own workspace.
+func TestReapOrphanBoxesRemovesADeadSessionRunsContainersFromAnyWorkspace(t *testing.T) {
+	rt, boxes := fakeRuntime(t)
+	workspace, gone := t.TempDir(), filepath.Join(t.TempDir(), "remote-fork")
+	session := map[string]string{LabelRun: "session-" + strings.Repeat("a", 24)}
+	with := func(label string, extra map[string]string) map[string]string {
+		labels := map[string]string{LabelHost: label}
+		for key, value := range extra {
+			labels[key] = value
+		}
+		return labels
+	}
+	dead := goneSupervisorLabel(t, gone)
+	addFakeContainer(t, boxes, "session-broker-dead", LabelBroker, with(dead, session))
+	addFakeBox(t, boxes, "session-box-dead", with(dead, session))
+	addFakeContainer(t, boxes, "session-broker-live", LabelBroker, with(liveSupervisorLabel(t, gone), session))
+	addFakeContainer(t, boxes, "session-broker-other-host", LabelBroker, with(supervisorLabelOn(otherHost, gone, gonePID(t)), session))
+	addFakeContainer(t, boxes, "plain-broker-other-workspace", LabelBroker, with(goneSupervisorLabel(t, gone), nil))
+
+	n, err := ReapOrphanBoxes(context.Background(), rt, workspace)
+	if err != nil || n != 1 {
+		t.Fatalf("ReapOrphanBoxes = (%d, %v), want the dead session run's one box", n, err)
+	}
+	left, err := os.ReadDir(boxes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var remaining []string
+	for _, entry := range left {
+		remaining = append(remaining, entry.Name())
+	}
+	slices.Sort(remaining)
+	if want := []string{"plain-broker-other-workspace", "session-broker-live", "session-broker-other-host"}; !slices.Equal(remaining, want) {
+		t.Fatalf("remaining containers = %v, want %v", remaining, want)
+	}
+}
+
 // One Docker daemon can serve two hosts, or a host and a container, at the same repository path, and
 // a pid recorded on one of them is gone or another process on the other. So both sweeps remove only
 // what this host's own label names, or a v1 label, which has no host field and keeps its old meaning;
@@ -670,7 +710,7 @@ func TestReapOrphanBoxesWithNothingToRemoveIsOneListing(t *testing.T) {
 		t.Fatalf("ReapOrphanBoxes = (%d, %v), want (0, nil)", n, err)
 	}
 	events := strings.Split(strings.TrimSpace(fakeRuntimeEvents(t)), "\n")
-	want := `ps -a --no-trunc --filter label=coop --format [{{json .ID}},{{json (.Label "coop")}},{{json (.Label "coop.host")}},{{json (.Label "com.docker.compose.project")}}]`
+	want := `ps -a --no-trunc --filter label=coop --format [{{json .ID}},{{json (.Label "coop")}},{{json (.Label "coop.host")}},{{json (.Label "com.docker.compose.project")}},{{json (.Label "coop.run")}}]`
 	if len(events) != 1 || events[0] != want {
 		t.Fatalf("runtime calls = %q, want the one listing %q", events, want)
 	}

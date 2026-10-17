@@ -27,7 +27,7 @@ func sweepRuntime(t *testing.T) (containerruntime.Runtime, string) {
 	if err := os.WriteFile(cli, []byte(`#!/bin/sh
 printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
 case "$*" in
-	"`+boxSurveyListing+`"*) printf '%s\n' '["legacy-box","box","",""]' ;;
+	"`+boxSurveyListing+`"*) printf '%s\n' '["legacy-box","box","","",""]' ;;
 esac
 exit 0
 `), 0o755); err != nil {

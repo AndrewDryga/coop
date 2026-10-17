@@ -56,7 +56,7 @@ The decision table (`box.SurveyOrphanBoxes`), applied per container:
 | this host's pid gone, or reused (different token) | reap — the ONLY reapable |
 | alive and matching                              | untouched                  |
 | unreadable identity (`Inspect` → Unknown)       | untouched (fails closed)   |
-| another workspace's scope                       | untouched                  |
+| another workspace's scope                       | untouched, unless a session-service run's (`coop.run=session-*`): judged like this workspace's |
 | another host or PID namespace: a v2 host field, another OS's start token, or a v1 label seen by a coop inside a container | untouched; doctor lists it under "Boxes from other computers" |
 | a v2 label while this coop cannot name its host (`thisHost` failed) | REPORTED, never reaped |
 | no label (pre-upgrade), or a value this version can't parse | REPORTED, never reaped |
@@ -76,7 +76,10 @@ runs with `--rm` and an open stdin pipe, so it exits and goes the moment its coo
 broker (`box/native_open.go`, `coop-native-*`) is created without `--rm`, so a coop killed after
 creating it leaves it behind, holding its `coop-network` image, while its box leaves. The four found
 on one Mac on 2026-10-15 were never started and came from session runs (`coop.run=session-*`) whose
-remote-fork workspaces were already gone: no workspace-scoped sweep reaches those.
+remote-fork workspaces were already gone, which no workspace-scoped sweep reached. So the survey
+also reads `coop.run`, and a session run's box or broker is judged from any workspace by the same
+proof (this host's supervisor, provably dead); another workspace's container is otherwise left
+alone, and is never listed as this workspace's other-host or unattributed box.
 `SurveyOrphanBoxes` lists every container carrying the `coop` label in ONE `ps --format` call
 (`runtime.ContainerLabels` with an empty value matches any value), reading each one's kind,
 supervisor and Compose labels, so a survey that finds nothing still costs exactly one runtime call:
@@ -237,6 +240,8 @@ Traps:
   point at a fresh temp root.
 
 ## Changelog
+- 2026-10-18 — a session-service run's boxes and brokers are judged from any workspace (task
+  2026-10-16-remove-a-dead-session-service-run-s-containers-b).
 - 2026-10-17 — the read-only and bare launches are gone: `runBox` and `collectOrphanBoxes` are the
   sweep's only starters and run.go the only launch that records its daemon.
 - 2026-10-17 — v2 labels name the host and PID namespace (`thisHost`); a sweep never judges another

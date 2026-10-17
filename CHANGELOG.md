@@ -41,6 +41,11 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **Leftover containers of finished remote sessions are cleaned up.** A session run's credential
+  helper (`coop-native-*`) could outlive the run, and since the run's workspace was gone, no cleanup
+  ever reached it. Coop's sweep now removes a session run's leftover containers from any project,
+  when the Coop that started the run on this computer is provably gone.
+
 - **A FIFO put in the forks folder no longer freezes `coop fork` commands.** An agent can write the
   folder that holds a project's forks, and a FIFO or link put where `.coop` or the forks folder
   belongs made `coop fork ls`, `stop` and `merge` wait forever, or read another folder. Coop now
