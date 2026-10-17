@@ -142,6 +142,11 @@ func summarizeForkExecutions(observations []forkspace.ExecutionObservation) (act
 		switch {
 		case observation.Stale:
 			cleanup++
+		case !observation.Running && observation.Foreign:
+			// Another operating system wrote the record, as a coop in a Linux container sharing this
+			// folder does: only a coop there can check it, so the warning says where.
+			unverified++
+			problems = append(problems, fmt.Sprintf("sandbox %s was started on %s; check it there", observation.Record.ID, forkspace.ProcTokenSystem(observation.Record.Token)))
 		case !observation.Running:
 			unverified++
 			problems = append(problems, fmt.Sprintf("sandbox %s liveness is unverifiable", observation.Record.ID))

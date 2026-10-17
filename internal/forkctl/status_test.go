@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -164,7 +165,7 @@ func TestForkLsNamesTheSystemThatStartedALoop(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(executionDir, sandbox.ID+".json"), append(body, '\n'), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			cause := "sandbox " + sandbox.ID + " liveness is unverifiable"
+			cause := "sandbox " + sandbox.ID + " was started on " + system + "; check it there"
 			text, stderr, status = listForkStatus(t, c, "perf")
 			if text != wantText {
 				t.Errorf("fork ls beside the loop's sandbox printed:\n%s\nwant:\n%s", text, wantText)
@@ -244,5 +245,17 @@ func TestSummarizeForkExecutionsKeepsEveryLivenessClassVisible(t *testing.T) {
 	}
 	if got := (forkStatus{UnverifiedSandboxes: unverified}).stateCell(); got != "unknown" {
 		t.Fatalf("unverified execution state = %q", got)
+	}
+}
+
+// A sandbox record another operating system wrote names that system; one this host wrote but
+// cannot check keeps the plain warning.
+func TestSandboxWarningNamesTheSystemThatStartedIt(t *testing.T) {
+	foreign := forkspace.ExecutionObservation{Record: forkspace.ExecutionRecord{ID: "f", Token: starttoken.Foreign()}, Foreign: true}
+	local := forkspace.ExecutionObservation{Record: forkspace.ExecutionRecord{ID: "l", Token: starttoken.Stale()}}
+	_, _, _, unverified, problems := summarizeForkExecutions([]forkspace.ExecutionObservation{foreign, local})
+	want := []string{"sandbox f was started on " + forkspace.ProcTokenSystem(starttoken.Foreign()) + "; check it there", "sandbox l liveness is unverifiable"}
+	if unverified != 2 || !slices.Equal(problems, want) {
+		t.Errorf("summarizeForkExecutions = %d, %q; want 2, %q", unverified, problems, want)
 	}
 }
