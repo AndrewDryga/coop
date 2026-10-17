@@ -311,6 +311,54 @@ func TestResolveRepoFollowsALinkedOverride(t *testing.T) {
 	}
 }
 
+// A box that can write the folder above an override can swap it for a link to the home folder or
+// above it, and the next launch would mount all the user's files, so an override a link takes there
+// is refused, whether the link is its last part or an earlier one, and the refusal names the folder
+// the link reached. The home folder as HOME spells it or by its own path, a folder above it named
+// directly and a link into it are still taken. HOME passes through a link here, as /home does on
+// some Linux systems, so naming it changes its path too.
+func TestResolveRepoRefusesALinkToTheHomeFolder(t *testing.T) {
+	base := t.TempDir()
+	users := filepath.Join(base, "users")
+	me, project, outer := filepath.Join(users, "me"), filepath.Join(users, "me", "project"), filepath.Join(users, "me", "p")
+	mkdirs(t, project, outer)
+	if err := os.Symlink(users, filepath.Join(base, "home")); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(base, "home", "me")
+	t.Setenv("HOME", home)
+	links := t.TempDir()
+	for link, target := range map[string]string{
+		filepath.Join(links, "me"): me, filepath.Join(links, "users"): users, filepath.Join(links, "project"): project,
+		filepath.Join(outer, "wt"): home, // a box working in ~/p swapped the checkout ~/p/wt for a link home
+	} {
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for override, reached := range map[string]string{
+		filepath.Join(links, "me"):          me,
+		filepath.Join(links, "users"):       users,
+		filepath.Join(links, "users", "me"): me,
+		filepath.Join(home, "p", "wt"):      me,
+	} {
+		want := "COOP_REPO " + override + " leads through a link to " + realPath(t, reached) + ", your home folder or above"
+		if got, err := ResolveRepo(override); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("ResolveRepo(%s) = %q, %v; want a refusal saying %q", override, got, err, want)
+		}
+	}
+	for override, want := range map[string]string{
+		home:                            me,
+		realPath(t, me):                 me, // no link on the way, so nothing to refuse
+		filepath.Join(base, "home"):     users,
+		filepath.Join(links, "project"): project,
+	} {
+		if got, err := ResolveRepo(override); err != nil || got != realPath(t, want) {
+			t.Errorf("ResolveRepo(%s) = %q, %v; want %s", override, got, err, realPath(t, want))
+		}
+	}
+}
+
 // A path that reaches the repository through a link, a shell's working directory say, is placed by
 // the folder it reaches. A path already under repo keeps its lexical answer, a link inside it
 // included, and a path outside stays outside.

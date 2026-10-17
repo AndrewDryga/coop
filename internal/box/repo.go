@@ -22,13 +22,30 @@ import (
 // with no secret hidden; and the working directory never names a link, so everything keyed by the
 // repository's path would see two projects. An override that cannot be resolved, one that does not
 // exist say, is kept as given, for the command that uses it to report.
+//
+// A link may not take the override to the home folder or a folder above it. A box that can write
+// the folder above the override, a checkout kept inside the one it works in say, could swap the
+// override for such a link, and the next launch would mount all the user's files read-write with
+// only the secret names hidden. An override spelled as HOME spells the home folder, or as a folder
+// above it, still names that folder when a link in that spelling changes its path, as /home does on
+// some Linux systems: such a link sits above the home folder, and a box that could change it could
+// already write the home folder.
 func ResolveRepo(override string) (string, error) {
 	if override != "" {
 		abs, err := filepath.Abs(override)
 		if err != nil {
 			return "", err
 		}
-		return canonicalWorkspace(abs), nil
+		resolved := canonicalWorkspace(abs)
+		if resolved != abs {
+			if home, above := shadowpath.HomeOrAbove(resolved); above {
+				if rel, err := filepath.Rel(abs, home); err != nil || !filepath.IsLocal(rel) {
+					return "", fmt.Errorf("COOP_REPO %s leads through a link to %s, your home folder or above. "+
+						"Remove the link, or set COOP_REPO to the folder itself", abs, resolved)
+				}
+			}
+		}
+		return resolved, nil
 	}
 	repo, ok, err := FindRepo()
 	if err != nil || ok {

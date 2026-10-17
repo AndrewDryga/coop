@@ -8,8 +8,8 @@ updated: 2026-10-17
 
 `box.ResolveRepo` names the project for nearly every command: the folder `FindRepo` walks to from
 the kernel's working directory, which never names a link, or `COOP_REPO` followed through links
-(`EvalSymlinks`; an override that cannot be resolved is kept as given). That string feeds two kinds
-of key.
+(`EvalSymlinks`; an override that cannot be resolved is kept as given, and one a link takes to the
+home folder or above it is refused, see [[secret-shadow-walk]]). That string feeds two kinds of key.
 
 **Resolved before use**, so a different spelling of the same folder keeps them: Compose project and
 network names and sidecar port scopes (`ComposeProject`, `canonicalWorkspace` in repo.go), native
@@ -58,3 +58,5 @@ repository through `COOP_REPO` must resolve it first on macOS, where `/var` link
   the project keeps working; dropped the `coop fork rm` trap the string comparison caused.
 - 2026-10-17 — `box.SameFolder` for recorded paths: projections are split as text with only the
   workspace matched, and `ReadProjectSnapshot` keys queues by folder (re-review of the same task).
+- 2026-10-17 — an override a link takes to the home folder or above is refused (task
+  2026-10-17-refuse-a-coop-repo-reached-through-a-link-that-r).

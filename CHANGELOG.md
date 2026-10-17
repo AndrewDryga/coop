@@ -30,6 +30,16 @@
   to recreate the fork and, once you agreed, recreated it before refusing. Coop now checks each
   peer's login first, so a refused peer leaves your forks as they were.
 
+- **Coop no longer follows a link in `COOP_REPO` to your home folder.** When `COOP_REPO` is a
+  folder inside a project, such as a worktree kept in it, an agent in a box working in that
+  project could replace the `COOP_REPO` folder with a link to your home folder. The next box then
+  got your whole home folder, apart from the files Coop hides. Coop now refuses a `COOP_REPO` that
+  a link takes to your home folder or a folder above it, and names the folder the link reached.
+  Setting `COOP_REPO` to your home folder itself still works. A box that can write the folder
+  holding `COOP_REPO` can still replace it with a link to another folder, such as `~/.config`,
+  which the next box gets read-write, or swap it just after Coop checks it. Keep `COOP_REPO` out
+  of folders a box can write.
+
 - **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
   `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a
   file in place. An agent in a box could swap that file's folder for a named pipe just as
@@ -142,15 +152,15 @@
   project instead of the project folder, Coop mounted the project into the box without hiding
   anything: the agent could read `.env` files, keys and every file `.coopignore` lists. Coop now
   follows the link and uses the folder it points to, as it does when you run Coop inside that
-  folder, and refuses to launch a box for a project folder that is still a link it could not
-  follow. If your `COOP_REPO` is a link or passes through one, Coop now keeps your project's state
-  under the folder's real path: agents work in that path, so conversations started under the old
-  path are not offered to resume, and `serve.ports` publish on new localhost ports. If
-  `COOP_REPO` itself is the link, merge or remove your forks with `coop fork merge` or
-  `coop fork rm` before you update: they live in `<link>-forks`, where the new version no longer
-  looks, so afterwards Coop cannot find them or return the tasks they took to the queue. If your
-  project has a box Dockerfile, run `coop build` after updating: Coop now names its image after the
-  folder, not the link.
+  folder, unless the link leads to your home folder or a folder above it. It refuses to launch a box
+  for a project folder that is still a link it could not follow. If your `COOP_REPO` is a link or
+  passes through one, Coop now keeps your project's state under the folder's real path: agents work
+  in that path, so conversations started under the old path are not offered to resume, and
+  `serve.ports` publish on new localhost ports. If `COOP_REPO` itself is the link, merge or remove
+  your forks with `coop fork merge` or `coop fork rm` before you update: they live in
+  `<link>-forks`, where the new version no longer looks, so afterwards Coop cannot find them or
+  return the tasks they took to the queue. If your project has a box Dockerfile, run `coop build`
+  after updating: Coop now names its image after the folder, not the link.
 
 - **`coop init` removes a partial file only where it wrote it.** When `coop init` could not finish
   writing a file, for example because the disk was full, it looked the file's path up again to
