@@ -20,6 +20,10 @@ import (
 // inspect round trip on a hot path to solve a slow problem.
 const tempReapInterval = 24 * time.Hour
 
+// serviceLockSweepLimit bounds how many service-launch locks one pass looks at, so the tens of
+// thousands that piled up before the sweep existed go over days rather than in one launch.
+const serviceLockSweepLimit = 10000
+
 // tempReapTimeout bounds the sweep. It is housekeeping — if the runtime is slow
 // or wedged, giving up costs nothing and blocking costs the user's command.
 const tempReapTimeout = 30 * time.Second
@@ -99,6 +103,8 @@ func reapTemp(rt runtime.Runtime, cfg *config.Config, stamp string) {
 	// Views of repositories that are gone; the sweep keeps one it cannot judge or that holds an
 	// unfinished rebase or merge.
 	_, _ = forkspace.SweepGitViews()
+	// Service-launch locks of repositories that are gone; one held is never touched.
+	_, _ = forkspace.SweepServiceLaunchLocks(serviceLockSweepLimit)
 	if err := os.MkdirAll(filepath.Dir(stamp), 0o755); err == nil {
 		_ = os.WriteFile(stamp, nil, 0o644)
 	}

@@ -128,23 +128,29 @@ func fallbackExecutionDir(repo string) (string, error) {
 	} else {
 		return "", absErr
 	}
-	root := ""
-	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
-		// Falling back to HOME let tests leave tens of thousands of service-launch locks in the
-		// developer's real registry, so a test binary that names no root fails instead.
-		if root = os.Getenv(TestExecutionRegistryRootEnv); root == "" {
-			return "", fmt.Errorf("a test binary must set %s (internal/testutil/teststate does); without it, tests write the real execution registry", TestExecutionRegistryRootEnv)
-		}
-	}
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		root = filepath.Join(home, ".local", "state", "coop", "executions", executionRegistryV1)
+	root, err := executionRegistryRoot()
+	if err != nil {
+		return "", err
 	}
 	sum := sha256.Sum256([]byte(canonical))
 	return filepath.Join(root, fmt.Sprintf("%x", sum)), nil
+}
+
+// executionRegistryRoot holds every project's fallback registry and the service-launch locks.
+func executionRegistryRoot() (string, error) {
+	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
+		// Falling back to HOME let tests leave tens of thousands of service-launch locks in the
+		// developer's real registry, so a test binary that names no root fails instead.
+		if root := os.Getenv(TestExecutionRegistryRootEnv); root != "" {
+			return root, nil
+		}
+		return "", fmt.Errorf("a test binary must set %s (internal/testutil/teststate does); without it, tests write the real execution registry", TestExecutionRegistryRootEnv)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "state", "coop", "executions", executionRegistryV1), nil
 }
 
 func executionRegistryDirs(repo string) ([]string, error) {
@@ -285,16 +291,9 @@ func LockServiceLaunch(ctx context.Context, repo string, exclusive bool) (func()
 	if err := ensureFallbackExecutionDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	recorded, err := filepath.EvalSymlinks(repo)
 	if err != nil {
 		return nil, err
-	}
-	info, err := f.Stat()
-	current, pathErr := os.Lstat(path)
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if err != nil || pathErr != nil || !ok || !info.Mode().IsRegular() || stat.Nlink != 1 || !os.SameFile(info, current) {
-		_ = f.Close()
-		return nil, errors.New("service launch authority changed while opening")
 	}
 	how := syscall.LOCK_SH
 	if exclusive {
@@ -304,25 +303,74 @@ func LockServiceLaunch(ctx context.Context, repo string, exclusive bool) (func()
 		ctx = context.Background()
 	}
 	for {
-		err = syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
-		if err == nil {
-			break
+		f, info, err := openServiceLaunchLock(path, recorded)
+		if err != nil {
+			return nil, err
 		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+		serviceLaunchLockOpened(path)
+		if err := flockWaiting(ctx, f, how); err != nil {
 			_ = f.Close()
 			return nil, err
 		}
+		// The daily sweep removes a lock whose repository is gone while it holds that lock. A lock
+		// taken on the file it removed guards nothing, so it is taken again on the file now there.
+		if current, err := os.Lstat(path); err == nil && os.SameFile(info, current) {
+			return func() {
+				_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+				_ = f.Close()
+			}, nil
+		}
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}
+}
+
+// serviceLaunchLockOpened is a test seam between opening the lock file and locking it, where the
+// sweep can remove it.
+var serviceLaunchLockOpened = func(string) {}
+
+// openServiceLaunchLock opens the lock file, making it if it is missing, and records in it which
+// repository it serves, so the sweep can tell when that repository is gone. The record is a hint:
+// a lock is safe however the sweep reads it, since LockServiceLaunch checks the file it locked is
+// still the one there.
+func openServiceLaunchLock(path, repo string) (*os.File, os.FileInfo, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := f.Stat()
+	current, pathErr := os.Lstat(path)
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if err != nil || pathErr != nil || !ok || !info.Mode().IsRegular() || stat.Nlink != 1 || !os.SameFile(info, current) {
+		_ = f.Close()
+		return nil, nil, errors.New("service launch authority changed while opening")
+	}
+	record := []byte(repo + "\n")
+	held := make([]byte, len(record)+1)
+	if n, _ := f.ReadAt(held, 0); !bytes.Equal(held[:n], record) {
+		if err := errors.Join(f.Truncate(0), func() error { _, err := f.WriteAt(record, 0); return err }()); err != nil {
+			_ = f.Close()
+			return nil, nil, err
+		}
+	}
+	return f, info, nil
+}
+
+func flockWaiting(ctx context.Context, f *os.File, how int) error {
+	for {
+		err := syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			return err
+		}
 		select {
 		case <-ctx.Done():
-			_ = f.Close()
-			return nil, ctx.Err()
+			return ctx.Err()
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
-	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		_ = f.Close()
-	}, nil
 }
 
 // ServiceLaunchLockPath follows the repository directory's current filesystem identity rather

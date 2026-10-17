@@ -41,6 +41,12 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **Lock files of deleted projects are cleaned up.** Every box launch keeps a small lock file for
+  its project's folder in `~/.local/state/coop/executions/v1/service-locks`, and none was ever
+  removed, so every temporary project, such as the one each `coop doctor` run makes, left one
+  behind: one Mac held 62,230. Each lock now records its project, and Coop's daily cleanup removes
+  up to 10,000 a day whose project is gone, never one in use.
+
 - **Coop no longer makes your home folder a project.** Outside a Git repository Coop used the
   current folder as the project, so `coop init` or `coop shell` run from your home folder set it
   up or mounted it read-write into a box, and so did a folder reached through a link that leads

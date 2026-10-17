@@ -2,7 +2,7 @@
 name: test-state-isolation
 description: every test binary that can reach Coop's per-user state calls teststate.Isolate in TestMain; Coop refuses the real roots in a test binary, children inherit the folder, and live suites opt back into the real config and network state; the cli unit tests run with failing stubs for the host provider CLIs and runtimes
 subsystem: development
-sources: [internal/testutil/teststate/teststate.go, internal/forkspace/execution.go, internal/forkspace/gitview.go, internal/tasks/lease.go, internal/config/config.go, internal/config/runfiles.go, internal/box/network_admission.go, internal/box/serviceapproval.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/acpproxy/trace.go, internal/cli/provider_live_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/box/reap.go, internal/cli/main_test.go, internal/cli/hostclis_test.go, internal/sessionsvc/main_test.go, internal/sessionsvc/acp.go, internal/box/isolated_mounts_test.go, internal/box/mounts_test.go]
+sources: [internal/testutil/teststate/teststate.go, internal/forkspace/execution.go, internal/forkspace/service_lock_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview.go, internal/tasks/lease.go, internal/config/config.go, internal/config/runfiles.go, internal/box/network_admission.go, internal/box/serviceapproval.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/acpproxy/trace.go, internal/cli/provider_live_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/box/reap.go, internal/cli/main_test.go, internal/cli/hostclis_test.go, internal/sessionsvc/main_test.go, internal/sessionsvc/acp.go, internal/box/isolated_mounts_test.go, internal/box/mounts_test.go]
 updated: 2026-10-17
 ---
 
@@ -90,14 +90,21 @@ Registries report any non-record entry with its full path, and that refusal stop
 `coop up`, fork changes and ACP cleanup in the repository. That includes the `.service-launch.lock`
 that builds of September 15 to 23, 2026 kept in each `<sha256>` registry folder: 29,648 on one Mac
 and one on a Ryker worker were removed on 2026-10-17, and docs/session-api.md tells an operator how
-to remove any left. The current locks in `service-locks/` are never removed either (62,230 on that
-Mac, about 5,400 a day); task 2026-10-17-stop-service-launch-lock-files-piling-up-in-the.
+to remove any left. The locks in `service-locks/` piled up too (62,230 on that Mac, about 5,400 a
+day until test binaries were kept out on 2026-10-17; real launches still make one per throwaway
+repository, such as each doctor fixture or eval trial). Each lock now records its repository's
+resolved path, and the daily temp sweep (`forkspace.SweepServiceLaunchLocks`, at most 10,000 locks
+a pass) removes, while holding it exclusively without waiting, a lock whose path is gone or is now
+another folder, and an unnamed one older than a day. `LockServiceLaunch` takes its lock again when
+the file it locked is no longer the one at the path, so a removal never splits one lock in two.
 
 **Proving it.** Run the tests under `sandbox-exec` with a profile that denies `file-write*` on
 the two real roots, then read the denials with `/usr/bin/log show --predicate 'sender == "Sandbox"'`.
 Nothing reaches the real folders, and every attempted write is named with its process.
 
 ## Changelog
+- 2026-10-17 — service-launch locks record their repository and the daily sweep removes those of
+  gone repositories (task 2026-10-17-stop-service-launch-lock-files-piling-up-in-the).
 - 2026-10-17 — box's source-copy helpers lost their TMPDIR fallback, so their tests no longer pin
   TMPDIR: they pass `copyParent(t)`, which keeps pinTemp's leftover check on that folder.
 - 2026-10-17 — the old-layout `.service-launch.lock` skip is gone after the owner-approved cleanup;
