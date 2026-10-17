@@ -156,7 +156,7 @@ func runCredentialUseLeases(cfg *config.Config, rt runtime.Runtime, spec *RunSpe
 	}
 	// A pending retained-history index import may replace its repository-local
 	// index only while no native client is using that complete home.
-	if spec.Homes && !spec.Login && !spec.Mode.Restricted() {
+	if spec.Homes && !spec.Login {
 		ctx := spec.Ctx
 		if ctx == nil {
 			ctx = context.Background()

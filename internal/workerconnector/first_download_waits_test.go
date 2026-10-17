@@ -135,7 +135,7 @@ func createWithJobSource(t *testing.T) workerproto.Command {
 	t.Helper()
 	job := workerproto.JobSpec{
 		Version: 2, JobRef: "job:blitz", Source: ptrJobSource(testJobSource()),
-		Companions: []workerproto.JobCompanion{}, Targets: []string{"codex"}, Mode: "readonly",
+		Companions: []workerproto.JobCompanion{}, Targets: []string{"codex"}, Mode: "normal",
 		RepositoryReadOnly: true, Egress: workerproto.JobEgress{Mode: "none", Rules: []workerproto.JobRule{}},
 		Limits: workerproto.JobLimits{MaxTurns: 1, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
 			TurnTimeoutMS: 60_000, MaxPatchBytes: 1024},
@@ -168,7 +168,7 @@ func TestACreateNeedingManyNewCopiesHoldsTheWorkerOnlyBriefly(t *testing.T) {
 		}
 		job := workerproto.JobSpec{
 			Version: 2, JobRef: "job:many", Source: ptrJobSource(testJobSource()),
-			Targets: []string{"codex"}, Mode: "readonly", RepositoryReadOnly: true,
+			Targets: []string{"codex"}, Mode: "normal", RepositoryReadOnly: true,
 			Egress: workerproto.JobEgress{Mode: "none", Rules: []workerproto.JobRule{}},
 			Limits: workerproto.JobLimits{MaxTurns: 1, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
 				TurnTimeoutMS: 60_000, MaxPatchBytes: 1024},

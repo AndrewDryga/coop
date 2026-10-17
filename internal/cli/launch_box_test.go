@@ -294,8 +294,8 @@ func TestTwoCoopVersionsKeepTheirOwnBases(t *testing.T) {
 
 // Acceptance: after an upgrade each launch gets this Coop's base where it can use it. An ordinary
 // launch resolves without building and its box check, run once the posture is known, builds it; a
-// filtered one never runs the base, so it builds nothing; an ACP or restricted launch
-// requires the image before starting its box.
+// filtered one never runs the base, so it builds nothing; an ACP launch requires the image
+// before starting its box.
 func TestLaunchesBuildThisCoopsBaseAfterAnUpgrade(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -317,7 +317,6 @@ func TestLaunchesBuildThisCoopsBaseAfterAnUpgrade(t *testing.T) {
 			}
 			return img, err
 		}, 1},
-		{"a restricted launch", func(a *app) (string, error) { img, _, err := a.restrictedImage(); return img, err }, 1},
 	} {
 		a, recorder := tagShimApp(t, newerBase, olderBase)
 		a.cfg.RepoOverride = t.TempDir()

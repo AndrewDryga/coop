@@ -198,13 +198,6 @@ func selectCredentialPlanWithMarkers(cfg *config.Config, spec RunSpec, markers m
 	if !spec.AgentCommand && spec.networkClient() != egress.ClientACP {
 		return nil, fmt.Errorf("%s API-key brokering serves agents, not this command; run the agent itself", credentialBrokerAgentName(first.provider))
 	}
-	// A restricted run assembles no broker of its own — but composed with the gateway it does not
-	// have to: the filtered launch's broker holds the key outside the box and the restricted profile
-	// still owns the filesystem. Without the gateway there is nowhere for the key to live but the box,
-	// which is the one place it must not be.
-	if spec.Mode.Restricted() && cfg.Egress != "filtered" {
-		return nil, fmt.Errorf("%s %s needs the credential broker, which an open %s run does not assemble; sign in with the provider, or add --egress filtered", credentialBrokerAgentName(first.provider), first.spec.CredentialEnv, spec.Mode)
-	}
 	if len(plan.routes) > maxProviderRoutes {
 		return nil, fmt.Errorf("one run can protect at most %d API-key accounts", maxProviderRoutes)
 	}

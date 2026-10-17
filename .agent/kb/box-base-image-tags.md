@@ -3,7 +3,7 @@ name: box-base-image-tags
 description: Coop's shared base is tagged by its box definition so two Coop versions on one host keep their own; why there is no :latest alias, how an upgrade is repaired, and what stays shared
 subsystem: box
 sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/network_setup.go, internal/runtime/docker.go, internal/runtime/runtime.go, internal/box/project_preparation.go, internal/box/network_admission.go, internal/box/network_qualification.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/project_build.go, internal/cli/selfupdate.go, internal/runtime/project_build.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 `COOP_BASE_IMAGE` defaults to the bare repository `coop-box`, which `box.ResolveBaseImage` (run
@@ -49,8 +49,7 @@ Where it runs: an ordinary interactive launch resolves with `resolveLaunchImage(
 the missing base through, and builds it in `checkCoopBox` after network admission, so a filtered box
 (it runs `coop-clients:<definition>`, whose Dockerfile shares no expensive layer with the base: the
 PATH lines differ inside the big RUN) never pays for it. Fork and ACP launch callers also defer
-ordinary-image availability until admission or capture reconstruction. `restrictedImage` still
-prepares the shared base eagerly; it never executes project build instructions. An ordinary merge
+ordinary-image availability until admission or capture reconstruction. An ordinary merge
 or controller-job review gate builds it through `forkctl.Host.EnsureBaseImage` (the CLI's
 `ensureManagedBase`; the daemon's build output goes to the controller-readable review log).
 Filtered gates defer to their captured image instead. `coop build --egress open` prints
@@ -76,8 +75,8 @@ repository, and nothing on a worker may build repository instructions. Under
 `COOP_CONTROLLER_JOB`, `resolveLaunchImage` picks `box.SharedImage` (the operator's `COOP_IMAGE`,
 else the worker's base) without parsing the job's project file: `project.Parse` rejects unknown
 keys, so a file written for a newer Coop would refuse every job on an older worker. A filtered
-job runs the locked client image (`filteredProjectImage` returns nothing for a job), and a
-readonly or bare one `restrictedImage`, which refuses `COOP_IMAGE`. The session review gate uses
+job runs the locked client image (`filteredProjectImage` returns nothing for a job). The session
+review gate uses
 `forkctl.ReviewControllerJob`: it selects the worker image, runs with `ControllerJob`, and reopens
 the session's saved filtered capture instead of consulting repository box policy or Dockerfile.
 `coop eval` selects the same shared-image family for its trials; invoking it from a checkout with
@@ -127,6 +126,7 @@ record, so the 14 days start then), and an image any container still references 
 stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-10-17 — readonly and bare jobs are refused now, so `restrictedImage` and its image rule are gone.
 - 2026-10-16 — a same-tag rebuild of the managed base or a derived image removes the image it
   untagged when no container uses it right after the build (network setup never does: earlier
   captures run its pair by ID), and a new image proof first prunes proof containers over an hour

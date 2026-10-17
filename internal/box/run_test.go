@@ -1026,6 +1026,63 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	}
 }
 
+// A fully featured launch keeps its profile byte for byte: limits pass through, a decoy and every
+// generated file mount read-only, the run carries its labels, and the cache volumes are named for
+// the native host identity.
+func TestAssembleArgsFullLaunchGolden(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir, BaseImage: "coop-box", MCPFile: filepath.Join(dir, "mcp.json"), MCPInBox: "/home/node/.mcp.json", Egress: "open", ConsultTimeout: "30"}
+	home := filepath.Join(dir, "claude", "native-homes", "default", "repo", "home")
+	cfg = cfg.WithNativeHomes(map[string]string{"claude": home})
+	t.Setenv("TZ", "America/Merida")
+	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Agent: "claude", Homes: true, Cache: true, Network: true, Serve: true, RunID: "run-1", SuperviseDescendants: true, ExtraArgs: []string{"-e", "X=1"}, claudeMCPFile: cfg.MCPFile}
+	mounts := []Mount{{Kind: Bind, Source: "/repo", Target: "/workspace"}, {Kind: Decoy, Target: "/workspace/.env"}}
+	got := assembleArgs(cfg, true, spec, mounts, "/d", "/dd", "/workspace", ttyInteractive, true,
+		[]extraMount{{"/tmp/g", "/home/node/.gemini/settings.json"}}, []extraMount{{"/tmp/c", "/home/node/.claude/CLAUDE.md"}},
+		[]extraMount{{"/tmp/gc", "/home/node/.gitconfig"}}, []extraMount{{"/tmp/i", "/home/node/.codex/AGENTS.md"}},
+		[]extraMount{{"/tmp/s", "/home/node/.claude/skills"}}, "coop-repo_default", filepath.Join(dir, "env"), "--cap-drop", "ALL")
+	want := []string{
+		"run", "--rm", "--init",
+		"-it", "-e", "TERM",
+		"-e", "TZ=America/Merida",
+		"--cap-drop", "ALL",
+		"-v", "/repo:/workspace",
+		"-v", "/d:/workspace/.env:ro",
+		"--mount", networkMount("bind", home, "/home/node/.claude", false),
+		"-v", "/tmp/s:/home/node/.claude/skills",
+		"-e", "COOP_PRIMARY=claude",
+		"-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
+		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
+		"-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"-e", "DISABLE_UPDATES=1",
+		"-e", "CODEX_SQLITE_HOME=/home/node/.codex-state",
+		"-e", "GEMINI_TELEMETRY_ENABLED=false",
+		"-e", "GROK_TELEMETRY_ENABLED=false",
+		"-e", "GROK_DISABLE_AUTOUPDATER=1",
+		"-e", "COOP_CONSULT_TIMEOUT=30",
+		"-v", "/tmp/i:/home/node/.codex/AGENTS.md:ro",
+		"-v", "/tmp/c:/home/node/.claude/CLAUDE.md:ro",
+		"-v", "/tmp/gc:/home/node/.gitconfig:ro",
+		"-v", cfg.MCPFile + ":/home/node/.mcp.json:ro",
+		"-v", "/tmp/g:/home/node/.gemini/settings.json:ro",
+		"--env-file", filepath.Join(dir, "env"),
+		"-e", "X=1",
+		"-e", "COOP_CONFIG_PUBLICATION=",
+		"--label", "coop=box",
+		"--label", "coop.host=" + supervisorLabelValue(workspaceScope("/repo"), os.Getpid()),
+		"--label", "coop.run=run-1",
+		"-e", "COOP_BOX=1",
+		"-e", "COOP_SUPERVISE_DESCENDANTS=1",
+		"--network", "coop-repo_default",
+		"-v", boxAgentIdentity().volume("coop-cache") + ":/home/node/.cache",
+		"-v", boxAgentIdentity().volume("coop-asdf") + ":/home/node/.asdf",
+		"-w", "/workspace", "coop-box", "claude",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("full launch:\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestAssembleArgsEvalWebToolPolicy(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	spec := RunSpec{Image: "coop-box", Agent: "codex", Homes: true}

@@ -29,8 +29,7 @@ func (e *ProjectBuildRequired) Error() string {
 }
 
 func projectDockerfileForRun(spec RunSpec) string {
-	mode, _ := executionMode(spec)
-	if spec.Login || spec.ControllerJob || mode.Restricted() {
+	if spec.Login || spec.ControllerJob {
 		return ""
 	}
 	return filteredProjectDockerfile(projectPolicyRepo(spec))

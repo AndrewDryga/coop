@@ -326,8 +326,7 @@ func (f *filteredExecution) removeResource(evidence *networkstate.Evidence, role
 // teardown is the filtered launch's own ending, lifted out of Run so it has ONE implementation.
 // This process owns the box, its gateway, its volumes and its receipt and none of it is --rm, so
 // every path that starts a filtered launch has to finish it exactly this way — which is precisely
-// why it must not be copied into a second launcher (a restricted run composing with filtered) that
-// would then drift from it.
+// why it must not be copied into a second launcher that would then drift from it.
 //
 // It takes the caller's final exit code, error and stop reason, and returns the error to report plus
 // the teardown error the caller records; everything else it needs it already owns.

@@ -616,16 +616,6 @@ func (grokAgent) ConsultCmd(question string) []string {
 	return []string{"grok", "--tools", grokReadOnlyTools, "-p", question}
 }
 
-// RestrictedCommand: no restricted mode is qualified on this CLI yet (see unqualifiedRestrictedCommand).
-func (a grokAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]string, error) {
-	return unqualifiedRestrictedCommand(a, mode, cmd)
-}
-
-// ACPRestrictedSessionMeta: nor on its ACP adapter (see unqualifiedRestrictedACPSession).
-func (a grokAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any, error) {
-	return unqualifiedRestrictedACPSession(a, mode)
-}
-
 // UpdateControls: the pinned 1.0.44 checks for a CLI update on launch unless
 // GROK_DISABLE_AUTOUPDATER is set (its own documentation, embedded in the binary).
 func (grokAgent) UpdateControls() UpdateControls {

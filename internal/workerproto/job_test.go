@@ -23,7 +23,7 @@ func validJobSpec() JobSpec {
 			}, Submodules: []JobSubmodule{},
 		},
 		Companions: []JobCompanion{}, Targets: []string{"codex:gpt-6-sol@default"},
-		Mode: "readonly", RepositoryReadOnly: true,
+		Mode: "normal", RepositoryReadOnly: true,
 		Egress:      JobEgress{Mode: "none", Rules: []JobRule{}},
 		Environment: map[string]string{"CI": "1"},
 		Check:       JobCheck{Argv: []string{"make", "test"}, Environment: map[string]string{"DATABASE_URL": "postgres://test"}},
@@ -88,7 +88,7 @@ func TestJobSpecRoundTripAndDigest(t *testing.T) {
 	if err != nil || first != second {
 		t.Fatalf("job digest changed with JSON field order: %s %s %v", first, second, err)
 	}
-	const rykerDigest = "e3413eaa0fde8dffc7adb163162ab06a1d6b11ccd8918235cde00735cae49400"
+	const rykerDigest = "f99e0c853235d59ca54d9e3d5eec95d2c70b1ef01e1f5fd7af1a02fef1e79b83"
 	if first != rykerDigest {
 		t.Fatalf("job digest = %s, want shared Ryker vector %s", first, rykerDigest)
 	}
@@ -226,10 +226,10 @@ func TestJobTimestampCanonicalIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	for timestamp, expected := range map[string]string{
-		"2026-09-26T12:00:00Z":           "e3413eaa0fde8dffc7adb163162ab06a1d6b11ccd8918235cde00735cae49400",
-		"2026-09-26T12:00:00.12345Z":     "97b9bcb9a49b0017e096997e6b3d2faef7f8689c1753e3e3d8d82c92e3ad5bd4",
-		"2026-09-26T12:00:00.000001Z":    "857d39e4484647feddef7ed81bf095c213363858bd3b152a9baa1d0ae6d1adc3",
-		"2026-09-26T12:00:00.123456789Z": "476e6a487c208a38aee4fc5d10ea082efbbdc72a8e555ececf6680349ad73554",
+		"2026-09-26T12:00:00Z":           "f99e0c853235d59ca54d9e3d5eec95d2c70b1ef01e1f5fd7af1a02fef1e79b83",
+		"2026-09-26T12:00:00.12345Z":     "912849518cdb641b0d52583c78c1eb989f1d3aeeed5649f2b0714609d2cc1ba5",
+		"2026-09-26T12:00:00.000001Z":    "f80344cd93c76c3fe1dde45a99b7749bb3719313f7017f0b78cfec95c46f92de",
+		"2026-09-26T12:00:00.123456789Z": "2396bbf41ba21b17d8e7be0e3911496ef319b7adbf786baac381a3763bf043eb",
 	} {
 		raw := strings.Replace(string(document), "2026-09-26T12:00:00Z", timestamp, 1)
 		job, err := DecodeJobSpec([]byte(raw))
@@ -275,28 +275,43 @@ func TestJobSpecRejectsUnknownAndOversizedAuthority(t *testing.T) {
 	}
 }
 
-func TestJobSpecRejectsChangedSourceAndBareAuthority(t *testing.T) {
+func TestJobSpecRejectsChangedSource(t *testing.T) {
 	spec := validJobSpec()
 	spec.Source.Binding.SelectedCommit = strings.Repeat("z", 40)
 	if err := spec.Validate(); err == nil {
 		t.Fatal("accepted non-commit source")
 	}
-	spec = validJobSpec()
-	spec.Mode = "bare"
-	if err := spec.Validate(); err == nil {
-		t.Fatal("accepted a repository in a bare job")
+}
+
+// The readonly and bare modes are gone: a job naming either is refused by name, with the shape
+// that replaces it, and never runs as normal. A read-only repository is mode normal with
+// repository_read_only, which the shared vector job above already is.
+func TestJobSpecRefusesRemovedModes(t *testing.T) {
+	for _, mode := range []string{"readonly", "bare"} {
+		spec := validJobSpec()
+		spec.Mode = mode
+		if mode == "bare" {
+			spec.Source, spec.RepositoryReadOnly = nil, false
+		}
+		document, err := json.Marshal(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = DecodeJobSpec(document)
+		if err == nil || !strings.Contains(err.Error(), "job mode \""+mode+"\" was removed") ||
+			!strings.Contains(err.Error(), "repository_read_only") {
+			t.Fatalf("%s job = %v, want a refusal naming the removed mode and its replacement", mode, err)
+		}
 	}
-	spec.Source = nil
-	spec.RepositoryReadOnly = false
-	if err := spec.Validate(); err != nil {
-		t.Fatalf("rejected a workspaceless bare job: %v", err)
+	if spec := validJobSpec(); spec.Mode != "normal" || !spec.RepositoryReadOnly || spec.Validate() != nil {
+		t.Fatal("a normal job with a read-only repository is refused")
 	}
 }
 
 func TestNormalJobCanUseEmptyWorkspaceAndAuthorizedCompanions(t *testing.T) {
 	spec := validJobSpec()
 	companion := *spec.Source
-	spec.Mode, spec.Source = "normal", nil
+	spec.Source = nil
 	spec.Companions = []JobCompanion{{Name: "library", Source: companion}}
 	document, err := json.Marshal(spec)
 	if err != nil {
@@ -304,10 +319,6 @@ func TestNormalJobCanUseEmptyWorkspaceAndAuthorizedCompanions(t *testing.T) {
 	}
 	if _, err := DecodeJobSpec(document); err != nil {
 		t.Fatal(err)
-	}
-	spec.Mode, spec.RepositoryReadOnly = "bare", false
-	if err := spec.Validate(); err == nil {
-		t.Fatal("bare job acquired companion repository authority")
 	}
 }
 
@@ -346,17 +357,10 @@ func TestJobSpecEnforcesExistingSessionBounds(t *testing.T) {
 		"too many queued turns": func(spec *JobSpec) { spec.Limits.MaxQueuedTurns = 1001 },
 		"oversized patch":       func(spec *JobSpec) { spec.Limits.MaxPatchBytes = (1 << 20) + 1 },
 		"long warm lease":       func(spec *JobSpec) { spec.Limits.WarmIdleTimeoutMS = 3_600_001 },
-		"readonly filtered": func(spec *JobSpec) {
-			spec.Egress.Mode = "filtered"
-		},
-		"readonly warm": func(spec *JobSpec) {
-			spec.Limits.WarmIdleTimeoutMS = 1
-		},
 		"open export": func(spec *JobSpec) {
 			spec.Egress.ExportDestinations = true
 		},
 		"service grant without service authority": func(spec *JobSpec) {
-			spec.Mode = "normal"
 			spec.Egress = JobEgress{Mode: "filtered", Rules: []JobRule{{To: JobDestination{Service: "database"}}}}
 		},
 	} {

@@ -163,8 +163,7 @@ no section without an account), `Configuring network access` (filtered: one row 
 Dockerfile that drifted) as `⚠` rows, and in the cli (`cli/launch_box.go`, after admission and only
 for a run that will use the repo's image — a filtered box runs the qualified client image) the
 automatic `box.Build` when `BaseImageSkew` reports a definition mismatch, never for an age nudge
-or an unstamped image. Restricted modes (`restricted.go`) narrate the same sections but get no box
-check. A failure before the main process is rendered once as
+or an unstamped image. A failure before the main process is rendered once as
 a nested `ui.Fail` under its
 section, AFTER the deferred cleanup has joined its own error into the reason, and comes back as
 `ui.Reported(err)`, which `cli.Main` does not print again; a cancellation the stop line named is
@@ -175,6 +174,8 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-10-17 — the read-only and bare launches (`restricted.go`) are gone, so the ordinary launch
+  narrates every section.
 - 2026-10-17 — a `coop net setup` check's snapshot from before markers is marked by the check's
   expiring run record (`execution-<id>.json`, purpose `qualification`) when it has a grant, every
   grant's only origin is `SetupOrigin` and it carries no provider, then removed by the next pass;

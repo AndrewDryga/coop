@@ -307,9 +307,7 @@ func TestHelpForAgentPrintsItsPage(t *testing.T) {
 }
 
 // Every other agent gets the SAME page generated from its own adapter: its command, its human
-// name, its argument label — and only the flags it accepts. Codex refuses restricted runs today,
-// so its page must not advertise --readonly/--bare (nor the sentence about combining them), and
-// an effort in a page's example must be one that agent accepts.
+// name, its argument label — and an effort in a page's example must be one that agent accepts.
 func TestHelpForAgentIsGeneratedPerAdapter(t *testing.T) {
 	codex := agentHelp("codex")
 	for _, want := range []string{
@@ -321,11 +319,6 @@ func TestHelpForAgentIsGeneratedPerAdapter(t *testing.T) {
 	} {
 		if !strings.Contains(codex, want) {
 			t.Errorf("codex page missing %q:\n%s", want, codex)
-		}
-	}
-	for _, unsupported := range []string{"--readonly", "--bare", "cannot be combined"} {
-		if strings.Contains(codex, unsupported) {
-			t.Errorf("codex page advertises %q, which a codex run refuses:\n%s", unsupported, codex)
 		}
 	}
 	gemini := agentHelp("gemini")

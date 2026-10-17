@@ -2,9 +2,9 @@
 name: coopignore-read-only-in-boxes
 description: keep .coopignore readable but read-only in boxes, preserve ordinary host editing, and avoid a separate policy-approval workflow
 scope: security
-sources: [internal/box/mounts.go, internal/box/secrets.go, internal/box/run.go, internal/box/restricted.go, internal/box/serviceshadow.go, internal/box/image.go, internal/box/mounts_test.go]
+sources: [internal/box/mounts.go, internal/box/secrets.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/image.go, internal/box/mounts_test.go]
 check: none
-updated: 2026-09-11
+updated: 2026-10-17
 ---
 
 # Mount .coopignore read-only while preserving normal host editing
@@ -31,6 +31,8 @@ on the next launch or build. Do not treat a mount-plan unit test as the complete
 
 ## Changelog
 
+- 2026-10-17 — dropped internal/box/restricted.go from sources: the read-only and bare launches are
+  gone, so the ordinary launch is the only one that calls ComputeMounts.
 - 2026-09-11 — approved design recorded. Swept all seven source files listed above: normal and
   restricted launches share ComputeMounts; service projection and build staging read the policy
   separately; the loader silently drops read failures; mount tests require visibility but do not

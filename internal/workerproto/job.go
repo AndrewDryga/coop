@@ -350,7 +350,12 @@ func (s JobSpec) Validate() error {
 	if s.Version != 2 || reference(s.JobRef, 256, "job ref") != nil {
 		return errors.New("invalid job version or reference")
 	}
-	if !slices.Contains([]string{"normal", "readonly", "bare"}, s.Mode) {
+	switch s.Mode {
+	case "normal":
+	case "readonly", "bare":
+		// Named so a controller still sending them learns why; nothing runs them as normal.
+		return fmt.Errorf("job mode %q was removed; send mode \"normal\", with repository_read_only true for a read-only repository", s.Mode)
+	default:
 		return errors.New("invalid job mode")
 	}
 	if s.Companions == nil || s.Egress.Rules == nil || len(s.Targets) == 0 || len(s.Targets) > 4 {
@@ -360,17 +365,6 @@ func (s JobSpec) Validate() error {
 		if len(target) == 0 || len(target) > 256 {
 			return errors.New("invalid job target")
 		}
-	}
-	if s.Mode == "bare" {
-		if s.Source != nil || len(s.Companions) != 0 || s.RepositoryReadOnly {
-			return errors.New("bare job cannot carry repository or project authority")
-		}
-	}
-	if s.Mode == "readonly" && !s.RepositoryReadOnly {
-		return errors.New("readonly job cannot write its repository")
-	}
-	if s.Mode != "normal" && (s.Egress.Mode == "filtered" || s.Limits.WarmIdleTimeoutMS != 0) {
-		return errors.New("restricted job cannot request filtered networking or warm execution")
 	}
 	if s.Source != nil {
 		if err := s.Source.validate(); err != nil {

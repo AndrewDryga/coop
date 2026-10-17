@@ -1782,3 +1782,53 @@ func TestACPChildCaptureIsAPerChildReference(t *testing.T) {
 		t.Fatalf("inherited ACP account bindings reached the child: %v", cleaned)
 	}
 }
+
+// --readonly and --bare are gone, and never passed on: Claude Code has its own --bare, so coop's
+// would start a normal writable box. Every command family that took one refuses it as an unknown
+// option before any runtime work, with advice that fits the flag and the command and never offers
+// a writable form without saying so. A flag past `--` is the agent's own.
+func TestRemovedExposureFlagsAreRefused(t *testing.T) {
+	lead := &preset.Preset{Name: "frontier", LeadTargets: []agents.Target{{Provider: "claude"}}}
+	for name, tc := range map[string]struct {
+		run          func(a *app) (int, error)
+		want, absent []string
+	}{
+		"agent": {func(a *app) (int, error) { return a.launchAgent("claude", []string{"--bare"}) },
+			[]string{`Unknown option "--bare" for "coop claude"`, "no replacement", "coop claude -- --bare", "normal writable box"}, []string{"--peer"}},
+		"preset": {func(a *app) (int, error) { return a.launchPreset(lead, []string{"--readonly"}) },
+			[]string{`Unknown option "--readonly" for "coop frontier"`, "coop frontier always runs a writable box", "--peer <target>", "coop fork <name> <target>"}, []string{"-- --"}},
+		"run": {func(a *app) (int, error) { return a.cmdRun([]string{"--readonly", "--", "ls"}) },
+			[]string{`Unknown option "--readonly" for "coop run"`, "coop run always runs a writable box"}, []string{"--peer", "coop fork"}},
+		"shell": {func(a *app) (int, error) { return a.dispatch([]string{"shell", "--bare"}) },
+			[]string{`Unknown option "--bare" for "coop shell"`, "no replacement"}, []string{"--peer", "-- --bare"}},
+		"acp": {func(a *app) (int, error) { return a.cmdACP([]string{"claude", "--bare"}) },
+			[]string{`Unknown option "--bare" for "coop acp"`, "no replacement"}, []string{"-- --bare"}},
+		"fork acp": {func(a *app) (int, error) { return a.forkACP("myfork", []string{"claude", "--readonly"}) },
+			[]string{`Unknown option "--readonly" for "coop fork myfork acp"`, "always runs a writable box", "--peer <target>"}, []string{"coop fork <name> <target>"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}, rt: recordingRuntime(t, recorder), rtSet: true}
+			code, err := tc.run(a)
+			if code != 2 || err == nil {
+				t.Fatalf("= (%d, %v), want a usage refusal", code, err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal lacks %q: %v", want, err)
+				}
+			}
+			for _, absent := range append(tc.absent, "repository_read_only") {
+				if strings.Contains(err.Error(), absent) {
+					t.Errorf("refusal offers %q: %v", absent, err)
+				}
+			}
+			if _, err := os.Stat(recorder); err == nil {
+				t.Fatal("the runtime was invoked")
+			}
+		})
+	}
+	if err := refuseRemovedExposureFlags("coop claude", []string{"--", "--bare"}, launchOffers{agentArgs: true}); err != nil {
+		t.Fatalf("a flag past -- was refused instead of reaching the agent: %v", err)
+	}
+}

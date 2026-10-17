@@ -131,7 +131,7 @@ func TestCLIConformance(t *testing.T) {
 			"fork help":            "coop fork <name> [<target|preset>]",
 			"fork usage error":     "coop fork <name> [<target|preset>]",
 			"fork peer error":      "--peer <target>",
-			"fork ACP usage error": "coop fork work acp [<target>] [--readonly] [--peer <target>...]",
+			"fork ACP usage error": "coop fork work acp [<target>] [--peer <target>...]",
 			"loop usage error":     "coop loop [<target|preset>]",
 			"peer usage error":     "--peer <target>",
 			"no-provider error":    "coop loop <target|preset>",

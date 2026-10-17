@@ -816,7 +816,7 @@ func TestSessionHTTPAsyncCreateReturnsOperationAndCoalescesReplay(t *testing.T) 
 		t.Fatalf("completed async operation = %+v", operation)
 	}
 
-	invalid := jobRequest(t, bareWorkerJob(), "invalid-bare-binding")
+	invalid := jobRequest(t, emptyWorkerJob(), "invalid-offline-binding")
 	invalid.ControllerTools = &session.ControllerTools{Endpoint: "https://controller.example/v1/state-tools/mcp", Token: strings.Repeat("b", 48)}
 	failure := requestAsync("async-http-invalid", invalid)
 	if failure.Code != http.StatusBadRequest ||

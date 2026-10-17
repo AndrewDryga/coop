@@ -4,7 +4,7 @@ description: protect credentials at the run boundary; teammates share selected r
 scope: security
 sources: [AGENTS.md, internal/box/credential_broker.go, internal/box/network_bundles.go]
 check: go test ./internal/box -run 'TestCredentialBrokerServesEveryTeammateShape|TestCredentialBrokerRoutesEveryProviderKeyAndLeavesSignedInTeammates|TestCredentialBrokerBindsEachBoxToItsOwnAccount'
-updated: 2026-10-09
+updated: 2026-10-17
 ---
 
 # Protect credentials at the run boundary, not between teammates
@@ -41,6 +41,8 @@ agents.
   tool route distinct from a provider/account route.
 
 ## Changelog
+- 2026-10-17 — the read-only and bare modes were removed, so the restricted-mode notes below are
+  history; no rule change.
 - 2026-10-09 — swept native broker, selected account plan and teammate fixtures. Updated native
   admission wording to namespace/public selectors; separate MCP stand-in semantics are unchanged.
 

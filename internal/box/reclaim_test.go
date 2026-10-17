@@ -324,8 +324,8 @@ func TestEveryLaunchRecordsTheImagesItRestsOn(t *testing.T) {
 	}
 	// assembleArgs only forwards to assembleOptions; its caller is the launch.
 	delete(launches, "assembleArgs")
-	if len(launches) < 2 {
-		t.Fatalf("found %d launch paths, expected the ordinary and restricted ones: %v", len(launches), launches)
+	if len(launches) == 0 {
+		t.Fatal("found no launch path; the scan no longer recognizes the ordinary launch")
 	}
 	for name, records := range launches {
 		if !records {

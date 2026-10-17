@@ -56,7 +56,6 @@ type app struct {
 	tempReapPending     bool                                         // Main's process may start the daily temp sweep once, from a box launch (see startTempReap)
 	preset              *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
 	network             networkFlags                                 // this launch's --egress/--allow-domain/--egress-rules, resolved by box.AdmitNetwork
-	mode                agents.ExecutionMode                         // this launch's --readonly/--bare; "" (normal) is every launch that takes neither
 	acpCapture          *box.CapturedEgress                          // an ACP supervisor's startup policy; children get a reference to it or a refresh's (currentACPCapture)
 	acpAdmission        acpAdmit                                     // a filtered `coop acp` supervisor's startup admission, run again by its refresh
 	acpRefresh          *acpNetworkRefresh                           // a filtered `coop acp` session's move onto newly approved policies; set before serving
@@ -281,12 +280,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 	// reported as such rather than as a missing runtime.
 	switch sub {
 	case "run", "shell", "login", "acp", "up", "down", "build":
-		// A bare launch has no project: it must work outside any repository, so the eager
-		// project load is skipped for it (the command still refuses everything else by name).
-		if mode, _, err := extractExposureFlags("coop "+sub, rest); err != nil || mode != agents.ModeBare {
-			if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
-				return -1, err
-			}
+		if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
+			return -1, err
 		}
 		if err := a.ensureRuntime(); err != nil {
 			return -1, err
@@ -304,7 +299,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 		if err != nil {
 			return 2, err
 		}
-		if rest, err = a.takeExposureFlags("coop shell", rest); err != nil {
+		if err := refuseRemovedExposureFlags("coop shell", rest, launchOffers{}); err != nil {
 			return 2, err
 		}
 		if err := rejectArgs("shell", rest); err != nil {

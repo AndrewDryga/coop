@@ -3,7 +3,7 @@ name: session-source-selection
 description: controller jobs freeze exact source bindings; the worker verifies private staging and refreshes the default separately without changing the admitted checkout
 subsystem: sessions
 sources: [internal/workerproto/job.go, internal/box/image.go, internal/box/network_session.go, internal/workerconnector/job_sources.go, internal/forkspace/lfs.go, internal/forkctl/merge.go, internal/sessionsvc/job.go, internal/sessionsvc/job_resources.go, internal/sessionsvc/acp.go, internal/sessionsvc/job_tree.go, internal/sessionsvc/empty_source.go, internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/sessionsvc/review.go, internal/sessionsvc/workspace.go, internal/box/authority_mounts.go, internal/session/records.go]
-updated: 2026-10-14
+updated: 2026-10-17
 ---
 
 A create carries one canonical controller job and its digest, not a local policy name or a
@@ -32,7 +32,7 @@ tested; worker-host crash cleanup of transient files remains an operational life
 
 A normal job with source:null uses a deterministic empty Git baseline in private worker state
 and an ordinary per-session fork. This retains tools and semantic repair without inventing a
-repository identity or weakening bare mode. Its local freshness receipt uses the durable create
+repository identity. Its local freshness receipt uses the durable create
 timestamp; review needs no GitHub refresh. Independently authorized companions still stage and
 produce receipts. The shared seed is never mounted in the sandbox, and unexpected seed content
 or remotes are refused. No source means no GitHub publication authority.
@@ -81,6 +81,7 @@ fetch the selected commit. Neither a branch advance nor an idempotent create ret
 code. The API exposes source metadata through explicit DTO projection, never JobDocument.
 
 ## Changelog
+- 2026-10-17 — bare mode is gone; a source:null job is always a normal empty-workspace session.
 - 2026-10-14 — background success skipped receipt collection through the existing-copy fast path.
   A real completed-download regression and a deterministic publication-window test cover the
   reordered collection; integrity verification and retry-after-failure remain unchanged.

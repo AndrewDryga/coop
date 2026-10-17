@@ -229,7 +229,7 @@ func TestHelpOptionRowsAlign(t *testing.T) {
 }
 
 // checkOptionGroup checks one group of option rows. A group with no two-space gap anywhere is
-// prose that happens to open with a flag ("--readonly and --bare cannot be combined."), not a table.
+// prose that happens to open with a flag ("--force does not bypass those checks."), not a table.
 func checkOptionGroup(t *testing.T, page string, group []string) {
 	t.Helper()
 	descAt := func(line string) int { // where an option row's description starts, or -1

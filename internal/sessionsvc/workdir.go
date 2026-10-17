@@ -4,11 +4,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-
-	"github.com/AndrewDryga/coop/internal/box"
 )
 
 const stableWorkdirMarker = ".stable-workdir"
+
+// StableWorkdir is the in-box cwd of every remote session started since stable workdirs: one
+// fixed name, so a native history never depends on a host path or a fork's name.
+const StableWorkdir = "/workspace"
 
 // SessionWorkdir keeps native history from pre-stable-workdir sessions at its original cwd.
 // The marker belongs to the host-private per-session state, never the fork or the box.
@@ -21,7 +23,7 @@ func SessionWorkdir(privateRoot, hostWorkspace string) (string, error) {
 	if err != nil || !info.Mode().IsRegular() || info.Size() != 0 || info.Mode().Perm()&0o077 != 0 {
 		return "", errors.Join(errors.New("session workdir marker is unsafe"), err)
 	}
-	return box.BareWorkdir, nil
+	return StableWorkdir, nil
 }
 
 func prepareSessionWorkdir(privateRoot, hostWorkspace, nativeID string) (string, error) {

@@ -208,8 +208,9 @@ func TestOpenAndOfflineLaunchesNeverSettleFilteredRuns(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	calls := stubRecoverNetworkRuns(t, []box.NetworkRecovery{{RunID: "removed", Sealed: true}}, nil)
 	for _, egress := range []string{"open", "none"} {
-		a := restrictedApp(t, filepath.Join(t.TempDir(), "runtime-args"))
-		a.cfg.RepoOverride = t.TempDir()
+		cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", BaseImage: "coop-box", Homes: true, Egress: "open", RepoOverride: t.TempDir()}
+		signInCred(t, cfg, "claude", "default")
+		a := &app{cfg: cfg, rt: nativeOnlineRuntime(t, filepath.Join(t.TempDir(), "runtime-args")), rtSet: true}
 		var code int
 		var err error
 		out := captureStderr(t, func() { code, err = a.cmdRun([]string{"--egress", egress, "--", "true"}) })

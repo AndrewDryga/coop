@@ -38,10 +38,8 @@ what jobs need in the base image. A normal-mode job still provisions the reposit
 
 Before accepting filtered jobs, run [`coop net setup`](networking.md#fleet-workers-and-docker-in-docker)
 under the worker's OS user with the same Docker endpoint and network state directory. The session
-API requires current qualification; it never builds the networking images itself. Use
-`mode: "normal"` and `repository_read_only: true` for a filtered repository-knowledge job: the
-separate `readonly` execution mode does not support filtered networking. Docker being present or
-the worker accepting JobSpec version 2 does not prove filtered readiness.
+API requires current qualification; it never builds the networking images itself. Docker being
+present or the worker accepting JobSpec version 2 does not prove filtered readiness.
 
 To check the local session service:
 
@@ -57,7 +55,7 @@ enrollment token or accepts work.
 
 ## Session authority
 
-Your controller supplies one immutable job. It holds the source, model targets, execution mode,
+Your controller supplies one immutable job. It holds the source, model targets, repository access,
 network access and resource limits. co:op validates and saves the job before it creates a
 workspace. Retries must carry the same configuration. A restart uses the saved configuration.
 Repository instructions and model output can't widen it. Old session history stays readable. An
@@ -369,10 +367,8 @@ Without `limits.warm_idle_timeout_ms`, co:op starts one short-lived `coop fork <
 for a turn. It resumes the exact recorded native session, and records only its terminal assistant
 message for public consumption. It tears down the child and the run-labeled box before parking.
 
-A `readonly` session's child is `coop fork <name> acp <target> --readonly`. A `bare` session's
-child is `coop acp <target> --bare`. Neither resumes a native session, because the restricted box
-keeps none. A bare box is reaped by its run receipt alone, since it has no fork or project
-registry behind it.
+A job with `repository_read_only: true` uses the same child. Its fork is mounted read-only, and the
+files a turn generates go to a writable output directory kept in the worker's private state.
 
 With `limits.warm_idle_timeout_ms`, co:op can prepare the authenticated ACP connection before the first
 turn. It reuses that exact process and native session across serialized turns. The daemon keeps
@@ -538,8 +534,10 @@ curl --unix-socket "$SOCKET" \
   http://localhost/v1/sessions
 ```
 
-The job selects model targets, execution mode, network rules, queue and turn limits, and the
-complete work and review setup. Besides the existing required fields, version 2 requires:
+The job selects model targets, network rules, queue and turn limits, and the complete work and
+review setup. Its `mode` is always `"normal"`; set `repository_read_only: true` for a job that must
+not change its repository. A job that asks for the removed `readonly` or `bare` mode is refused with
+`invalid_request`. Besides the existing required fields, version 2 requires:
 
 ```json
 {
@@ -599,7 +597,7 @@ The trusted worker obtains short-lived, repository-scoped grants through its aut
 controller connection. It fetches Git and LFS data directly from GitHub, and verifies the complete
 working tree. Untrusted `.gitmodules` and `.lfsconfig` can't redirect authenticated requests.
 Missing history, missing LFS payloads, mismatched gitlinks or insufficient disk fail closed. A job
-with `source: null` uses an isolated empty workspace, or no workspace in bare mode.
+with `source: null` uses an isolated empty workspace.
 
 #### Session endpoints
 
@@ -622,8 +620,9 @@ creation waits and returns the operation and the session together.
 | `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; the job must turn on warm execution |
 | `POST` | `/v1/sessions/{session_id}/workspace` | `expected_revision`, `task`; the session must be open, writable and unused |
 
-A bare session has no workspace. Changes, workspace binding, checkpoint, restore and review refuse
-it. Turns, events, budget, cancel, close and discard remain available.
+A session created in the removed `readonly` or `bare` mode stays readable, but its job no longer
+validates, so it can't run again: a new turn fails with `invalid_session_state`. Close and discard
+it.
 
 #### Task binding
 
@@ -651,10 +650,10 @@ as co:op encoded it. The revision goes up by one, and co:op appends a `workspace
 event.
 
 The session must be open, writable and unused: parked, with no active, queued or used turns.
-Anything else fails with `invalid_session_state`, and so does a bare session. A changed task under
-an `offer_ref` the workspace already holds fails the same way. A stale `expected_revision` returns
-`revision_conflict`. An invalid task returns `invalid_request`, and so does a different task for a
-session that is already bound. Repeating the exact binding returns the session unchanged.
+Anything else fails with `invalid_session_state`. A changed task under an `offer_ref` the workspace
+already holds fails the same way. A stale `expected_revision` returns `revision_conflict`. An
+invalid task returns `invalid_request`, and so does a different task for a session that is already
+bound. Repeating the exact binding returns the session unchanged.
 
 ### Workspace checkpoints
 
@@ -755,7 +754,7 @@ co:op rejects symlinks, special files, mismatched content, a sixth image, a file
 more than 8 MiB in total.
 
 The scratch directory is removed before the turn completes, so generated charts don't appear as
-repository changes. For a legacy read-only repository session, the path in the box is still
+repository changes. For a read-only repository session, the path in the box is still
 `.coop-output/...`. Its host source lives in co:op's session state instead of beneath the
 checkout. The repository mount stays wholly read-only.
 

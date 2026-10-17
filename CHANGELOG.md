@@ -74,6 +74,17 @@
   `coop fork stop` says which system started the loop and to stop it there, and `coop tasks ls`
   shows a claim's pid as "PID 4242 on Linux".
 
+- **Breaking: read-only and bare runs are removed.** `--readonly` and `--bare` no longer run
+  anything. `coop <agent>`, `coop <preset>`, `coop run`, `coop shell`, `coop acp` and
+  `coop fork <name> acp` refuse them as unknown options and say what to do instead: every box is
+  writable, a read-only second opinion is `--peer <target>`, isolation is a fork
+  (`coop fork <name> <target>`), and `--bare` has no replacement. Claude Code's own `--bare` still
+  works after `--`, in a normal writable box. A session job asking for `mode: "readonly"` or
+  `"bare"` is refused with `invalid_request`, which says what to send instead: `mode: "normal"`,
+  with `repository_read_only: true` for a job that must not change its repository. Those jobs work
+  as before. A session created in a removed mode stays readable but can't run again; close and
+  discard it.
+
 - **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
   `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a
   file in place. An agent in a box could swap that file's folder for a named pipe just as

@@ -1,4 +1,4 @@
 
-✗ Cannot combine "--readonly" and "--bare" in "coop claude"
+✗ Cannot combine "--all" and "--all-projects" in "coop net runs"
 
-  Help: coop help claude
+  Help: coop help net runs

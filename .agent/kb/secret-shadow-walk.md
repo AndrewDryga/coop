@@ -6,11 +6,11 @@ sources: [internal/box/mounts.go, internal/shadowpath/shadowpath.go, internal/sh
 updated: 2026-10-17
 ---
 
-`box.ComputeMounts` runs on every launch (`run.go`, and `restricted.go` for read-only and bare
-runs). It walks the whole repository, skipping only `.git` and directories it hides, and asks
-`shadowpath.NewDecider` about each path. Everything in the checkout is visible in the box,
-gitignored working state included, so `.agent/tasks` (artifacts, `tmp/` worktrees and clones) is
-walked too and can't be skipped. A secret in a task's scratch clone is still a secret.
+`box.ComputeMounts` runs on every launch (`run.go`). It walks the whole repository, skipping only
+`.git` and directories it hides, and asks `shadowpath.NewDecider` about each path. Everything in
+the checkout is visible in the box, gitignored working state included, so `.agent/tasks`
+(artifacts, `tmp/` worktrees and clones) is walked too and can't be skipped. A secret in a task's
+scratch clone is still a secret.
 
 **The root must be a real folder.** `filepath.WalkDir` lstats its root and never follows a link,
 so a repository path that is itself a link was walked as one entry and bound whole: no decoy, no
@@ -118,6 +118,7 @@ and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
   is hidden pin HOME, found by running the package under a temp folder holding a stray `*` rule.
 - 2026-10-16 — a linked repository root: ResolveRepo follows a linked `COOP_REPO`, ComputeMounts
   refuses a root still a link or a file (task 2026-10-16-resolve-links-in-coop-repo-so-secret-decoys-stil).
+- 2026-10-17 — the read-only and bare launches are gone; run.go is the only caller of ComputeMounts.
 - 2026-10-17 — ResolveRepo refuses an override a link takes to the home folder or above; the
   parent-writable limit, bind-by-path included, is stated (task
   2026-10-17-refuse-a-coop-repo-reached-through-a-link-that-r). Checked against box/repo.go,

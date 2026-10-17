@@ -29,7 +29,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
-	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -99,22 +98,12 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	// --bare serves a Q&A agent with no repository, context or tool, and needs none of what the
-	// supervisor exists for (a project toolbar, provider switching, warm boxes), so it runs the
-	// box directly below. --readonly is not offered here: an editor session mounts its repository
-	// writable, and the read-only form that fronts a pinned fork is `coop fork <name> acp --readonly`.
-	if args, err = a.takeExposureFlags("coop acp", args); err != nil {
+	if err := refuseRemovedExposureFlags("coop acp", args, launchOffers{peers: true, fork: true}); err != nil {
 		return 2, err
-	}
-	if a.mode == agents.ModeReadOnly {
-		return 2, errors.New("coop acp does not take --readonly — front a fork read-only with 'coop fork <name> acp --readonly', or investigate with 'coop <target> --readonly'")
 	}
 	peerVals, args, err := extractPeer("coop acp", args)
 	if err != nil {
 		return 2, err
-	}
-	if a.mode == agents.ModeBare && len(peerVals) > 0 {
-		return 2, errors.New("a bare run consults no peers — drop --peer")
 	}
 	// Validate syntax now; account presence depends on the selected concrete lead below.
 	peers, err := resolvePeerTargets("coop acp", peerVals, agents.Names())
@@ -160,15 +149,6 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
 		return 2, ui.UnexpectedArgument(leftover[0], "coop acp", "coop acp [<target|preset>] [--peer <target>...]")
-	}
-	if a.mode == agents.ModeBare {
-		if !toolSet {
-			if presetName != "" {
-				return 2, fmt.Errorf("preset roles are unavailable in bare mode. Run the lead directly: coop acp <target> --bare")
-			}
-			return 2, noProviderErr("acp")
-		}
-		return a.acpBare(tool, model, profile, effort)
 	}
 	// A running ACP session can switch its credential/preset/provider via coop's selector; the
 	// supervisor re-execs the inner box with the resolved spawn target in the env
@@ -411,40 +391,6 @@ func (a *app) cmdACP(args []string) (int, error) {
 		spec.Ctx = ctx
 	}
 	return a.runBox(spec)
-}
-
-// acpBare serves the target's ACP adapter under the bare profile: the shared base image, no
-// repository, no project, no tool, over stdio, with no supervisor in between. The adapter takes
-// no flags, so the no-tools switch is not on this command — it rides the session/new the ACP
-// client sends (agents.Agent.ACPRestrictedSessionMeta), which is why only a client that knows
-// the mode (the session daemon) can drive a bare session correctly; an editor entry runs the
-// same box and gets a tool-less agent only if it sends that meta. The run label is the session
-// daemon's cleanup receipt, exactly as for a fork's ACP child.
-func (a *app) acpBare(tool, model, profile, effort string) (int, error) {
-	if err := a.applyOneOff(tool, model, profile, effort); err != nil {
-		return refusalExit(err), err
-	}
-	img, code, err := a.restrictedImage()
-	if err != nil {
-		return code, err
-	}
-	if a.network.Mode != nil {
-		a.cfg.SetEgress(string(*a.network.Mode))
-	}
-	// The run owns a host seed directory holding the credential projection; the signal the session
-	// daemon ends a turn with has to arrive as a cancellation this run can clean up after.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
-	controllerJob, err := box.ControllerJobFromEnvironment()
-	if err != nil {
-		return 1, err
-	}
-	a.startTempReap()
-	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Cmd: acpCommand(a.cfg, tool), ForceNoTTY: true, Agent: tool, Homes: a.cfg.Homes,
-		Mode: agents.ModeBare, NetworkClient: egress.ClientACP, Quiet: true, ControllerJob: controllerJob,
-		RunID: sessionsvc.RunIDFromEnv(), Ctx: ctx,
-	})
 }
 
 // ensureACPImage builds the box image when it is missing, so a pruned or never-built image is a

@@ -96,12 +96,3 @@ func TestACPAutomaticStartupPreservesExplicitTarget(t *testing.T) {
 		t.Fatalf("invalid explicit account fell back: (%d, %v)", code, err)
 	}
 }
-
-func TestACPAutomaticStartupDoesNotApplyToBareMode(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
-	signInCred(t, cfg, "codex", "default")
-	a := &app{cfg: cfg}
-	if code, err := a.cmdACP([]string{"--bare"}); code != 2 || err == nil {
-		t.Fatalf("no-target bare ACP = (%d, %v), want explicit-target refusal", code, err)
-	}
-}

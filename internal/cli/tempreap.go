@@ -42,9 +42,8 @@ func tempReapDue(path string, now time.Time) bool {
 // temp directory until it fills the volume.
 //
 // The sweep dies with its process, so it starts, once per process, only where a
-// box keeps the process alive: runBox (direct, editor and fork launches), the
-// readonly and bare launches, and the orphan-box sweep that loop and fork starts
-// run first. A build's recycle runs that sweep too, near its end; if the process
+// box keeps the process alive: runBox (direct, editor and fork launches) and the
+// orphan-box sweep that loop and fork starts run first. A build's recycle runs that sweep too, near its end; if the process
 // exits first, the next launch tries again. Doctor probes, eval trials and fork
 // merge gates launch boxes without it.
 //

@@ -398,7 +398,7 @@ func TestLaunchFailureIsRenderedOnceAndMarkedReported(t *testing.T) {
 	s := newLaunchSections(RunSpec{Agent: "claude"})
 	// Before any section opened there is nothing to nest under: a refusal by name passes through
 	// for the dispatcher's plain ✗ line, exactly like a usage error.
-	early := errors.New("a readonly run cannot mount /tmp as the repository")
+	early := errors.New("the repository cannot be mounted at /tmp")
 	if got := captureStderr(t, func() {
 		if again := s.failed(early); again != early {
 			t.Error("a failure before any section must pass through untouched")

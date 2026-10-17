@@ -114,13 +114,13 @@ func TestStoreRefusesEverySelfInconsistentSourceBinding(t *testing.T) {
 			t.Fatalf("%s error = %v, want invalid_request", name, err)
 		}
 	}
-	// A workspace-free session binds a policy and nothing repository-shaped.
-	_, err := store.CreateSession(ctx, "refuse-bare-source", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
-		ID: "bare-source", Target: "target", Mode: "bare",
+	// A session bound to no workspace binds no source either.
+	_, err := store.CreateSession(ctx, "refuse-unbound-source", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+		ID: "unbound-source", Target: "target",
 		Source: mutate(SourceDefault, func(*SourceBinding) {}),
 	})
 	if CodeOf(err) != CodeInvalidRequest {
-		t.Fatalf("bare session source error = %v, want invalid_request", err)
+		t.Fatalf("unbound session source error = %v, want invalid_request", err)
 	}
 }
 

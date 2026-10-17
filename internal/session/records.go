@@ -757,7 +757,7 @@ type CreateSessionRequest struct {
 	OmitEnv         bool             `json:"omit_env,omitempty"`
 	OmitMCP         bool             `json:"omit_mcp,omitempty"`
 	ControllerTools *ControllerTools `json:"controller_tools,omitempty"`
-	// Mode is the execution mode; empty is normal. A bare session names no repository binding.
+	// Mode is the execution mode; empty is normal, the only mode the service still creates.
 	Mode                 string                       `json:"mode,omitempty"`
 	RepositoryReadOnly   bool                         `json:"repository_read_only,omitempty"`
 	Repository           string                       `json:"repository"`

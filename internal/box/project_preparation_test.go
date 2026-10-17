@@ -90,7 +90,6 @@ func TestFilteredProjectReadinessNamesMissingAndChangedInputs(t *testing.T) {
 	check("client image has not been prepared")
 	for name, excluded := range map[string]RunSpec{
 		"login": {Repo: repo, Login: true}, "controller": {Repo: repo, ControllerJob: true},
-		"readonly": {Repo: repo, Mode: agents.ModeReadOnly}, "bare": {Repo: repo, Mode: agents.ModeBare},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := checkFilteredProjectReadiness(t.Context(), d, f.store, excluded, candidate.Runtime); err != nil {

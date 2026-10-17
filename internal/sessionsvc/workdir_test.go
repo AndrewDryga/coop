@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/AndrewDryga/coop/internal/box"
 )
 
 func TestSessionWorkdirMarkerKeepsNewAndLegacyHistoriesDistinct(t *testing.T) {
@@ -17,10 +15,10 @@ func TestSessionWorkdirMarkerKeepsNewAndLegacyHistoriesDistinct(t *testing.T) {
 	if got, err := SessionWorkdir(root, host); err != nil || got != host {
 		t.Fatalf("legacy workdir = %q, %v", got, err)
 	}
-	if got, err := prepareSessionWorkdir(root, host, ""); err != nil || got != box.BareWorkdir {
+	if got, err := prepareSessionWorkdir(root, host, ""); err != nil || got != StableWorkdir {
 		t.Fatalf("new workdir = %q, %v", got, err)
 	}
-	if got, err := prepareSessionWorkdir(root, host, "native-1"); err != nil || got != box.BareWorkdir {
+	if got, err := prepareSessionWorkdir(root, host, "native-1"); err != nil || got != StableWorkdir {
 		t.Fatalf("resumed new workdir = %q, %v", got, err)
 	}
 	if err := os.Remove(filepath.Join(root, stableWorkdirMarker)); err != nil {

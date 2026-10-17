@@ -2,9 +2,8 @@
 
 The box is the container your agent runs in: your project is mounted at its real path, and your
 home folder, SSH keys and the rest of your disk aren't there. This page is the reference for what
-the box hides, the restricted read-only and bare runs, the toolchain and image, project services,
-dev server ports and updates. The website has the overview: [the
-sandbox](https://coop.dryga.com/docs.html#sandbox), [hiding
+the box hides, the toolchain and image, project services, dev server ports and updates. The
+website has the overview: [the sandbox](https://coop.dryga.com/docs.html#sandbox), [hiding
 secrets](https://coop.dryga.com/docs.html#secrets) and [toolchain and
 services](https://coop.dryga.com/docs.html#toolchain).
 
@@ -18,7 +17,7 @@ names another repository's Git folder, linked `objects` or `refs` folders, and
 `objects/info/alternates`. So the agent can make Coop's Git read another repository your user can
 open, and a reset or review can bring that repository's files into the box. Use
 [`coop fork <name> <target> --isolated`](forks.md#isolated-write-forks) for independent Git storage
-and controlled committed publication, or `--readonly` when the work needs no repository writes.
+and controlled committed publication.
 
 co:op shadows secret-looking files and directories, such as `.env`, `*.tfvars`, `*.pem`,
 `secrets/` and `.ssh`:
@@ -87,55 +86,6 @@ It applies to this check only: fork merge, checkpoint upload and session redacti
 every finding.
 
 Prove your setup holds with [`coop doctor`](https://coop.dryga.com/docs.html#doctor).
-
-## Read-only and bare runs
-
-Two launches take the sandbox further, for work that must not change anything:
-
-```bash
-coop claude --readonly                  # investigate this repo; every write to it fails
-coop claude --bare -- -p "..."          # Q&A with no repo, no project context, no tools
-coop run --readonly -- sh -c 'touch x'  # the same profile around a raw command: the probe
-```
-
-| | `--readonly` | `--bare` |
-| --- | --- | --- |
-| Repository | mounted read-only, git history included, plus any approved companions | none mounted |
-| Tools | the agent can read, search and run experiments in scratch | co:op adds the provider's own no-tools switch, so the model's request carries no tool: the conversation in, the answer out |
-| Networking | direct runs support `--egress filtered` | open or offline only |
-
-Both run on an image co:op manages, under one restricted filesystem profile:
-
-- The container root is read-only.
-- The only writable places are run-private in-memory scratch: the box home and `/tmp`, plus an
-  empty `/workspace` for bare. It is discarded when the run ends.
-- Every host path that enters the box enters read-only.
-
-Nothing the normal launch mounts writable exists here: no credential home, no dependency cache, no
-asdf volume, no skills copy, no ACP transcripts. Project environment, services, hooks, MCP servers
-and `.tool-versions` provisioning are not loaded. Read-only runs still use the normal project
-network approval and admission flow.
-
-The provider gets a seed instead of its home, copied into the tmpfs home before it starts:
-
-- public native auth selectors (real access and refresh grants stay outside the box);
-- the run-local provider broker entrance, with host-managed continuous renewal;
-- its first-run defaults;
-- a note stating the mode's contract.
-
-If the checkout's host path is under the box's `/tmp` or home scratch, a read-only run mounts it at
-`/workspace` inside the box instead. An explicit workdir inside that scratch is refused.
-
-Both stop before launch when co:op cannot enforce their restrictions:
-
-- They run on Docker only.
-- Native restricted modes are offered only for `claude`.
-- `--peer`, presets and `COOP_IMAGE` are refused.
-- A `COOP_RUN_ARGS` entry other than `-e KEY=VALUE` stops the launch by name.
-- Restricted runs do not start services, so a filtered policy with service grants is refused.
-- Remote-session jobs using either restricted mode still reject filtered networking.
-
-The answer is the run's only output. A run that needs artifacts back is a normal run.
 
 ## Toolchain: .tool-versions
 

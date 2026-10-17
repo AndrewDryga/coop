@@ -839,16 +839,6 @@ func (codexAgent) ConsultCmd(question string) []string {
 	return []string{"codex", "exec", "--enable", "use_legacy_landlock", "-s", "read-only", question}
 }
 
-// RestrictedCommand: no restricted mode is qualified on this CLI yet (see unqualifiedRestrictedCommand).
-func (a codexAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]string, error) {
-	return unqualifiedRestrictedCommand(a, mode, cmd)
-}
-
-// ACPRestrictedSessionMeta: nor on its ACP adapter (see unqualifiedRestrictedACPSession).
-func (a codexAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any, error) {
-	return unqualifiedRestrictedACPSession(a, mode)
-}
-
 // codexManagedConfig is the pinned 0.159.2's managed layer, which it loads after -c, the project
 // and the user's own config (verified: its model beats the user's; /etc/codex/config.toml is only a
 // default the user's overrides) — so what it sets holds whatever a home or project sets.

@@ -247,11 +247,11 @@ func TestNetworkMCPDependenciesAreAbsentWithoutTrustedConfiguration(t *testing.T
 	if err != nil || automatic != nil {
 		t.Fatal("absent MCP configuration derived dependencies", automatic, err)
 	}
-	// A bare run omits both the configuration and anything derived from it.
+	// A run without agent homes omits both the configuration and anything derived from it.
 	cfg, spec = mcpDependencyFixture(t, `{"mcpServers":{"remote":{"url":"https://mcp.example.com"}}}`)
 	spec.Homes = false
 	if automatic, err = NetworkMCPDependencies(cfg, spec); err != nil || automatic != nil {
-		t.Fatal("a no-tools run inherited MCP dependencies", automatic, err)
+		t.Fatal("a run without homes inherited MCP dependencies", automatic, err)
 	}
 }
 

@@ -2,7 +2,7 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/cli/acp_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/box/restricted.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go]
+sources: [internal/cli/acp_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go]
 updated: 2026-10-17
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
@@ -99,8 +99,8 @@ surface: the count and the container ids, outside its pass/fail tally, reaping n
 Files get a separate daily sweep (`cli.startTempReap` → `box.ReapOrphanTempEntries` for TMPDIR,
 then `box.ReapOrphanRunfiles` for the private runfiles root): coop-prefixed entries that are over an
 hour old AND mounted by no box (a run's folder must also name the daemon that listed the boxes). It
-starts once per process from `runBox` (direct, editor and fork launches), the readonly/bare
-launches, and `collectOrphanBoxes` (loop and fork starts, and a build's recycle near its end);
+starts once per process from `runBox` (direct, editor and fork launches) and `collectOrphanBoxes`
+(loop and fork starts, and a build's recycle near its end);
 doctor probes, eval trials and fork merge gates launch boxes without it. It stamps
 `BoxHome/temp-reap` only after a pass whose mount listing succeeded (`box.ErrMountsUnknown` marks
 one that did not): a goroutine dies with its process, stamping first let a short command use up the
@@ -112,7 +112,7 @@ A listing is one daemon's word. The runtime CLI follows DOCKER_HOST or the curre
 and another daemon's boxes are simply missing from it, so after `docker context use other` their
 folders looked unused. Each run's folder (`coop-run-*`, the only kind current code makes that a box
 mounts) therefore names its daemon in a `daemon` file. The launch writes the ID its own probe
-returned (`runtime.DaemonID`, `info --format {{.ID}}`, at run.go and restricted.go), so a run
+returned (`runtime.DaemonID`, `info --format {{.ID}}`, in run.go), so a run
 killed after the launch probe is still swept, and writes it again just before the box starts
 (`recordDaemonAtStart`): the CLI starts the box on whichever daemon the context selects by then,
 and a switch while services or brokers start would otherwise leave the folder naming a daemon that
@@ -237,6 +237,8 @@ Traps:
   point at a fresh temp root.
 
 ## Changelog
+- 2026-10-17 — the read-only and bare launches are gone: `runBox` and `collectOrphanBoxes` are the
+  sweep's only starters and run.go the only launch that records its daemon.
 - 2026-10-17 — v2 labels name the host and PID namespace (`thisHost`); a sweep never judges another
   host's pid, and v1 labels keep their meaning for a coop on a host while a coop in a container
   judges none. Doctor lists another host's containers and a host id

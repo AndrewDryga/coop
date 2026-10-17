@@ -2,8 +2,8 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/box/restricted.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go]
-updated: 2026-10-10
+sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go]
+updated: 2026-10-17
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -133,7 +133,7 @@ box that loads no MCP (`mcpScrubNames`) — are dropped from a filtered box's en
 or one set through `-e` refuses by name; SSE uses the wider route described below. The pinned claude IGNORES
 `bearer_token_env_var` (captured 2026-09-19: no Authorization at all) and expands `${VAR}` in a
 header, so claude's mount is `mcp.ClaudeView` — the snapshot with each bearer turned into
-`Authorization: Bearer ${NAME}` — in every non-restricted mode (restricted modes mount no MCP file). A filtered SESSION child writes its lead adapter's
+`Authorization: Bearer ${NAME}`. A filtered SESSION child writes its lead adapter's
 final ACP list to the daemon-named `COOP_SESSION_MCP_HANDOFF` file before its container starts; the
 daemon renders nothing pre-spawn for it, reads the file once after `initialize` (bound to the run
 id), and refuses the turn without it. A filtered session that withholds MCP drops the source's token
@@ -170,18 +170,9 @@ UNLIKE filtered, an open run never refuses a server it cannot broker: a secret i
 `--network container:`) keeps TODAY's behaviour — its variable stays in the box env — and the launch
 names it (`sections.openMCP`). Only brokered variables are scrubbed, and a variable a kept server
 also reads stays. A session child hands its list over in open mode too (the daemon asks whenever the
-session is not offline and the mode is not bare), and `mcpStandIns.kept` lets a kept server's real
-value still be inlined, as the daemon used to. A READ-ONLY session brokers the same way
-(`box/restricted.go`): the daemon asks it for a handoff, and its child — which mounts no MCP file
-and loads nothing from the project — reads only the daemon's own projection (through the shared
-`validateMCPSourceIsolation`) to plan the helper, scrub the env and render the list. The restricted
-profile admits exactly one `--add-host`, the planned `plan.brokerHost`, so the helper is reachable
-without widening the allowlist, and the helper's private directory is proven outside the repository
-AND every companion the box mounts (its `secrets.json` is cleartext). Because that box loads no MCP
-file, `mcpScrub`'s names leave its environment whether they were brokered or not — the list the
-daemon sends resolves from the projection, not from the box's env. A HAND-RUN `--readonly` brokers
-nothing: the gate is the handoff env AND an ACP session client, so a stale variable in a shell
-cannot start a helper holding the real tokens. A bare session has none to load.
+session is not offline), and `mcpStandIns.kept` lets a kept server's real value still be inlined, as
+the daemon used to. A session whose repository is read-only is an ordinary box and brokers the same
+way.
 
 **Offline runs drop every remote server** (`box.Run`, `sessionsvc` `captureSessionMCP`). A box on
 `--network none` cannot reach one, so `mcp.WithoutRemoteServers` removes each server with a `url`
@@ -205,6 +196,8 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-10-17 — removed the read-only and bare modes: every session child hands its list over when
+  online, and a read-only repository session brokers like any other box.
 - 2026-10-10 — actual editor session had no shared MCP tools: only daemon children requested the
   final handoff. Reused it for editor/fork generations and child-bound proxy projection without
   changing remote custody, service ownership, credential rendering or network grants.

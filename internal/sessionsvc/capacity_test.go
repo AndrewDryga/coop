@@ -345,7 +345,7 @@ func TestRestartProvesItsSessionBacklogWithoutWaitingForTheTicker(t *testing.T) 
 				}
 				return service
 			}
-			job := bareWorkerJob()
+			job := emptyWorkerJob()
 			document, err := json.Marshal(job)
 			if err != nil {
 				t.Fatal(err)

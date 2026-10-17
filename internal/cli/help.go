@@ -304,21 +304,15 @@ Usage:
 EXAMPLES
   coop run -- npm test
   coop run -- curl https://example.com
-  coop run --readonly --egress none -- git status
+  coop run --egress none -- git status
 
 OPTIONS
-  --readonly  mount the repository read-only
-  --bare      run without the repository or project context
-
   --egress <mode>        choose filtered, open, or none
   --allow-domain <host>  allow TLS access to this host on port 443
                          repeat to allow more hosts
   --egress-rules <path>  load network rules from a file
 
   Put Coop options before --. Everything after it belongs to your command.
-  --readonly and --bare cannot be combined.
-  These two modes require Docker.
-  --bare requires --egress open or none; --readonly also supports filtered.
 
 NETWORK ACCESS
   filtered  allow traffic permitted by approved network rules
@@ -331,9 +325,9 @@ For more details see:
 // agentHelp is `coop help <agent>` — how to run THAT agent, in its own words: the command a
 // person types, four examples, the coop flags read before a `--`, and where its models and
 // accounts live. It documents coop's OWN flags because `coop <agent> --help` forwards to the
-// agent's real CLI. Every line is generated from the adapter (name, effort support, restricted
-// modes), so a new agent gets its page for free and none of them advertises a flag it refuses —
-// see .agent/kb/rules/agents-are-one-file.md. Orchestration lives in `coop help presets`, the
+// agent's real CLI. Every line is generated from the adapter (name, effort support), so a new
+// agent gets its page for free and none of them advertises a flag it refuses — see
+// .agent/kb/rules/agents-are-one-file.md. Orchestration lives in `coop help presets`, the
 // target grammar in `coop help models`; neither is restated here.
 func agentHelp(name string) string {
 	ag, ok := agents.Get(name)
@@ -348,25 +342,17 @@ func agentHelp(name string) string {
 		target += "[/<effort>]"
 		account = example + "/high@work"
 	}
-	restricted := restrictedModesOffered(ag)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "coop %s: run %s in the box\n\n", name, title)
 	fmt.Fprintf(&b, "Usage:\n  coop %s[@<account>] [options] [-- <%s-args>...]\n\n", target, name)
 	fmt.Fprintf(&b, "EXAMPLES\n  coop %s\n  coop %s\n  coop %s\n  coop %s -- --help\n\n", name, example, account, name)
 
-	options := [][2]string{{"--peer <target>", "start with a read-only peer agent; repeat to add more"}}
-	if restricted {
-		options = append(options,
-			[2]string{"--readonly", "mount the repository read-only"},
-			[2]string{"--bare", "run without the repository, project context, or tools"})
-	}
-	options = append(options, [2]string{"--", "pass all remaining arguments directly to " + title})
 	b.WriteString("OPTIONS\n")
-	b.WriteString(helpRows(options, 2))
-	if restricted {
-		b.WriteString("\n  --readonly and --bare cannot be combined or used with peers.\n")
-	}
+	b.WriteString(helpRows([][2]string{
+		{"--peer <target>", "start with a read-only peer agent; repeat to add more"},
+		{"--", "pass all remaining arguments directly to " + title},
+	}, 2))
 
 	b.WriteString("\nNETWORK OPTIONS\n")
 	b.WriteString(helpRows([][2]string{
@@ -418,14 +404,6 @@ func helpRowsAt(rows [][2]string, column int) string {
 		fmt.Fprintf(&b, "  %s  %s\n", padRight(r[0], w), r[1])
 	}
 	return b.String()
-}
-
-// restrictedModesOffered asks the adapter the same question a launch asks — an agent whose CLI
-// has no proven switch refuses ModeReadOnly — so help never advertises a mode that would be
-// rejected the moment someone typed it.
-func restrictedModesOffered(ag agents.Agent) bool {
-	_, err := ag.RestrictedCommand(agents.ModeReadOnly, nil)
-	return err == nil
 }
 
 // commandHelp is the focused text for `coop <cmd> --help`, per subcommand. fork has its
@@ -593,26 +571,17 @@ Usage:
 
 EXAMPLES
   coop shell
-  coop shell --readonly --egress none
+  coop shell --egress none
 
 OPTIONS
-  --readonly  mount the repository read-only
-  --bare      open a shell without the repository or project context
-
   --egress <mode>        choose filtered, open, or none
   --allow-domain <host>  allow TLS access to this host on port 443
                          repeat to allow more hosts
   --egress-rules <path>  load network rules from a file
 
-  --readonly and --bare cannot be combined.
-  These two modes require Docker.
-  --bare requires --egress open or none; --readonly also supports filtered.
-
 USING THE SHELL
   The shell opens in your project inside the box.
   Type exit or press Ctrl-D to return to your host.
-
-  With --bare, the project is not mounted.
 
 NETWORK ACCESS
   filtered  allow traffic permitted by approved network rules
@@ -848,15 +817,11 @@ EDITOR SETUP
 OPTIONS
   --peer <agent>         start a peer provider for read-only advice
                          repeat to add more peers
-  --bare                 run without the repository, project context, or tools
 
   --egress <mode>        choose filtered, open, or none
   --allow-domain <host>  allow TLS access to this host on port 443
                          repeat to allow more hosts
   --egress-rules <path>  load network rules from a file
-
-  --bare requires a single agent, without peers or a preset.
-  It requires Docker and --egress open or none.
 
 SWITCHING AGENTS
   Use the editor's Provider and Account controls to change who runs the session.
@@ -869,11 +834,6 @@ SWITCHING AGENTS
   With filtered networking, only compatible providers and presets are offered.
   Claude, Codex and Grok support it; Gemini needs an API key to use it.
   Switching never changes this session's network rules.
-
-READ-ONLY WORK
-  coop fork investigation acp claude --readonly
-
-  Replace investigation with your fork's name.
 
 TROUBLESHOOTING
   Set COOP_ACP_TRACE=1 in your editor's agent environment to record a trace.
@@ -1330,7 +1290,6 @@ EXAMPLE
 Usage: coop fork <name> acp [<target>] [<options>]
 
 OPTIONS
-  --readonly             mount the fork read-only
   --peer <target>        start with read-only peer agents; repeatable
   --egress <mode>        internet access: filtered, open or none
   --allow-domain <name>  allow exact TLS access on port 443; repeatable
@@ -1339,10 +1298,9 @@ OPTIONS
   Without a target, Coop starts the fork's agent with its default model and
   account; choose another model or effort in your editor.
 
-  Read-only mode has no peer agents, project hooks or MCP servers.
-  For a writable local session, open the parent project in your editor; Coop maps
-  its working directory to the fork. The fork, provider and account stay fixed;
-  any native model and effort choices remain available. With --readonly, open the fork.
+  Open the parent project in your editor; Coop maps its working directory to
+  the fork. The fork, provider and account stay fixed; any native model and
+  effort choices remain available.
 
 EXAMPLES
   coop fork myfork acp

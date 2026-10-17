@@ -221,10 +221,10 @@ func (r Runtime) SupportsRunLimits() bool {
 	return r.kind() == runtimeDocker
 }
 
-// SupportsRestrictedFilesystem reports whether the restricted execution modes (a read-only root
-// with owned tmpfs scratch) are qualified on this runtime. Docker documents both primitives and is
-// the one proven live; Apple's container CLI takes different flags — inferred parity is not
-// qualification.
+// SupportsRestrictedFilesystem reports whether a box with a read-only root and owned tmpfs scratch,
+// the shape of the native quota helper, is qualified on this runtime. Docker documents both
+// primitives and is the one proven live; Apple's container CLI takes different flags — inferred
+// parity is not qualification.
 func (r Runtime) SupportsRestrictedFilesystem() bool {
 	return r.kind() == runtimeDocker
 }

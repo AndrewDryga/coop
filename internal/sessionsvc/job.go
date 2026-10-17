@@ -38,7 +38,7 @@ func (s *Service) sessionExecution(ctx context.Context, bound session.Session) (
 		return executionConfig{}, err
 	}
 	if job.JobRef != bound.JobRef || policy.Repository != bound.Repository ||
-		string(policy.Mode) != bound.Mode || policy.RepositoryReadOnly != bound.RepositoryReadOnly ||
+		job.Mode != bound.Mode || policy.RepositoryReadOnly != bound.RepositoryReadOnly ||
 		policy.OmitEnv == bound.ProjectEnv || policy.OmitMCP == bound.ProjectMCP ||
 		policy.MaxQueuedTurns != bound.MaxQueuedTurns || policy.MaxQueuedBytes != bound.MaxQueuedBytes ||
 		policy.TurnTimeout != bound.TurnTimeout || policy.MaxPatchBytes != bound.MaxPatchBytes ||
@@ -49,7 +49,7 @@ func (s *Service) sessionExecution(ctx context.Context, bound session.Session) (
 	base := ""
 	if job.Source != nil {
 		source, base = &job.Source.Binding, job.Source.Binding.BaseCommit
-	} else if job.Mode != "bare" {
+	} else {
 		base = emptyJobCommit
 	}
 	if !reflect.DeepEqual(source, bound.Source) || base != bound.BaseCommit || len(bound.Companions) != len(job.Companions) {
@@ -103,7 +103,7 @@ func (s *Service) resolveJobExecution(ctx context.Context, job workerproto.JobSp
 		}
 	}
 	policy := executionConfig{
-		Mode: agents.ExecutionMode(job.Mode), OmitEnv: true, OmitMCP: true,
+		OmitEnv: true, OmitMCP: true,
 		RepositoryReadOnly: job.RepositoryReadOnly,
 		Egress:             executionNetwork{Mode: egress.Mode(job.Egress.Mode), ExportDestinations: job.Egress.ExportDestinations},
 		Environment:        job.Environment, Check: job.Check, Resources: job.Resources,
@@ -124,7 +124,7 @@ func (s *Service) resolveJobExecution(ctx context.Context, job workerproto.JobSp
 	policy.Egress.Rules = rules
 	if job.Source != nil {
 		policy.Repository, err = stagedJobRepository(ctx, s.store.Root(), *job.Source)
-	} else if job.Mode != "bare" {
+	} else {
 		policy.Repository, err = emptyJobRepository(ctx, s.store.Root())
 	}
 	if err != nil {
@@ -248,9 +248,6 @@ func stagedJobRepository(ctx context.Context, stateRoot string, source workerpro
 }
 
 func jobRepositoryFreshness(job workerproto.JobSpec, createdAt time.Time) []session.RepositoryFreshnessReceipt {
-	if job.Mode == "bare" {
-		return nil
-	}
 	receipt := func(name string, source workerproto.JobSource, selected bool) session.RepositoryFreshnessReceipt {
 		binding := source.Binding
 		requested, resolved := binding.DefaultRef, binding.DefaultCommit

@@ -41,8 +41,8 @@ func TestEmptySourceJobOwnsPrivateWorkspaceAndSurvivesRestart(t *testing.T) {
 		return s
 	}
 	ctx := context.Background()
-	job := bareWorkerJob()
-	job.Mode, job.RepositoryReadOnly, job.Egress.Mode = "normal", true, "open"
+	job := emptyWorkerJob()
+	job.RepositoryReadOnly, job.Egress.Mode = true, "open"
 	document, _ := json.Marshal(job)
 	digest, _ := job.Digest()
 	req := CreateRemoteSessionRequest{Task: "empty-workspace", Job: document, ExpectedJobDigest: digest}

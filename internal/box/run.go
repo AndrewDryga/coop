@@ -73,11 +73,6 @@ type RunSpec struct {
 	Repo            string   // host repo to mount
 	Workdir         string   // where Repo mounts; empty defers to resolveWorkdir (the repo's real host path)
 	Cmd             []string // command + args to run in the box
-	// Mode is the execution mode, fixed at creation. Empty is ModeNormal — every field below
-	// then means what it always did. A restricted mode (readonly, bare) takes the separate
-	// launch in restricted.go: it honors Repo, Cmd, Agent, AgentCommand, Homes, the companions,
-	// labels, tty and stdio, and refuses the rest rather than widening what the box can reach.
-	Mode agents.ExecutionMode
 	// PolicyRepo is the trusted source for .agent/project.yaml box policy. Empty uses Repo.
 	PolicyRepo string
 	// IsolatedParent carries the trusted publication boundary into disposable gate
@@ -172,8 +167,8 @@ type RunSpec struct {
 	Stdout               io.Writer // capture output (doctor); nil means inherit os.Stdout
 	Stderr               io.Writer // capture/discard the container's stderr; nil means inherit os.Stderr
 	ExtraArgs            []string  // extra runtime args for this run (e.g. doctor's probe mount)
-	// SessionOutputRoot is the one host-owned writable subtree a legacy read-only remote session
-	// mounts beside its checkout. It is never request data; mount validation exact-allows this
+	// SessionOutputRoot is the one host-owned writable subtree a read-only remote session mounts
+	// beside its checkout. It is never request data; mount validation exact-allows this
 	// source while protecting the rest of the session daemon's state.
 	SessionOutputRoot string `json:"-"`
 	// ControllerReviewRoot/ID identify the daemon-created disposable review checkout. Only that
@@ -514,13 +509,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if spec.CapturedEgress == nil && spec.Image != id {
 			return -1, errors.New("the workload image no longer matches the image selected for this run")
 		}
-	}
-	// A restricted mode takes its own launch, whose whole point is that nothing below — homes,
-	// caches, services, project policy, generated mounts — is assembled for it.
-	if mode, err := executionMode(spec); err != nil {
-		return -1, err
-	} else if mode.Restricted() {
-		return runRestricted(cfg, rt, spec, artifacts, mode)
 	}
 	// Every launcher checks its leads before it starts; a box whose lead cannot host a native role
 	// still refuses rather than run that role as something else.

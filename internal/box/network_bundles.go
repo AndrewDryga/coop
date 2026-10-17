@@ -34,7 +34,7 @@ func (s RunSpec) networkClient() egress.Client {
 func NetworkProviderBundles(cfg *config.Config, spec RunSpec) ([]egress.Bundle, error) {
 	if !spec.NetworkAdmission {
 		// A run's own plan refuses first what no policy can serve: a command that is not the
-		// agent, a restricted mode.
+		// agent.
 		if _, err := selectCredentialPlan(cfg, spec); err != nil {
 			return nil, err
 		}
@@ -114,6 +114,11 @@ func networkTargetsForProvider(cfg *config.Config, spec RunSpec, provider string
 	}
 	return targets
 }
+
+// RestrictedCredentialHorizon is how long an account that must bring a portable credential into a
+// restricted-networking run has to stay usable without refresh authority in the box. Exported
+// because the live suites size their own credential deadlines past it.
+const RestrictedCredentialHorizon = time.Hour
 
 // NetworkTargetBundle binds one exact account's selected authentication family
 // to its release-owned endpoint bundle without reading credential bytes. It is

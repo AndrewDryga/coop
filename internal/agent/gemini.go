@@ -924,16 +924,6 @@ func (geminiAgent) ConsultCmd(question string) []string {
 	return []string{"gemini", "--approval-mode", "plan", "-p", question}
 }
 
-// RestrictedCommand: no restricted mode is qualified on this CLI yet (see unqualifiedRestrictedCommand).
-func (a geminiAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]string, error) {
-	return unqualifiedRestrictedCommand(a, mode, cmd)
-}
-
-// ACPRestrictedSessionMeta: nor on its ACP adapter (see unqualifiedRestrictedACPSession).
-func (a geminiAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any, error) {
-	return unqualifiedRestrictedACPSession(a, mode)
-}
-
 // geminiNoUpdates is Gemini's update switch, a system-settings block. /etc/gemini-cli/settings.json
 // is the pinned 0.62.0's system layer, which overrides both the user's and a workspace's settings
 // (it reports a bad file there by path). Pointing GEMINI_CLI_SYSTEM_SETTINGS_PATH at another file

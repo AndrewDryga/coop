@@ -102,8 +102,7 @@ provider keys and do not start a broker.
 
 The broker requires Docker's private network namespace; host networking, joining an arbitrary
 container's network and Apple's `container` runtime are not supported for online provider runs.
-Custom provider base URLs and unsupported credential families are refused. Native restricted modes
-remain Claude-only; remote restricted jobs still do not support filtered networking.
+Custom provider base URLs and unsupported credential families are refused.
 See [provider networking](networking.md#provider-credentials-stay-outside-the-box).
 
 ### The env file

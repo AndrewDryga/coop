@@ -788,7 +788,7 @@ func TestJobSourceGrantIsJobAndExactRepositoryBound(t *testing.T) {
 func TestCreateJobCommandForwardsOnlyTheFrozenJob(t *testing.T) {
 	job := workerproto.JobSpec{
 		Version: 2, JobRef: "job:one", Source: ptrJobSource(testJobSource()),
-		Companions: []workerproto.JobCompanion{}, Targets: []string{"codex"}, Mode: "readonly",
+		Companions: []workerproto.JobCompanion{}, Targets: []string{"codex"}, Mode: "normal",
 		RepositoryReadOnly: true, Egress: workerproto.JobEgress{Mode: "none", Rules: []workerproto.JobRule{}},
 		Limits: workerproto.JobLimits{MaxTurns: 1, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
 			TurnTimeoutMS: 60_000, MaxPatchBytes: 1024},

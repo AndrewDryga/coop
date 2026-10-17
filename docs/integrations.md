@@ -195,12 +195,11 @@ There's nothing to push, your secrets never came along, and you still review and
 The command starts the agent the fork was created with. Name a target to start another, as in
 `coop fork <name> acp claude:opus`.
 
-For a writable local session, configure that command while the parent project is open in Zed.
-co:op maps the editor's project directory to the fork inside the box. The fork, provider and
-account stay fixed, and the plain ACP Provider and Preset menus don't appear. Any model and effort
-choices the adapter offers stay available. co:op refuses an editor opened on an unrelated
-directory instead of quietly sending its session to the fork. With `--readonly`, open the fork
-itself in the editor.
+Configure that command while the parent project is open in Zed. co:op maps the editor's project
+directory to the fork inside the box. The fork, provider and account stay fixed, and the plain ACP
+Provider and Preset menus don't appear. Any model and effort choices the adapter offers stay
+available. co:op refuses an editor opened on an unrelated directory instead of quietly sending its
+session to the fork.
 
 ### Services and custom images
 
@@ -365,8 +364,8 @@ box, and the launch says which server and why. That happens for:
 - every server, when the box has no network of its own to reach a helper on (Apple's `container`
   runtime, `--network none`, `--network container:…`)
 
-Read-only sessions on open networking use the same helper. Their adapters receive stand-ins for
-the servers it covers, with the same fallbacks for servers it can't broker.
+Remote sessions on open networking use the same helper. Their adapters receive stand-ins for the
+servers it covers, with the same fallbacks for servers it can't broker.
 
 #### Offline runs
 

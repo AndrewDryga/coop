@@ -78,6 +78,39 @@ func recorderRuntime(t *testing.T, recorder string) runtime.Runtime {
 	return runtime.Runtime{Name: shim}
 }
 
+// dockerRecorder is a runtime whose binary is named docker, so Docker-only support resolves as it
+// does on the qualified runtime, and records every invocation's exact argv: one line per
+// invocation with NUL-separated arguments, so an empty argument survives.
+func dockerRecorder(t *testing.T, recorder string) runtime.Runtime {
+	t.Helper()
+	shim := filepath.Join(t.TempDir(), "docker")
+	script := "#!/bin/sh\n{ printf '%s\\0' \"$@\"; printf '\\n'; } >> " + strconv.Quote(recorder) + "\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return runtime.Runtime{Name: shim}
+}
+
+// recordedRun returns the argv of the one `run` invocation the recorder saw.
+func recordedRun(t *testing.T, recorder string) []string {
+	t.Helper()
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runs [][]string
+	for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+		args := strings.Split(strings.TrimSuffix(line, "\x00"), "\x00")
+		if len(args) > 0 && args[0] == "run" {
+			runs = append(runs, args)
+		}
+	}
+	if len(runs) != 1 {
+		t.Fatalf("recorded %d run invocations, want 1:\n%q", len(runs), data)
+	}
+	return runs[0]
+}
+
 func TestStopSessionServicesUsesImmutableOwnershipLabels(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {

@@ -382,15 +382,12 @@ func TestReapTouchesOnlyCoopEntries(t *testing.T) {
 // just before the box starts: the CLI starts the box on whichever daemon the current Docker context
 // selects by then, and the record is all a later sweep can go on. After a `docker context use`
 // while services or brokers start, the folder names the daemon the box started on; when no daemon
-// can be named then, it names none, so the sweep keeps it. Both launch paths do this.
+// can be named then, it names none, so the sweep keeps it.
 func TestRunRecordsTheDaemonItsBoxStartsOn(t *testing.T) {
 	for name, setup := range map[string]func(t *testing.T) (*config.Config, RunSpec){
 		"ordinary": func(t *testing.T) (*config.Config, RunSpec) {
 			return &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"},
 				RunSpec{Image: "i", Repo: t.TempDir(), Workdir: "/workspace", Cmd: []string{"true"}, Batch: true, Quiet: true}
-		},
-		"restricted": func(t *testing.T) (*config.Config, RunSpec) {
-			return restrictedConfig(t), RunSpec{Image: "coop-box", Cmd: []string{"true"}, Mode: agents.ModeBare, Batch: true, Quiet: true}
 		},
 	} {
 		for _, tc := range []struct{ name, atStart, want string }{
@@ -439,7 +436,6 @@ func TestANativeRunRecordsTheDaemonItsOwnerIsBoundTo(t *testing.T) {
 			return cfg, RunSpec{Image: "i", Repo: t.TempDir(), Cmd: claude.Interactive(cfg), Agent: "claude",
 				AgentCommand: true, Homes: true, Batch: true, Quiet: true}
 		},
-		"restricted": readOnlySessionFixture,
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg, spec := setup(t)

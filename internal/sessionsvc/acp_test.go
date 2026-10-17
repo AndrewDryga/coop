@@ -97,7 +97,7 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 		strings.Contains(got, "secret") || !strings.Contains(got, "mcp= openai=") {
 		t.Fatalf("child environment was not private: %q", got)
 	}
-	if got := readFile(t, fixture.childLog); !strings.Contains(got, `"cwd":"`+box.BareWorkdir+`"`) {
+	if got := readFile(t, fixture.childLog); !strings.Contains(got, `"cwd":"`+StableWorkdir+`"`) {
 		t.Fatalf("ACP cwd was not the stable in-box workspace: %q", got)
 	}
 	if got := readFile(t, fixture.runtimeLog); !strings.Contains(got, "coop.run") ||
@@ -563,7 +563,7 @@ func TestAClaudeACPSessionIsHandedTheSharedMCPServers(t *testing.T) {
 // listener and a stand-in — on session/new and on every load, never the token the private env
 // holds; a child that hands over nothing fails the turn rather than falling back to that env.
 func TestAFilteredSessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
-	fixture := newSessionACPFixtureOn(t, "normal", "claude@work", agents.ModeNormal, egress.Filtered)
+	fixture := newSessionACPFixtureOn(t, "normal", "claude@work", false, egress.Filtered)
 	first := fixture.submit(t, "first prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, first); err != nil {
 		t.Fatal(err)
@@ -592,7 +592,7 @@ func TestAFilteredSessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
 	}
 
 	for _, network := range []egress.Mode{egress.Filtered, egress.Open} {
-		silent := newSessionACPFixtureOn(t, "no-mcp-handoff", "claude@work", agents.ModeNormal, network)
+		silent := newSessionACPFixtureOn(t, "no-mcp-handoff", "claude@work", false, network)
 		leased := silent.submit(t, "first prompt")
 		if _, err := silent.runner.Run(contextWithTurnDeadline(t), silent.session, leased); err == nil || !strings.Contains(err.Error(), "handed over no MCP servers") {
 			t.Fatalf("a %s child without a handoff = %v, want the turn refused", network, err)
@@ -600,11 +600,10 @@ func TestAFilteredSessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
 	}
 }
 
-// A READ-ONLY session is handed its child's stand-ins too. Its box loads no project MCP, but the
-// servers this daemon projects for it are the user's own: until now their real token rode inline in
-// session/new, which is the one place a restricted box's secrets could still leak.
+// A session whose repository is read-only is handed its child's stand-ins too: the servers this
+// daemon projects for it are the user's own, and their secrets belong outside its box.
 func TestAReadOnlySessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
-	fixture := newSessionACPFixtureOn(t, "normal", "claude@work", agents.ModeReadOnly, egress.Open)
+	fixture := newSessionACPFixtureOn(t, "normal", "claude@work", true, egress.Open)
 	first := fixture.submit(t, "first prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, first); err != nil {
 		t.Fatal(err)
@@ -620,20 +619,11 @@ func TestAReadOnlySessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
 		t.Fatalf("the daemon left the handoff behind: %v", handoffs)
 	}
 	// A child that hands over nothing fails the turn rather than falling back to the private env.
-	silent := newSessionACPFixtureOn(t, "no-mcp-handoff", "claude@work", agents.ModeReadOnly, egress.Open)
+	silent := newSessionACPFixtureOn(t, "no-mcp-handoff", "claude@work", true, egress.Open)
 	leased := silent.submit(t, "first prompt")
 	if _, err := silent.runner.Run(contextWithTurnDeadline(t), silent.session, leased); err == nil ||
 		!strings.Contains(err.Error(), "handed over no MCP servers") {
 		t.Fatalf("a read-only child without a handoff = %v, want the turn refused", err)
-	}
-	// A bare session has no MCP at all, so it is asked for none: nothing to hand over, nothing sent.
-	bare := newSessionACPFixtureOn(t, "normal", "claude@work", agents.ModeBare, egress.Open)
-	bareTurn := bare.submit(t, "first prompt")
-	if _, err := bare.runner.Run(contextWithTurnDeadline(t), bare.session, bareTurn); err != nil {
-		t.Fatal(err)
-	}
-	if got := sessionACPRequestMCPServers(t, bare.childLog, "session/new"); got != "[]" {
-		t.Fatalf("a bare session/new carried mcpServers = %s", got)
 	}
 }
 
@@ -641,7 +631,7 @@ func TestAReadOnlySessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
 // child starts from carries none of their token variables — while an open one keeps today's env.
 func TestAFilteredSessionWithoutSharedMCPDropsItsTokenVariables(t *testing.T) {
 	for _, network := range []egress.Mode{egress.Filtered, ""} {
-		fixture := newSessionACPFixtureOn(t, "normal", "codex@work", agents.ModeNormal, network)
+		fixture := newSessionACPFixtureOn(t, "normal", "codex@work", false, network)
 		if err := os.WriteFile(filepath.Join(fixture.source, "mcp.json"), []byte(`{"mcpServers":{"emisar":{"type":"http","url":"https://example.invalid/mcp","bearer_token_env_var":"EMISAR_TOKEN"}}}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -664,7 +654,7 @@ func TestAFilteredSessionWithoutSharedMCPDropsItsTokenVariables(t *testing.T) {
 // An offline session reaches no remote MCP server: its private copy keeps only local servers, its
 // env drops the remote servers' tokens, and its session/new names only the local ones.
 func TestAnOfflineSessionIsHandedOnlyLocalMCPServers(t *testing.T) {
-	fixture := newSessionACPFixtureOn(t, "normal", "codex@work", agents.ModeNormal, egress.None)
+	fixture := newSessionACPFixtureOn(t, "normal", "codex@work", false, egress.None)
 	if err := os.WriteFile(filepath.Join(fixture.source, "mcp.json"), []byte(`{"mcpServers":{
 		"emisar":{"type":"http","url":"https://example.invalid/mcp","bearer_token_env_var":"EMISAR_TOKEN"},
 		"local":{"command":"true"}}}`), 0o600); err != nil {
@@ -2267,7 +2257,8 @@ func TestSessionACPInterruptedPromptWriteCancelsDeliveredPrompt(t *testing.T) {
 			})
 			process := &sessionACPProcess{
 				stdin: writer, frames: make(chan sessionACPFrame), initialized: true,
-				nativeSessionID: "native-1", restricted: true, stopGrace: grace,
+				nativeSessionID: "native-1", stopGrace: grace,
+				outputRoot: filepath.Join(fixture.session.Workspace, sessionOutputRoot),
 			}
 			_, _, _, err := fixture.runner.runACP(ctx, process, fixture.session, turn, turn.Prompt, false)
 			if err == nil || ctx.Err() == nil {
@@ -3221,20 +3212,13 @@ func newSessionACPFixture(t *testing.T, scenario string, target ...string) *sess
 	if len(target) > 0 && target[0] != "" {
 		sessionTarget = target[0]
 	}
-	return newSessionACPFixtureUnder(t, scenario, sessionTarget, agents.ModeNormal)
+	return newSessionACPFixtureOn(t, scenario, sessionTarget, false, "")
 }
 
-// newSessionACPFixtureUnder builds the fixture's session under an execution mode. A bare session
-// is created as the service creates one: no fork, no workspace, no reservation, no repository
-// binding at all.
-func newSessionACPFixtureUnder(t *testing.T, scenario, sessionTarget string, mode agents.ExecutionMode) *sessionACPFixture {
-	t.Helper()
-	return newSessionACPFixtureOn(t, scenario, sessionTarget, mode, "")
-}
-
-// newSessionACPFixtureOn is newSessionACPFixtureUnder on a network posture. A filtered session
-// carries a frozen capture reference; the fixture's child never proves it against a store.
-func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode agents.ExecutionMode, network egress.Mode) *sessionACPFixture {
+// newSessionACPFixtureOn builds the fixture's session on a network posture, its repository
+// read-only when readOnly is set. A filtered session carries a frozen capture reference; the
+// fixture's child never proves it against a store.
+func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, readOnly bool, network egress.Mode) *sessionACPFixture {
 	t.Helper()
 	if network == "" {
 		network = egress.Open
@@ -3268,21 +3252,17 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode a
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	request := session.CreateSessionRequest{
-		Target: sessionTarget, Mode: string(mode),
+		Target: sessionTarget, Mode: "normal",
 		Repository: repo, Workspace: workspace, ForkName: "fork", BaseCommit: strings.Repeat("a", 40),
-		RepositoryReadOnly: mode == agents.ModeReadOnly, NetworkMode: string(network),
+		RepositoryReadOnly: readOnly, NetworkMode: string(network),
 	}
 	if network == egress.Filtered {
 		request.NetworkFingerprint, request.NetworkQualification = strings.Repeat("a", 64), strings.Repeat("b", 64)
 	}
-	if mode == agents.ModeBare {
-		request.Repository, request.Workspace, request.ForkName, request.BaseCommit = "", "", "", ""
-		request.OmitEnv, request.OmitMCP = true, true
-	}
 	// These runner tests bypass source staging, but still carry the frozen job
 	// identity that the service now requires before launching an ACP child.
 	job := workerproto.JobSpec{
-		Version: 2, JobRef: "job:runner", Mode: string(mode), Targets: []string{sessionTarget},
+		Version: 2, JobRef: "job:runner", Mode: "normal", Targets: []string{sessionTarget},
 		Companions: []workerproto.JobCompanion{}, RepositoryReadOnly: request.RepositoryReadOnly,
 		Egress: workerproto.JobEgress{Mode: string(network), Rules: []workerproto.JobRule{}},
 		Limits: workerproto.JobLimits{MaxTurns: 100, MaxQueuedTurns: 20,
@@ -3290,16 +3270,14 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode a
 		Environment: map[string]string{}, Check: workerproto.JobCheck{Argv: []string{}, Environment: map[string]string{}},
 		Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
 	}
-	if mode != agents.ModeBare {
-		ref := "refs/heads/main"
-		job.Source = &workerproto.JobSource{
-			RepositoryRef: "repo:runner", GitHubRepository: "example/runner", GitHubRepositoryID: 1,
-			Binding: session.SourceBinding{Version: 1, Kind: session.SourceDefault,
-				Requested: session.DefaultSourceSelector(), RemoteIdentity: "origin", DefaultRef: ref,
-				SelectedRef: &ref, SelectedCommit: request.BaseCommit, DefaultCommit: request.BaseCommit,
-				BaseCommit: request.BaseCommit, AdmittedTree: strings.Repeat("b", 40), ResolvedAt: time.Unix(1, 0).UTC()},
-			Submodules: []workerproto.JobSubmodule{},
-		}
+	ref := "refs/heads/main"
+	job.Source = &workerproto.JobSource{
+		RepositoryRef: "repo:runner", GitHubRepository: "example/runner", GitHubRepositoryID: 1,
+		Binding: session.SourceBinding{Version: 1, Kind: session.SourceDefault,
+			Requested: session.DefaultSourceSelector(), RemoteIdentity: "origin", DefaultRef: ref,
+			SelectedRef: &ref, SelectedCommit: request.BaseCommit, DefaultCommit: request.BaseCommit,
+			BaseCommit: request.BaseCommit, AdmittedTree: strings.Repeat("b", 40), ResolvedAt: time.Unix(1, 0).UTC()},
+		Submodules: []workerproto.JobSubmodule{},
 	}
 	request.JobDocument, err = job.CanonicalDocument()
 	if err != nil {
@@ -3313,27 +3291,25 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode a
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode != agents.ModeBare {
-		unlockGeneration, err := forkspace.LockState(repo, "fork")
-		if err != nil {
-			t.Fatal(err)
-		}
-		identity, err := forkspace.EnsureGenerationLocked(repo, "fork")
-		if err == nil {
-			err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
-				Version: forkspace.WorkspaceReservationVersion, Fork: identity,
-				Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: store.ID(), OwnerID: sess.ID, CreatedAt: time.Now().UTC(),
-			})
-		}
-		unlockGeneration()
-		if err != nil {
-			t.Fatal(err)
-		}
-		sess = setSyntheticSessionGeneration(t, store, sess.ID, string(identity.Generation))
-		// Runner-only fixtures bypass CompleteCreateSessionOperation, which normally
-		// records this owner binding atomically with the session row.
-		bindSyntheticSessionOwner(t, store, sess.ID)
+	unlockGeneration, err := forkspace.LockState(repo, "fork")
+	if err != nil {
+		t.Fatal(err)
 	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "fork")
+	if err == nil {
+		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
+			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: store.ID(), OwnerID: sess.ID, CreatedAt: time.Now().UTC(),
+		})
+	}
+	unlockGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess = setSyntheticSessionGeneration(t, store, sess.ID, string(identity.Generation))
+	// Runner-only fixtures bypass CompleteCreateSessionOperation, which normally
+	// records this owner binding atomically with the session row.
+	bindSyntheticSessionOwner(t, store, sess.ID)
 	resolvedStateRoot, err := filepath.EvalSymlinks(stateRoot)
 	if err != nil {
 		t.Fatal(err)

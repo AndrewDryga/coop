@@ -618,28 +618,12 @@ func TestCredentialBrokerServesEveryTeammateShape(t *testing.T) {
 }
 
 // What the broker cannot serve stays refused before a box starts: a provider with no broker contract
-// (Grok) keeps its key out even as a peer, and a restricted mode — which cannot run filtered yet —
-// says so instead of sending the person to a flag it would refuse.
+// (Grok) keeps its key out even as a peer.
 func TestCredentialBrokerRefusesWhatItCannotServe(t *testing.T) {
 	cfg, _ := brokerFixture(t, "XAI_API_KEY=xai-secret\n")
 	peer := RunSpec{Agent: "claude", AgentCommand: true, Homes: true, Peers: []agents.Target{{Provider: "grok"}}}
 	if plan, err := selectCredentialPlan(cfg, peer); err == nil || plan != nil {
 		t.Fatal("unsupported Grok API key peer admitted")
-	}
-	for _, mode := range []string{"filtered", "open"} {
-		t.Run(mode, func(t *testing.T) {
-			cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
-			cfg.Egress, spec.Mode = mode, agents.ModeReadOnly
-			run := nativeBrokerPlanFixture(t, cfg, spec)
-			if len(run.accounts) != 1 {
-				t.Fatal("restricted native authority missing")
-			}
-			assertNativePublicSeed(t, run.accounts[0].seed, "raw-provider-secret")
-			_, snapshots := nativeBrokerPreparedFixture(t, run)
-			if snapshots["claude"].Credential != "raw-provider-secret" || snapshots["claude"].Revoked {
-				t.Fatal("restricted key was not held guard-only")
-			}
-		})
 	}
 }
 

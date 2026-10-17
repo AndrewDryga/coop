@@ -926,29 +926,19 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if rest, err = a.takeNetworkFlags(rest); err != nil {
 		return 2, err
 	}
-	// --readonly fronts the fork under the restricted profile: the fork and its companions mount
-	// read-only, the box writes only to run-private scratch, and the adapter is started under the
-	// mode's switches by the ACP client (the session daemon). It is a different contract from the
-	// legacy read-only session above, which keeps a writable output root. --bare names no fork.
-	if rest, err = a.takeExposureFlags("coop fork", rest); err != nil {
+	if err := refuseRemovedExposureFlags("coop fork "+name+" acp", rest, launchOffers{peers: true}); err != nil {
 		return 2, err
-	}
-	if a.mode == agents.ModeBare {
-		return 2, errors.New("a bare run names no fork — it mounts no repository; serve one with 'coop acp <target> --bare'")
 	}
 	peerVals, rest, err := extractPeer("coop fork", rest)
 	if err != nil {
 		return 2, err
-	}
-	if a.mode.Restricted() && len(peerVals) > 0 {
-		return 2, fmt.Errorf("a %s run consults no peers — drop --peer", a.mode)
 	}
 	// Every peer's form before the fork, its image or any account is looked at: a peer typed wrong
 	// exits 2. Whether each peer can sign in is checked once the session's account is chosen.
 	if _, err := resolvePeerTargets("coop fork "+name, peerVals, agents.Names()); err != nil {
 		return 2, err
 	}
-	usage := fmt.Sprintf("usage: coop fork %s acp [<target>] [--readonly] [--peer <target>...] [--egress <mode>]", name)
+	usage := fmt.Sprintf("usage: coop fork %s acp [<target>] [--peer <target>...] [--egress <mode>]", name)
 	if len(rest) > 1 || (len(rest) == 1 && !isTargetHead(rest[0])) {
 		return 2, errors.New(usage)
 	}
@@ -982,12 +972,8 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	// isTargetHead accepted only a registered provider, so the adapter lookup cannot miss.
 	cmd := acpCommand(a.cfg, agent)
-	var repo, img string
-	if a.mode.Restricted() {
-		if repo, err = box.ResolveRepo(a.cfg.RepoOverride); err != nil {
-			return -1, err
-		}
-	} else if repo, img, err = a.resolveLaunchImage(); err != nil {
+	repo, img, err := a.resolveLaunchImage()
+	if err != nil {
 		return -1, err
 	}
 	ws := forkspace.Workspace(repo, name)
@@ -1003,19 +989,9 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			return 1, err
 		}
 	}
-	if a.mode == agents.ModeReadOnly && sessionsvc.RunIDFromEnv() == "" &&
-		box.ReadOnlyDefaultWorkdir(ws, a.cfg.HomeInBox) != ws {
-		return 2, errors.New("this fork is under container scratch; a direct ACP editor cannot use --readonly here because it sends the host cwd; use a checkout outside /tmp or start a remote session")
-	}
-	if a.mode.Restricted() {
-		var code int
-		if img, code, err = a.restrictedImage(); err != nil {
-			return code, err
-		}
-	}
 	var sessionOutputArgs []string
 	var sessionOutputRoot string
-	if repositoryReadOnly && !a.mode.Restricted() {
+	if repositoryReadOnly {
 		sessionOutputArgs, sessionOutputRoot, err = readOnlySessionOutputMountArgs(ws, workdir)
 		if err != nil {
 			return -1, err
@@ -1054,7 +1030,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	spec := box.RunSpec{
 		Image: img, Repo: ws, Workdir: workdir, RepoReadOnly: repositoryReadOnly,
 		Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers, NetworkClient: egress.ClientACP,
-		ShareACPSessions: !a.mode.Restricted(),
+		ShareACPSessions: true,
 		SupervisorID:     os.Getenv("COOP_ACP_SUPERVISOR"), Quiet: innerProcess,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name, identity.Generation),
@@ -1073,20 +1049,6 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		MCPHandoffID: acpMCPIDFromEnv(),
 		ExtraArgs:    sessionOutputArgs, SessionOutputRoot: sessionOutputRoot,
 	}
-	if a.mode.Restricted() {
-		// The restricted profile registers no activity record (it starts no service and joins no
-		// project); the daemon's receipt reaps it by the run label. The reservation check above
-		// still proved this fork is the session's own. Keep SessionStoreID for companion mount
-		// admission even though the activity fields are cleared. The run owns a host seed directory
-		// holding the credential projection. The daemon's end-of-turn signal must arrive as a
-		// cancellation this run can clean up after — exactly as a filtered child's does.
-		spec.Mode, spec.RepoReadOnly = a.mode, true
-		spec.ActivityRepo, spec.ActivityKind, spec.ActivityRole, spec.ActivityReservationOwner, spec.ActivitySource = "", "", "", "", ""
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-		defer stop()
-		spec.Ctx = ctx
-	}
-	// A remote session's network authority arrives from the daemon that started
 	controllerJob, err := box.ControllerJobFromEnvironment()
 	if err != nil {
 		return 1, err
@@ -1108,7 +1070,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		}
 	}
 	defer capture.Close()
-	if capture == nil && !a.mode.Restricted() {
+	if capture == nil {
 		if err := a.requireLaunchImage(img); err != nil {
 			return 1, err
 		}
@@ -1128,7 +1090,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			return 1, err
 		}
 	}
-	if !innerProcess && sessionsvc.RunIDFromEnv() == "" && !a.mode.Restricted() && !repositoryReadOnly {
+	if !innerProcess && sessionsvc.RunIDFromEnv() == "" && !repositoryReadOnly {
 		return a.superviseForkACP(repo, ws, name, t, peers, capture)
 	}
 	return a.runBox(spec)

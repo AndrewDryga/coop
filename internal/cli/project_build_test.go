@@ -22,7 +22,6 @@ func TestProjectBuildPromptOnlyBelongsToHostInteractiveLaunches(t *testing.T) {
 		"loop": func(s *box.RunSpec) { s.Batch = true }, "ACP": func(s *box.RunSpec) { s.ForceNoTTY = true },
 		"probe": func(s *box.RunSpec) { s.Quiet = true }, "controller": func(s *box.RunSpec) { s.ControllerJob = true },
 		"login": func(s *box.RunSpec) { s.Login = true }, "raw": func(s *box.RunSpec) { s.AgentCommand = false },
-		"readonly":   func(s *box.RunSpec) { s.Mode = agents.ModeReadOnly },
 		"supervised": func(s *box.RunSpec) { s.SupervisorID = "owner" },
 	} {
 		t.Run(name, func(t *testing.T) {

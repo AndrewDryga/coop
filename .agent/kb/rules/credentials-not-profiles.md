@@ -2,9 +2,9 @@
 name: credentials-not-profiles
 description: "a stored account is publicly a \"credential\"; \"profile\" is retired, not aliased"
 scope: cli-grammar
-sources: [internal/cli/profiles.go, internal/cli/help.go, internal/cli/cli_test.go, README.md, site/docs.html, MIGRATING.md, docs/agents.md]
+sources: [internal/cli/profiles.go, internal/cli/help.go, internal/cli/cli_test.go, internal/cli/commands.go, README.md, site/docs.html, MIGRATING.md, docs/agents.md]
 check: "none"
-updated: 2026-10-05
+updated: 2026-10-17
 ---
 
 # The account concept is publicly named "credentials", never "profiles"
@@ -20,6 +20,13 @@ tombstone hint) — and the
 on an agent launch it forwards to the agent like any other arg (codex has its own
 `--profile`) and elsewhere it's an unknown argument. The RECIPE concept (lead + roles +
 models) is a **preset**, never a profile.
+
+**One exception:** a removed SAFETY flag whose passthrough could reach an agent's own same-named
+flag and start a writable box is refused as an unknown option with advice
+(`refuseRemovedExposureFlags`). `--readonly` and `--bare` are refused that way in every command
+that took them, because `claude --help` shows Claude Code's own `--bare` ("Minimal mode: skip
+hooks, LSP, plugin…"): forwarding coop's would start a normal writable box. It is still not an
+alias, since nothing runs under the old flags, and a flag after `--` still reaches the agent.
 
 **Why:** "Profile" was carrying two unrelated meanings (an account, and a runtime
 preference bundle), which is exactly what the credentials/presets split resolved. Any
@@ -53,3 +60,7 @@ identifiers and tests, never current help, errors, or hints.
 - 2026-08-26 — removed retired-command history from current help and README guidance; kept the
   historical migration mapping and exempt internal storage terminology.
 - 2026-10-05 — the README became a short landing page and its detail moved to docs/agents.md (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.
+- 2026-10-17 — recorded the one exception to "no tombstone": the removed `--readonly` and `--bare`
+  are refused as unknown options with advice instead of being forwarded, because Claude Code has its
+  own `--bare` ("Minimal mode: skip hooks, LSP, plugin…" in `claude --help`) and forwarding coop's
+  would start a normal writable box. Swept the six commands that took them; each refuses both.

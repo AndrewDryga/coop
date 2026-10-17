@@ -2,6 +2,8 @@ package sessionsvc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -138,6 +140,93 @@ func TestVersionOneHistoricalSessionRemainsReadableButCannotExecute(t *testing.T
 	turn, err := fixture.GetTurn(ctx, current.ID, queued.ID)
 	if err != nil || turn.State != session.TurnQueued || runs.Load() != 0 {
 		t.Fatalf("version-one restart executed work: %+v, runs=%d, err=%v", turn, runs.Load(), err)
+	}
+}
+
+// A session created before the readonly and bare modes were removed keeps its record, but its job
+// no longer decodes: a restart starts no worker for it, its queued turn stays queued, and a new
+// turn is refused with the reason rather than run as a normal session.
+func TestSessionInARemovedModeRemainsReadableButCannotExecute(t *testing.T) {
+	ctx := context.Background()
+	var runs atomic.Int32
+	fixture := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), "", func(*session.Store) Runner {
+		return RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+			runs.Add(1)
+			return turn, nil
+		})
+	})
+	defer fixture.Stop()
+	// The job as the previous version froze it: canonical sorted-key JSON, which Digest now refuses.
+	job := emptyWorkerJob()
+	job.Mode = "bare"
+	raw, err := json.Marshal(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatal(err)
+	}
+	document, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(document)
+	old, err := fixture.Store().CreateSession(ctx, "removed-mode-row", session.CreateSessionRequest{
+		JobDocument: document, JobDigest: hex.EncodeToString(sum[:]),
+		Target: "codex", Mode: "bare", OmitEnv: true, OmitMCP: true, NetworkMode: "none",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := fixture.Store().SubmitTurn(ctx, "removed-mode-queue", session.SubmitTurnRequest{
+		SessionID: old.ID, ExpectedRevision: old.Revision, Prompt: "old queued work",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err := fixture.GetSession(ctx, old.ID)
+	if err != nil || current.Mode != "bare" {
+		t.Fatalf("removed-mode inspection = %+v, %v", current, err)
+	}
+	if _, err := fixture.SubmitTurn(ctx, "removed-mode-new-turn", session.SubmitTurnRequest{
+		SessionID: current.ID, ExpectedRevision: current.Revision, Prompt: "new work",
+	}); session.CodeOf(err) != session.CodeInvalidSessionState || !strings.Contains(err.Error(), `job mode "bare" was removed`) {
+		t.Fatalf("removed-mode turn admission = %v", err)
+	}
+	fixture.mu.Lock()
+	workers := len(fixture.workers)
+	fixture.mu.Unlock()
+	turn, err := fixture.GetTurn(ctx, current.ID, queued.ID)
+	if err != nil || turn.State != session.TurnQueued || workers != 0 || runs.Load() != 0 {
+		t.Fatalf("removed-mode restart executed work: turn=%+v workers=%d runs=%d err=%v", turn, workers, runs.Load(), err)
+	}
+	// What the docs tell its owner to do still works, with no job authority: cancel the queued
+	// turn, close the session, then plan and apply its discard.
+	if _, err := fixture.CancelTurn(ctx, "removed-mode-cancel", session.CancelTurnRequest{
+		SessionID: current.ID, TurnID: queued.ID, ExpectedRevision: current.Revision,
+	}); err != nil {
+		t.Fatalf("cancel the queued turn: %v", err)
+	}
+	if current, err = fixture.GetSession(ctx, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	closed, err := fixture.CloseSession(ctx, "removed-mode-close", session.CloseSessionRequest{
+		SessionID: current.ID, ExpectedRevision: current.Revision,
+	})
+	if err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	plan, err := fixture.PlanDiscard(ctx, "removed-mode-plan", PlanDiscardRequest{SessionID: closed.ID, ExpectedRevision: closed.Revision})
+	if err != nil {
+		t.Fatalf("discard plan: %v", err)
+	}
+	if discarded, err := fixture.Discard(ctx, "removed-mode-discard", DiscardRequest{PlanOperationID: plan.OperationID}); err != nil ||
+		discarded.State != session.SessionDiscarded || runs.Load() != 0 {
+		t.Fatalf("discard = %+v, %v (runs=%d)", discarded, err, runs.Load())
 	}
 }
 

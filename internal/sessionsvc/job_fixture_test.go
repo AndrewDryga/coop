@@ -111,9 +111,7 @@ func openSessionFixture(t *testing.T, cfg Config, repository string) (*sessionFi
 		Environment: map[string]string{}, Check: workerproto.JobCheck{Argv: []string{}, Environment: map[string]string{}},
 		Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
 	}
-	if repository == "" {
-		job.Mode = "bare"
-	} else {
+	if repository != "" {
 		source := stageTestJobSource(t, cfg.StateRoot, repository)
 		job.Source = &source
 	}

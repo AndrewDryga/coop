@@ -120,10 +120,12 @@ func TestControllerJobUsesAnExactPrivateSourceWithoutSharedRepositoryPaths(t *te
 	}
 }
 
-func bareWorkerJob() workerproto.JobSpec {
+// emptyWorkerJob is an offline normal job with no source: its session works in an isolated empty
+// workspace.
+func emptyWorkerJob() workerproto.JobSpec {
 	return workerproto.JobSpec{
 		Version: 2, JobRef: "job:route", Companions: []workerproto.JobCompanion{},
-		Targets: []string{"codex"}, Mode: "bare",
+		Targets: []string{"codex"}, Mode: "normal",
 		Egress: workerproto.JobEgress{Mode: "none", Rules: []workerproto.JobRule{}},
 		Limits: workerproto.JobLimits{
 			MaxTurns: 2, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
@@ -142,7 +144,7 @@ func TestJobCannotSetProviderCredentialEnvironment(t *testing.T) {
 		"work adapter":     func(job *workerproto.JobSpec) { job.Environment["CODEX_SQLITE_HOME"] = "/tmp/unexpected" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			job := bareWorkerJob()
+			job := emptyWorkerJob()
 			set(&job)
 			if err := validateJobEnvironmentOwnership(job, "/home/node"); err == nil {
 				t.Fatal("controller job overrode a provider credential variable")
@@ -224,7 +226,7 @@ func TestControllerJobCreatesWithoutLocalPolicyAndReplaysAfterRestart(t *testing
 		}
 		return service
 	}
-	job := bareWorkerJob()
+	job := emptyWorkerJob()
 	document, err := json.Marshal(job)
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +241,7 @@ func TestControllerJobCreatesWithoutLocalPolicyAndReplaysAfterRestart(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.JobDigest != digest || created.JobRef != job.JobRef || created.ExternalRef != req.Task || created.Mode != "bare" ||
+	if created.JobDigest != digest || created.JobRef != job.JobRef || created.ExternalRef != req.Task || created.Mode != "normal" ||
 		created.NetworkMode != "none" || created.ProjectEnv || created.ProjectMCP {
 		t.Fatalf("controller job session = %+v", created)
 	}
@@ -285,7 +287,7 @@ func TestControllerJobCreatesWithoutLocalPolicyAndReplaysAfterRestart(t *testing
 	}); session.CodeOf(err) != session.CodeIdempotencyConflict {
 		t.Fatalf("changed job identity replay = %v, want idempotency conflict", err)
 	}
-	changed := bareWorkerJob()
+	changed := emptyWorkerJob()
 	changed.Limits.MaxTurns++
 	changedDocument, err := json.Marshal(changed)
 	if err != nil {
@@ -314,7 +316,7 @@ func TestControllerJobRejectsMissingAndMismatchedAuthorityBeforeJournal(t *testi
 		t.Fatal(err)
 	}
 	defer service.Stop()
-	job := bareWorkerJob()
+	job := emptyWorkerJob()
 	document, err := json.Marshal(job)
 	if err != nil {
 		t.Fatal(err)
@@ -323,8 +325,7 @@ func TestControllerJobRejectsMissingAndMismatchedAuthorityBeforeJournal(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	unsupported := bareWorkerJob()
-	unsupported.Mode = "normal"
+	unsupported := emptyWorkerJob()
 	ref := "refs/heads/main"
 	commit := strings.Repeat("a", 40)
 	unsupported.Source = &workerproto.JobSource{RepositoryRef: "repo:one", GitHubRepository: "example/repository", GitHubRepositoryID: 17,
@@ -343,7 +344,7 @@ func TestControllerJobRejectsMissingAndMismatchedAuthorityBeforeJournal(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	badTarget := bareWorkerJob()
+	badTarget := emptyWorkerJob()
 	badTarget.Targets = []string{"not-an-agent"}
 	badTargetDocument, err := json.Marshal(badTarget)
 	if err != nil {
@@ -371,6 +372,41 @@ func TestControllerJobRejectsMissingAndMismatchedAuthorityBeforeJournal(t *testi
 	}
 }
 
+// A controller still asking for the removed readonly or bare mode is refused before anything is
+// journaled and told what to send instead; nothing runs the job as a normal session.
+func TestControllerJobWithARemovedModeIsRefusedBeforeJournal(t *testing.T) {
+	service, err := newSessionServiceWithTestStorage(t, Config{
+		StateRoot:    filepath.Join(t.TempDir(), "state"),
+		SourceConfig: &config.Config{ConfigDir: t.TempDir()},
+		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+			return turn, nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	for _, mode := range []string{"readonly", "bare"} {
+		t.Run(mode, func(t *testing.T) {
+			job := emptyWorkerJob()
+			job.Mode = mode
+			document, err := json.Marshal(job)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := "removed-" + mode
+			req := CreateRemoteSessionRequest{Task: job.JobRef, Job: document, ExpectedJobDigest: strings.Repeat("0", 64)}
+			if _, err := service.CreateRemoteSessionAsync(context.Background(), key, req); session.CodeOf(err) != session.CodeInvalidRequest ||
+				!strings.Contains(err.Error(), `job mode "`+mode+`" was removed`) {
+				t.Fatalf("%s job = %v, want an invalid request naming the removed mode", mode, err)
+			}
+			if _, err := service.store.GetOperation(context.Background(), key); !errors.Is(err, session.ErrOperationNotFound) {
+				t.Fatalf("%s job was journaled: %v", mode, err)
+			}
+		})
+	}
+}
+
 func TestControllerJobHTTPCreateCarriesAuthorityAndRedactsDocument(t *testing.T) {
 	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot:    filepath.Join(t.TempDir(), "state"),
@@ -383,7 +419,7 @@ func TestControllerJobHTTPCreateCarriesAuthorityAndRedactsDocument(t *testing.T)
 		t.Fatal(err)
 	}
 	defer service.Stop()
-	job := bareWorkerJob()
+	job := emptyWorkerJob()
 	document, err := json.Marshal(job)
 	if err != nil {
 		t.Fatal(err)
@@ -407,6 +443,9 @@ func TestControllerJobHTTPCreateCarriesAuthorityAndRedactsDocument(t *testing.T)
 		if bytes.Contains(created.Body.Bytes(), []byte(`"`+obsolete+`"`)) {
 			t.Fatalf("HTTP create still exposes obsolete %s: %s", obsolete, created.Body.String())
 		}
+	}
+	if !bytes.Contains(created.Body.Bytes(), []byte(`"mode":"normal"`)) {
+		t.Fatalf("HTTP create does not publish the session's mode: %s", created.Body.String())
 	}
 	var response sessionMutationSessionResponse
 	if err := json.Unmarshal(created.Body.Bytes(), &response); err != nil || response.Session.ID == "" || response.Session.JobRef != job.JobRef || response.Session.JobDigest != digest {

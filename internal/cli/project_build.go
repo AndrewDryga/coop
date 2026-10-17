@@ -16,7 +16,7 @@ import (
 func projectBuildPromptEligible(spec box.RunSpec, session, terminal bool) bool {
 	ag, ok := agents.Get(spec.Agent)
 	return ok && len(spec.Cmd) > 0 && ag.InteractiveInvocation(spec.Cmd) && session && terminal && spec.AgentCommand && !spec.Login && !spec.ControllerJob &&
-		!spec.Batch && !spec.Quiet && !spec.ForceNoTTY && !spec.Mode.Restricted() && spec.SupervisorID == "" &&
+		!spec.Batch && !spec.Quiet && !spec.ForceNoTTY && spec.SupervisorID == "" &&
 		os.Getenv("COOP_BOX") == "" && os.Getenv(box.ControllerJobEnv) == ""
 }
 

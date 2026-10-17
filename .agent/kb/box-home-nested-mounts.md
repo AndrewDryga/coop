@@ -3,7 +3,7 @@ name: box-home-nested-mounts
 description: Avoid bind targets that make Docker create missing application-owned home parents as root
 subsystem: box
 sources: [internal/box/run.go, internal/box/gitenv.go, internal/cli/doctor.go, internal/box/config_publication.go, internal/box/config_publication.js, internal/agent/claude.go, internal/networkgateway/native_runtime.go, internal/networkgateway/native_document_test.go]
-updated: 2026-10-11
+updated: 2026-10-17
 ---
 
 Docker prepares bind targets before the image's non-root user starts. If a generated mount targets
@@ -16,9 +16,6 @@ Generated Git artifacts now mount at the direct home children `~/.coop-git-hooks
 nested, application-owned home parents unless their ownership is guaranteed for arbitrary project
 images. `coop doctor` guards the underlying contract by writing a throwaway directory below
 `~/.config` from a normally composed non-root box.
-
-The same mechanism rules the restricted modes' tmpfs home: no bind may target anything under it,
-which is why their seed is bound outside the home and copied in ([[restricted-execution-modes]]).
 
 A host atomic rename can briefly expose stale content and metadata through a VM bind mount.
 After defaults, normal launches carry a digest of the selected Claude `.claude.json`; the current
@@ -37,6 +34,7 @@ JSON failures refuse immediately. Persistent absence/truncation and every comple
 expired, wrong-binding or rolled-back snapshot still shut down protected traffic permanently.
 
 ## Changelog
+- 2026-10-17 — dropped the tmpfs-home note: the read-only and bare modes that seeded one are gone.
 - 2026-10-11 — captured session-time read failures and reproduced both transient VM behaviors with
   public synthetic leases; added bounded fresh-read, cancellation and fail-closed regressions.
 - 2026-10-01 — captured a stale857-byte guest read followed by899-byte descriptor metadata and an

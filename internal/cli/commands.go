@@ -15,7 +15,6 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
@@ -186,12 +185,6 @@ func lockSessionProducer(cfg *config.Config, provider, cwd string) (func(), erro
 }
 
 func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, session bool) (int, error) {
-	if a.mode.Restricted() {
-		if len(peers) > 0 {
-			return 2, fmt.Errorf("a %s run consults no peers — drop --peer", a.mode)
-		}
-		return a.runRestrictedInBox(cmd, agent)
-	}
 	companionRepositories, err := sessionCompanionRepositoriesFromEnvironment()
 	if err != nil {
 		return -1, err
@@ -262,79 +255,6 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	return code, err
 }
 
-// restrictedImage is the one image a restricted launch may run — the shared base image, built —
-// with the usage refusals every restricted launch shares reported first, so a wrong flag is
-// reported as such and never as a missing docker. Bare has no project to admit a network policy
-// for, so it takes only an open or offline --egress; the code is the exit status to return.
-func (a *app) restrictedImage() (img string, code int, err error) {
-	mode := a.mode
-	if a.cfg.ImageOverride != "" {
-		return "", 2, fmt.Errorf("a %s run uses the shared base image. Unset COOP_IMAGE", mode)
-	}
-	if mode == agents.ModeBare && (a.network.Domains != nil || a.network.RulesFile != "" || (a.network.Mode != nil && *a.network.Mode == egress.Filtered)) {
-		return "", 2, errors.New("a bare run has no project for network rules. Use --egress open or none")
-	}
-	if err := a.ensureRuntime(); err != nil {
-		return "", -1, err
-	}
-	img = a.cfg.BaseImage
-	if err := a.ensureManagedBase(); err != nil {
-		return "", 1, err
-	}
-	if !box.ImageExists(a.rt, img) {
-		if err := a.rt.EnsureDaemon(); err != nil { // as requireLaunchImage: blame a stopped daemon, not the image
-			return "", -1, err
-		}
-		return "", 1, fmt.Errorf("image %q not built — run 'coop build --egress open' in a directory without a project Dockerfile", img)
-	}
-	return img, 0, nil
-}
-
-// runRestrictedInBox is the launch behind --readonly and --bare. Both run the shared base image
-// under box's restricted filesystem profile and neither publishes activity, starts services or
-// signs on exit — there is nothing a read-only checkout could have committed. Readonly resolves
-// the repository like every other launch and admits its network posture the same way, including
-// filtered networking. Bare resolves no project at all — it must work outside any Git repository —
-// so it takes only an open or offline --egress.
-func (a *app) runRestrictedInBox(cmd []string, agent string) (int, error) {
-	mode := a.mode
-	img, code, err := a.restrictedImage()
-	if err != nil {
-		return code, err
-	}
-	spec := box.RunSpec{Image: img, Cmd: cmd, Agent: agent, AgentCommand: agent != "", Homes: a.cfg.Homes, Mode: mode}
-	spec.StartingNotice = a.loginStartingNotice(agent)
-	switch mode {
-	case agents.ModeBare:
-		if a.network.Mode != nil {
-			a.cfg.SetEgress(string(*a.network.Mode))
-		}
-	case agents.ModeReadOnly:
-		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-		if err != nil {
-			return -1, err
-		}
-		companionRepositories, err := sessionCompanionRepositoriesFromEnvironment()
-		if err != nil {
-			return -1, err
-		}
-		spec.Repo, spec.CompanionRepositories = repo, companionRepositories
-		capture, err := box.AdmitNetwork(a.cfg, a.rt, spec, a.network.admission())
-		if err != nil {
-			return 1, err
-		}
-		defer capture.Close()
-		spec.CapturedEgress = capture
-		// The shared base image is this launch's image too, so a definition that drifted is
-		// repaired here as on an ordinary launch. Bare has no project to build from and skips it.
-		if err := a.checkCoopBox(repo, img); err != nil {
-			return 1, err
-		}
-	}
-	a.startTempReap()
-	return box.Run(a.cfg, a.rt, spec)
-}
-
 func sessionCompanionRepositoriesFromEnvironment() ([]box.CompanionRepository, error) {
 	raw := os.Getenv("COOP_SESSION_COMPANIONS")
 	if raw == "" {
@@ -364,14 +284,56 @@ func sessionCompanionRepositoriesFromEnvironment() ([]box.CompanionRepository, e
 
 // runOptions are the options `coop run` itself takes; everything else belongs to the command after
 // `--`. They are what a mistyped leading option is measured against.
-var runOptions = []string{"--readonly", "--bare", "--egress", "--allow-domain", "--egress-rules"}
+var runOptions = []string{"--egress", "--allow-domain", "--egress-rules"}
+
+// launchOffers is what a launch command has in place of the removed --readonly and --bare.
+type launchOffers struct {
+	peers     bool // takes --peer <target>, a read-only second opinion
+	fork      bool // its work could move into a fork for isolation
+	agentArgs bool // its `--` hands the rest to the agent's own CLI
+}
+
+// refuseRemovedExposureFlags refuses the removed --readonly and --bare as unknown options, with
+// advice, before anything launches. They are not passed on: Claude Code has its own --bare, so
+// passing coop's through would start a normal writable box. Only coop's own arguments are read;
+// past `--` they belong to the agent or the command.
+func refuseRemovedExposureFlags(command string, args []string, offers launchOffers) error {
+	for _, arg := range args {
+		if arg == "--" {
+			return nil
+		}
+		var advice []string
+		switch arg {
+		case "--readonly":
+			advice = append(advice, command+" always runs a writable box.")
+			if offers.peers {
+				advice = append(advice, "For a read-only second opinion, add --peer <target>.")
+			}
+			if offers.fork {
+				advice = append(advice, "For isolation, work in a fork: coop fork <name> <target>.")
+			}
+		case "--bare":
+			advice = append(advice, "There is no replacement: coop always mounts the project.")
+			if offers.agentArgs {
+				advice = append(advice, "For Claude Code's own minimal mode, put --bare after --: "+command+" -- --bare",
+					"That runs a normal writable box.")
+			}
+		default:
+			continue
+		}
+		refusal := ui.UnknownOption(arg, command, "")
+		refusal.Cause = strings.Join(advice, "\n")
+		return refusal
+	}
+	return nil
+}
 
 func (a *app) cmdRun(args []string) (int, error) {
 	args, err := a.takeNetworkFlags(args)
 	if err != nil {
 		return 2, err
 	}
-	if args, err = a.takeExposureFlags("coop run", args); err != nil {
+	if err := refuseRemovedExposureFlags("coop run", args, launchOffers{}); err != nil {
 		return 2, err
 	}
 	// Intercept the meta cases before entering the box. We can't lean on the dispatch's --help
@@ -412,7 +374,7 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	if args, err = a.takeExposureFlags("coop "+target, args); err != nil {
+	if err := refuseRemovedExposureFlags("coop "+target, args, launchOffers{peers: true, fork: true, agentArgs: true}); err != nil {
 		return 2, err
 	}
 	peerVals, args, err := extractPeer(a.launchCommand(), args)
@@ -422,9 +384,6 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 	// `coop claude login` reads as "log in to claude" — route it to the sign-in flow like
 	// `coop login claude`; the account rides the target (`coop claude@work login`).
 	if len(args) >= 1 && args[0] == "login" {
-		if a.mode.Restricted() {
-			return 2, fmt.Errorf("'coop %s login' signs in on the host; it takes no --%s", tool, a.mode)
-		}
 		acct, aerr := singleAccount(t, "coop "+tool+" login")
 		if aerr != nil {
 			return 2, aerr
@@ -462,13 +421,8 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	if args, err = a.takeExposureFlags("coop "+p.Name, args); err != nil {
+	if err := refuseRemovedExposureFlags("coop "+p.Name, args, launchOffers{peers: true, fork: true, agentArgs: true}); err != nil {
 		return 2, err
-	}
-	if a.mode.Restricted() {
-		// A preset's roles run from inside the box, which a restricted run gives no credentials
-		// or wrappers to. The lead alone can run restricted, as a plain target.
-		return 2, fmt.Errorf("preset roles are unavailable in %s mode. Run the lead directly: coop %s --%s", a.mode, tool, a.mode)
 	}
 	peerVals, args, err := extractPeer(a.launchCommand(), args)
 	if err != nil {

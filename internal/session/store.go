@@ -797,7 +797,7 @@ func (s *Store) CompleteCreateSessionOperation(
 	if req.ID == "" {
 		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "remote session id is required"}
 	}
-	if len(req.RepositoryFreshness) == 0 && normalizedMode(req.Mode) != "bare" {
+	if len(req.RepositoryFreshness) == 0 {
 		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "remote session repository freshness is required"}
 	}
 	if err := validateCreateRequest(req); err != nil {
@@ -1130,12 +1130,7 @@ func validateCreateRequest(req CreateSessionRequest) error {
 			return &Error{Code: CodeInvalidRequest, Detail: "session binding is outside bounds"}
 		}
 	}
-	if normalizedMode(req.Mode) == "bare" {
-		if boundCount != 0 || req.ForkGeneration != "" || req.Source != nil ||
-			len(req.Companions) != 0 || len(req.RepositoryFreshness) != 0 {
-			return &Error{Code: CodeInvalidRequest, Detail: "a bare session cannot bind a repository"}
-		}
-	} else if boundCount != 0 && boundCount != len(bindings) {
+	if boundCount != 0 && boundCount != len(bindings) {
 		return &Error{Code: CodeInvalidRequest, Detail: "session bindings must be all-or-none"}
 	}
 	if req.ForkGeneration != "" {
@@ -1229,8 +1224,8 @@ func normalized(value, fallback int) int {
 
 // normalizedMode reads the empty execution mode as normal: a create request from before modes
 // existed and a row migrated across schema v22 both stored nothing, and both ran as every
-// session did before modes existed. The value is not validated here — the service admits only
-// the three spellings — it is only never left blank.
+// session did before modes existed. The value is not validated here — the service creates only
+// normal sessions, and a row kept from a removed mode never runs — it is only never left blank.
 func normalizedMode(mode string) string {
 	if mode == "" {
 		return "normal"

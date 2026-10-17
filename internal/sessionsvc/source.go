@@ -15,7 +15,7 @@ func (s *Service) pinCurrentSessionParent(ctx context.Context, sess session.Sess
 		return "", &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	job, err := workerproto.DecodeJobSpec(sess.JobDocument)
-	if err == nil && job.Source == nil && job.Mode != "bare" {
+	if err == nil && job.Source == nil {
 		return emptyJobCommit, nil // sessionExecution verified the private empty baseline.
 	}
 	if err != nil || job.Source == nil || s.sourceRefresher == nil {

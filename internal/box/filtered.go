@@ -287,16 +287,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	// (derived_image.go) — before any container of this run exists. The preflight
 	// smoke is deliberately excluded: it qualifies the locked image itself, and
 	// what it proves must be that image, not a project's layers on top of it.
-	//
-	// A RESTRICTED mode is excluded for a different reason, and a stronger one:
-	// checkRestrictedSpec refuses a project image outright ("the shared base image only"), because
-	// the image defines the filesystem the profile is supposed to be the contract for. Composing
-	// restricted with filtered must not become the way a project's own layers get inside it.
-	restricted := false
-	if mode, err := executionMode(spec); err == nil && mode.Restricted() {
-		restricted = true
-	}
-	if err := f.selectImage(ctx, rt, cfg, spec, candidate, smoke == nil && !restricted); err != nil {
+	if err := f.selectImage(ctx, rt, cfg, spec, candidate, smoke == nil); err != nil {
 		return f, err
 	}
 	f.publish, servePorts, f.serveEnv = filteredPublish(cfg, spec, hostPortFree)

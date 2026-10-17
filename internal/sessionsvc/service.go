@@ -57,7 +57,6 @@ const (
 // executionConfig is derived from one authenticated, immutable controller job.
 // It is never loaded from a local registry or persisted as a second authority.
 type executionConfig struct {
-	Mode               agents.ExecutionMode
 	Repository         string
 	Companions         []executionCompanion
 	Targets            []agents.Target
@@ -1029,27 +1028,24 @@ func (s *Service) validateSessionForkAuthorityState(ctx context.Context, bound s
 }
 
 // normalizedSessionMode reads a blank mode as normal: a session replayed from an operation
-// receipt written before modes existed carries none, and it ran as every session did then.
+// receipt written before modes existed carries none, and it ran as every session did then. A
+// row created in a removed mode keeps that mode, so it reads back as what it was.
 func normalizedSessionMode(mode string) string {
 	if mode == "" {
-		return string(agents.ModeNormal)
+		return "normal"
 	}
 	return mode
 }
 
 // requireSessionWorkspace refuses a repository-specific operation on a session that has no
-// workspace: a bare session by design, or a store-only record nothing ever bound. One sentence,
-// one code (a state conflict, not a malformed request), so a client that asked a bare session
-// for its changes learns what the session is rather than what its request lacked.
+// workspace: a store-only record nothing ever bound. One sentence, one code (a state conflict,
+// not a malformed request), so the client learns what the session is rather than what its
+// request lacked.
 func requireSessionWorkspace(bound session.Session) error {
 	if bound.Workspace != "" {
 		return nil
 	}
-	detail := "session has no workspace"
-	if bound.Mode == string(agents.ModeBare) {
-		detail += ": its execution mode is bare"
-	}
-	return &session.Error{Code: session.CodeInvalidSessionState, Detail: detail}
+	return &session.Error{Code: session.CodeInvalidSessionState, Detail: "session has no workspace"}
 }
 
 // requireSessionForkAuthority is the runtime/destructive-operation fence for a persisted session.
@@ -1740,13 +1736,8 @@ func (s *Service) captureCreateIntent(ctx context.Context, op session.Operation,
 	if err != nil {
 		return sessionCreateIntent{}, err
 	}
-	if req.ControllerTools != nil {
-		if execution.Mode == agents.ModeBare {
-			return sessionCreateIntent{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "a bare session cannot bind an MCP endpoint"}
-		}
-		if execution.Egress.Mode == egress.None {
-			return sessionCreateIntent{}, &session.Error{Code: session.CodeInvalidRequest, Detail: controllerToolsNeedsNetwork}
-		}
+	if req.ControllerTools != nil && execution.Egress.Mode == egress.None {
+		return sessionCreateIntent{}, &session.Error{Code: session.CodeInvalidRequest, Detail: controllerToolsNeedsNetwork}
 	}
 	return sessionCreateIntent{
 		OperationID: op.ID, OwnerStoreID: s.store.ID(), Task: req.Task,
@@ -1814,7 +1805,7 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 	createReq := session.CreateSessionRequest{
 		ID: intent.SessionID, ExternalRef: intent.Task, Target: execution.Targets[0].String(),
 		JobDocument: append(json.RawMessage(nil), intent.JobDocument...), JobDigest: intent.JobDigest,
-		Mode: string(execution.Mode), OmitEnv: execution.OmitEnv, OmitMCP: execution.OmitMCP,
+		Mode: job.Mode, OmitEnv: execution.OmitEnv, OmitMCP: execution.OmitMCP,
 		ControllerTools: cloneControllerTools(intent.ControllerTools), RepositoryReadOnly: execution.RepositoryReadOnly,
 		MaxTurns: execution.MaxTurns, MaxQueuedTurns: execution.MaxQueuedTurns, MaxQueuedBytes: execution.MaxQueuedBytes,
 		TurnTimeout: execution.TurnTimeout, MaxPatchBytes: execution.MaxPatchBytes,
@@ -1832,64 +1823,57 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		}
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, cause)
 	}
-	if execution.Mode == agents.ModeBare {
-		createReq.NetworkMode = string(execution.Egress.Mode)
-	} else {
-		if s.testBeforeCreatePin != nil {
-			if err := s.testBeforeCreatePin(); err != nil {
-				return failCreate(err)
-			}
+	if s.testBeforeCreatePin != nil {
+		if err := s.testBeforeCreatePin(); err != nil {
+			return failCreate(err)
 		}
-		selected, base := emptyJobCommit, emptyJobCommit
-		if job.Source != nil {
-			selected, base = job.Source.Binding.SelectedCommit, job.Source.Binding.BaseCommit
-			createReq.Source = session.CloneSourceBinding(&job.Source.Binding)
+	}
+	selected, base := emptyJobCommit, emptyJobCommit
+	if job.Source != nil {
+		selected, base = job.Source.Binding.SelectedCommit, job.Source.Binding.BaseCommit
+		createReq.Source = session.CloneSourceBinding(&job.Source.Binding)
+	}
+	started := time.Now()
+	workspace, err = ensureSessionWorkspaceContext(ctx, s, execution.Repository, intent.ForkName, selected, intent.OwnerStoreID, intent.SessionID)
+	if err != nil {
+		if errors.Is(err, errSessionWorkspacePublicationPending) {
+			// The generation or reservation may already be visible. Keep the
+			// intent runnable to repeat the exact owner's durability barrier.
+			return session.Session{}, wrapServiceOperationError(op.ID, err)
 		}
-		started := time.Now()
-		workspace, err = ensureSessionWorkspaceContext(ctx, s, execution.Repository, intent.ForkName, selected, intent.OwnerStoreID, intent.SessionID)
-		if err != nil {
-			if errors.Is(err, errSessionWorkspacePublicationPending) {
-				// The generation or reservation may already be visible. Keep the
-				// intent runnable to repeat the exact owner's durability barrier.
-				return session.Session{}, wrapServiceOperationError(op.ID, err)
-			}
-			return failCreate(fmt.Errorf("ensure session workspace: %w", err))
-		}
-		workspaceDone := time.Now()
-		bindings := make([]session.CompanionRepository, 0, len(execution.Companions))
-		for index, companion := range execution.Companions {
-			path, err := sessionCompanionWorkspace(s.store.Root(), intent.SessionID, companion.Name)
-			if err != nil {
-				return failCreate(err)
-			}
-			bindings = append(bindings, session.CompanionRepository{
-				Name: companion.Name, Repository: companion.Repository, Workspace: path,
-				BaseCommit: job.Companions[index].Source.Binding.SelectedCommit,
-			})
-		}
-		companions, err = ensureSessionCompanionsContext(ctx, s.store.Root(), intent.SessionID, bindings)
+		return failCreate(fmt.Errorf("ensure session workspace: %w", err))
+	}
+	workspaceDone := time.Now()
+	bindings := make([]session.CompanionRepository, 0, len(execution.Companions))
+	for index, companion := range execution.Companions {
+		path, err := sessionCompanionWorkspace(s.store.Root(), intent.SessionID, companion.Name)
 		if err != nil {
 			return failCreate(err)
 		}
-		// Where a creation's time went, without names or paths: the controller
-		// only sees the operation running until it is done.
-		s.log.Info("session workspaces prepared", "operation_id", op.ID,
-			"workspace_ms", workspaceDone.Sub(started).Milliseconds(),
-			"companions", len(companions), "companions_ms", time.Since(workspaceDone).Milliseconds())
-		network, err := s.admitControllerJobNetwork(intent.JobDigest, intent.SessionID, execution, workspace.Path, intent.ForkName, companions)
-		if err != nil {
-			return failCreate(&session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()})
-		}
-		if execution.Mode.Restricted() && network.Mode == egress.Filtered {
-			return failCreate(&session.Error{Code: session.CodeNetworkUnavailable, Detail: "restricted sessions do not support filtered networking"})
-		}
-		createReq.Repository, createReq.Workspace, createReq.ForkName = execution.Repository, workspace.Path, intent.ForkName
-		createReq.ForkGeneration = string(workspace.Fork.Generation)
-		createReq.BaseCommit, createReq.Companions = base, companions
-		createReq.RepositoryFreshness = jobRepositoryFreshness(job, op.CreatedAt)
-		createReq.NetworkMode, createReq.NetworkFingerprint = string(network.Mode), network.Fingerprint
-		createReq.NetworkQualification = network.Qualification
+		bindings = append(bindings, session.CompanionRepository{
+			Name: companion.Name, Repository: companion.Repository, Workspace: path,
+			BaseCommit: job.Companions[index].Source.Binding.SelectedCommit,
+		})
 	}
+	companions, err = ensureSessionCompanionsContext(ctx, s.store.Root(), intent.SessionID, bindings)
+	if err != nil {
+		return failCreate(err)
+	}
+	// Where a creation's time went, without names or paths: the controller
+	// only sees the operation running until it is done.
+	s.log.Info("session workspaces prepared", "operation_id", op.ID,
+		"workspace_ms", workspaceDone.Sub(started).Milliseconds(),
+		"companions", len(companions), "companions_ms", time.Since(workspaceDone).Milliseconds())
+	network, err := s.admitControllerJobNetwork(intent.JobDigest, intent.SessionID, execution, workspace.Path, intent.ForkName, companions)
+	if err != nil {
+		return failCreate(&session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()})
+	}
+	createReq.Repository, createReq.Workspace, createReq.ForkName = execution.Repository, workspace.Path, intent.ForkName
+	createReq.ForkGeneration = string(workspace.Fork.Generation)
+	createReq.BaseCommit, createReq.Companions = base, companions
+	createReq.RepositoryFreshness = jobRepositoryFreshness(job, op.CreatedAt)
+	createReq.NetworkMode, createReq.NetworkFingerprint = string(network.Mode), network.Fingerprint
+	createReq.NetworkQualification = network.Qualification
 	latest, err := s.store.GetOperationByID(ctx, op.ID)
 	if err != nil {
 		return session.Session{}, err
@@ -2226,9 +2210,6 @@ func (s *Service) validateTurnEscalation(ctx context.Context, req session.Submit
 	if bound.NetworkMode == string(egress.None) && req.ControllerTools != nil {
 		return &session.Error{Code: session.CodeInvalidRequest, Detail: controllerToolsNeedsNetwork}
 	}
-	if err := validateRestrictedTurn(bound, req); err != nil {
-		return err
-	}
 	policy, err := s.sessionExecution(ctx, bound)
 	if err != nil {
 		return &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
@@ -2248,24 +2229,6 @@ func (s *Service) validateTurnEscalation(ctx context.Context, req session.Submit
 // controllerToolsNeedsNetwork is shared by both admissions: a controller endpoint is reached
 // by URL, and an offline box reaches none.
 const controllerToolsNeedsNetwork = "an offline session binds no controller MCP endpoint — its box reaches no server by URL"
-
-// validateRestrictedTurn refuses, at admission, the two turn options a restricted session cannot
-// honor. Each of its turns runs in a fresh box whose provider history dies with it, so there is
-// no native session for a caller's semantic rejection to re-prompt; and a bare session runs no
-// tool, so a controller endpoint bound to its turn would be authority nothing can use.
-func validateRestrictedTurn(bound session.Session, req session.SubmitTurnRequest) error {
-	if !agents.ExecutionMode(bound.Mode).Restricted() {
-		return nil
-	}
-	if req.OutputContract != nil && req.OutputContract.RequireSemanticValidation {
-		return &session.Error{Code: session.CodeInvalidRequest, Detail: fmt.Sprintf(
-			"a %s session keeps no provider history to re-prompt, so require_semantic_validation is not available; validate the completed turn's assistant message instead", bound.Mode)}
-	}
-	if bound.Mode == string(agents.ModeBare) && req.ControllerTools != nil {
-		return &session.Error{Code: session.CodeInvalidRequest, Detail: "a bare session binds no controller MCP endpoint — it runs no tool"}
-	}
-	return nil
-}
 
 func (s *Service) GetTurn(ctx context.Context, sessionID, turnID string) (session.Turn, error) {
 	return s.store.GetTurn(ctx, sessionID, turnID)
@@ -2600,8 +2563,9 @@ func (s *Service) executePlanDiscard(ctx context.Context, op session.Operation, 
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidSessionState, Detail: "discard planning requires a closed idle session"})
 	}
 	if sess.Workspace == "" {
-		// Nothing to plan against: a bare session's discard removes its private state and
-		// retires the record. The plan still pins the revision the discard must find.
+		// Nothing to plan against: a session without a workspace (an unbound record, or one created
+		// in the removed bare mode) discards its private state and retires the record. The plan
+		// still pins the revision the discard must find.
 		return s.completePlanDiscard(ctx, op, PlanDiscardResult{
 			OperationID: op.ID, Plan: DiscardPlan{SessionID: sess.ID, Revision: sess.Revision},
 		})

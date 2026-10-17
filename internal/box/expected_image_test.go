@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -17,7 +16,6 @@ func TestRunBindsExpectedImmutableImage(t *testing.T) {
 	id := "sha256:" + strings.Repeat("a", 64)
 	for _, tc := range []struct {
 		name, image, expected, refusal string
-		mode                           agents.ExecutionMode
 	}{
 		{name: "unchanged default", image: "mutable:tag"},
 		{name: "exact immutable image", image: id, expected: id},
@@ -27,13 +25,12 @@ func TestRunBindsExpectedImmutableImage(t *testing.T) {
 		{name: "tag expectation", image: "mutable:tag", expected: "mutable:tag", refusal: "immutable image ID"},
 		{name: "short digest", image: "sha256:aaa", expected: "sha256:aaa", refusal: "immutable image ID"},
 		{name: "nonhex digest", image: "sha256:" + strings.Repeat("z", 64), expected: "sha256:" + strings.Repeat("z", 64), refusal: "immutable image ID"},
-		{name: "restricted refuses", image: id, expected: id, mode: agents.ModeReadOnly, refusal: "expected image"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := filepath.Join(t.TempDir(), "runtime-args")
 			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none", BaseImage: tc.image}
 			spec := RunSpec{Image: tc.image, ExpectedImageID: tc.expected, Repo: t.TempDir(), Workdir: "/workspace",
-				Cmd: []string{"true"}, Mode: tc.mode, Batch: true, Quiet: true}
+				Cmd: []string{"true"}, Batch: true, Quiet: true}
 			code, err := Run(cfg, recorderRuntime(t, recorder), spec)
 			if tc.refusal != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.refusal) {
