@@ -49,8 +49,16 @@ no Coop state, and the refusals would fail it if it did.
 points. The one exception is a child of the live harness: `internal/testutil/liveprovider` puts
 `teststate.LiveEnv` (`COOP_TEST_LIVE_HOMES=1`) in every environment it builds, so the child keeps
 the folders of its layout, and the host's network state when granted, and the guards accept them.
-When the helper replaces `XDG_CONFIG_HOME`, it pins `GOENV` to where `go` would have looked, so
-fixture builds on Linux keep the developer's go settings.
+It moves HOME too, into the state folder (`<root>/home`), except for a live child: Coop reads the
+`.coopignore` of each folder above a project up to the home folder, and a test's projects live in
+the temporary folder, outside the developer's home, so the walk climbed to `/` and a stray
+`.coopignore` anywhere above TMPDIR changed what the tests saw (dozens of cli, forkctl and preset
+tests with one holding `*`). With home inside the state folder, TMPDIR lies above it and the walk
+stops there. Before moving anything it pins `GOENV`, `GOCACHE`, `GOPATH` and `DOCKER_CONFIG`, when
+unset, to where those tools would have looked, so fixture builds and Docker keep the developer's
+settings; `teststate.DeveloperHome()` is the home the binary started with, for a test that checks
+Coop stays out of the real one. To check a package: `mkdir -p /tmp/stray/tmp && echo '*' >
+/tmp/stray/.coopignore && TMPDIR=/tmp/stray/tmp go test ./internal/<pkg>`.
 
 **TMPDIR stays the developer's.** Box tests bind unix sockets under TMPDIR, within Darwin's 104-byte
 socket path limit: the full path of `coop-ipc-*/control.sock` is 81 bytes under the real 49-byte
@@ -103,6 +111,9 @@ the two real roots, then read the denials with `/usr/bin/log show --predicate 's
 Nothing reaches the real folders, and every attempted write is named with its process.
 
 ## Changelog
+- 2026-10-17 — Isolate moves HOME into the state folder and keeps the go command's and Docker's
+  folders, so a stray `.coopignore` above TMPDIR no longer changes test results (task
+  2026-10-17-pin-home-and-tmpdir-in-tests-that-build-a-secret).
 - 2026-10-17 — service-launch locks record their repository and the daily sweep removes those of
   gone repositories (task 2026-10-17-stop-service-launch-lock-files-piling-up-in-the).
 - 2026-10-17 — box's source-copy helpers lost their TMPDIR fallback, so their tests no longer pin

@@ -12,6 +12,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
 
 // admissionFixture gives every case its own private state root and project, so
@@ -344,10 +345,7 @@ func TestAdmissionWithExistingQualificationNeverSetsTheHostUp(t *testing.T) {
 // the store is outside the real home (a temporary folder may sit inside it), and the developer's
 // state is refused outright. NetworkStatePath only builds names, so the refused cases open nothing.
 func TestNetworkStatePathStaysOutOfTheRealHome(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
+	home := teststate.DeveloperHome()
 	inside := func(dir, path string) bool {
 		rel, err := filepath.Rel(dir, path)
 		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))

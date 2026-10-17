@@ -35,7 +35,10 @@ func freshBinary(t *testing.T) {
 	t.Cleanup(func() { developerHomes = saved })
 	t.Setenv(rootEnv, "")
 	t.Setenv(LiveEnv, "")
-	t.Setenv("GOENV", "")
+	t.Setenv(homeEnv, os.Getenv(homeEnv))
+	for key := range toolFolderEnvs {
+		t.Setenv(key, "")
+	}
 	for _, r := range roots {
 		t.Setenv(r.env, os.Getenv(r.env))
 	}
@@ -50,6 +53,8 @@ func TestIsolateMakesOneFolderAndRemovesIt(t *testing.T) {
 	for _, r := range roots {
 		t.Setenv(r.env, filepath.Join(t.TempDir(), "stale"))
 	}
+	home, _ := os.UserHomeDir()
+	tools := toolFolders()
 	var made string
 	Isolate(func() int {
 		made = Dir()
@@ -58,7 +63,16 @@ func TestIsolateMakesOneFolderAndRemovesIt(t *testing.T) {
 				t.Errorf("%s = %s, want a folder inside %s", r.env, got, made)
 			}
 		}
-		home, _ := os.UserHomeDir()
+		// The home folder moves too, so the .coopignore files above a test's project stop at the
+		// temporary folder; the go command and Docker keep the developer's folders.
+		if got := os.Getenv(homeEnv); got != filepath.Join(made, "home") {
+			t.Errorf("HOME = %s, want a folder inside %s", got, made)
+		}
+		for key, want := range tools {
+			if got := os.Getenv(key); got != want {
+				t.Errorf("%s = %q, want the developer's %q", key, got, want)
+			}
+		}
 		if DeveloperConfigHome() != filepath.Join(home, ".config") {
 			t.Errorf("DeveloperConfigHome = %s, want ~/.config", DeveloperConfigHome())
 		}

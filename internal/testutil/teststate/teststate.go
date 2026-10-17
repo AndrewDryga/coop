@@ -33,6 +33,7 @@ const LiveEnv = "COOP_TEST_LIVE_HOMES"
 const (
 	configHomeEnv = "XDG_CONFIG_HOME"
 	stateHomeEnv  = "XDG_STATE_HOME"
+	homeEnv       = "HOME"
 )
 
 // roots are the variables Coop reads for its state roots in a test binary, and the folder each one
@@ -82,15 +83,24 @@ func Isolate(tests func() int) int {
 			env[x.env] = filepath.Join(root, x.dir)
 		}
 	}
-	// On Linux the go command finds its own settings under XDG_CONFIG_HOME. Tests build fixture
-	// binaries with it, so it keeps reading the developer's settings.
-	if _, replaced := env[configHomeEnv]; replaced && os.Getenv("GOENV") == "" {
-		if dir, err := os.UserConfigDir(); err == nil {
-			env["GOENV"] = filepath.Join(dir, "go", "env")
+	developerHomes[homeEnv] = os.Getenv(homeEnv)
+	// HOME bounds the .coopignore files a project takes from the folders above it: Coop reads them
+	// up to the home folder. A test's project lives in the temporary folder, outside the developer's
+	// home, so the walk climbed to / and a stray .coopignore anywhere above the temporary folder, as
+	// in /tmp on a CI runner, changed what the tests saw. A home inside this folder puts the
+	// temporary folder above it, where the walk stops.
+	if !live {
+		env[homeEnv] = filepath.Join(root, "home")
+	}
+	// The go command and Docker find their settings and caches under the home folder and, on Linux,
+	// XDG_CONFIG_HOME. Tests build fixture binaries and run Docker, so both keep the developer's.
+	for key, dir := range toolFolders() {
+		if os.Getenv(key) == "" {
+			env[key] = dir
 		}
 	}
 	for key, value := range env {
-		if key != rootEnv && key != "GOENV" {
+		if _, tool := toolFolderEnvs[key]; key != rootEnv && !tool {
 			if err := os.MkdirAll(value, 0o700); err != nil {
 				fmt.Fprintln(os.Stderr, "teststate:", err)
 				return 1
@@ -108,6 +118,16 @@ func Isolate(tests func() int) int {
 // with it, or "" outside Isolate.
 func Dir() string { return os.Getenv(rootEnv) }
 
+// DeveloperHome is the home folder this process started with, before Isolate moved HOME: the folder
+// a test means when it checks that Coop stays out of the developer's real one.
+func DeveloperHome() string {
+	if home := developerHomes[homeEnv]; home != "" {
+		return home
+	}
+	home, _ := os.UserHomeDir()
+	return home
+}
+
 // DeveloperConfigHome is the XDG_CONFIG_HOME Coop uses outside tests: the one this process started
 // with, else ~/.config. Only the live provider suites use it, to load the signed-in configuration
 // they exercise on purpose.
@@ -124,9 +144,32 @@ func developerHome(env, fallback string) string {
 	if value := developerHomes[env]; value != "" {
 		return value
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+	home := developerHomes[homeEnv]
+	if home == "" {
+		var err error
+		if home, err = os.UserHomeDir(); err != nil {
+			return ""
+		}
 	}
 	return filepath.Join(home, fallback)
+}
+
+// toolFolderEnvs are the variables that name the go command's and Docker's folders.
+var toolFolderEnvs = map[string]bool{"GOENV": true, "GOCACHE": true, "GOPATH": true, "DOCKER_CONFIG": true}
+
+// toolFolders are the folders those tools use by default, worked out before Isolate moves HOME and
+// XDG_CONFIG_HOME, as each tool works them out.
+func toolFolders() map[string]string {
+	folders := map[string]string{}
+	if dir, err := os.UserConfigDir(); err == nil {
+		folders["GOENV"] = filepath.Join(dir, "go", "env")
+	}
+	if dir, err := os.UserCacheDir(); err == nil {
+		folders["GOCACHE"] = filepath.Join(dir, "go-build")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		folders["GOPATH"] = filepath.Join(home, "go")
+		folders["DOCKER_CONFIG"] = filepath.Join(home, ".docker")
+	}
+	return folders
 }

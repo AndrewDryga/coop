@@ -140,9 +140,10 @@ spelling, but a `COOP_REPO` typed in another case on a case-insensitive disk (`~
 
 Tests reach this walk from every repository they create under the machine's temp folder, so a
 stray `.coopignore` above it changes their answers: one holding `*` in TMPDIR failed 50 box tests
-and hung another. The box tests that depend on what is hidden pin HOME to a temp folder
-(`pinHome`), which keeps the walk inside the test's own temp folders. To find a new one, run the
-package with TMPDIR pointing at a scratch folder whose `.coopignore` holds `*`.
+and hung another. Every test binary now runs with HOME inside its teststate folder, which keeps the
+walk below TMPDIR (see [[test-state-isolation]]); box tests that also need a fresh home of their own
+pin one (`pinHome`). To check a package, run it with TMPDIR pointing at a scratch folder whose
+`.coopignore` holds `*`.
 
 **Measuring start time:** `make lifecycle-bench` on a clean clone gives the product's number. A
 cluttered checkout measures its clutter. After the globSet change (2026-10-06, before and after
@@ -150,6 +151,8 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-10-17 — every test binary's HOME is inside its teststate folder, so the stray-file run passes
+  without per-test pins (task 2026-10-17-pin-home-and-tmpdir-in-tests-that-build-a-secret).
 - 2026-10-17 — below an unreadable `.coopignore` the readable rules still decide: the decider
   answers plain "hidden" for what they or a secret name hide and carries the error only for the
   rest, reading on past the unreadable file; the scans name every file the readable rules hide, and

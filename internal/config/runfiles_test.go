@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
 
 // The daily sweep looks for the runfiles folder without creating it, and finds the one a run made.
@@ -112,10 +114,7 @@ func TestConfigRootRefusesATestBinaryWithoutItsOwnConfigHome(t *testing.T) {
 // cli test that fell back to ~/.local/state sealed a run record in the real network store. A marked
 // live provider run chooses its own. The guard reads names only, so nothing here opens a folder.
 func TestStateHomeRefusesAnyFolderButTheTestsOwn(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
+	home := teststate.DeveloperHome()
 	real := filepath.Join(home, ".local", "state")
 	elsewhere := filepath.Join(string(filepath.Separator), "data", "state")
 	for _, value := range []string{"", real, elsewhere, "state"} {
