@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -341,6 +343,7 @@ func TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution(t *testing.T) {
 		want string
 	}{
 		{name: "detached loop", fork: ProjectForkSnapshot{Name: "worker", DetachedRunning: true}, want: "detached loop running"},
+		{name: "loop another system started", fork: ProjectForkSnapshot{Name: "worker", DetachedSystem: "Linux"}, want: "background loop started on Linux"},
 		{name: "cleanup", fork: ProjectForkSnapshot{Name: "worker", CleanupPending: true}, want: "cleanup-pending"},
 		{name: "assignment", fork: ProjectForkSnapshot{Name: "worker", Assignments: 2}, want: "2 assignment(s)"},
 		{name: "candidate", fork: ProjectForkSnapshot{Name: "worker", Candidate: true}, want: "ready"},
@@ -355,6 +358,83 @@ func TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution(t *testing.T) {
 			frame := strings.Join(tasksWatchFrameWithSnapshot(nil, nil, snapshot, 0, 120), "\n")
 			if !strings.Contains(frame, "worker · "+tt.want) {
 				t.Fatalf("fork work did not render %q:\n%s", tt.want, frame)
+			}
+		})
+	}
+}
+
+// A fork loop that a coop on another operating system started, as one in a Linux container sharing
+// this folder with macOS, is recorded with a pid this kernel cannot check, whether that pid is
+// missing here or belongs to a process here, and coop fork stop refuses to clean it up from here.
+// The board called it cleanup-pending and --json set cleanup_pending, while coop fork ls named the
+// system. Both now name the system as fork ls does, generation or not; a record this system wrote
+// whose worker is gone or replaced is still left for cleanup.
+func TestTaskWatchNamesTheSystemThatStartedAForkLoop(t *testing.T) {
+	system := forkspace.ProcTokenSystem(starttoken.Foreign())
+	const gone = 2147483645 // above any pid_max, so no process here has it
+	for _, tc := range []struct {
+		name   string
+		pid    int
+		token  string
+		legacy bool // no fork generation: the snapshot finds the fork by its record's name alone
+	}{
+		{name: "another system's record, pid missing here", pid: gone, token: starttoken.Foreign()},
+		{name: "another system's record, pid alive here", pid: os.Getpid(), token: starttoken.Foreign()},
+		{name: "another system's record without a generation", pid: gone, token: starttoken.Foreign(), legacy: true},
+		{name: "this system's record, worker gone", pid: gone, token: starttoken.Stale()},
+		{name: "this system's record, pid reused", pid: os.Getpid(), token: starttoken.Stale()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state, status := "cleanup-pending", `"detached_running":false,"cleanup_pending":true`
+			if tc.token == starttoken.Foreign() {
+				state = "background loop started on " + system
+				status = `"detached_running":false,"detached_system":"` + system + `","cleanup_pending":false`
+			}
+			repo := filepath.Join(t.TempDir(), "project")
+			root := filepath.Join(repo, TasksRoot)
+			if err := ScaffoldStateDirs(root); err != nil {
+				t.Fatal(err)
+			}
+			worker := forkspace.WorkerState{Pid: tc.pid, Token: tc.token}
+			wantFork := `{"name":"perf","workspace_valid":false,`
+			if !tc.legacy {
+				_, identity := testAssignmentFork(t, repo, "perf")
+				worker.Generation = identity.Generation
+				wantFork = `{"name":"perf","identity":{"name":"perf","generation":"` + string(identity.Generation) + `"},"workspace_valid":true,`
+			}
+			wantFork += status + `,"assignments":0,"candidate":false,"pending_land":false,"active_executions":0}`
+			if err := forkspace.WriteWorkerState(repo, "perf", worker); err != nil {
+				t.Fatal(err)
+			}
+			watch := func(jsonOutput bool) string {
+				return captureStdout(t, func() {
+					if code, err := TasksWatch(Host{}, repo, []string{root}, jsonOutput); code != 0 || err != nil {
+						t.Errorf("watch = (%d, %v)", code, err)
+					}
+				})
+			}
+
+			if board, want := watch(false), "\nforks\n  perf · "+state+"\n"; !strings.HasSuffix(board, want) {
+				t.Errorf("watch printed:\n%s\nwant it to end with:%s", board, want)
+			}
+			out := watch(true)
+			var snapshot struct {
+				Forks    []json.RawMessage `json:"forks"`
+				Problems []string          `json:"problems"`
+			}
+			if err := json.Unmarshal([]byte(out), &snapshot); err != nil {
+				t.Fatalf("bad json: %v\n%s", err, out)
+			}
+			var forks []string
+			for _, fork := range snapshot.Forks {
+				var compact bytes.Buffer
+				if err := json.Compact(&compact, fork); err != nil {
+					t.Fatal(err)
+				}
+				forks = append(forks, compact.String())
+			}
+			if len(forks) != 1 || forks[0] != wantFork || len(snapshot.Problems) != 0 {
+				t.Errorf("watch --json forks =\n%s\nproblems: %q\nwant the one fork\n%s", strings.Join(forks, "\n"), snapshot.Problems, wantFork)
 			}
 		})
 	}

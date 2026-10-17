@@ -73,7 +73,7 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 	running := forkspace.RunningPid(repo, name) != 0
 	// A record another operating system wrote names a pid this kernel cannot check, so it is neither
 	// running nor left for cleanup: coop fork stop refuses it and says where to stop the loop.
-	elsewhere := workerElsewhere(repo, name)
+	elsewhere := forkspace.WorkerElsewhere(repo, name)
 	cleanup := !running && elsewhere == "" && pathExists(forkspace.PidPath(repo, name))
 	active, parked, cleanupSandboxes, unverifiedSandboxes := 0, 0, 0, 0
 	reserved, ready, landing := false, false, false
@@ -94,8 +94,7 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 		reserved = reserved || observed.Reservation != nil
 		ready = ready || observed.Candidate
 		landing = landing || observed.PendingLand
-		// The snapshot reads the same record, and counts another system's as left for cleanup.
-		cleanup = cleanup || (observed.CleanupPending && elsewhere == "") || executionCleanup > 0
+		cleanup = cleanup || observed.CleanupPending || executionCleanup > 0
 	}
 	cost, _ := c.host.forkCost(ws)
 	return forkStatus{
@@ -125,16 +124,6 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 		Problems:            problems,
 		Cost:                cost,
 	}
-}
-
-// workerElsewhere names the operating system that started the fork's background loop when another
-// one wrote its record, as a coop in a Linux container sharing this folder with macOS does, or "".
-func workerElsewhere(repo, name string) string {
-	state, err := forkspace.ReadWorkerState(repo, name)
-	if err != nil || forkspace.ProcessIdentityOf(state.Pid, state.Token) != forkspace.ProcessIdentityForeign {
-		return ""
-	}
-	return forkspace.ProcTokenSystem(state.Token)
 }
 
 func summarizeForkExecutions(observations []forkspace.ExecutionObservation) (active, parked, cleanup, unverified int, problems []string) {

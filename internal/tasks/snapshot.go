@@ -60,6 +60,7 @@ type ProjectForkSnapshot struct {
 	Identity         *forkspace.Identity              `json:"identity,omitempty"`
 	WorkspaceValid   bool                             `json:"workspace_valid"`
 	DetachedRunning  bool                             `json:"detached_running"`
+	DetachedSystem   string                           `json:"detached_system,omitempty"` // set only for a loop another OS started
 	CleanupPending   bool                             `json:"cleanup_pending"`
 	Assignments      int                              `json:"assignments"`
 	Candidate        bool                             `json:"candidate"`
@@ -311,7 +312,8 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 					appendSnapshotProblem(&snapshot, "fork "+identity.Name+" worker", errors.New("worker belongs to another generation"))
 				} else {
 					fork.DetachedRunning = forkspace.RunningPid(repo, identity.Name) != 0
-					fork.CleanupPending = forkspace.NeedsStop(repo, identity.Name) && !fork.DetachedRunning
+					fork.DetachedSystem = forkspace.WorkerElsewhere(repo, identity.Name)
+					fork.CleanupPending = forkspace.NeedsStop(repo, identity.Name) && !fork.DetachedRunning && fork.DetachedSystem == ""
 				}
 			} else if !errors.Is(stateErr, os.ErrNotExist) {
 				appendSnapshotProblem(&snapshot, "fork "+identity.Name+" worker", stateErr)
@@ -360,7 +362,8 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 	}
 	for name := range nameSet {
 		fork := ProjectForkSnapshot{Name: name, DetachedRunning: forkspace.RunningPid(repo, name) != 0}
-		fork.CleanupPending = forkspace.NeedsStop(repo, name) && !fork.DetachedRunning
+		fork.DetachedSystem = forkspace.WorkerElsewhere(repo, name)
+		fork.CleanupPending = forkspace.NeedsStop(repo, name) && !fork.DetachedRunning && fork.DetachedSystem == ""
 		if _, err := forkspace.ReadWorkerState(repo, name); err != nil && !errors.Is(err, os.ErrNotExist) {
 			appendSnapshotProblem(&snapshot, "fork "+name+" worker", err)
 		}

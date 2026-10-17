@@ -150,7 +150,10 @@
   running, `coop loop --preflight` released the claim, and network cleanup removed the run's
   containers and volumes. The same happened the other way round. Coop now keeps these records:
   `coop fork stop` says which system started the loop and to stop it there, or which file to
-  remove once that system is gone, and `coop tasks ls` shows a claim's pid as "PID 4242 on Linux".
+  remove once that system is gone. `coop fork ls` and `coop tasks watch` show the fork as
+  "background loop started on Linux", not as needing cleanup: in their `--json`, `cleanup_pending`
+  is false and `detached_system` names the system, present only then, and `coop fork ls --json`
+  gives the state `elsewhere`. `coop tasks ls` shows a claim's pid as "PID 4242 on Linux".
 
 - **Breaking: read-only and bare runs are removed.** `--readonly` and `--bare` no longer run
   anything. `coop <agent>`, `coop <preset>`, `coop run`, `coop shell`, `coop acp` and
@@ -171,11 +174,6 @@
   the first launch that meets one instead of retrying it. `coop fork merge` asks for `--force` and
   still names every file under it whose name, or a folder's name above it, marks it as a secret,
   such as `.env` or anything in `secrets/` or `.aws/`, and session reviews report it.
-
-  `coop fork stop` says which system started the loop and to stop it there, `coop fork ls` lists
-  the fork as "background loop started on Linux" (in `--json`, the state `elsewhere`, with the
-  system in `detached_system`, present only then), and `coop tasks ls` shows a claim's pid as
-  "PID 4242 on Linux".
 
 - **`coop init` no longer freezes when a box swaps the folder of a file it edits.**
   `coop init --services` and the registration of new task queues in `.agent/project.yaml` edit a

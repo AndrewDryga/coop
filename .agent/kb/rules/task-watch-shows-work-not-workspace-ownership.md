@@ -4,7 +4,7 @@ description: tasks watch renders task-affecting activity, never an idle workspac
 scope: cli-output
 sources: [internal/tasks/watch.go, internal/tasks/watch_test.go, internal/tasks/snapshot.go, internal/tasks/owner.go]
 check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels'
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 
 # Show work in tasks watch, not idle workspace ownership
@@ -44,6 +44,10 @@ and keep standalone fork rows only for lifecycle states that affect task progres
 
 ## Changelog
 
+- 2026-10-17 — a fork loop another operating system started is task work, not cleanup: its row
+  reads `background loop started on <system>`, as `coop fork ls` does, where it read
+  `cleanup-pending`. Added that state to TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution and
+  re-ran the card's check; the other fork states were unchanged.
 - 2026-10-15 — dropped "worker startup" from the board states: the fork lifecycle lost its start
   reservation, so the snapshot's `starting` flag, the board's `starting` row and the watch's startup
   guard are gone. A detached loop shows as running once its start returns. Re-ran the card's check.

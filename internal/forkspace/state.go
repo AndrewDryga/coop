@@ -267,6 +267,18 @@ func NeedsStop(repo, name string) bool {
 	return pathExists(PidPath(repo, name))
 }
 
+// WorkerElsewhere names the operating system that started the fork's background loop when another
+// one wrote its record, as a coop in a Linux container sharing this folder with macOS does, or "".
+// Such a record is neither running nor left for cleanup here: fork stop refuses it, so the fork
+// listing and the task board both name that system instead.
+func WorkerElsewhere(repo, name string) string {
+	state, err := ReadWorkerState(repo, name)
+	if err != nil || ProcessIdentityOf(state.Pid, state.Token) != ProcessIdentityForeign {
+		return ""
+	}
+	return ProcTokenSystem(state.Token)
+}
+
 // parsePidfile reads a record's "<pid>\n<start-token>" body. pid 0 means unparseable.
 func parsePidfile(s string) (int, string) {
 	lines := strings.SplitN(strings.TrimSpace(s), "\n", 2)

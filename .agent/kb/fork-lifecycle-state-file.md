@@ -2,7 +2,7 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
-sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
+sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
 updated: 2026-10-17
 ---
 A fork's detached loop is recorded in ONE small file, `<repo>-forks/.coop/<name>.pid`, read and
@@ -64,9 +64,11 @@ system wrote as `elsewhere`, "background loop started on Linux", ahead of `unkno
 the loop's own sandbox record reads as unverifiable here too, and stop cleans nothing while the
 record stands. Its `--json` names the system in `detached_system` (present only then); the record
 itself never makes `cleanup_pending` true, though a dead local sandbox of the same fork still does,
-and the listing shows `elsewhere` until the record goes. Trap: the task snapshot's `CleanupPending` (`internal/tasks/snapshot.go`) still counts such a
-record as left for cleanup, so `gatherForkStatus` sets it aside, while `coop tasks watch` and its
-`--json` still report it as cleanup-pending.
+and the listing shows `elsewhere` until the record goes. The task snapshot (`ReadProjectSnapshot`,
+`internal/tasks/snapshot.go`) asks the same `forkspace.WorkerElsewhere` and agrees: the fork gets
+`DetachedSystem` (`detached_system`), never `CleanupPending`, so `coop tasks watch` shows
+"background loop started on Linux" and its `--json` matches fork ls. Neither counts that loop as
+running, so it does not hold a drained board open.
 
 ## Unsupported state never becomes an identity
 
@@ -115,7 +117,8 @@ The FILE is `internal/forkspace`'s: paths, the flock (`LockState`, `LockStateCon
 `TryLockState`), the log open (`OpenLog`), the wire format (`WorkerState`, `ParseWorkerState`,
 `Marshal`, `Read/WriteWorkerState`, `RemoveWorkerState`, `WritePid`, `ConfirmWorker`,
 `ClearPidIfMine`) and the identity doctrine
-(`ProcessIdentityOf`, `OwnerProvablyDead`, `StateOwner`, `RunningPid`, `NeedsStop`). It is a leaf —
+(`ProcessIdentityOf`, `OwnerProvablyDead`, `StateOwner`, `RunningPid`, `NeedsStop`,
+`WorkerElsewhere`). It is a leaf —
 no runtime, no `ui` — so fork commands and the sessions service (which checks `NeedsStop` and takes
 the lock through `LockState` and `LockStateContext`) read one contract. SUPERVISION is
 `internal/forkctl`'s: `requireNoWorkerLocked`, `DetachForkLoop`, `recordStartedFork`, `ForkStop`
@@ -163,6 +166,13 @@ to a process or a container, or prints, it is supervision.
   not a regular file gets "remove it", not the permissions advice: a log only holds output.
 
 ## Changelog
+- 2026-10-17 — the task snapshot reads another system's record through the same check as
+  `coop fork ls`, now `forkspace.WorkerElsewhere` (it was forkctl's `workerElsewhere`): the fork
+  gets `DetachedSystem` and `CleanupPending` stays false, in the generation-bound and name-only
+  branches alike, so `coop tasks watch` shows "background loop started on <system>" where it showed
+  cleanup-pending, and `gatherForkStatus` no longer sets the snapshot's flag aside. Retired the
+  trap. Re-verified against state.go, status.go, snapshot.go and watch.go
+  (task 2026-10-17-stop-coop-tasks-watch-from-reporting-a-fork-loop).
 - 2026-10-17 — one identity check: `ProcessIdentityOf` delegates to `processidentity.Inspect`
   through `processidentity.Kernel`, and `ProcessIdentity` is an alias of `processidentity.State`
   under the old names. The copies differed for a pid of 1 or below and for a missing pid with no

@@ -234,7 +234,7 @@ func snapshotHasVisibleActivity(snapshot ProjectSnapshot) bool {
 func forkHasVisibleActivity(fork ProjectForkSnapshot) bool {
 	// A reservation protects a persistent remote workspace; by itself it says nothing about
 	// current task work and stays available in the JSON snapshot instead of filling the board.
-	return fork.DetachedRunning || fork.CleanupPending || fork.Assignments > 0 ||
+	return fork.DetachedRunning || fork.DetachedSystem != "" || fork.CleanupPending || fork.Assignments > 0 ||
 		fork.Candidate || fork.PendingLand || fork.CandidatePhase == forkCandidateSuperseding ||
 		fork.CandidatePhase == forkCandidateReviewing || fork.CandidatePhase == forkCandidatePublishing
 }
@@ -263,6 +263,8 @@ func tasksWatchFrameWithSnapshot(sources []watchSource, merged []mergedTask, sna
 		switch {
 		case fork.DetachedRunning:
 			state = "detached loop running"
+		case fork.DetachedSystem != "": // coop fork ls's words: only that system can check the loop
+			state = "background loop started on " + fork.DetachedSystem
 		case fork.CleanupPending:
 			state = "cleanup-pending"
 		case fork.PendingLand:
