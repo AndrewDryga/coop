@@ -72,6 +72,12 @@ is not proof the live helpers conform; regression tests must exercise all output
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-10-17 — applied the 2-versus-1 split to configuration: a `.agent/loop.yaml` or preset that
+  does not load exits 1 (a command that could not do its job, as `config.Failure` already did), and
+  only a preset name nothing defines exits 2. `presetLoadErr` draws both (UsageError /
+  CommandFailed) and every caller returns `refusalExit`: loop, acp, fork, `coop <preset>`,
+  `coop presets <name>`, `coop help <name>` and loop.yaml's work.agent; eval already used 1 and
+  now refuses a loop recipe that does not parse before any trial (`loopcfg.Parse`).
 - 2026-10-17 — `coop fork rm <name> --yes` now guards its blank line before `✓ Deleted fork` the
   same way, keeping it when a forced stop printed its own lines first;
   TestForkRmYesPrintsOneBlankLineBetweenSections pins both. `coop fork <name> --fresh --yes` was

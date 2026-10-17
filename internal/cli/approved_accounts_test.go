@@ -70,8 +70,12 @@ func TestApprovedAccountInputErrors(t *testing.T) {
 			a := newApp(t)
 			writePresetFile(t, a.cfg.RepoOverride, "review",
 				"lead: {agent: codex}\nroles: {critic: {mode: readonly, agent: claude}}\n")
+			// A preset that exists but does not load is a page coop could not show, not rejected input.
 			code, err := a.showPreset(a.cfg.RepoOverride, "review")
-			return codeErr(t, code, err)
+			if code != 1 {
+				t.Errorf("a preset that does not load exited %d, want 1", code)
+			}
+			return err
 		}},
 		{"05-login-needs-terminal", func(t *testing.T) error {
 			code, err := newApp(t).loginTo("claude", "work")

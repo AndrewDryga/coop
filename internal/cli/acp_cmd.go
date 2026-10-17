@@ -198,7 +198,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	p, err := a.loadRunPreset(presetName)
 	if err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	tool = presetLeadAgent(p, tool, toolSet)
 	if tool == "" {

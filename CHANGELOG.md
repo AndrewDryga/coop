@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A `.agent/loop.yaml` or preset that does not load now exits 1 instead of 2.** `coop loop`,
+  `coop acp`, `coop fork`, `coop <preset>`, `coop presets <name>` and `coop help <name>` exited 2,
+  the code for a mistyped command, when the loop's settings file or a preset's `preset.yaml` did
+  not load. They now exit 1, the code for a command that could not do its job, as a `coop.conf` or
+  `.agent/project.yaml` that does not parse already does. Naming a preset that does not exist still
+  exits 2. `coop eval` now refuses a loop recipe that does not parse before it starts any trial,
+  instead of scoring each trial's failed start. `coop help loop` lists the exit codes as they are.
+
 - **A large companion repository is ready in half a minute, not five.** Coop copied each companion
   repository a session reads into a new Git repository the way a clone over the network does: Git
   searched its large files for deltas again and checked every object once more. A 6 GB repository

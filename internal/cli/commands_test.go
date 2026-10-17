@@ -1533,9 +1533,55 @@ func TestACPOuterRejectsInvalidProjectBeforeSupervisor(t *testing.T) {
 	}
 }
 
-// A bad flag, an unknown provider in the positional target, or a malformed loop.yaml is a usage
-// error and reads as one even where no container runtime is installed; the runtime is looked up
-// only once the run is otherwise valid.
+// A preset named on the command line that no folder defines is rejected input (2); one that exists
+// but does not load is a run that cannot start (1), like a settings file that does not parse. The
+// same holds for coop loop, coop acp and coop <preset>, and none reaches the runtime.
+func TestAPresetThatDoesNotLoadExitsByWhatWentWrong(t *testing.T) {
+	repo := t.TempDir()
+	if err := tasks.ScaffoldStateDirs(filepath.Join(repo, tasks.TasksRoot)); err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(repo, ".agent", "presets", "broken")
+	if err := os.MkdirAll(broken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(broken, "preset.yaml"), []byte("broken: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// acp resolves its runtime first, so it gets one that would fail the run if anything executed it.
+	a := func() *app {
+		return &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: repo},
+			rt: runtime.Runtime{Name: "coop-must-not-execute"}, rtSet: true}
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+		code int
+	}{
+		{[]string{"loop", "missing"}, `No preset named "missing"`, 2},
+		{[]string{"loop", "broken"}, `Could not load preset "broken"`, 1},
+		{[]string{"acp", "broken"}, `Could not load preset "broken"`, 1},
+		{[]string{"broken"}, `Could not load preset "broken"`, 1},
+	} {
+		code, err := a().dispatch(c.args)
+		if code != c.code || err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("coop %s = (%d, %v); want exit %d with the preset's own error", strings.Join(c.args, " "), code, err, c.code)
+		}
+	}
+	// A preset named by .agent/loop.yaml's work.agent was not typed, so its refusal says where it
+	// came from, and a run that cannot start exits 1 even for a name nothing defines.
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "loop.yaml"), []byte("work:\n  agent: [fats]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, err := a().dispatch([]string{"loop"})
+	if want := `Could not use preset "fats" from .agent/loop.yaml's work.agent`; code != 1 || err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("coop loop with work.agent naming no preset = (%d, %v); want exit 1 saying %q", code, err, want)
+	}
+}
+
+// A bad flag or an unknown provider in the positional target is a usage error, and a malformed
+// loop.yaml a run that cannot start; each reads as itself even where no container runtime is
+// installed, since the runtime is looked up only once the run is otherwise valid.
 func TestLoopReportsUsageBeforeRuntimeDiscovery(t *testing.T) {
 	repo := t.TempDir()
 	if err := tasks.ScaffoldStateDirs(filepath.Join(repo, tasks.TasksRoot)); err != nil {
@@ -1563,8 +1609,9 @@ func TestLoopReportsUsageBeforeRuntimeDiscovery(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "loop.yaml"), []byte("work: [\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := a().dispatch([]string{"loop", "codex"}); code != 2 || err == nil || !strings.Contains(err.Error(), "loop.yaml") || strings.Contains(err.Error(), "runtime") {
-		t.Errorf("coop loop with a malformed loop.yaml = (%d, %v); want its parse error (2), no runtime lookup", code, err)
+	// A committed loop.yaml that does not parse is a run that cannot start (1), not rejected input.
+	if code, err := a().dispatch([]string{"loop", "codex"}); code != 1 || err == nil || !strings.Contains(err.Error(), "loop.yaml") || strings.Contains(err.Error(), "runtime") {
+		t.Errorf("coop loop with a malformed loop.yaml = (%d, %v); want its parse error (1), no runtime lookup", code, err)
 	}
 	if err := os.Remove(filepath.Join(repo, ".agent", "loop.yaml")); err != nil {
 		t.Fatal(err)

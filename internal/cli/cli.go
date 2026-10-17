@@ -372,7 +372,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 		// by a same-named preset.
 		if p, ok, perr := a.presetNamed(sub); ok {
 			if perr != nil {
-				return 2, perr // the preset exists but is broken — surface the load error
+				return refusalExit(perr), perr // the preset exists but is broken — surface the load error
 			}
 			return a.launchPreset(p, rest)
 		}

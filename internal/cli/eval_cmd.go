@@ -14,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/eval"
+	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -182,6 +183,12 @@ func (a *app) evalRun(args []string) (int, error) {
 		loopConfig, err = os.ReadFile(loopConfigPath)
 		if err != nil {
 			return 1, fmt.Errorf("freeze loop config %s: %w", loopConfigPath, err)
+		}
+		// Every trial's loop reads these bytes as its .agent/loop.yaml, and one that does not parse
+		// stops each loop before it runs with the exit a run that left work also has, so the trials
+		// would be graded. It is refused once, here, before any trial.
+		if _, err := loopcfg.Parse(loopConfigPath, loopConfig); err != nil {
+			return 1, err
 		}
 	}
 	if err := ctx.Err(); err != nil {

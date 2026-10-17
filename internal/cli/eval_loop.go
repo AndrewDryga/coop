@@ -259,8 +259,11 @@ func loopOutcome(code int, ctxErr error) error {
 		// so it goes to the verifier like any other.
 		return nil
 	default:
-		// 2 is a refusal to start (no queue, missing image, unusable runtime) — the scenario
-		// never ran, so there is nothing to grade and nothing to say about the configuration.
+		// 2 is rejected input, such as an unknown target or preset: the scenario never ran, so
+		// there is nothing to grade and nothing to say about the configuration. A loop that could
+		// not start for another reason (no queue, a missing image, an unusable runtime) exits 1
+		// like one that left work, and reaches the verifier above; evalRun refuses a recipe or
+		// preset that does not load before any trial.
 		return fmt.Errorf("the loop could not start (exit %d)", code)
 	}
 }

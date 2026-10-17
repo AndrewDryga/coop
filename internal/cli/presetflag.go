@@ -14,19 +14,25 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // loadRunPreset resolves the repo and loads the named preset ("" loads nothing). Pure
-// local reads — validation fails loud here, before any box or detached worker starts.
+// local reads — validation fails loud here, before any box or detached worker starts. A refusal is
+// drawn as presetLoadErr draws it, so refusalExit gives its exit code.
 func (a *app) loadRunPreset(name string) (*preset.Preset, error) {
 	if name == "" {
 		return nil, nil
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
-		return nil, err
+		return nil, ui.CommandFailed("Could not find the project", err.Error()) // a run that cannot start: exit 1
 	}
-	return preset.Load(repo, a.cfg.GlobalPresetsDir(), name)
+	p, err := preset.Load(repo, a.cfg.GlobalPresetsDir(), name)
+	if err != nil {
+		return nil, presetLoadErr(repo, name, err)
+	}
+	return p, nil
 }
 
 // presetNamed reports whether word names an EXISTING preset folder (.agent/presets/<word>/, or the
@@ -48,7 +54,10 @@ func (a *app) presetNamed(word string) (p *preset.Preset, ok bool, err error) {
 		return nil, false, nil
 	}
 	p, err = preset.Load(repo, globalDir, word)
-	return p, true, err
+	if err != nil {
+		return nil, true, presetLoadErr(repo, word, err)
+	}
+	return p, true, nil
 }
 
 // presetLeadAgent resolves the launched agent under a preset: an agent the command

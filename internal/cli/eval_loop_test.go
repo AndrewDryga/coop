@@ -75,6 +75,23 @@ func TestEvalLoopDryRunShowsSelectedRecipe(t *testing.T) {
 	}
 }
 
+// A loop recipe every trial would read as its .agent/loop.yaml is checked once, before any trial: one
+// that does not parse would stop each trial's loop with the exit a run that left work also has, and
+// the trials would be graded against the configuration.
+func TestEvalLoopRefusesARecipeThatDoesNotParse(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	suite := loopSuite(t)
+	broken := filepath.Join(t.TempDir(), "broken.yaml")
+	if err := os.WriteFile(broken, []byte("signoff: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	code, err := a.evalRun([]string{suite.Path, "codex", "--timeout", "10m", "--loop-config", broken, "--dry-run"})
+	if code != 1 || err == nil || !strings.HasPrefix(err.Error(), broken+": ") {
+		t.Fatalf("eval with a recipe that does not parse = (%d, %v), want exit 1 naming it", code, err)
+	}
+}
+
 func loopRunner(t *testing.T, suite *eval.Suite, presets map[string]string) *trialRunner {
 	t.Helper()
 	cfg, err := config.Load()

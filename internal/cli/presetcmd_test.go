@@ -199,8 +199,8 @@ func TestPresetDetailBlocksAlignOnTheLongestRoleName(t *testing.T) {
 
 // `coop help <name>` resolves like a run does: a built-in command and a registered agent win a
 // name collision, then a project preset, then a global one. A name nobody claims is unknown
-// (exit 2), and a preset whose YAML is broken returns THAT error rather than pretending the
-// name doesn't exist. All of it is file-only — no runtime, no box.
+// (exit 2), and a preset whose YAML is broken returns THAT error, as a page coop could not show
+// (exit 1), rather than pretending the name doesn't exist. All of it is file-only — no runtime, no box.
 func TestHelpTopicResolutionOrder(t *testing.T) {
 	repo := t.TempDir()
 	global := t.TempDir()
@@ -249,8 +249,8 @@ func TestHelpTopicResolutionOrder(t *testing.T) {
 		t.Errorf("unknown topic = %d, want 2", code)
 	}
 	broken := captureStderr(t, func() {
-		if code, _ := helpForPath([]string{"wrecked"}, cfg, true); code != 2 {
-			t.Errorf("a broken preset = %d, want 2", code)
+		if code, _ := helpForPath([]string{"wrecked"}, cfg, true); code != 1 {
+			t.Errorf("a broken preset = %d, want 1", code)
 		}
 	})
 	if !strings.Contains(broken, "mode \"nonsense\"") {

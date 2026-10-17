@@ -1718,7 +1718,7 @@ func TestDetachedWorkerEarlyValidationFailureClearsItsRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
-	if code, err := a.forkCreate([]string{name, "vanish", "--loop", "--_detached"}); code != 2 || err == nil {
+	if code, err := a.forkCreate([]string{name, "vanish", "--loop", "--_detached"}); code != 1 || err == nil {
 		t.Fatalf("worker with a broken preset = (%d, %v), want the preset failure", code, err)
 	}
 	if pathExists(forkspace.PidPath(repo, name)) {

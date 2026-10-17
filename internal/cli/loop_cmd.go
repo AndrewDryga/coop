@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -105,7 +106,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	// .agent/loop.yaml is the committed loop config; a bad file fails fast, before any box work.
 	lc, err := loopcfg.Load(repo)
 	if err != nil {
-		return 2, err
+		return 1, err
 	}
 	// preflight defaults to loop.yaml preflight.enabled; --preflight/--no-preflight override.
 	t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, err := parseLoopArgs(rest, lc.Preflight.Enabled)
@@ -123,7 +124,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	// ladder becomes the rotation. A positional target instead pins the one-off ladder.
 	p, err := a.loadRunPreset(presetName)
 	if err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	// .agent/loop.yaml work.agent is the committed default work ladder — used ONLY when the launch
 	// names no positional who (no target and no preset). Its rungs are targets or preset names (a preset
@@ -134,7 +135,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if !hasTarget && p == nil && len(lc.Work.Agent) > 0 {
 		workAgent, p, workLadder, err = a.resolveWorkAgent(lc.Work.Agent)
 		if err != nil {
-			return 2, err
+			return 1, err // loop.yaml's own work.agent, not anything typed
 		}
 	}
 	agent := presetLeadAgent(p, t.Provider, hasTarget)
@@ -248,7 +249,14 @@ func (a *app) resolveWorkAgent(rungs []string) (agent string, p *preset.Preset, 
 		if r.Preset != "" {
 			pr, perr := a.loadRunPreset(r.Preset)
 			if perr != nil {
-				return "", nil, nil, fmt.Errorf("work.agent: %w", perr)
+				// The name comes from .agent/loop.yaml, not the command line, so the refusal says so.
+				cause := perr.Error()
+				var usage *ui.UsageError
+				if errors.As(perr, &usage) {
+					cause = strings.TrimSpace(usage.Headline + "\n" + usage.Cause)
+				}
+				return "", nil, nil, ui.CommandFailed(fmt.Sprintf("Could not use preset %q from .agent/loop.yaml's work.agent", r.Preset),
+					cause, [2]string{"Help:", "coop help loop"})
 			}
 			if agent == "" {
 				agent = pr.Lead().Provider

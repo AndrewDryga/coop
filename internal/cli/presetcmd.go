@@ -218,15 +218,17 @@ func upperFirst(s string) string {
 func (a *app) showPreset(repo, name string) (int, error) {
 	p, err := preset.Load(repo, a.cfg.GlobalPresetsDir(), name)
 	if err != nil {
-		return 2, presetLoadErr(repo, name, err)
+		err = presetLoadErr(repo, name, err)
+		return refusalExit(err), err
 	}
 	fmt.Print(presetDetail(p, repo, ui.For(os.Stdout)))
 	return 0, nil
 }
 
-// presetLoadErr refuses a named preset: one that does not exist points at the list, while one that
-// exists but will not load shows the file and the loader's own sentences — calling that a typo
-// would send its author hunting for the wrong mistake.
+// presetLoadErr refuses a named preset: one that does not exist is rejected input pointing at the
+// list (exit 2), while one that exists but will not load shows the file and the loader's own
+// sentences as a run that could not start (exit 1) — calling that a typo would send its author
+// hunting for the wrong mistake.
 func presetLoadErr(repo, name string, err error) error {
 	var le *preset.LoadError
 	if !errors.As(err, &le) {
@@ -242,11 +244,8 @@ func presetLoadErr(repo, name string, err error) error {
 		}
 	}
 	cause := append([]string{presetDisplayPath(repo, le.Path)}, le.Detail...)
-	return &ui.UsageError{
-		Headline: fmt.Sprintf("Could not load preset %q", name),
-		Cause:    strings.Join(cause, "\n"),
-		Rows:     [][2]string{{"Help:", "coop help presets"}},
-	}
+	return ui.CommandFailed(fmt.Sprintf("Could not load preset %q", name), strings.Join(cause, "\n"),
+		[2]string{"Help:", "coop help presets"})
 }
 
 // presetDisplayPath writes a preset file the way the reader can use it: relative to the project
@@ -277,13 +276,14 @@ func helpForPreset(name string, cfg *config.Config) (code int, ok bool) {
 	}
 	p, err := preset.Load(repo, globalDir, name)
 	if err != nil {
+		err = presetLoadErr(repo, name, err)
 		var usage *ui.UsageError
-		if errors.As(presetLoadErr(repo, name, err), &usage) {
+		if errors.As(err, &usage) {
 			ui.PrintUsageError(usage)
 		} else {
 			ui.Error("%v", err)
 		}
-		return 2, true
+		return refusalExit(err), true
 	}
 	fmt.Print(presetDetail(p, repo, ui.For(os.Stdout)))
 	return 0, true

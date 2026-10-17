@@ -136,7 +136,7 @@ func LoadSnapshot(repo string) (*Config, *Snapshot, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	c, err := parse(data)
+	c, err := Parse(File, data)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -155,12 +155,15 @@ func readLoopConfig(repo string) ([]byte, error) {
 	return safefile.ReadRegular(root, filepath.FromSlash(File), loopConfigFileLimit)
 }
 
-func parse(data []byte) (*Config, error) {
+// Parse reads a loop config from data as Load reads .agent/loop.yaml: unknown keys and malformed
+// ladders are errors, each naming name. coop eval checks a recipe with it, by its own path, before
+// writing it into every trial.
+func Parse(name string, data []byte) (*Config, error) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)                                             // an unknown key is a typo, not silently ignored
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) { // EOF = an all-comments/empty file
-		return nil, fmt.Errorf("%s: %w", File, err)
+		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 	for _, s := range []struct {
 		name  string
@@ -172,21 +175,21 @@ func parse(data []byte) (*Config, error) {
 		{"verify.agent", c.Verify.Agent},
 	} {
 		if _, err := Rungs(s.rungs); err != nil {
-			return nil, fmt.Errorf("%s %s: %w", File, s.name, err)
+			return nil, fmt.Errorf("%s %s: %w", name, s.name, err)
 		}
 	}
 	if c.Between.Enabled && strings.TrimSpace(c.Between.Prompt) == "" {
-		return nil, fmt.Errorf("%s: between.enabled is true but between.prompt is empty — between has no built-in, so set its prompt", File)
+		return nil, fmt.Errorf("%s: between.enabled is true but between.prompt is empty — between has no built-in, so set its prompt", name)
 	}
 	if c.Verify.Enabled && strings.TrimSpace(c.Verify.Prompt) == "" {
-		return nil, fmt.Errorf("%s: verify.enabled is true but verify.prompt is empty — verify has no built-in, so set its prompt (e.g. \"e2e-test the affected features\")", File)
+		return nil, fmt.Errorf("%s: verify.enabled is true but verify.prompt is empty — verify has no built-in, so set its prompt (e.g. \"e2e-test the affected features\")", name)
 	}
 	for _, stage := range []struct {
 		name   string
 		writes ReviewWrites
 	}{{"between", c.Between.Writes}, {"signoff", c.Signoff.Writes}, {"verify", c.Verify.Writes}} {
 		if stage.writes != "" && stage.writes != ReviewWritesTasks && stage.writes != ReviewWritesRepo {
-			return nil, fmt.Errorf("%s: %s.writes must be tasks or repo, got %q", File, stage.name, stage.writes)
+			return nil, fmt.Errorf("%s: %s.writes must be tasks or repo, got %q", name, stage.name, stage.writes)
 		}
 	}
 	return &c, nil

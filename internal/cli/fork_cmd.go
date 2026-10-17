@@ -392,7 +392,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if fa.preset != "" {
 		p, err := a.loadRunPreset(fa.preset)
 		if err != nil {
-			return 2, err
+			return refusalExit(err), err
 		}
 		if !fa.agentSet {
 			fa.agent, fa.agentSet = p.Lead().Provider, true // the preset's lead wins over the remembered agent
