@@ -1088,7 +1088,10 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 			}
 			return -1, err
 		}
-		ui.Note("")
+		// --yes asked nothing, so there is no answered question to separate from the result.
+		if !yes {
+			ui.Note("")
+		}
 		ui.OK("Deleted fork %s", name)
 		return 0, nil
 	}
@@ -1152,7 +1155,10 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 	if err := ui.DestroyGate("Merge and delete forks that land", yes); err != nil {
 		return 2, ForkCancelled(err)
 	}
-	ui.Note("")
+	// --yes asked nothing, so there is no answered question to separate from the first fork.
+	if !yes {
+		ui.Note("")
+	}
 	var landed []string
 	for _, n := range names {
 		if skip[n] {

@@ -1190,6 +1190,90 @@ func TestForkMergeQueue(t *testing.T) {
 	}
 }
 
+// At a terminal the delete confirmation is a section of its own, with a blank line on either side.
+// --yes asks nothing, so those two blank lines must not stack: `coop fork merge --yes` keeps exactly
+// one blank line between sections, for one fork (with and without the service-data preview) and
+// for --all.
+func TestForkMergeYesPrintsOneBlankLineBetweenSections(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		forks    []string
+		services bool // the project has a compose file, so deleting a fork deletes its service data
+		want     string
+	}{
+		{name: "one fork", args: []string{"a", "--yes"}, forks: []string{"a"}, want: "" +
+			"Merge fork a into main\n" +
+			"  1 commit · +1 −0\n" +
+			"\n" +
+			"Rebasing onto main\n" +
+			"\n" +
+			"✓ Merged fork a into main\n" +
+			"\n" +
+			"✓ Deleted fork a\n"},
+		{name: "one fork with services", args: []string{"a", "--yes"}, forks: []string{"a"}, services: true, want: "" +
+			"Merge fork a into main\n" +
+			"  1 commit · +1 −0\n" +
+			"\n" +
+			"Rebasing onto main\n" +
+			"\n" +
+			"✓ Merged fork a into main\n" +
+			"\n" +
+			"Will be permanently deleted:\n" +
+			"  - This fork's service containers, Docker volumes, and their stored data.\n" +
+			"\n" +
+			"✓ Deleted fork a\n"},
+		{name: "all", args: []string{"--all", "--yes"}, forks: []string{"a", "b"}, want: "" +
+			"Process 2 forks for merge into main\n" +
+			"  a\n" +
+			"  b\n" +
+			"\n" +
+			"After processing:\n" +
+			"  - Each fork that lands will be deleted.\n" +
+			"  - A fork with no new commits or pending landing will be kept.\n" +
+			"\n" +
+			"Rebasing onto main\n" +
+			"\n" +
+			"✓ Merged fork a into main\n" +
+			"✓ Deleted fork a\n" +
+			"Rebasing onto main\n" +
+			"\n" +
+			"✓ Merged fork b into main\n" +
+			"✓ Deleted fork b\n" +
+			"\n" +
+			"✓ Merged 2 forks\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initRepo(t)
+			if tc.services { // committed before forking, so the merge's policy scan never sees it
+				writeTaskFile(t, filepath.Join(repo, filepath.FromSlash(project.DefaultCompose)), "services: {}\n")
+				git(t, repo, "add", "-A")
+				git(t, repo, "commit", "-qm", "services")
+			}
+			for _, n := range tc.forks {
+				ws, err := forkspace.Setup(repo, n)
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeTaskFile(t, filepath.Join(ws, n+".txt"), n+"\n")
+				git(t, ws, "add", "-A")
+				git(t, ws, "commit", "-qm", n)
+			}
+			// No gate and no runtime, so only the merge's own lines reach stderr.
+			c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+			var code int
+			var err error
+			stderr := captureStderr(t, func() { code, err = c.ForkMerge(tc.args) })
+			if code != 0 || err != nil {
+				t.Fatalf("ForkMerge(%v) = (%d, %v), want (0, nil)\n%s", tc.args, code, err, stderr)
+			}
+			if stderr != tc.want {
+				t.Errorf("ForkMerge(%v) printed\n%q\nwant\n%q", tc.args, stderr, tc.want)
+			}
+		})
+	}
+}
+
 // Task (security 1): every host-side git command coop runs against the PARENT repo must be
 // hardened too — the parent's .git (config + hooks) is agent-writable on a normal box run, so a
 // poisoned knob must not execute host code when coop reads/merges/diffs it. Each case fires a

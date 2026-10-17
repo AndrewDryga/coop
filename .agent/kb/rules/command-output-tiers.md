@@ -2,9 +2,9 @@
 name: command-output-tiers
 description: "Unprefixed human output, truthful progress, useful results, and readable consequences"
 scope: cli-output
-sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/box/run.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/session_cmd.go, internal/cli/models.go, internal/cli/eval_cmd.go]
+sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/box/run.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/session_cmd.go, internal/cli/models.go, internal/cli/eval_cmd.go, internal/forkctl/merge.go]
 check: "none"
-updated: 2026-09-27
+updated: 2026-10-17
 ---
 
 # Command output: no prefixes, useful results, truthful progress
@@ -29,6 +29,8 @@ updated: 2026-09-27
   Independent service warnings are separate paragraphs too: a network summary, hidden-file
   notice and service-start failure each need a blank line between them. Keep loop warnings
   nested in their existing service section, without changing provider or protocol bytes.
+  A confirmation is a section only when it asks: `--yes` prints no question, so print the blank
+  line after the gate only when it asked (`if !yes`), or the blank lines around it stack.
 - Rejected input is data, not a sentence a parser writes: build a `ui.UsageError` (the command
   path, the offending token, a usage line) and let it render — a leading blank line, one red `✗`
   headline naming the full command, an optional six-space cause stating the actual constraint,
@@ -70,6 +72,14 @@ is not proof the live helpers conform; regression tests must exercise all output
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-10-17 — `coop fork merge --yes` printed two blank lines where its delete question would
+  stand: before `✓ Deleted fork`, and before the first fork of `--all`. Fixed both with the
+  `if !yes` blank line named above; TestForkMergeYesPrintsOneBlankLineBetweenSections pins the
+  bytes. Swept every `ui.DestroyGate` caller: credentials rm and `coop down --delete-volumes`
+  already guard theirs; tasks rm, backlog rm, the isolated merge and the orphaned-state branch of
+  fork rm print no blank line after the gate. `coop fork rm <name> --yes` still prints two before
+  `✓ Deleted fork` (reported for the queue); `coop fork <name> --fresh --yes` hands over to the
+  fork's launch output, not checked.
 - 2026-09-27 — required visible model-catalog refresh and applied the existing grouped-spacing
   rule to eval plan previews. Swept the model menu and eval plan/result renderers; the menu's due
   refresh and the plan's section boundaries were the two gaps, while results already group output.
