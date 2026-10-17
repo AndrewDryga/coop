@@ -317,8 +317,10 @@ func TestReportShiftedDailyBucketAndExplicitZero(t *testing.T) {
 
 func TestReportGoogleTokenCancellationReapsHelper(t *testing.T) {
 	dir := t.TempDir()
-	pidFile := filepath.Join(dir, "helper.pid")
-	script := fmt.Sprintf("#!/bin/sh\nsleep 300 &\nprintf '%%s' \"$!\" > %q\nprintf 'fixture-token\\n'\nwait\n", pidFile)
+	pidFile, ready := filepath.Join(dir, "helper.pid"), filepath.Join(dir, "ready")
+	// The shell creates the pid file before printf fills it, so the helper writes a ready marker
+	// after the pid and the test waits for that, not for the pid file to exist.
+	script := fmt.Sprintf("#!/bin/sh\nsleep 300 &\nprintf '%%s' \"$!\" > %q\n: > %q\nprintf 'fixture-token\\n'\nwait\n", pidFile, ready)
 	if err := os.WriteFile(filepath.Join(dir, "gcloud"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +329,7 @@ func TestReportGoogleTokenCancellationReapsHelper(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := googleToken(ctx, "billing@example.com"); done <- err }()
-	wait.ForFile(t, pidFile)
+	wait.ForFile(t, ready)
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		t.Fatal(err)

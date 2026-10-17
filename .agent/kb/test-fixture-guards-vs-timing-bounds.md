@@ -2,8 +2,8 @@
 name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
-sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/lifecyclebench/cases.go, tools/lifecyclebench/cases_test.go]
-updated: 2026-10-16
+sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/lifecyclebench/cases.go, tools/lifecyclebench/cases_test.go, internal/agent/usage_report_test.go]
+updated: 2026-10-17
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -105,13 +105,19 @@ the drain. Linux discards only output still on its way to the bench's side (by r
 code, not a run), so there the test passes either way.
 
 **Marker existence is not complete content.** Shell redirection creates a PGID marker before
-`printf` writes the bytes. Write a private sibling and rename it only after completion so the
-fixture's existence waiter cannot read an empty identity. The controlled ACP marker test holds
-`printf` before its write; the final marker must remain absent until release, then contain the
-exact PGID. Report joined helper output on failure and reap its resident group on every assertion
-path. The editor-stdin and stable-leader assertions remain unchanged.
+`printf` writes the bytes. Write a private sibling and rename it only after completion, or have
+the fixture write a ready marker after the content and wait for that marker (the Google token
+helper in `internal/agent/usage_report_test.go`), so the fixture's existence waiter cannot read
+an empty identity. The controlled ACP marker test holds `printf` before its write; the final
+marker must remain absent until release, then contain the exact PGID. Report joined helper output
+on failure and reap its resident group on every assertion path. The editor-stdin and
+stable-leader assertions remain unchanged.
 
 ## Changelog
+- 2026-10-17 — the Google token cancellation test read its helper's pid file empty in 17 of 200
+  runs: `wait.ForFile` saw the file the redirection had just created. The helper now writes a
+  ready marker after the pid and the test waits for it; 200 plain and 50 race runs green, with the
+  cancellation and reap assertions unchanged (task 2026-10-17-fix-testreportgoogletokencancellationreapshelper).
 - 2026-10-16 — the lifecycle bench and its fixtures are Go (tools/lifecyclebench); the readiness
   handshake is the bench's start seam, and the queued-terminal-output check uses a real PTY and the
   `^C` echo instead of a patched select (task 2026-10-15-port-the-lifecycle-and-services-benchmarks-to-go).
