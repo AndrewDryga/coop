@@ -233,9 +233,14 @@ func readProjectFile(root *os.Root, rel, display string) (snap projectFileSnapsh
 		return snap, false, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(file)
+	// A box can leave a sparse file of any size where the file belongs; reading it whole would
+	// exhaust the host's memory, so the edit stops past 1 MiB.
+	data, err := io.ReadAll(io.LimitReader(file, maxReadBytes+1))
 	if err != nil {
 		return snap, false, fmt.Errorf("read %s: %w", display, pathCause(err))
+	}
+	if len(data) > maxReadBytes {
+		return snap, false, tooLarge{display}
 	}
 	return projectFileSnapshot{dir: dir, name: name, info: info, data: data}, true, nil
 }
@@ -311,10 +316,17 @@ func readRegular(dir *os.Root, rel, display string) ([]byte, error) {
 		return nil, fmt.Errorf("read %s: %w", display, pathCause(err))
 	}
 	if len(data) > maxReadBytes {
-		return nil, fmt.Errorf("%s is larger than 1 MiB", display)
+		return nil, tooLarge{display}
 	}
 	return data, nil
 }
+
+// tooLarge refuses a project file over 1 MiB. It answers errors.Is(err, ErrNotRegular), so coop
+// init gives the remedy it gives any file in the way: fix the file, not its permissions.
+type tooLarge struct{ file string }
+
+func (e tooLarge) Error() string        { return e.file + " is larger than 1 MiB" }
+func (e tooLarge) Is(target error) bool { return target == ErrNotRegular }
 
 // linkOut refuses a link that leads out of the project where coop only reads a file. It answers
 // errors.Is(err, ErrNotRegular) like notRegular, with a sentence that names the real problem.

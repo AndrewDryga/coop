@@ -54,7 +54,9 @@
   leave a named pipe at any of them, and the command waited forever. Now none of them waits:
   `coop init` refuses a `.tool-versions` that is not a regular file of at most 1 MiB and names it,
   `coop help` leaves the service list out, and the subproject search skips the folder. A
-  `.tool-versions` or Compose file that links to another file in the project still works.
+  `.tool-versions` or Compose file that links to another file in the project still works. The
+  files `coop init` edits in place, `.agent/project.yaml`, the Compose file and `.gitignore`, are
+  refused over 1 MiB too, so a box cannot make it read a huge file into memory.
 
 - **Coop's own search for a project's `.git` no longer ends in your home folder.** Before running
   Git in a project or fork, Coop looks for the nearest `.git`, starting in that folder and moving

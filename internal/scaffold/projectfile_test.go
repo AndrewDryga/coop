@@ -523,6 +523,47 @@ func TestHiddenCheckReadsRulesFromHeldDirectories(t *testing.T) {
 	}
 }
 
+// A box can leave a sparse file of any size where a file coop init edits belongs. Each edit stops
+// past 1 MiB instead of reading it whole, says why, and leaves the file as it was.
+func TestInPlaceEditsRefuseAFileOverOneMiB(t *testing.T) {
+	for _, tc := range []struct {
+		rel  string
+		edit func(repo string) error
+	}{
+		{".agent/project.yaml", func(repo string) error { _, err := RegisterSubprojects(repo, []string{"api"}); return err }},
+		{".agent/compose.yml", func(repo string) error {
+			_, err := AddComposeServices(repo, ".agent/compose.yml", []string{"redis"})
+			return err
+		}},
+		{".gitignore", CheckGitignore},
+	} {
+		t.Run(tc.rel, func(t *testing.T) {
+			repo := t.TempDir()
+			path := filepath.Join(repo, filepath.FromSlash(tc.rel))
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Truncate(path, maxReadBytes+1); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = tc.edit(repo)
+			if want := tc.rel + " is larger than 1 MiB"; err == nil || !strings.Contains(err.Error(), want) || !errors.Is(err, ErrNotRegular) {
+				t.Errorf("editing an oversized %s = %v; want %q", tc.rel, err, want)
+			}
+			if after, err := os.Stat(path); err != nil || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+				t.Errorf("the refused edit changed %s: %v", tc.rel, err)
+			}
+		})
+	}
+}
+
 // The rules come from every .coopignore on the way to the file, and coop reads only a regular file
 // of at most 1 MiB. Any other .coopignore stops the edit, since coop cannot tell what it hides, and
 // the refusal names that .coopignore and why, not the file being edited, as the box's own refusal
