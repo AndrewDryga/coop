@@ -49,6 +49,10 @@ func TestParseTarget(t *testing.T) {
 		"claude:a:b":                  "A model name cannot contain", // model can't contain ':'
 		"claude:opus@a:b":             "Invalid account name",        // account can't contain ':'
 		"claude:op us":                "A model name cannot contain",
+		"claude:op\x1b[2Jus":          "control or invisible characters",
+		"codex:gpt\u202e5":            "control or invisible characters",
+		"codex:gpt\u200b5/high":       "control or invisible characters",
+		"claude:op\xffus":             "control or invisible characters",
 		"claude:opus/":                "Add a reasoning effort after",    // '/' with nothing after
 		"claude:opus/HIGH":            "lowercase letters",               // effort is lowercase letters
 		"claude:opus@work/high":       "Invalid account name",            // effort must precede the account

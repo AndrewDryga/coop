@@ -602,3 +602,19 @@ func TestValidNameRefusesControlCharacters(t *testing.T) {
 		}
 	}
 }
+
+// A box can write a preset's preset.yaml, and banners print its targets: a model name with a
+// control or invisible character fails the load instead.
+func TestLoadRefusesAnUnprintableModelName(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".agent", "presets", "odd")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte("lead: {agent: \"claude:op\\e[2Jus\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(repo, "", "odd"); err == nil || !strings.Contains(err.Error(), "control or invisible characters") {
+		t.Fatalf("Load = %v, want the model-name refusal", err)
+	}
+}

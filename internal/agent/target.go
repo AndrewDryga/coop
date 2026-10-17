@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Target is coop's single addressing scheme — WHO runs on WHAT: a provider, optionally a
@@ -146,6 +147,11 @@ func ParseTarget(s string) (Target, error) {
 		}
 		if strings.ContainsAny(model, ":@/ \t") {
 			return invalid(`A model name cannot contain ":", "@", "/", or spaces.`)
+		}
+		// A preset.yaml or loop.yaml, which a box can write, names targets that banners print: a
+		// model name must be plain text, not an escape sequence or a character that draws as nothing.
+		if !utf8.ValidString(model) || strings.IndexFunc(model, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+			return invalid("A model name cannot contain control or invisible characters.")
 		}
 	}
 	effort = strings.TrimSpace(effort)

@@ -252,3 +252,12 @@ func TestRungsClassify(t *testing.T) {
 		t.Errorf("nil rungs → nil, nil; got %v, %v", r, err)
 	}
 }
+
+// A box can write .agent/loop.yaml, and banners print its targets: a model name with a control or
+// invisible character fails the load instead.
+func TestLoadRefusesAnUnprintableModelName(t *testing.T) {
+	repo := write(t, "work:\n  agent: [\"codex:gpt\\u200b5\"]\n")
+	if _, err := Load(repo); err == nil || !strings.Contains(err.Error(), "control or invisible characters") {
+		t.Fatalf("Load = %v, want the model-name refusal", err)
+	}
+}
