@@ -35,7 +35,7 @@ func TestProviderScriptedLoopPendingReviewResumeProcess(t *testing.T) {
 		Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
 		Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: work, Stage: "work", Result: "complete"}}},
 	})
-	firstCtx, firstCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	firstCtx, firstCancel := context.WithTimeout(context.Background(), wait.Deadline)
 	first := procharness.Run(firstCtx, procharness.Command{
 		Path: suite.coopBin, Args: []string{"loop", work, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
 		Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -62,7 +62,7 @@ func TestProviderScriptedLoopPendingReviewResumeProcess(t *testing.T) {
 			{TaskID: freshID, Target: currentSignoff, Stage: "signoff", Result: "pass"},
 		}},
 	})
-	second := runLoopReview(t, suite, work, 20*time.Second)
+	second := runLoopReview(t, suite, work, wait.Deadline)
 	if second.Err != nil || second.ExitCode != 0 ||
 		!strings.Contains(second.Stderr, "Resuming final review for 1 task completed in an earlier loop") ||
 		!strings.Contains(second.Stdout+second.Stderr, "All tasks passed final review") {
@@ -73,7 +73,7 @@ func TestProviderScriptedLoopPendingReviewResumeProcess(t *testing.T) {
 		Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
 		Loop: loopProcessPlan{TaskID: taskID},
 	})
-	thirdCtx, thirdCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	thirdCtx, thirdCancel := context.WithTimeout(context.Background(), wait.Deadline)
 	third := procharness.Run(thirdCtx, procharness.Command{
 		Path: suite.coopBin, Args: []string{"loop", work, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
 		Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -217,7 +217,7 @@ func TestProviderScriptedLoopPendingReviewRejectsAForgedSubjectCommit(t *testing
 	}
 
 	suite.reset(t, loopProcessScenario{Version: 6, Provider: "claude", ProviderHomes: agents.Names(), Loop: loopProcessPlan{TaskID: taskID}})
-	retry := runLoopReview(t, suite, work, 20*time.Second)
+	retry := runLoopReview(t, suite, work, wait.Deadline)
 	if retry.Err != nil || retry.ExitCode != 1 ||
 		!strings.Contains(retry.Stderr, "needs exactly one commit with \"Coop-Task: "+subjectID+"\"") ||
 		!strings.Contains(retry.Stderr, "found 2") {
@@ -428,12 +428,12 @@ func TestProviderScriptedLoopPendingVerificationSurvivesProcessDeath(t *testing.
 		t.Fatal(err)
 	}
 	defer process.Cleanup()
-	awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 15*time.Second)
-	coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), 5*time.Second)
+	awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", wait.Deadline)
+	coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), wait.Deadline)
 	if err := syscall.Kill(coopPID, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
 	first := process.Wait(ctx)
 	cancel()
 	trace := readProcessTrace(t, suite.layout.Trace)
@@ -446,7 +446,7 @@ func TestProviderScriptedLoopPendingVerificationSurvivesProcessDeath(t *testing.
 		Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
 		Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: verify, Stage: "verify", Result: "pass"}}},
 	})
-	second := runLoopReview(t, suite, work, 20*time.Second)
+	second := runLoopReview(t, suite, work, wait.Deadline)
 	if second.Err != nil || second.ExitCode != 0 ||
 		!strings.Contains(second.Stderr, "Resuming final review for 1 task completed in an earlier loop") ||
 		!strings.Contains(second.Stdout+second.Stderr, "All tasks passed final review") {
@@ -481,12 +481,12 @@ func TestProviderScriptedLoopPendingSignoffResumesTheStartedRound(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer process.Cleanup()
-	awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 15*time.Second)
-	coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), 5*time.Second)
+	awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", wait.Deadline)
+	coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), wait.Deadline)
 	if err := syscall.Kill(coopPID, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
 	first := process.Wait(ctx)
 	cancel()
 	terminateOrphanedProviders(t, readProcessTrace(t, suite.layout.Trace))
@@ -498,7 +498,7 @@ func TestProviderScriptedLoopPendingSignoffResumesTheStartedRound(t *testing.T) 
 		Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
 		Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: signoff, Stage: "signoff", Result: "pass"}}},
 	})
-	second := runLoopReview(t, suite, work, 20*time.Second)
+	second := runLoopReview(t, suite, work, wait.Deadline)
 	output := second.Stdout + second.Stderr
 	if second.Err != nil || second.ExitCode != 0 || !strings.Contains(output, "Final review · Round 1 of 3") ||
 		!strings.Contains(output, "All tasks passed final review") {
