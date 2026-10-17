@@ -354,7 +354,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		ui.Note("")
 	}
 	if needsStop {
-		if code, err := c.ForkStop([]string{name}); err != nil {
+		if code, err := c.StopBeforeDestroy(name); err != nil {
 			return code, err
 		}
 		ui.Note("")

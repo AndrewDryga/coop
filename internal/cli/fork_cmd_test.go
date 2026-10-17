@@ -595,7 +595,13 @@ func TestForkFreshPrintsOneBlankLineBetweenSections(t *testing.T) {
 			cfg := freshConfig(t)
 			cfg.RepoOverride = initRepo(t)
 			signInCred(t, cfg, "claude", "default")
-			if _, err := forkspace.Setup(cfg.RepoOverride, "perf"); err != nil {
+			ws, err := forkspace.Setup(cfg.RepoOverride, "perf")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The fork remembers its agent, so a plain stop would end with a hint to continue it; a
+			// stop that precedes recreating it must not.
+			if err := forkctl.SaveForkAgent(ws, "claude"); err != nil {
 				t.Fatal(err)
 			}
 			args := []string{"perf", "claude", "--fresh"}

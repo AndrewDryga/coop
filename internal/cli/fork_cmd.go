@@ -550,7 +550,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 			}
 		}
 		if needsStop {
-			if code, err := fc.ForkStop([]string{fa.name}); err != nil {
+			if code, err := fc.StopBeforeDestroy(fa.name); err != nil {
 				return code, err
 			}
 			ui.Note("") // the stop's own lines are a section of their own too

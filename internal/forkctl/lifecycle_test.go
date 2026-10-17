@@ -1133,3 +1133,40 @@ func TestForkRmLeftoverStateQuestion(t *testing.T) {
 		}
 	}
 }
+
+// A stop that is part of rm --force deletes the fork right after, so it never tells the person to
+// continue it; a plain coop fork stop still does.
+func TestStopBeforeDestroyGivesNoContinueHint(t *testing.T) {
+	for _, destroy := range []bool{true, false} {
+		repo := initRepo(t)
+		ws, err := forkspace.Setup(repo, "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := SaveForkAgent(ws, "claude"); err != nil {
+			t.Fatal(err)
+		}
+		if err := forkspace.WriteWorkerState(repo, "a", deadWorker); err != nil {
+			t.Fatal(err)
+		}
+		runtimeCLI := filepath.Join(t.TempDir(), "runtime")
+		if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: runtimeCLI}}
+		var code int
+		stderr := captureStderr(t, func() {
+			if destroy {
+				code, err = c.ForkRm([]string{"a", "--force", "--yes"})
+			} else {
+				code, err = c.ForkStop([]string{"a"})
+			}
+		})
+		if code != 0 || err != nil {
+			t.Fatalf("destroy=%v: exit %d, %v\n%s", destroy, code, err, stderr)
+		}
+		if hint := strings.Contains(stderr, "Continue: coop fork a claude --loop"); hint == destroy {
+			t.Errorf("destroy=%v: Continue hint shown = %v\n%s", destroy, hint, stderr)
+		}
+	}
+}

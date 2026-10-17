@@ -417,7 +417,15 @@ func streamLog(path, prefix string, follow bool, w io.Writer, mu *sync.Mutex) (b
 	}
 }
 
-func (c *Control) ForkStop(args []string) (int, error) {
+func (c *Control) ForkStop(args []string) (int, error) { return c.forkStop(args, true) }
+
+// StopBeforeDestroy stops fork name for coop fork rm --force and --fresh, which delete or recreate
+// it next: the stop prints its own lines, but not the hint to continue a fork about to go.
+func (c *Control) StopBeforeDestroy(name string) (int, error) {
+	return c.forkStop([]string{name}, false)
+}
+
+func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 	if len(args) == 0 || args[0] == "" {
 		return 2, ui.MissingArgument("fork name", "coop fork stop", "coop fork stop <name>")
 	}
@@ -664,7 +672,7 @@ func (c *Control) ForkStop(args []string) (int, error) {
 	}
 	ui.Note("")
 	ui.OK("Fork %s stopped", name)
-	if remembered := ReadForkAgent(forkspace.Workspace(repo, name)); remembered != "" && remembered != "?" {
+	if remembered := ReadForkAgent(forkspace.Workspace(repo, name)); continueHint && remembered != "" && remembered != "?" {
 		ui.Note("")
 		ui.Note("  Continue: coop fork %s %s --loop", name, remembered)
 	}
