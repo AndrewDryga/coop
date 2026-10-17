@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
 	"runtime/debug"
 	"slices"
@@ -24,6 +26,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
+	"go.yaml.in/yaml/v3"
 )
 
 // Version is the tool version, reported by `coop version`. Defaults to "dev" and
@@ -109,7 +112,7 @@ func (a *app) ensureRuntimeContext(ctx context.Context) error {
 func Main(argv []string) int {
 	cfg, err := config.Load()
 	if err != nil {
-		ui.Error("%v", err)
+		ui.Error("%s", safeErrorText(err))
 		return 1
 	}
 	box.ResolveBaseImage(cfg)
@@ -185,7 +188,7 @@ func reportExit(code int, err error) int {
 			}
 		case errors.Is(err, ui.ErrReported):
 		default:
-			ui.Error("%v", err)
+			ui.Error("%s", safeErrorText(err))
 		}
 		if code == 0 {
 			code = 1
@@ -195,6 +198,48 @@ func reportExit(code int, err error) int {
 		code = 1
 	}
 	return code
+}
+
+// safeErrorText is err's message with the text a box could have chosen escaped: an error can quote
+// a project.yaml key, a file name or git's output. Line breaks and tabs stay, since errors put them
+// there on purpose; each line is escaped by itself. Text an error quotes exactly as written is
+// escaped whole first, so a newline inside a key or a file name a box chose cannot start a line of
+// its own.
+func safeErrorText(err error) string {
+	msg := err.Error()
+	for _, quoted := range quotedAsWritten(err) {
+		if strings.ContainsAny(quoted, "\r\n") {
+			msg = strings.ReplaceAll(msg, quoted, ui.SafeInline(quoted))
+		}
+	}
+	lines := strings.Split(msg, "\n")
+	for i, line := range lines {
+		cells := strings.Split(line, "\t")
+		for j, cell := range cells {
+			cells[j] = ui.SafeInline(cell)
+		}
+		lines[i] = strings.Join(cells, "\t")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// quotedAsWritten is the text err's parts quote as written: the problems yaml lists one a line,
+// which name an unknown key and a short value whole, and the paths a file operation names.
+func quotedAsWritten(err error) []string {
+	var quoted []string
+	var problems *yaml.TypeError
+	if errors.As(err, &problems) {
+		quoted = append(quoted, problems.Errors...)
+	}
+	var path *fs.PathError
+	if errors.As(err, &path) {
+		quoted = append(quoted, path.Path)
+	}
+	var link *os.LinkError
+	if errors.As(err, &link) {
+		quoted = append(quoted, link.Old, link.New)
+	}
+	return quoted
 }
 
 // refusalExit is the exit code for a command that refuses err: 2 for rejected input, or the code a

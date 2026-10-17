@@ -1,15 +1,19 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -21,6 +25,37 @@ func useEmptyMainConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("COOP_CONF", path)
+}
+
+// The fallback error line can quote project.yaml, which a box can write: yaml quotes a value it
+// could not use, and an unknown key, as written. The line escapes what would act on the terminal,
+// a newline inside a quoted key does not start a line of its own, and the line breaks and tabs an
+// error puts there itself stay.
+func TestFallbackErrorLineEscapesBoxChosenText(t *testing.T) {
+	color := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	for _, tc := range []struct{ name, file, want string }{
+		{"a value", "serve:\n  ports: [\"evil\\x1b[2J\\nfake\"]\n", "cannot unmarshal !!str `evil\\u001B[2...` into int"},
+		{"a key", "\"evil\\x1b[2J\\nfake\": 1\n", "field evil\\u001B[2J\\u000Afake not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := project.Parse([]byte(tc.file))
+			if err == nil {
+				t.Fatal("project.yaml parsed")
+			}
+			out := color.ReplaceAllString(captureStderr(t, func() { reportExit(-1, err) }), "")
+			if strings.ContainsRune(out, '\x1b') || !strings.Contains(out, tc.want) || strings.Count(out, "\n") != 2 {
+				t.Errorf("error line = %q, want it escaped on yaml's two lines with %q", out, tc.want)
+			}
+		})
+	}
+	planted := fmt.Errorf("read task: %w", &fs.PathError{Op: "open", Path: "/repo/evil\nfake", Err: fs.ErrPermission})
+	if out := color.ReplaceAllString(captureStderr(t, func() { reportExit(-1, planted) }), ""); out != "✗ read task: open /repo/evil\\u000Afake: permission denied\n" {
+		t.Errorf("file error = %q, want the file name's newline escaped", out)
+	}
+	out := color.ReplaceAllString(captureStderr(t, func() { reportExit(-1, errors.New("could not commit\n\tgit: index.lock exists")) }), "")
+	if out != "✗ could not commit\n\tgit: index.lock exists\n" {
+		t.Errorf("multi-line error = %q, want its own line break and tab kept", out)
+	}
 }
 
 func TestMainRejectsInvalidConfigBeforeRuntime(t *testing.T) {

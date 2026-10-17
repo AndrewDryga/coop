@@ -41,6 +41,13 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
+- **An error Coop prints no longer passes terminal codes through.** When a command failed with an
+  error Coop does not draw as its own block, the error was printed as it was, and it can quote
+  text a box wrote: a project.yaml key or value, a file name, git's output. An escape sequence in
+  that text reached your terminal, and a line break in a key or file name started a line of its
+  own. Such characters now show as their codes, while the line breaks an error puts there itself
+  stay.
+
 - **`coop loop` exits 1 when the work it leaves is not finished.** A loop that stopped because
   another agent holds the rest of the queue exited 0, the code for a queue that passed review,
   though that work was not done. When the final review hit its round limit and Coop could not

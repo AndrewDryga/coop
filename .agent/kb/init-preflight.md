@@ -2,7 +2,7 @@
 name: init-preflight
 description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links and files hidden from the box, new files and agent links are created, checked and removed through one parent handle, and what it prints from the repository goes through ui.SafeInline
 subsystem: scaffold
-sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/scaffold/gates.go, internal/scaffold/docker.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go, internal/cli/net_cmd.go]
+sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/scaffold/gates.go, internal/scaffold/docker.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go, internal/cli/net_cmd.go, internal/cli/cli.go]
 updated: 2026-10-17
 ---
 
@@ -114,10 +114,15 @@ languages, services), the project folder's own path and the person's arguments p
 yaml.v3 lists one problem a line, so the network-access warning prints each `TypeError` entry on a
 line of its own, escaped by itself: an honest typo still reads as two lines, and a newline inside a
 key cannot start a line. An unreadable `.coopignore` is drawn by `reportUnreadableCoopignore`, which
-escapes its path too. A name that reaches the terminal through the dispatcher's fallback error line
-(`reportExit`) is not escaped (queued).
+escapes its path too. The dispatcher's fallback error line (`reportExit`, and `Main` for a
+`coop.conf` that does not load) escapes through `safeErrorText`: each line and tab-separated cell by
+itself, so an error's own line breaks stay, and first, whole, the text an error quotes as written —
+yaml's `TypeError` entries and the paths of `fs.PathError` and `os.LinkError` — so a newline a box
+put in a key or a file name stays on its line.
 
 ## Changelog
+- 2026-10-17 — the fallback error line now escapes (`safeErrorText` in internal/cli/cli.go); was
+  "not escaped (queued)".
 - 2026-10-17 — the second-review entry's `MaxCoopIgnoreBytes` is now the unexported `ignoreLimit`
   (internal/shadowpath/shadowpath.go); noted where the entry names it.
 - 2026-10-17 — `detectDocker` walked with `filepath.WalkDir`, which opens each folder by path
