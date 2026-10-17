@@ -156,7 +156,7 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 	// Two starts, or a start and a stop, cannot interleave; unrelated forks are not serialized.
 	unlock, err := forkspace.LockState(repo, name)
 	if err != nil {
-		return -1, fmt.Errorf("lock fork %s state: %w — check permissions on %s, then retry the original coop fork command", name, err, forkspace.StateDir(repo))
+		return -1, forkLockError(repo, name, err, "retry the original coop fork command")
 	}
 	defer unlock()
 	if !pathExists(forkspace.Workspace(repo, name)) {
@@ -165,9 +165,9 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 	if err := requireNoWorkerLocked(repo, name); err != nil {
 		return 1, err
 	}
-	logf, err := OpenForkLog(forkspace.LogPath(repo, name))
+	logf, err := forkspace.OpenLog(repo, name)
 	if err != nil {
-		return -1, err
+		return -1, forkLogError(repo, name, err)
 	}
 	defer logf.Close()
 	self, err := os.Executable()
@@ -214,35 +214,6 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 	return 0, nil
 }
 
-// OpenForkLog creates or truncates one owner-only fork log without following a final link.
-// Both foreground CLI loops and detached supervision use this boundary. Writes append: a child
-// whose start died before its record still holds an earlier open, and its refusal must land after a
-// newer start's output, not over it.
-func OpenForkLog(path string) (*os.File, error) {
-	if info, err := os.Lstat(path); err == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
-		return nil, fmt.Errorf("fork log %s must be a regular file", path)
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_APPEND|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		_ = f.Close()
-		if err != nil {
-			return nil, err
-		}
-		return nil, fmt.Errorf("fork log %s must be a regular file", path)
-	}
-	if err := f.Chmod(0o600); err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	return f, nil
-}
-
 func (c *Control) ForkLogs(args []string) (int, error) {
 	follow := false
 	var pos []string
@@ -278,7 +249,7 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 		}
 		opened, err := streamLog(forkspace.LogPath(repo, name), "", follow, os.Stdout, &mu)
 		if err != nil {
-			return 1, forkLogReadError(repo, name, err)
+			return 1, forkLogError(repo, name, err)
 		}
 		if !opened {
 			ui.Note("Fork %s has no log output yet.", name)
@@ -298,7 +269,7 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 		for _, n := range names {
 			opened, err := streamLog(forkspace.LogPath(repo, n), n, false, os.Stdout, &mu)
 			if err != nil {
-				failures = append(failures, forkLogReadError(repo, n, err))
+				failures = append(failures, forkLogError(repo, n, err))
 			} else if !opened {
 				ui.Note("Fork %s has no log output yet.", n)
 			}
@@ -318,7 +289,7 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 			defer wg.Done()
 			opened, err := streamLog(forkspace.LogPath(repo, name), name, true, os.Stdout, &mu)
 			if err != nil {
-				err = forkLogReadError(repo, name, err)
+				err = forkLogError(repo, name, err)
 				mu.Lock()
 				ui.Error("%v", err)
 				mu.Unlock()
@@ -344,12 +315,23 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 	return 0, nil
 }
 
-func forkLogReadError(repo, name string, err error) error {
+// forkLockError says why a fork's lifecycle lock could not be taken, then how to retry. A lock file
+// holds nothing, and no Coop process holds a lock through a name it refused, so whatever Coop found
+// there can go.
+func forkLockError(repo, name string, err error, retry string) error {
+	if errors.Is(err, forkspace.ErrNotAStateFile) {
+		return fmt.Errorf("lock fork %s state: %w — remove it: %s, then %s", name, err, removeCommand(forkspace.LockPath(repo, name)), retry)
+	}
+	return fmt.Errorf("lock fork %s state: %w — check permissions on %s, then %s", name, err, forkspace.StateDir(repo), retry)
+}
+
+// forkLogError says why a fork's log could not be opened, for reading or for a loop's output.
+func forkLogError(repo, name string, err error) error {
 	path := forkspace.LogPath(repo, name)
 	if errors.Is(err, forkspace.ErrNotAStateFile) {
 		// No permission change turns it into a log, and a log only holds a worker's output, so
 		// removing whatever is there loses nothing Coop needs.
-		return fmt.Errorf("fork %s log: %w — remove it: %s", name, err, removeCommand(path))
+		return fmt.Errorf("fork %s log: %w — remove it: %s, then retry", name, err, removeCommand(path))
 	}
 	return fmt.Errorf("fork %s log %s: %w — fix ownership or permissions under %s and retry", name, path, err, forkspace.StateDir(repo))
 }
@@ -434,7 +416,7 @@ func (c *Control) ForkStop(args []string) (int, error) {
 	}
 	unlock, err := forkspace.LockState(repo, name)
 	if err != nil {
-		return -1, fmt.Errorf("lock fork %s state: %w — check permissions on %s, then retry: coop fork stop %s", name, err, forkspace.StateDir(repo), name)
+		return -1, forkLockError(repo, name, err, "retry: coop fork stop "+name)
 	}
 	defer unlock()
 	workspaceExists = pathExists(forkspace.Workspace(repo, name))
@@ -639,7 +621,7 @@ func (c *Control) ForkStop(args []string) (int, error) {
 	if n > 0 {
 		ui.Detail("removed %s", ui.Count(n, "orphaned box container"))
 	}
-	if err := os.Remove(forkspace.PidPath(repo, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := forkspace.RemoveWorkerState(repo, name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 1, fmt.Errorf("fork %s box is gone, but its cleanup state could not be cleared: %w — inspect it and its parent with: ls -ld %q %q; remove any obstruction or restore parent write permission, then retry: coop fork stop %s", name, err, forkspace.PidPath(repo, name), forkspace.StateDir(repo), name)
 	}
 	if hasGeneration {

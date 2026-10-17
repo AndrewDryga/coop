@@ -3,6 +3,7 @@ package forkspace
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +14,10 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/AndrewDryga/coop/internal/processidentity"
+	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
 // The wire header stays line-oriented, so the file remains readable with `sed -n 1,4p` when an
@@ -54,10 +58,50 @@ func LockPath(repo, name string) string { return filepath.Join(StateDir(repo), n
 // ordinary project directories; only the host-owned .coop authority and its descendants are
 // owner-private.
 func EnsureStateDir(repo string) error {
-	if err := ensureForkHome(repo); err != nil {
+	dir, err := openStateDir(repo)
+	if err != nil {
 		return err
 	}
-	return ensurePrivateStateDir(StateDir(repo))
+	return dir.Close()
+}
+
+// openStateDir is EnsureStateDir returning .coop open. A box whose mount holds the forks folder can
+// swap .coop for a link after any check by name, and one whose mount holds the folder above it can
+// swap the forks folder itself. So neither is opened through a link, .coop's mode is set through its
+// descriptor, and the lock, log and worker record are opened, renamed and removed relative to the
+// returned handle, never by path.
+func openStateDir(repo string) (*os.File, error) {
+	if err := ensureForkHome(repo); err != nil {
+		return nil, err
+	}
+	home, err := safefile.OpenRoot(Home(repo))
+	if err != nil {
+		return nil, err
+	}
+	defer home.Close()
+	path := StateDir(repo)
+	if err := unix.Mkdirat(int(home.Fd()), ".coop", 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
+		return nil, &os.PathError{Op: "mkdir", Path: path, Err: err}
+	}
+	fd, err := unix.Openat(int(home.Fd()), ".coop", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
+		return nil, fmt.Errorf("fork state path %q is not a real directory", path)
+	}
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	dir := os.NewFile(uintptr(fd), path)
+	// Repeat this barrier even when the directory was already visible. A previous creation may
+	// have returned an fsync error after mkdir; the idempotent retry is what confirms publication.
+	if err := syncForkDirectoryEntry(home); err != nil {
+		_ = dir.Close()
+		return nil, err
+	}
+	if err := dir.Chmod(0o700); err != nil {
+		_ = dir.Close()
+		return nil, fmt.Errorf("make fork state path %q owner-only: %w", path, err)
+	}
+	return dir, nil
 }
 
 func ensureForkHome(repo string) error {
@@ -115,15 +159,8 @@ func LockState(repo, name string) (func(), error) {
 // wait forever behind another process. The ordinary command path passes a
 // background context and retains the historical blocking behavior.
 func LockStateContext(ctx context.Context, repo, name string) (func(), error) {
-	if err := EnsureStateDir(repo); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(LockPath(repo, name), os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := createStateFile(repo, name+".lock", os.O_RDWR)
 	if err != nil {
-		return nil, err
-	}
-	if err := f.Chmod(0o600); err != nil {
-		_ = f.Close()
 		return nil, err
 	}
 	for {
@@ -151,15 +188,8 @@ func LockStateContext(ctx context.Context, repo, name string) (func(), error) {
 // TryLockState is used by worker-exit cleanup: if stop already owns the lifecycle lock, the
 // worker must be allowed to exit rather than wait behind the command that's waiting for its exit.
 func TryLockState(repo, name string) (func(), bool) {
-	if err := EnsureStateDir(repo); err != nil {
-		return nil, false
-	}
-	f, err := os.OpenFile(LockPath(repo, name), os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := createStateFile(repo, name+".lock", os.O_RDWR)
 	if err != nil {
-		return nil, false
-	}
-	if err := f.Chmod(0o600); err != nil {
-		_ = f.Close()
 		return nil, false
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
@@ -335,7 +365,8 @@ func (state WorkerState) Marshal() ([]byte, error) {
 // *os.PathError, os.ErrNotExist when there is no record. Any other error means a record is there
 // that Coop cannot own: ErrNotAStateFile, or bytes ParseWorkerState refuses.
 func ReadWorkerState(repo, name string) (WorkerState, error) {
-	data, err := readWorkerRecord(PidPath(repo, name))
+	path := PidPath(repo, name)
+	data, err := readWorkerRecord(unix.AT_FDCWD, path, path)
 	if err != nil {
 		return WorkerState{}, err
 	}
@@ -347,27 +378,62 @@ func ReadWorkerState(repo, name string) (WorkerState, error) {
 // pipe, and anything but a regular file is refused with an error that matches ErrNotAStateFile and
 // says what is there. Any other failure, a missing file included, is an *os.PathError.
 func OpenStateFile(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	return openStateFile(unix.AT_FDCWD, path, path, os.O_RDONLY)
+}
+
+// openStateFile is OpenStateFile for name relative to the folder dirfd (unix.AT_FDCWD for a path),
+// with path naming it in errors and flag adding the access mode and how to open it. A file opened
+// with O_CREATE, whether it was just made or was already there, is set to 0600 through its
+// descriptor, never by path.
+func openStateFile(dirfd int, name, path string, flag int) (*os.File, error) {
+	fd, err := unix.Openat(dirfd, name, flag|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
 	if err != nil {
-		// O_NOFOLLOW refuses a link with ELOOP, and open(2) refuses a socket with ENXIO on Linux and
-		// EOPNOTSUPP on macOS. Lstat names what is there; if that changed meanwhile, the open's error
-		// stands.
-		if errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENXIO) || errors.Is(err, syscall.EOPNOTSUPP) {
-			if info, statErr := os.Lstat(path); statErr == nil && !info.Mode().IsRegular() {
-				return nil, &notAStateFile{path, fileKind(info.Mode())}
-			}
+		// O_NOFOLLOW refuses a link with ELOOP, a folder opened to write fails with EISDIR, and
+		// open(2) refuses a socket with ENXIO on Linux and EOPNOTSUPP on macOS, as it does a named
+		// pipe opened to write that nobody reads with ENXIO. Lstat names what is there; if that
+		// changed meanwhile, the open's error stands.
+		var st unix.Stat_t
+		if (errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EISDIR) || errors.Is(err, unix.ENXIO) || errors.Is(err, unix.EOPNOTSUPP)) &&
+			unix.Fstatat(dirfd, name, &st, unix.AT_SYMLINK_NOFOLLOW) == nil && st.Mode&unix.S_IFMT != unix.S_IFREG {
+			return nil, &notAStateFile{path, fileKind(uint32(st.Mode))}
 		}
-		return nil, err
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
-	info, err := f.Stat()
-	if err == nil && !info.Mode().IsRegular() {
-		err = &notAStateFile{path, fileKind(info.Mode())}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
+		return nil, &os.PathError{Op: "stat", Path: path, Err: err}
 	}
-	if err != nil {
-		_ = f.Close()
-		return nil, err
+	if st.Mode&unix.S_IFMT != unix.S_IFREG {
+		_ = unix.Close(fd)
+		return nil, &notAStateFile{path, fileKind(uint32(st.Mode))}
+	}
+	f := os.NewFile(uintptr(fd), path)
+	if flag&os.O_CREATE != 0 {
+		if err := f.Chmod(0o600); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
 	}
 	return f, nil
+}
+
+// createStateFile opens base in repo's .coop folder through openStateDir's handle, creating it if it
+// is missing. It is an owner-only regular file, or refused as OpenStateFile refuses a reader's.
+func createStateFile(repo, base string, flag int) (*os.File, error) {
+	dir, err := openStateDir(repo)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	return openStateFile(int(dir.Fd()), base, filepath.Join(dir.Name(), base), flag|os.O_CREATE)
+}
+
+// OpenLog opens a fork's log for a loop's output, emptied. Writes append: a child whose start died
+// before its record still holds an earlier open, and its refusal must land after a newer start's
+// output, not over it.
+func OpenLog(repo, name string) (*os.File, error) {
+	return createStateFile(repo, name+".log", os.O_WRONLY|os.O_TRUNC|os.O_APPEND)
 }
 
 // notAStateFile says what Coop found at a fork state file's name. It is deliberately not an
@@ -377,28 +443,28 @@ type notAStateFile struct{ path, found string }
 func (e *notAStateFile) Error() string        { return e.path + " is " + e.found }
 func (e *notAStateFile) Is(target error) bool { return target == ErrNotAStateFile }
 
-// fileKind names the type of a file that is not a regular file, in plain words.
-func fileKind(mode os.FileMode) string {
-	switch {
-	case mode&os.ModeSymlink != 0:
+// fileKind names, in plain words, the type of a file that is not a regular file from its stat mode.
+func fileKind(mode uint32) string {
+	switch mode & unix.S_IFMT {
+	case unix.S_IFLNK:
 		return "a link"
-	case mode&os.ModeNamedPipe != 0:
+	case unix.S_IFIFO:
 		return "a named pipe"
-	case mode.IsDir():
+	case unix.S_IFDIR:
 		return "a folder"
-	case mode&os.ModeSocket != 0:
+	case unix.S_IFSOCK:
 		return "a socket"
-	case mode&os.ModeDevice != 0:
+	case unix.S_IFCHR, unix.S_IFBLK:
 		return "a device"
 	default:
 		return "not a regular file"
 	}
 }
 
-// readWorkerRecord returns a lifecycle record's bytes, opened by OpenStateFile and never more than
-// workerStateLimit of them.
-func readWorkerRecord(path string) ([]byte, error) {
-	f, err := OpenStateFile(path)
+// readWorkerRecord returns the bytes of the lifecycle record name, relative to dirfd as
+// openStateFile opens it, and never more than workerStateLimit of them.
+func readWorkerRecord(dirfd int, name, path string) ([]byte, error) {
+	f, err := openStateFile(dirfd, name, path, os.O_RDONLY)
 	if err != nil {
 		return nil, err
 	}
@@ -418,25 +484,24 @@ func readWorkerRecord(path string) ([]byte, error) {
 }
 
 // WriteWorkerState atomically replaces the record, so a reader sees either the previous complete
-// record or the new one, never a truncated identity.
+// record or the new one, never a truncated identity. The new record is written, renamed into place
+// and, on failure, removed through openStateDir's handle.
 func WriteWorkerState(repo, name string, state WorkerState) error {
 	data, err := state.Marshal()
 	if err != nil {
 		return err
 	}
-	if err := EnsureStateDir(repo); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(StateDir(repo), "."+name+".pid-")
+	dir, err := openStateDir(repo)
 	if err != nil {
 		return err
 	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if err := f.Chmod(0o600); err != nil {
-		_ = f.Close()
+	defer dir.Close()
+	tmp := "." + name + ".pid-" + rand.Text()
+	f, err := openStateFile(int(dir.Fd()), tmp, filepath.Join(dir.Name(), tmp), os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
 		return err
 	}
+	defer unix.Unlinkat(int(dir.Fd()), tmp, 0) // after the rename there is nothing left to remove
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
 		return err
@@ -448,7 +513,25 @@ func WriteWorkerState(repo, name string, state WorkerState) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, PidPath(repo, name))
+	if err := unix.Renameat(int(dir.Fd()), tmp, int(dir.Fd()), name+".pid"); err != nil {
+		return &os.LinkError{Op: "rename", Old: f.Name(), New: PidPath(repo, name), Err: err}
+	}
+	return nil
+}
+
+// RemoveWorkerState deletes a fork's lifecycle record through openStateDir's handle, so a box that
+// swaps .coop for a link cannot make it delete a file elsewhere. As with os.Remove, a missing record
+// is an *os.PathError that matches os.ErrNotExist. The caller holds the lifecycle lock.
+func RemoveWorkerState(repo, name string) error {
+	dir, err := openStateDir(repo)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := unix.Unlinkat(int(dir.Fd()), name+".pid", 0); err != nil {
+		return &os.PathError{Op: "remove", Path: PidPath(repo, name), Err: err}
+	}
+	return nil
 }
 
 // WritePid records a detached worker: its pid, its kernel start token, so a pid reused after a crash
@@ -500,14 +583,20 @@ func ConfirmWorker(repo, name string) (WorkerState, error) {
 // ClearPidIfMine removes the fork's record only while it still names THIS process for generation,
 // so an exiting worker never deletes a replacement that reused its numeric pid. It gives up rather
 // than wait when stop holds the lock: stop is waiting for this process to exit and removes the
-// record itself once the box is gone.
+// record itself once the box is gone. The record it compares is the one it removes: both go
+// through one openStateDir handle.
 func ClearPidIfMine(repo, name string, generation Generation) {
 	unlock, ok := TryLockState(repo, name)
 	if !ok {
 		return
 	}
 	defer unlock()
-	data, err := readWorkerRecord(PidPath(repo, name))
+	dir, err := openStateDir(repo)
+	if err != nil {
+		return
+	}
+	defer dir.Close()
+	data, err := readWorkerRecord(int(dir.Fd()), name+".pid", PidPath(repo, name))
 	if err != nil {
 		return
 	}
@@ -516,7 +605,7 @@ func ClearPidIfMine(repo, name string, generation Generation) {
 		return
 	}
 	if expected, err := mine.Marshal(); err == nil && bytes.Equal(data, expected) {
-		_ = os.Remove(PidPath(repo, name))
+		_ = unix.Unlinkat(int(dir.Fd()), name+".pid", 0)
 	}
 }
 

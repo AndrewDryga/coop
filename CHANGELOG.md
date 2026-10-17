@@ -18,6 +18,18 @@
   one that names an account, still exits 2. Coop now names it before checking any account, wherever
   it sits among the peers, so a fork loop no longer creates the fork first.
 
+- **A box can no longer make Coop change files outside a fork's state folder through its lock, log or
+  loop record.** Coop keeps each
+  fork's lock, log and loop record in `<project>-forks/.coop`. A box started in a folder that
+  contains it, such as a parent folder of the project, could put a link at a fork's lock, and Coop
+  created the file the link pointed to or made it readable only by you. The box could also swap
+  `.coop`, or the forks folder, for a link just after Coop checked it, and Coop then emptied,
+  replaced, deleted or changed the permissions of files in the folder the link pointed to. Coop now
+  opens the forks folder and `.coop` without following a link, and creates, renames and removes
+  these files only inside the folder it opened. It refuses a link, a named pipe or anything else
+  that is not an ordinary file at a lock or a log, and a background start and `coop fork stop` say
+  what they found and how to remove it.
+
 - **A session whose box image is missing says so even when it fails fast.** When the model process
   of a session exited before Coop sent it anything, the turn failed with "ACP frame could not be
   written" instead of the advice to run `coop build`. Coop now reports such a failure the same way

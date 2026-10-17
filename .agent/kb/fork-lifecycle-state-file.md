@@ -90,8 +90,9 @@ in depth — keep it.
 ## Who owns which half
 
 The FILE is `internal/forkspace`'s: paths, the flock (`LockState`, `LockStateContext`,
-`TryLockState`), the wire format (`WorkerState`, `ParseWorkerState`, `Marshal`,
-`Read/WriteWorkerState`, `WritePid`, `ConfirmWorker`, `ClearPidIfMine`) and the identity doctrine
+`TryLockState`), the log open (`OpenLog`), the wire format (`WorkerState`, `ParseWorkerState`,
+`Marshal`, `Read/WriteWorkerState`, `RemoveWorkerState`, `WritePid`, `ConfirmWorker`,
+`ClearPidIfMine`) and the identity doctrine
 (`ProcessIdentityOf`, `OwnerProvablyDead`, `StateOwner`, `RunningPid`, `NeedsStop`). It is a leaf —
 no runtime, no `ui` — so fork commands and the sessions service (which checks `NeedsStop` and takes
 the lock through `LockState` and `LockStateContext`) read one contract. SUPERVISION is
@@ -105,6 +106,16 @@ to a process or a container, or prints, it is supervision.
   `0700` directory. New lifecycle, generation, execution, reservation, assignment, candidate,
   proposal, land, discard, lock and log records are `0600`; opening an existing lock or log also
   tightens its mode.
+- A box whose mount holds the forks folder can swap `.coop` for a link between any check by name
+  and the write, and one whose mount holds the folder above can swap the forks folder itself. So
+  `openStateDir` (behind `EnsureStateDir`) opens the forks folder and then `.coop` without following
+  a link and sets `.coop`'s mode through that handle, and the lock, the log and the worker record
+  are created, renamed and removed only relative to it (`openStateFile`, the readers' open with a
+  folder handle). A lock or log name that holds a link, pipe, folder, socket or device is refused as
+  `ErrNotAStateFile` before any mode change; start and stop then say to remove it. Trap: the other
+  `.coop` writers (generation, executions, reservations, land intents, isolated candidates and the
+  internal/tasks registries) still go by path or through `os.OpenRoot`, which follows a `.coop`
+  link.
 - The host-owned `<name>.generation.json` binds name and generation to a private two-link anchor
   ([[identity-fences-compare-the-inode]]). Workers, runtime labels, executions, assignments,
   candidates and cleanup all carry that exact identity, so `--fresh` cannot rebind a stale
@@ -130,6 +141,14 @@ to a process or a container, or prints, it is supervision.
   not a regular file gets "remove it", not the permissions advice: a log only holds output.
 
 ## Changelog
+- 2026-10-17 — the lock, the log and the worker record are written only through a handle each call opens on
+  `.coop`, opened with the forks folder without following a link: lock and log opens refuse
+  anything but a regular file before their fchmod, the record is renamed and removed with
+  renameat/unlinkat, and `.coop`'s own chmod goes through its descriptor. forkctl's `OpenForkLog`
+  became `forkspace.OpenLog`, stop clears the record with `forkspace.RemoveWorkerState`, and start
+  and stop say to remove whatever stands at a refused lock. Recorded the remaining by-path `.coop`
+  writers as a trap. Re-verified against state.go,
+  supervise.go and fork_cmd.go (task 2026-10-16-create-fork-lock-files-without-following-a-plant).
 - 2026-10-17 — the record and the fork log open through `forkspace.OpenStateFile` (no link
   followed, no FIFO waited on, a regular file only), and the record read stops past 4 KiB; anything
   else is `ErrNotAStateFile`, named by what Coop found. forkctl stopped reading the record's bytes

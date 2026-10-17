@@ -91,75 +91,111 @@ func TestDetachStartFailureLeavesNoRecord(t *testing.T) {
 	}
 }
 
-func TestForkLogIsOwnerOnlyAndDoesNotFollowLinks(t *testing.T) {
-	t.Run("new and reused regular file", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "fork.log")
-		if err := os.WriteFile(path, []byte("old output\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(path, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		file, err := OpenForkLog(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := file.WriteString("new output\n"); err != nil {
-			t.Fatal(err)
-		}
-		if err := file.Close(); err != nil {
-			t.Fatal(err)
-		}
-		info, err := os.Stat(path)
-		if err != nil || info.Mode().Perm() != 0o600 {
-			t.Fatalf("fork log mode = %v, err=%v; want 0600", info, err)
-		}
-		if got, err := os.ReadFile(path); err != nil || string(got) != "new output\n" {
-			t.Fatalf("fork log did not preserve truncate-on-start behavior: %q, %v", got, err)
-		}
-	})
-
-	t.Run("symlink", func(t *testing.T) {
-		outside := filepath.Join(t.TempDir(), "outside.log")
-		if err := os.WriteFile(outside, []byte("keep\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(t.TempDir(), "fork.log")
-		if err := os.Symlink(outside, path); err != nil {
-			t.Fatal(err)
-		}
-		if file, err := OpenForkLog(path); err == nil {
-			_ = file.Close()
-			t.Fatal("symlinked fork log was accepted")
-		}
-		if got, err := os.ReadFile(outside); err != nil || string(got) != "keep\n" {
-			t.Fatalf("symlink target changed: %q, %v", got, err)
-		}
-	})
+// A box whose mount holds a fork's .coop folder can plant a link at the fork's lock or log that
+// points at a file outside the forks tree. A detached start and stop refuse it plainly, with how to
+// remove it, write no record, and leave the file the link points at as it was.
+func TestForkStartAndStopRefuseALinkAtTheLockOrLog(t *testing.T) {
+	start := func(repo string) (int, error) {
+		return (&Control{cfg: &config.Config{}}).DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil)
+	}
+	stop := func(repo string) (int, error) {
+		return (&Control{cfg: &config.Config{RepoOverride: repo}}).ForkStop([]string{"perf"})
+	}
+	lock := func(repo string) string { return forkspace.LockPath(repo, "perf") }
+	for _, tc := range []struct {
+		name string
+		run  func(repo string) (int, error)
+		path func(repo string) string
+		want string // %[1]s is the planted path
+	}{
+		{name: "start/lock", run: start, path: lock,
+			want: "lock fork perf state: %[1]s is a link — remove it: rm -- %[1]q, then retry the original coop fork command"},
+		{name: "start/log", run: start, path: func(repo string) string { return forkspace.LogPath(repo, "perf") },
+			want: "fork perf log: %[1]s is a link — remove it: rm -- %[1]q, then retry"},
+		{name: "stop/lock", run: stop, path: lock,
+			want: "lock fork perf state: %[1]s is a link — remove it: rm -- %[1]q, then retry: coop fork stop perf"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// repo itself is never created, so a start that wrongly got past the log fails to start
+			// its worker there instead of re-executing the test binary.
+			repo := filepath.Join(t.TempDir(), "proj")
+			if err := os.MkdirAll(forkspace.Workspace(repo, "perf"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := forkspace.EnsureStateDir(repo); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(t.TempDir(), "user-file")
+			if err := os.WriteFile(outside, []byte("keep\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(outside, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			path := tc.path(repo)
+			if err := os.Symlink(outside, path); err != nil {
+				t.Fatal(err)
+			}
+			code, err := tc.run(repo)
+			if want := fmt.Sprintf(tc.want, path); code != -1 || err == nil || err.Error() != want {
+				t.Fatalf("%s over a link = (%d, %v), want (-1, %s)", tc.name, code, err, want)
+			}
+			if pathExists(forkspace.PidPath(repo, "perf")) {
+				t.Fatal("the refused command wrote a worker record")
+			}
+			info, statErr := os.Stat(outside)
+			got, readErr := os.ReadFile(outside)
+			if statErr != nil || readErr != nil || info.Mode().Perm() != 0o644 || string(got) != "keep\n" {
+				t.Fatalf("the file the link points at changed: %v %q, %v, %v", info, got, statErr, readErr)
+			}
+		})
+	}
 }
 
-// A child whose start died before its record still writes through that start's open of the log.
-// Its refusal must land after a newer start's output, not over it.
-func TestForkLogEarlierOpenAppendsAfterANewerStart(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "fork.log")
-	earlier, err := OpenForkLog(path)
+// A box that can write the forks folder can swap .coop for a link to a folder elsewhere while stop
+// runs. Stop clears the worker record through the folder it opened, never through the link: the
+// record the link reaches stays, and stop refuses plainly and keeps its own record to retry with.
+func TestForkStopNeverRemovesARecordThroughASwappedStateFolder(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(forkspace.Workspace(repo, "perf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := forkspace.WriteWorkerState(repo, "perf", deadWorker); err != nil {
+		t.Fatal(err)
+	}
+	record, err := os.ReadFile(forkspace.PidPath(repo, "perf"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer earlier.Close()
-	newer, err := OpenForkLog(path)
-	if err != nil {
+	outside := filepath.Join(dir, "outside")
+	if err := os.Mkdir(outside, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	defer newer.Close()
-	if _, err := newer.WriteString("newer start output\n"); err != nil {
+	if err := os.WriteFile(filepath.Join(outside, "perf.pid"), record, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := earlier.WriteString("refused\n"); err != nil {
+	// The runtime's ps runs after stop took the lock and read the record, and before it clears it.
+	runtimeCLI := filepath.Join(dir, "runtime")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+if [ "$1" = ps ]; then
+	mv "$COOP_TEST_STATE" "$COOP_TEST_STATE.pinned" && ln -s "$COOP_TEST_OUTSIDE" "$COOP_TEST_STATE"
+fi
+`), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := os.ReadFile(path); err != nil || string(got) != "newer start output\nrefused\n" {
-		t.Fatalf("log = %q, %v; want the refusal after the newer start's output", got, err)
+	t.Setenv("COOP_TEST_STATE", forkspace.StateDir(repo))
+	t.Setenv("COOP_TEST_OUTSIDE", outside)
+	a := &Control{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}}
+	code, err := a.ForkStop([]string{"perf"})
+	want := fmt.Sprintf("fork perf box is gone, but its cleanup state could not be cleared: fork state path %q is not a real directory", forkspace.StateDir(repo))
+	if code != 1 || err == nil || !strings.HasPrefix(err.Error(), want) || !strings.HasSuffix(err.Error(), "then retry: coop fork stop perf") {
+		t.Fatalf("stop across the swap = (%d, %v), want (1, %s …)", code, err, want)
+	}
+	for _, path := range []string{filepath.Join(outside, "perf.pid"), filepath.Join(forkspace.StateDir(repo)+".pinned", "perf.pid")} {
+		if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, record) {
+			t.Fatalf("%s = %q, %v; want the record kept", path, got, err)
+		}
 	}
 }
 
