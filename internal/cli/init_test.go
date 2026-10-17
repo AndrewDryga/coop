@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bufio"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -403,5 +405,161 @@ func TestInitReportsAPendingNetworkRequestOnlyWhenThereIsOne(t *testing.T) {
 	// The file a human edited is not rewritten by the re-init.
 	if after, _ := os.ReadFile(project); !strings.Contains(string(after), "docs.example.com") {
 		t.Errorf("re-init rewrote project.yaml:\n%s", after)
+	}
+}
+
+// Coop init edits .gitignore by writing a temporary copy beside it. When .coopignore hides
+// .gitignore from the box, init stops before it writes anything, first run or re-run, names the
+// file and says to stop hiding it.
+func TestInitRefusesAHiddenGitignore(t *testing.T) {
+	hermeticGit(t)
+	for _, state := range []string{"first init", "re-init"} {
+		t.Run(state, func(t *testing.T) {
+			repo := t.TempDir()
+			if state == "re-init" {
+				repo = initializedProject(t)
+			}
+			for name, body := range map[string]string{".coopignore": ".gitignore\n", ".gitignore": "node_modules/\n"} {
+				if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := snapshotInitTree(t, repo)
+			a, _ := initApp(t, repo)
+			var code int
+			out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+			if code != 1 {
+				t.Fatalf("init with a hidden .gitignore exited %d:\n%s", code, out)
+			}
+			for _, want := range []string{
+				"Could not update .gitignore",
+				"Coop will not edit .gitignore because it is hidden from the box.",
+				"Stop hiding .gitignore in .coopignore, then run coop init again.",
+				"No files were changed.",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("missing %q:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, "Setting up Coop") {
+				t.Errorf("the refusal followed setup progress:\n%s", out)
+			}
+			if changed := initTreeChange(before, snapshotInitTree(t, repo)); changed != "" {
+				t.Fatalf("refused init changed %s", changed)
+			}
+		})
+	}
+}
+
+// A .coopignore that coop init cannot read stops it, and the refusal names that .coopignore and how
+// to fix it, not the file init was editing: .gitignore before anything is written, the Compose file
+// for --services, and .agent/project.yaml when a task queue is registered at the end of setup.
+func TestInitNamesAnUnreadableCoopignore(t *testing.T) {
+	hermeticGit(t)
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		plant     func(t *testing.T, repo string)
+		unchanged bool // the refusal comes before init writes anything
+		want      []string
+	}{
+		{"coop init with a linked .coopignore", nil, func(t *testing.T, repo string) {
+			if err := os.WriteFile(filepath.Join(repo, "rules"), []byte(".env\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("rules", filepath.Join(repo, ".coopignore")); err != nil {
+				t.Fatal(err)
+			}
+		}, true, []string{
+			"Could not read .coopignore",
+			".coopignore is a link, so it hides nothing from the box.",
+			"Make .coopignore a readable regular file of at most 1 MiB, then run coop init again.",
+			"No files were changed.",
+		}},
+		{"coop init --services with a FIFO .coopignore", []string{"--services", "postgres"}, func(t *testing.T, repo string) {
+			if err := os.Mkdir(filepath.Join(repo, "config"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(filepath.Join(repo, "config", ".coopignore"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("box:\n  compose: config/compose.yml\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, true, []string{
+			"Could not read config/.coopignore",
+			"config/.coopignore is not a regular file, so it hides nothing from the box.",
+			"Make config/.coopignore a readable regular file of at most 1 MiB, then run coop init --services again.",
+			"No services were changed.",
+		}},
+		{"task queue registration with a .coopignore over 1 MiB", nil, func(t *testing.T, repo string) {
+			if err := os.MkdirAll(filepath.Join(repo, "api", ".agent"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			padding := strings.Repeat("# padding\n", 1<<20/10+1)
+			if err := os.WriteFile(filepath.Join(repo, ".agent", ".coopignore"), []byte(padding), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, false, []string{
+			"Could not read .agent/.coopignore",
+			".agent/.coopignore is larger than 1 MiB.",
+			"Make .agent/.coopignore a readable regular file of at most 1 MiB, then run coop init again.",
+			"Files already created have been kept.",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initializedProject(t)
+			tc.plant(t, repo)
+			before := snapshotInitTree(t, repo)
+			a, _ := initApp(t, repo)
+			var code int
+			out := captureTerminal(t, func() { code, _ = a.cmdInit(tc.args) })
+			if code != 1 {
+				t.Fatalf("exited %d:\n%s", code, out)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("missing %q:\n%s", want, out)
+				}
+			}
+			if changed := initTreeChange(before, snapshotInitTree(t, repo)); tc.unchanged && changed != "" {
+				t.Fatalf("refused init changed %s", changed)
+			}
+		})
+	}
+}
+
+// initTreeChange names an entry that differs between two snapshots of a tree, or is "" when none does.
+func initTreeChange(before, after map[string]initTreeEntry) string {
+	for name := range after {
+		if _, ok := before[name]; !ok {
+			return name
+		}
+	}
+	for name, want := range before {
+		got, ok := after[name]
+		if !ok || !os.SameFile(want.info, got.info) || want.info.Mode() != got.info.Mode() || want.data != got.data || want.link != got.link {
+			return name
+		}
+	}
+	return ""
+}
+
+// The remedy follows the refusal: a file .coopignore hides is fixed by no longer hiding it, a path
+// that leads to a hidden file or is not a regular file by fixing the path, anything else possibly by
+// permissions.
+func TestInitFixMatchesTheRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{scaffold.HiddenFile{File: ".agent/project.yaml"}, "Stop hiding .agent/project.yaml in .coopignore, then run coop init again."},
+		{scaffold.HiddenFile{File: ".agent/project.yaml", LeadsTo: "secrets/project.yaml"}, "Fix the path, then run coop init again."},
+		{fmt.Errorf("create: %w", scaffold.ErrNotRegular), "Fix the path, then run coop init again."},
+		{fs.ErrPermission, "Fix the path or permissions, then run coop init again."},
+	} {
+		if got := initFix(tc.err); got != tc.want {
+			t.Errorf("initFix(%v) = %q, want %q", tc.err, got, tc.want)
+		}
 	}
 }

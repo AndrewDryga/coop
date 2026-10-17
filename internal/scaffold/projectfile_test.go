@@ -3,11 +3,14 @@ package scaffold
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/project"
@@ -378,6 +381,286 @@ func TestInPlaceEditsRefuseLeafLinks(t *testing.T) {
 			})
 		}
 	}
+}
+
+// An in-place edit writes a temporary copy beside the file and renames it into place, both readable
+// wherever the box can read that directory. A box can point box.compose at a file hidden from it, or
+// link .agent into a hidden folder, so every in-place edit refuses a file the box cannot see, judged
+// on the path links lead to, before it reads or writes anything.
+func TestInPlaceEditsRefuseHiddenFiles(t *testing.T) {
+	const secret = "password: hunter2\n" // a mapping, which the Compose and project.yaml readers accept
+	// A wildcard rule hides by path only, so the link case is hidden only where the link leads.
+	hiddenByRule := map[string]string{".coopignore": "config/*.yml\n", "config/prod.yml": secret}
+	// A nested .coopignore rules only its own directory, so the link case is hidden only there too.
+	hiddenNested := map[string]string{"config/.coopignore": "prod.yml\n", "config/prod.yml": secret}
+	for _, tc := range []struct {
+		name  string
+		files map[string]string // written before the edit
+		links map[string]string // link -> relative target
+		edit  string            // the Compose path to add a service to, project.File or .gitignore
+		want  string            // the refusal
+	}{
+		{"compose at a secret name", map[string]string{"config/database.yml": secret}, nil, "config/database.yml",
+			"coop will not edit config/database.yml because it is hidden from the box"},
+		{"compose hidden by .coopignore", hiddenByRule, nil, "config/prod.yml",
+			"coop will not edit config/prod.yml because it is hidden from the box"},
+		{"compose through a link to a .coopignore-hidden file", hiddenByRule, map[string]string{"deploy": "config"}, "deploy/prod.yml",
+			"coop will not edit deploy/prod.yml because it leads to config/prod.yml, which is hidden from the box"},
+		{"compose hidden by a nested .coopignore", hiddenNested, nil, "config/prod.yml",
+			"coop will not edit config/prod.yml because it is hidden from the box"},
+		{"compose through a link to a file a nested .coopignore hides", hiddenNested, map[string]string{"deploy": "config"}, "deploy/prod.yml",
+			"coop will not edit deploy/prod.yml because it leads to config/prod.yml, which is hidden from the box"},
+		{"compose not created at a hidden path", map[string]string{".coopignore": "config/*.yml\n", "config/app.json": "{}\n"}, nil, "config/prod.yml",
+			"coop will not edit config/prod.yml because it is hidden from the box"},
+		{"project.yaml hidden by .coopignore", map[string]string{".coopignore": ".agent/project.yaml\n", ".agent/project.yaml": "subprojects:\n  - portal\n"}, nil, project.File,
+			"coop will not edit .agent/project.yaml because it is hidden from the box"},
+		{"project.yaml through .agent linked into a secret folder", map[string]string{"secrets/project.yaml": "subprojects:\n  - portal\n"}, map[string]string{".agent": "secrets"}, project.File,
+			"coop will not edit .agent/project.yaml because it leads to secrets/project.yaml, which is hidden from the box"},
+		{".gitignore hidden by .coopignore", map[string]string{".coopignore": ".gitignore\n", ".gitignore": "node_modules/\n"}, nil, ".gitignore",
+			"coop will not edit .gitignore because it is hidden from the box"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			for rel, body := range tc.files {
+				path := filepath.Join(repo, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeComposeFixture(t, path, body)
+			}
+			for link, target := range tc.links {
+				if err := os.Symlink(target, filepath.Join(repo, link)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := repoTree(t, repo)
+			var err error
+			switch tc.edit {
+			case project.File:
+				_, err = RegisterSubprojects(repo, []string{"infra", "portal"})
+			case ".gitignore":
+				err = (&scaffolder{repo: repo}).updateGitignore(nil, writeAndSync)
+			default:
+				var out ComposeAddition
+				out, err = AddComposeServices(repo, tc.edit, []string{"postgres"})
+				if out.Created || len(out.Added) != 0 {
+					t.Errorf("refused addition reports %+v", out)
+				}
+			}
+			if !errors.As(err, new(HiddenFile)) || err.Error() != tc.want {
+				t.Fatalf("edit = %v, want %q", err, tc.want)
+			}
+			if after := repoTree(t, repo); !maps.Equal(after, before) {
+				t.Fatalf("refused edit changed the repository:\nbefore %q\nafter  %q", before, after)
+			}
+		})
+	}
+}
+
+// The rules are read through the directories the edit holds open. A box that swaps a held directory
+// for one without a .coopignore, after it was opened and before its rules were read, must still be
+// refused: otherwise coop judges the empty newcomer, reads the real file through the held directory
+// and stages a copy of it there, under the name the box moved it to.
+func TestHiddenCheckReadsRulesFromHeldDirectories(t *testing.T) {
+	repo := t.TempDir()
+	config, moved := filepath.Join(repo, "config"), filepath.Join(repo, "moved")
+	if err := os.Mkdir(config, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const secret = "password: hunter2\n"
+	writeComposeFixture(t, filepath.Join(config, ".coopignore"), "prod.yml\n")
+	writeComposeFixture(t, filepath.Join(config, "prod.yml"), secret)
+	previous := afterDirHeld
+	t.Cleanup(func() { afterDirHeld = previous })
+	afterDirHeld = func(dirRel string) {
+		if dirRel != "config" {
+			return
+		}
+		if err := os.Rename(config, moved); err != nil {
+			t.Error(err)
+		}
+		if err := os.Mkdir(config, 0o755); err != nil {
+			t.Error(err)
+		}
+	}
+	_, err := AddComposeServices(repo, "config/prod.yml", []string{"postgres"})
+	if !errors.As(err, new(HiddenFile)) {
+		t.Fatalf("edit after the swap = %v, want a hidden-file refusal", err)
+	}
+	want := map[string]string{"config": "directory", "moved": "directory", "moved/.coopignore": "prod.yml\n", "moved/prod.yml": secret}
+	if got := repoTree(t, repo); !maps.Equal(got, want) {
+		t.Fatalf("repository after the refusal:\n got %q\nwant %q", got, want)
+	}
+}
+
+// The rules come from every .coopignore on the way to the file, and coop reads only a regular file
+// of at most 1 MiB. Any other .coopignore stops the edit, since coop cannot tell what it hides, and
+// the refusal names that .coopignore and why, not the file being edited. The box's own visibility
+// rules skip one that is not a regular file, so then the reason says it hides nothing from the box.
+func TestInPlaceEditsRefuseAnUnreadableCoopignore(t *testing.T) {
+	for _, tc := range []struct {
+		name, at, want string
+		plant          func(t *testing.T, path string)
+	}{
+		{"a link", ".coopignore", ".coopignore is a link, so it hides nothing from the box", func(t *testing.T, path string) {
+			// Followed, the link's rules would hide the Compose file and give a different refusal.
+			writeComposeFixture(t, filepath.Join(filepath.Dir(path), "rules"), "config/compose.yml\n")
+			if err := os.Symlink("rules", path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a folder", "config/.coopignore", "config/.coopignore is a folder, so it hides nothing from the box", func(t *testing.T, path string) {
+			if err := os.Mkdir(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a FIFO", "config/.coopignore", "config/.coopignore is not a regular file, so it hides nothing from the box", func(t *testing.T, path string) {
+			if err := syscall.Mkfifo(path, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a file over 1 MiB", ".coopignore", ".coopignore is larger than 1 MiB", func(t *testing.T, path string) {
+			writeComposeFixture(t, path, strings.Repeat("# padding\n", 1<<20/10+1))
+		}},
+		{"a file without read permission", "config/.coopignore", "config/.coopignore cannot be read: permission denied", func(t *testing.T, path string) {
+			if os.Geteuid() == 0 {
+				t.Skip("root reads a file without read permission")
+			}
+			writeComposeFixture(t, path, "compose.yml\n")
+			if err := os.Chmod(path, 0); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			if err := os.Mkdir(filepath.Join(repo, "config"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeComposeFixture(t, filepath.Join(repo, "config", "compose.yml"), "services: {}\n")
+			tc.plant(t, filepath.Join(repo, filepath.FromSlash(tc.at)))
+			before := repoTree(t, repo)
+			_, err := AddComposeServices(repo, "config/compose.yml", []string{"postgres"})
+			var unreadable UnreadableCoopignore
+			if !errors.As(err, &unreadable) || unreadable.File != tc.at || unreadable.Error() != tc.want {
+				t.Fatalf("edit = %v, want %q", err, tc.want)
+			}
+			if after := repoTree(t, repo); !maps.Equal(after, before) {
+				t.Fatalf("refused edit changed the repository:\nbefore %q\nafter  %q", before, after)
+			}
+		})
+	}
+}
+
+// openRealDir opens only a name Lstat finds to be a real directory: the hidden check judges the real
+// path, and opening a link there would put the edit in another directory than the one judged.
+func TestOpenRealDirRefusesALink(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("config", filepath.Join(repo, "deploy")); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if dir, _, err := openRealDir(root, "deploy"); err == nil {
+		_ = dir.Close()
+		t.Fatal("opened a directory through a link")
+	}
+	dir, stored, err := openRealDir(root, "config")
+	if err != nil || stored != "config" {
+		t.Fatalf("real directory = %q, %v", stored, err)
+	}
+	_ = dir.Close()
+}
+
+// A Mac volume ignores case by default, so CONFIG/prod.yml opens config/prod.yml, while the box's
+// mounts hide by the stored name. The check judges stored names, so another spelling of a folder or
+// a file cannot slip past a .coopignore rule. A volume that tells names apart by case, as Linux ones
+// do, has no other spelling that reaches the file: there the edit makes a new file of its own. Either
+// way the hidden file is never touched and nothing is staged beside it.
+func TestInPlaceEditsJudgeStoredNames(t *testing.T) {
+	for _, edit := range []string{"CONFIG/prod.yml", "config/PROD.yml"} {
+		t.Run(edit, func(t *testing.T) {
+			repo := t.TempDir()
+			config := filepath.Join(repo, "config")
+			if err := os.Mkdir(config, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			_, statErr := os.Lstat(filepath.Join(repo, "CONFIG"))
+			// A wildcard rule hides by path only, and matches neither spelling as written.
+			writeComposeFixture(t, filepath.Join(repo, ".coopignore"), "config/prod.*\n")
+			const secret = "password: hunter2\n"
+			writeComposeFixture(t, filepath.Join(config, "prod.yml"), secret)
+			before := repoTree(t, repo)
+			_, err := AddComposeServices(repo, edit, []string{"postgres"})
+			if statErr == nil {
+				want := "coop will not edit " + edit + " because it leads to config/prod.yml, which is hidden from the box"
+				if !errors.As(err, new(HiddenFile)) || err.Error() != want {
+					t.Fatalf("edit = %v, want %q", err, want)
+				}
+				if after := repoTree(t, repo); !maps.Equal(after, before) {
+					t.Fatalf("refused edit changed the repository:\nbefore %q\nafter  %q", before, after)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%s names a new file on this volume: %v", edit, err)
+			}
+			after := repoTree(t, repo)
+			if after["config/prod.yml"] != secret {
+				t.Fatalf("hidden file changed: %q", after["config/prod.yml"])
+			}
+			for name := range after {
+				if strings.Contains(name, ".coop-") {
+					t.Fatalf("temporary file %s left behind", name)
+				}
+			}
+		})
+	}
+}
+
+// repoTree records every entry under repo, a file's content and a link's target, so a test can show
+// a refused edit changed nothing and left no temporary file behind.
+func repoTree(t *testing.T, repo string) map[string]string {
+	t.Helper()
+	tree := map[string]string{}
+	err := filepath.WalkDir(repo, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || path == repo {
+			return err
+		}
+		rel, err := filepath.Rel(repo, path)
+		if err != nil {
+			return err
+		}
+		switch {
+		case entry.Type()&fs.ModeSymlink != 0:
+			target, err := os.Readlink(path)
+			tree[rel] = "link to " + target
+			return err
+		case entry.IsDir():
+			tree[rel] = "directory"
+		case !entry.Type().IsRegular():
+			tree[rel] = entry.Type().String() // a FIFO: reading one would wait for a writer
+		default:
+			data, err := os.ReadFile(path)
+			if errors.Is(err, fs.ErrPermission) {
+				tree[rel] = "unreadable"
+				return nil
+			}
+			tree[rel] = string(data)
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tree
 }
 
 // A box can replace .gitignore with a link. Following one out of the repository would append Coop's

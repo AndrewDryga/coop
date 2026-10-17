@@ -557,6 +557,23 @@ func coopIgnoreStanza() []string {
 	)
 }
 
+// CheckGitignore refuses a .gitignore that coop init could not edit, without writing anything: one
+// hidden from the box or behind a .coopignore coop cannot read, a link or another entry that is not
+// a regular file. The caller checks first so init stops before it changes the repository, not
+// halfway through; the edit checks again.
+func CheckGitignore(repo string) error {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return fmt.Errorf("open scaffold root %s: %w", repo, err)
+	}
+	defer root.Close()
+	before, present, err := readProjectFile(root, ".gitignore", ".gitignore")
+	if present {
+		_ = before.dir.Close()
+	}
+	return err
+}
+
 // updateGitignore edits .gitignore through the rooted reader and staged replacement the other
 // in-place edits use. A box can write the repository, so .gitignore may be a link it planted to a
 // host file such as ~/.zshrc: the read refuses a link or any other non-regular entry, and the edit

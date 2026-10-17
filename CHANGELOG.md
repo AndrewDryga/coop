@@ -65,6 +65,17 @@
   if no container, running or stopped, still uses it. Images left behind this way before this
   release stay until you run `docker image prune`.
 
+- **`coop init` no longer edits a file hidden from the box.** An agent in a box can set
+  `box.compose`, so it could point `coop init --services` at a file hidden from it, such as
+  `config/database.yml`, and read the copy Coop writes beside a file before renaming it into place.
+  Now `coop init` stops and names the file when the box cannot see the Compose file,
+  `.agent/project.yaml` or `.gitignore`, including through a link or another spelling of its name,
+  and leaves that file untouched. A `.gitignore` it cannot edit now stops `coop init` before it
+  writes anything. Point `box.compose` at a file the box can see, or stop hiding the file in
+  `.coopignore`. `coop init` also stops, and names the `.coopignore`, when a `.coopignore` on the
+  way to one of these files is a link, a folder, unreadable or over 1 MiB. The box skips one that
+  is a link or a folder, so it hides nothing.
+
 - **An interrupted credential renewal no longer locks the account.** When a renewal of an agent's
   sign-in was cut short by Ctrl-C, a lost connection or a provider error, Coop refused that account
   until `coop login`. Now it finishes the renewal from the provider's answer when it got one, and

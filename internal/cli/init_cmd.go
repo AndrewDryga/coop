@@ -187,6 +187,15 @@ func (a *app) cmdInit(args []string) (int, error) {
 		return 1, reported("Could not use --stack "+stack, sentence(firstLine(err)),
 			"Add the tool versions this project needs, then run coop init --stack "+stack+".")
 	}
+	// A .gitignore init could not edit stops it here, before it writes anything, rather than after
+	// it has created half of the project's files.
+	if err := scaffold.CheckGitignore(repo); err != nil {
+		if refused := reportUnreadableCoopignore(err, "coop init", "No files were changed."); refused != nil {
+			return 1, refused
+		}
+		return 1, reported("Could not update .gitignore", sentence(firstLine(err)), initFix(err),
+			"No files were changed.")
+	}
 	// Detect the repo's stack(s) for the commit gate; if nothing's detected and we're at a
 	// terminal, ask rather than guess — coop never imposes a check the repo doesn't use.
 	langs := scaffold.DetectStacks(repo)
@@ -338,14 +347,41 @@ func (a *app) reportUnfilteredRuntime(repo string) {
 // setupFailure reports a scaffold that stopped partway. The writes it already made are real files
 // on disk, so it says so: claiming a rollback that did not happen is worse than the partial state.
 func setupFailure(repo string, err error) error {
-	// An entry that is already something else is not a permissions problem, and telling someone
-	// to chmod their way out of a symlink sends them to the wrong fix.
-	fix := "Fix the path or permissions, then run coop init again."
-	if errors.Is(err, scaffold.ErrNotRegular) {
-		fix = "Fix the path, then run coop init again."
+	if refused := reportUnreadableCoopignore(err, "coop init", "Files already created have been kept."); refused != nil {
+		return refused
 	}
 	return reported("Could not finish Coop setup", sentence(pathReason(repo, "create", err)),
-		fix, "Files already created have been kept.")
+		initFix(err), "Files already created have been kept.")
+}
+
+// reportUnreadableCoopignore reports an edit refused over a .coopignore coop init could not read,
+// and returns nil for any other error. Its headline and fix name that .coopignore, not the file
+// being edited, because the .coopignore is what to fix. rerun is the command to run afterwards and
+// kept says what was left as it was.
+func reportUnreadableCoopignore(err error, rerun, kept string) error {
+	var unreadable scaffold.UnreadableCoopignore
+	if !errors.As(err, &unreadable) {
+		return nil
+	}
+	// Only a period: the reason starts with the path, whose case sentence would change.
+	return reported("Could not read "+unreadable.File, unreadable.Error()+".",
+		fmt.Sprintf("Make %s a readable regular file of at most 1 MiB, then run %s again.", unreadable.File, rerun),
+		kept)
+}
+
+// initFix is the action after coop init refused a path. A file .coopignore hides from the box is
+// fixed by no longer hiding it; one reached through a link, or an entry that is not a regular file,
+// by fixing the path. Neither is a permissions problem, and telling someone to chmod their way out
+// of a symlink sends them to the wrong fix.
+func initFix(err error) string {
+	var hidden scaffold.HiddenFile
+	switch {
+	case errors.As(err, &hidden) && hidden.LeadsTo == "":
+		return fmt.Sprintf("Stop hiding %s in .coopignore, then run coop init again.", hidden.File)
+	case errors.As(err, &hidden), errors.Is(err, scaffold.ErrNotRegular):
+		return "Fix the path, then run coop init again."
+	}
+	return "Fix the path or permissions, then run coop init again."
 }
 
 // addServices is `coop init --services` on an initialized project: an additive edit to the
@@ -384,8 +420,15 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 				fmt.Sprintf("Review %s before adding %s.", rel, titleName(collision.Catalog)),
 				"No services were changed.")
 		}
-		return 1, reported("Could not add services to "+rel, sentence(firstLine(err)),
-			fmt.Sprintf("Fix %s, then run coop init --services again.", rel),
+		if refused := reportUnreadableCoopignore(err, "coop init --services", "No services were changed."); refused != nil {
+			return 1, refused
+		}
+		fix := fmt.Sprintf("Fix %s, then run coop init --services again.", rel)
+		if errors.As(err, new(scaffold.HiddenFile)) {
+			// The box can write box.compose, so the path, not the hidden file, is what to fix.
+			fix = fmt.Sprintf("Point box.compose in %s at a file the box can see.", project.File)
+		}
+		return 1, reported("Could not add services to "+rel, sentence(firstLine(err)), fix,
 			"No services were changed.")
 	}
 	if len(added.Added) == 0 {

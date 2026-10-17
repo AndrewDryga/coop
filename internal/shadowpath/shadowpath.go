@@ -41,7 +41,8 @@ var hardSecretGlobs = []string{
 
 const (
 	CoopIgnoreFile = ".coopignore"
-	ignoreLimit    = 1 << 20
+	// MaxCoopIgnoreBytes is the largest .coopignore read here, exported so a refusal can say so.
+	MaxCoopIgnoreBytes = 1 << 20
 )
 
 type UserGlobs struct {
@@ -184,13 +185,13 @@ func (s *Snapshot) Shadowed(relSlash string) bool {
 }
 
 func snapshotPolicy(dir *os.File, dirRel string, policies map[string]UserGlobs, totalBytes *int64) error {
-	data, err := safefile.ReadRegular(dir, CoopIgnoreFile, ignoreLimit)
+	data, err := safefile.ReadRegular(dir, CoopIgnoreFile, MaxCoopIgnoreBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		policies[dirRel] = UserGlobs{}
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("read repository policy in %q: %w", dirRel, err)
+		return fmt.Errorf("read %s: %w", path.Join(dirRel, CoopIgnoreFile), err)
 	}
 	*totalBytes += int64(len(data))
 	if *totalBytes > MaxSnapshotPolicyBytes {
@@ -273,7 +274,7 @@ func RepoCommentedEntries(repo string) []string {
 		return nil
 	}
 	defer root.Close()
-	data, err := safefile.ReadRegular(root, CoopIgnoreFile, ignoreLimit)
+	data, err := safefile.ReadRegular(root, CoopIgnoreFile, MaxCoopIgnoreBytes)
 	if err != nil {
 		return nil
 	}
@@ -312,7 +313,7 @@ func NewDecider(repo string) func(string) bool {
 		}
 		root, openErr := safefile.OpenRoot(canonical)
 		if openErr == nil {
-			if data, readErr := safefile.ReadRegular(root, rel, ignoreLimit); readErr == nil {
+			if data, readErr := safefile.ReadRegular(root, rel, MaxCoopIgnoreBytes); readErr == nil {
 				g = ParseUserGlobs(data)
 			}
 			_ = root.Close()

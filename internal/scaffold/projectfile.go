@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"github.com/AndrewDryga/coop/internal/taskstate"
 )
 
@@ -110,8 +111,7 @@ func registerSubprojects(repo string, detected []string, write scaffoldFileWrite
 		return nil, fmt.Errorf("open scaffold root %s: %w", repo, err)
 	}
 	defer root.Close()
-	dest := filepath.Join(repo, project.File)
-	before, present, err := readProjectFile(root, project.File, dest)
+	before, present, err := readProjectFile(root, project.File, project.File)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func registerSubprojects(repo string, detected []string, write scaffoldFileWrite
 		return nil, nil // hand-restructured file — leave it alone and let the caller advise
 	}
 	next := []byte(strings.Join(lines, "\n") + "\n")
-	if err := replaceProjectFile(before, dest, next, write); err != nil {
+	if err := replaceProjectFile(before, project.File, next, write); err != nil {
 		return nil, err
 	}
 	return missing, nil
@@ -167,6 +167,8 @@ func registerSubprojects(repo string, detected []string, write scaffoldFileWrite
 // directory it came from; the caller closes dir. Staging and renaming through that same handle
 // keeps the edit where the content was read, even if a box swaps a parent directory for a link in
 // between — otherwise a file hidden from the box could be read and then written where it can look.
+// Only readProjectFile makes one, and it refuses a file hidden from the box, so the temporary file
+// stageProjectFile writes beside the original never lands beside a hidden one.
 type projectFileSnapshot struct {
 	dir  *os.Root
 	name string
@@ -175,18 +177,17 @@ type projectFileSnapshot struct {
 }
 
 func readProjectFile(root *os.Root, rel, display string) (snap projectFileSnapshot, present bool, err error) {
-	dir, err := root.OpenRoot(filepath.Dir(rel))
+	dir, name, err := openVisibleDir(root, rel, display)
 	if errors.Is(err, os.ErrNotExist) {
 		return snap, false, nil
 	} else if err != nil {
-		return snap, false, fmt.Errorf("open %s: %w", display, err)
+		return snap, false, err
 	}
 	defer func() {
 		if !present {
 			_ = dir.Close()
 		}
 	}()
-	name := filepath.Base(rel)
 	// Nonblocking lets the regular-file check refuse a FIFO without waiting for a writer.
 	file, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -221,6 +222,211 @@ type notRegular struct{ file string }
 
 func (e notRegular) Error() string        { return e.file + " must be a regular file" }
 func (e notRegular) Is(target error) bool { return target == ErrNotRegular }
+
+// HiddenFile is an in-place edit refused because the box cannot see the file. LeadsTo is the hidden
+// path the given one reaches through a link or another spelling, or empty. Exported because the
+// remedy differs: stop hiding the file or fix the path, not fix permissions.
+type HiddenFile struct{ File, LeadsTo string }
+
+func (e HiddenFile) Error() string {
+	if e.LeadsTo != "" {
+		return "coop will not edit " + e.File + " because it leads to " + e.LeadsTo + ", which is hidden from the box"
+	}
+	return "coop will not edit " + e.File + " because it is hidden from the box"
+}
+
+// UnreadableCoopignore is an in-place edit refused because a .coopignore on the way to the file is
+// not a regular file of at most 1 MiB that coop can read, so coop cannot tell what it hides. File is
+// that .coopignore's repository-relative path. Exported so coop init names it, and how to fix it,
+// rather than the file it was editing.
+type UnreadableCoopignore struct{ File, Reason string }
+
+func (e UnreadableCoopignore) Error() string { return e.File + " " + e.Reason }
+
+// Injectable only in tests that swap a held directory before its .coopignore is read.
+var afterDirHeld = func(dirRel string) {}
+
+// openVisibleDir opens the directory holding rel for an in-place edit, refusing a file the box
+// cannot see. The edit writes a temporary copy beside the file and renames it over the original,
+// and the box can read both when it can read the directory. A box can write box.compose, so without
+// this check it could point coop init at a file hidden from it, such as config/database.yml, and
+// read the copy.
+//
+// The box hides a file by the path its mounts walk: through real directories (ComputeMounts never
+// follows a link), under the names the volume stores. Links in rel's directory are resolved first,
+// and a case-insensitive volume, the default on a Mac, finds config/prod.yml as CONFIG/prod.yml, so
+// the directory is then opened one real directory at a time, and the stored names found on the way
+// are judged against the .coopignore rules read through those same open directories. Each directory
+// opened must be the one Lstat found there, which stops a box that swaps in a link to another
+// directory after the links were resolved, and reading the rules through the open directories stops
+// one that swaps a directory after it was opened. A .coopignore coop cannot read stops the edit,
+// since coop cannot tell what it hides. A file whose directory does not exist yet is not judged:
+// creating it copies nothing from the repository. The returned name is the file's stored name, or
+// rel's when the file does not exist.
+func openVisibleDir(root *os.Root, rel, display string) (*os.Root, string, error) {
+	repo, err := filepath.EvalSymlinks(root.Name())
+	if err != nil {
+		return nil, "", fmt.Errorf("open %s: %w", display, err)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(repo, filepath.Dir(rel)))
+	if err != nil {
+		return nil, "", fmt.Errorf("open %s: %w", display, err)
+	}
+	realDir, err := filepath.Rel(repo, resolved)
+	if err != nil || !filepath.IsLocal(realDir) {
+		return nil, "", fmt.Errorf("open %s: its folder is outside the repository", display)
+	}
+	dir, err := root.OpenRoot(".")
+	if err != nil {
+		return nil, "", fmt.Errorf("open %s: %w", display, err)
+	}
+	policy, err := heldPolicy(nil, "", dir)
+	if err != nil {
+		_ = dir.Close()
+		return nil, "", fmt.Errorf("read the .coopignore rules for %s: %w", display, err)
+	}
+	var stored []string
+	if realDir != "." {
+		for _, name := range strings.Split(realDir, string(filepath.Separator)) {
+			next, storedDir, err := openRealDir(dir, name)
+			_ = dir.Close()
+			if err != nil {
+				return nil, "", fmt.Errorf("open %s: %w", display, err)
+			}
+			dir, stored = next, append(stored, storedDir)
+			dirRel := path.Join(stored...)
+			afterDirHeld(dirRel)
+			if policy, err = heldPolicy(policy, dirRel, dir); err != nil {
+				_ = dir.Close()
+				return nil, "", fmt.Errorf("read the .coopignore rules for %s: %w", display, err)
+			}
+		}
+	}
+	name, _, err := storedName(dir, filepath.Base(rel))
+	if errors.Is(err, os.ErrNotExist) {
+		name = filepath.Base(rel)
+	} else if err != nil {
+		_ = dir.Close()
+		return nil, "", fmt.Errorf("open %s: %w", display, err)
+	}
+	if realFile := path.Join(append(stored, name)...); policy.Shadowed(realFile) {
+		_ = dir.Close()
+		refusal := HiddenFile{File: display}
+		if realFile != filepath.ToSlash(rel) {
+			refusal.LeadsTo = realFile
+		}
+		return nil, "", refusal
+	}
+	return dir, name, nil
+}
+
+// heldPolicy adds the .coopignore of a directory this edit holds open, read through that same
+// handle. Rules read by path could come from a directory a box swapped in after this one was opened,
+// pairing the bytes of one directory with the rules of another. A nil policy starts at the root.
+func heldPolicy(policy *shadowpath.Snapshot, dirRel string, dir *os.Root) (*shadowpath.Snapshot, error) {
+	held, err := dir.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer held.Close()
+	var next *shadowpath.Snapshot
+	if policy != nil {
+		next, err = policy.Extend(dirRel, held)
+	} else {
+		var tree *os.File
+		if tree, next, err = shadowpath.OpenTree(held, ""); err == nil {
+			_ = tree.Close()
+		}
+	}
+	if err != nil {
+		return nil, unreadableCoopignore(dir, dirRel, err)
+	}
+	return next, nil
+}
+
+// unreadableCoopignore names the .coopignore whose rules a held directory could not supply, and why,
+// from what the directory holds under that name; a failure with no .coopignore there is returned as
+// it is. The box's own visibility rules skip a .coopignore that is not a regular file, so for one
+// the reason says it hides nothing from the box.
+func unreadableCoopignore(dir *os.Root, dirRel string, err error) error {
+	info, statErr := dir.Lstat(shadowpath.CoopIgnoreFile)
+	if errors.Is(statErr, os.ErrNotExist) {
+		return err
+	}
+	reason := ""
+	if statErr == nil {
+		switch mode := info.Mode(); {
+		case mode&os.ModeSymlink != 0:
+			reason = "is a link, so it hides nothing from the box"
+		case mode.IsDir():
+			reason = "is a folder, so it hides nothing from the box"
+		case !mode.IsRegular():
+			reason = "is not a regular file, so it hides nothing from the box"
+		case info.Size() > shadowpath.MaxCoopIgnoreBytes:
+			reason = "is larger than 1 MiB"
+		}
+	}
+	// Anything else, such as a file without read permission, is named by what made the read fail.
+	if reason == "" {
+		cause := err
+		for errors.Unwrap(cause) != nil {
+			cause = errors.Unwrap(cause)
+		}
+		reason = "cannot be read: " + cause.Error()
+	}
+	return UnreadableCoopignore{File: path.Join(dirRel, shadowpath.CoopIgnoreFile), Reason: reason}
+}
+
+// openRealDir opens the real directory Lstat finds at name inside dir and returns the name dir
+// stores for it. os.Root follows a link that stays inside the repository, so a link a box swaps in
+// after the Lstat is opened too; the directory opened must then be the one Lstat found, which refuses
+// a link to any other directory. A link back to that same directory gets through, and the edit still
+// reads the rules and the file from the directory Lstat found.
+func openRealDir(dir *os.Root, name string) (*os.Root, string, error) {
+	stored, named, err := storedName(dir, name)
+	if err != nil {
+		return nil, "", err
+	}
+	if named.IsDir() {
+		child, err := dir.OpenRoot(stored)
+		if err != nil {
+			return nil, "", err
+		}
+		if opened, err := child.Stat("."); err == nil && os.SameFile(named, opened) {
+			return child, stored, nil
+		}
+		_ = child.Close()
+	}
+	return nil, "", fmt.Errorf("%s changed while coop was opening it", name)
+}
+
+// storedName returns the name dir stores for the entry name finds, and that entry's Lstat. They
+// differ only on a volume that finds one name by another spelling, so the listing is searched only
+// then, by identity, which also matches a different Unicode normalization.
+func storedName(dir *os.Root, name string) (string, os.FileInfo, error) {
+	named, err := dir.Lstat(name)
+	if err != nil {
+		return "", nil, err
+	}
+	listing, err := dir.Open(".")
+	if err != nil {
+		return "", nil, err
+	}
+	defer listing.Close()
+	names, err := listing.Readdirnames(-1)
+	if err != nil {
+		return "", nil, err
+	}
+	if slices.Contains(names, name) {
+		return name, named, nil
+	}
+	for _, stored := range names {
+		if info, err := dir.Lstat(stored); err == nil && os.SameFile(info, named) {
+			return stored, named, nil
+		}
+	}
+	return "", nil, fmt.Errorf("%s changed while coop was opening it", name)
+}
 
 // replaceProjectFile writes next beside the file it read and renames it into place, so a failed
 // write leaves the original untouched.

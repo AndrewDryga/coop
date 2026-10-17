@@ -187,7 +187,7 @@ func TestDeciderMatchesShadowed(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer root.Close()
-		data, err := safefile.ReadRegular(root, filepath.Join(filepath.FromSlash(dirRel), CoopIgnoreFile), ignoreLimit)
+		data, err := safefile.ReadRegular(root, filepath.Join(filepath.FromSlash(dirRel), CoopIgnoreFile), MaxCoopIgnoreBytes)
 		if err != nil {
 			return UserGlobs{}
 		}
