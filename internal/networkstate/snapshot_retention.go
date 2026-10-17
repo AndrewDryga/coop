@@ -18,7 +18,9 @@ import (
 // ever removed: a controller job's snapshot is named by its session row for as
 // long as that row exists, rows are never deleted, and they live in session
 // stores under any --state, which this store cannot see; a snapshot written
-// before the marker existed may be such a session's too. The marker's
+// before the marker existed may be such a session's too. One whose own rule says
+// coop net setup's check admitted it cannot be, so the record of the check's run
+// marks it as that record goes, dated to when the run ended. The marker's
 // modification time is when the snapshot was last admitted or loaded, which
 // covers an admission still on its way to its run and a loop or editor session
 // that loads it again for each box.
@@ -30,6 +32,26 @@ func snapshotRecord(fingerprint string) string { return "snapshot-" + fingerprin
 
 func admittedRecord(fingerprint string) string { return "admitted-" + fingerprint + ".json" }
 
+// SetupOrigin is the origin coop net setup gives the one rule its check
+// admits. Retention recognizes by it the check snapshots earlier versions wrote
+// without a marker, so it must not change.
+func SetupOrigin() egress.Origin { return egress.Origin{Kind: "operator", Name: "net-setup"} }
+
+// fromSetupCheck reports whether a snapshot is a setup check's policy: coop net
+// setup granted every rule in it, and it carries no provider, since the check
+// runs no agent. No launch or session admits a rule with that origin.
+func fromSetupCheck(snapshot egress.Snapshot) bool {
+	if len(snapshot.Grants) == 0 || len(snapshot.Dependencies) != 0 {
+		return false
+	}
+	for _, grant := range snapshot.Grants {
+		if len(grant.Origins) != 1 || grant.Origins[0] != SetupOrigin() {
+			return false
+		}
+	}
+	return true
+}
+
 type admittedSnapshot struct {
 	Version     int    `json:"version"`
 	Fingerprint string `json:"fingerprint"`
@@ -38,7 +60,9 @@ type admittedSnapshot struct {
 // lockSnapshots orders what puts a removable snapshot to use, admitting or
 // loading it, against retention's last look before it removes one: the snapshot
 // is either marked in use before that look or found gone after it, never removed
-// in between. Both sides hold it for a few file operations.
+// in between. Both sides hold it for a few file operations. RemoveExpired takes
+// it inside a run's lock to mark a setup check's snapshot, so whoever holds it
+// must never take a run's lock: the two orders would deadlock.
 func (s *Store) lockSnapshots(ctx context.Context, operation func() error) error {
 	ctx, cancel := context.WithTimeout(ctx, ExecutionLockTimeout)
 	defer cancel()
@@ -62,17 +86,69 @@ func (s *Store) markAdmitted(fingerprint string) error {
 	return s.confirmPublication()
 }
 
-// touchAdmitted restarts a removable snapshot's retention window. It sets the
+// touchAdmitted restarts a removable snapshot's retention window. The caller
+// holds lockSnapshots.
+func (s *Store) touchAdmitted(fingerprint string) error {
+	return s.setAdmittedTime(fingerprint, time.Now())
+}
+
+// setAdmittedTime records when a removable snapshot was last used. It sets the
 // time on the marker's own name, never through a link, and reports a missing
 // marker as os.ErrNotExist. The caller holds lockSnapshots.
-func (s *Store) touchAdmitted(fingerprint string) error {
+func (s *Store) setAdmittedTime(fingerprint string, used time.Time) error {
 	dir, err := s.root.Open(".")
 	if err != nil {
 		return err
 	}
 	defer dir.Close()
-	now := unix.NsecToTimespec(time.Now().UnixNano())
-	return unix.UtimesNanoAt(int(dir.Fd()), admittedRecord(fingerprint), []unix.Timespec{now, now}, unix.AT_SYMLINK_NOFOLLOW)
+	at := unix.NsecToTimespec(used.UnixNano())
+	return unix.UtimesNanoAt(int(dir.Fd()), admittedRecord(fingerprint), []unix.Timespec{at, at}, unix.AT_SYMLINK_NOFOLLOW)
+}
+
+// markSetupCheck makes removable the snapshot a setup check's run ran under,
+// when an earlier coop wrote it without a marker, and dates the marker to when
+// that run ended: nothing used the snapshot after it. RemoveExpired calls this
+// under the run's lock, before it removes the run's record, the last thing that
+// names the snapshot. A snapshot already marked, gone, a link, or not proved a
+// setup check's by its own rules is left as it is. An error means it could not
+// look, and keeps the record.
+func (s *Store) markSetupCheck(ctx context.Context, fingerprint string, ended time.Time) error {
+	if !lowerHex(fingerprint, 64) {
+		return nil
+	}
+	// A snapshot this coop's setup admitted is marked already.
+	if _, err := s.root.Lstat(admittedRecord(fingerprint)); err == nil {
+		return nil
+	}
+	return s.lockSnapshots(ctx, func() error {
+		_, err := s.root.Lstat(admittedRecord(fingerprint))
+		if err == nil {
+			return nil // marked since the look above
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		// read opens without following links and accepts only a private regular
+		// file. A snapshot that is gone needs no mark, and a link, which read
+		// refuses with ELOOP, proves nothing, so the record goes and nothing is
+		// marked. Any other error, a file that is not private or a failed read
+		// such as one out of descriptors, keeps the record for the next pass.
+		data, err := s.read(snapshotRecord(fingerprint), maxPrivateRecordBytes)
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, unix.ELOOP) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var snapshot egress.Snapshot
+		if strictJSON(data, &snapshot) != nil || snapshot.ValidateRecorded() != nil || snapshot.Fingerprint != fingerprint || !fromSetupCheck(snapshot) {
+			return nil
+		}
+		if err := s.markAdmitted(fingerprint); err != nil {
+			return err
+		}
+		return s.setAdmittedTime(fingerprint, ended)
+	})
 }
 
 // RemoveUnusedSnapshots deletes the snapshots retention may let go: an admission
@@ -133,7 +209,9 @@ func admittedFingerprint(name string) (string, bool) {
 // not a private regular file, and a snapshot that does not read as the recorded
 // snapshot its name promises keep both. The snapshot goes before its marker, so
 // a snapshot found without one was never marked, and a load needs no lock to
-// trust that; a removal that stops halfway leaves a marker the next pass clears.
+// trust that it stays: only an earlier coop's setup check snapshot is marked
+// later, once the one run that loads it has ended. A removal that stops halfway
+// leaves a marker the next pass clears.
 func (s *Store) removeUnusedSnapshot(ctx context.Context, fingerprint string, now time.Time) (bool, error) {
 	removed := false
 	err := s.lockSnapshots(ctx, func() error {

@@ -105,7 +105,8 @@ type ExecutionSpec struct {
 // Its root is opened without creating/regenerating an owner key. Inspection and
 // exact-owned cleanup do not depend on the source project still existing.
 // Besides a run's own artifacts it deletes only what retention lets go: finished
-// runs' records and unused admitted policy snapshots.
+// runs' records and unused admitted policy snapshots, which include an earlier
+// coop's setup check snapshot once the check's record has marked it.
 type Evidence struct{ files *Store }
 
 func OpenEvidence(path string, exposed []string) (*Evidence, error) {

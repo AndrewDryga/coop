@@ -57,8 +57,14 @@ func sealedWithCleanupOwed(t *testing.T, s *Store, record Execution) Execution {
 
 func anotherRun(t *testing.T, s *Store, like Execution) Execution {
 	t.Helper()
-	record, err := executionSmoke(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: like.Project,
-		PolicyFingerprint: like.Snapshot.PolicyFingerprint, Runtime: like.Runtime, DaemonID: like.DaemonID,
+	return runUnder(t, s, like, like.Project, like.Snapshot.PolicyFingerprint)
+}
+
+// runUnder starts another setup check's run like the given one, under one project's snapshot.
+func runUnder(t *testing.T, s *Store, like Execution, project, fingerprint string) Execution {
+	t.Helper()
+	record, err := executionSmoke(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: project,
+		PolicyFingerprint: fingerprint, Runtime: like.Runtime, DaemonID: like.DaemonID,
 		Endpoint: like.Endpoint, GatewayImage: like.GatewayImage, ClientImage: like.ClientImage})
 	if err != nil {
 		t.Fatal(err)

@@ -207,7 +207,10 @@
   cleanup until that cleanup is done. `coop net runs --all` shows the runs from the last 90 days.
   The copy of a launch's network rules goes too, once no kept run uses it and no launch has used it
   for 90 days, so an editor session that starts no box for that long may have to be started again.
-  Copies made by earlier versions are kept.
+  `coop net setup`, and a filtered launch that sets the host up first, test filtered networking with
+  a short run, and each such check left a copy of its test rules for good (92 on one Mac). That copy
+  now goes once the check's record does, including copies earlier versions made, because Coop wrote
+  in each one that setup made it. Other copies made by earlier versions are kept.
 
 - **Run `coop net setup` once after upgrading.** This release changes both images that filtered runs
   use, the gateway and the client image, so a network setup made by an earlier version no longer

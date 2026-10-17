@@ -4,7 +4,7 @@ description: "every unrecoverable delete routes through the one shared `ui.Destr
 scope: security
 sources: [internal/ui/confirm.go, internal/box/reclaim.go, internal/box/derived_image.go, internal/box/sweep.go, internal/box/network_recover.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go, internal/box/image.go, internal/box/network_setup.go]
 check: "none"
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 # Every unrecoverable delete goes through the one shared confirmation gate
@@ -68,16 +68,25 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 - Narrow exception: Coop's network records are its own bookkeeping, kept for a window. The settle
   pass every filtered launch, loop or fork start and `coop net recover` runs
   (`internal/box/network_recover.go`) removes, unattended, a finished run's record 90 days after the
-  run ended, and an unused policy snapshot with its `admitted-` marker (compiled from the inputs that
-  admitted it, which the next admission with those inputs writes again). It earns that
-  by being narrow: only `execution-<id>.json`, and `snapshot-<fingerprint>.json` with its
+  run ended, and an unused policy snapshot with its `admitted-` marker (a launch's is compiled from
+  the inputs that admitted it, which the next admission with those inputs writes again). It earns
+  that by being narrow: only `execution-<id>.json`, and `snapshot-<fingerprint>.json` with its
   `admitted-<fingerprint>.json`, in the network state directory; never a run still owed cleanup,
   never a snapshot a project admission did not create (a controller job's, which its session row
-  names forever, or one from before the marker), and never an approval, withdrawal, bundle or
-  qualification record; a record that does not read and validate, or is a link, stays; a snapshot
-  goes only after a listing of every run record read whole, when no run names it and nothing
-  admitted or loaded it for 90 days; and the last look happens under the run's or the snapshot
-  lock, so nothing put to use since is removed.
+  names forever, or one from before the marker, except the setup check's below), and never an
+  approval, withdrawal, bundle or qualification record; a record that does not read and validate,
+  or is a link, stays; a snapshot goes only after a listing of every run record read whole, when
+  no run names it and nothing admitted or loaded it for 90 days; and the last look happens under
+  the run's or the snapshot lock, so nothing put to use since is removed. A `coop net setup`
+  check's snapshot is never written again, and is safe to remove for another reason: only the
+  check's own run names or loads it, nothing else admits a rule with `networkstate.SetupOrigin()`,
+  and a crashed setup is rerun in a new scratch project, never resumed (`QualificationSmoke`), so
+  nothing loads it once that run has ended. Setup also deletes the scratch project the snapshot is
+  scoped to when it returns, though not when it is killed. One from before the marker goes only on
+  this proof: the check's expiring run record (`execution-<id>.json`, purpose `qualification`)
+  names it; it has at least one grant; every grant's only origin is `networkstate.SetupOrigin()`;
+  and it names no provider (no dependencies). That record marks it just before it goes, dated to
+  the run's end, and the next pass removes it.
 - Narrow exception: `<task>/tmp/` is lifecycle-declared disposable scratch, not retained user state.
   Reaching done may remove exactly that containment-checked child without a second prompt (the loop
   cannot prompt), but it must preserve `artifacts/` and every other task file, refuse path escape or
@@ -87,6 +96,13 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
 
 ## Changelog
+- 2026-10-17 — the network-records exception now covers a `coop net setup` check's snapshot,
+  safe to remove because only the check's own run names or loads it and a crashed setup is rerun,
+  never resumed (not because an admission writes it again). One from before markers needs the
+  exact proof the bullet lists, checked as the check's expiring run record (`execution-<id>.json`,
+  purpose `qualification`) goes; that record marks it, dated to the run's end, and the next pass
+  removes it. Swept the change: the one new write is that marker, the one new removal candidate is
+  such a snapshot, and every other snapshot from before markers still stays.
 - 2026-10-16 — named the settle pass's network retention as a narrow exception when it began
   removing unused policy snapshots. Swept every delete under `~/.local/state/coop/network`: the
   90-day run-record retention (`RemoveExpired`, 2026-10-15) had landed without a bullet and is

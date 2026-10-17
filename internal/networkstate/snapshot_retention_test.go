@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -297,6 +298,182 @@ func TestSnapshotRetentionKeepsLinksAndWhatItCannotRead(t *testing.T) {
 	for _, fingerprint := range []string{garbled, misnamed, directory, shared} {
 		if !recordExists(t, s, snapshotRecord(fingerprint)) || !recordExists(t, s, admittedRecord(fingerprint)) {
 			t.Fatalf("snapshot-%s.json or its marker was removed", fingerprint[:8])
+		}
+	}
+}
+
+// unmarkedRun admits these rules for a new project, drops the marker as a coop without markers never
+// wrote one, and finishes a setup check's run under that snapshot.
+func unmarkedRun(t *testing.T, s *Store, like Execution, inputs ...egress.Input) Execution {
+	t.Helper()
+	mode := egress.Filtered
+	project := t.TempDir()
+	policy, err := s.Admit(project, Admission{InvocationMode: &mode, Operator: inputs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(s.Path(), admittedRecord(policy.Fingerprint))); err != nil {
+		t.Fatal(err)
+	}
+	return finishedRun(t, s, runUnder(t, s, like, project, policy.Fingerprint))
+}
+
+// A setup check's snapshot from before markers is recognized by its own rule when retention removes
+// the record of the check's run, the last thing that names it. Dated to when that run ended, it goes
+// with the next pass. A launch's from before markers stays, and so does one a setup rule is only part
+// of, though a setup check's run names them too: a session this store cannot see may use them.
+func TestRetentionMarksASetupCheckSnapshotAsItsRunsRecordGoes(t *testing.T) {
+	s, live := executionFixture(t)
+	setup := egress.Input{Origin: SetupOrigin(), Rules: []egress.Rule{rule("example.com")}}
+	check := unmarkedRun(t, s, live, setup)
+	launch := unmarkedRun(t, s, live)
+	mixed := unmarkedRun(t, s, live, setup, egress.Input{Origin: egress.Origin{Kind: "operator", Name: "allow-domain"}, Rules: []egress.Rule{rule("docs.example.com")}})
+	evidence := retentionEvidence(t, s)
+	ctx := context.Background()
+	marked := func(run Execution) bool { return recordExists(t, s, admittedRecord(run.Snapshot.PolicyFingerprint)) }
+
+	soon := time.Now().Add(ExecutionRetention - time.Hour)
+	if removed, err := evidence.RemoveExpired(ctx, check.ID, soon); removed || err != nil || marked(check) {
+		t.Fatalf("a setup check's record inside its window: removed %v, %v, snapshot marked %v", removed, err, marked(check))
+	}
+	later := time.Now().Add(ExecutionRetention + time.Hour)
+	for _, run := range []Execution{check, launch, mixed} {
+		if removed, err := evidence.RemoveExpired(ctx, run.ID, later); !removed || err != nil {
+			t.Fatalf("RemoveExpired = %v, %v; want the finished run's record removed", removed, err)
+		}
+	}
+	marker, err := os.Lstat(filepath.Join(s.Path(), admittedRecord(check.Snapshot.PolicyFingerprint)))
+	if err != nil {
+		t.Fatal("the setup check's snapshot was not marked", err)
+	}
+	if ended := *check.Receipt.EndedAt; !marker.ModTime().Equal(ended) {
+		t.Fatalf("marked as last used at %v; want when its run ended, %v", marker.ModTime(), ended)
+	}
+	if marked(launch) || marked(mixed) {
+		t.Fatalf("marked a snapshot setup did not grant alone: launch %v, mixed %v", marked(launch), marked(mixed))
+	}
+
+	removed, err := evidence.RemoveUnusedSnapshots(ctx, map[string]bool{live.Snapshot.PolicyFingerprint: true}, later)
+	if err != nil || removed != 1 || recordExists(t, s, snapshotRecord(check.Snapshot.PolicyFingerprint)) {
+		t.Fatalf("RemoveUnusedSnapshots = %d, %v; want only the setup check's snapshot removed", removed, err)
+	}
+	for _, run := range []Execution{launch, mixed, live} {
+		if !recordExists(t, s, snapshotRecord(run.Snapshot.PolicyFingerprint)) {
+			t.Fatal("a snapshot that is not an unused setup check's was removed")
+		}
+	}
+}
+
+// A pass that cannot mark a setup check's snapshot keeps the record of the check's run, the last
+// thing that names the snapshot, so the next pass tries both again. Removing the record anyway would
+// leave the snapshot unmarked for good.
+func TestRetentionKeepsASetupCheckRecordUntilItsSnapshotIsMarked(t *testing.T) {
+	s, live := executionFixture(t)
+	check := unmarkedRun(t, s, live, egress.Input{Origin: SetupOrigin(), Rules: []egress.Rule{rule("example.com")}})
+	evidence := retentionEvidence(t, s)
+	later := time.Now().Add(ExecutionRetention + time.Hour)
+	record, marker := "execution-"+check.ID+".json", admittedRecord(check.Snapshot.PolicyFingerprint)
+
+	// Another process holds the snapshot lock past the pass's deadline.
+	held, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var holding error
+	go func() {
+		defer close(done)
+		holding = s.lockSnapshots(context.Background(), func() error { close(held); <-release; return nil })
+	}()
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(func() { unblock(); <-done })
+	select {
+	case <-held:
+	case <-done:
+		t.Fatal("the snapshot lock was never held:", holding)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if removed, err := evidence.RemoveExpired(ctx, check.ID, later); removed || !errors.Is(err, context.DeadlineExceeded) ||
+		!recordExists(t, s, record) || recordExists(t, s, marker) {
+		t.Fatalf("RemoveExpired while the snapshot lock is held = %v, %v; record kept %v, snapshot marked %v; want an error and the record kept",
+			removed, err, recordExists(t, s, record), recordExists(t, s, marker))
+	}
+
+	unblock()
+	<-done
+	if removed, err := evidence.RemoveExpired(context.Background(), check.ID, later); !removed || err != nil || !recordExists(t, s, marker) {
+		t.Fatalf("the next pass = %v, %v, snapshot marked %v; want the record removed and the snapshot marked",
+			removed, err, recordExists(t, s, marker))
+	}
+}
+
+// A setup check's snapshot the pass fails to read keeps the record of the check's run, so the next
+// pass reads it again. Only a snapshot that is gone, or a link read refuses, lets the record go with
+// nothing marked. No seam injects EMFILE or EIO, so a mode that forbids reading fails the same read.
+func TestRetentionKeepsASetupCheckRecordWhileItsSnapshotCannotBeRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its mode")
+	}
+	s, live := executionFixture(t)
+	setup := egress.Input{Origin: SetupOrigin(), Rules: []egress.Rule{rule("example.com")}}
+	unreadable, gone, linked := unmarkedRun(t, s, live, setup), unmarkedRun(t, s, live, setup), unmarkedRun(t, s, live, setup)
+	evidence := retentionEvidence(t, s)
+	ctx := context.Background()
+	later := time.Now().Add(ExecutionRetention + time.Hour)
+	path := func(run Execution) string {
+		return filepath.Join(s.Path(), snapshotRecord(run.Snapshot.PolicyFingerprint))
+	}
+	kept := func(run Execution) bool { return recordExists(t, s, "execution-"+run.ID+".json") }
+	marked := func(run Execution) bool { return recordExists(t, s, admittedRecord(run.Snapshot.PolicyFingerprint)) }
+
+	if err := os.Chmod(path(unreadable), 0); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := evidence.RemoveExpired(ctx, unreadable.ID, later); removed || !errors.Is(err, os.ErrPermission) || !kept(unreadable) || marked(unreadable) {
+		t.Fatalf("RemoveExpired while the snapshot cannot be read = %v, %v; record kept %v, snapshot marked %v; want an error and the record kept",
+			removed, err, kept(unreadable), marked(unreadable))
+	}
+	if err := os.Chmod(path(unreadable), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := evidence.RemoveExpired(ctx, unreadable.ID, later); !removed || err != nil || !marked(unreadable) {
+		t.Fatalf("the next pass = %v, %v, snapshot marked %v; want the record removed and the snapshot marked", removed, err, marked(unreadable))
+	}
+
+	if err := os.Remove(path(gone)); err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(t.TempDir(), "elsewhere.json")
+	if err := os.Rename(path(linked), moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, path(linked)); err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range []Execution{gone, linked} {
+		if removed, err := evidence.RemoveExpired(ctx, run.ID, later); !removed || err != nil || marked(run) {
+			t.Fatalf("RemoveExpired with the snapshot gone or a link = %v, %v, snapshot marked %v; want the record removed and nothing marked",
+				removed, err, marked(run))
+		}
+	}
+}
+
+// Only a snapshot setup granted alone proves a setup check's. A rule another input shares, or an
+// agent's provider, which a check never runs, may be a launch's, and a session may still use it.
+func TestSetupCheckProofNeedsSetupAloneAndNoProvider(t *testing.T) {
+	setup := egress.Grant{Rule: rule("example.com"), Origins: []egress.Origin{SetupOrigin()}}
+	// Setup's origin sorts before rules-file's, as a capture orders them, so only the one-origin
+	// check rejects this grant.
+	shared := egress.Grant{Rule: rule("example.com"), Origins: []egress.Origin{SetupOrigin(), {Kind: "operator", Name: "rules-file"}}}
+	agent := []egress.Dependency{{Provider: "model", Client: egress.ClientCLI, Version: "1", Backend: "direct", AuthMode: "key"}}
+	for _, c := range []struct {
+		name     string
+		snapshot egress.Snapshot
+		want     bool
+	}{
+		{"setup's grants alone", egress.Snapshot{Grants: []egress.Grant{setup}}, true},
+		{"a grant another input shares", egress.Snapshot{Grants: []egress.Grant{shared}}, false},
+		{"setup's grants and an agent's provider", egress.Snapshot{Grants: []egress.Grant{setup}, Dependencies: agent}, false},
+	} {
+		if got := fromSetupCheck(c.snapshot); got != c.want {
+			t.Errorf("fromSetupCheck(%s) = %v, want %v", c.name, got, c.want)
 		}
 	}
 }

@@ -779,7 +779,9 @@ func (s *Store) loadSnapshotScope(id, fingerprint string) (egress.Snapshot, erro
 	// Loading is using: a run about to start under a removable snapshot, from a
 	// process that admitted it long ago, restarts its retention window first, or
 	// finds it removed. One without a marker is never removed, so its load takes
-	// no lock and writes nothing.
+	// no lock and writes nothing. The exception, an earlier coop's setup check
+	// snapshot, is marked only after its check's run, the one run that loads it,
+	// ended 90 days ago.
 	if _, err := s.root.Lstat(admittedRecord(fingerprint)); err == nil {
 		if err := s.lockSnapshots(context.Background(), func() error { return s.touchAdmitted(fingerprint) }); err != nil {
 			return egress.Snapshot{}, err

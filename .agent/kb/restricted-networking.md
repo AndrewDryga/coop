@@ -17,8 +17,9 @@ between that flag and `docker run`:
    reachable from any agent mount (`networkstate/authority.go:39`), so it is never a box mount.
    Each capture is published once as `snapshot-<fingerprint>.json`. One a project admission created
    carries an `admitted-` marker and goes once no run record names it and nothing admitted or
-   loaded it for 90 days, serialized on `snapshot-lock`; a controller job's stays for good
-   ([[network-consumers]]).
+   loaded it for 90 days, serialized on `snapshot-lock`; a controller job's stays for good, and so
+   does one from before markers unless its rule's recorded origin proves a `coop net setup` check
+   made it ([[network-consumers]]).
 3. **Admission** — `box.AdmitNetwork` (`box/network_admission.go:58`) resolves the posture and, for
    filtered mode only, captures the frozen policy the gateway will enforce. Once the mode resolves
    to filtered, `checkFilteredRuntime` is the first gate: a runtime that cannot serve the gateway is
@@ -324,6 +325,8 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-10-16 — layer 2: a setup check's snapshot from before markers goes too, proved by its rule's
+  origin; the mechanism is in [[network-consumers]].
 - 2026-10-17 — the release suite has a runner, `make network-runtime-e2e`, and the qualification
   paragraph says what it covers: it never had a collector-fault or credentialed-provider case (those
   providers are the live network suite). Verified by full runs on Docker 29.8.2 (OrbStack, arm64).

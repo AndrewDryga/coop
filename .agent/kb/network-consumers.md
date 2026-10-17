@@ -2,8 +2,8 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture per box, and which surface reads which evidence
 subsystem: networking
-sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go, internal/session/schema.go, internal/workerproto/protocol.go, internal/cli/acp_refresh.go]
-updated: 2026-10-16
+sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go, internal/networkstate/qualification.go, internal/box/network_setup.go, internal/session/schema.go, internal/workerproto/protocol.go, internal/cli/acp_refresh.go]
+updated: 2026-10-17
 ---
 
 Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; a
@@ -99,7 +99,19 @@ project admission CREATED is removable: `saveSnapshot` writes `admitted-<fingerp
 on that exclusive create, and never for `CaptureJob`. A session row names its job snapshot forever,
 rows are never deleted, and they live in session stores under any `--state` the pass cannot find, so
 job snapshots and every snapshot from before markers (possibly a pre-job session's) stay; whoever
-adds session deletion must remove the job snapshot in that change. A marked snapshot stays while a
+adds session deletion must remove the job snapshot in that change. The one pre-marker snapshot that
+goes is a `coop net setup` check's: only the check's own run names or loads it, nothing else admits
+a rule with `networkstate.SetupOrigin()`, and a crashed setup is rerun in a new scratch project,
+never resumed (`QualificationSmoke`); `SetupNetwork` also deletes that scratch project when it
+returns, though not when it is killed. The smoke admits its one rule with that origin
+(`box/network_setup.go`, `admitSetupSmoke`; marked like any admission), and before `RemoveExpired`
+removes the check's expiring run record (`execution-<id>.json`, purpose `qualification`) it marks
+that run's unmarked snapshot when it has at least one grant, every grant's only origin is that one
+and it carries no provider (`markSetupCheck`), dated to the run's `EndedAt`, so it goes one pass
+after the record. That costs one read per expiring check, where recognizing them in
+`RemoveUnusedSnapshots` would read every unmarked snapshot, job ones included, on every pass. A
+check snapshot whose record is already gone stays; one the mark fails to read keeps the record for
+the next pass, unless it is gone or a link. A marked snapshot stays while a
 listed run names it (it goes one pass after its last record) or while its marker's mtime is inside
 the 90 days. The mtime is the last use: re-admitting an unchanged policy (`saveSnapshot`'s EEXIST
 branch) and loading a marked snapshot (`loadSnapshotScope`) refresh it under `snapshot-lock`, where
@@ -163,6 +175,12 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-10-17 — a `coop net setup` check's snapshot from before markers is marked by the check's
+  expiring run record (`execution-<id>.json`, purpose `qualification`) when it has a grant, every
+  grant's only origin is `SetupOrigin` and it carries no provider, then removed by the next pass;
+  only the check's own run names or loads it, and a crashed setup is rerun, never resumed. A
+  snapshot the mark fails to read keeps the record unless it is gone or a link. Verified against
+  `RemoveExpired`, `markSetupCheck`, `SetupNetwork`, `QualificationSmoke` and their tests.
 - 2026-10-16 — policy snapshots nothing uses are removed by the same pass (paragraph under the
   `coop net` table): only admission-created snapshots carry the `admitted-` marker that makes them
   removable, the census needs every record read, and re-admission or a load of a marked snapshot

@@ -424,3 +424,69 @@ func TestRecoverNetworkRunsRemovesSnapshotsNoRetainedRunUses(t *testing.T) {
 		t.Fatal("the snapshot a session was created with was removed")
 	}
 }
+
+// A setup check's snapshot goes one pass after the record of the check's run, like a launch's. The
+// admission marks a current one; the record marks one an earlier coop wrote without a marker, which
+// the origin of its one rule proves was setup's. A launch's from before markers stays: a session
+// this host cannot see may still use it.
+func TestRecoverNetworkRunsRemovesSetupCheckSnapshots(t *testing.T) {
+	f, d, evidence, connect := recoveryFixture(t)
+	ctx := context.Background()
+	marker := func(fingerprint string) string { return filepath.Join(f.store.Path(), "admitted-"+fingerprint+".json") }
+	// check admits the setup check's policy for a scratch project and starts the check's run under
+	// it, as coop net setup does, then loses the run's supervisor. earlier drops the marker an earlier
+	// coop never wrote.
+	check := func(earlier bool) string {
+		project := t.TempDir()
+		policy, err := admitSetupSmoke(f.store, project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if earlier {
+			if err := os.Remove(marker(policy.Fingerprint)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		smoke, err := f.store.BeginQualification(d.smoke.Candidate(),
+			[]networkstate.QualifiedClient{{Provider: "claude", Client: egress.ClientCLI, Version: "2.1.260"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := smoke.CreateExecution(ctx, networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
+			Runtime: "docker", DaemonID: f.record.DaemonID, Endpoint: f.record.Endpoint,
+			GatewayImage: f.record.GatewayImage, ClientImage: f.record.ClientImage})
+		if err != nil {
+			t.Fatal(err)
+		}
+		departSupervisor(t, f.store, run.ID)
+		return policy.Fingerprint
+	}
+	current, earlier := check(false), check(true)
+	launch := unusedSnapshot(t, f.store)
+	if err := os.Remove(marker(launch)); err != nil {
+		t.Fatal(err)
+	}
+
+	// The first pass settles the interrupted checks. The second, past retention, removes their
+	// records and keeps the snapshots those records still named. The third removes the snapshots.
+	now := time.Now()
+	later := now.Add(networkstate.ExecutionRetention + time.Hour)
+	for _, at := range []time.Time{now, later} {
+		if _, err := recoverNetworkRunsAt(ctx, evidence, "", connect, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !snapshotKept(t, f.store, current) || !snapshotKept(t, f.store, earlier) {
+		t.Fatal("a setup check's snapshot went in the pass that removed its run's record")
+	}
+	if _, err := recoverNetworkRunsAt(ctx, evidence, "", connect, later); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotKept(t, f.store, current) || snapshotKept(t, f.store, earlier) {
+		t.Fatalf("a setup check's snapshot outlived its run's record: current %v, earlier %v",
+			snapshotKept(t, f.store, current), snapshotKept(t, f.store, earlier))
+	}
+	if !snapshotKept(t, f.store, launch) {
+		t.Fatal("a launch's snapshot from before markers was removed")
+	}
+}

@@ -23,7 +23,8 @@ func (s ExecutionSummary) Expired(now time.Time) bool {
 // whether it did. The summary that named the run may be stale, so the record is
 // read again under the run's own lock, where no writer can change it: one that
 // does not read and validate, is owed cleanup or is not old enough is kept. One
-// already gone was taken by another settle pass.
+// already gone was taken by another settle pass. A setup check's record first
+// marks the snapshot its run ran under, when an earlier coop left that unmarked.
 func (e *Evidence) RemoveExpired(ctx context.Context, id string, now time.Time) (bool, error) {
 	removed := false
 	err := e.files.lockExecution(ctx, id, func() error {
@@ -38,6 +39,16 @@ func (e *Evidence) RemoveExpired(ctx context.Context, id string, now time.Time) 
 		}
 		if !summarize(record).Expired(now) {
 			return nil
+		}
+		// A setup check's snapshot written by an earlier coop has no marker, so
+		// nothing would ever remove it. Marking it as the check's record goes
+		// costs one read per check; finding it later would mean reading every
+		// unmarked snapshot on every pass. A mark that fails keeps the record, so
+		// the next pass tries both again.
+		if record.Purpose == "qualification" {
+			if err := e.files.markSetupCheck(ctx, record.Snapshot.PolicyFingerprint, *record.Receipt.EndedAt); err != nil {
+				return err
+			}
 		}
 		// os.Root unlinks the name itself. No directory sync: a removal a crash
 		// undoes leaves an expired record that the next pass removes again.

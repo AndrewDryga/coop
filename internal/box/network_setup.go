@@ -279,19 +279,26 @@ type setupProof struct {
 	elapsed time.Duration
 }
 
+// admitSetupSmoke captures the one rule the smoke runs under, SmokeDomain over
+// TLS, with the origin snapshot retention knows setup by. Admitting marks the
+// snapshot removable like a launch's, so it goes 90 days after the smoke.
+func admitSetupSmoke(store *networkstate.Store, project string) (egress.Snapshot, error) {
+	mode := egress.Filtered
+	rules, err := egress.NormalizeRules([]egress.Rule{{To: egress.Destination{Domain: SmokeDomain}, Protocol: "tls", Ports: []int{443}}})
+	if err != nil {
+		return egress.Snapshot{}, err
+	}
+	return store.Admit(project, networkstate.Admission{InvocationMode: &mode,
+		Operator: []egress.Input{{Origin: networkstate.SetupOrigin(), Rules: rules}}})
+}
+
 // runSetupSmoke drives the ONE preflight run through the ordinary launch engine.
 // Its configuration is built here rather than copied from the operator's: an
 // image override or extra runtime argument must not reach what the record
 // claims to have proven. It returns the workload's exit code — the verdict the
 // script encodes — and separately whether the run reached one at all.
 func runSetupSmoke(ctx context.Context, cfg *config.Config, rt runtime.Runtime, store *networkstate.Store, smoke *networkstate.QualificationSmoke, project string, out io.Writer) (setupProof, int, error) {
-	mode := egress.Filtered
-	rules, err := egress.NormalizeRules([]egress.Rule{{To: egress.Destination{Domain: SmokeDomain}, Protocol: "tls", Ports: []int{443}}})
-	if err != nil {
-		return setupProof{}, 0, err
-	}
-	policy, err := store.Admit(project, networkstate.Admission{InvocationMode: &mode,
-		Operator: []egress.Input{{Origin: egress.Origin{Kind: "operator", Name: "net-setup"}, Rules: rules}}})
+	policy, err := admitSetupSmoke(store, project)
 	if err != nil {
 		return setupProof{}, 0, err
 	}
