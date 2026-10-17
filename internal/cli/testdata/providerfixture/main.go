@@ -244,10 +244,17 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 	case "version":
 		fmt.Println("coop-provider-fixture 1")
 		return nil
-	case "info":
+	case "info", "daemon-id":
 		// The daemon probe opens every box run, so it is the harness's handle on HOST-side box
-		// setup — the work a test holds to prove no provider clock is running during it.
-		return holdHostSetup(root, trace)
+		// setup — the work a test holds to prove no provider clock is running during it. The run
+		// names its daemon again just before the box starts, by when any hold is released.
+		if err := holdHostSetup(root, trace); err != nil {
+			return err
+		}
+		if parsed.Kind == "daemon-id" {
+			fmt.Println("fixture-daemon")
+		}
+		return nil
 	case "inspect", "network-ls", "volume", "volume-ls":
 		return nil
 	case "task-channel":
@@ -393,6 +400,12 @@ func holdHostSetup(root, trace string) error {
 	}
 }
 
+// daemonIDProbe is a box launch's daemon probe, which also asks which daemon answered
+// (runtime.DaemonID): the run records it for the daily temp sweep.
+func daemonIDProbe(args []string) bool {
+	return len(args) == 3 && args[0] == "info" && args[1] == "--format" && args[2] == "{{.ID}}"
+}
+
 func parseRuntime(root, image string, args []string, providerHomes ...string) (runtimeCommand, error) {
 	return parseRuntimeForProvider(root, image, args, "", providerHomes...)
 }
@@ -421,6 +434,9 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 	}
 	if len(args) == 1 && args[0] == "info" {
 		return runtimeCommand{Kind: "info"}, nil
+	}
+	if daemonIDProbe(args) {
+		return runtimeCommand{Kind: "daemon-id"}, nil
 	}
 	if len(args) == 3 && args[0] == "image" && args[1] == "inspect" && args[2] == image {
 		return runtimeCommand{Kind: "inspect"}, nil
@@ -1395,7 +1411,7 @@ func traceRuntimeArgv(root, image string, args []string) []string {
 		case "volume":
 			return []string{"volume", "<validated>"}
 		case "--version", "info":
-			if len(args) == 1 {
+			if len(args) == 1 || daemonIDProbe(args) {
 				return append([]string(nil), args...)
 			}
 			return []string{"<rejected>"}

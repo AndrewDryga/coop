@@ -68,6 +68,15 @@ func (a *app) startTempReap() {
 // prior box with a broad /tmp bind could observe a later run, and holds each run's Docker client
 // folder. Locating it is read-only, so housekeeping never creates run state.
 //
+// A run's folder is judged only by the daemon its box started on (box.ReapOrphanRunfiles): the
+// runtime lists the boxes of one Docker daemon, and another daemon's boxes are simply missing from
+// that list. So when there is a runfiles root to judge, the pass first pins the daemon the current
+// Docker context selects, and lists only that daemon however the context changes meanwhile. A pin
+// keeps a Docker client folder in that root while it lists, so a host without one is not pinned.
+// Docker at an endpoint that is not a local socket (TCP, SSH) cannot be pinned, and a pass with no
+// pinned daemon keeps every run folder while it still clears the rest. Apple's container cannot
+// list mounts at all, so there the pass removes nothing and stamps nothing.
+//
 // It stamps the day only after a pass in which the runtime said what is mounted. A process that
 // exits mid-pass — a launch that fails at once, a coop stopped — stamps nothing, and a pass that
 // could not ask removed nothing, so either way the next launch tries again. A pass that failed any
@@ -77,6 +86,11 @@ func (a *app) startTempReap() {
 func reapTemp(rt runtime.Runtime, cfg *config.Config, stamp string) {
 	ctx, cancel := context.WithTimeout(context.Background(), tempReapTimeout)
 	defer cancel()
+	if _, exists, err := config.ExistingRunfiles(cfg); err == nil && exists {
+		if pinned, err := rt.FreezeCompose(ctx); err == nil {
+			rt = pinned
+		}
+	}
 	if _, err := box.ReapOrphanTempEntries(ctx, rt, os.TempDir(), time.Now()); errors.Is(err, box.ErrMountsUnknown) {
 		return
 	}

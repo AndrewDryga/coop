@@ -2,8 +2,8 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/cli/acp_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go]
-updated: 2026-10-16
+sources: [internal/cli/acp_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/box/restricted.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go]
+updated: 2026-10-17
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
 CLIENT's promise, no Go `defer` runs, and no PID 1 inside the box can help (that limit, and why a
@@ -65,14 +65,54 @@ surface: the count and the container ids, outside its pass/fail tally, reaping n
 
 Files get a separate daily sweep (`cli.startTempReap` → `box.ReapOrphanTempEntries` for TMPDIR,
 then `box.ReapOrphanRunfiles` for the private runfiles root): coop-prefixed entries that are over an
-hour old AND mounted by no box. It starts once per process from `runBox` (direct, editor and fork
-launches), the readonly/bare launches, and `collectOrphanBoxes` (loop and fork starts, and a
-build's recycle near its end); doctor probes, eval trials and fork merge gates launch boxes without
-it. It stamps `BoxHome/temp-reap` only after a pass whose mount listing succeeded
-(`box.ErrMountsUnknown` marks one that did not): a goroutine dies with its process, stamping first
-let a short command use up the day, and a pass that could not list removed nothing, so the next
-launch retries it. `MountSourcesByLabel` skips a box removed between `ps` and its inspect only when
-the same listing, run again, no longer shows its id.
+hour old AND mounted by no box (a run's folder must also name the daemon that listed the boxes). It
+starts once per process from `runBox` (direct, editor and fork launches), the readonly/bare
+launches, and `collectOrphanBoxes` (loop and fork starts, and a build's recycle near its end);
+doctor probes, eval trials and fork merge gates launch boxes without it. It stamps
+`BoxHome/temp-reap` only after a pass whose mount listing succeeded (`box.ErrMountsUnknown` marks
+one that did not): a goroutine dies with its process, stamping first let a short command use up the
+day, and a pass that could not list removed nothing, so the next launch retries it.
+`MountSourcesByLabel` skips a box removed between `ps` and its inspect only when the same listing,
+run again, no longer shows its id.
+
+A listing is one daemon's word. The runtime CLI follows DOCKER_HOST or the current docker context,
+and another daemon's boxes are simply missing from it, so after `docker context use other` their
+folders looked unused. Each run's folder (`coop-run-*`, the only kind current code makes that a box
+mounts) therefore names its daemon in a `daemon` file. The launch writes the ID its own probe
+returned (`runtime.DaemonID`, `info --format {{.ID}}`, at run.go and restricted.go), so a run
+killed after the launch probe is still swept, and writes it again just before the box starts
+(`recordDaemonAtStart`): the CLI starts the box on whichever daemon the context selects by then,
+and a switch while services or brokers start would otherwise leave the folder naming a daemon that
+never sees the box. A start-time probe that names no daemon drops the record. A native-credential
+run records its owner's bound daemon (`owner.docker.Info().ID`) instead and skips the start-time
+probe, since that box starts through the bound endpoint.
+
+The pass (`cli.reapTemp`) pins the daemon the current context selects (`FreezeCompose`) when a
+runfiles root exists: pinning makes a client folder there, and a host without one has no run
+folders to judge. A frozen runtime's `MountSourcesByLabel` lists through that daemon's socket,
+whatever the context says meanwhile, and fails (`ErrMountsUnknown`) unless that daemon still
+answers there at the end; reading the ID before and after an unpinned listing missed a switch and
+back. `ReapOrphanRunfiles` removes a run folder only when it names the frozen daemon's ID. Another
+daemon's folder, or one with no record, is kept, and so is every run folder when the pass has no
+pinned daemon, though the rest is still swept: `bindDocker` binds only a local unix socket, so
+Docker over TCP or SSH never pins, and a `COOP_RUNTIME` Coop does not recognize names no daemon.
+Apple's container sweeps nothing at all: `FreezeCompose` returns it unchanged, its
+`MountSourcesByLabel` fails, and the TMPDIR pass stops on `ErrMountsUnknown` before it removes or
+stamps anything. The ID, not the endpoint: `default` and `orbstack` reach one daemon on the
+developer's Mac, and Docker Desktop and OrbStack take turns behind /var/run/docker.sock. The
+TMPDIR pass sweeps only kinds no box mounts (audit snapshots, test leases, earlier versions' broker
+and Compose client folders); the box files earlier versions left there name no daemon, so the
+sweep leaves them.
+
+Known leak: a run folder that no pass can prove unused stays forever, credentials included. That
+is one with no record: made before 2026-10-16, by a run killed before its launch probe (the folder
+comes first), or by a run whose start-time probe failed or printed no ID. It is every run folder
+on Docker over TCP or SSH, which earlier versions swept, or under a `COOP_RUNTIME` Coop does not
+recognize. And it is one whose daemon never lists again: resetting Docker Desktop or OrbStack
+gives the daemon a new ID, an engine the user stops using never sweeps again, and the stamp is per
+host, so a second daemon that is never the current one at the day's first launch may never sweep.
+The user can delete those `coop-run-*` folders in the runfiles root (`~/.config/coop/runfiles`)
+while no Coop runs; the CHANGELOG entry says so.
 
 Trap: a `coop-docker-client-*` directory (`runtime.bindDocker`) is in use for a whole run yet never
 mounted. It lives in the runfiles root beside the run files and `coop-compose-client-*`, made only
@@ -129,10 +169,18 @@ Traps:
 - The sweep adds TWO runtime `ps` listings to loop/fork/build (every coop container for boxes and
   brokers, then project services). The
   scripted process E2Es pin exact runtime call counts, so those suites pass `sweepsOrphanBoxes` (see
-  `assertDirectRunContract`); a command that grows any OTHER runtime call still fails the count. The daily temp sweep would add
-  more when due; `procharness.NewLayout` stamps `temp-reap` fresh so it never is there.
+  `assertDirectRunContract`); a command that grows any OTHER runtime call still fails the count.
+  The daily temp sweep would add more when due; `procharness.NewLayout` stamps `temp-reap` fresh so
+  it never is there.
 - The scripted fixture must accept the survey's bare `label=coop` filter (`parsePS`: a key with no
   value matches the label's presence) or the sweep silently fails in every E2E.
+- A launch's daemon probe is `info --format {{.ID}}` (`DaemonID`), not bare `info`, and a box that
+  starts through the CLI makes it twice, at setup and just before the start, so a direct box run is
+  four runtime invocations in the scripted E2Es. The scripted fixture accepts exactly that form
+  (`daemonIDProbe`), holds host setup on it and prints an ID. An answer without an ID falls back to
+  bare `info` (a CLI may print a blank one for a daemon it cannot reach), so a fixture that printed
+  none would add a call per probe. Every other caller keeps `EnsureDaemon`'s bare `info`: test
+  fakes answer `info --format` with a platform.
 - A fork's boxes are scoped to the FORK's workspace, not the parent repo, so `coop fork <name>` from
   the parent never sweeps them; the fork's own loop start does, and `coop fork stop` still owns the
   exact-owner reap.
@@ -142,6 +190,13 @@ Traps:
   live session's services and volumes.
 
 ## Changelog
+- 2026-10-17 — the daily sweep judges a run's folder only by the daemon its box started on: launches
+  record the daemon ID in the folder at setup and again as the box starts (the bound one for native
+  runs), the pass pins one daemon for its whole listing, the TMPDIR pass sweeps only kinds no box
+  mounts, and a run folder no pass can prove unused leaks (no record, Docker over TCP or SSH, a
+  daemon that never lists again); Apple's container sweeps nothing (task
+  2026-10-15-tie-the-daily-temp-sweep-to-the-docker-daemon-th; verified against `reap_test.go`,
+  `tempreap_test.go`, `mounts_test.go` and `runtime_test.go`).
 - 2026-10-16 — model probes start no services in open mode; a filtered probe removes its own project.
 - 2026-10-16 — an editor session removes its own per-run services at exit and on reload, never while one
   of its inner children runs (task 2026-10-16-editor-sessions-remove-their-own-services-when-t).

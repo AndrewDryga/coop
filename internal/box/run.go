@@ -323,7 +323,10 @@ type compositionArtifactOps struct {
 	// parent is the directory generated artifacts are created in. A filtered run points it at the
 	// execution's private artifact directory. An ordinary run replaces empty with one owner-private
 	// per-run directory before producing anything a box could use.
-	parent            string
+	parent string
+	// runDir is that per-run directory when this run made it, where the launch records the daemon
+	// its box starts on for the daily sweep (recordRunDaemon).
+	runDir            string
 	writeFile         func(parent, content string) (string, error)
 	chmod             func(string, os.FileMode) error
 	assembleAgentsDir func(parent string, files []genFile) (string, error)
@@ -409,7 +412,7 @@ func prepareCompositionArtifactParent(artifacts *compositionArtifactOps, cfg *co
 	if err != nil {
 		return nil, fmt.Errorf("create private run artifact directory: %w", err)
 	}
-	artifacts.parent = dir
+	artifacts.parent, artifacts.runDir = dir, dir
 	return func() { _ = os.RemoveAll(dir) }, nil
 }
 
@@ -1241,9 +1244,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 
 	// All required host artifacts now exist. Only after the whole set succeeds may the runtime or
 	// first-run defaults have side effects.
-	if err := rt.EnsureDaemon(); err != nil {
+	daemon, err := rt.DaemonID(context.Background())
+	if err != nil {
 		return -1, err
 	}
+	// Recorded now so a run killed during setup is still swept, and again as the box starts.
+	recordRunDaemon(artifacts.runDir, daemon)
 	// Every image Coop built that this launch rests on counts as used, not just the one the box
 	// runs: a filtered box runs its client image by ID, and a project image's own base is the
 	// managed one. A later build of each family keeps what was recorded here (reclaim.go).
@@ -1601,6 +1607,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return finish(-1, startErr)
 		}
 		spec.nativeNamespace = owner.ref.ID
+		// The box starts on the owner's bound daemon, which need not be the one probed above.
+		recordRunDaemon(artifacts.runDir, owner.docker.Info().ID)
 		runPlain = func(in io.Reader, out, errOut io.Writer, args ...string) (int, error) {
 			return owner.docker.RunWorkload(context.Background(), in, out, errOut, args...)
 		}
@@ -1662,6 +1670,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return finish(-1, err)
 	}
 	defer unlockMounts()
+	if spec.native == nil {
+		// A native box starts on its owner's bound daemon, recorded above; this one starts through
+		// the runtime CLI, on whichever daemon the current Docker context selects by now.
+		recordDaemonAtStart(spec.Ctx, rt, artifacts.runDir)
+	}
 	// The launch boundary: everything above is host work, everything below is the provider's.
 	// A caller that clocks the provider starts counting HERE, never from Run's entry — an early
 	// return above launched nothing, so it signals nothing.

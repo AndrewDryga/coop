@@ -5,16 +5,24 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
+// fakeMounts is a runtime whose boxes mount sources. With daemon set, it is frozen to that daemon
+// and lists it alone, as runtime.FreezeCompose makes the sweep's runtime.
 type fakeMounts struct {
+	daemon  string
 	sources map[string]bool
 	err     error
 }
+
+func (f fakeMounts) ComposeBinding() (string, string) { return "", f.daemon }
 
 func (f fakeMounts) MountSourcesByLabel(
 	context.Context, string, string,
@@ -35,6 +43,45 @@ func writeEntry(t *testing.T, dir, name string, age time.Duration) string {
 	return path
 }
 
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// newRunfiles is a Coop home with an empty private runfiles root, returned with links resolved as
+// the launch mounts from it (macOS's temp directory is under a /var link).
+func newRunfiles(t *testing.T) (*config.Config, string) {
+	t.Helper()
+	cfg := &config.Config{BoxHome: t.TempDir()}
+	root := filepath.Join(cfg.BoxHome, "runfiles")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg, root
+}
+
+// runFolder is a run's folder in root that recorded daemon as its box's (none when empty).
+func runFolder(t *testing.T, root, name, daemon string, age time.Duration) string {
+	t.Helper()
+	path := filepath.Join(root, name)
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "env"), []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recordRunDaemon(path, daemon)
+	when := time.Now().Add(-age)
+	if err := os.Chtimes(path, when, when); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // Reaping takes both signals, because either alone is wrong.
 //
 // Ownership alone races a box that has written its config and not yet started
@@ -42,59 +89,97 @@ func writeEntry(t *testing.T, dir, name string, age time.Duration) string {
 // deleting one breaks the launch in a way that looks like a corrupt config.
 // Age alone is wrong because a warm box outlives any threshold.
 func TestReapNeedsBothUnmountedAndOld(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now()
+	cfg, root := newRunfiles(t)
+	orphan := runFolder(t, root, "coop-run-orphan", "daemon-a", 3*time.Hour)
+	inUse := runFolder(t, root, "coop-run-live", "daemon-a", 3*time.Hour)
+	justWritten := runFolder(t, root, "coop-run-starting", "daemon-a", time.Minute)
+	notOurs := writeDirEntry(t, root, "someone-elses-dir", 3*time.Hour)
 
-	orphan := writeEntry(t, dir, "coop-mcp-orphan", 3*time.Hour)
-	inUse := writeEntry(t, dir, "coop-mcp-live", 3*time.Hour)
-	justWritten := writeEntry(t, dir, "coop-mcp-starting", time.Minute)
-	notOurs := writeEntry(t, dir, "someone-elses-file", 3*time.Hour)
-
-	removed, err := ReapOrphanTempEntries(
-		context.Background(),
-		fakeMounts{sources: map[string]bool{inUse: true}},
-		dir, now,
-	)
+	removed, err := ReapOrphanRunfiles(context.Background(),
+		fakeMounts{daemon: "daemon-a", sources: map[string]bool{inUse: true}}, cfg, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if removed != 1 {
 		t.Fatalf("removed %d entries, want 1", removed)
 	}
-	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+	if exists(orphan) {
 		t.Error("the orphan survived")
 	}
 	for name, path := range map[string]string{
-		"a mounted file":            inUse,
+		"a mounted run folder":      inUse,
 		"a box that is starting up": justWritten,
-		"another program's file":    notOurs,
+		"another program's folder":  notOurs,
 	} {
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("%s was deleted: %v", name, err)
+		if !exists(path) {
+			t.Errorf("%s was deleted", name)
 		}
 	}
 }
 
 func TestReapPreservesRunDirectoryWhileAChildArtifactIsMounted(t *testing.T) {
-	dir := t.TempDir()
-	run := filepath.Join(dir, "coop-run-live")
-	if err := os.Mkdir(run, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	cfg, root := newRunfiles(t)
+	run := runFolder(t, root, "coop-run-live", "daemon-a", 3*time.Hour)
 	artifact := filepath.Join(run, "env")
-	if err := os.WriteFile(artifact, []byte("secret\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	when := time.Now().Add(-3 * time.Hour)
-	if err := os.Chtimes(run, when, when); err != nil {
-		t.Fatal(err)
-	}
-	removed, err := ReapOrphanTempEntries(context.Background(), fakeMounts{sources: map[string]bool{artifact: true}}, dir, time.Now())
+	removed, err := ReapOrphanRunfiles(context.Background(),
+		fakeMounts{daemon: "daemon-a", sources: map[string]bool{artifact: true}}, cfg, time.Now())
 	if err != nil || removed != 0 {
 		t.Fatalf("mounted run directory reap = %d, %v", removed, err)
 	}
 	if _, err := os.Stat(artifact); err != nil {
 		t.Fatalf("mounted artifact was reaped with its parent: %v", err)
+	}
+}
+
+// A sweep lists one daemon's boxes, so it proves what that daemon's boxes use and nothing more:
+// after `docker context use other`, or with DOCKER_HOST pointing elsewhere, the boxes still running
+// on the first daemon are not in the listing at all, and their run folders look unused. A run
+// folder is removed only when it names the daemon that answered; one that names another daemon,
+// or none, is kept however old it is.
+func TestReapRunfilesJudgesARunFolderOnlyByItsOwnDaemon(t *testing.T) {
+	cfg, root := newRunfiles(t)
+	here := runFolder(t, root, "coop-run-here", "daemon-a", 3*time.Hour)
+	elsewhere := runFolder(t, root, "coop-run-elsewhere", "daemon-b", 3*time.Hour)
+	unknown := runFolder(t, root, "coop-run-unknown", "", 3*time.Hour)
+
+	removed, err := ReapOrphanRunfiles(context.Background(),
+		fakeMounts{daemon: "daemon-a", sources: map[string]bool{}}, cfg, time.Now())
+	if err != nil || removed != 1 {
+		t.Fatalf("reap = %d, %v; want this daemon's one orphaned run folder", removed, err)
+	}
+	if exists(here) {
+		t.Error("an orphaned run folder of the daemon that answered survived")
+	}
+	for name, path := range map[string]string{"another daemon's run folder": elsewhere, "a run folder that names no daemon": unknown} {
+		if !exists(path) {
+			t.Errorf("%s was removed on this daemon's word", name)
+		}
+	}
+
+	// An unfrozen runtime names no daemon: Apple's container, or one the sweep could not pin. Its
+	// listing proves no run folder unused, though what needs no daemon's word still goes.
+	client := writeDirEntry(t, root, "coop-docker-client-1", 3*time.Hour)
+	removed, err = ReapOrphanRunfiles(context.Background(), fakeMounts{sources: map[string]bool{}}, cfg, time.Now())
+	if err != nil || removed != 1 || exists(client) || !exists(elsewhere) || !exists(unknown) {
+		t.Fatalf("reap by an unfrozen runtime = %d, %v; want only the client folder removed", removed, err)
+	}
+}
+
+// A frozen runtime's listing fails when its daemon stops answering, or another daemon answers on
+// its socket by the end (runtime.MountSourcesByLabel). A sweep without that daemon's word removes
+// nothing at all, so the next launch tries again.
+func TestReapRunfilesRefusesAListingFromAnUnprovenDaemon(t *testing.T) {
+	cfg, root := newRunfiles(t)
+	run := runFolder(t, root, "coop-run-orphan", "daemon-a", 3*time.Hour)
+	client := writeDirEntry(t, root, "coop-docker-client-1", 3*time.Hour)
+
+	lister := fakeMounts{daemon: "daemon-a", err: errors.New("Docker daemon identity changed; custody remains pending")}
+	removed, err := ReapOrphanRunfiles(context.Background(), lister, cfg, time.Now())
+	if !errors.Is(err, ErrMountsUnknown) || removed != 0 {
+		t.Fatalf("reap = %d, %v; want ErrMountsUnknown and nothing removed", removed, err)
+	}
+	if !exists(run) || !exists(client) {
+		t.Fatal("a sweep that could not prove its daemon removed something")
 	}
 }
 
@@ -106,7 +191,7 @@ func TestReapPreservesRunDirectoryWhileAChildArtifactIsMounted(t *testing.T) {
 // configuration at once.
 func TestReapRefusesToGuessWhenTheRuntimeIsUnavailable(t *testing.T) {
 	dir := t.TempDir()
-	orphan := writeEntry(t, dir, "coop-mcp-orphan", 3*time.Hour)
+	orphan := writeEntry(t, dir, "coop-audit-trees-orphan", 3*time.Hour)
 
 	removed, err := ReapOrphanTempEntries(
 		context.Background(),
@@ -145,18 +230,14 @@ func writeDirEntry(t *testing.T, dir, name string, age time.Duration) string {
 // runfiles root, where both now live, removes them under the same old-and-unmounted rule as
 // everything else.
 func TestReapRunfilesCoversCoopClientConfigs(t *testing.T) {
-	cfg := &config.Config{BoxHome: t.TempDir()}
-	root := filepath.Join(cfg.BoxHome, "runfiles")
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	cfg, root := newRunfiles(t)
 	docker := writeDirEntry(t, root, "coop-docker-client-123", 3*time.Hour)
 	compose := writeDirEntry(t, root, "coop-compose-client-456", 3*time.Hour)
-	run := writeDirEntry(t, root, "coop-run-789", 3*time.Hour)
+	run := runFolder(t, root, "coop-run-789", "daemon-a", 3*time.Hour)
 	starting := writeDirEntry(t, root, "coop-docker-client-012", time.Minute)
 	notOurs := writeDirEntry(t, root, "someone-elses-dir", 3*time.Hour)
 
-	removed, err := ReapOrphanRunfiles(context.Background(), fakeMounts{sources: map[string]bool{}}, cfg, time.Now())
+	removed, err := ReapOrphanRunfiles(context.Background(), fakeMounts{daemon: "daemon-a", sources: map[string]bool{}}, cfg, time.Now())
 	if err != nil || removed != 3 {
 		t.Fatalf("reap = %d, %v; want 3", removed, err)
 	}
@@ -197,6 +278,28 @@ func TestReapTempLeavesDockerClientConfigs(t *testing.T) {
 				t.Errorf("a temp directory sweep removed a Docker client directory: %v", err)
 			}
 		})
+	}
+}
+
+// Earlier versions put each run's box files straight into the temp directory. None of them says
+// which daemon its box ran on, so no listing can prove one unused, and the sweep leaves them all;
+// what no box mounts, such as an audit's tree snapshot, it still removes.
+func TestReapTempKeepsEarlierVersionsBoxFiles(t *testing.T) {
+	dir := t.TempDir()
+	var boxFiles []string
+	for _, name := range []string{"coop-run-1", "coop-mcp-1", "coop-decoy-1", "coop-githooks-1", "coop-skills-claude-1"} {
+		boxFiles = append(boxFiles, writeDirEntry(t, dir, name, 72*time.Hour))
+	}
+	audit := writeDirEntry(t, dir, "coop-audit-trees-1", 72*time.Hour)
+
+	removed, err := ReapOrphanTempEntries(context.Background(), fakeMounts{daemon: "daemon-a", sources: map[string]bool{}}, dir, time.Now())
+	if err != nil || removed != 1 || exists(audit) {
+		t.Fatalf("reap = %d, %v (audit snapshot left: %v); want only the audit snapshot removed", removed, err, exists(audit))
+	}
+	for _, path := range boxFiles {
+		if !exists(path) {
+			t.Errorf("an earlier version's box file %s was removed", filepath.Base(path))
+		}
 	}
 }
 
@@ -272,5 +375,91 @@ func TestReapTouchesOnlyCoopEntries(t *testing.T) {
 	}
 	if removed != 0 {
 		t.Fatalf("removed %d entries that were not coop's", removed)
+	}
+}
+
+// A launch names its daemon inside its run folder from the daemon probe it already makes, and again
+// just before the box starts: the CLI starts the box on whichever daemon the current Docker context
+// selects by then, and the record is all a later sweep can go on. After a `docker context use`
+// while services or brokers start, the folder names the daemon the box started on; when no daemon
+// can be named then, it names none, so the sweep keeps it. Both launch paths do this.
+func TestRunRecordsTheDaemonItsBoxStartsOn(t *testing.T) {
+	for name, setup := range map[string]func(t *testing.T) (*config.Config, RunSpec){
+		"ordinary": func(t *testing.T) (*config.Config, RunSpec) {
+			return &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"},
+				RunSpec{Image: "i", Repo: t.TempDir(), Workdir: "/workspace", Cmd: []string{"true"}, Batch: true, Quiet: true}
+		},
+		"restricted": func(t *testing.T) (*config.Config, RunSpec) {
+			return restrictedConfig(t), RunSpec{Image: "coop-box", Cmd: []string{"true"}, Mode: agents.ModeBare, Batch: true, Quiet: true}
+		},
+	} {
+		for _, tc := range []struct{ name, atStart, want string }{
+			{name: "the same daemon", atStart: "echo daemon-a", want: "daemon-a\n"},
+			{name: "another daemon after a context switch", atStart: "echo daemon-b", want: "daemon-b\n"},
+			{name: "no daemon answers", atStart: "echo 'failed to connect to the docker API' >&2; exit 1", want: ""},
+		} {
+			t.Run(name+"/"+tc.name, func(t *testing.T) {
+				cfg, spec := setup(t)
+				dir := t.TempDir()
+				probed, recorded := filepath.Join(dir, "probed"), filepath.Join(dir, "recorded-daemon")
+				// Named docker: only the Docker kind is probed. The launch's probe answers daemon-a, the
+				// one at the box's start answers per case, and the box reports its run folder's record.
+				shim := filepath.Join(t.TempDir(), "docker")
+				script := "#!/bin/sh\ncase \"$1\" in\n" +
+					"info) [ \"$2 $3\" = '--format {{.ID}}' ] || exit 0\n" +
+					"\tif [ -e " + strconv.Quote(probed) + " ]; then " + tc.atStart + "; else : > " + strconv.Quote(probed) + "; echo daemon-a; fi ;;\n" +
+					"run) cat " + strconv.Quote(filepath.Join(cfg.ConfigDir, "runfiles")) + "/coop-run-*/" + runDaemonFile + " 2>/dev/null >> " + strconv.Quote(recorded) + " ;;\n" +
+					"esac\nexit 0\n"
+				if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if code, err := Run(cfg, runtime.Runtime{Name: shim}, spec); code != 0 || err != nil {
+					t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+				}
+				if got, err := os.ReadFile(recorded); err != nil || string(got) != tc.want {
+					t.Fatalf("the box started with its run folder naming %q (%v), want %q", got, err, tc.want)
+				}
+			})
+		}
+	}
+}
+
+// A run with native credentials starts its box through the daemon its credential owner is bound
+// to, not through whatever the plain CLI would reach, so that is the daemon its run folder must
+// name, at the box's start too. Here the plain probe answers with a different ID than the bound
+// daemon reports.
+func TestANativeRunRecordsTheDaemonItsOwnerIsBoundTo(t *testing.T) {
+	for name, setup := range map[string]func(t *testing.T) (*config.Config, RunSpec){
+		"ordinary": func(t *testing.T) (*config.Config, RunSpec) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
+			if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=inert-environment-secret\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			claude, _ := agents.Get("claude")
+			return cfg, RunSpec{Image: "i", Repo: t.TempDir(), Cmd: claude.Interactive(cfg), Agent: "claude",
+				AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+		},
+		"restricted": readOnlySessionFixture,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, spec := setup(t)
+			dir := t.TempDir()
+			fixture := nativeOnlineRuntime(t, filepath.Join(dir, "calls"), filepath.Join(dir, "box-env"))
+			recorded := filepath.Join(dir, "recorded-daemon")
+			// The fixture's plain `info --format` answers linux/amd64; its bound daemon is fixture-daemon.
+			shim := filepath.Join(t.TempDir(), "docker")
+			script := "#!/bin/sh\nprev=\nfor arg in \"$@\"; do\n" +
+				"\t[ \"$prev\" = --env-file ] && cat \"$(dirname \"$arg\")/" + runDaemonFile + "\" >> " + strconv.Quote(recorded) + "\n" +
+				"\tprev=$arg\ndone\nexec " + strconv.Quote(fixture.Name) + " \"$@\"\n"
+			if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if code, err := Run(cfg, runtime.Runtime{Name: shim}, spec); code != 0 || err != nil {
+				t.Fatalf("native Run = %d, %v; want 0, nil", code, err)
+			}
+			if got, err := os.ReadFile(recorded); err != nil || string(got) != "fixture-daemon\n" {
+				t.Fatalf("the native box started with its run folder naming %q (%v), want the bound fixture-daemon", got, err)
+			}
+		})
 	}
 }

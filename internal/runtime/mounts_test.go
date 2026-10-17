@@ -78,6 +78,58 @@ esac
 	}
 }
 
+// The daily sweep judges a run's folder by one daemon's word, so a runtime frozen to that daemon
+// lists it alone. Every call goes to its socket whatever the current context says by then, so no
+// `docker context use` and back mid-listing can slip another daemon's boxes in. Another daemon
+// answering on that socket, before the listing or by its end, is an error, never a listing.
+func TestFrozenMountSourcesListOneDaemon(t *testing.T) {
+	replaced := filepath.Join(t.TempDir(), "daemon-replaced")
+	t.Setenv("DOCKER_CONTEXT", "")
+	endpoint := dockersock.Serve(t, func() (dockersock.Info, error) {
+		id := "daemon-one"
+		if _, err := os.Stat(replaced); err == nil {
+			id = "daemon-two"
+		}
+		return dockersock.Info{ID: id, OSType: "linux", Architecture: "amd64", ServerVersion: "29", KernelVersion: "fixture", SecurityOptions: []string{}}, nil
+	})
+	t.Setenv("DOCKER_HOST", endpoint)
+	recorder := filepath.Join(t.TempDir(), "commands")
+	cli := filepath.Join(t.TempDir(), "docker")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\ncase \"$*\" in\n" +
+		"*'ps -q -a --filter label=coop=box') echo live ;;\n" +
+		"*'inspect --format {{json .Mounts}} live') echo '[{\"Source\":\"/live\"}]'\n" +
+		"\t[ -z \"$COOP_TEST_REPLACE\" ] || : > " + strconv.Quote(replaced) + " ;;\nesac\n"
+	if err := os.WriteFile(cli, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := (Runtime{Name: cli}).FreezeCompose(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKER_HOST", "unix:///other.sock")
+
+	sources, err := rt.MountSourcesByLabel(t.Context(), "coop", "box")
+	if err != nil || !reflect.DeepEqual(sources, map[string]bool{"/live": true}) {
+		t.Fatalf("frozen mount sources = %v, %v; want the frozen daemon's box", sources, err)
+	}
+	commands, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(commands)), "\n") {
+		if !strings.Contains(line, "--host "+endpoint+" ") {
+			t.Fatalf("a frozen listing followed the current context: %s", line)
+		}
+	}
+	t.Setenv("COOP_TEST_REPLACE", "1")
+	if sources, err := rt.MountSourcesByLabel(t.Context(), "coop", "box"); err == nil || sources != nil {
+		t.Fatalf("a listing another daemon finished = %v, %v; want an error", sources, err)
+	}
+	if sources, err := rt.MountSourcesByLabel(t.Context(), "coop", "box"); err == nil || sources != nil {
+		t.Fatalf("a listing of a replaced daemon = %v, %v; want an error", sources, err)
+	}
+}
+
 func mountRecord(id, mounts string) string {
 	return `{"ID":"` + id + `","Status":"exited","Mounts":` + mounts + `}`
 }

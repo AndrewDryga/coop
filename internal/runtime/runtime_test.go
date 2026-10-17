@@ -89,6 +89,48 @@ func TestEnsureDaemonContextReturnsCallerDeadline(t *testing.T) {
 	}
 }
 
+// DaemonID is the launch's daemon probe, so a stopped daemon still fails it with the same advice.
+// What it adds is the daemon's own ID, the proof the daily sweep needs; an answer that is no ID is
+// no proof, and then the plain probe says whether the daemon is up (a CLI may print a blank answer
+// for one it cannot reach). A runtime with no daemon is not asked at all.
+func TestDaemonIDNamesTheDaemonThatAnswered(t *testing.T) {
+	for _, tc := range []struct {
+		name, formatted, plain, want string
+		down                         bool
+	}{
+		{name: "Docker's ID", formatted: "echo 33c3ed04-1aa3-402f-93a3-a02050f6f1b8", plain: "exit 98", want: "33c3ed04-1aa3-402f-93a3-a02050f6f1b8"},
+		{name: "an answer that is no ID", formatted: "echo 'no value'", plain: "exit 0"},
+		{name: "a stopped daemon", formatted: "echo 'failed to connect to the docker API' >&2; exit 1", plain: "exit 98", down: true},
+		{name: "a blank answer from a stopped daemon", formatted: "echo", plain: "exit 1", down: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			docker := filepath.Join(t.TempDir(), "docker")
+			script := "#!/bin/sh\ncase \"$*\" in\n'info --format {{.ID}}') " + tc.formatted + " ;;\ninfo) " + tc.plain + " ;;\n*) exit 99 ;;\nesac\n"
+			if err := os.WriteFile(docker, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			got, err := (Runtime{Name: docker}).DaemonID(context.Background())
+			if tc.down {
+				if !errors.Is(err, ErrDaemonUnavailable) || got != "" {
+					t.Fatalf("DaemonID = %q, %v; want ErrDaemonUnavailable", got, err)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("DaemonID = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+	// Apple's container has no daemon to ask; its CLI is never run for one.
+	container := filepath.Join(t.TempDir(), "container")
+	if err := os.WriteFile(container, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := (Runtime{Name: container}).DaemonID(context.Background()); got != "" || err != nil {
+		t.Fatalf("Apple container DaemonID = %q, %v; want no ID and no probe", got, err)
+	}
+}
+
 // Podman was a supported runtime and is installed on plenty of machines, so its removal has to be
 // refused by NAME. Falling through to the unknown-executable path would accept it — `podman
 // --version` succeeds — and coop would then drive it with Docker's flags.

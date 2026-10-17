@@ -25,6 +25,10 @@ import (
 // mounted would take a transient docker failure as permission to delete
 // everything. The one failure that is no error is a container removed between
 // the listing and its inspect: it mounts nothing any more.
+//
+// A runtime frozen by FreezeCompose lists its one daemon through that daemon's socket, never the
+// current Docker context, and fails unless the daemon answering there is still the frozen one when
+// the listing is done: a caller that judges files by one daemon's word needs all of it from there.
 func (r Runtime) MountSourcesByLabel(
 	ctx context.Context,
 	key, value string,
@@ -32,14 +36,30 @@ func (r Runtime) MountSourcesByLabel(
 	if r.kind() == runtimeAppleContainer {
 		return nil, fmt.Errorf("mount inspection is unsupported by %s", r.Name)
 	}
-	ids, err := r.containerIDsContext(ctx, true, "label="+key+"="+value)
+	filter := "label=" + key + "=" + value
+	list := func() ([]string, error) { return r.containerIDsContext(ctx, true, filter) }
+	inspect := func(args ...string) ([]byte, error) { return contextCommand(ctx, r.Name, args...).CombinedOutput() }
+	var docker *Docker
+	if r.composeEndpoint != "" {
+		var err error
+		if docker, err = bindDocker(ctx, r, r.composeEndpoint, r.composeDaemon, false); err != nil {
+			return nil, fmt.Errorf("bind the frozen Docker daemon: %w", err)
+		}
+		defer docker.Close()
+		list = func() ([]string, error) {
+			out, err := docker.output(ctx, 1<<20, "ps", "-q", "-a", "--filter", filter)
+			return strings.Fields(string(out)), err
+		}
+		inspect = func(args ...string) ([]byte, error) { return docker.output(ctx, 1<<20, args...) }
+	}
+	ids, err := list()
 	if err != nil {
 		return nil, fmt.Errorf("list matching containers: %w", err)
 	}
 	sources := make(map[string]bool)
 	for _, id := range ids {
 		args := []string{"inspect", "--format", "{{json .Mounts}}", id}
-		out, err := contextCommand(ctx, r.Name, args...).CombinedOutput()
+		out, err := inspect(args...)
 		if err != nil {
 			if ctx.Err() != nil {
 				err = ctx.Err()
@@ -48,7 +68,7 @@ func (r Runtime) MountSourcesByLabel(
 				// 29 changed it), so only the same listing, run again and no longer showing this
 				// id, proves the box gone. Another box that shares the short id stays listed and
 				// keeps the error.
-				remaining, listErr := r.containerIDsContext(ctx, true, "label="+key+"="+value)
+				remaining, listErr := list()
 				if listErr == nil && !slices.Contains(remaining, id) {
 					continue
 				}
@@ -68,6 +88,11 @@ func (r Runtime) MountSourcesByLabel(
 			if mount.Source != "" {
 				sources[mount.Source] = true
 			}
+		}
+	}
+	if docker != nil {
+		if err := docker.Verify(ctx); err != nil {
+			return nil, err
 		}
 	}
 	return sources, nil

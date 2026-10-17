@@ -158,9 +158,41 @@ func (r Runtime) EnsureDaemonContext(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return fmt.Errorf("%w — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry", ErrDaemonUnavailable)
+		return errDaemonDown
 	}
 	return ctx.Err()
+}
+
+// errDaemonDown is what a daemon probe says of a Docker that is installed but not answering.
+var errDaemonDown = fmt.Errorf("%w — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry", ErrDaemonUnavailable)
+
+// DaemonID is the daemon probe that also says which daemon answered. The ID names the daemon
+// itself: every context or socket path that reaches one daemon gets the same ID, and a socket path
+// another daemon takes over gets that daemon's, so it proves which daemon a listing came from where
+// an endpoint cannot. It is "" for a runtime with no daemon to probe (Apple's container), or for a
+// daemon that is up and gives no ID.
+func (r Runtime) DaemonID(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if r.kind() != runtimeDocker {
+		return "", nil
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, daemonProbeTimeout)
+	defer cancel()
+	out, err := contextCommand(probeCtx, r.Name, "info", "--format", "{{.ID}}").Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", errDaemonDown
+	}
+	if id := strings.TrimSpace(string(out)); dockerToken(id, 128) {
+		return id, ctx.Err()
+	}
+	// A CLI may format the info of a daemon it cannot reach as a blank line and exit 0, so without an
+	// ID the plain probe decides whether the daemon is up.
+	return "", r.EnsureDaemonContext(ctx)
 }
 
 // SupportsFilteredNetwork reports whether `--egress filtered` can run on this runtime. The gateway,

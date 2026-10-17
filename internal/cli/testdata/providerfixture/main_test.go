@@ -235,6 +235,7 @@ func TestParseRuntimeSupportsOnlyExplicitLifecycleProbes(t *testing.T) {
 	}{
 		{[]string{"--version"}, "version"},
 		{[]string{"info"}, "info"},
+		{[]string{"info", "--format", "{{.ID}}"}, "daemon-id"},
 		{[]string{"image", "inspect", "fixture-image"}, "inspect"},
 		{[]string{"ps", "-q", "-a", "--filter", "label=coop=box"}, "ps"},
 		// The box survey's one listing: every container carrying the coop label, whatever its kind.
@@ -251,6 +252,7 @@ func TestParseRuntimeSupportsOnlyExplicitLifecycleProbes(t *testing.T) {
 	for _, args := range [][]string{
 		{"--version", "extra"},
 		{"info", "extra"},
+		{"info", "--format", "{{.Name}}"},
 		{"image", "inspect", "other-image"},
 		{"ps", "--all"},
 		{"ps", "-q", "--filter", "label="},

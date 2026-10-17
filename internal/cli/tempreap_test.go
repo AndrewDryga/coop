@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	containerruntime "github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
@@ -82,7 +84,7 @@ func newTempSweepFixture(t *testing.T, block bool) tempSweepFixture {
 	tmp, dir := t.TempDir(), t.TempDir()
 	t.Setenv("TMPDIR", tmp)
 	f := tempSweepFixture{
-		orphan: filepath.Join(tmp, "coop-mcp-orphan"), events: filepath.Join(dir, "events"),
+		orphan: filepath.Join(tmp, "coop-audit-trees-orphan"), events: filepath.Join(dir, "events"),
 		started: filepath.Join(dir, "started"), release: filepath.Join(dir, "release"),
 	}
 	if err := os.WriteFile(f.orphan, nil, 0o600); err != nil {
@@ -184,7 +186,7 @@ func TestTempReapRetriesAPassThatCouldNotListMounts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "runfiles"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	orphan := filepath.Join(tmp, "coop-mcp-orphan")
+	orphan := filepath.Join(tmp, "coop-audit-trees-orphan")
 	if err := os.WriteFile(orphan, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -228,6 +230,104 @@ func TestTempReapRetriesAPassThatCouldNotListMounts(t *testing.T) {
 	}
 	if pathExists(view) {
 		t.Error("the pass left the view of a repository that is gone")
+	}
+}
+
+// A pass pins the daemon the current Docker context selects, lists it alone, and removes a killed
+// run's folder only when the run recorded that daemon. After `docker context use other` the boxes
+// still running on the first daemon are missing from the listing, so their folders stay, as does
+// one that names no daemon. A runtime the pass cannot pin, such as one reached over TCP, names no
+// daemon: every run folder stays, and the rest is still cleared.
+func TestTempReapRemovesOnlyTheListedDaemonsRunFolders(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		pinned bool
+	}{{"pinned", true}, {"cannot be pinned", false}} {
+		pinned := tc.pinned
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+			t.Setenv(forkspace.GitViewRootEnv, t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("DOCKER_CONTEXT", "")
+			endpoint := "tcp://127.0.0.1:2375"
+			if pinned {
+				endpoint = dockersock.Serve(t, func() (dockersock.Info, error) {
+					return dockersock.Info{ID: "daemon-a", OSType: "linux", Architecture: "amd64", ServerVersion: "29", KernelVersion: "fixture", SecurityOptions: []string{}}, nil
+				})
+			}
+			t.Setenv("DOCKER_HOST", endpoint)
+			cfg := &config.Config{BoxHome: t.TempDir()}
+			run := func(name, daemon string) string {
+				dir := filepath.Join(cfg.BoxHome, "runfiles", name)
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if daemon != "" {
+					if err := os.WriteFile(filepath.Join(dir, "daemon"), []byte(daemon+"\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return oldDir(t, dir)
+			}
+			here, elsewhere, unknown := run("coop-run-here", "daemon-a"), run("coop-run-elsewhere", "daemon-b"), run("coop-run-unknown", "")
+			client := oldDir(t, filepath.Join(cfg.BoxHome, "runfiles", "coop-docker-client-killed"))
+			// Named docker, so the pass pins it. It lists no boxes at all, and records how it was asked.
+			calls := filepath.Join(t.TempDir(), "calls")
+			docker := filepath.Join(t.TempDir(), "docker")
+			if err := os.WriteFile(docker, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> "+strconv.Quote(calls)+"\nexit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			stamp := tempReapPath(cfg)
+
+			reapTemp(containerruntime.Runtime{Name: docker}, cfg, stamp)
+			if !pathExists(stamp) || pathExists(client) {
+				t.Fatalf("the pass did not finish (stamped: %v, client folder left: %v)", pathExists(stamp), pathExists(client))
+			}
+			if pathExists(here) == pinned {
+				t.Errorf("an old, unmounted run folder of the daemon that answered was removed: %v, want %v", !pathExists(here), pinned)
+			}
+			if !pathExists(elsewhere) || !pathExists(unknown) {
+				t.Errorf("the pass removed a run folder it had no proof for (another daemon's: %v, no daemon's: %v)", !pathExists(elsewhere), !pathExists(unknown))
+			}
+			listings, err := os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range strings.Split(strings.TrimSpace(string(listings)), "\n") {
+				if pinned != strings.Contains(line, "--host "+endpoint+" ") {
+					t.Errorf("listing %q went to the pinned daemon: %v, want %v", line, !pinned, pinned)
+				}
+			}
+		})
+	}
+}
+
+// A host that never staged a run has no runfiles root, and housekeeping must not make one: pinning a
+// daemon keeps a Docker client folder in that root while it lists, so the pass pins only when the
+// root already exists.
+func TestTempReapMakesNoRunfilesRoot(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv(forkspace.GitViewRootEnv, t.TempDir())
+	t.Setenv("DOCKER_CONTEXT", "")
+	// A daemon the pass could pin. Serve also gives the test a config root of its own, where a pin
+	// would make the runfiles root.
+	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
+		return dockersock.Info{ID: "daemon-a", OSType: "linux", Architecture: "amd64", ServerVersion: "29", KernelVersion: "fixture", SecurityOptions: []string{}}, nil
+	}))
+	// Named docker, so the pass could pin it; it lists no boxes.
+	docker := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{BoxHome: config.RootDir()} // as Load sets it: the home a pin's client folder goes under
+	stamp := tempReapPath(cfg)
+
+	reapTemp(containerruntime.Runtime{Name: docker}, cfg, stamp)
+	if !pathExists(stamp) {
+		t.Fatal("the pass did not finish")
+	}
+	if root := filepath.Join(cfg.BoxHome, "runfiles"); pathExists(root) {
+		t.Errorf("housekeeping made the runfiles root %s on a host that never staged a run", root)
 	}
 }
 

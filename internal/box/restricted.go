@@ -773,9 +773,12 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		cmd = nativeCACommand(cmd)
 	}
 	plan.envFile = envFile
-	if err := rt.EnsureDaemon(); err != nil {
+	daemon, err := rt.DaemonID(context.Background())
+	if err != nil {
 		return -1, err
 	}
+	// Recorded now so a run killed during setup is still swept, and again as the box starts.
+	recordRunDaemon(artifacts.runDir, daemon)
 	if mode == agents.ModeBare {
 		sections.secrets(0) // nothing mounted, nothing to hide — said rather than skipped
 	}
@@ -829,6 +832,8 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		}
 		spec.nativeNamespace = owner.ref.ID
 		plan.nativeNamespace = owner.ref.ID
+		// The box starts on the owner's bound daemon, which need not be the one probed above.
+		recordRunDaemon(artifacts.runDir, owner.docker.Info().ID)
 		runPlain = func(in io.Reader, out, errOut io.Writer, args ...string) (int, error) {
 			return owner.docker.RunWorkload(context.Background(), in, out, errOut, args...)
 		}
@@ -933,6 +938,11 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 			return -1, err
 		}
 		defer unlockMounts()
+	}
+	if spec.native == nil {
+		// A native box starts on its owner's bound daemon, recorded above; this one starts through
+		// the runtime CLI, on whichever daemon the current Docker context selects by now.
+		recordDaemonAtStart(spec.Ctx, rt, artifacts.runDir)
 	}
 	if spec.OnRuntimeLaunch != nil {
 		spec.OnRuntimeLaunch()

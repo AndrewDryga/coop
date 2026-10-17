@@ -124,6 +124,22 @@
   remove the account, when its access expires before a renewal gets through, or when another command
   keeps the account busy for more than about two minutes.
 
+- **The daily cleanup no longer removes files that boxes on another Docker daemon use.** It asks
+  Docker which files boxes use, but only the current daemon answers. After `docker context use`, or
+  with `DOCKER_HOST` pointing elsewhere, boxes still running on the first daemon looked unused, and
+  the cleanup removed their run files once they were an hour old. Each run now notes which daemon
+  its box started on, and the cleanup removes a run's files only when that daemon says no box uses
+  them. Some run folders are therefore never cleaned up, and they can hold credentials. With Docker
+  reached over TCP or SSH, the cleanup now keeps every run's folder; earlier versions cleaned them
+  up. It also keeps folders from earlier versions, which name no daemon; the folder of a run killed
+  before Coop checked that Docker was running, or whose Docker did not answer just before its box
+  started; and folders of a Docker engine you reset or stopped using (resetting Docker Desktop or
+  OrbStack gives the engine a new identity). The cleanup runs once a day and checks only the engine
+  that is current when the day's first box starts, so a second engine that is never current then
+  keeps its folders too. While no Coop is running, you can delete the `coop-run-*` folders in
+  `~/.config/coop/runfiles` yourself. Box files that versions before 10.1.2 left in the temp folder
+  stay too.
+
 - **An interrupted credential renewal no longer locks the account.** When a renewal of an agent's
   sign-in was cut short by Ctrl-C, a lost connection or a provider error, Coop refused that account
   until `coop login`. Now it finishes the renewal from the provider's answer when it got one, and

@@ -231,13 +231,14 @@ func readProcessTrace(t *testing.T, path string) []*processTrace {
 	return trace
 }
 
-// One box run's whole trace: three runtime invocations (image probe, daemon probe, run), the parsed
-// run contract, provider start and exit, and the runtime's exit. A command that reaps orphaned boxes
-// on its way in (loop, fork, build) adds exactly two runtime `ps` listings (boxes, then a dead run's
-// own project services) and one `network` listing. A loop
-// WORK box adds its task channel on top (box/taskchannel.go): the run-private volume is created,
-// coop's helper container is started on it, the host checks the volume's backing exposure before
-// launch, and the volume is removed after the box — four more runtime invocations.
+// One box run's whole trace: four runtime invocations (image probe, daemon probe, the daemon named
+// again at the box's start, run), the parsed run contract, provider start and exit, and the
+// runtime's exit. A command that reaps orphaned boxes on its way in (loop, fork, build) adds exactly
+// two runtime `ps` listings (boxes, then a dead run's own project services) and one `network`
+// listing. A loop WORK box adds its task channel on top (box/taskchannel.go): the run-private
+// volume is created, coop's helper container is started on it, the host checks the volume's
+// backing exposure before launch, and the volume is removed after the box — four more runtime
+// invocations.
 type traceShape int
 
 const (
@@ -247,7 +248,7 @@ const (
 )
 
 const (
-	directTraceEvents   = 7
+	directTraceEvents   = 8
 	sweptTraceEvents    = directTraceEvents + 3
 	loopWorkTraceEvents = sweptTraceEvents + 4
 )
@@ -292,7 +293,8 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape t
 		// leaves holding a subnet.
 		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"}, []string{"ps", "<validated>"}, []string{"network", "<validated>"})
 	}
-	wantPrefix = append(wantPrefix, []string{"info"})
+	// The daemon probe also names the daemon, which the run records for the daily temp sweep.
+	wantPrefix = append(wantPrefix, []string{"info", "--format", "{{.ID}}"})
 	wantSuffix := [][]string{}
 	if shape == loopWorkBox {
 		// The task channel brackets the box: its volume and helper come up first (the box must
@@ -300,6 +302,9 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape t
 		wantPrefix = append(wantPrefix, []string{"volume", "<validated>"}, []string{"run", "<task-channel>"}, []string{"volume", "<validated>"})
 		wantSuffix = [][]string{{"volume", "<validated>"}}
 	}
+	// Named again just before the box starts: the CLI starts it on whichever daemon the current
+	// Docker context selects by then.
+	wantPrefix = append(wantPrefix, []string{"info", "--format", "{{.ID}}"})
 	run := len(wantPrefix)
 	if len(got) != run+1+len(wantSuffix) || !reflect.DeepEqual(got[:run], wantPrefix) || len(got[run]) == 0 || got[run][0] != "run" ||
 		!reflect.DeepEqual(got[run+1:], wantSuffix) {
