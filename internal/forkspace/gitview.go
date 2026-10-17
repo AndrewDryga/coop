@@ -53,6 +53,10 @@ var gitViewHardening = []string{
 }
 
 type gitView struct {
+	// mu serializes this view's refresh and guards workTree. A refresh reads files a box can
+	// replace, so it never runs under gitViewsMu: one repository's slow or refused refresh holds
+	// up only its own commands.
+	mu        sync.Mutex
 	workTree  string
 	gitDir    string // the worktree's own git dir (HEAD, index, logs/HEAD)
 	commonDir string // objects, refs, packed-refs, config — same as gitDir for a plain clone
@@ -60,7 +64,7 @@ type gitView struct {
 }
 
 var (
-	gitViewsMu   sync.Mutex
+	gitViewsMu   sync.Mutex              // guards the map and the root, never a refresh
 	gitViews     = map[string]*gitView{} // by git dir
 	gitViewsRoot string
 )
@@ -81,7 +85,7 @@ func GitCommand(ctx context.Context, dir string, args ...string) (*exec.Cmd, err
 // entries, a private HOME); the repository-locating variables are still the view's own.
 func GitCommandWithEnv(ctx context.Context, dir string, env []string, args ...string) (*exec.Cmd, error) {
 	full := append(append(append([]string{"-C", dir}, GitHardening...), gitViewHardening...), args...)
-	view, err := openGitView(ctx, dir)
+	_, viewEnv, err := openGitView(ctx, dir, env)
 	if errors.Is(err, errNoRepository) {
 		// Nothing to shield: with no repository above dir, git itself finds no config to read
 		// (the repository-locating variables are stripped) and reports that in its own words.
@@ -93,7 +97,7 @@ func GitCommandWithEnv(ctx context.Context, dir string, env []string, args ...st
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, "git", full...)
-	cmd.Env = view.envFrom(env)
+	cmd.Env = viewEnv
 	return cmd, nil
 }
 
@@ -151,35 +155,70 @@ func gitViewRoot() (string, error) {
 	return root, nil
 }
 
-func openGitView(ctx context.Context, workTree string) (*gitView, error) {
+// openGitView brings workTree's view up to date and returns it with the environment that runs git
+// under it, built from base. The environment is built under the view's lock: once the lock is
+// free, a command reaching the same git dir by another path moves the view to that path.
+func openGitView(ctx context.Context, workTree string, base []string) (*gitView, []string, error) {
 	if err := validateIsolatedGitAccess(workTree); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	gitDir, commonDir, err := gitDirsOf(workTree)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	view, err := cachedGitView(gitDir, commonDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	view.mu.Lock()
+	defer view.mu.Unlock()
+	// One git dir can serve successive worktree paths (git reuses a removed worktree's slot under
+	// .git/worktrees/<name>), so the view follows the path it is asked for — and the state an
+	// operation left behind in the previous worktree's life goes with that life. A view new to this
+	// process keeps what it finds: that is how an interrupted rebase reaches the next coop.
+	fresh := view.workTree == ""
+	if view.workTree != workTree {
+		if !fresh {
+			if err := view.clearOperationState(); err != nil {
+				return nil, nil, err
+			}
+		}
+		view.workTree = workTree
+	}
+	// Another coop's daily sweep may have removed the folder, or be removing it, while its
+	// repository was away (an unplugged disk, a re-clone); laying it out again is safe to repeat,
+	// so a process never fails until a restart.
+	err = os.MkdirAll(view.dir, 0o700)
+	if err == nil {
+		err = view.populate(ctx)
+	}
+	if err != nil {
+		if fresh {
+			// A view this process never laid out is not kept, so the next command still finds it
+			// new and keeps the state an earlier coop left in it.
+			view.workTree = ""
+			forgetGitView(view)
+		}
+		return nil, nil, fmt.Errorf("trusted git view of %s: %w", workTree, err)
+	}
+	return view, view.envFrom(base), nil
+}
+
+// forgetGitView drops view from this process's cache, unless another view already took its place.
+func forgetGitView(view *gitView) {
+	gitViewsMu.Lock()
+	defer gitViewsMu.Unlock()
+	if gitViews[view.gitDir] == view {
+		delete(gitViews, view.gitDir)
+	}
+}
+
+// cachedGitView returns this process's view of gitDir, adding it on first use; the caller lays it
+// out under the view's own lock.
+func cachedGitView(gitDir, commonDir string) (*gitView, error) {
 	gitViewsMu.Lock()
 	defer gitViewsMu.Unlock()
 	if view := gitViews[gitDir]; view != nil {
-		// One git dir can serve successive worktree paths (git reuses a removed worktree's slot
-		// under .git/worktrees/<name>), so the view follows the path it is asked for — and the
-		// state an operation left behind in the previous worktree's life goes with that life.
-		if view.workTree != workTree {
-			view.workTree = workTree
-			if err := view.clearOperationState(); err != nil {
-				return nil, err
-			}
-		}
-		// Another coop's daily sweep may have removed the folder, or be removing it, while its
-		// repository was away (an unplugged disk, a re-clone); laying it out again is safe to repeat,
-		// so a process never fails until a restart.
-		if err := os.MkdirAll(view.dir, 0o700); err != nil {
-			return nil, err
-		}
-		if err := view.populate(ctx); err != nil {
-			return nil, err
-		}
 		return view, nil
 	}
 	root, err := gitViewRoot()
@@ -187,14 +226,7 @@ func openGitView(ctx context.Context, workTree string) (*gitView, error) {
 		return nil, fmt.Errorf("git view root: %w", err)
 	}
 	sum := sha256.Sum256([]byte(gitDir))
-	dir := filepath.Join(root, hex.EncodeToString(sum[:8]))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	view := &gitView{workTree: workTree, gitDir: gitDir, commonDir: commonDir, dir: dir}
-	if err := view.populate(ctx); err != nil {
-		return nil, fmt.Errorf("trusted git view of %s: %w", workTree, err)
-	}
+	view := &gitView{gitDir: gitDir, commonDir: commonDir, dir: filepath.Join(root, hex.EncodeToString(sum[:8]))}
 	gitViews[gitDir] = view
 	return view, nil
 }
@@ -244,7 +276,7 @@ func nearestGitDir(dir string) (root, gitDir string, err error) {
 // gitDirsOf resolves the worktree's git dir and common dir the way git does, without running
 // git: the nearest `.git` above workTree — a directory, or a `gitdir: <path>` file for a linked
 // worktree — and that dir's `commondir` pointer when it has one. Symlinks are resolved first so
-// one repository has one view.
+// one repository has one view. A linked worktree's git dir must name this worktree back.
 func gitDirsOf(workTree string) (gitDir, commonDir string, err error) {
 	abs, err := filepath.Abs(workTree)
 	if err != nil {
@@ -258,7 +290,7 @@ func gitDirsOf(workTree string) (gitDir, commonDir string, err error) {
 	if fileExists(filepath.Join(abs, "HEAD")) && fileExists(filepath.Join(abs, "objects")) && !fileExists(filepath.Join(abs, ".git")) {
 		return abs, abs, nil
 	}
-	_, gitDir, err = nearestGitDir(abs)
+	root, gitDir, err := nearestGitDir(abs)
 	if errors.Is(err, errNoRepository) {
 		return "", "", fmt.Errorf("%s: %w", workTree, errNoRepository)
 	}
@@ -269,17 +301,81 @@ func gitDirsOf(workTree string) (gitDir, commonDir string, err error) {
 		gitDir = real
 	}
 	commonDir = gitDir
-	if data, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
-		target := strings.TrimSpace(string(data))
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(gitDir, target)
+	data, err := readGitFile(filepath.Join(gitDir, "commondir"))
+	if errors.Is(err, os.ErrNotExist) {
+		return gitDir, commonDir, nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	target := strings.TrimSpace(string(data))
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(gitDir, target)
+	}
+	if real, err := filepath.EvalSymlinks(target); err == nil {
+		target = real
+	}
+	commonDir = filepath.Clean(target)
+	// A git dir with its own common dir is a linked worktree's. Unless it is this folder's own
+	// .git, the worktree reached it through a `gitdir:` file or a link, which a box can aim at
+	// any repository's worktree.
+	if commonDir != gitDir && gitDir != filepath.Join(root, ".git") {
+		if err := checkLinkedWorktree(root, gitDir, commonDir, readGitFile); err != nil {
+			return "", "", err
 		}
-		if real, err := filepath.EvalSymlinks(target); err == nil {
-			target = real
-		}
-		commonDir = filepath.Clean(target)
 	}
 	return gitDir, commonDir, nil
+}
+
+// checkLinkedWorktree refuses a linked worktree's git dir that is not root's; root is the
+// worktree folder with its links resolved. Git keeps that dir at <common dir>/worktrees/<name>
+// with a `gitdir` file naming the worktree's .git. A box can write a pointer to any repository's
+// worktree, but not that repository's backlink, so the backlink is what proves the git dir is
+// this worktree's. Views and `coop approve` both check with it; read is how each opens the
+// backlink, reporting a missing one as os.ErrNotExist.
+//
+// `git worktree repair`, run in this worktree, makes the backlink name it. That restores a lost
+// link, but against a git dir another worktree still uses it would hand that git dir to this
+// folder, so the advice appears only when the backlink names nothing that exists.
+func checkLinkedWorktree(root, gitDir, commonDir string, read func(string) ([]byte, error)) error {
+	dotGit := filepath.Join(root, ".git")
+	if filepath.Base(filepath.Dir(gitDir)) != "worktrees" || !sameFile(filepath.Dir(filepath.Dir(gitDir)), commonDir) {
+		return fmt.Errorf("%s points at %s, which is not a worktree folder of the repository at %s", dotGit, gitDir, commonDir)
+	}
+	data, err := read(filepath.Join(gitDir, "gitdir"))
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%s points at %s, whose gitdir file is missing; run `git worktree repair` in this worktree to restore it", dotGit, gitDir)
+	}
+	if err != nil {
+		return fmt.Errorf("%s points at %s, whose worktree cannot be checked: %w", dotGit, gitDir, err)
+	}
+	backlink := strings.TrimSpace(string(data))
+	if backlink == "" {
+		return fmt.Errorf("%s points at %s, whose gitdir file is empty; run `git worktree repair` in this worktree to restore it", dotGit, gitDir)
+	}
+	if !filepath.IsAbs(backlink) {
+		backlink = filepath.Join(gitDir, backlink)
+	}
+	// Folders are compared, never the .git files: a box can replace its .git with a symbolic or
+	// hard link to another worktree's, which is that very file. root holds no link, and a folder
+	// cannot be hard-linked.
+	if filepath.Base(backlink) == ".git" && sameFile(filepath.Dir(backlink), root) {
+		return nil
+	}
+	if _, err := os.Lstat(backlink); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%s points at %s, which git keeps for the worktree at %s, and that worktree is gone; "+
+			"if this worktree was moved from there, run `git worktree repair` in it", dotGit, gitDir, filepath.Dir(backlink))
+	}
+	return fmt.Errorf("%s points at %s, which belongs to the worktree at %s", dotGit, gitDir, filepath.Dir(backlink))
+}
+
+// sameFile reports whether a and b name one existing file or folder. It compares identities, not
+// spellings: a case-insensitive disk or a linked folder (/var is /private/var on macOS) spells one
+// path several ways.
+func sameFile(a, b string) bool {
+	infoA, errA := os.Stat(a)
+	infoB, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(infoA, infoB)
 }
 
 // GitSwitchBranch puts dir on branch: HEAD is rewritten on the real git dir (a view would keep the
@@ -362,11 +458,11 @@ func (v *gitView) refresh(ctx context.Context) error {
 // records the branch its files and index are on.
 func (v *gitView) reconcileHead() error {
 	realPath, viewPath := filepath.Join(v.gitDir, "HEAD"), filepath.Join(v.dir, "HEAD")
-	realHead, err := os.ReadFile(realPath)
+	realHead, realInfo, err := readGitMetadata(realPath, gitPointerLimit)
 	if err != nil {
 		return err
 	}
-	viewHead, err := os.ReadFile(viewPath)
+	viewHead, viewInfo, err := readGitMetadata(viewPath, gitPointerLimit)
 	if errors.Is(err, os.ErrNotExist) {
 		return writeViewFile(viewPath, realHead)
 	}
@@ -375,14 +471,6 @@ func (v *gitView) reconcileHead() error {
 	}
 	if string(viewHead) == string(realHead) {
 		return nil
-	}
-	realInfo, err := os.Stat(realPath)
-	if err != nil {
-		return err
-	}
-	viewInfo, err := os.Stat(viewPath)
-	if err != nil {
-		return err
 	}
 	if viewInfo.ModTime().After(realInfo.ModTime()) {
 		return writeViewFile(realPath, viewHead)

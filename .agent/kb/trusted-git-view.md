@@ -2,7 +2,7 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go]
+sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go]
 updated: 2026-10-17
 ---
 
@@ -38,6 +38,48 @@ only by their owner. Concurrent first population accepts an existing symlink onl
 matches exactly. This supports ordinary concurrent reads of a stable repository; it does not make
 concurrent rebases or branch mutations transactional. Pending-review branch reads retain actual
 Git/view failures instead of reporting them as branch loss or drift.
+
+**Reading box-writable metadata.** Every file a view reads by content (`.git` pointer files,
+`commondir`, a linked worktree's `gitdir` backlink, `HEAD`, the config) goes through
+`readGitMetadata` (`exclude_unix.go`; `readGitFile` is its 64 KiB form): it follows a link as git
+does, opens with `O_NONBLOCK`, requires a regular file by `fstat`, and refuses one over its limit
+before reading. Limits: 64 KiB for pointers and HEAD, 4 MiB for the config (read on every refresh),
+1 GiB for the `packed-refs`, `shallow` and index that only the fsck and observation snapshots copy
+(`gitFileTooLargeError` names the file and both sizes; an oversize index also gets
+`git update-index --index-version 4`, which git documents as 30-50% smaller). A plain
+`os.ReadFile` there waits forever on a FIFO with no writer and reads `/dev/zero` without end.
+In-process, `gitViewsMu` guards only the view map and root; each view refreshes under its own `mu`,
+so a stalled refresh holds up only that repository (`TestGitViewStalledRefreshNeverHoldsUpAnotherView`
+stalls one view with a PATH shim). The environment (`GIT_WORK_TREE`) is built under that `mu`, and a
+view whose first refresh fails is dropped from the cache, or a later command reaching its git dir by
+another path would clear the operation state an earlier coop left in it.
+
+**Git's own repository search.** Git searches for a repository from its working folder upward even
+for `git config --file`, and opens any `HEAD` it finds without `O_NONBLOCK`. The config parse
+(`listGitConfig`) therefore runs with `cmd.Dir` at its scratch folder (the view, or the snapshot)
+and `GIT_CEILING_DIRECTORIES` at that folder's parent: without the first, a FIFO at `.git/HEAD` of
+coop's working folder hung every refresh in the process; without the ceiling, a view root or
+`TMPDIR` inside a box's repository did (`TestGitViewNeverSearchesTheFoldersAroundIt`). The checkout
+settings query (`includeTrustedCheckoutConfig`) gets `GIT_DIR` = the resolved git dir instead of
+`-C <worktree>`: `includeIf "gitdir:"` still matches the real repository, and git never climbs
+into the folders above it when it refuses the worktree's `HEAD`. What git itself opens is not
+covered: the commands under a view or snapshot open the real index, refs and objects with blocking
+opens, and the checkout settings query opens the real `HEAD` and config. Such a stall hangs only
+that command, which holds no Coop lock.
+
+**Linked worktree backlinks.** A git dir with its own `commondir`, reached through a `.git` file or
+link, is a linked worktree's: it must sit at `<common dir>/worktrees/<name>` and its `gitdir`
+backlink must name this folder's `.git`. `checkLinkedWorktree` makes that check for views and for
+`coop approve` (`safeExcludeTarget`) alike. It compares the backlink's folder with the link-free
+worktree folder by identity (`os.SameFile`), so case-insensitive disks and `/var` →
+`/private/var` spellings agree; it never compares the `.git` files, because a box can replace its
+`.git` with a symbolic or hard link to another worktree's, which is that very file. Views read the
+backlink following links as git does, approve refuses links. It suggests `git worktree repair`
+only when the backlink is missing, empty or names a worktree that is gone. When the named worktree
+still exists the pointer is a hijack, and repair run from the pointing folder would hand it the
+other worktree's git dir. Not covered, because git keeps no backlink there: a `.git` file naming
+another repository's own git dir (the separate-git-dir and submodule layout), and a `commondir`
+planted in a real `.git` folder, which views follow as git does.
 
 Tests that deliberately invalidate repository configuration must restore the owned fixture's
 original bytes without repository discovery. Git 2.55 rejects a format-0 repository containing
@@ -86,7 +128,8 @@ command, and writes its temporary and final pack there, never into the source.
 
 Session integrity checks use `RunGitFsck` instead: modern Git's reference verifier
 refuses the operational view's symlinked refs root. A per-call private view copies
-HEAD, refs, packed-refs and shallow through pinned no-symlink regular-file reads;
+HEAD, refs, packed-refs and shallow through pinned no-symlink regular-file reads,
+each bounded by `copyGitMetadataFile`'s limit (observation copies the index the same way);
 config is safely copied then projected through the same allowlist. Objects remain
 linked and the real index remains selected. These checks exclude reflogs. Temporary
 metadata is removed on construction/command failures and success; cached mutable
@@ -102,6 +145,15 @@ inline-diff positive control but never during production review. The loop's work
 keep their existing restrictions.
 
 ## Changelog
+- 2026-10-17 — the config parse runs in its scratch folder under a ceiling; the checkout settings
+  query names the git dir instead of searching; one backlink check for views and approve, by folder
+  identity (comparing the .git files let a symlinked or hard-linked .git through), with repair
+  advice only where repair cannot hijack; plain size refusals; a failed first refresh is not
+  cached; the environment is built under the view lock. Corrected the earlier claim that every
+  backlink refusal suggests repair.
+- 2026-10-16 — view metadata reads are bounded, non-blocking and regular-file only; refreshes run
+  under a per-view lock; linked worktree pointers need a matching backlink (task
+  2026-10-16-read-trusted-git-view-metadata-without-waiting-o).
 - 2026-10-16 — choosing the project (`box.FindRepo`) walks to the nearest `.git` instead of asking git.
 - 2026-10-16 — the daily temp sweep removes views whose repository is gone (`SweepGitViews`).
 - 2026-10-10 — reproduced the pending-review fixture cleanup failure on actual Git 2.55 and

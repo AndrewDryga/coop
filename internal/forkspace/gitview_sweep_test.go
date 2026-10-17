@@ -130,14 +130,14 @@ func TestOpenGitViewLaysOutASweptViewAgain(t *testing.T) {
 	CloseGitViews()
 	t.Cleanup(CloseGitViews)
 	repo := initRepo(t)
-	view, err := openGitView(context.Background(), repo)
+	view, _, err := openGitView(context.Background(), repo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.RemoveAll(view.dir); err != nil {
 		t.Fatal(err)
 	}
-	again, err := openGitView(context.Background(), repo)
+	again, _, err := openGitView(context.Background(), repo, nil)
 	if err != nil {
 		t.Fatalf("a swept view did not come back: %v", err)
 	}

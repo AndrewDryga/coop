@@ -34,10 +34,11 @@ var errRefStorageUnsupported = errors.New("repository uses reftable ref storage,
 
 // trustedGitConfig projects the repository's local config onto the allowlist. It reads a private
 // COPY of the file (git config --file, which follows no include), so the result is a snapshot: a
-// value the agent writes after the copy is never seen by anything that executes. The returned
+// value the agent writes after the copy is never seen by anything that executes. The file is read
+// as a bounded regular file, so a FIFO or a device the agent put there fails fast. The returned
 // bytes are a complete config file git reads verbatim as $GIT_DIR/config.
 func trustedGitConfig(ctx context.Context, localConfig, scratchDir string) ([]byte, error) {
-	data, err := os.ReadFile(localConfig)
+	data, _, err := readGitMetadata(localConfig, gitConfigLimit)
 	if errors.Is(err, os.ErrNotExist) {
 		data = nil
 	} else if err != nil {
@@ -104,8 +105,19 @@ func listGitConfig(ctx context.Context, data []byte, scratchDir string) ([][2]st
 	if err := errors.Join(writeErr, file.Close()); err != nil {
 		return nil, err
 	}
+	// Even to read one named file, git looks for a repository from the folder it starts in upward,
+	// and opens any HEAD it finds without O_NONBLOCK. Coop's working folder is often a box's
+	// repository, where a FIFO at .git/HEAD would hold this parse, and the view's lock, forever.
+	// So git starts in the coop-owned scratch folder, and the ceiling ends its search there, even
+	// when the view root or the temp folder lies inside a box's repository.
+	ceiling, err := filepath.Abs(filepath.Dir(scratchDir))
+	if err != nil {
+		return nil, err
+	}
 	cmd := exec.CommandContext(ctx, "git", "config", "--file", path, "-z", "--list")
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Dir = scratchDir
+	cmd.Env = append(withoutGitEnv(os.Environ()), "GIT_CEILING_DIRECTORIES="+ceiling,
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.Output()
 	if err != nil && ctx.Err() != nil {
 		return nil, errors.Join(ctx.Err(), err) // a cancelled projection is a cancellation, not a verdict on the config
@@ -143,7 +155,7 @@ func includeTrustedCheckoutConfig(ctx context.Context, view *gitView) error {
 				return errors.New("invalid GIT_CONFIG_NOSYSTEM for native checkout conversion")
 			}
 		}
-		command := exec.CommandContext(ctx, "git", "-C", view.workTree, "config", "--"+scope,
+		command := exec.CommandContext(ctx, "git", "config", "--"+scope,
 			"--includes", "--null", "--type=bool-or-str", "--get-regexp", `^core\.(autocrlf|eol|safecrlf)$`)
 		// Retain only the trusted host config locations, never repository locators
 		// or command-line config injected through ambient GIT_CONFIG_* variables.
@@ -152,6 +164,11 @@ func includeTrustedCheckoutConfig(ctx context.Context, view *gitView) error {
 				command.Env = append(command.Env, entry)
 			}
 		}
+		// Include conditions such as includeIf "gitdir:" must see the real repository, so git gets
+		// the git dir Coop resolved and checked instead of searching for one: a search from the
+		// worktree climbs into the folders above it when git refuses the worktree's own .git.
+		command.Dir = view.dir
+		command.Env = append(command.Env, "GIT_DIR="+view.gitDir)
 		output, err := command.Output()
 		if ctx.Err() != nil {
 			return errors.Join(ctx.Err(), err)

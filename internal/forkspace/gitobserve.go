@@ -66,7 +66,14 @@ func observationGitCommandWithCheckout(ctx context.Context, repository string, c
 	if err != nil {
 		return nil, nil, err
 	}
-	err = copyGitMetadataFile(ctx, root, "index", filepath.Join(view.dir, "index"))
+	// The copy keeps git off the box-writable index, so a FIFO there cannot stall it; its limit
+	// keeps a box from making Coop write a terabyte of holes out in full.
+	err = copyGitMetadataFile(ctx, root, "index", filepath.Join(view.dir, "index"), gitStoreFileLimit)
+	var tooLarge *gitFileTooLargeError
+	if errors.As(err, &tooLarge) {
+		// Index version 4 compresses the paths, which git documents as 30-50% smaller on large repositories.
+		err = fmt.Errorf("%w; if it should, `git update-index --index-version 4` in the repository writes a smaller one", err)
+	}
 	err = errors.Join(err, root.Close())
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, nil, err

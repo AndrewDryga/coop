@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,7 +128,7 @@ func TestObservedCheckoutProjectsOnlySafeTrustedIncludedSettings(t *testing.T) {
 }
 
 func TestObservedCheckoutHandlesTrustedSettingFailuresAndPrecedence(t *testing.T) {
-	for _, kind := range []string{"system", "global-override", "no-system", "invalid-value", "malformed", "cancelled"} {
+	for _, kind := range []string{"system", "global-override", "repository-include", "no-system", "invalid-value", "malformed", "cancelled"} {
 		t.Run(kind, func(t *testing.T) {
 			repo, run := viewTestRepo(t)
 			run("config", "--file", os.Getenv("GIT_CONFIG_SYSTEM"), "core.autocrlf", "true")
@@ -137,6 +138,12 @@ func TestObservedCheckoutHandlesTrustedSettingFailuresAndPrecedence(t *testing.T
 			switch kind {
 			case "global-override":
 				run("config", "--file", os.Getenv("GIT_CONFIG_GLOBAL"), "core.autocrlf", "false")
+				want = "before\n"
+			case "repository-include":
+				// An include condition on the git dir matches the real repository, not the snapshot.
+				included := filepath.Join(t.TempDir(), "repository-include")
+				run("config", "--file", included, "core.autocrlf", "false")
+				run("config", "--file", os.Getenv("GIT_CONFIG_GLOBAL"), "includeIf.gitdir:"+repo+"/.path", included)
 				want = "before\n"
 			case "no-system":
 				t.Setenv("GIT_CONFIG_NOSYSTEM", "true")
@@ -168,4 +175,23 @@ func TestObservedCheckoutHandlesTrustedSettingFailuresAndPrecedence(t *testing.T
 			}
 		})
 	}
+}
+
+// The checkout settings are read for the git dir Coop resolved, never one git finds by searching:
+// when git refuses the repository's own HEAD, a search climbs into the folder around it, which a
+// box can make a repository with a FIFO at HEAD.
+func TestObservedCheckoutNeverSearchesAboveItsRepository(t *testing.T) {
+	repo, _ := viewTestRepo(t)
+	object := strings.TrimSpace(string(readOut(t, repo, "rev-parse", "HEAD:tracked.txt")))
+	nested := filepath.Join(fifoHeadRepo(t), "nested")
+	if err := os.Rename(repo, nested); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, ".git", "HEAD"), []byte("not a ref\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Git refuses the snapshot's copy of that HEAD too, so the observation fails; it must fail fast.
+	_ = returnsWithin(t, "a checkout observation of a repository inside a box repository", func() error {
+		return ObserveCheckoutBlob(t.Context(), nested, object, "tracked.txt", io.Discard)
+	})
 }

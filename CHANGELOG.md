@@ -39,6 +39,19 @@
   repository, run Coop in a project folder with its own repository (`git init` there), or set
   `COOP_REPO`.
 
+- **Coop's own reads of a repository's Git files no longer freeze on a named pipe.** Before each Git
+  command in your repository, Coop reads a few of its Git files itself, such as `HEAD`,
+  `.git/config`, `commondir` and a linked worktree's `.git` file, and its integrity checks copy the
+  refs. An agent in a box can replace any of them. A named pipe there could freeze every Git command
+  Coop ran, in any repository, and so could one at `.git/HEAD` in the folder you run Coop from; a
+  link to an endless device made Coop read without end. Now Coop stops with an error, and a stall in
+  one repository never holds up another. Coop also refuses these files when they are far larger than
+  Git writes them: over 64 KiB for `HEAD`, refs and the Git folder pointers, and over 4 MiB for
+  `.git/config`. The private copies Coop takes for its integrity checks and isolated forks refuse a
+  `packed-refs`, `shallow` or index file over 1 GiB; `git update-index --index-version 4` writes a
+  smaller index. Coop now follows a linked worktree's `.git` file only when the repository it names
+  records that worktree in return. If you moved a worktree by hand, run `git worktree repair` in it.
+
 - **`coop init` removes a partial file only where it wrote it.** When `coop init` could not finish
   writing a file, for example because the disk was full, it looked the file's path up again to
   remove what it had written. An agent in a box could swap a folder on that path for a link just

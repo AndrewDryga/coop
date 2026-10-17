@@ -17,7 +17,46 @@ import (
 const (
 	localExcludeLimit = 1 << 20
 	gitPointerLimit   = 64 << 10
+	// A view refresh reads the repository's config whole on every host command; 4 MiB holds tens of
+	// thousands of remotes and tracked branches.
+	gitConfigLimit = 4 << 20
+	// packed-refs, shallow and the index hold a line or an entry per ref, boundary commit or file,
+	// so they grow with the repository; they are copied, never held in memory, and 1 GiB holds
+	// millions of each.
+	gitStoreFileLimit = 1 << 30
 )
+
+// gitFileTooLargeError refuses a repository file past limit, naming it and both sizes. Only a huge
+// repository, or a damaged or replaced file, comes near these limits.
+type gitFileTooLargeError struct {
+	path        string
+	size, limit int64
+}
+
+func gitFileTooLarge(path string, size, limit int64) error {
+	return &gitFileTooLargeError{path: path, size: size, limit: limit}
+}
+
+func (e *gitFileTooLargeError) Error() string {
+	return fmt.Sprintf("%s is %s, more than the %s Coop reads; if it should not be that large, it was damaged or replaced",
+		e.path, byteSize(e.size), byteSize(e.limit))
+}
+
+// byteSize writes n in the largest of GiB, MiB and KiB it reaches, to one decimal unless whole.
+func byteSize(n int64) string {
+	for _, unit := range []struct {
+		size int64
+		name string
+	}{{1 << 30, "GiB"}, {1 << 20, "MiB"}, {1 << 10, "KiB"}} {
+		if n >= unit.size && n%unit.size == 0 {
+			return fmt.Sprintf("%d %s", n/unit.size, unit.name)
+		}
+		if n >= unit.size {
+			return fmt.Sprintf("%.1f %s", float64(n)/float64(unit.size), unit.name)
+		}
+	}
+	return fmt.Sprintf("%d bytes", n)
+}
 
 var (
 	syncLocalExcludeFile      = func(file *os.File) error { return file.Sync() }
@@ -106,29 +145,15 @@ func safeExcludeTarget(ws string) (string, os.FileInfo, error) {
 				return "", nil, err
 			}
 		}
-		if filepath.Base(filepath.Dir(gitDir)) != "worktrees" ||
-			filepath.Clean(filepath.Dir(filepath.Dir(gitDir))) != filepath.Clean(commonDir) {
-			return "", nil, errors.New("project .git pointer does not name a linked-worktree admin directory")
+		readBacklink := func(path string) ([]byte, error) {
+			data, present, err := readGitPointerFile(path)
+			if err == nil && !present {
+				err = os.ErrNotExist
+			}
+			return data, err
 		}
-		backlink, present, err := readGitPointerFile(filepath.Join(gitDir, "gitdir"))
-		if err != nil {
-			return "", nil, fmt.Errorf("read linked-worktree backlink: %w", err)
-		}
-		if !present {
-			return "", nil, errors.New("linked-worktree admin directory has no backlink")
-		}
-		backPath := strings.TrimSpace(string(backlink))
-		if backPath == "" {
-			return "", nil, errors.New("linked-worktree admin directory has an empty backlink")
-		}
-		if !filepath.IsAbs(backPath) {
-			backPath = filepath.Join(gitDir, backPath)
-		}
-		if resolved, resolveErr := filepath.EvalSymlinks(backPath); resolveErr == nil {
-			backPath = resolved
-		}
-		if filepath.Clean(backPath) != dotGit {
-			return "", nil, errors.New("linked-worktree admin directory does not point back to this project")
+		if err := checkLinkedWorktree(canonical, gitDir, commonDir, readBacklink); err != nil {
+			return "", nil, err
 		}
 	default:
 		return "", nil, errors.New("project .git entry is not an owner-controlled directory or linked-worktree pointer")
@@ -184,25 +209,39 @@ func readGitPointerFile(path string) ([]byte, bool, error) {
 // the time it is open must be a regular file of at most gitPointerLimit bytes: the open never
 // waits on a FIFO, and nothing is read without bound.
 func readGitFile(path string) ([]byte, error) {
+	data, _, err := readGitMetadata(path, gitPointerLimit)
+	return data, err
+}
+
+// readGitMetadata is readGitFile for any repository file host code reads whole (a pointer, HEAD,
+// the config) with the limit its purpose allows. It also returns the open file's status, so a
+// caller comparing modification times compares the very bytes it read.
+func readGitMetadata(path string, limit int64) ([]byte, os.FileInfo, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
-	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
-		if err != nil {
-			return nil, err
-		}
-		return nil, fmt.Errorf("%s is not a git directory pointer", path)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, gitPointerLimit+1))
+	info, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if len(data) > gitPointerLimit {
-		return nil, fmt.Errorf("%s exceeds %d bytes", path, gitPointerLimit)
+	if !info.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("%s is not a regular file", path)
 	}
-	return data, nil
+	// The size check refuses a huge sparse file before reading any of it; the bounded read still
+	// stops a file that grows after the check.
+	if info.Size() > limit {
+		return nil, nil, gitFileTooLarge(path, info.Size(), limit)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, nil, gitFileTooLarge(path, int64(len(data)), limit)
+	}
+	return data, info, nil
 }
 
 func resolveGitPointer(base string, data []byte, label string) (string, error) {

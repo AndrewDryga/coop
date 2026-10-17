@@ -47,7 +47,7 @@ func TestReadGitFileRefusesWhatIsNotAPointer(t *testing.T) {
 			if err == nil {
 				t.Errorf("%s was read as a git pointer", name)
 			}
-			if path == huge && (err == nil || !strings.Contains(err.Error(), "exceeds")) {
+			if path == huge && (err == nil || !strings.Contains(err.Error(), "is 1024 GiB, more than the 64 KiB Coop reads")) {
 				t.Errorf("a 1 TiB file = %v, want it refused for its size", err)
 			}
 		case <-time.After(wait.Deadline):

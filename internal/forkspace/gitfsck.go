@@ -54,7 +54,7 @@ func fsckGitView(ctx context.Context, workTree string) (_ *gitView, err error) {
 		return nil, err
 	}
 	defer work.Close()
-	if err := copyGitMetadataFile(ctx, work, "HEAD", filepath.Join(dir, "HEAD")); err != nil {
+	if err := copyGitMetadataFile(ctx, work, "HEAD", filepath.Join(dir, "HEAD"), gitPointerLimit); err != nil {
 		return nil, err
 	}
 	refs, err := safefile.OpenDir(common, "refs")
@@ -65,8 +65,11 @@ func fsckGitView(ctx context.Context, workTree string) (_ *gitView, err error) {
 	if err := copyGitRefs(ctx, refs, filepath.Join(dir, "refs")); err != nil {
 		return nil, err
 	}
-	for _, name := range []string{"packed-refs", "shallow", "config"} {
-		if err := copyGitMetadataFile(ctx, common, name, filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	for _, file := range []struct {
+		name  string
+		limit int64
+	}{{"packed-refs", gitStoreFileLimit}, {"shallow", gitStoreFileLimit}, {"config", gitConfigLimit}} {
+		if err := copyGitMetadataFile(ctx, common, file.name, filepath.Join(dir, file.name), file.limit); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
 	}
@@ -107,7 +110,7 @@ func copyGitRefs(ctx context.Context, source *os.File, dest string) error {
 				if err := errors.Join(err, closeErr); err != nil {
 					return err
 				}
-			} else if err := copyGitMetadataFile(ctx, source, entry.Name(), path); err != nil {
+			} else if err := copyGitMetadataFile(ctx, source, entry.Name(), path, gitPointerLimit); err != nil {
 				return err
 			}
 		}
@@ -117,17 +120,29 @@ func copyGitRefs(ctx context.Context, source *os.File, dest string) error {
 	}
 }
 
-func copyGitMetadataFile(ctx context.Context, root *os.File, name, dest string) error {
+// copyGitMetadataFile copies one regular file below root, never following a link or waiting on a
+// FIFO, and refuses one larger than limit: a box can truncate a file to a terabyte of holes.
+func copyGitMetadataFile(ctx context.Context, root *os.File, name, dest string, limit int64) error {
 	source, err := safefile.OpenRegular(root, name)
 	if err != nil {
 		return err
 	}
 	defer source.Close()
+	info, err := source.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() > limit {
+		return gitFileTooLarge(filepath.Join(root.Name(), name), info.Size(), limit)
+	}
 	target, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(target, &gitMetadataReader{ctx: ctx, reader: source})
+	copied, err := io.Copy(target, &gitMetadataReader{ctx: ctx, reader: io.LimitReader(source, limit+1)})
+	if err == nil && copied > limit {
+		err = gitFileTooLarge(filepath.Join(root.Name(), name), copied, limit)
+	}
 	return errors.Join(err, target.Close())
 }
 

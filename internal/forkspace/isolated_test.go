@@ -18,7 +18,7 @@ func TestIsolatedHostGitRefusesRedirectBeforeParentViewRecovery(t *testing.T) {
 			if _, err := viewRun(t, repo, "status", "--porcelain"); err != nil {
 				t.Fatal(err)
 			}
-			view, err := openGitView(t.Context(), repo)
+			view, _, err := openGitView(t.Context(), repo, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -8,9 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 func fsckRun(t *testing.T, repo string) (string, error) {
@@ -96,27 +93,42 @@ func TestGitFsckRejectsInvalidHistory(t *testing.T) {
 	}
 }
 
+// The snapshot copies HEAD, the refs, packed-refs, shallow and the config by content. A link, a
+// FIFO, a device or a file past its limit is refused at once, and the snapshot is removed.
 func TestGitFsckRejectsUnsafeMetadataAndCleansUp(t *testing.T) {
-	for _, name := range []string{"HEAD", "config", "refs", "refs/heads/main"} {
-		for _, kind := range []string{"symlink", "fifo"} {
-			t.Run(name+"/"+kind, func(t *testing.T) {
+	for _, file := range []struct {
+		name  string
+		limit int64 // 0: a folder, which has no size limit
+	}{
+		{"HEAD", gitPointerLimit}, {"config", gitConfigLimit}, {"refs", 0}, {"refs/heads/main", gitPointerLimit},
+		{"packed-refs", gitStoreFileLimit}, {"shallow", gitStoreFileLimit},
+	} {
+		for _, kind := range []string{"symlink", "fifo", "device", "oversize"} {
+			if kind == "oversize" && file.limit == 0 {
+				continue
+			}
+			t.Run(file.name+"/"+kind, func(t *testing.T) {
 				repo, _ := viewTestRepo(t)
 				t.Setenv("TMPDIR", t.TempDir())
-				path := filepath.Join(repo, ".git", name)
-				if err := os.RemoveAll(path); err != nil {
-					t.Fatal(err)
-				}
+				path := filepath.Join(repo, ".git", file.name)
 				if kind == "symlink" {
+					if err := os.RemoveAll(path); err != nil {
+						t.Fatal(err)
+					}
 					if err := os.Symlink("/nonexistent-outside-repository", path); err != nil {
 						t.Fatal(err)
 					}
-				} else if err := unix.Mkfifo(path, 0o600); err != nil {
-					t.Fatal(err)
+				} else {
+					plantMetadata(t, path, kind, file.limit)
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := RunGitFsck(ctx, repo, os.Environ(), nil, nil); err == nil || ctx.Err() != nil {
-					t.Fatalf("unsafe metadata did not refuse promptly: %v (context %v)", err, ctx.Err())
+				err := returnsWithin(t, "fsck with "+kind+" "+file.name, func() error {
+					return RunGitFsck(context.Background(), repo, os.Environ(), nil, nil)
+				})
+				if err == nil {
+					t.Fatalf("fsck accepted %s %s", kind, file.name)
+				}
+				if kind == "oversize" && !strings.Contains(err.Error(), "more than the") {
+					t.Fatalf("oversize %s = %v; want it refused for its size before any copy", file.name, err)
 				}
 				if entries, err := os.ReadDir(os.Getenv("TMPDIR")); err != nil || len(entries) != 0 {
 					t.Fatalf("failed fsck left metadata: %v, %v", entries, err)
