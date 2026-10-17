@@ -35,14 +35,6 @@ var syncStagedDiscardDirectory = func(dir *os.File) error { return dir.Sync() }
 // one from the other.
 func StagedDiscardDir(repo string) string { return filepath.Join(Home(repo), ".discarding") }
 
-func ensureStagedDiscardDir(repo string) error {
-	home, staging, err := openStagedDiscardDir(repo)
-	if err != nil {
-		return err
-	}
-	return errors.Join(staging.Close(), home.Close())
-}
-
 // openStagedDiscardDir opens the forks folder, and the staging folder in it, by descriptor without
 // following a link (the staging folder made owner-only first, with its parent barrier), so a
 // workspace moved between the two never goes where a link a box swapped in points.
