@@ -20,8 +20,9 @@ RUN cd /home/node \
 
 # Go's module downloads land in ~/.cache, the volume every box shares, so a box doesn't fetch them
 # again (proxy.golang.org, sum.golang.org and vuln.go.dev are allowed in .agent/project.yaml). The
-# proxy hands a large module (modernc.org/sqlite) to storage.googleapis.com, which stays blocked:
-# it would reach any public bucket. Fetch such a module from the host into the same volume:
+# proxy hands a large module (modernc.org/sqlite) to storage.googleapis.com, which .agent/project.yaml
+# allows too, so a box downloads it itself. If a module still fails to download in a box, fetch it
+# from the host into the same volume:
 #   docker run --rm --user 1000:1000 --entrypoint sh -v coop-cache:/home/node/.cache \
 #     -v "$PWD":/src:ro -w /src -e HOME=/home/node <this project's box image> -lc 'go mod download'
 ENV GOMODCACHE=/home/node/.cache/go-mod

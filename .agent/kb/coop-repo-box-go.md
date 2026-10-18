@@ -3,7 +3,7 @@ name: coop-repo-box-go
 description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and four approved domains, the module proxy's storage.googleapis.com redirect included; module downloads share the coop-cache volume
 subsystem: box
 sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, tools/staticcheck.mod, Makefile, .tool-versions, agent_config_test.go]
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 A filtered box runs the locked client image, which carries the asdf binary but installs nothing on
@@ -30,14 +30,15 @@ large module zips (modernc.org/sqlite) to `storage.googleapis.com`, and since 21
 the project allows that host too, so a box downloads them itself. That rule grants the whole host:
 any public bucket on it, not only Go's. `GOMODCACHE` sits in `~/.cache`, the `coop-cache` volume
 every box shares; the host command in the Dockerfile's comment fills that cache when a module still
-fails to download in a box. That comment still says the host stays blocked: editing the Dockerfile
-marks this repo's box image stale, so the fix rides along with the Dockerfile's next real change
-(queued).
+fails to download in a box. Editing the Dockerfile, even a comment, marks this repo's box image
+stale, so filtered launches here wait for `coop build --egress filtered`, which only the owner runs.
 
 `coop init` in this repo also installs its generic `.githooks/` gate and sets `core.hooksPath`; coop
 doesn't use them, so they were removed after running it.
 
 ## Changelog
+- 2026-10-18 — the Dockerfile comment now says storage.googleapis.com is allowed and the host fill is
+  the fallback; the owner chose to fix it now and rebuild once.
 - 2026-10-17 — storage.googleapis.com is allowed, not blocked: `.agent/project.yaml` has granted it
   since 21e0fb08, so a box fetches the large zips itself and the host fill is only the fallback.
   Rewrote that paragraph, the description and the index line against `.agent/project.yaml` and
