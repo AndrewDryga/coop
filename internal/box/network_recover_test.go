@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -724,5 +725,83 @@ func TestRecoverNetworkRunsRemovesSetupCheckSnapshots(t *testing.T) {
 	}
 	if !snapshotKept(t, f.store, launch) {
 		t.Fatal("a launch's snapshot from before markers was removed")
+	}
+}
+
+// Recovery removes a run's resources by their fixed names and the run labels coop sets on them. A
+// container or volume under one of those names whose labels coop did not set is another process's:
+// it stays, the run's receipt keeps its cleanup pending, and the report names what it could not
+// verify.
+func TestRecoverNetworkRunsLeavesAResourceItDidNotLabel(t *testing.T) {
+	for role, kind := range map[string]string{"agent": "container", "ipc": "volume"} {
+		t.Run(role, func(t *testing.T) {
+			f, d, evidence, connect := recoveryFixture(t)
+			name := f.ref(role).Name
+			labels := map[string]string{LabelNetworkRun: f.record.ID, "coop.network.role": role, "coop.network.epoch": "another-epoch"}
+			present := func() bool {
+				d.mu.Lock()
+				defer d.mu.Unlock()
+				if kind == "volume" {
+					_, ok := d.volumes[name]
+					return ok
+				}
+				_, ok := d.containers[name]
+				return ok
+			}
+			d.mu.Lock()
+			if kind == "volume" {
+				planted := d.volumes[name]
+				planted.Labels = labels
+				d.volumes[name] = planted
+			} else {
+				planted := d.containers[name]
+				planted.Labels = labels
+				d.containers[name] = planted
+			}
+			d.mu.Unlock()
+			departSupervisor(t, f.store, f.record.ID)
+			results, err := recoverNetworkRuns(context.Background(), evidence, "", connect)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(results) != 1 || results[0].Unverified != kind || !slices.ContainsFunc(results[0].Pending, func(p string) bool { return strings.HasPrefix(p, role) }) {
+				t.Fatalf("recovery result = %+v; want the %s left pending and its %s unverified", results, role, kind)
+			}
+			if !present() {
+				t.Fatalf("recovery removed a %s whose labels coop did not set", kind)
+			}
+			record, err := evidence.Execution(f.record.ID)
+			if err != nil || record.Receipt == nil || record.Receipt.Cleanup != "pending" {
+				t.Fatalf("receipt = %+v, %v; want cleanup pending", record.Receipt, err)
+			}
+			// The run's files go once no container could use them, so only a kept container keeps them.
+			if _, err := os.Stat(f.runfiles); kind == "container" && err != nil {
+				t.Fatal("the artifacts a possible consumer may still use were removed", err)
+			}
+		})
+	}
+}
+
+// Every gateway resource carries the run's labels and its supervisor's identity, pid, start token
+// and host, so `docker ps` shows which coop runs it.
+func TestFilteredResourcesCarryTheirSupervisor(t *testing.T) {
+	f, d, _, _ := recoveryFixture(t)
+	want := fmt.Sprintf("%d:%s:%s", f.record.Supervisor.PID, f.record.Supervisor.StartToken, f.record.Supervisor.Host)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	labels := map[string]map[string]string{}
+	for name, container := range d.containers {
+		labels[name] = container.Labels
+	}
+	for name, volume := range d.volumes {
+		labels[name] = volume.Labels
+	}
+	if len(labels) != 5 {
+		t.Fatalf("launch made %d resources, want 5", len(labels))
+	}
+	for name, got := range labels {
+		if got[LabelNetworkSupervisor] != want || got[LabelNetworkRun] != f.record.ID {
+			t.Fatalf("%s labels = %v; want run %s and supervisor %s", name, got, f.record.ID, want)
+		}
 	}
 }

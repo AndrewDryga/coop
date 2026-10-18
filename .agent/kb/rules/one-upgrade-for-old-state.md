@@ -74,6 +74,7 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 | Task owner record | `~/.local/state/coop/task-leases/v1/<key>.owner.json` | 2 | 1 | read in place, never rewritten | none needed |
 | Pending final review | `~/.local/state/coop/task-leases/v1/<queue>-<key>.pending-review.json` | 2 | 1 | read without its commit IDs (one awaiting verification returns to signoff once; one whose commit predates its run base is anchored on load); the next write stores 2 | builds after v11.3.0 |
 | Network approval | `~/.local/state/coop/network/approval-<id>.json` | 3 | 1 | read, but grants nothing | `coop approve` (v10.1.2 and later) |
+| Network execution | `~/.local/state/coop/network/execution-<id>.json` | 2 | 1 | read; a resource the version 1 journal left short of gone reads as planned, and the next write stores 2 | builds after v11.3.0 |
 | Isolated fork generation | `<repo>-forks/.coop/<name>.generation.json` | 4 | 4 | none exist | none |
 | Service approval | `~/.local/state/coop/service-approvals/` | 5 | 4 | read; a new approval writes 5 | `coop up` re-approves |
 | Workspace checkpoint bundle | kept by Ryker's controller | 2 | 1 | read | none needed |
@@ -89,6 +90,9 @@ retire v1 once those all write v2. Retiring it also removes `legacyLabelsAreLoca
 label then reads as unknown: reported, never removed.
 
 ## Changelog
+- 2026-10-18 — added the network execution record: version 2 drops the per-resource create/start
+  journal (task 2026-10-15-replace-the-network-cleanup-journal-with-a-label), version 1 is still
+  read. `coop sessions check` does not read the network store.
 - 2026-10-17 — the pending final-review row also notes that a version 1 record whose commit
   predates its run base is anchored on load, as version 2 enrollment anchors one.
 - 2026-10-17 — the pending final-review row: a version 1 record awaiting verification has no

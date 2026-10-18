@@ -168,11 +168,12 @@ func injectQualifiedGuardLoss(ctx context.Context, store *networkstate.Store, ru
 			for _, role := range []string{"agent", "guard"} {
 				i := slices.IndexFunc(r.Resources, func(resource networkstate.Resource) bool { return resource.Role == role })
 				resource := r.Resources[i]
-				ref := runtime.DockerRef{Name: resource.Name, ID: resource.ID, Labels: map[string]string{"coop.network.run": r.ID, "coop.network.epoch": r.Epoch, "coop.network.scope": r.Scope, "coop.network.role": role}}
+				ref := runtime.DockerRef{Name: resource.Name, Labels: map[string]string{"coop.network.run": r.ID, "coop.network.epoch": r.Epoch, "coop.network.scope": r.Scope, "coop.network.role": role}}
 				value, exists, err := docker.InspectContainer(control, ref)
 				if err != nil || !exists || !value.State.Running || value.State.Paused || value.State.StartedAt.IsZero() {
 					return errors.New("fault target not confirmed running")
 				}
+				ref.ID = value.ID
 				if role == "guard" {
 					guard = ref
 				}

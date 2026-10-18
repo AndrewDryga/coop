@@ -27,7 +27,7 @@ func TestExecutionCrossProcessCAS(t *testing.T) {
 			t.Fatal(err)
 		}
 		resource := record.Resources[0]
-		_, err = evidence.ConfirmResourceGone(context.Background(), id, 1, record.DaemonID, resource.Role, resource.Name, resource.ID)
+		_, err = evidence.ConfirmResourceGone(context.Background(), id, 1, record.DaemonID, resource.Role, resource.Name)
 		if errors.Is(err, ErrExecutionConflict) {
 			os.Exit(42)
 		}
@@ -70,7 +70,7 @@ func TestExecutionReplacementKeyDoesNotAuthorizeExistingStore(t *testing.T) {
 	if err := s.publish("owner.key", []byte(strings.Repeat("x", 32)), true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.BeginResourceCreation(context.Background(), record.ID, record.Revision, "agent"); err == nil {
+	if err := s.AuthorizeLaunch(context.Background(), record.ID, "agent"); err == nil {
 		t.Fatal("a replaced key authorized work through the old store")
 	}
 	evidence, err := OpenEvidence(s.Path(), nil)
@@ -112,70 +112,6 @@ func TestExecutionMismatchedSupervisorRecoveryPreservesCleanupAndUnknownWorkload
 	}
 }
 
-func TestExecutionInterruptedCreationReconciliationRequiresExactDepartedCustody(t *testing.T) {
-	s, record := executionFixture(t)
-	record = prepareFixtureLaunch(t, s, record)
-	ctx := context.Background()
-	record, err := s.BeginResourceCreation(ctx, record.ID, record.Revision, "guard")
-	if err != nil {
-		t.Fatal(err)
-	}
-	evidence, err := OpenEvidence(s.Path(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer evidence.Close()
-	resource, err := resourceAt(&record, "guard")
-	if err != nil {
-		t.Fatal(err)
-	}
-	name, id := resource.Name, strings.Repeat("a", 64)
-	if _, err := evidence.ReconcileInterruptedResource(ctx, record.ID, record.Revision, record.DaemonID, "guard", name, id); err == nil {
-		t.Fatal("live owner allowed reconciliation")
-	}
-	record.Supervisor.StartToken += "-different-generation"
-	if processidentity.Inspect(record.Supervisor.PID, record.Supervisor.StartToken) != processidentity.Mismatch {
-		t.Fatal("fixture owner did not depart")
-	}
-	data, err := json.Marshal(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.publish("execution-"+record.ID+".json", data, true); err != nil {
-		t.Fatal(err)
-	}
-	for _, change := range []struct{ daemon, role, name, id string }{
-		{"different", "guard", name, id},
-		{record.DaemonID, "guard", name + "-replacement", id},
-		{record.DaemonID, "guard", name, ""},
-		{record.DaemonID, "guard", name, strings.Repeat("A", 64)},
-		{record.DaemonID, "missing", name, id},
-	} {
-		if _, err := evidence.ReconcileInterruptedResource(ctx, record.ID, record.Revision, change.daemon, change.role, change.name, change.id); err == nil {
-			t.Fatal("invalid reconciliation accepted", change)
-		}
-	}
-	// Cleanup can bind a positive observation after a partial receipt is sealed;
-	// that receipt is immutable and does not acquire invented terminal evidence.
-	record, err = evidence.RecoverInterrupted(ctx, record.ID, record.Revision)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := record.Receipt.Digest
-	record, err = evidence.ReconcileInterruptedResource(ctx, record.ID, record.Revision, record.DaemonID, "guard", name, id)
-	if err != nil || record.Receipt.Digest != digest {
-		t.Fatal("positive reconciliation", err)
-	}
-	revision := record.Revision
-	record, err = evidence.ReconcileInterruptedResource(ctx, record.ID, record.Revision, record.DaemonID, "guard", name, id)
-	if err != nil || record.Revision != revision {
-		t.Fatal("idempotent reconciliation", err)
-	}
-	if _, err := evidence.ReconcileInterruptedResource(ctx, record.ID, record.Revision, record.DaemonID, "guard", name, strings.Repeat("b", 64)); err == nil {
-		t.Fatal("rebound cleanup identity")
-	}
-}
-
 func TestExecutionLockSymlinkRefusesWithoutTouchingTarget(t *testing.T) {
 	s, record := executionFixture(t)
 	entries, err := os.ReadDir(s.Path())
@@ -194,7 +130,7 @@ func TestExecutionLockSymlinkRefusesWithoutTouchingTarget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.BeginResourceCreation(context.Background(), record.ID, record.Revision, "agent"); err == nil {
+	if err := s.AuthorizeLaunch(context.Background(), record.ID, "agent"); err == nil {
 		t.Fatal("symlink lock entered the authority transaction")
 	}
 	if err := s.authorityAvailable(); err != nil {

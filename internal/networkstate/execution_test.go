@@ -2,8 +2,10 @@ package networkstate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -30,46 +32,73 @@ func executionFixture(t *testing.T) (*Store, Execution) {
 	return s, record
 }
 
-func TestExecutionIntentsBindExactResourcesWithoutRestartOrRebind(t *testing.T) {
+// AuthorizeLaunch records nothing: whether a resource exists is asked of the runtime by its fixed
+// name. It still refuses a container whose launch artifacts are not in place.
+func TestAuthorizeLaunchChecksWithoutRecording(t *testing.T) {
 	s, record := executionFixture(t)
 	ctx := context.Background()
 	if record.Revision != 1 || record.ID == record.Epoch || len(record.Resources) != 5 {
-		t.Fatal("missing unique intent")
+		t.Fatal("missing unique run identity")
 	}
-	object := strings.Repeat("b", 64)
-	if _, err := s.RecordResourceCreated(ctx, record.ID, record.Revision, "guard", object); err == nil {
-		t.Fatal("created without durable intent")
+	if err := s.AuthorizeLaunch(ctx, record.ID, "guard"); err == nil {
+		t.Fatal("a container launched before its artifacts were prepared")
 	}
-	var err error
 	record = prepareFixtureLaunch(t, s, record)
-	record, err = s.BeginResourceCreation(ctx, record.ID, record.Revision, "guard")
-	if err != nil {
-		t.Fatal(err)
+	for _, role := range []string{"ipc", "guard", "agent"} {
+		if err := s.AuthorizeLaunch(ctx, record.ID, role); err != nil {
+			t.Fatal(role, err)
+		}
 	}
 	persisted, err := s.Execution(record.ID)
-	if err != nil || persisted.Resources[1].State != "creating" || persisted.Resources[1].ID != "" {
-		t.Fatal("unknown create outcome became absence")
+	if err != nil || persisted.Revision != record.Revision {
+		t.Fatalf("an authorization wrote the record: %v, revision %d to %d", err, record.Revision, persisted.Revision)
 	}
-	if _, err := s.BeginResourceCreation(ctx, record.ID, record.Revision, "guard"); err == nil {
-		t.Fatal("unknown create outcome authorized a repeated external submission")
+	if err := s.AuthorizeLaunch(ctx, record.ID, "unknown"); err == nil {
+		t.Fatal("an unknown role was authorized")
 	}
-	record, err = s.RecordResourceCreated(ctx, record.ID, record.Revision, "guard", object)
+}
+
+// A version 1 record journaled each create and start. It reads as version 2, with every resource
+// short of gone planned, and the next write stores version 2.
+func TestExecutionVersionOneReadsAsVersionTwo(t *testing.T) {
+	s, record := executionFixture(t)
+	path := filepath.Join(s.Path(), "execution-"+record.ID+".json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordResourceCreated(ctx, record.ID, record.Revision, "guard", strings.Repeat("c", 64)); err == nil {
-		t.Fatal("resource rebound")
-	}
-	record, err = s.BeginResourceStart(ctx, record.ID, record.Revision, "guard")
-	if err != nil {
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
-	record, err = s.RecordResourceStarted(ctx, record.ID, record.Revision, "guard")
-	if err != nil {
+	raw["version"] = 1
+	for i, state := range []string{"started", "created", "creating", "gone", "planned"} {
+		resource := raw["resources"].([]any)[i].(map[string]any)
+		resource["state"] = state
+		if state == "started" || state == "created" {
+			resource["id"] = strings.Repeat("c", 64)
+		}
+	}
+	if data, err = json.Marshal(raw); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.BeginResourceStart(ctx, record.ID, record.Revision, "guard"); err == nil {
-		t.Fatal("same-epoch helper restarted")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Execution(record.ID)
+	if err != nil || got.Version != ExecutionVersion {
+		t.Fatalf("version 1 record = %+v, %v", got, err)
+	}
+	for i, want := range []string{"planned", "planned", "planned", "gone", "planned"} {
+		if got.Resources[i].State != want {
+			t.Fatalf("resource %s = %q, want %q", got.Resources[i].Role, got.Resources[i].State, want)
+		}
+	}
+	if _, err := s.RecordWorkloadStarted(context.Background(), got.ID, got.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if data, err = os.ReadFile(path); err != nil || !strings.Contains(string(data), `"version":2`) || strings.Contains(string(data), `"id":"cccc`) {
+		t.Fatalf("the next write did not store version 2: %s, %v", data, err)
 	}
 }
 
@@ -80,7 +109,7 @@ func TestExecutionConcurrentCASHasOnlyOneWinner(t *testing.T) {
 	results := make(chan error, 20)
 	for range 20 {
 		workers.Go(func() {
-			_, err := s.BeginResourceCreation(context.Background(), record.ID, record.Revision, "controller")
+			_, err := s.RecordWorkloadStarted(context.Background(), record.ID, record.Revision)
 			results <- err
 		})
 	}
@@ -144,7 +173,7 @@ func TestExecutionSnapshotReplayDoesNotInflateOrCrossEpoch(t *testing.T) {
 	if _, err := s.AcceptSnapshot(ctx, record.ID, record.Revision, snapshot); err == nil {
 		t.Fatal("terminal observation reopened")
 	}
-	if _, err := s.BeginResourceCreation(ctx, record.ID, record.Revision, "agent"); err == nil {
+	if err := s.AuthorizeLaunch(ctx, record.ID, "agent"); err == nil {
 		t.Fatal("terminal epoch authorized new runtime work before receipt sealing")
 	}
 }
@@ -186,10 +215,10 @@ func TestEvidenceKeyLossPreservesReadsAndCleanupButNotAuthority(t *testing.T) {
 		t.Fatal("project/key loss hid cleanup custody", err)
 	}
 	resource := record.Resources[0]
-	if _, err := evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, "another-daemon", resource.Role, resource.Name, resource.ID); err == nil {
+	if _, err := evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, "another-daemon", resource.Role, resource.Name); err == nil {
 		t.Fatal("cleanup crossed runtime identity")
 	}
-	record, err = evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, resource.Name, resource.ID)
+	record, err = evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, resource.Name)
 	if err != nil || record.Resources[0].State != "gone" || !reflect.DeepEqual(sealed, *record.Receipt) {
 		t.Fatal("cleanup rewrote sealed receipt", err)
 	}
@@ -199,8 +228,8 @@ func TestExecutionLockCancellationAndLiveSupervisorRecoveryRefuse(t *testing.T) 
 	s, record := executionFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := s.BeginResourceCreation(ctx, record.ID, record.Revision, "agent"); !errors.Is(err, context.Canceled) {
-		t.Fatal("cancelled mutation entered lock", err)
+	if err := s.AuthorizeLaunch(ctx, record.ID, "agent"); !errors.Is(err, context.Canceled) {
+		t.Fatal("cancelled check entered lock", err)
 	}
 	evidence, err := OpenEvidence(s.Path(), nil)
 	if err != nil {
@@ -216,27 +245,20 @@ func TestExecutionLockCancellationAndLiveSupervisorRecoveryRefuse(t *testing.T) 
 	}
 }
 
-func TestExecutionKeyLossFencesNewWorkButKeepsInFlightOutcomeCustody(t *testing.T) {
+func TestExecutionKeyLossFencesNewWork(t *testing.T) {
 	s, record := executionFixture(t)
 	record = prepareFixtureLaunch(t, s, record)
 	ctx := context.Background()
-	var err error
-	record, err = s.BeginResourceCreation(ctx, record.ID, record.Revision, "guard")
-	if err != nil {
+	if err := s.AuthorizeLaunch(ctx, record.ID, "guard"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.root.Remove("owner.key"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.BeginResourceCreation(ctx, record.ID, record.Revision, "agent"); err == nil {
-		t.Fatal("cached key authorized new creation")
-	}
-	record, err = s.RecordResourceCreated(ctx, record.ID, record.Revision, "guard", strings.Repeat("b", 64))
-	if err != nil {
-		t.Fatal("key loss erased an already-in-flight create result", err)
-	}
-	if _, err := s.BeginResourceStart(ctx, record.ID, record.Revision, "guard"); err == nil {
-		t.Fatal("cached key authorized a new start")
+	for _, role := range []string{"guard", "agent"} {
+		if err := s.AuthorizeLaunch(ctx, record.ID, role); err == nil {
+			t.Fatalf("cached key authorized a new %s create or start", role)
+		}
 	}
 }
 
@@ -258,42 +280,6 @@ func TestExecutionKnownDetailLossCannotProduceCompleteReceipt(t *testing.T) {
 		if err != nil || record.Receipt.Completeness != "partial" || record.Receipt.Finality != "final" {
 			t.Fatal("known evidence loss claimed complete", err)
 		}
-	}
-}
-
-// An interruption right after the creating intent is published leaves the intent in place: it
-// refuses a second create, and reconciliation settles it.
-func TestExecutionInterruptedAfterItsIntentRetainsItForReconciliation(t *testing.T) {
-	s, record := executionFixture(t)
-	record = prepareFixtureLaunch(t, s, record)
-	wanted := errors.New("injected interruption after publication")
-	s.afterPublish = func(string) error {
-		current, err := s.Execution(record.ID)
-		if err != nil {
-			return err
-		}
-		if current.Resources[0].State == "creating" {
-			return wanted
-		}
-		return nil
-	}
-	uncertain, err := s.BeginResourceCreation(context.Background(), record.ID, record.Revision, "controller")
-	if !errors.Is(err, wanted) || uncertain.ID != record.ID {
-		t.Fatal("publication error lost operation identity", err)
-	}
-	got, err := s.Execution(record.ID)
-	if err != nil || got.Resources[0].State != "creating" || got.Revision != record.Revision+1 {
-		t.Fatal("the interrupted outcome was treated as absent", err)
-	}
-	// The retained intent refuses a second create rather than repeating it.
-	if _, err := s.BeginResourceCreation(context.Background(), got.ID, got.Revision, "controller"); err == nil ||
-		!strings.Contains(err.Error(), "already intended") {
-		t.Fatal("uncertain outcome authorized a second runtime operation", err)
-	}
-	s.afterPublish = nil
-	confirmed, err := s.RecordResourceCreated(context.Background(), got.ID, got.Revision, "controller", strings.Repeat("a", 64))
-	if err != nil || confirmed.Revision != got.Revision+1 || confirmed.Resources[0].State != "created" {
-		t.Fatal("reconciliation could not settle the uncertain outcome", err)
 	}
 }
 

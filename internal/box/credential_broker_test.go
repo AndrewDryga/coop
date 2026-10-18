@@ -758,8 +758,9 @@ func TestCredentialBrokerSecretCoversEveryRouteOnce(t *testing.T) {
 
 func TestCredentialBrokerSecretMountExistsOnlyOnCaplessGuard(t *testing.T) {
 	f := &filteredExecution{config: "/owner/launch.json", broker: &credentialBrokerRun{configPath: "/owner/broker.json"},
+		ids: map[string]string{"controller": "controller-id"},
 		record: networkstate.Execution{Resources: []networkstate.Resource{
-			{Role: "controller", ID: "controller-id"}, {Role: "ipc", Name: "ipc-volume"}, {Role: "observations", Name: "observations-volume"},
+			{Role: "controller"}, {Role: "ipc", Name: "ipc-volume"}, {Role: "observations", Name: "observations-volume"},
 		}}}
 	guard := strings.Join(f.helperOptions("guard"), " ")
 	controller := strings.Join(f.helperOptions("controller"), " ")

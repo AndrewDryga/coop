@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"testing"
 )
@@ -38,7 +37,7 @@ func confirmFixtureConsumersGone(t *testing.T, evidence *Evidence, record Execut
 			continue
 		}
 		var err error
-		record, err = evidence.ConfirmResourceGone(context.Background(), record.ID, record.Revision, record.DaemonID, resource.Role, resource.Name, resource.ID)
+		record, err = evidence.ConfirmResourceGone(context.Background(), record.ID, record.Revision, record.DaemonID, resource.Role, resource.Name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +48,7 @@ func confirmFixtureConsumersGone(t *testing.T, evidence *Evidence, record Execut
 func TestArtifactsPrepareOneOwnedDirectoryBeforeAnyContainer(t *testing.T) {
 	s, record := executionFixture(t)
 	ctx := context.Background()
-	if _, err := s.BeginResourceCreation(ctx, record.ID, record.Revision, "controller"); err == nil {
+	if err := s.AuthorizeLaunch(ctx, record.ID, "controller"); err == nil {
 		t.Fatal("container created before its launch artifacts were prepared")
 	}
 	record = prepareFixtureLaunch(t, s, record)
@@ -133,7 +132,7 @@ func TestArtifactsRefuseAnOccupiedOrTamperedDestination(t *testing.T) {
 			if _, err := s.LaunchConfigPath(record.ID); err == nil {
 				t.Fatal("tampered artifacts were accepted", kind)
 			}
-			if _, err := s.BeginResourceCreation(context.Background(), record.ID, record.Revision, "controller"); err == nil {
+			if err := s.AuthorizeLaunch(context.Background(), record.ID, "controller"); err == nil {
 				t.Fatal("tampered artifacts authorized runtime work", kind)
 			}
 		})
@@ -158,14 +157,6 @@ func TestArtifactCleanupRequiresGoneConsumersAndSurvivesKeyLoss(t *testing.T) {
 	evidence := fixtureEvidence(t, s)
 	if _, err := evidence.CleanupArtifacts(ctx, record.ID, record.Revision); err == nil {
 		t.Fatal("cleanup ran while container consumers might exist")
-	}
-	for _, role := range []string{"controller", "guard", "agent"} {
-		if record, err = s.BeginResourceCreation(ctx, record.ID, record.Revision, role); err != nil {
-			t.Fatal(err)
-		}
-		if record, err = s.RecordResourceCreated(ctx, record.ID, record.Revision, role, strings.Repeat("a", 64)); err != nil {
-			t.Fatal(err)
-		}
 	}
 	record = confirmFixtureConsumersGone(t, evidence, record)
 	if err := os.Remove(filepath.Join(s.Path(), "owner.key")); err != nil {
@@ -196,15 +187,6 @@ func TestArtifactCleanupSurvivesADeviceRenumber(t *testing.T) {
 	ctx := context.Background()
 	record = prepareFixtureLaunch(t, s, record)
 	evidence := fixtureEvidence(t, s)
-	for _, role := range []string{"controller", "guard", "agent"} {
-		var err error
-		if record, err = s.BeginResourceCreation(ctx, record.ID, record.Revision, role); err != nil {
-			t.Fatal(err)
-		}
-		if record, err = s.RecordResourceCreated(ctx, record.ID, record.Revision, role, strings.Repeat("a", 64)); err != nil {
-			t.Fatal(err)
-		}
-	}
 	record = confirmFixtureConsumersGone(t, evidence, record)
 	record.Artifact.Device++ // recorded before the reboot renumbered the volume
 	if err := s.writeExecution(&record, true); err != nil {

@@ -50,6 +50,9 @@ const (
 	LabelRun            = "coop.run"             // value=<loop run id>, so cancellation reaps the daemon-owned box
 	LabelExecution      = "coop.execution"       // exact host activity record; runtime cleanup never guesses by kind/name
 	LabelNetworkRun     = "coop.network.run"     // a filtered run's gateway containers and volumes: value=<network run id>
+	// LabelNetworkSupervisor names the coop process that runs a filtered run's gateway resources:
+	// <pid>:<start token>:<host>, as its execution record does.
+	LabelNetworkSupervisor = "coop.network.supervisor"
 	// LabelHost records the HOST PROCESS supervising this box, as
 	// v2:<workspace-scope>:<host>:<pid>:<start-token> — the versioned form parseSupervisorLabel reads
 	// back. Every other label above names a LOGICAL owner (a run, a supervisor id, a fork); none of

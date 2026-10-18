@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"sync"
 
@@ -83,11 +82,11 @@ func (f *filteredExecution) cleanup(workload string) (agentGone bool, result err
 	result = errors.Join(result, f.removeResource(evidence, "agent"))
 	agentGone = f.resource("agent").State == "gone"
 	retainEvidence := false
-	guard, resolveErr := f.resolveResource("guard")
+	guard, guardRan, resolveErr := f.resolveContainer("guard")
 	result = errors.Join(result, resolveErr)
 	// A guard that was only created never ran: there is nothing to stop and no final observation to
 	// take — asking the daemon for one reports a missing file, a failure that never happened.
-	if resolveErr == nil && guard.ID != "" && f.resource("guard").State != "created" {
+	if resolveErr == nil && guard.ID != "" && guardRan {
 		if agentGone {
 			ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
 			// This round-trip happens after exact agent absence. A guard that
@@ -136,7 +135,7 @@ func (f *filteredExecution) cleanup(workload string) (agentGone bool, result err
 		steps.Go(func() { guardErr = f.removeResource(evidence, "guard") })
 	}
 	steps.Go(func() {
-		controller, err := f.resolveResource("controller")
+		controller, _, err := f.resolveContainer("controller")
 		if err != nil || controller.ID == "" {
 			controllerErr = err
 			return
@@ -220,7 +219,7 @@ func (f *filteredExecution) confirmGone(evidence *networkstate.Evidence, role st
 	ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
 	defer cancel()
 	_ = f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
-		return evidence.ConfirmResourceGone(ctx, r.ID, r.Revision, r.DaemonID, role, ref.Name, ref.ID)
+		return evidence.ConfirmResourceGone(ctx, r.ID, r.Revision, r.DaemonID, role, ref.Name)
 	})
 }
 
@@ -240,86 +239,62 @@ func finalObservationFile(data []byte) ([]byte, error) {
 	return value, nil
 }
 
-// A positive exact-owner inspection may reconcile an ambiguous creation. A
-// negative observation cannot prove a timed-out daemon request will not appear.
-func (f *filteredExecution) resolveResource(role string) (runtime.DockerRef, error) {
-	ref, resource := f.ref(role), f.resource(role)
-	if resource.State != "creating" || ref.ID != "" {
-		return ref, nil
-	}
+// resolveContainer is role's container as the runtime has it: the ID this supervisor's create
+// returned, or else the container under the run's fixed name and labels, and whether it ever ran.
+// An absent one has no ID.
+func (f *filteredExecution) resolveContainer(role string) (runtime.DockerRef, bool, error) {
+	ref := f.ref(role)
 	ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
 	defer cancel()
-	id := ""
-	if resource.Kind == "container" {
-		value, present, err := f.docker.InspectContainer(ctx, ref)
-		if err != nil {
-			return ref, err
-		}
-		if present {
-			id = value.ID
-		}
-	} else {
-		value, present, err := f.docker.InspectVolume(ctx, ref)
-		if err != nil {
-			return ref, err
-		}
-		if present {
-			id = value.Name
-		}
+	value, present, err := f.docker.InspectContainer(ctx, ref)
+	if err != nil || !present {
+		ref.ID = ""
+		return ref, false, err
 	}
-	if id == "" {
-		if f.attempted[role] {
-			return ref, fmt.Errorf("network %s creation outcome remains unknown", role)
-		}
-		return ref, nil
-	}
-	if err := f.created(ctx, role, id); err != nil {
-		return ref, err
-	}
-	return f.ref(role), nil
+	ref.ID = value.ID
+	f.mu.Lock()
+	f.ids[role] = value.ID
+	f.mu.Unlock()
+	return ref, !value.State.StartedAt.IsZero(), nil
 }
 
 func (f *filteredExecution) removeResource(evidence *networkstate.Evidence, role string) error {
-	ref, err := f.resolveResource(role)
-	if err != nil {
-		return err
-	}
 	resource := f.resource(role)
 	if resource.State == "gone" {
 		return nil
 	}
+	ref := f.ref(role)
+	if resource.Kind == "container" {
+		var err error
+		if ref, _, err = f.resolveContainer(role); err != nil {
+			return err
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
 	defer cancel()
-	if resource.Kind == "container" {
-		if ref.ID != "" {
-			// Force removal remains available after a failed graceful stop.
-			stopCtx, stop := context.WithTimeout(context.Background(), filteredControlTimeout)
-			grace := 0
-			if role == "agent" {
-				grace = 10 // give provider transcripts the same bounded drain as the guard
-			}
-			_ = f.docker.StopContainer(stopCtx, ref, grace)
-			stop()
-			cancel()
-			ctx, cancel = context.WithTimeout(context.Background(), filteredControlTimeout)
-			defer cancel()
-			if err := f.docker.RemoveContainer(ctx, ref); err != nil {
-				return err
-			}
-		} else if _, present, err := f.docker.InspectContainer(ctx, ref); err != nil || present {
-			return errors.Join(errors.New("network container absence is unconfirmed"), err)
+	switch {
+	case resource.Kind != "container":
+		if err := f.docker.RemoveVolume(ctx, ref); err != nil {
+			return err
 		}
-	} else {
-		if ref.ID != "" {
-			if err := f.docker.RemoveVolume(ctx, ref); err != nil {
-				return err
-			}
-		} else if _, present, err := f.docker.InspectVolume(ctx, ref); err != nil || present {
-			return errors.Join(errors.New("network volume absence is unconfirmed"), err)
+	case ref.ID != "":
+		// Force removal remains available after a failed graceful stop.
+		stopCtx, stop := context.WithTimeout(context.Background(), filteredControlTimeout)
+		grace := 0
+		if role == "agent" {
+			grace = 10 // give provider transcripts the same bounded drain as the guard
+		}
+		_ = f.docker.StopContainer(stopCtx, ref, grace)
+		stop()
+		cancel()
+		ctx, cancel = context.WithTimeout(context.Background(), filteredControlTimeout)
+		defer cancel()
+		if err := f.docker.RemoveContainer(ctx, ref); err != nil {
+			return err
 		}
 	}
 	return f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
-		return evidence.ConfirmResourceGone(ctx, r.ID, r.Revision, r.DaemonID, role, ref.Name, ref.ID)
+		return evidence.ConfirmResourceGone(ctx, r.ID, r.Revision, r.DaemonID, role, ref.Name)
 	})
 }
 

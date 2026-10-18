@@ -37,15 +37,6 @@ func TestFilteredConfirmedVolumeSurvivesCallerCancellation(t *testing.T) {
 	if err := f.createVolume(ctx, "ipc"); !errors.Is(err, context.Canceled) {
 		t.Fatal("successful create hid caller cancellation", err)
 	}
-	record, err := f.store.Execution(f.record.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, resource := range record.Resources {
-		if resource.Role == "ipc" && (resource.State != "created" || resource.ID != resource.Name) {
-			t.Fatal("confirmed volume identity lost after cancellation", resource)
-		}
-	}
 	if gone, err := f.cleanup("launch_failed"); err != nil || !gone || len(daemon.volumes) != 0 {
 		t.Fatal("cancelled create left cleanup debt", gone, err)
 	}

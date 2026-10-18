@@ -107,7 +107,7 @@ func (d *Docker) InspectContainer(ctx context.Context, ref DockerRef) (DockerCon
 	}
 	value.Name = strings.TrimPrefix(value.Name, "/")
 	if !ref.matches(value.Name, value.ID, value.Labels) {
-		return DockerContainer{}, false, errors.New("Docker container ownership conflict")
+		return DockerContainer{}, false, ErrDockerOwnership
 	}
 	return value, true, nil
 }
@@ -159,8 +159,11 @@ func (d *Docker) InspectVolume(ctx context.Context, ref DockerRef) (DockerVolume
 		return DockerVolume{}, false, errors.Join(err, checkErr)
 	}
 	var value DockerVolume
-	if json.Unmarshal(data, &value) != nil || !ref.matches(value.Name, value.Name, value.Labels) || value.Driver != "local" || value.Scope != "local" || len(value.Options) != 0 || value.CreatedAt == "" {
-		return DockerVolume{}, false, errors.New("Docker volume ownership or driver conflict")
+	if json.Unmarshal(data, &value) != nil || value.Driver != "local" || value.Scope != "local" || len(value.Options) != 0 || value.CreatedAt == "" {
+		return DockerVolume{}, false, errors.New("Docker volume driver conflict")
+	}
+	if !ref.matches(value.Name, value.Name, value.Labels) {
+		return DockerVolume{}, false, ErrDockerOwnership
 	}
 	return value, true, nil
 }

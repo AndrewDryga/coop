@@ -73,9 +73,9 @@ type filteredExecution struct {
 	hostAddresses       func() ([]netip.Prefix, error) // nil uses live host inventory; fixtures own their topology
 	mu                  sync.Mutex                     // host callbacks serialize registry CAS, never runtime I/O
 	record              networkstate.Execution
-	attempted           map[string]bool
-	startAttempted      bool // monotonic host launch boundary, independent of registry publication
-	mainStarted         bool // the daemon reported the workload running: teardown may then speak of its main process
+	ids                 map[string]string // role → the container ID this supervisor created
+	startAttempted      bool              // monotonic host launch boundary, independent of registry publication
+	mainStarted         bool              // the daemon reported the workload running: teardown may then speak of its main process
 	bindSources         map[string]os.FileInfo
 	unsafeRoots         []string
 	publish             []string // -p options the controller carries for serve.ports
@@ -265,7 +265,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 			ui.Detail("waiting for Docker to start this box (%s so far)", elapsed.Round(time.Second))
 		}
 	}
-	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, agentIdentity: boxAgentIdentity(), attempted: map[string]bool{}, taskVolume: spec.taskVolume, authMarkers: authMarkers, authoritySpec: spec, authorityConfig: cfg}
+	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, agentIdentity: boxAgentIdentity(), ids: map[string]string{}, taskVolume: spec.taskVolume, authMarkers: authMarkers, authoritySpec: spec, authorityConfig: cfg}
 	f.native = spec.native
 	if brokerPlan != nil {
 		f.broker = &credentialBrokerRun{plan: brokerPlan}
@@ -479,19 +479,35 @@ func filteredHostAddresses() ([]netip.Prefix, error) {
 func (f *filteredExecution) ref(role string) runtime.DockerRef {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return networkResourceRef(f.record, role)
+	ref := networkResourceRef(f.record, role)
+	ref.ID = f.ids[role]
+	return ref
 }
 
+// networkResourceRef names one of a run's resources: its fixed name and the run labels only coop
+// sets, so neither cleanup nor recovery ever takes a resource another process made under that name
+// for the run's. Whether its supervisor is gone is judged from the run's record, never a label.
 func networkResourceRef(record networkstate.Execution, role string) runtime.DockerRef {
 	for _, resource := range record.Resources {
 		if resource.Role == role {
-			return runtime.DockerRef{Name: resource.Name, ID: resource.ID, Labels: map[string]string{
+			return runtime.DockerRef{Name: resource.Name, Labels: map[string]string{
 				LabelNetworkRun: record.ID, "coop.network.epoch": record.Epoch,
 				"coop.network.scope": record.Scope, "coop.network.role": role,
 			}}
 		}
 	}
 	return runtime.DockerRef{}
+}
+
+// createRef is role's reference as the run creates it: with its supervisor's label too, pid,
+// start token and host, so a person reading `docker ps` sees which coop runs it.
+func (f *filteredExecution) createRef(role string) runtime.DockerRef {
+	ref := f.ref(role)
+	f.mu.Lock()
+	supervisor := f.record.Supervisor
+	f.mu.Unlock()
+	ref.Labels[LabelNetworkSupervisor] = fmt.Sprintf("%d:%s:%s", supervisor.PID, supervisor.StartToken, supervisor.Host)
+	return ref
 }
 
 // Reread before each CAS: a failed rename/fsync may have published the previous
@@ -509,27 +525,6 @@ func (f *filteredExecution) update(ctx context.Context, change func(networkstate
 		f.record = next
 	}
 	return err
-}
-
-func (f *filteredExecution) transition(ctx context.Context, role, phase string) error {
-	return f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
-		switch phase {
-		case "creating":
-			return f.store.BeginResourceCreation(ctx, r.ID, r.Revision, role)
-		case "starting":
-			return f.store.BeginResourceStart(ctx, r.ID, r.Revision, role)
-		case "started":
-			return f.store.RecordResourceStarted(ctx, r.ID, r.Revision, role)
-		default:
-			return r, errors.New("invalid filtered launch phase")
-		}
-	})
-}
-
-func (f *filteredExecution) created(ctx context.Context, role, id string) error {
-	return f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
-		return f.store.RecordResourceCreated(ctx, r.ID, r.Revision, role, id)
-	})
 }
 
 func (f *filteredExecution) accept(ctx context.Context, snapshot networkview.Snapshot) error {

@@ -828,7 +828,7 @@ func netCleanUpWithoutSeal(t *testing.T, store *networkstate.Store, record netwo
 	defer evidence.Close()
 	ctx := context.Background()
 	for _, resource := range record.Resources {
-		if record, err = evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, resource.Name, resource.ID); err != nil {
+		if record, err = evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, resource.Name); err != nil {
 			t.Fatal(err)
 		}
 	}

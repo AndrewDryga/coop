@@ -153,7 +153,7 @@ func filteredFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &filteredExecution{store: store, record: record, policy: policy, image: "sha256:" + strings.Repeat("b", 64), agentIdentity: boxAgentIdentity(), attempted: map[string]bool{}}
+	f := &filteredExecution{store: store, record: record, policy: policy, image: "sha256:" + strings.Repeat("b", 64), agentIdentity: boxAgentIdentity(), ids: map[string]string{}}
 	f.config, err = store.LaunchConfigPath(record.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -294,7 +294,20 @@ func (d *filteredDaemonFixture) InspectVolume(_ context.Context, ref runtime.Doc
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	v, ok := d.volumes[ref.Name]
+	if ok && !fixtureLabelsMatch(ref.Labels, v.Labels) {
+		return runtime.DockerVolume{}, false, runtime.ErrDockerOwnership
+	}
 	return v, ok, nil
+}
+
+// fixtureLabelsMatch is Docker's exact-owner rule: every label the reference names, as it names it.
+func fixtureLabelsMatch(want, have map[string]string) bool {
+	for key, value := range want {
+		if have[key] != value {
+			return false
+		}
+	}
+	return true
 }
 func (d *filteredDaemonFixture) RemoveVolume(_ context.Context, ref runtime.DockerRef) error {
 	d.mu.Lock()
@@ -398,6 +411,9 @@ func (d *filteredDaemonFixture) InspectContainer(_ context.Context, ref runtime.
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	v, ok := d.containers[ref.Name]
+	if ok && (!fixtureLabelsMatch(ref.Labels, v.Labels) || ref.ID != "" && ref.ID != v.ID) {
+		return runtime.DockerContainer{}, false, runtime.ErrDockerOwnership
+	}
 	return v, ok, nil
 }
 func (d *filteredDaemonFixture) StartContainer(_ context.Context, ref runtime.DockerRef) error {
@@ -779,8 +795,8 @@ func TestFilteredLaunchStepPanicReachesTheCallersTeardown(t *testing.T) {
 	if message := fmt.Sprint(recovered); !strings.Contains(message, "fixture step panicked") || !strings.Contains(message, "goroutine") {
 		t.Fatalf("the step's panic did not reach the launch with its stack: %v", recovered)
 	}
-	if f.resource("guard").State != "created" {
-		t.Fatalf("the panic rose before its sibling settled: guard is %q", f.resource("guard").State)
+	if f.ref("guard").ID == "" {
+		t.Fatal("the panic rose before its sibling settled: the guard was not created")
 	}
 	if gone, err := f.cleanup("launch_failed"); err != nil || !gone {
 		t.Fatal("teardown after a step panic", gone, err)
@@ -816,14 +832,10 @@ func TestFilteredLaunchRefusedIntentAllocatesNothing(t *testing.T) {
 }
 
 func TestFilteredCleanupRetainsUnknownCreateAndSurvivingAgent(t *testing.T) {
-	for _, phase := range []string{"ambiguous-create", "unknown-removal"} {
+	for _, phase := range []string{"unknown-removal"} {
 		t.Run(phase, func(t *testing.T) {
 			f, d := filteredFixture(t)
-			if phase == "ambiguous-create" {
-				d.ambiguous = "agent"
-			} else {
-				d.refuseRemoval = "agent"
-			}
+			d.refuseRemoval = "agent"
 			_, _ = f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
 			gone, err := f.cleanup("runtime_failed")
 			if gone || err == nil {
@@ -1187,7 +1199,7 @@ func TestFilteredStartupPersistenceFailureIsRuntimeFailure(t *testing.T) {
 	f, d := filteredFixture(t)
 	d.failStartupPersistence = true
 	code, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
-	if err == nil || f.workloadOutcome(code, err, false) != "runtime_failed" || f.resource("agent").State != "starting" {
+	if err == nil || f.workloadOutcome(code, err, false) != "runtime_failed" {
 		t.Fatal("failed startup publication reclassified the runtime", code, err)
 	}
 	if gone, err := f.cleanup("runtime_failed"); err != nil || !gone {

@@ -50,13 +50,7 @@ func qualificationFixture(t *testing.T) (*QualificationSmoke, ExecutionSpec) {
 	}
 	r, err = smoke.store.mutateExecution(context.Background(), r.ID, r.Revision, func(r *Execution) (bool, error) {
 		for i := range r.Resources {
-			resource := &r.Resources[i]
-			resource.State = "gone"
-			if resource.Kind == "volume" {
-				resource.ID = resource.Name
-			} else {
-				resource.ID = strings.Repeat("a", 64)
-			}
+			r.Resources[i].State = "gone"
 		}
 		r.Artifact.State = "gone"
 		r.Snapshot.Terminal, r.WorkloadStarted, r.ObserverAfterWorkload = true, true, true

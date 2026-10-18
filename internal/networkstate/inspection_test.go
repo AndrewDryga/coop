@@ -243,7 +243,7 @@ func TestInspectionCleanupAfterFinalLeavesTheSealedReceiptUnchanged(t *testing.T
 		t.Fatal("uncleaned resources reported complete cleanup", err)
 	}
 	for _, resource := range record.Resources {
-		record, err = evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, resource.Name, resource.ID)
+		record, err = evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, resource.Name)
 		if err != nil {
 			t.Fatal(err)
 		}

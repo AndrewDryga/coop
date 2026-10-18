@@ -147,7 +147,7 @@ func TestSettleInterruptedFilteredRunsOncePerProcess(t *testing.T) {
 		{RunID: "removed", Removed: []string{"guard", "controller", "ipc", "observations"}, Sealed: true},
 		{RunID: "already-absent", Sealed: true},
 		{RunID: "live", Skipped: "its supervisor is still running", Live: true},
-		{RunID: "unproved", Pending: []string{"ipc (a container that could still use it is not proved gone)"}, Unverified: true},
+		{RunID: "unproved", Pending: []string{"ipc (a container that could still use it is not proved gone)"}, Unverified: "container"},
 		{RunID: "failed", Pending: []string{"guard"}, Failures: []error{errors.New("daemon hung up")}},
 	}, nil)
 	rt, _ := sweepRuntime(t)

@@ -31,6 +31,10 @@ type DockerCreate struct {
 // Only creation methods produce it; a failed post-create inspection never does.
 var ErrDockerCreateNotAttempted = errors.New("Docker creation was not attempted")
 
+// ErrDockerOwnership is a container or volume under an exact reference's name whose labels are
+// not the reference's: another process's, which coop never touches.
+var ErrDockerOwnership = errors.New("Docker resource ownership conflict")
+
 var errDockerStartupProbe = errors.New("attached Docker startup observation unavailable")
 
 const dockerImageFormat = `{"ID":{{json .Id}},"Labels":{{json (index .Config "Labels")}}}`

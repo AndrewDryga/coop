@@ -203,7 +203,13 @@ the teardown removed the containers and volumes leaves at most the artifact and 
 retention keeps an unsealed run forever, so the pass finishes that one from the record alone: it
 connects to the recorded daemon only for a resource still at the runtime (`recoverLeftovers`), so a
 stopped or replaced daemon cannot hold the seal back, and `coop net recover` and `coop net inspect`
-resolve a runtime only when cleanup is pending. `NetworkRecovery.Sealed` means THIS pass wrote the
+resolve a runtime only when cleanup is pending. There is no create/start journal (execution record
+version 2): each resource has a fixed name, `coop-net-<run>-<role>`, and run labels only coop sets
+(plus its supervisor's pid, start token and host, for a person reading `docker ps`). The launch asks
+`AuthorizeLaunch` before each create and start, and teardown and recovery inspect each role by name
+and run labels, remove what matches, and leave a holder of the name with other labels alone
+(`runtime.ErrDockerOwnership`, reported as `NetworkRecovery.Unverified`). Whether a supervisor is
+gone is judged from its record, never from a label. `NetworkRecovery.Sealed` means THIS pass wrote the
 receipt, never an earlier one. A record names its supervisor's host (`Supervisor.Host`, the
 supervisor labels' host field), and the pass judges only a supervisor recorded here
 (`supervisorRecordedHere`): another host's run is left alone with `Elsewhere` set, and a record with
@@ -292,6 +298,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-18 — cleanup and recovery find each resource by its fixed name and run labels; the
+  create/start journal and its ambiguous-create reconciliation are gone (task
+  2026-10-15-replace-the-network-cleanup-journal-with-a-label).
 - 2026-10-18 — coop-net now imports `internal/randid` (the shared random-ID helper), so it joined
   `sourceDirs`; four refactors had left `source.tar` stale until the batch gate caught it.
 - 2026-10-17 — run records name the supervisor's host and recovery skips other hosts' runs (task

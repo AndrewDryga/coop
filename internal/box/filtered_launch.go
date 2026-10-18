@@ -40,14 +40,6 @@ func networkMount(kind, source, target string, readonly bool) string {
 	return strings.TrimSuffix(buffer.String(), "\n")
 }
 
-// markAttempted records whether a create request for role may have reached the daemon. Launch steps
-// that run together write it at once; cleanup reads it only after every one of them has returned.
-func (f *filteredExecution) markAttempted(role string, attempted bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.attempted[role] = attempted
-}
-
 // together runs launch steps that do not depend on each other at once, and returns only when every
 // one has: a step that fails does not abandon its sibling mid-request, because a runtime call already
 // sent must settle before cleanup can know what the daemon holds.
@@ -96,45 +88,36 @@ func sameFailure(ctx context.Context, a, b error) bool {
 func (f *filteredExecution) createVolume(ctx context.Context, role string) error {
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
-	if err := f.transition(ctx, role, "creating"); err != nil {
+	if err := f.store.AuthorizeLaunch(ctx, f.record.ID, role); err != nil {
 		return err
 	}
-	f.markAttempted(role, true)
-	volume, err := f.docker.CreateVolume(ctx, f.ref(role))
-	if err != nil {
-		if errors.Is(err, runtime.ErrDockerCreateNotAttempted) {
-			f.markAttempted(role, false)
-		}
-		return err // current absence cannot settle an ambiguous daemon request
+	if _, err := f.docker.CreateVolume(ctx, f.createRef(role)); err != nil {
+		return err
 	}
-	// The daemon confirmed creation. Caller cancellation must not discard that
-	// custody, but it still stops the launch after the independent bounded write.
-	persist, stop := context.WithTimeout(context.WithoutCancel(ctx), filteredControlTimeout)
-	defer stop()
-	return errors.Join(f.created(persist, role, volume.Name), ctx.Err())
+	// A volume made just as the caller gave up still stops the launch; cleanup finds it by name.
+	return ctx.Err()
 }
 
+// createContainer creates role's container under the run's fixed name and labels. Cleanup and
+// recovery find it by that name whatever this call's outcome, so nothing is recorded first.
 func (f *filteredExecution) createContainer(ctx context.Context, role, image string, options, command []string) error {
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
-	if err := f.transition(ctx, role, "creating"); err != nil {
+	if err := f.store.AuthorizeLaunch(ctx, f.record.ID, role); err != nil {
 		return err
 	}
-	f.markAttempted(role, true)
-	id, createErr := f.docker.CreateContainer(ctx, runtime.DockerCreate{Ref: f.ref(role), Image: image, Options: options, Command: command})
+	id, createErr := f.docker.CreateContainer(ctx, runtime.DockerCreate{Ref: f.createRef(role), Image: image, Options: options, Command: command})
 	if id == "" {
 		if errors.Is(createErr, runtime.ErrDockerCreateNotAttempted) {
-			f.markAttempted(role, false)
 			return createErr
 		}
 		return errors.Join(createErr, errors.New("network container creation outcome is unknown"))
 	}
-	// Even a failed post-create inspection can return a known immutable ID.
-	// Record it using an independent bounded context before cleanup starts.
-	persist, stop := context.WithTimeout(context.WithoutCancel(ctx), filteredControlTimeout)
-	defer stop()
-	if err := errors.Join(createErr, f.created(persist, role, id)); err != nil {
-		return err
+	f.mu.Lock()
+	f.ids[role] = id
+	f.mu.Unlock()
+	if createErr != nil {
+		return createErr
 	}
 	return f.verifyContainer(ctx, role, image, options)
 }
@@ -177,13 +160,10 @@ func (f *filteredExecution) startHelper(ctx context.Context, role string) error 
 	}
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
-	if err := f.transition(ctx, role, "starting"); err != nil {
+	if err := f.store.AuthorizeLaunch(ctx, f.record.ID, role); err != nil {
 		return err
 	}
-	if err := f.docker.StartContainer(ctx, f.ref(role)); err != nil {
-		return err
-	}
-	return f.transition(ctx, role, "started")
+	return f.docker.StartContainer(ctx, f.ref(role))
 }
 
 func (f *filteredExecution) helperOptions(role string) []string {
@@ -371,7 +351,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	if err := f.checkBindings(); err != nil {
 		return -1, err
 	}
-	if err := f.transition(ctx, "agent", "starting"); err != nil {
+	if err := f.store.AuthorizeLaunch(ctx, f.record.ID, "agent"); err != nil {
 		return -1, err
 	}
 	run, cancel := context.WithCancel(ctx)
@@ -388,7 +368,9 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		f.mu.Lock()
 		f.mainStarted = true
 		f.mu.Unlock()
-		return f.transition(run, "agent", "started")
+		return f.update(run, func(r networkstate.Execution) (networkstate.Execution, error) {
+			return f.store.RecordWorkloadStarted(run, r.ID, r.Revision)
+		})
 	})
 	cancel()
 	watchErr := <-watchDone

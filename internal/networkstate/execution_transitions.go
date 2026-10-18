@@ -33,55 +33,64 @@ func resourceAt(record *Execution, role string) (*Resource, error) {
 	return nil, errors.New("unknown network resource role")
 }
 
-func (s *Store) resourceTransition(ctx context.Context, id string, revision networkview.Count, role, before, after string) (Execution, error) {
+// AuthorizeLaunch is the check before each runtime create or start of a run's resource: the
+// run is this supervisor's and unsealed, its epoch is not over, the network authority and the
+// qualification it was launched under still hold, and a container's launch artifacts are in
+// place. It records nothing: whether a resource exists is asked of the runtime by its name.
+func (s *Store) AuthorizeLaunch(ctx context.Context, id, role string) error {
+	return s.lockExecution(ctx, id, func() error {
+		record, err := s.execution(id)
+		if err != nil {
+			return err
+		}
+		if err := s.ownedExecution(&record); err != nil {
+			return err
+		}
+		if record.Snapshot.Terminal {
+			return errors.New("terminal network epoch cannot authorize new runtime work")
+		}
+		if err := s.intactAuthority(); err != nil {
+			return err
+		}
+		if err := s.executionLaunchAuthority(record); err != nil {
+			return err
+		}
+		resource, err := resourceAt(&record, role)
+		if err != nil {
+			return err
+		}
+		if resource.State == "gone" {
+			return errors.New("network resource was already removed")
+		}
+		if resource.Kind != "container" {
+			return nil
+		}
+		if record.Artifact.State != "prepared" {
+			return errors.New("network launch artifacts are not durably prepared")
+		}
+		if _, err := s.readArtifactLaunch(record.Artifact); err != nil {
+			return err
+		}
+		if role == "agent" {
+			files, err := s.openArtifactFiles(record.Artifact)
+			if err != nil {
+				return err
+			}
+			_ = files.Close()
+		}
+		return nil
+	})
+}
+
+// RecordWorkloadStarted notes that the agent container started, which a smoke run must show.
+func (s *Store) RecordWorkloadStarted(ctx context.Context, id string, revision networkview.Count) (Execution, error) {
 	return s.mutateExecution(ctx, id, revision, func(record *Execution) (bool, error) {
 		if err := s.ownedExecution(record); err != nil {
 			return false, err
 		}
-		if record.Snapshot.Terminal && (after == "creating" || after == "starting") {
-			return false, errors.New("terminal network epoch cannot authorize new runtime work")
-		}
-		if after == "creating" || after == "starting" {
-			if err := s.authorityAvailable(); err != nil {
-				return false, err
-			}
-			if err := s.executionLaunchAuthority(*record); err != nil {
-				return false, err
-			}
-		}
-		resource, err := resourceAt(record, role)
-		if err != nil {
-			return false, err
-		}
-		if resource.Kind == "container" && (after == "creating" || after == "starting") {
-			if record.Artifact.State != "prepared" {
-				return false, errors.New("network launch artifacts are not durably prepared")
-			}
-			if _, err := s.readArtifactLaunch(record.Artifact); err != nil {
-				return false, err
-			}
-			if role == "agent" {
-				files, err := s.openArtifactFiles(record.Artifact)
-				if err != nil {
-					return false, err
-				}
-				_ = files.Close()
-			}
-		}
-		if resource.State == after {
-			if after == "creating" || after == "starting" {
-				return false, errors.New("network resource operation already intended; reconcile its outcome before acting")
-			}
-			return false, nil
-		}
-		if resource.State != before || after == "starting" && resource.Kind != "container" {
-			return false, errors.New("invalid network resource transition")
-		}
-		resource.State = after
-		if role == "agent" && after == "started" {
-			record.WorkloadStarted = true
-		}
-		return true, nil
+		changed := !record.WorkloadStarted
+		record.WorkloadStarted = true
+		return changed, nil
 	})
 }
 
@@ -104,16 +113,6 @@ func (s *Store) executionLaunchAuthority(record Execution) error {
 		return errors.New("network execution launch binding changed")
 	}
 	return nil
-}
-
-func (s *Store) BeginResourceCreation(ctx context.Context, id string, revision networkview.Count, role string) (Execution, error) {
-	return s.resourceTransition(ctx, id, revision, role, "planned", "creating")
-}
-func (s *Store) BeginResourceStart(ctx context.Context, id string, revision networkview.Count, role string) (Execution, error) {
-	return s.resourceTransition(ctx, id, revision, role, "created", "starting")
-}
-func (s *Store) RecordResourceStarted(ctx context.Context, id string, revision networkview.Count, role string) (Execution, error) {
-	return s.resourceTransition(ctx, id, revision, role, "starting", "started")
 }
 
 // RecordProtected replaces the run's protection envelope with a grown one. The
@@ -146,52 +145,6 @@ func (s *Store) RecordProtected(ctx context.Context, id string, revision network
 		}
 		record.Protected = next
 		return true, nil
-	})
-}
-
-func (s *Store) RecordResourceCreated(ctx context.Context, id string, revision networkview.Count, role, objectID string) (Execution, error) {
-	return s.mutateExecution(ctx, id, revision, func(record *Execution) (bool, error) {
-		if err := s.ownedExecution(record); err != nil {
-			return false, err
-		}
-		return recordResourceCreated(record, role, objectID)
-	})
-}
-
-func recordResourceCreated(record *Execution, role, objectID string) (bool, error) {
-	resource, err := resourceAt(record, role)
-	if err != nil {
-		return false, err
-	}
-	if resource.Kind == "container" && !lowerHex(objectID, 64) || resource.Kind == "volume" && objectID != resource.Name {
-		return false, errors.New("invalid exact network resource identity")
-	}
-	if resource.State == "created" && resource.ID == objectID {
-		return false, nil
-	}
-	if resource.State != "creating" || resource.ID != "" {
-		return false, errors.New("network resource cannot be rebound or recreated")
-	}
-	resource.ID, resource.State = objectID, "created"
-	return true, nil
-}
-
-// ReconcileInterruptedResource retains a positive exact-owner runtime inspection
-// after its supervisor departed. It cannot create/start anything or turn a
-// negative observation of an ambiguous creation into confirmed absence.
-func (e *Evidence) ReconcileInterruptedResource(ctx context.Context, id string, revision networkview.Count, daemon, role, name, objectID string) (Execution, error) {
-	return e.files.mutateExecution(ctx, id, revision, func(record *Execution) (bool, error) {
-		if !processidentity.Inspect(record.Supervisor.PID, record.Supervisor.StartToken).ProvesGone() {
-			return false, errors.New("network supervisor is live or its identity is uncertain")
-		}
-		resource, err := resourceAt(record, role)
-		if err != nil {
-			return false, err
-		}
-		if daemon != record.DaemonID || name != resource.Name {
-			return false, errors.New("creation observation belongs to another network resource")
-		}
-		return recordResourceCreated(record, role, objectID)
 	})
 }
 
@@ -231,18 +184,16 @@ func (s *Store) AcceptSnapshot(ctx context.Context, id string, revision networkv
 	})
 }
 
-// ConfirmResourceGone records an affirmative exact-runtime observation supplied
-// by the trusted cleanup owner. This method does not remove anything or infer
-// absence from process death. The runtime caller must verify daemon, ID/name and
-// ownership labels before removal, then confirm absence; ambiguous inspection is
-// not a valid call here. Cleanup can advance after sealing without changing it.
-func (e *Evidence) ConfirmResourceGone(ctx context.Context, id string, revision networkview.Count, daemon, role, name, objectID string) (Execution, error) {
+// ConfirmResourceGone records that the runtime the run used no longer has the resource: its
+// supervisor or recovery removed it, or found its name absent. It removes nothing and never infers
+// absence from process death. Cleanup can advance after sealing without changing the receipt.
+func (e *Evidence) ConfirmResourceGone(ctx context.Context, id string, revision networkview.Count, daemon, role, name string) (Execution, error) {
 	return e.files.mutateExecution(ctx, id, revision, func(record *Execution) (bool, error) {
 		resource, err := resourceAt(record, role)
 		if err != nil {
 			return false, err
 		}
-		if daemon != record.DaemonID || name != resource.Name || objectID != resource.ID {
+		if daemon != record.DaemonID || name != resource.Name {
 			return false, errors.New("cleanup observation belongs to another network resource")
 		}
 		if resource.State == "gone" {

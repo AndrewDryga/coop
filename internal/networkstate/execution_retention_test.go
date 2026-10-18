@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -17,13 +16,7 @@ func finishedRun(t *testing.T, s *Store, record Execution) Execution {
 	t.Helper()
 	sealed, err := s.mutateExecution(context.Background(), record.ID, record.Revision, func(r *Execution) (bool, error) {
 		for i := range r.Resources {
-			resource := &r.Resources[i]
-			resource.State = "gone"
-			if resource.Kind == "volume" {
-				resource.ID = resource.Name
-			} else {
-				resource.ID = strings.Repeat("a", 64)
-			}
+			r.Resources[i].State = "gone"
 		}
 		r.Artifact.State = "gone"
 		r.Snapshot.Terminal, r.WorkloadStarted, r.ObserverAfterWorkload = true, true, true

@@ -497,7 +497,7 @@ func TestApprovedNetRecover(t *testing.T) {
 			Skipped: "the runtime at unix:///var/run/docker.sock is a different daemon than the one this run used"},
 		"26g-net-recover-partial": {RunID: netTestRun, Removed: []string{"agent", "guard"}, Pending: []string{"ipc"},
 			RemovedContainers: 2, PendingVolumes: 1},
-		"26h-net-recover-unverified": {RunID: netTestRun, Pending: []string{"ipc"}, PendingVolumes: 1, Unverified: true},
+		"26h-net-recover-unverified": {RunID: netTestRun, Pending: []string{"ipc"}, PendingVolumes: 1, Unverified: "container"},
 		"26i-net-recover-elsewhere": {RunID: netTestRun, Live: true, Elsewhere: true,
 			Skipped: "it was started on another computer or container, and only the Coop there can tell whether it is still running"},
 	} {

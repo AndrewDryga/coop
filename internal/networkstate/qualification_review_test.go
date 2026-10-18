@@ -50,7 +50,7 @@ func TestQualificationLossBlocksStartsNotInspectionOrCleanup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := smoke.store.BeginResourceCreation(context.Background(), r.ID, r.Revision, "controller"); err == nil {
+			if err := smoke.store.AuthorizeLaunch(context.Background(), r.ID, "controller"); err == nil {
 				t.Fatal("missing qualification authorized new runtime work")
 			}
 			evidence, err := OpenEvidence(smoke.store.Path(), nil)
@@ -62,7 +62,7 @@ func TestQualificationLossBlocksStartsNotInspectionOrCleanup(t *testing.T) {
 				t.Fatal("authority loss hid exact custody", err)
 			}
 			resource := r.Resources[0]
-			if _, err := evidence.ConfirmResourceGone(context.Background(), r.ID, r.Revision, r.DaemonID, resource.Role, resource.Name, resource.ID); err != nil {
+			if _, err := evidence.ConfirmResourceGone(context.Background(), r.ID, r.Revision, r.DaemonID, resource.Role, resource.Name); err != nil {
 				t.Fatal("authority loss blocked cleanup", err)
 			}
 		})

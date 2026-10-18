@@ -38,10 +38,12 @@ type NetworkRecovery struct {
 	// never claim a container it never touched.
 	RemovedContainers, RemovedVolumes int
 	PendingContainers, PendingVolumes int
-	// Unverified is set when something was left in place because a consumer
-	// could not be proved gone: ownership coop will not guess at, which is a
-	// different thing from a removal that failed.
-	Unverified bool
+	// Unverified names the kind, container or volume, of what was left in place
+	// because coop could not prove it the run's to remove: a consumer not proved
+	// gone, or a holder of the run's name with labels the run did not set.
+	// Ownership coop will not guess at is a different thing from a removal that
+	// failed.
+	Unverified string
 }
 
 // recoverDocker is the bounded exact-owner surface recovery needs. It removes
@@ -269,13 +271,18 @@ func recoverLeftovers(ctx context.Context, evidence *networkstate.Evidence, reco
 		}
 		if !consumersGoneFor(record, role) {
 			out.Pending = append(out.Pending, role+" (a container that could still use it is not proved gone)")
-			out.Unverified = true
+			out.Unverified = "container"
 			out.countPending(resource.Kind)
 			continue
 		}
 		next, outcome, err := recoverResource(ctx, evidence, docker, record, resource)
 		record = next
 		switch {
+		case errors.Is(err, runtime.ErrDockerOwnership):
+			// A resource under the run's name that coop did not label as this run's: not ours to remove.
+			out.Pending = append(out.Pending, role+" (what holds its name carries labels this run did not set)")
+			out.Unverified = resource.Kind
+			out.countPending(resource.Kind)
 		case err != nil:
 			out.Failures = appendError(out.Failures, fmt.Errorf("%s: %w", role, err))
 			out.Pending = append(out.Pending, role)
@@ -342,39 +349,28 @@ func (r *NetworkRecovery) countPending(kind string) {
 	r.PendingVolumes++
 }
 
-// recoverResource removes ONE recorded resource and records the outcome. A
-// positive inspection reconciles an ambiguous creation first, so the removal
-// always names an exact id; an exact absence is what proves it gone — and is
-// reported as absent, never as a removal this pass performed.
+// recoverResource removes ONE of the run's resources and records the outcome. It finds it by the
+// run's fixed name and labels: one under that name with other labels is not the run's and stays
+// (runtime.ErrDockerOwnership). Its absence is what proves it gone, and is reported as absent,
+// never as a removal this pass performed.
 func recoverResource(ctx context.Context, evidence *networkstate.Evidence, docker recoverDocker,
 	record networkstate.Execution, resource networkstate.Resource) (networkstate.Execution, string, error) {
 	ref := networkResourceRef(record, resource.Role)
 	if ref.Name == "" {
-		return record, resourcePending, errors.New("this run recorded no exact id for that container or volume, so coop will not remove anything by guess")
+		return record, resourcePending, errors.New("this run names no such container or volume, so coop will not remove anything by guess")
 	}
-	present, id := false, ""
+	present := false
 	var err error
 	if resource.Kind == "container" {
 		var value runtime.DockerContainer
 		if value, present, err = docker.InspectContainer(ctx, ref); err == nil && present {
-			id = value.ID
+			ref.ID = value.ID
 		}
 	} else {
-		var value runtime.DockerVolume
-		if value, present, err = docker.InspectVolume(ctx, ref); err == nil && present {
-			id = value.Name
-		}
+		_, present, err = docker.InspectVolume(ctx, ref)
 	}
 	if err != nil {
 		return record, resourcePending, err
-	}
-	if present && resource.ID == "" {
-		// The supervisor died between submitting the create and recording its
-		// outcome. This exact-owner observation binds the identity it left.
-		if record, err = evidence.ReconcileInterruptedResource(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, ref.Name, id); err != nil {
-			return record, resourcePending, err
-		}
-		ref = networkResourceRef(record, resource.Role)
 	}
 	if present {
 		if resource.Kind == "container" {
@@ -389,7 +385,7 @@ func recoverResource(ctx context.Context, evidence *networkstate.Evidence, docke
 			return record, resourcePending, err
 		}
 	}
-	record, err = evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, ref.Name, ref.ID)
+	record, err = evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, ref.Name)
 	switch {
 	case err != nil:
 		return record, resourcePending, err

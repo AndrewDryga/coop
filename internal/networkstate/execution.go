@@ -26,10 +26,14 @@ import (
 const (
 	// The kernel enforcer bounds its protected set the same way; this record
 	// only stores what that launch already accepted.
-	maxProtectedRanges   = 256
-	ExecutionVersion     = 1
-	ExecutionPageSize    = 100
-	ExecutionLockTimeout = 5 * time.Second
+	maxProtectedRanges = 256
+	// ExecutionVersion 2 records only whether each runtime resource is gone; whether one that is
+	// not exists is asked of the runtime by its fixed name and labels. Version 1 also journaled
+	// each create and start, and is read as version 2.
+	ExecutionVersion       = 2
+	executionLegacyVersion = 1
+	ExecutionPageSize      = 100
+	ExecutionLockTimeout   = 5 * time.Second
 )
 
 var (
@@ -47,13 +51,13 @@ type Supervisor struct {
 	Host       string `json:"host,omitempty"`
 }
 
-// Resource names exist in the intent before any runtime operation. An empty ID
-// after a creating transition means unknown outcome, never confirmed absence.
+// Resource is one of a run's five runtime objects, named before it exists. State is "planned"
+// until the run's supervisor or recovery sees it gone ("gone"); whether a planned one exists is
+// asked of the runtime by its name and labels, which only coop sets.
 type Resource struct {
 	Role  string `json:"role"`
 	Kind  string `json:"kind"`
 	Name  string `json:"name"`
-	ID    string `json:"id,omitempty"`
 	State string `json:"state"`
 }
 
@@ -250,6 +254,7 @@ func (s *Store) execution(id string) (Execution, error) {
 	if err := json.Unmarshal(data, &record); err != nil {
 		return Execution{}, err
 	}
+	upgradeExecution(&record)
 	if record.ID != id {
 		return Execution{}, errors.New("invalid network execution identity")
 	}
@@ -257,6 +262,20 @@ func (s *Store) execution(id string) (Execution, error) {
 		return Execution{}, err
 	}
 	return record, nil
+}
+
+// upgradeExecution reads a version 1 record as version 2: a resource its journal left anywhere
+// short of gone may exist, so it reads as planned. The next write stores version 2.
+func upgradeExecution(record *Execution) {
+	if record.Version != executionLegacyVersion {
+		return
+	}
+	record.Version = ExecutionVersion
+	for i := range record.Resources {
+		if record.Resources[i].State != "gone" {
+			record.Resources[i].State = "planned"
+		}
+	}
 }
 
 func validExecution(record Execution) error {
@@ -283,7 +302,7 @@ func validExecution(record Execution) error {
 			return errors.New("invalid network execution protection envelope")
 		}
 	}
-	if record.ReadySequence > record.Snapshot.Sequence || record.WorkloadStarted && record.Resources[2].ID == "" {
+	if record.ReadySequence > record.Snapshot.Sequence {
 		return errors.New("invalid network execution startup evidence")
 	}
 	switch record.Purpose {
@@ -308,12 +327,8 @@ func validExecution(record Execution) error {
 			kind = "volume"
 		}
 		if resource.Role != role || resource.Kind != kind || resource.Name != "coop-net-"+record.ID+"-"+role ||
-			!slices.Contains([]string{"planned", "creating", "created", "starting", "started", "gone"}, resource.State) ||
-			(kind == "volume" && (resource.State == "starting" || resource.State == "started")) ||
-			(resource.State == "planned" || resource.State == "creating") && resource.ID != "" ||
-			(resource.State == "created" || resource.State == "starting" || resource.State == "started") && resource.ID == "" ||
-			resource.ID != "" && (kind == "container" && !lowerHex(resource.ID, 64) || kind == "volume" && resource.ID != resource.Name) {
-			return errors.New("invalid network resource intent or binding")
+			resource.State != "planned" && resource.State != "gone" {
+			return errors.New("invalid network resource")
 		}
 	}
 	if receipt := record.Receipt; receipt != nil {

@@ -203,8 +203,8 @@ func netCleanupCauses(result box.NetworkRecovery) []string {
 	if n := result.RemovedVolumes; n != 0 {
 		out = append(out, ui.Count(n, "temporary volume")+" "+netWas(n)+" removed.")
 	}
-	if result.Unverified {
-		return append(out, "Coop could not verify ownership of a remaining container.")
+	if result.Unverified != "" {
+		return append(out, "Coop could not verify ownership of a remaining "+result.Unverified+".")
 	}
 	if n := result.PendingContainers; n != 0 {
 		out = append(out, netRemaining(n, "temporary container"))

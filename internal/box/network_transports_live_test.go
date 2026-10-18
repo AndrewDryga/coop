@@ -186,16 +186,12 @@ timeout 45 python3 -m http.server %d --bind 0.0.0.0 --directory /tmp/s || test $
 					sibling <- siblingProbe{err: err}
 					return
 				}
-				controllerID := ""
-				for _, resource := range record.Resources {
-					if resource.Role == "controller" {
-						controllerID = resource.ID
-					}
-				}
-				if controllerID == "" {
-					sibling <- siblingProbe{err: errors.New("registered controller has no exact identity")}
+				controller, present, err := docker.InspectContainer(ctx, networkResourceRef(record, "controller"))
+				if err != nil || !present {
+					sibling <- siblingProbe{err: errors.Join(errors.New("the run's controller is not at the runtime"), err)}
 					return
 				}
+				controllerID := controller.ID
 				probe := siblingReachesServePort(ctx, docker, controllerID, port)
 				if probe.err == nil && !probe.reached {
 					body, err := transportHostBody(ctx, repo, port)
