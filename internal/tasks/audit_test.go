@@ -5474,7 +5474,8 @@ func TestAppendTaskLogStrictRejectsSymlinkedLog(t *testing.T) {
 }
 
 func TestIsGateGuardPath(t *testing.T) {
-	guarded := []string{"Makefile", "sub/Makefile", ".agent/project.yaml", ".agent/loop.yaml",
+	guarded := []string{"Makefile", "sub/Makefile", "MAKEFILE", ".AGENT/Loop.yaml", ".GitHub/workflows/ci.yml",
+		".agent/project.yaml", ".agent/loop.yaml",
 		".agent/skills/sweep/SKILL.md", ".agent/skills/sweep/queue-guard.sh",
 		".claude/skills/workflow-sweep/queue-guard.sh",
 		".claude/settings.json", ".claude/hooks/commit-gate.sh", ".github/workflows/ci.yml"}

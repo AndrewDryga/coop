@@ -218,13 +218,13 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 			if present && previous == entry {
 				continue
 			}
-			if entry.mode == "160000" || previous.mode == "160000" || filepath.Base(isolatedPathKey(entry.path)) == ".gitmodules" {
+			if entry.mode == "160000" || previous.mode == "160000" || filepath.Base(hostsurface.Key(entry.path)) == ".gitmodules" {
 				return fmt.Errorf("isolated publication refuses changed nested Git sources at %q", entry.path)
 			}
-			if reason, automatic := hostsurface.Classify("M", isolatedHostSurfacePath(entry.path)); automatic {
+			if reason, automatic := hostsurface.Classify("M", entry.path); automatic {
 				return fmt.Errorf("isolated publication refuses %q: %s; --force cannot bypass this boundary", entry.path, reason)
 			}
-			hidden, err := shadowed(isolatedPathKey(entry.path))
+			hidden, err := shadowed(hostsurface.Key(entry.path))
 			if err != nil {
 				return fmt.Errorf("isolated publication refuses %q: %w; --force cannot bypass this boundary", entry.path, err)
 			}
@@ -243,7 +243,7 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 			if err != nil {
 				return err
 			}
-			if filepath.Base(isolatedPathKey(entry.path)) == "package.json" {
+			if filepath.Base(hostsurface.Key(entry.path)) == "package.json" {
 				if entry.mode == "120000" || !json.Valid([]byte(content)) {
 					return fmt.Errorf("isolated publication cannot inspect package lifecycle scripts at %q", entry.path)
 				}
@@ -271,7 +271,7 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 			}
 		}
 		for _, entry := range old {
-			if entry.mode == "160000" || filepath.Base(isolatedPathKey(entry.path)) == ".gitmodules" {
+			if entry.mode == "160000" || filepath.Base(hostsurface.Key(entry.path)) == ".gitmodules" {
 				return fmt.Errorf("isolated publication refuses changed nested Git sources at %q", entry.path)
 			}
 		}

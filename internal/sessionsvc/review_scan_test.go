@@ -219,3 +219,42 @@ func TestReviewScanChecksLFSActivatedByRemovingAnAttributeOverride(t *testing.T)
 		t.Fatalf("newly activated payload escaped scan, or empty JSON was falsely flagged: %v, %v", findings, err)
 	}
 }
+
+// Another spelling of .gitattributes is the file Git reads once a Mac checks the candidate out, so
+// removing an override spelled .GITATTRIBUTES rescans what it may have switched on, as removing
+// .gitattributes does; another spelling of a name a .coopignore hides, or of a hook, is named too.
+func TestReviewScanJudgesEverySpelling(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	writeSessionLFSSource(t, repo, []byte("ghp_"+strings.Repeat("Q7r9", 10)+"\n"))
+	if err := os.Mkdir(filepath.Join(repo, "nested"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(repo, "asset.bin"), filepath.Join(repo, "nested/asset.bin")); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceWrite(t, filepath.Join(repo, "nested/.GITATTRIBUTES"), "*.bin -filter\n")
+	sessionWorkspaceWrite(t, filepath.Join(repo, ".coopignore"), "private.yml\n")
+	git("add", ".")
+	git("commit", "-qm", "an override in another spelling")
+	parent := gitOut(repo, "rev-parse", "HEAD")
+	git("rm", "-q", "nested/.GITATTRIBUTES")
+	if err := os.Mkdir(filepath.Join(repo, "config"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceWrite(t, filepath.Join(repo, "config/PRIVATE.yml"), "password: inert\n")
+	if err := os.Mkdir(filepath.Join(repo, ".GITHOOKS"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceWrite(t, filepath.Join(repo, ".GITHOOKS/pre-commit"), "#!/bin/sh\n")
+	git("add", ".")
+	git("commit", "-qm", "candidate")
+	findings, err := scanReviewCandidate(context.Background(), repo, parent, gitOut(repo, "rev-parse", "HEAD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"possible secret in nested/asset.bin", "secret-like file: config/PRIVATE.yml", ".GITHOOKS/pre-commit — Runs during Git operations."} {
+		if !slices.ContainsFunc(findings, func(finding string) bool { return strings.Contains(finding, want) }) {
+			t.Errorf("findings = %q; want one naming %q", findings, want)
+		}
+	}
+}

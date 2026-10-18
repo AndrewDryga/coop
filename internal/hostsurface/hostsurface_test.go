@@ -51,6 +51,24 @@ func TestClassifyNamesTheActionThatRunsIt(t *testing.T) {
 	}
 }
 
+// Every spelling a case-insensitive disk resolves to a surface is that surface: a commit can name
+// .GITATTRIBUTES, and a Mac checks it out as the .gitattributes Git reads.
+func TestClassifyJudgesEverySpelling(t *testing.T) {
+	for p, want := range map[string]string{
+		".GITATTRIBUTES":           "Git filters",
+		".AGENT/Compose.yml":       "Starts containers",
+		".agent/DOCKERFILE":        "build the box",
+		"MAKEFILE":                 "make",
+		".Claude/Settings.json":    "Claude Code hooks",
+		".GitHub/Workflows/ci.yml": "CI",
+		".git\u200battributes":     "Git filters",
+	} {
+		if got, _ := Classify("M", p); !strings.Contains(got, want) {
+			t.Errorf("Classify(%q) = %q, want it to mention %q", p, got, want)
+		}
+	}
+}
+
 func TestFindingsReadsNameStatusAndKeepsRenameTargets(t *testing.T) {
 	listing := "M\tmain.go\nA\t.githooks/pre-commit\nR100\told.mk\tMakefile\nD\t.envrc\nM\t.claude/settings.json\nM\t.claude/settings.json\n"
 	got := Findings(listing)

@@ -46,6 +46,9 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-18 — tasks imports hostsurface for `hostsurface.Key`, so the gate-defining file check
+  judges every spelling the way fork merge and session review do (task
+  2026-10-18-make-coop-s-path-based-safety-checks-case-aware). hostsurface is a leaf, so no cycle.
 - 2026-10-18 — eval, forkspace and workerconnector import config for `config.WriteFileAtomic`, the one
   path-based atomic writer: each carried its own temp-file-and-rename copy (eval's store, the trusted
   git view, the worker's identity, journal, cursors and activity records), as did cli and box (task

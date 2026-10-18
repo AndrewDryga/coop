@@ -72,8 +72,13 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		}
 		path := f[len(f)-1]
 		// A file the readable rules or a secret name hide comes back without an error even under a
-		// .coopignore coop cannot read, so it is named whatever that file says.
-		switch hidden, err := shadowed(filepath.ToSlash(path)); {
+		// .coopignore coop cannot read, so it is named whatever that file says. Its Key counts too:
+		// .ENV in a commit is the .env a Mac checks out.
+		hidden, err := shadowed(filepath.ToSlash(path))
+		if err == nil && !hidden {
+			hidden, err = shadowed(hostsurface.Key(filepath.ToSlash(path)))
+		}
+		switch {
 		case err != nil: // coop cannot tell whether the file is hidden, so the merge waits for --force
 			if !unreadable[err.Error()] {
 				unreadable[err.Error()] = true

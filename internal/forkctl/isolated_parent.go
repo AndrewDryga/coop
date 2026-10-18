@@ -17,11 +17,9 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"unicode"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/unicode/norm"
+	"github.com/AndrewDryga/coop/internal/hostsurface"
 )
 
 type isolatedParent struct {
@@ -61,7 +59,7 @@ func isolatedTree(repo, commit string) ([]isolatedTreeEntry, error) {
 			return nil, fmt.Errorf("isolated publication refuses tree mode %s at %q", fields[0], path)
 		}
 		entries = append(entries, isolatedTreeEntry{fields[0], fields[2], path})
-		folded := isolatedPathKey(path)
+		folded := hostsurface.Key(path)
 		if old, exists := paths[folded]; exists && old != path {
 			return nil, fmt.Errorf("isolated tree has case or normalization aliases %q and %q", old, path)
 		}
@@ -83,7 +81,7 @@ func safeIsolatedTreePath(path string) bool {
 		return false
 	}
 	for _, segment := range strings.Split(path, "/") {
-		normal := isolatedPathKey(segment)
+		normal := hostsurface.Key(segment)
 		if normal == "" || normal == ".git" || strings.HasPrefix(normal, "git~") || strings.HasPrefix(normal, ".git~") {
 			return false
 		}
@@ -93,29 +91,6 @@ func safeIsolatedTreePath(path string) bool {
 
 // Publication must not acquire automatic authority through filesystem aliases.
 // Darwin folds names and ignores format characters; Windows also trims suffixes.
-func isolatedPathKey(path string) string {
-	parts := strings.Split(path, "/")
-	for i, part := range parts {
-		part = strings.Map(func(r rune) rune {
-			if unicode.Is(unicode.Cf, r) {
-				return -1
-			}
-			return r
-		}, part)
-		parts[i] = cases.Fold().String(norm.NFC.String(strings.TrimRight(part, ". ")))
-	}
-	return strings.Join(parts, "/")
-}
-
-func isolatedHostSurfacePath(path string) string {
-	path = isolatedPathKey(path)
-	base := filepath.Base(path)
-	if base == "dockerfile" || strings.HasPrefix(base, "dockerfile.") {
-		path = strings.TrimSuffix(path, base) + "Dockerfile" + strings.TrimPrefix(base, "dockerfile")
-	}
-	return path
-}
-
 // Compare logical index entries and every tracked byte, not Git's stat cache or
 // hidden skip/assume flags. No persistent allocator tuple becomes replay authority.
 func captureIsolatedParent(repo string) (isolatedParent, error) {

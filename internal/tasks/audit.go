@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/hostsurface"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -178,17 +179,21 @@ func taskBindingCounts(repo, head string) (map[string]int, bool) {
 // gateGuardGlobs name the files that DEFINE what "green" means — the candidate's own verifier: the
 // Makefile/gate, the loop + project config, the hooks, CI. A task that edits these could weaken the
 // gate to pass itself (cross-vendor review is no defense when every reviewer trusts the same mutable
-// oracle). A trailing "/" matches a directory prefix; else an exact base name.
+// oracle). A trailing "/" matches a directory prefix; else an exact base name. They are written as
+// hostsurface.Key spells them: lower case.
 var gateGuardGlobs = []string{
-	"Makefile", "makefile", "GNUmakefile",
+	"makefile", "gnumakefile",
 	".agent/project.yaml", ".agent/loop.yaml",
 	".agent/skills/sweep/", "queue-guard.sh",
 	".claude/hooks/", ".claude/settings.json", ".claude/settings.local.json",
 	".github/workflows/",
 }
 
-// isGateGuardPath reports whether a repo-relative path is gate-defining (in gateGuardGlobs).
+// isGateGuardPath reports whether a repo-relative path is gate-defining (in gateGuardGlobs). It
+// judges the path's hostsurface.Key, so every spelling counts: on a Mac, MAKEFILE is the Makefile
+// the gate runs.
 func isGateGuardPath(f string) bool {
+	f = hostsurface.Key(f)
 	for _, g := range gateGuardGlobs {
 		if strings.HasSuffix(g, "/") {
 			if strings.HasPrefix(f, g) {
@@ -207,11 +212,11 @@ func isGateGuardPath(f string) bool {
 func ProtectedGateFiles(files, projectSources []string) []string {
 	declared := make(map[string]bool, len(projectSources))
 	for _, path := range projectSources {
-		declared[path] = true
+		declared[hostsurface.Key(path)] = true
 	}
 	seen := map[string]bool{}
 	for _, f := range files {
-		if f = strings.TrimSpace(f); f != "" && (isGateGuardPath(f) || declared[f]) {
+		if f = strings.TrimSpace(f); f != "" && (isGateGuardPath(f) || declared[hostsurface.Key(f)]) {
 			seen[f] = true
 		}
 	}

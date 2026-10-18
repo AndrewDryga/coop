@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fork merges and reviews check every spelling of a file.** A Mac's disk ignores letter case, so
+  a commit that adds `.GITHOOKS/pre-commit`, `.AGENT/compose.yml` or `.GITATTRIBUTES` puts a file
+  where Git, your editor or Docker runs it as the lower-case one. `coop fork merge`, session reviews
+  and the loop's check for changed gate files looked only at the exact spelling, so such a change
+  went through without the usual warning. They now treat every spelling of a host-run file, a gate
+  file, or a name a `.coopignore` hides as that file, on every disk.
+
 - **A box can no longer point its task tools at another project's tasks mid-call.** The task tools a
   box calls run on your machine. Each one checked that the queue's folders were real, then found
   them by name again, so a box that swapped `.agent` or a state folder for a link at the right

@@ -68,7 +68,7 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 			break
 		}
 		path := strings.TrimSuffix(string(record), "\x00")
-		attributesChanged = attributesChanged || filepath.Base(path) == ".gitattributes"
+		attributesChanged = attributesChanged || filepath.Base(hostsurface.Key(path)) == ".gitattributes"
 		// A .coopignore decides what every later box is shown. A link is named below as unreadable.
 		if box.IsCoopignoreName(filepath.Base(path)) && fields[1] != "120000" {
 			add(path + " — the change edits a .coopignore, which decides what boxes are shown")
@@ -78,7 +78,11 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 		}
 		// A file the readable rules or a secret name hide comes back without an error even under a
 		// .coopignore coop cannot read, so it is named whatever that file says.
-		switch hidden, policyErr := shadowed(path); {
+		hidden, policyErr := shadowed(path)
+		if policyErr == nil && !hidden {
+			hidden, policyErr = shadowed(hostsurface.Key(path)) // .ENV is the .env a Mac checks out
+		}
+		switch {
 		case policyErr != nil:
 			if !unreadable[policyErr.Error()] {
 				unreadable[policyErr.Error()] = true

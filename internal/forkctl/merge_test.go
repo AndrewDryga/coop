@@ -1680,6 +1680,27 @@ func TestPolicyScanFlagsARulesFolderInAnotherCase(t *testing.T) {
 	}
 }
 
+// Another spelling of a host-run file or a secret name is that file once a Mac checks the fork out,
+// so the scan judges every spelling, on every disk.
+func TestPolicyScanJudgesEverySpelling(t *testing.T) {
+	repo := initRepo(t)
+	writeTaskFile(t, filepath.Join(repo, ".coopignore"), "private.yml\n")
+	git(t, repo, "add", ".coopignore")
+	git(t, repo, "commit", "-qm", "a project rule")
+	git(t, repo, "checkout", "-q", "-b", "candidate")
+	writeTaskFile(t, filepath.Join(repo, ".GITHOOKS", "pre-commit"), "#!/bin/sh\n")
+	writeTaskFile(t, filepath.Join(repo, "config", "PRIVATE.yml"), "password: inert\n")
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "other spellings")
+	git(t, repo, "checkout", "-q", "main")
+	got := mustPolicyScan(t, repo, "candidate")
+	for _, want := range []string{".GITHOOKS/pre-commit — Runs during Git operations.", "secret-like file: config/PRIVATE.yml"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("PolicyScan = %q; want %q", got, want)
+		}
+	}
+}
+
 // A fork's in-tree .gitattributes + a fork-local smudge filter must not run on the land rebase's
 // checkout. Includes a positive control (a raw re-checkout fires the smudge) so a green test means
 // the neutralizer worked, not that the filter is dead.
