@@ -197,7 +197,12 @@ Worker publication pins push recursion off in both argv and config. Git LFS acce
 diagnostic env, and only push --object-id <remote> --stdin; identity diagnostics accept only
 var GIT_COMMITTER_IDENT. Recursive options (including aliases/abbreviations), generic add/commit/submodule and unknown
 verbs are refused. Rebase's internal cleanliness checks override submodule ignore settings;
-recursive checkout/fetch and custom strategy/exec options are forbidden.
+recursive checkout/fetch and custom strategy/exec options are forbidden. A caller's leading `-c`
+settings must be on a typed list (`callerGitSettings`): signing values and the difftool read from
+the host's global config, `core.attributesFile=/dev/null`, identity, and the worker's transport
+and LFS values. A `filter.*`, `diff.<driver>.*` or `merge.<driver>.driver` from a caller would
+define a command a box-written `.gitattributes` selects, so it never launches
+(`TestHostGitRefusesCallerDriverSettings`).
 
 `forkctl.ForkWorktreeClean` checks populated children through their own views before parent
 status. Landed cleanup, `fork rm` and `fork --fresh` share it; removal and recreation repeat it
@@ -207,7 +212,10 @@ fork storage uses the same per-child principle while accepting `.git/modules` me
 companion custody still requires independent child metadata. Private session staging uses
 `update-index --add --remove -z --stdin` on literal changed paths instead of add's recursive diff
 scan. It preserves staged changes, conversions and the agent's real index. Ref-only commands
-have a separate runtime policy so they cannot bypass view isolation for content reads.
+have a separate runtime policy so they cannot bypass view isolation for content reads: it accepts
+only the exact argument shapes host code passes (`refOnlyShape`), never a verb alone, since
+`remote update` would fetch with the box-written config's credential helpers and `config --global`
+would write the host's own configuration.
 
 `TestHostGitCommandsUseSharedBoundary` parses production Go and pins each reviewed raw Git
 constructor and low-level trusted constructor by exact call expression. New or changed calls
@@ -215,6 +223,9 @@ fail, including additional calls inside an existing wrapper. New ordinary caller
 private-metadata exceptions require explicit review and a reason. Dynamic executables require
 review regardless of variable name. Constructor function values and forwarding wrappers are
 forbidden independently of the allowlist: approving an assignment cannot approve its later calls.
+A method value's receiver type is read from the source, including a call's declared result type
+(`newLauncher().forward`), and every direct call that hands a literal git to a generic command
+wrapper (one that forwards its caller's executable) is pinned for review like a raw constructor.
 Only literal non-Git executable names are excluded. Release metadata queries use observation
 views; remote tag lookup uses fresh private metadata and an explicit workflow-owned URL, with
 no checkout config or origin resolution. Test-only Git setup is outside the source check. This source check is a guard
@@ -231,6 +242,9 @@ prompt) is left to run. `GlobalGitConfig` reads `git config --global` from `/` w
 cannot exist, so it never searches a box's repository from coop's working folder.
 
 ## Changelog
+- 2026-10-18 — caller `-c` settings are a typed list, ref-only commands accept exact shapes only,
+  and the source guard resolves call-result receivers and pins git calls through generic wrappers
+  (task 2026-10-17-tighten-the-host-git-guard-against-wrapper-calls).
 - 2026-10-18 — the git read/run helpers live once in forkspace (GitOut, GitOutErr, GitOutput,
   GitRun); box's fileUntracked runs through the view (task
   2026-10-15-replace-copied-git-and-random-id-helpers-with-on).

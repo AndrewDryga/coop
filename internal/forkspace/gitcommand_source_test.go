@@ -23,26 +23,28 @@ var reviewedGitConstructors = map[string]string{
 	"tools/releasenotes/main.go:remoteTags:forkspace.TrustedGitCommand(ctx, dir, env, \"init\", \"--bare\", \"--quiet\", \"--template=\")":               "Initializes empty private metadata with isolated configuration.",
 	"tools/releasenotes/main.go:remoteTags:forkspace.TrustedGitCommand(ctx, dir, env, \"ls-remote\", \"--exit-code\", \"--\", remote, ref, ref+\"^{}\")": "Explicit workflow remote and private metadata; no checkout config or transport settings.",
 
-	"internal/cli/acp_cmd.go:spawnBox:exec.Command(self, inner...)":                                             "Reexecutes os.Executable for the editor child; argv invokes Coop.",
-	"internal/cli/eval_loop.go:runLoopTrial:exec.Command(self, args...)":                                        "Reexecutes os.Executable for a Coop loop trial.",
-	"internal/cli/modelscache.go:runModelCLI:exec.CommandContext(ctx, name, args...)":                           "Provider catalog spec selects the fixed codex debug models command.",
-	"internal/forkctl/review.go:openInEditor:exec.Command(parts[0], parts[1:]...)":                              "Explicit editor launch selected from host settings/global config, never repository config.",
-	"internal/forkctl/supervise.go:DetachForkLoop:exec.Command(self, reExec...)":                                "Reexecutes os.Executable as the detached Coop fork worker.",
-	"internal/loop/keepawake.go:armKeepAwake:exec.Command(argv[0], argv[1:]...)":                                "sleepInhibitorCmd supplies only the platform caffeinate executable.",
-	"internal/runtime/compose.go:RunCompose:exec.Command(docker.Binary(), argv...)":                             "Bound Docker client and explicit compose argv, not Git workspace inspection.",
-	"internal/runtime/docker.go:runWorkload:exec.Command(d.binary, argv...)":                                    "Bound Docker client with validated run argv.",
-	"internal/runtime/docker_lifecycle.go:StartAttached:exec.Command(d.binary, append(args, ref.ID)...)":        "Bound Docker client with fixed container start argv.",
-	"internal/runtime/project_build.go:RunProjectBuild:exec.Command(docker.binary, argv...)":                    "Bound Docker client with validated build argv.",
-	"internal/runtime/runtime.go:Run:exec.Command(r.Name, args...)":                                             "Configured host container runtime CLI, not Git workspace inspection.",
-	"internal/runtime/runtime.go:contextCommand:exec.CommandContext(ctx, name, args...)":                        "Runtime and bound Docker callers supply the host container runtime CLI.",
-	"internal/runtime/runtime.go:RunInterruptible:exec.Command(r.Name, args...)":                                "Configured host container runtime CLI, not Git workspace inspection.",
-	"internal/runtime/runtime.go:StartHelper:exec.Command(r.Name, args...)":                                     "Configured host container runtime CLI starts a helper container.",
-	"internal/runtime/runtime.go:Silent:exec.Command(r.Name, args...)":                                          "Configured host container runtime CLI performs existence probes.",
-	"internal/tasks/lease_cmd.go:holdTaskLease:exec.CommandContext(ctx, req.command[0], req.command[1:]...)":    "Explicit user-requested lease command; arbitrary execution is the user-facing operation.",
-	"tools/lifecyclebench/cases.go:coopCommand:exec.Command(b.coop, args...)":                                   "User-selected Coop benchmark binary; not a Git runner.",
-	"tools/lifecyclebench/main.go:runCommand:exec.CommandContext(ctx, name, args...)":                           "Benchmark runtime/system queries; Git callers only list files or read HEAD metadata.",
-	"tools/servicesbench/main.go:step:exec.CommandContext(bounded, b.coop, verb)":                               "User-selected Coop benchmark binary runs up/down.",
-	"tools/servicesbench/main.go:launch:exec.Command(b.coop, \"run\", \"--\", \"sh\", \"-c\", \": > ./\"+mark)": "User-selected Coop benchmark binary launches the benchmark container.",
+	"internal/cli/acp_cmd.go:spawnBox:exec.Command(self, inner...)":                                                                                  "Reexecutes os.Executable for the editor child; argv invokes Coop.",
+	"internal/cli/eval_loop.go:runLoopTrial:exec.Command(self, args...)":                                                                             "Reexecutes os.Executable for a Coop loop trial.",
+	"internal/cli/modelscache.go:runModelCLI:exec.CommandContext(ctx, name, args...)":                                                                "Provider catalog spec selects the fixed codex debug models command.",
+	"internal/forkctl/review.go:openInEditor:exec.Command(parts[0], parts[1:]...)":                                                                   "Explicit editor launch selected from host settings/global config, never repository config.",
+	"internal/forkctl/supervise.go:DetachForkLoop:exec.Command(self, reExec...)":                                                                     "Reexecutes os.Executable as the detached Coop fork worker.",
+	"internal/loop/keepawake.go:armKeepAwake:exec.Command(argv[0], argv[1:]...)":                                                                     "sleepInhibitorCmd supplies only the platform caffeinate executable.",
+	"internal/runtime/compose.go:RunCompose:exec.Command(docker.Binary(), argv...)":                                                                  "Bound Docker client and explicit compose argv, not Git workspace inspection.",
+	"internal/runtime/docker.go:runWorkload:exec.Command(d.binary, argv...)":                                                                         "Bound Docker client with validated run argv.",
+	"internal/runtime/docker_lifecycle.go:StartAttached:exec.Command(d.binary, append(args, ref.ID)...)":                                             "Bound Docker client with fixed container start argv.",
+	"internal/runtime/project_build.go:RunProjectBuild:exec.Command(docker.binary, argv...)":                                                         "Bound Docker client with validated build argv.",
+	"internal/runtime/runtime.go:Run:exec.Command(r.Name, args...)":                                                                                  "Configured host container runtime CLI, not Git workspace inspection.",
+	"internal/runtime/runtime.go:contextCommand:exec.CommandContext(ctx, name, args...)":                                                             "Runtime and bound Docker callers supply the host container runtime CLI.",
+	"internal/runtime/runtime.go:RunInterruptible:exec.Command(r.Name, args...)":                                                                     "Configured host container runtime CLI, not Git workspace inspection.",
+	"internal/runtime/runtime.go:StartHelper:exec.Command(r.Name, args...)":                                                                          "Configured host container runtime CLI starts a helper container.",
+	"internal/runtime/runtime.go:Silent:exec.Command(r.Name, args...)":                                                                               "Configured host container runtime CLI performs existence probes.",
+	"internal/tasks/lease_cmd.go:holdTaskLease:exec.CommandContext(ctx, req.command[0], req.command[1:]...)":                                         "Explicit user-requested lease command; arbitrary execution is the user-facing operation.",
+	"tools/lifecyclebench/cases.go:coopCommand:exec.Command(b.coop, args...)":                                                                        "User-selected Coop benchmark binary; not a Git runner.",
+	"tools/lifecyclebench/main.go:describeWorkspace:b.executeCommand(60*time.Second, \"git\", \"-C\", b.repo, \"ls-files\")":                         "Benchmark lists the files of the repository it measures; no content conversion.",
+	"tools/lifecyclebench/main.go:describeWorkspace:b.executeCommand(30*time.Second, \"git\", \"-C\", b.repo, \"rev-parse\", \"--short\", \"HEAD\")": "Benchmark reads the measured HEAD; metadata only.",
+	"tools/lifecyclebench/main.go:runCommand:exec.CommandContext(ctx, name, args...)":                                                                "Benchmark runtime/system queries; Git callers only list files or read HEAD metadata.",
+	"tools/servicesbench/main.go:step:exec.CommandContext(bounded, b.coop, verb)":                                                                    "User-selected Coop benchmark binary runs up/down.",
+	"tools/servicesbench/main.go:launch:exec.Command(b.coop, \"run\", \"--\", \"sh\", \"-c\", \": > ./\"+mark)":                                      "User-selected Coop benchmark binary launches the benchmark container.",
 
 	"internal/box/image.go:ignoredBuildPaths:exec.Command(\"git\", \"-C\", repo,\n\t\"-c\", \"core.fsmonitor=\", \"-c\", \"core.hooksPath=/dev/null\",\n\t\"ls-files\", \"--others\", \"--ignored\", \"--exclude-standard\", \"--directory\", \"-z\", \"--\")": "Lists ignored paths; no recursive submodule option or content conversion.",
 	"internal/cli/doctor.go:fixtureGit:exec.Command(\"git\", args...)":                                                                                                                                                                                                               "Fresh generated doctor fixture only, before box execution, with the person's git config kept out; remote URL is data.",
@@ -84,12 +86,18 @@ func TestHostGitCommandsUseSharedBoundary(t *testing.T) {
 	if override := os.Getenv("COOP_TEST_GIT_BOUNDARY_ROOT"); override != "" {
 		root = override
 	}
-	forbidden, err := forbiddenConstructorValues(root)
+	forbidden, wrapperSites, err := forbiddenConstructorValues(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, violation := range forbidden {
 		t.Error(violation)
+	}
+	for _, site := range wrapperSites {
+		found[site]++
+		if reviewedGitConstructors[site] == "" {
+			t.Errorf("unreviewed Git constructor: %q", site)
+		}
 	}
 	err = walkGitSources(root, func(path string, data []byte) error {
 		sites, err := gitConstructorSites(path, data)
@@ -249,7 +257,7 @@ func TestHostGitBoundaryScannerRejectsConstructorValues(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, "new.go"), []byte(source), 0600); err != nil {
 			t.Fatal(err)
 		}
-		violations, err := forbiddenConstructorValues(root)
+		violations, _, err := forbiddenConstructorValues(root)
 		if err != nil || len(violations) == 0 {
 			t.Fatalf("forbidden constructor value escaped: %v, %v", violations, err)
 		}

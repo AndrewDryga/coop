@@ -2,6 +2,7 @@ package forkspace
 
 import (
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -15,6 +16,7 @@ import (
 
 type constructorSource struct {
 	path, pkg string
+	set       *token.FileSet
 	file      *ast.File
 	imports   map[string]string
 }
@@ -83,52 +85,22 @@ func constructorParameter(expr ast.Expr, params map[string]int) (int, bool) {
 	return index, found
 }
 
-// Recover an explicitly declared receiver type without loading or executing the
-// package. In particular, a data field named Run is not a runner method value.
-func constructorReceiver(expr ast.Expr) ast.Expr {
-	switch expr := expr.(type) {
-	case *ast.CompositeLit:
-		return expr.Type
-	case *ast.UnaryExpr:
-		return constructorReceiver(expr.X)
-	case *ast.ParenExpr:
-		return constructorReceiver(expr.X)
-	case *ast.StarExpr:
-		return expr.X
-	case *ast.Ident:
-		if expr.Obj == nil {
-			return nil
-		}
-		switch decl := expr.Obj.Decl.(type) {
-		case *ast.Field:
-			if pointer, ok := decl.Type.(*ast.StarExpr); ok {
-				return pointer.X
-			}
-			return decl.Type
-		case *ast.ValueSpec:
-			return decl.Type
-		case *ast.AssignStmt:
-			for i, left := range decl.Lhs {
-				if id, ok := left.(*ast.Ident); ok && id.Name == expr.Name && i < len(decl.Rhs) {
-					return constructorReceiver(decl.Rhs[i])
-				}
-			}
-		}
-	}
-	return nil
-}
-
 // Constructor values cannot be exempted: reviewing their definition says nothing
 // about executables supplied by later calls through an alias. Include command
 // factories and generic runners, even when they return output instead of Cmd.
-func forbiddenConstructorValues(root string) ([]string, error) {
+//
+// It also returns, for review, every direct call that passes a literal git to a generic command
+// wrapper (one that forwards its caller's executable): reviewing the wrapper says nothing about a
+// new call that hands it Git.
+func forbiddenConstructorValues(root string) (forbidden, wrapperSites []string, err error) {
 	var sources []constructorSource
-	err := walkGitSources(root, func(path string, data []byte) error {
-		file, err := parser.ParseFile(token.NewFileSet(), path, data, 0)
+	err = walkGitSources(root, func(path string, data []byte) error {
+		set := token.NewFileSet()
+		file, err := parser.ParseFile(set, path, data, 0)
 		if err != nil {
 			return err
 		}
-		source := constructorSource{path: path, pkg: "github.com/AndrewDryga/coop/" + filepath.ToSlash(filepath.Dir(path)), file: file, imports: map[string]string{}}
+		source := constructorSource{path: path, pkg: "github.com/AndrewDryga/coop/" + filepath.ToSlash(filepath.Dir(path)), set: set, file: file, imports: map[string]string{}}
 		for _, imp := range file.Imports {
 			value, _ := strconv.Unquote(imp.Path.Value)
 			name := filepath.Base(value)
@@ -146,7 +118,7 @@ func forbiddenConstructorValues(root string) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	functionKey := func(source constructorSource, fn *ast.FuncDecl) string {
 		if fn.Recv != nil {
@@ -164,7 +136,75 @@ func forbiddenConstructorValues(root string) ([]string, error) {
 	methods := map[string]string{}
 	wrappers := map[string]bool{"os/exec.Command": true, "os/exec.CommandContext": true}
 	rawWrappers := map[string]bool{"os/exec.Command": true, "os/exec.CommandContext": true}
-	key := func(source constructorSource, expr ast.Expr) string {
+	// A type as the source spells it, "pkg.(Type)", and each function's first result type, so a
+	// method value on a call's result, newLauncher().forward, names its receiver's type.
+	typeKey := func(source constructorSource, typ ast.Expr) string {
+		if pointer, ok := typ.(*ast.StarExpr); ok {
+			typ = pointer.X
+		}
+		switch typ := typ.(type) {
+		case *ast.Ident:
+			return source.pkg + ".(" + typ.Name + ")"
+		case *ast.SelectorExpr:
+			if pkg, ok := typ.X.(*ast.Ident); ok && source.imports[pkg.Name] != "" {
+				return source.imports[pkg.Name] + ".(" + typ.Sel.Name + ")"
+			}
+		}
+		return ""
+	}
+	results := map[string]string{}
+	for _, source := range sources {
+		for _, decl := range source.file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Type.Results != nil && len(fn.Type.Results.List) > 0 {
+				results[source.pkg+"."+fn.Name.Name] = typeKey(source, fn.Type.Results.List[0].Type)
+			}
+		}
+	}
+	var key func(source constructorSource, expr ast.Expr) string
+	// receiverType names a method value's receiver type from what the source declares: a composite
+	// literal, a typed variable, field or parameter, a value assigned to one, or a call to a function
+	// whose first result is the type. Nothing is loaded or run. A data field named Run is not a
+	// runner method value.
+	var receiverType func(source constructorSource, expr ast.Expr) string
+	receiverType = func(source constructorSource, expr ast.Expr) string {
+		switch expr := expr.(type) {
+		case *ast.CompositeLit:
+			return typeKey(source, expr.Type)
+		case *ast.UnaryExpr:
+			return receiverType(source, expr.X)
+		case *ast.ParenExpr:
+			return receiverType(source, expr.X)
+		case *ast.StarExpr:
+			return receiverType(source, expr.X)
+		case *ast.CallExpr:
+			return results[key(source, expr.Fun)]
+		case *ast.Ident:
+			if expr.Obj == nil {
+				return ""
+			}
+			switch decl := expr.Obj.Decl.(type) {
+			case *ast.Field:
+				return typeKey(source, decl.Type)
+			case *ast.ValueSpec:
+				if decl.Type != nil {
+					return typeKey(source, decl.Type)
+				}
+				for i, name := range decl.Names {
+					if name.Name == expr.Name && i < len(decl.Values) {
+						return receiverType(source, decl.Values[i])
+					}
+				}
+			case *ast.AssignStmt:
+				for i, left := range decl.Lhs {
+					if id, ok := left.(*ast.Ident); ok && id.Name == expr.Name && i < len(decl.Rhs) {
+						return receiverType(source, decl.Rhs[i])
+					}
+				}
+			}
+		}
+		return ""
+	}
+	key = func(source constructorSource, expr ast.Expr) string {
 		switch expr := expr.(type) {
 		case *ast.Ident:
 			if expr.Obj != nil && expr.Obj.Kind != ast.Fun {
@@ -180,8 +220,8 @@ func forbiddenConstructorValues(root string) ([]string, error) {
 			}
 			return source.pkg + "." + expr.Name
 		case *ast.SelectorExpr:
-			if name, ok := constructorReceiver(expr.X).(*ast.Ident); ok {
-				return source.pkg + ".(" + name.Name + ")." + expr.Sel.Name
+			if receiver := receiverType(source, expr.X); receiver != "" {
+				return receiver + "." + expr.Sel.Name
 			}
 			if pkg, ok := expr.X.(*ast.Ident); ok && source.imports[pkg.Name] != "" {
 				return source.imports[pkg.Name] + "." + expr.Sel.Name
@@ -368,7 +408,71 @@ func forbiddenConstructorValues(root string) ([]string, error) {
 			}
 		}
 	}
-	var forbidden []string
+	// A generic wrapper forwards its caller's executable to exec, directly or through another
+	// generic wrapper, whether or not it returns the command.
+	generic := map[string]int{"os/exec.Command": 0, "os/exec.CommandContext": 1}
+	for changed := true; changed; {
+		changed = false
+		for _, source := range sources {
+			for _, decl := range source.file.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				name := functionKey(source, fn)
+				if _, known := generic[name]; known {
+					continue
+				}
+				params := constructorParameters(fn.Type, fn.Body)
+				ast.Inspect(fn.Body, func(node ast.Node) bool {
+					if _, ok := node.(*ast.FuncLit); ok {
+						return false
+					}
+					call, ok := node.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					if position, ok := generic[key(source, call.Fun)]; ok && len(call.Args) > position {
+						if index, dependent := constructorParameter(call.Args[position], params); dependent {
+							if _, exists := generic[name]; !exists {
+								generic[name] = index
+								changed = true
+							}
+						}
+					}
+					return true
+				})
+			}
+		}
+	}
+	for _, source := range sources {
+		for _, decl := range source.file.Decls {
+			name := "package-level"
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				name = fn.Name.Name
+			}
+			ast.Inspect(decl, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				wrapper := key(source, call.Fun)
+				position, ok := generic[wrapper]
+				if !ok || wrapper == "os/exec.Command" || wrapper == "os/exec.CommandContext" || len(call.Args) <= position {
+					return true // exec itself is gitConstructorSites' to inventory
+				}
+				if literal, ok := call.Args[position].(*ast.BasicLit); ok && literal.Kind == token.STRING {
+					executable, _ := strconv.Unquote(literal.Value)
+					if base := strings.ToLower(filepath.Base(executable)); base == "git" || base == "git.exe" {
+						var text strings.Builder
+						_ = format.Node(&text, source.set, call)
+						wrapperSites = append(wrapperSites, source.path+":"+name+":"+text.String())
+					}
+				}
+				return true
+			})
+		}
+	}
 	for _, source := range sources {
 		direct := map[ast.Node]bool{}
 		ast.Inspect(source.file, func(node ast.Node) bool {
@@ -425,7 +529,7 @@ func forbiddenConstructorValues(root string) ([]string, error) {
 			return true
 		})
 	}
-	return forbidden, nil
+	return forbidden, wrapperSites, nil
 }
 
 func walkGitSources(root string, visit func(string, []byte) error) error {
@@ -471,19 +575,21 @@ func TestHostGitBoundaryRejectsAliasTreeMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, probe := range []struct{ name, source string }{
-		{"control", ""},
-		{"raw alias", `package runtime; import "os/exec"; func probe() { run := exec.Command; _ = run("git", "status") }`},
-		{"reviewed wrapper alias", `package runtime; var escaped = contextCommand`},
-		{"forwarding wrapper", `package runtime; import "context"; import "os/exec"; func forward(ctx context.Context, name string, args ...string) *exec.Cmd { return contextCommand(ctx,name,args...) }; var escaped = forward`},
-		{"chained runner", `package runtime; import "context"; func forward(ctx context.Context, name string,args ...string)([]byte,error){ return contextCommand(ctx,name,args...).Output() }; var escaped = forward`},
-		{"forwarding method", `package runtime; import "context"; type launcher struct{}; func (launcher) invoke(ctx context.Context,name string,args ...string)([]byte,error){return contextCommand(ctx,name,args...).Output()}; var escaped=launcher{}.invoke`},
-		{"chained forwarding method", `package runtime; import "context"; type launcher struct{}; func (b launcher) invoke(ctx context.Context,name string,args ...string)([]byte,error){return contextCommand(ctx,name,args...).Output()}; func(b launcher) forward(ctx context.Context,name string,args ...string)([]byte,error){return b.invoke(ctx,name,args...)}; var escaped=launcher{}.forward`},
-		{"assigned runner", `package runtime; import "context"; func forward(ctx context.Context, name string,args ...string)([]byte,error){ cmd:=contextCommand(ctx,name,args...); out,err:=cmd.Output(); return out,err }; var escaped = forward`},
-		{"imported factory", `package runtime; import . "github.com/AndrewDryga/coop/internal/forkspace"; var escaped = GitCommand`},
-		{"closure local alias", `package runtime; import "context"; var escaped = func(name string, args ...string)([]byte,error){ binary:=name; return contextCommand(context.Background(),binary,args...).Output() }`},
-		{"closure forwarding factory", `package runtime; import "context"; import "os/exec"; func forward(name string,args ...string)*exec.Cmd{return contextCommand(context.Background(),name,args...)}; var escaped=func(name string,args ...string)([]byte,error){return forward(name,args...).Output()}`},
-		{"closure", `package runtime; import "os/exec"; var escaped = func(name string, args ...string) *exec.Cmd { return exec.Command(name,args...) }`},
+	for _, probe := range []struct{ name, source, want string }{
+		{"control", "", ""},
+		{"raw alias", `package runtime; import "os/exec"; func probe() { run := exec.Command; _ = run("git", "status") }`, ""},
+		{"reviewed wrapper alias", `package runtime; var escaped = contextCommand`, ""},
+		{"forwarding wrapper", `package runtime; import "context"; import "os/exec"; func forward(ctx context.Context, name string, args ...string) *exec.Cmd { return contextCommand(ctx,name,args...) }; var escaped = forward`, ""},
+		{"chained runner", `package runtime; import "context"; func forward(ctx context.Context, name string,args ...string)([]byte,error){ return contextCommand(ctx,name,args...).Output() }; var escaped = forward`, ""},
+		{"forwarding method", `package runtime; import "context"; type launcher struct{}; func (launcher) invoke(ctx context.Context,name string,args ...string)([]byte,error){return contextCommand(ctx,name,args...).Output()}; var escaped=launcher{}.invoke`, ""},
+		{"chained forwarding method", `package runtime; import "context"; type launcher struct{}; func (b launcher) invoke(ctx context.Context,name string,args ...string)([]byte,error){return contextCommand(ctx,name,args...).Output()}; func(b launcher) forward(ctx context.Context,name string,args ...string)([]byte,error){return b.invoke(ctx,name,args...)}; var escaped=launcher{}.forward`, ""},
+		{"assigned runner", `package runtime; import "context"; func forward(ctx context.Context, name string,args ...string)([]byte,error){ cmd:=contextCommand(ctx,name,args...); out,err:=cmd.Output(); return out,err }; var escaped = forward`, ""},
+		{"imported factory", `package runtime; import . "github.com/AndrewDryga/coop/internal/forkspace"; var escaped = GitCommand`, ""},
+		{"closure local alias", `package runtime; import "context"; var escaped = func(name string, args ...string)([]byte,error){ binary:=name; return contextCommand(context.Background(),binary,args...).Output() }`, ""},
+		{"closure forwarding factory", `package runtime; import "context"; import "os/exec"; func forward(name string,args ...string)*exec.Cmd{return contextCommand(context.Background(),name,args...)}; var escaped=func(name string,args ...string)([]byte,error){return forward(name,args...).Output()}`, ""},
+		{"closure", `package runtime; import "os/exec"; var escaped = func(name string, args ...string) *exec.Cmd { return exec.Command(name,args...) }`, ""},
+		{"direct wrapper git call", `package runtime; import "context"; func probe() { _ = contextCommand(context.Background(), "git", "status") }`, "unreviewed Git constructor"},
+		{"call-result method value", `package runtime; import "context"; type launcher struct{}; func newLauncher() launcher { return launcher{} }; func (launcher) forward(ctx context.Context, name string, args ...string) ([]byte, error) { return contextCommand(ctx, name, args...).Output() }; var escaped = newLauncher().forward`, ""},
 	} {
 		t.Run(probe.name, func(t *testing.T) {
 			path := filepath.Join(root, "internal/runtime/constructor_probe.go")
@@ -503,8 +609,12 @@ func TestHostGitBoundaryRejectsAliasTreeMutation(t *testing.T) {
 				t.Logf("unmodified tree: guard exited %d", cmd.ProcessState.ExitCode())
 				return
 			}
-			if err == nil || !strings.Contains(string(out), "forbidden constructor function value") {
-				t.Fatalf("alias guard did not fail: %v\n%s", err, out)
+			want := probe.want
+			if want == "" {
+				want = "forbidden constructor function value"
+			}
+			if err == nil || !strings.Contains(string(out), want) {
+				t.Fatalf("alias guard did not fail with %q: %v\n%s", want, err, out)
 			}
 			t.Logf("%s: guard exited %d as required", probe.name, cmd.ProcessState.ExitCode())
 		})
@@ -545,7 +655,7 @@ func TestHostGitConstructorValueCannotBeAllowlisted(t *testing.T) {
 		if err := os.WriteFile(path, []byte("package p; import \"os/exec\"; "+body), 0600); err != nil {
 			t.Fatal(err)
 		}
-		violations, err := forbiddenConstructorValues(root)
+		violations, _, err := forbiddenConstructorValues(root)
 		if err != nil || len(violations) == 0 {
 			t.Fatalf("function value was accepted: %v %v", violations, err)
 		}

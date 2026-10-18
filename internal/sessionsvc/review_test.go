@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
@@ -111,8 +110,8 @@ func TestSessionServiceReviewReportsMissingIdentityAsAnErrorNotAConflict(t *test
 	sessionWorkspaceGit(t, created.Workspace, "commit", "-qm", "work")
 	git("commit", "--allow-empty", "-qm", "default advanced")
 	for _, key := range []string{"user.name", "user.email"} {
-		if err := forkspace.GitRefCommand(context.Background(), created.Repository, "config", "--unset", key).Run(); err != nil {
-			t.Fatal(err)
+		if out, err := exec.Command("git", "-C", created.Repository, "config", "--unset", key).CombinedOutput(); err != nil {
+			t.Fatalf("unset %s: %v\n%s", key, err, out)
 		}
 	}
 	dossier, err := fixture.RunReview(context.Background(), "missing-identity-review", RunReviewRequest{

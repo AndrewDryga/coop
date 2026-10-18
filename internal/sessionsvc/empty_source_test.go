@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -200,8 +201,8 @@ func TestEmptySourceConcurrentInitializationAndTamperRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.GitRefCommand(context.Background(), repository, "remote", "add", "origin", "https://example.invalid/changed").Run(); err != nil {
-		t.Fatal(err)
+	if out, err := exec.Command("git", "-C", repository, "remote", "add", "origin", "https://example.invalid/changed").CombinedOutput(); err != nil {
+		t.Fatalf("plant a remote: %v\n%s", err, out)
 	}
 	if _, err := emptyJobRepository(context.Background(), root); err == nil {
 		t.Fatal("adopted empty baseline with a remote")

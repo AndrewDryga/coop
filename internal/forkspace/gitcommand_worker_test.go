@@ -114,15 +114,18 @@ func TestHostGitRejectsUnreviewedWorkerCommands(t *testing.T) {
 	}
 }
 
-// Caller configuration cannot undo the policy, including when -- ends option parsing.
+// Caller configuration cannot undo the policy: a caller cannot pass push recursion at all, and the
+// policy's own flag stays an option when -- ends option parsing.
 func TestHostGitPushOverridesRecursion(t *testing.T) {
-	args := []string{"-c", "push.recurseSubmodules=on-demand", "push", "--quiet", "--", "origin", "HEAD:refs/heads/topic"}
-	got, err := nonRecursiveGitArgs(args)
+	if _, err := nonRecursiveGitArgs([]string{"-c", "push.recurseSubmodules=on-demand", "push", "--quiet", "--", "origin", "HEAD:refs/heads/topic"}); err == nil {
+		t.Fatal("a caller's push recursion setting was accepted")
+	}
+	got, err := nonRecursiveGitArgs([]string{"push", "--quiet", "--", "origin", "HEAD:refs/heads/topic"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Index(got, "push.recurseSubmodules=no") <= slices.Index(got, "push.recurseSubmodules=on-demand") {
-		t.Fatalf("caller config won: %v", got)
+	if !slices.Contains(got, "push.recurseSubmodules=no") {
+		t.Fatalf("the policy does not turn push recursion off: %v", got)
 	}
 	boundary := slices.Index(got, "--")
 	if boundary < 1 || got[boundary-1] != "--recurse-submodules=no" {

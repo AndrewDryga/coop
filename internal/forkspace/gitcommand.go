@@ -151,6 +151,9 @@ func nonRecursiveGitArgs(args []string) ([]string, error) {
 		if i+1 >= len(args) {
 			return nil, fmt.Errorf("missing Git configuration value")
 		}
+		if !callerGitSetting(args[i+1]) {
+			return nil, fmt.Errorf("host Git setting %q is not one a caller may pass", args[i+1])
+		}
 		i += 2
 	}
 	if i == len(args) {
@@ -256,27 +259,116 @@ func nonRecursiveGitArgs(args []string) ([]string, error) {
 	return append(out, flags...), nil
 }
 
+// callerGitSettings are the -c settings a host caller may pass, each with the values it may take.
+// None defines a driver or program that a box-written file can select: the signing values and the
+// difftool come from the host's global config, and the rest turn a feature off or name a fixed
+// value. A filter.<name>.clean, diff.<name>.textconv or merge.<name>.driver from a caller would
+// define a command that a box-written .gitattributes runs.
+var callerGitSettings = map[string]func(string) bool{
+	// Signing (TrustedSignArgs): the key, format and program from the host's global config.
+	"commit.gpgsign": isGitValue("true"), "user.signingkey": anyGitValue,
+	"gpg.format":  isGitValue("openpgp", "ssh", "x509"),
+	"gpg.program": anyGitValue, "gpg.ssh.program": anyGitValue, "gpg.x509.program": anyGitValue,
+	"gpg.ssh.defaultkeycommand": anyGitValue,
+	// The difftool the host's global diff.tool names; difftool.<tool>.cmd is matched below.
+	"diff.tool": anyGitValue,
+	// Attributes, and identity, which is data that runs nothing.
+	"core.attributesfile": isGitValue(os.DevNull), "user.useconfigonly": isGitValue("true"),
+	"user.name": anyGitValue, "user.email": anyGitValue,
+	// Transport: the worker's own endpoints, and LFS features turned off.
+	"http.followredirects": isGitValue("false"),
+	"lfs.url":              anyGitValue, "lfs.pushurl": anyGitValue, "remote.origin.lfsurl": anyGitValue,
+	"lfs.basictransfersonly": isGitValue("true"), "lfs.standalonetransferagent": isGitValue(""),
+	"lfs.remote.autodetect": isGitValue("false"), "lfs.remote.searchall": isGitValue("false"),
+	"lfs.transfer.enablehrefrewrite": isGitValue("false"), "lfs.skipdownloaderrors": isGitValue("false"),
+	"lfs.fetchrecentalways": isGitValue("false"),
+}
+
+func anyGitValue(string) bool { return true }
+
+func isGitValue(values ...string) func(string) bool {
+	return func(value string) bool { return slices.Contains(values, value) }
+}
+
+// callerGitSetting reports whether a caller may pass setting, a "key=value" for -c.
+func callerGitSetting(setting string) bool {
+	key, value, ok := strings.Cut(setting, "=")
+	if !ok {
+		return false // a bare key means true; no reviewed setting is spelled that way
+	}
+	lower := strings.ToLower(key)
+	if strings.HasPrefix(lower, "difftool.") && strings.HasSuffix(lower, ".cmd") && len(lower) > len("difftool..cmd") {
+		return true // the host's global difftool.<tool>.cmd
+	}
+	valid := callerGitSettings[lower]
+	return valid != nil && valid(value)
+}
+
 // Real metadata is only for operations that cannot use a view. Keep this list
 // separate from the worktree policy: a safe argv does not make local drivers safe.
 func refOnlyGitArgs(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("missing ref-only Git command")
 	}
-	switch args[0] {
-	case "config", "rev-parse", "update-ref", "symbolic-ref", "for-each-ref", "branch", "remote", "init":
+	if refOnlyShape(args) {
 		return nil
-	case "cat-file":
-		if len(args) == 3 && args[1] == "-e" {
-			return nil
-		}
-	case "hash-object":
-		if len(args) == 5 && args[1] == "-w" && args[2] == "-t" && (args[3] == "tree" || args[3] == "commit" || args[3] == "blob") && args[4] == "--stdin" {
-			return nil
-		}
-	case "worktree":
-		if len(args) > 1 && (args[1] == "add" && slices.Contains(args, "--no-checkout") || args[1] == "remove" && slices.Contains(args, "--force")) {
-			return nil
-		}
 	}
 	return fmt.Errorf("git %v needs a trusted worktree view", args)
+}
+
+// refOnlyShape reports whether args is one of the exact ref-only calls host code makes. A verb is
+// not enough: `remote update` fetches with the box-written config's credential helpers, and
+// `config --global` writes the host's own configuration.
+func refOnlyShape(args []string) bool {
+	plain := func(values ...string) bool {
+		for _, value := range values {
+			if value == "" || strings.HasPrefix(value, "-") {
+				return false
+			}
+		}
+		return true
+	}
+	switch args[0] {
+	case "config": // the fork's identity and signing values, the clone's origin, or a read
+		writable := []string{"user.name", "user.email", "user.signingkey", "gpg.format", "remote.origin.url"}
+		return len(args) == 3 && slices.Contains(writable, args[1]) ||
+			len(args) == 3 && args[1] == "--get" && plain(args[2])
+	case "rev-parse":
+		return len(args) == 4 && args[1] == "--path-format=absolute" && args[2] == "--git-path" && plain(args[3]) ||
+			slices.Equal(args, []string{"rev-parse", "--path-format=absolute", "--git-common-dir"})
+	case "update-ref":
+		rest := args[1:]
+		if slices.Equal(rest, []string{"--stdin"}) {
+			return true
+		}
+		if len(rest) > 2 && rest[0] == "-m" {
+			rest = rest[2:]
+		}
+		if len(rest) > 0 && rest[0] == "--no-deref" {
+			rest = rest[1:]
+		}
+		return (len(rest) == 2 || len(rest) == 3) && plain(rest...)
+	case "symbolic-ref":
+		return len(args) == 3 && args[1] == "HEAD" && strings.HasPrefix(args[2], "refs/heads/") && plain(args[2])
+	case "for-each-ref":
+		return len(args) == 2 && strings.HasPrefix(args[1], "--format=")
+	case "branch":
+		return len(args) == 4 && args[1] == "-q" && args[2] == "-D" && plain(args[3]) ||
+			len(args) == 3 && plain(args[1]) && args[2] == "HEAD"
+	case "remote":
+		return len(args) == 3 && args[1] == "remove" && plain(args[2])
+	case "init":
+		return slices.Equal(args, []string{"init", "--bare", "--quiet"}) ||
+			slices.Equal(args, []string{"init", "--bare", "--quiet", "--object-format=sha256"}) ||
+			slices.Equal(args, []string{"init", "--quiet", "--template=", "--object-format=sha1", "--initial-branch=main"})
+	case "cat-file":
+		return len(args) == 3 && args[1] == "-e"
+	case "hash-object":
+		return len(args) == 5 && args[1] == "-w" && args[2] == "-t" && (args[3] == "tree" || args[3] == "commit" || args[3] == "blob") && args[4] == "--stdin"
+	case "worktree":
+		return len(args) == 7 && slices.Equal(args[1:5], []string{"add", "--no-checkout", "--detach", "--quiet"}) && plain(args[5], args[6]) ||
+			len(args) == 4 && args[1] == "remove" && args[2] == "--force" && plain(args[3]) ||
+			len(args) == 5 && slices.Equal(args[1:4], []string{"remove", "--force", "--"}) && args[4] != ""
+	}
+	return false
 }

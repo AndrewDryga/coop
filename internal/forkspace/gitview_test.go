@@ -431,7 +431,7 @@ func TestGitRefCommandNeverClimbsToTheHomeRepository(t *testing.T) {
 	if err := os.MkdirAll(inside, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := GitRefCommand(ctx, workspace, "init", "--quiet").CombinedOutput(); err != nil || !fileExists(filepath.Join(gitDir, "HEAD")) {
+	if out, err := GitRefCommand(ctx, workspace, "init", "--quiet", "--template=", "--object-format=sha1", "--initial-branch=main").CombinedOutput(); err != nil || !fileExists(filepath.Join(gitDir, "HEAD")) {
 		t.Fatalf("git init in a folder inside the home repository: %v\n%s", err, out)
 	}
 	if out, err := GitRefCommand(ctx, inside, "symbolic-ref", "HEAD", "refs/heads/topic").CombinedOutput(); err != nil {
