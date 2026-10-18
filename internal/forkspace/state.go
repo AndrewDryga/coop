@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -37,8 +38,8 @@ var (
 	ErrUnsupportedWorkerStateVersion = errors.New("unsupported detached-worker state version")
 	// ErrNotAStateFile matches an error that says what Coop found at a fork state file's name in place
 	// of a file it wrote: a link, a named pipe, a folder, a socket, a device, or a lifecycle record
-	// larger than any Coop writes. A box whose mount holds the .coop folder can put any of them there,
-	// and reading one could wait forever or never end.
+	// larger than any Coop writes. Records an older build kept where a box could write them move in
+	// once as they are, so one can be any of these, and reading one could wait forever or never end.
 	ErrNotAStateFile = errors.New("not a file Coop wrote")
 	// folderChecked, swapped only by tests, runs where Coop has checked a folder of the forks tree
 	// and is about to work in it: the moment a box could swap that folder for a link. The work after
@@ -50,15 +51,64 @@ var (
 // stub liveness once for both.
 var SignalPID = syscall.Kill
 
-// Per-fork process state (logs + pidfiles) lives in <repo>-forks/.coop/.
-func StateDir(repo string) string       { return filepath.Join(Home(repo), ".coop") }
+// PrivateStateRootEnv names a test binary's private state root, which holds service approvals
+// too (box.ServiceStateRootEnv); internal/testutil/teststate sets it.
+const PrivateStateRootEnv = "COOP_SERVICE_STATE_ROOT"
+
+// PrivateStateRoot is coop's private per-user state folder, ~/.local/state/coop, which holds its
+// fork records and service approvals. No box ever mounts it: box.authorityProtection refuses any
+// bind that overlaps it.
+func PrivateStateRoot() (string, error) {
+	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
+		if root := os.Getenv(PrivateStateRootEnv); root != "" {
+			return root, nil
+		}
+		return "", fmt.Errorf("a test binary must set %s (internal/testutil/teststate does); without it, tests write the real fork records", PrivateStateRootEnv)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("find coop's private state folder: %w", err)
+	}
+	return filepath.Join(home, ".local", "state", "coop"), nil
+}
+
+// forkRecordsKey names repo's record folder: the sha256 of its real path, as the execution
+// registry fallback names its folders.
+func forkRecordsKey(repo string) string {
+	canonical := repo
+	if resolved, err := filepath.EvalSymlinks(repo); err == nil {
+		canonical = resolved
+	} else if absolute, err := filepath.Abs(repo); err == nil {
+		canonical = absolute
+	}
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(canonical)))
+}
+
+// StateDir holds repo's fork records — lifecycle locks, pidfiles and logs, generations,
+// reservations, candidates, assignments, land journals, execution records — at
+// <private state>/forks/<key>. Fork workspaces stay in Home(repo). The records left it: a box whose
+// mount holds another project's forks folder could write that project's records there. Every
+// reader finds its path here, so this is also where records an older build left in the old place
+// move, once; a move that fails is reported by the next open of the folder.
+func StateDir(repo string) string {
+	_ = MoveLegacyForkRecords(repo)
+	return recordsPath(repo)
+}
+
+func recordsPath(repo string) string {
+	root, err := PrivateStateRoot()
+	if err != nil {
+		// A folder nothing can open; openStateDir reports err itself.
+		root = filepath.Join(string(filepath.Separator), "coop-private-state-unavailable")
+	}
+	return filepath.Join(root, "forks", forkRecordsKey(repo))
+}
+
 func LogPath(repo, name string) string  { return filepath.Join(StateDir(repo), name+".log") }
 func PidPath(repo, name string) string  { return filepath.Join(StateDir(repo), name+".pid") }
 func LockPath(repo, name string) string { return filepath.Join(StateDir(repo), name+".lock") }
 
-// EnsureStateDir creates or tightens the central fork control directory. Fork workspaces remain
-// ordinary project directories; only the host-owned .coop authority and its descendants are
-// owner-private.
+// EnsureStateDir creates or tightens repo's fork record folder, owner-only.
 func EnsureStateDir(repo string) error {
 	dir, err := openStateDir(repo)
 	if err != nil {
@@ -67,38 +117,39 @@ func EnsureStateDir(repo string) error {
 	return dir.Close()
 }
 
-// openStateDir is EnsureStateDir returning .coop open. A box whose mount holds the forks folder can
-// swap .coop for a link after any check by name, and one whose mount holds the folder above it can
-// swap the forks folder itself. So neither is opened through a link, .coop's mode is set through its
-// descriptor, and the lock, log and worker record are opened, renamed and removed relative to the
-// returned handle, never by path.
+// openStateDir is EnsureStateDir returning the folder open. It is made under the private state
+// root through descriptors that never follow a link, and the lock, log and worker record are
+// opened, renamed and removed relative to the returned handle.
 func openStateDir(repo string) (*os.File, error) {
-	if err := ensureForkHome(repo); err != nil {
-		return nil, err
-	}
-	home, err := safefile.OpenRoot(Home(repo))
+	return openForkRecords(repo, true)
+}
+
+// openForkRecords opens repo's record folder under the private state root, making it and the
+// forks folder above it owner-only when create; without create a missing one is os.ErrNotExist.
+func openForkRecords(repo string, create bool) (*os.File, error) {
+	root, err := PrivateStateRoot()
 	if err != nil {
 		return nil, err
 	}
-	defer home.Close()
-	path := StateDir(repo)
-	if err := unix.Mkdirat(int(home.Fd()), ".coop", 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
-		return nil, &os.PathError{Op: "mkdir", Path: path, Err: err}
+	if create {
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			return nil, err
+		}
 	}
-	fd, err := unix.Openat(int(home.Fd()), ".coop", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
-	if errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
-		return nil, fmt.Errorf("fork state path %q is not a real directory", path)
+	if err := MoveLegacyForkRecords(repo); err != nil {
+		return nil, err
 	}
+	base, err := safefile.OpenRoot(root)
 	if err != nil {
-		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+		return nil, err
 	}
-	dir := os.NewFile(uintptr(fd), path)
-	folderChecked(Home(repo))
-	if err := dir.Chmod(0o700); err != nil {
-		_ = dir.Close()
-		return nil, fmt.Errorf("make fork state path %q owner-only: %w", path, err)
+	defer base.Close()
+	forks, err := openStateChild(base, filepath.Join(root, "forks"), "forks", create)
+	if err != nil {
+		return nil, err
 	}
-	return dir, nil
+	defer forks.Close()
+	return openStateChild(forks, recordsPath(repo), forkRecordsKey(repo), create)
 }
 
 func ensureForkHome(repo string) error {
@@ -116,6 +167,38 @@ func ensureForkHome(repo string) error {
 	}
 	folderChecked(filepath.Dir(home))
 	return nil
+}
+
+// openForkHome opens repo's forks folder as a root without following a link at it, so a box that
+// replaced the folder with a link cannot point a fork command at another folder. The folders above
+// it, the project's own parent, may be reached through a link.
+func openForkHome(repo string) (*os.Root, error) {
+	home := Home(repo)
+	dir, err := safefile.OpenRoot(home)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w; remove it if you did not make it", err)
+	}
+	defer dir.Close()
+	// os.OpenRoot follows a link at home: it must be the folder just opened without one.
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return nil, err
+	}
+	want, err := dir.Stat()
+	if err == nil {
+		var got os.FileInfo
+		if got, err = root.Stat("."); err == nil && !os.SameFile(want, got) {
+			err = fmt.Errorf("the forks folder %s changed while Coop opened it", home)
+		}
+	}
+	if err != nil {
+		_ = root.Close()
+		return nil, err
+	}
+	return root, nil
 }
 
 // LockState serializes a detached start through its child's record, the child's confirmation and
@@ -344,10 +427,10 @@ func ReadWorkerState(repo, name string) (WorkerState, error) {
 	return ParseWorkerState(string(data))
 }
 
-// OpenStateFile opens a file in a fork's .coop folder for reading. A box whose mount holds that
-// folder can put anything at a name there, so the open neither follows a link nor waits on a named
-// pipe, and anything but a regular file is refused with an error that matches ErrNotAStateFile and
-// says what is there. Any other failure, a missing file included, is an *os.PathError.
+// OpenStateFile opens a file in a project's fork records for reading. Records an older build kept
+// where a box could write them move in as they are, so a name there can hold anything: the open
+// neither follows a link nor waits on a named pipe, and anything but a regular file is refused with
+// an error that matches ErrNotAStateFile and says what is there. Any other failure, a missing file included, is an *os.PathError.
 func OpenStateFile(path string) (*os.File, error) {
 	return openStateFile(unix.AT_FDCWD, path, path, os.O_RDONLY)
 }
@@ -389,8 +472,8 @@ func openStateFile(dirfd int, name, path string, flag int) (*os.File, error) {
 	return f, nil
 }
 
-// createStateFile opens base in repo's .coop folder through openStateDir's handle, creating it if it
-// is missing. It is an owner-only regular file, or refused as OpenStateFile refuses a reader's.
+// createStateFile opens base in repo's fork records folder through openStateDir's handle, creating
+// it if it is missing. It is an owner-only regular file, or refused as OpenStateFile refuses a reader's.
 func createStateFile(repo, base string, flag int) (*os.File, error) {
 	dir, err := openStateDir(repo)
 	if err != nil {
@@ -490,9 +573,8 @@ func WriteWorkerState(repo, name string, state WorkerState) error {
 	return nil
 }
 
-// RemoveWorkerState deletes a fork's lifecycle record through openStateDir's handle, so a box that
-// swaps .coop for a link cannot make it delete a file elsewhere. As with os.Remove, a missing record
-// is an *os.PathError that matches os.ErrNotExist. The caller holds the lifecycle lock.
+// RemoveWorkerState deletes a fork's lifecycle record through openStateDir's handle, never by
+// name. As with os.Remove, a missing record is an *os.PathError that matches os.ErrNotExist. The caller holds the lifecycle lock.
 func RemoveWorkerState(repo, name string) error {
 	dir, err := openStateDir(repo)
 	if err != nil {

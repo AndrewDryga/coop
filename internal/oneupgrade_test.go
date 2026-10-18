@@ -19,7 +19,8 @@ const waypointCard = ".agent/kb/rules/one-upgrade-for-old-state.md"
 // current and oldest-read versions, as "<file under internal/>:<name>". An empty oldest means no
 // constant names it yet; the task that retires that reader adds one (it needs it for the refusal).
 // An empty current means the versions are not integer constants: the box supervisor label's are the
-// string prefixes "v2" and "v1" (box/sweep.go), so its row is listed but pins nothing.
+// string prefixes "v2" and "v1" (box/sweep.go), and the fork records folder's are its two places
+// (forkspace.MoveLegacyForkRecords), so their rows are listed but pin nothing.
 var waypointConstants = map[string]struct{ current, oldest string }{
 	"Session database schema":     {"session/records.go:SchemaVersion", "session/records.go:OldestSchemaVersion"},
 	"Turn retry receipts":         {"session/operation_result.go:turnOperationResultVersion", ""},
@@ -37,6 +38,7 @@ var waypointConstants = map[string]struct{ current, oldest string }{
 	"Service approval":            {"box/serviceapproval.go:serviceApprovalVersion", "box/serviceapproval.go:serviceApprovalLegacyVersion"},
 	"Workspace checkpoint bundle": {"workerproto/checkpoint.go:WorkspaceCheckpointVersion", "workerproto/checkpoint.go:WorkspaceCheckpointLegacyVersion"},
 	"Box supervisor label":        {"", ""},
+	"Fork records folder":         {"", ""},
 }
 
 // TestOneUpgradeWaypoints is the check for waypointCard: its waypoint table must state the versions

@@ -319,8 +319,8 @@ func (c *Control) gateIsolatedCandidate(repo, img string, candidate isolatedCand
 	return candidate.validateSource(repo)
 }
 
-// mkdirStateTemp makes a new owner-only folder in .coop through .coop's own folder, never by name,
-// so a box that swapped .coop for a link cannot place it elsewhere, and returns its path.
+// mkdirStateTemp makes a new owner-only folder in the fork records through that folder's own
+// handle, never by name, and returns its path.
 func mkdirStateTemp(repo, prefix string) (string, error) {
 	state, err := forkspace.OpenStateRoot(repo, "", true)
 	if err != nil {

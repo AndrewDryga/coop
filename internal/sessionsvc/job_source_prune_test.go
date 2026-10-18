@@ -60,6 +60,12 @@ func TestPruningRemovesOnlyStagedSourcesNoSessionCanStillUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	staged["unused"] = baseKey
+	// A copy's fork records live in Coop's private state, keyed by the copy's own path, and go
+	// with the copy.
+	if err := forkspace.EnsureStateDir(repository(baseKey)); err != nil {
+		t.Fatal(err)
+	}
+	unusedRecords := forkspace.StateDir(repository(baseKey))
 	// The repository's newest copy is the one staged ten minutes ago, so this one is not.
 	stage("older", 2, now.Add(-90*time.Minute))
 	stage("open", 3, unused)
@@ -78,6 +84,34 @@ func TestPruningRemovesOnlyStagedSourcesNoSessionCanStillUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{forkspace.Home(repository(forked)), filepath.Join(root, forked)} {
+		if err := os.Chtimes(path, unused, unused); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A copy whose forks folder holds only the records an older build kept there holds no fork.
+	legacy := stage("legacy-records", 12, unused)
+	legacyRecords := filepath.Join(forkspace.Home(repository(legacy)), ".coop", "executions")
+	if err := os.MkdirAll(legacyRecords, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyRecords, "run.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{forkspace.Home(repository(legacy)), filepath.Join(root, legacy)} {
+		if err := os.Chtimes(path, unused, unused); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An old .coop that stayed where it was, as one whose anchor could not cross disks does, holds
+	// no fork either.
+	stayed := stage("stayed-records", 16, unused)
+	if err := forkspace.EnsureStateDir(repository(stayed)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(forkspace.Home(repository(stayed)), ".coop"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{forkspace.Home(repository(stayed)), filepath.Join(root, stayed)} {
 		if err := os.Chtimes(path, unused, unused); err != nil {
 			t.Fatal(err)
 		}
@@ -117,7 +151,7 @@ func TestPruningRemovesOnlyStagedSourcesNoSessionCanStillUse(t *testing.T) {
 		}
 	}
 	slices.Sort(gone)
-	if want := []string{"discarded", "old-task", "older", "other-older", "unused"}; !slices.Equal(gone, want) || removed != len(want) {
+	if want := []string{"discarded", "legacy-records", "old-task", "older", "other-older", "stayed-records", "unused"}; !slices.Equal(gone, want) || removed != len(want) {
 		t.Fatalf("removed %d: %v, want %v", removed, gone, want)
 	}
 	entries, err := os.ReadDir(root)
@@ -127,6 +161,11 @@ func TestPruningRemovesOnlyStagedSourcesNoSessionCanStillUse(t *testing.T) {
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), jobSourcePrunePrefix) {
 			t.Fatalf("a removed copy left %s behind", entry.Name())
+		}
+	}
+	for _, records := range []string{unusedRecords, forkspace.StateDir(repository(legacy))} {
+		if entries, err := os.ReadDir(records); len(entries) != 0 {
+			t.Fatalf("a removed copy left its fork records behind in %s: %v %v", records, entries, err)
 		}
 	}
 }

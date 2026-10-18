@@ -113,14 +113,14 @@ func (o ExecutionObservation) Path() string {
 	return filepath.Join(o.Record.registry, o.Record.ID+".json")
 }
 
-// executionFolder holds the project's execution records, in .coop.
+// executionFolder holds the project's execution records, in its fork records folder.
 const executionFolder = "executions"
 
 func executionDir(repo string) string { return filepath.Join(StateDir(repo), executionFolder) }
 
-// openExecutionRegistry opens registry as a root. The project's own registry is in .coop, which a
-// box that can write the forks folder could swap for a link, so it is opened through OpenStateRoot;
-// the fallback is in Coop's per-user state, which no box mounts.
+// openExecutionRegistry opens registry as a root. The project's own registry is in its fork
+// records, opened through OpenStateRoot like every record; the fallback is beside them in Coop's
+// per-user state.
 func openExecutionRegistry(repo, registry string, create bool) (*os.Root, error) {
 	if filepath.Clean(registry) == executionDir(repo) {
 		return OpenStateRoot(repo, executionFolder, create)

@@ -169,9 +169,14 @@ func readStagedJobSource(directory string) (stagedJobSource, bool) {
 	return stagedJobSource{key: filepath.Base(directory), identity: source.RepositoryIdentity(), changed: changed}, true
 }
 
-// holdsForks reports whether anything but Coop's own fork records lives in a copy's fork home: a
-// fork, or a discard not yet finished. One that cannot be read counts as holding them.
+// holdsForks reports whether a copy's fork home holds a fork, or a discard not yet finished.
+// Coop's own fork records live in its private state; records an older build left in the home's
+// .coop move first, and a .coop that had to stay (an anchor cannot cross disks) is no fork. One
+// that cannot be read counts as holding them.
 func holdsForks(repository string) bool {
+	if err := forkspace.MoveLegacyForkRecords(repository); err != nil {
+		return true
+	}
 	entries, err := os.ReadDir(forkspace.Home(repository))
 	if errors.Is(err, os.ErrNotExist) {
 		return false
@@ -180,7 +185,7 @@ func holdsForks(repository string) bool {
 		return true
 	}
 	for _, entry := range entries {
-		if entry.Name() != filepath.Base(forkspace.StateDir(repository)) {
+		if entry.Name() != ".coop" {
 			return true
 		}
 	}
@@ -192,6 +197,11 @@ func holdsForks(repository string) bool {
 func (s *Service) removeJobSource(root, key string) error {
 	s.storage.measureMu.Lock()
 	defer s.storage.measureMu.Unlock()
+	// The copy's fork records live in Coop's private state, keyed by the copy's own path, so they
+	// go first: once the copy is retired, nothing names them.
+	if err := os.RemoveAll(forkspace.StateDir(filepath.Join(root, key, "repository"))); err != nil {
+		return fmt.Errorf("remove the fork records of staged job source %s: %w", key, err)
+	}
 	retired := filepath.Join(root, jobSourcePrunePrefix+key)
 	if err := os.Rename(filepath.Join(root, key), retired); err != nil {
 		return fmt.Errorf("retire staged job source %s: %w", key, err)

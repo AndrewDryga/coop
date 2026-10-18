@@ -7,7 +7,7 @@
 // on top of it with values read only from your trusted global config (git.go).
 //
 // Forks live in a sibling directory <repo>-forks/, one subdirectory per fork, with coop's own
-// per-fork state under <repo>-forks/.coop/.
+// per-fork records in its private state folder (StateDir).
 //
 // It is deliberately a leaf: paths, names, files, flock, git, and process identity — no
 // container runtime, no terminal output, no command wiring. Worker SUPERVISION (signalling a

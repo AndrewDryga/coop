@@ -11,15 +11,13 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/AndrewDryga/coop/internal/randid"
-	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
-// OpenStateRoot opens <repo>-forks/.coop, or the folder sub inside it, as an os.Root without
-// following a link a box put in either place. A box whose mount holds the forks folder can swap
-// .coop for a link after any check by name, so the folder is opened by descriptor without following
-// a link first (made, owner-only, when create), and the root must then be that same folder: every
-// open, rename and removal through it stays there even if the name is swapped afterwards. Without
-// create, a missing folder is os.ErrNotExist.
+// OpenStateRoot opens repo's fork records folder (StateDir), or the folder sub inside it, as an
+// os.Root without following a link at any step: the folder is opened by descriptor first (made,
+// owner-only, when create), and the root must then be that same folder, so every open, rename and
+// removal through it stays there even if a name on the way is swapped afterwards. Without create, a
+// missing folder is os.ErrNotExist.
 func OpenStateRoot(repo, sub string, create bool) (*os.Root, error) {
 	dir, err := openStateFolder(repo, sub, create)
 	if err != nil {
@@ -42,8 +40,8 @@ func OpenStateRoot(repo, sub string, create bool) (*os.Root, error) {
 	return root, nil
 }
 
-// openStateFolder opens .coop, or the folder sub inside it (one or more components), by descriptor
-// without following a link at any step.
+// openStateFolder opens the fork records folder, or the folder sub inside it (one or more
+// components), by descriptor without following a link at any step.
 func openStateFolder(repo, sub string, create bool) (*os.File, error) {
 	var dir *os.File
 	var err error
@@ -57,7 +55,7 @@ func openStateFolder(repo, sub string, create bool) (*os.File, error) {
 	}
 	if !filepath.IsLocal(sub) {
 		_ = dir.Close()
-		return nil, fmt.Errorf("fork state folder %q is not inside .coop", sub)
+		return nil, fmt.Errorf("fork state folder %q is not inside the fork records folder", sub)
 	}
 	path := StateDir(repo)
 	for _, component := range strings.Split(filepath.Clean(sub), string(filepath.Separator)) {
@@ -97,23 +95,10 @@ func openStateChild(dir *os.File, path, name string, create bool) (*os.File, err
 	return folder, nil
 }
 
-// openExistingStateDir is openStateDir for a reader or a writer that must not make the forks tree:
-// a missing .coop or forks folder is os.ErrNotExist.
+// openExistingStateDir is openStateDir for a reader or a writer that must not make the record
+// folder: a missing one is os.ErrNotExist.
 func openExistingStateDir(repo string) (*os.File, error) {
-	home, err := safefile.OpenRoot(Home(repo))
-	if err != nil {
-		return nil, err
-	}
-	defer home.Close()
-	path := StateDir(repo)
-	fd, err := unix.Openat(int(home.Fd()), ".coop", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
-	if errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
-		return nil, fmt.Errorf("fork state path %q is not a real directory", path)
-	}
-	if err != nil {
-		return nil, &os.PathError{Op: "open", Path: path, Err: err}
-	}
-	return os.NewFile(uintptr(fd), path), nil
+	return openForkRecords(repo, false)
 }
 
 // CreateTempIn creates a new owner-only file in root named prefix plus a random suffix, never

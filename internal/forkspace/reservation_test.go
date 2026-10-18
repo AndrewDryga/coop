@@ -183,11 +183,3 @@ func TestWorkspaceReservationReleasedDuringScanIsAbsentNotAProblem(t *testing.T)
 		t.Fatalf("an entry replaced during the scan gave problems %v, want one", problems)
 	}
 }
-
-func ensureReservationDir(repo string) error {
-	root, err := OpenStateRoot(repo, reservationFolder, true)
-	if err != nil {
-		return err
-	}
-	return root.Close()
-}

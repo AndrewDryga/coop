@@ -3,7 +3,7 @@ name: identity-fences-compare-the-inode
 description: inode and timestamp reuse is real; durable fork and network roots use private hardlink anchors, while tasks and destructive plans combine logical identity, semantic checks and live pins
 subsystem: security
 sources: [internal/fsidentity/anchor.go, internal/fsidentity/link_unix.go, internal/forkspace/generation.go, internal/networkstate/project_anchor.go, internal/networkstate/authority.go, internal/box/serviceanchor.go, internal/box/authority_mounts.go, internal/tasks/identity.go, internal/tasks/completion.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/device_fence_test.go]
-updated: 2026-09-27
+updated: 2026-10-19
 ---
 
 Coop often needs to answer “is this still the object I authorized?” Linux overlayfs disproved the
@@ -76,6 +76,8 @@ from a malicious process already running as the host user: that actor can alter 
 records directly. The relevant attacker is repository/model code confined to the box.
 
 ## Changelog
+- 2026-10-19 — forkspace's sameDisk (the one-disk check before a fork's hard-linked anchor) compares
+  two live devices at once; listed in deviceComparisons as not an identity fence.
 - 2026-09-27 — checked fork generation migration and session startup; removed reserved-session
   legacy generation adoption while retaining ordinary stopped-fork migration.
 - 2026-09-23 — included service approval's third hardlink authority and the exact-reservation

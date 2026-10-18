@@ -56,8 +56,8 @@ func validateForkAssignmentIndex(record ForkAssignmentIndex) error {
 	return nil
 }
 
-// openStateRoot opens dir, a folder in repo's <repo>-forks/.coop, through forkspace.OpenStateRoot:
-// never through a link a box put in place of .coop or any folder on the way, made when create.
+// openStateRoot opens dir, a folder in repo's fork records (forkspace.StateDir), through
+// forkspace.OpenStateRoot: never through a link on the way, made when create.
 func openStateRoot(repo, dir string, create bool) (*os.Root, error) {
 	rel, err := filepath.Rel(forkspace.StateDir(repo), dir)
 	if err != nil || !filepath.IsLocal(rel) {
@@ -85,8 +85,8 @@ func decodeForkAssignmentIndex(data []byte) (ForkAssignmentIndex, error) {
 	return record, nil
 }
 
-// Stays bounded and no-follow: fork records sit in <repo>-forks/.coop, which a box can reach
-// through a nested mount.
+// Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
+// could write, move into Coop's private state once, as they are.
 func readForkAssignmentIndexFile(root *os.Root, name string) (ForkAssignmentIndex, error) {
 	info, err := root.Lstat(name)
 	if err != nil {

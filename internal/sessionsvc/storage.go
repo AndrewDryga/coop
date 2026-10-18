@@ -559,6 +559,17 @@ func (s *Service) measureForkRoot(
 	}
 	report.Roots = append(report.Roots, root)
 
+	// Coop's own fork records live in its private state, outside the fork root. The report keeps
+	// the name they had there, and lists them only when there are any: a first look makes the
+	// folder empty.
+	if records := forkspace.StateDir(repo); folderHasEntries(records) {
+		usage := s.measureTree(scan, records, report)
+		report.Totals.ControlBytes += usage.ExclusiveBytes()
+		report.Totals.BaselineSharedBytes += usage.SharedBytes
+		report.Forks = append(report.Forks, storageOwnEntry(repo, ".coop", usage,
+			StorageCategoryControl, "coop's own fork lifecycle, generation, reservation and execution records"))
+	}
+
 	home := forkspace.Home(repo)
 	entries, err := os.ReadDir(home)
 	if errors.Is(err, os.ErrNotExist) {
@@ -585,12 +596,6 @@ func (s *Service) measureForkRoot(
 			report.Totals.BaselineSharedBytes += usage.SharedBytes
 			report.Forks = append(report.Forks, storageOwnEntry(repo, entry.Name(), usage,
 				StorageCategoryStagedDiscard, "workspaces proven removable whose deletion has not finished"))
-		case entry.Name() == filepath.Base(forkspace.StateDir(repo)):
-			usage := s.measureTree(scan, path, report)
-			report.Totals.ControlBytes += usage.ExclusiveBytes()
-			report.Totals.BaselineSharedBytes += usage.SharedBytes
-			report.Forks = append(report.Forks, storageOwnEntry(repo, entry.Name(), usage,
-				StorageCategoryControl, "coop's own fork lifecycle, generation, reservation and execution records"))
 		default:
 			s.measureForkEntry(scan, repo, entry.Name(), path, entry.IsDir(), byFork, limits, now, report)
 		}
@@ -932,4 +937,9 @@ func storageGitlinksClean(ctx context.Context, workspace, commit string, depth i
 		}
 	}
 	return true, nil
+}
+
+func folderHasEntries(path string) bool {
+	entries, err := os.ReadDir(path)
+	return err == nil && len(entries) > 0
 }

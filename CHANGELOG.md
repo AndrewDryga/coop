@@ -4,6 +4,18 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A box can no longer fake another project's fork records.** Coop kept each project's fork
+  records (which forks exist, their workers, locks and logs, reviews, and lands and discards in
+  progress) in `<project>-forks/.coop`, next to the project. A box whose folder held another
+  project's forks folder (a project nested in yours, or a box started in a folder of several
+  projects) could write them, and one fake record made `coop fork stop` stop another running Coop
+  session. The records now live in Coop's private folder, `~/.local/state/coop/forks/`, which no
+  box can mount. The first time this version opens a project, it copies the project's records
+  there, following no link, and never reads the old place for that project again. Forks now need
+  each fork's folder and your home folder on one disk: Coop refuses a fork on another disk and
+  names both folders. An older Coop that opens the project afterwards does not see its forks; see
+  MIGRATING.md.
+
 - **A box or service on a Mac can no longer read a hidden file under another letter case.** Coop
   hides a secret file such as `.env` by covering it with an empty file. A Mac's disk ignores letter
   case, so a box or a project service could `cat .ENV` and read the real file, or edit a

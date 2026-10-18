@@ -92,10 +92,11 @@ func TestForksTreeFoldersRefuseAPlantedFIFOOrLinkAtOnce(t *testing.T) {
 				}
 				path := Home(repo)
 				if at == "state" {
-					if err := os.Mkdir(Home(repo), 0o755); err != nil {
+					// The records folder, which a first look would make: plant at its name instead.
+					path = recordsPath(repo)
+					if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 						t.Fatal(err)
 					}
-					path = StateDir(repo)
 				}
 				if planted == "fifo" {
 					if err := syscall.Mkfifo(path, 0o600); err != nil {
@@ -106,7 +107,11 @@ func TestForksTreeFoldersRefuseAPlantedFIFOOrLinkAtOnce(t *testing.T) {
 				}
 				done := make(chan error, 1)
 				go func() {
-					_, err := LifecycleNames(repo)
+					// The forks folder holds the workspaces; the records live in Coop's private state.
+					_, err := Names(repo)
+					if at == "state" {
+						_, err = LifecycleNames(repo)
+					}
 					if at == "state" && err == nil {
 						var root *os.Root
 						if root, err = OpenStateRoot(repo, "", false); err == nil {

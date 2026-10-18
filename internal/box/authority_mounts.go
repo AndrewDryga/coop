@@ -269,7 +269,7 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 	if err := allowEvalMountSources(spec, evalRoot, &allow); err != nil {
 		return err
 	}
-	projects, private, err := authorityProtection(spec, networkState)
+	projects, private, forkHomes, err := authorityProtection(spec, networkState)
 	if err != nil {
 		return err
 	}
@@ -299,7 +299,7 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 				return fmt.Errorf("isolated fork mount %q exposes its parent checkout %q; use the fork workspace instead", source, isolatedParent)
 			}
 		}
-		if err := checkAuthoritySource(source, writable, projects, private, allowed, trees); err != nil {
+		if err := checkAuthoritySource(source, writable, projects, private, forkHomes, allowed, trees); err != nil {
 			return err
 		}
 		if len(isolatedParents) > 0 && !trustedOpaque {
@@ -562,8 +562,7 @@ func checkMutableMountSources(sources []authorityBind) error {
 	return nil
 }
 
-func authorityProtection(spec RunSpec, networkState string) ([]string, []string, error) {
-	var projects, private []string
+func authorityProtection(spec RunSpec, networkState string) (projects, private, forkHomes []string, err error) {
 	if networkState != "" {
 		// The first approval creates this authority tree. Protect its prospective path too, or a
 		// box started on a fresh host could prepopulate the same-UID store through a broad bind.
@@ -577,7 +576,7 @@ func authorityProtection(spec RunSpec, networkState string) ([]string, []string,
 	}
 	serviceApprovals, err := serviceApprovalRoot()
 	if err != nil {
-		return nil, nil, fmt.Errorf("locate private Coop service state: %w", err)
+		return nil, nil, nil, fmt.Errorf("locate private Coop service state: %w", err)
 	}
 	private = appendUniqueAuthorityPath(private, filepath.Dir(serviceApprovals))
 	if root := os.Getenv(forkspace.GitViewRootEnv); root != "" {
@@ -587,27 +586,24 @@ func authorityProtection(spec RunSpec, networkState string) ([]string, []string,
 	if policyRepo != "" {
 		canonical, err := canonicalProjectDir(policyRepo)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		private, err = appendProjectPrivateAuthority(private, canonical)
-		if err != nil {
-			return nil, nil, err
+		if private, forkHomes, err = appendProjectPrivateAuthority(private, forkHomes, canonical); err != nil {
+			return nil, nil, nil, err
 		}
 		_, networkMarkerErr := os.Lstat(filepath.Join(canonical, networkstate.ProjectApprovalMarker))
 		_, serviceMarkerErr := os.Lstat(filepath.Join(canonical, serviceApprovalMarker))
 		if networkMarkerErr == nil || serviceMarkerErr == nil {
 			projects = append(projects, canonical)
 		} else if !errors.Is(networkMarkerErr, os.ErrNotExist) {
-			return nil, nil, networkMarkerErr
+			return nil, nil, nil, networkMarkerErr
 		} else if !errors.Is(serviceMarkerErr, os.ErrNotExist) {
-			return nil, nil, serviceMarkerErr
+			return nil, nil, nil, serviceMarkerErr
 		}
 	}
 	if spec.ActivityRepo != "" {
-		var err error
-		private, err = appendProjectPrivateAuthority(private, spec.ActivityRepo)
-		if err != nil {
-			return nil, nil, err
+		if private, forkHomes, err = appendProjectPrivateAuthority(private, forkHomes, spec.ActivityRepo); err != nil {
+			return nil, nil, nil, err
 		}
 	}
 	// Companion repositories are first-class model-writable roots even though this particular run
@@ -617,84 +613,89 @@ func authorityProtection(spec RunSpec, networkState string) ([]string, []string,
 	for _, companion := range spec.CompanionRepositories {
 		canonical, err := canonicalProjectDir(companion.HostPath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("inspect companion repository %q: %w", companion.Name, err)
+			return nil, nil, nil, fmt.Errorf("inspect companion repository %q: %w", companion.Name, err)
 		}
 		if !slices.Contains(projects, canonical) {
 			projects = append(projects, canonical)
 		}
-		private, err = appendProjectPrivateAuthority(private, canonical)
-		if err != nil {
-			return nil, nil, err
+		if private, forkHomes, err = appendProjectPrivateAuthority(private, forkHomes, canonical); err != nil {
+			return nil, nil, nil, err
 		}
 	}
 	if spec.ForkGeneration == "" && spec.Repo != "" {
 		workspace, err := filepath.EvalSymlinks(spec.Repo)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		repo, identity, err := forkspace.ResolveProjectBinding(workspace)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if identity != nil {
 			spec.ActivityRepo, spec.ForkName, spec.ForkGeneration = repo, identity.Name, string(identity.Generation)
 		}
 	}
 	if spec.ForkGeneration == "" {
-		return projects, private, nil
+		return projects, private, forkHomes, nil
 	}
 	identity := forkspace.Identity{Name: spec.ForkName, Generation: forkspace.Generation(spec.ForkGeneration)}
 	authorityRepo := spec.ActivityRepo
 	if authorityRepo == "" {
 		resolved, bound, err := forkspace.ResolveProjectBinding(spec.Repo)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if bound == nil || *bound != identity {
-			return nil, nil, errors.New("fork mount authority does not match this workspace generation")
+			return nil, nil, nil, errors.New("fork mount authority does not match this workspace generation")
 		}
 		authorityRepo = resolved
 	} else if err := forkspace.ValidateGenerationWorkspace(authorityRepo, identity); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	workspace, err := filepath.EvalSymlinks(spec.Repo)
 	if err != nil {
-		return nil, nil, errors.New("fork mount authority workspace cannot be resolved")
+		return nil, nil, nil, errors.New("fork mount authority workspace cannot be resolved")
 	}
 	expectedWorkspace, err := filepath.EvalSymlinks(forkspace.Workspace(authorityRepo, identity.Name))
 	if err != nil || filepath.Clean(workspace) != filepath.Clean(expectedWorkspace) {
-		return nil, nil, errors.New("fork mount authority points at another workspace")
+		return nil, nil, nil, errors.New("fork mount authority points at another workspace")
 	}
 	projects = append(projects, workspace)
-	private = appendUniqueAuthorityPath(private, forkspace.StateDir(authorityRepo))
-	return projects, private, nil
+	return projects, private, forkHomes, nil
 }
 
-func appendProjectPrivateAuthority(private []string, repo string) ([]string, error) {
+// appendProjectPrivateAuthority adds repo's private authority to private, and its forks folder to
+// forkHomes: fork commands work in that folder by name, so a writable mount that holds it could swap
+// it for a link (checkAuthoritySource), while a fork's own workspace inside it is an ordinary mount.
+func appendProjectPrivateAuthority(private, forkHomes []string, repo string) ([]string, []string, error) {
 	canonical, err := canonicalProjectDir(repo)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	forkHomes = appendUniqueAuthorityPath(forkHomes, forkspace.Home(canonical))
 	registries, err := forkspace.ExecutionRegistryDirs(canonical)
 	if err != nil {
-		return nil, fmt.Errorf("locate execution authority state: %w", err)
+		return nil, nil, fmt.Errorf("locate execution authority state: %w", err)
 	}
-	// Both are authority before they exist: the first fork creates StateDir, while ordinary boxes
-	// create the fallback registry and its service-launch lock on first use.
-	for _, path := range append([]string{forkspace.StateDir(canonical)}, registries...) {
+	// Authority before it exists: ordinary boxes create the fallback registry and its
+	// service-launch lock on first use. Fork records need no entry: they live in Coop's private
+	// state folder, which is fenced whole. Records an older Coop left in <repo>-forks/.coop move
+	// there now, before this box could write them; one that cannot move says why on its next use.
+	_ = forkspace.MoveLegacyForkRecords(canonical)
+	for _, path := range registries {
 		if !slices.Contains(private, path) {
 			private = append(private, path)
 		}
 	}
 	serviceLock, err := forkspace.ServiceLaunchLockPath(canonical)
 	if err != nil {
-		return nil, fmt.Errorf("locate service launch authority: %w", err)
+		return nil, nil, fmt.Errorf("locate service launch authority: %w", err)
 	}
 	private = appendUniqueAuthorityPath(private, filepath.Dir(serviceLock))
-	return private, nil
+	return private, forkHomes, nil
 }
 
-func checkAuthoritySource(source string, writable bool, projects, private []string, allowed map[string]bool, allowedTrees []string) error {
+func checkAuthoritySource(source string, writable bool, projects, private, forkHomes []string, allowed map[string]bool, allowedTrees []string) error {
 	canonical, err := resolveAuthorityPath(source)
 	if err != nil {
 		return fmt.Errorf("inspect runtime mount source %q: %w", source, err)
@@ -734,6 +735,18 @@ func checkAuthoritySource(source string, writable bool, projects, private []stri
 		}
 		if contains && !exact {
 			return fmt.Errorf("writable runtime mount %q contains anchored project %q; mount the exact project or an unrelated host path instead", source, project)
+		}
+	}
+	if !writable {
+		return nil
+	}
+	for _, home := range forkHomes {
+		contains, _, err := authorityContains(canonical, home)
+		if err != nil {
+			return err
+		}
+		if contains {
+			return fmt.Errorf("writable runtime mount %q contains the project's forks folder %q; mount the project, a fork's own folder, or an unrelated host path instead", source, home)
 		}
 	}
 	return nil

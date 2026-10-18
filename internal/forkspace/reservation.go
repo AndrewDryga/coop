@@ -56,7 +56,7 @@ func sameWorkspaceReservationOwner(a, b WorkspaceReservation) bool {
 		a.OwnerStoreID == b.OwnerStoreID && a.OwnerID == b.OwnerID
 }
 
-// reservationFolder holds the workspace reservations, in .coop.
+// reservationFolder holds the workspace reservations, in the fork records folder.
 const reservationFolder = "reservations"
 
 func reservationDir(repo string) string { return filepath.Join(StateDir(repo), reservationFolder) }
@@ -106,8 +106,8 @@ func decodeWorkspaceReservation(data []byte) (WorkspaceReservation, error) {
 	return record, validateWorkspaceReservation(record)
 }
 
-// Stays bounded and no-follow: fork records sit in <repo>-forks/.coop, which a box can reach
-// through a nested mount.
+// Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
+// could write, move into Coop's private state once, as they are.
 func readWorkspaceReservationFile(root *os.Root, name string) (WorkspaceReservation, error) {
 	data, err := ReadRecordIn(root, name, "workspace reservation", workspaceReservationLimit)
 	if err != nil {

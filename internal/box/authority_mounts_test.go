@@ -110,7 +110,7 @@ func TestAuthorityMountGuardPermitsOnlySafeProjectRelations(t *testing.T) {
 		{"writable project parent bundled short flags", []string{"-iv" + filepath.Dir(project) + ":/host"}, false},
 		{"joined environment value with v", []string{"-eAPP_ENV=development"}, true},
 		{"writable project parent alias", []string{"-v", alias + ":/host"}, false},
-		{"readonly project parent exposes prospective private state", []string{"-v", filepath.Dir(project) + ":/host:ro"}, false},
+		{"readonly project parent holding its forks folder", []string{"-v", filepath.Dir(project) + ":/host:ro"}, true},
 		{"private state", []string{"-v", state + ":/state:ro"}, false},
 		{"private state parent", []string{"--mount", "type=bind,source=" + filepath.Dir(state) + ",target=/parent,readonly"}, false},
 		{"private state descendant", []string{"-v", filepath.Join(state, "future") + ":/future:ro"}, false},
@@ -137,9 +137,6 @@ func TestAuthorityMountGuardInspectsNamedVolumesAndOpaqueInheritance(t *testing.
 	}
 	if err := validateAuthorityMounts(context.Background(), spec, []string{"-v", "shared:/data"}, state, reader, authorityMountAllowlist{}); err == nil {
 		t.Fatal("writable named volume backed by the project parent was accepted")
-	}
-	if err := validateAuthorityMounts(context.Background(), spec, []string{"-v", "shared:/data:ro"}, state, reader, authorityMountAllowlist{}); err == nil {
-		t.Fatal("read-only project-parent volume exposed prospective private state")
 	}
 	safeReader := func(context.Context, []string) (runtime.VolumeExposure, error) {
 		return runtime.VolumeExposure{Sources: []string{t.TempDir()}}, nil
@@ -223,29 +220,41 @@ func TestAuthorityMountGuardTreatsCompanionsAsMutableProjectRoots(t *testing.T) 
 	}
 }
 
-func TestAuthorityMountGuardProtectsForkStateFromMainProjectRuns(t *testing.T) {
+// Fork records live in Coop's private state, which no mount may reach, so a main-project run may
+// mount the folder that holds its forks folder read-only. A writable mount of it could swap the
+// forks folder, where fork commands work by name, for a link, so it is refused. Records an older
+// Coop left in <repo>-forks/.coop move to the private state first, before the box could write them.
+func TestAuthorityMountGuardMovesOldForkRecordsBeforeAMainProjectRun(t *testing.T) {
 	parent := t.TempDir()
 	repo := filepath.Join(parent, "project")
 	if err := os.Mkdir(repo, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	workspace := forkspace.Workspace(repo, "worker")
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
+	legacy := filepath.Join(forkspace.Home(repo), ".coop")
+	if err := os.MkdirAll(legacy, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	unlock, err := forkspace.LockState(repo, "worker")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = forkspace.EnsureGenerationLocked(repo, "worker")
-	unlock()
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(legacy, "worker.log"), []byte("an older Coop's log\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	spec := RunSpec{Repo: repo}
 	if err := validateAuthorityMounts(context.Background(), spec,
-		[]string{"-v", parent + ":/projects"}, "", nil, authorityMountAllowlist{}); err == nil {
-		t.Fatal("ordinary main-project run could expose sibling fork authority state")
+		[]string{"-v", parent + ":/projects:ro"}, "", nil, authorityMountAllowlist{}); err != nil {
+		t.Fatal("a read-only mount of the folder holding the forks folder was refused:", err)
+	}
+	if err := validateAuthorityMounts(context.Background(), spec,
+		[]string{"-v", parent + ":/projects"}, "", nil, authorityMountAllowlist{}); err == nil || !strings.Contains(err.Error(), "forks folder") {
+		t.Fatalf("a writable mount of the folder holding the forks folder = %v; want it refused", err)
+	}
+	if _, err := os.Lstat(legacy); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an older Coop's fork records stayed where the box could write them: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(forkspace.StateDir(repo), "worker.log")); err != nil {
+		t.Fatal("the old fork records did not reach Coop's private state:", err)
+	}
+	if err := validateAuthorityMounts(context.Background(), spec,
+		[]string{"-v", forkspace.StateDir(repo) + ":/state:ro"}, "", nil, authorityMountAllowlist{}); err == nil {
+		t.Fatal("a main-project run could mount its fork records")
 	}
 }
 
@@ -264,12 +273,13 @@ func TestAuthorityMountGuardProtectsProspectiveHostAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	fallback := registries[len(registries)-1]
-	forkState := forkspace.StateDir(repo)
-	for _, path := range []string{networkState, fallback, forkState} {
+	for _, path := range []string{networkState, fallback} {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("prospective authority path already exists: %s: %v", path, err)
 		}
 	}
+	// The first look at a project's fork records makes their folder, so it is never prospective.
+	forkState := forkspace.StateDir(repo)
 	for _, test := range []struct {
 		name   string
 		source string

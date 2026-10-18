@@ -74,8 +74,8 @@ func validateLandIntent(intent landIntent) error {
 	return nil
 }
 
-// Stays bounded and no-follow: fork records sit in <repo>-forks/.coop, which a box can reach
-// through a nested mount.
+// Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
+// could write, move into Coop's private state once, as they are.
 func readLandIntent(repo string, identity forkspace.Identity) (landIntent, bool, error) {
 	path := landIntentPath(repo, identity)
 	data, err := forkspace.ReadRecord(path, "fork land intent", landIntentLimit)
@@ -129,8 +129,7 @@ func writeLandIntent(repo string, intent landIntent) error {
 	if err != nil {
 		return err
 	}
-	// Through .coop's own folder, never by name: a box that can write the forks folder could swap
-	// .coop for a link between a check and this write.
+	// Through the records folder's own handle, never by name.
 	state, err := forkspace.OpenStateRoot(repo, "", true)
 	if err != nil {
 		return err

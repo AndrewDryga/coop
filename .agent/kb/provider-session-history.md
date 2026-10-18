@@ -3,7 +3,7 @@ name: provider-session-history
 description: Native session layouts, lookup bounds, pre-v11 import completion stamps, and the large-history regression contract
 subsystem: testing
 sources: [internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/session_history_large_test.go, internal/agent/history_import.go, internal/agent/history_json.go, internal/box/native_home.go, internal/box/native_history.go, internal/box/native_history_index.go, internal/box/native_history_stamp.go, internal/acpctl/bindings.go, internal/cli/acp_cmd.go]
-updated: 2026-10-15
+updated: 2026-10-19
 ---
 
 Resume is exact by provider, account, cwd, and canonical UUID. Claude checks one
@@ -24,7 +24,7 @@ home, records one source's fingerprint per ownership scope: every entry's path, 
 mtime and ctime from a stat walk, taken before planning, written only after the import completed.
 A matching stamp skips planning entirely; any write, rename, link or chmod in the source moves a
 ctime, which nothing can set back. Which transcripts a project owns depends on its fork records, so
-a project's stamps also cover `<repo>-forks/.coop/*.generation.json` and the fork anchors (`forkRecordsStore`): a fork
+a project's stamps also cover its fork records' `*.generation.json` and the fork anchors (`forkRecordsStore`, in `forkspace.StateDir`): a fork
 recorded after an import reopens it. A finished receipt is kept per file, so an edited transcript
 that was already imported is not imported again; new history is. Private
 ACP homes scope stamps by their exact owned working folders, because the session's child prepares
@@ -43,6 +43,8 @@ time and allocations diagnostically; it has no machine-sensitive threshold. Do n
 index or cache unless this evidence first demonstrates a real bound the adapters cannot meet.
 
 ## Changelog
+- 2026-10-19 — fork records now live in `forkspace.StateDir` (Coop's private folder); a stamp
+  taken before the move no longer matches, so the next launch plans the import once more.
 - 2026-10-15 — added completion stamps so launches stop re-planning finished pre-v11 imports
   (task 2026-10-15-stop-rescanning-pre-v11-history-on-every-launch); reverified the planners and
   receipts against the sources above.

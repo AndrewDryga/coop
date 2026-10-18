@@ -2,6 +2,7 @@ package forkspace
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -75,10 +76,11 @@ func TestForkStateRootRefusesUnsafeEntries(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := filepath.Join(t.TempDir(), "project")
-			if err := os.MkdirAll(Home(repo), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(recordsPath(repo)), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			tc.setup(t, StateDir(repo))
+			// At the records folder's name, which a first look would otherwise make.
+			tc.setup(t, recordsPath(repo))
 			if _, err := LockState(repo, "perf"); err == nil {
 				t.Fatal("unsafe fork state root was accepted")
 			}
@@ -97,16 +99,26 @@ func assertForkStatePerm(t *testing.T, path string, want os.FileMode) {
 	}
 }
 
+// Fork records live in coop's private state folder, one folder per project keyed by its real path,
+// never in the forks folder a box can reach.
 func TestForkStatePaths(t *testing.T) {
+	root, err := PrivateStateRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
 	repo := "/home/me/proj"
-	if got, want := StateDir(repo), "/home/me/proj-forks/.coop"; got != want {
+	want := filepath.Join(root, "forks", fmt.Sprintf("%x", sha256.Sum256([]byte(repo))))
+	if got := StateDir(repo); got != want {
 		t.Errorf("StateDir = %q, want %q", got, want)
 	}
-	if got, want := LogPath(repo, "perf"), "/home/me/proj-forks/.coop/perf.log"; got != want {
-		t.Errorf("LogPath = %q, want %q", got, want)
+	if got := LogPath(repo, "perf"); got != filepath.Join(want, "perf.log") {
+		t.Errorf("LogPath = %q", got)
 	}
-	if got, want := PidPath(repo, "perf"), "/home/me/proj-forks/.coop/perf.pid"; got != want {
-		t.Errorf("PidPath = %q, want %q", got, want)
+	if got := PidPath(repo, "perf"); got != filepath.Join(want, "perf.pid") {
+		t.Errorf("PidPath = %q", got)
+	}
+	if StateDir("/home/me/other") == want {
+		t.Error("two projects share one record folder")
 	}
 }
 
@@ -379,110 +391,6 @@ func TestOpenLogEarlierOpenAppendsAfterANewerStart(t *testing.T) {
 	}
 }
 
-// stateWriters is every forkspace call that writes in a fork's .coop folder, and what each leaves in
-// the folder it opened. Quiet calls report no reason when they refuse, so only the unchanged files
-// show it.
-var stateWriters = []struct {
-	name  string
-	nth   int // which open of .coop is the call's own: ClearPidIfMine opens it to lock first
-	quiet bool
-	write func(repo string) error
-	did   func(t *testing.T, dir string)
-}{
-	{name: "EnsureStateDir", nth: 1, write: EnsureStateDir, did: func(*testing.T, string) {}},
-	{name: "LockState", nth: 1, write: lockState, did: func(t *testing.T, dir string) {
-		assertForkStatePerm(t, filepath.Join(dir, "perf.lock"), 0o600)
-	}},
-	{name: "TryLockState", nth: 1, quiet: true, write: tryLock, did: func(t *testing.T, dir string) {
-		assertForkStatePerm(t, filepath.Join(dir, "perf.lock"), 0o600)
-	}},
-	{name: "OpenLog", nth: 1, write: openLog, did: func(t *testing.T, dir string) {
-		assertForkStatePerm(t, filepath.Join(dir, "perf.log"), 0o600)
-	}},
-	{name: "WriteWorkerState", nth: 1, write: func(repo string) error {
-		return WriteWorkerState(repo, "perf", WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"})
-	}, did: func(t *testing.T, dir string) {
-		if got, err := os.ReadFile(filepath.Join(dir, "perf.pid")); err != nil || string(got) != OwnerStateV1+"2147483646\nlinux-proc-v1:1:2\n" {
-			t.Fatalf("record = %q, %v; want the new worker", got, err)
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), ".perf.pid-") {
-				t.Fatalf("the record's temporary file %s was left behind", entry.Name())
-			}
-		}
-	}},
-	{name: "RemoveWorkerState", nth: 1, write: func(repo string) error { return RemoveWorkerState(repo, "perf") }, did: assertNoRecord},
-	{name: "ClearPidIfMine", nth: 2, quiet: true, write: func(repo string) error {
-		ClearPidIfMine(repo, "perf", "")
-		return nil
-	}, did: assertNoRecord},
-}
-
-// A box that can write the forks folder can swap .coop for a link to a folder elsewhere after Coop
-// checks it. Every writer works through the handle it opened, so it finishes in the real folder and
-// nothing outside the forks tree is created, emptied, replaced, removed or chmodded; the next call
-// refuses the link plainly.
-func TestStateWritersKeepToTheStateFolderTheyOpened(t *testing.T) {
-	for _, w := range stateWriters {
-		t.Run(w.name, func(t *testing.T) {
-			repo, outside := swapFixture(t, ".")
-			if err := os.Chmod(StateDir(repo), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			untouched := treeState(t, outside)
-			swapped := swapAtCheck(t, Home(repo), w.nth, StateDir(repo), outside)
-			if err := w.write(repo); err != nil {
-				t.Fatalf("%s across the swap = %v, want it to finish in the folder it opened", w.name, err)
-			}
-			if !*swapped {
-				t.Fatal("the swap never happened")
-			}
-			if after := treeState(t, outside); !reflect.DeepEqual(after, untouched) {
-				t.Fatalf("%s changed files outside the forks tree:\nbefore %v\nafter  %v", w.name, untouched, after)
-			}
-			opened := StateDir(repo) + ".pinned"
-			assertForkStatePerm(t, opened, 0o700)
-			w.did(t, opened)
-			want := fmt.Sprintf("fork state path %q is not a real directory", StateDir(repo))
-			if err := w.write(repo); !w.quiet && (err == nil || err.Error() != want) {
-				t.Fatalf("%s through the link = %v, want %s", w.name, err, want)
-			}
-			if after := treeState(t, outside); !reflect.DeepEqual(after, untouched) {
-				t.Fatalf("%s through the link changed files outside the forks tree:\nbefore %v\nafter  %v", w.name, untouched, after)
-			}
-		})
-	}
-}
-
-// The same swap one level up, by a box whose mount holds the folder the forks folder sits in: every
-// writer refuses, and nothing changes outside the forks tree or in the real .coop.
-func TestStateWritersRefuseASwappedForksFolder(t *testing.T) {
-	for _, w := range stateWriters {
-		t.Run(w.name, func(t *testing.T) {
-			repo, outside := swapFixture(t, ".coop")
-			untouched, state := treeState(t, outside), treeState(t, StateDir(repo))
-			swapped := swapAtCheck(t, filepath.Dir(Home(repo)), 1, Home(repo), outside)
-			err := w.write(repo)
-			if !*swapped {
-				t.Fatal("the swap never happened")
-			}
-			if want := fmt.Sprintf("%s is not a real directory", Home(repo)); !w.quiet && (err == nil || err.Error() != want) {
-				t.Fatalf("%s across the swap = %v, want %s", w.name, err, want)
-			}
-			if after := treeState(t, outside); !reflect.DeepEqual(after, untouched) {
-				t.Fatalf("%s changed files outside the forks tree:\nbefore %v\nafter  %v", w.name, untouched, after)
-			}
-			if after := treeState(t, filepath.Join(Home(repo)+".pinned", ".coop")); !reflect.DeepEqual(after, state) {
-				t.Fatalf("%s changed the real .coop:\nbefore %v\nafter  %v", w.name, state, after)
-			}
-		})
-	}
-}
-
 func lockState(repo string) error {
 	unlock, err := LockState(repo, "perf")
 	if err == nil {
@@ -506,41 +414,6 @@ func openLog(repo string) error {
 		return err
 	}
 	return f.Close()
-}
-
-func assertNoRecord(t *testing.T, dir string) {
-	t.Helper()
-	if _, err := os.Lstat(filepath.Join(dir, "perf.pid")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the record is still in the folder the call opened: %v", err)
-	}
-}
-
-// swapFixture is a fork whose worker record names this process, and a folder outside the forks tree
-// holding a file at every name a writer uses, the record's own bytes included, so a writer that
-// followed a link there would show. under is where those files sit in outside: "." for a link at
-// .coop, ".coop" for a link at the forks folder.
-func swapFixture(t *testing.T, under string) (repo, outside string) {
-	t.Helper()
-	repo = filepath.Join(t.TempDir(), "proj")
-	if err := WritePid(repo, "perf", os.Getpid(), ""); err != nil {
-		t.Fatal(err)
-	}
-	record, err := os.ReadFile(PidPath(repo, "perf"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	outside = t.TempDir()
-	files := filepath.Join(outside, under)
-	if err := os.MkdirAll(files, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(files, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeModeFile(t, filepath.Join(files, "perf.lock"), "keep\n")
-	writeModeFile(t, filepath.Join(files, "perf.log"), "keep\n")
-	writeModeFile(t, filepath.Join(files, "perf.pid"), string(record))
-	return repo, outside
 }
 
 // writeModeFile writes a 0644 file, whatever the umask.
@@ -1003,67 +876,5 @@ func TestClearForkPidIfMine(t *testing.T) {
 				t.Fatalf("replacement changed = (%q, %v), want %q", got, err, tc.raw)
 			}
 		})
-	}
-}
-
-// The record writers that go through OpenStateRoot never write through a link a box put in place
-// of .coop: not one planted before they run, and not one swapped in while they open the folder.
-// Either way nothing outside the forks tree changes.
-func TestCoopRecordWritersNeverWriteThroughALink(t *testing.T) {
-	writers := []struct {
-		name  string
-		write func(repo string) error
-	}{
-		{"generation record", func(repo string) error {
-			_, err := publishGenerationAtomic(repo, "perf", []byte("{}\n"), false)
-			return err
-		}},
-		{"execution registry", func(repo string) error {
-			root, err := openExecutionRegistry(repo, executionDir(repo), true)
-			if err == nil {
-				err = errors.Join(root.WriteFile("probe.json", []byte("{}\n"), 0o600), root.Close())
-			}
-			return err
-		}},
-		{"reservation registry", ensureReservationDir},
-		{"nested state folder", func(repo string) error {
-			root, err := OpenStateRoot(repo, filepath.Join("assignments", "perf.1"), true)
-			if err == nil {
-				err = root.Close()
-			}
-			return err
-		}},
-	}
-	for _, w := range writers {
-		for _, when := range []string{"planted before", "swapped while opening"} {
-			t.Run(w.name+"/"+when, func(t *testing.T) {
-				repo, outside := swapFixture(t, ".")
-				untouched := treeState(t, outside)
-				if when == "planted before" {
-					if err := os.Rename(StateDir(repo), StateDir(repo)+".pinned"); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.Symlink(outside, StateDir(repo)); err != nil {
-						t.Fatal(err)
-					}
-				}
-				swapped := new(bool)
-				if when == "planted before" {
-					*swapped = true
-				} else {
-					swapped = swapAtCheck(t, Home(repo), 1, StateDir(repo), outside)
-				}
-				err := w.write(repo)
-				if !*swapped {
-					t.Fatal("the swap never happened")
-				}
-				if when == "planted before" && err == nil {
-					t.Fatalf("%s wrote through a .coop link", w.name)
-				}
-				if after := treeState(t, outside); !reflect.DeepEqual(after, untouched) {
-					t.Fatalf("%s (%v) changed files outside the forks tree:\nbefore %v\nafter  %v", w.name, err, untouched, after)
-				}
-			})
-		}
 	}
 }

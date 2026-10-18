@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -70,6 +71,29 @@ func TestForkGenerationIsStableAndFencesWorkspaceReplacement(t *testing.T) {
 	}
 	if replacement.Generation == first.Generation {
 		t.Fatal("reused fork name received the same generation")
+	}
+}
+
+// A fork is bound to its record by a hard link from its folder, which cannot cross disks, so a fork
+// whose folder is on another disk than Coop's private state is refused, naming both folders, and
+// nothing is recorded.
+func TestForkGenerationRefusesAProjectOnAnotherDisk(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	makeGenerationWorkspace(t, repo, "perf")
+	before := sameDisk
+	sameDisk = func(string, string) (bool, error) { return false, nil }
+	t.Cleanup(func() { sameDisk = before })
+	unlock, err := LockState(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	_, err = EnsureGenerationLocked(repo, "perf")
+	if err == nil || !strings.Contains(err.Error(), Workspace(repo, "perf")) || !strings.Contains(err.Error(), StateDir(repo)) || !strings.Contains(err.Error(), "one disk") {
+		t.Fatalf("fork on another disk = %v; want a refusal naming %s and %s", err, Workspace(repo, "perf"), StateDir(repo))
+	}
+	if _, err := os.Lstat(GenerationPath(repo, "perf")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a refused fork left a generation record: %v", err)
 	}
 }
 
@@ -577,5 +601,45 @@ func TestForkGenerationPublicationLeavesOneLinkAndNoTemporaryAuthority(t *testin
 	}
 	if len(matches) != 0 {
 		t.Fatalf("temporary generation authorities remain: %v", matches)
+	}
+}
+
+// A build before this one kept fork records in <repo>-forks/.coop. The first use moves them, once,
+// by one rename, and the fork still validates: its anchor and marker are still one inode. A .coop
+// planted afterwards is never read, and a link in its place is refused, not followed.
+func TestForkRecordsMoveOnceFromTheForksFolder(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	makeGenerationWorkspace(t, repo, "perf")
+	identity := ensureTestGeneration(t, repo, "perf")
+	legacy := filepath.Join(Home(repo), ".coop")
+	if err := os.Rename(recordsPath(repo), legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateGenerationWorkspace(repo, identity); err != nil {
+		t.Fatalf("the moved records lost the fork: %v", err)
+	}
+	if _, err := os.Lstat(legacy); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the old records folder is still there: %v", err)
+	}
+	if err := os.MkdirAll(legacy, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "planted.pid"), []byte("owner-v2\npid=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	names, err := LifecycleNames(repo)
+	if err != nil || slices.Contains(names, "planted") {
+		t.Fatalf("lifecycle names = %v, %v; a .coop planted after the move was read", names, err)
+	}
+
+	other := filepath.Join(t.TempDir(), "other")
+	if err := os.MkdirAll(Home(other), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(Home(other), ".coop")); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureStateDir(other); err == nil || !strings.Contains(err.Error(), "not a real folder") {
+		t.Fatalf("a linked old records folder = %v; want it refused", err)
 	}
 }

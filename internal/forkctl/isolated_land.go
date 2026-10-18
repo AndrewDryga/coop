@@ -148,8 +148,8 @@ func readIsolatedRecord(path string, target any) (bool, error) {
 	return true, nil
 }
 
-// writeIsolatedRecord writes path, a record in repo's .coop, through .coop's own folder, never by
-// name.
+// writeIsolatedRecord writes path, one of repo's fork records, through the records folder's own
+// handle, never by name.
 func writeIsolatedRecord(repo, path string, value any) error {
 	data, err := json.Marshal(value)
 	if err != nil || len(data) > landIntentLimit {
@@ -441,7 +441,8 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 	return finish(landed, candidate.sourceHead, candidate.head, err)
 }
 
-// removeStateRecord removes path, a record in repo's .coop, through .coop's own folder.
+// removeStateRecord removes path, one of repo's fork records, through the records folder's own
+// handle.
 func removeStateRecord(repo, path string) error {
 	state, err := forkspace.OpenStateRoot(repo, "", false)
 	if err != nil {

@@ -158,7 +158,7 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 		}
 	}
 	var identityCopies []io.Writer
-	if sink != nil { // fork loops also capture to ../<repo>-forks/.coop/<name>.log
+	if sink != nil { // fork loops also capture to the fork's log (forkspace.LogPath)
 		outWs = append(outWs, sink)
 		errWs = append(errWs, sink)
 		identityCopies = append(identityCopies, sink)

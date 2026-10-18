@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"go.yaml.in/yaml/v3"
@@ -27,7 +28,7 @@ import (
 // (hostIDFile). Honored only by test binaries (internal/testutil/teststate sets it), which otherwise
 // get a directory under the system temp dir, so a test never reads or writes the developer's real
 // state.
-const ServiceStateRootEnv = "COOP_SERVICE_STATE_ROOT"
+const ServiceStateRootEnv = forkspace.PrivateStateRootEnv
 
 // ServiceApproval records a human's decision that the sibling services defined by one exact
 // compose file may read the secret-looking files it binds — a generated dev TLS key for Keycloak,

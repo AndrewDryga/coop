@@ -223,7 +223,18 @@ func Destroy(repo, name string) error {
 	if !isolated {
 		_ = GitRefCommand(context.Background(), repo, "branch", "-q", "-D", "review/"+name).Run() // ordinary forks own this parent ref; isolated forks do not
 	}
-	if err := os.RemoveAll(Workspace(repo, name)); err != nil {
+	// Through the forks folder's own handle: a box that replaced the folder with a link must not
+	// make this remove a folder of the same name somewhere else.
+	forks, err := openForkHome(repo)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	err = forks.RemoveAll(name)
+	_ = forks.Close()
+	if err != nil {
 		return err
 	}
 	home := Home(repo)

@@ -25,6 +25,8 @@ var deviceComparisons = map[string]string{
 		"always captured together: a corruption tripwire, not a comparison with the live filesystem",
 	"m.device == h.device": "two lines of one /proc/self/mountinfo read (shadowpath's mountedPaths), compared to find " +
 		"the other mounts of home's filesystem: never stored, so no reboot comes between them",
+	"x.Dev == y.Dev": "forkspace's sameDisk asks whether two live folders share a filesystem before a hard link joins " +
+		"them: both are stat'ed at once, nothing is stored, and it decides nothing about identity",
 }
 
 // TestIdentityFencesNeverCompareTheDevice is the check for deviceFenceCard. A volume's device number

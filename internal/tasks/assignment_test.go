@@ -1108,7 +1108,12 @@ func TestTaskRegistriesNeverWriteThroughACoopLink(t *testing.T) {
 			if err := os.MkdirAll(forkspace.Home(repo), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(outside, forkspace.StateDir(repo)); err != nil {
+			// The first look at the records makes their empty folder; a link takes its place.
+			records := forkspace.StateDir(repo)
+			if err := os.Remove(records); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, records); err != nil {
 				t.Fatal(err)
 			}
 			if err := tc.write(repo); err == nil {

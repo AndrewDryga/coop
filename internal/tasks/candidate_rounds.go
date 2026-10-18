@@ -90,8 +90,8 @@ func ensureForkCandidateHistoryDir(repo string, identity forkspace.Identity) err
 	return root.Close()
 }
 
-// Stays bounded and no-follow: fork records sit in <repo>-forks/.coop, which a box can reach
-// through a nested mount.
+// Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
+// could write, move into Coop's private state once, as they are.
 func readForkCandidateControlFile(path, kind string) ([]byte, bool, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {

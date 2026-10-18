@@ -1257,8 +1257,7 @@ func snapshotForkProjection(authorityRepo, root, id string, expected ForkTaskOwn
 	if err != nil {
 		return ProjectionResult{}, "", err
 	}
-	// The snapshot is made, filled and removed through .coop's own folders, never by name: a box
-	// that can write the forks folder could swap .coop for a link between a check and a write.
+	// The snapshot is made, filled and removed through the fork records' own folders, never by name.
 	snapshots := filepath.Join(forkspace.StateDir(authorityRepo), "projection-snapshots")
 	state, err := openStateRoot(authorityRepo, snapshots, true)
 	if err != nil {

@@ -184,8 +184,8 @@ func validateForkDiscard(intent forkDiscardIntent) error {
 	return nil
 }
 
-// Stays bounded and no-follow: fork records sit in <repo>-forks/.coop, which a box can reach
-// through a nested mount.
+// Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
+// could write, move into Coop's private state once, as they are.
 func readForkDiscard(repo string, identity forkspace.Identity) (forkDiscardIntent, bool, error) {
 	path := forkDiscardPath(repo, identity)
 	info, err := os.Lstat(path)

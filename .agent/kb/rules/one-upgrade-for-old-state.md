@@ -2,9 +2,9 @@
 name: one-upgrade-for-old-state
 description: an old on-disk format is read for one upgrade step, then refused with the state version that converts it; check a worker with the new build before swapping it
 scope: architecture
-sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go]
+sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go]
 check: "go test ./internal -run TestOneUpgradeWaypoints"
-updated: 2026-10-17
+updated: 2026-10-19
 ---
 
 # Read old on-disk state for one upgrade step, then refuse it by name
@@ -68,28 +68,34 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 | Worker command receipts | `<state>/connector/commands/` | 1 | 1 | none exist | none |
 | Worker event streams | `<state>/connector/event-streams/` | 1 | 1 | none exist | none |
 | Worker create origins | `<state>/connector/create-origins/` | 1 | 1 | none exist | none |
-| Fork generation | `<repo>-forks/.coop/<name>.generation.json` | 3 | 1 | read; converted when the stopped fork next starts (isolated forks write 4) | v10.1.2 and later |
-| Fork reservation | `<repo>-forks/.coop/reservations/` | 2 | 1 | held: keeps the fork name blocked until recovered offline | none |
-| Fork review candidate | `<repo>-forks/.coop/<name>.<generation>.candidate.json` | 2 | 1 | read; adopted into round history at the next change | v10.1.2 and later |
+| Fork generation | `~/.local/state/coop/forks/<key>/<name>.generation.json` | 3 | 1 | read; converted when the stopped fork next starts (isolated forks write 4) | v10.1.2 and later |
+| Fork reservation | `~/.local/state/coop/forks/<key>/reservations/` | 2 | 1 | held: keeps the fork name blocked until recovered offline | none |
+| Fork review candidate | `~/.local/state/coop/forks/<key>/<name>.<generation>.candidate.json` | 2 | 1 | read; adopted into round history at the next change | v10.1.2 and later |
 | Task owner record | `~/.local/state/coop/task-leases/v1/<key>.owner.json` | 2 | 1 | read in place, never rewritten | none needed |
 | Pending final review | `~/.local/state/coop/task-leases/v1/<queue>-<key>.pending-review.json` | 2 | 1 | read without its commit IDs (one awaiting verification returns to signoff once; one whose commit predates its run base is anchored on load); the next write stores 2 | builds after v11.3.0 |
 | Network approval | `~/.local/state/coop/network/approval-<id>.json` | 3 | 1 | read, but grants nothing | `coop approve` (v10.1.2 and later) |
 | Network execution | `~/.local/state/coop/network/execution-<id>.json` | 2 | 1 | read; a resource the version 1 journal left short of gone reads as planned, and the next write stores 2 | builds after v11.3.0 |
-| Isolated fork generation | `<repo>-forks/.coop/<name>.generation.json` | 4 | 4 | none exist | none |
+| Isolated fork generation | `~/.local/state/coop/forks/<key>/<name>.generation.json` | 4 | 4 | none exist | none |
+| Fork records folder | `~/.local/state/coop/forks/<key>/` | private folder | `<repo>-forks/.coop/` | copied in once, by the first open of the project or a box launch in it | builds after v11.3.0 |
 | Service approval | `~/.local/state/coop/service-approvals/` | 5 | 4 | read; a new approval writes 5 | `coop up` re-approves |
 | Workspace checkpoint bundle | kept by Ryker's controller | 2 | 1 | read | none needed |
 | Box supervisor label | `coop.host` on boxes, their brokers and per-run services | 2 | 1 | judged as before by a Coop on a host, by none inside a container; an older Coop sharing the Docker daemon still writes them | none: labels are never rewritten |
 
 `<state>` is the session state root (`--state`, default `~/.local/state/coop/sessions`). A worker's
-job forks live under it too, in `<state>/job-sources/<key>/repository-forks/`. The `check:` test
+job forks live under it too, in `<state>/job-sources/<key>/repository-forks/`. Fork records are in
+`~/.local/state/coop/forks/<key>/`, where `<key>` is the SHA-256 of the project's real path. The `check:` test
 pins each row's Current and Oldest read to the constants named in `waypointConstants` in
 `internal/oneupgrade_test.go`. A row whose oldest version has no constant yet pins only Current.
 The box supervisor label's versions are the string prefixes `v2` and `v1` (`internal/box/sweep.go`),
-so its row pins neither. Its waypoint is every Coop that shares a Docker daemon, not a store:
+so its row pins neither, and the fork records folder's are its two places
+(`forkspace.MoveLegacyForkRecords`), so its row pins neither too. Its waypoint is every Coop that shares a Docker daemon, not a store:
 retire v1 once those all write v2. Retiring it also removes `legacyLabelsAreLocal`, and a v1
 label then reads as unknown: reported, never removed.
 
 ## Changelog
+- 2026-10-19 — fork records moved from `<repo>-forks/.coop/` to `~/.local/state/coop/forks/<key>/`
+  (task 2026-10-15-fence-other-projects-fork-records-inside-a-box-m): the four fork rows' Where,
+  and a row for the folder itself, whose old place is moved in once and never read again.
 - 2026-10-18 — added the network execution record: version 2 drops the per-resource create/start
   journal (task 2026-10-15-replace-the-network-cleanup-journal-with-a-label), version 1 is still
   read. `coop sessions check` does not read the network store.

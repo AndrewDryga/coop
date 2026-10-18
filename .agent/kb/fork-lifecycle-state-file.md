@@ -2,10 +2,11 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
-sources: [internal/forkspace/state_root.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
-updated: 2026-10-18
+sources: [internal/forkspace/state_root.go, internal/forkspace/legacy_records.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
+updated: 2026-10-19
 ---
-A fork's detached loop is recorded in ONE small file, `<repo>-forks/.coop/<name>.pid`, read and
+A fork's detached loop is recorded in ONE small file, `<name>.pid` in the project's fork records
+folder (`forkspace.StateDir`, `~/.local/state/coop/forks/<key>/`), read and
 written only through `forkspace.WorkerState` (`internal/forkspace/state.go`). It has one shape:
 `owner-v2\ngeneration=<id>\n<pid>\n<token>\n` — the worker's pid, its kernel start token (a pid
 reused after a crash or a reboot belongs to another process) and the fork generation it serves.
@@ -16,9 +17,10 @@ flock already covers both windows.
 ## Reading it
 
 Every read of its bytes goes through `ReadWorkerState`, forkctl's included; `ClearPidIfMine`
-compares the same bounded bytes, and `NeedsStop` only asks whether the name exists. A box whose
-mount holds this `.coop` folder (another project's, through a nested repository or a non-git parent
-folder) can put anything at the name, so `OpenStateFile` opens it with `O_NOFOLLOW|O_NONBLOCK`: a
+compares the same bounded bytes, and `NeedsStop` only asks whether the name exists. Records an
+older build kept in `<repo>-forks/.coop`, where a box whose mount held that folder (another
+project's, through a nested repository or a non-git parent folder) could put anything at the name,
+move in as they are, so `OpenStateFile` opens it with `O_NOFOLLOW|O_NONBLOCK`: a
 link fails with ELOOP, a socket with ENXIO (Linux) or EOPNOTSUPP (macOS), and fstat must say
 regular. The record read then stops past 4 KiB (a real record is about 150 bytes). Each refusal
 matches `ErrNotAStateFile` and names what Coop found ("… is a named pipe", "… is 1048576 bytes,
@@ -130,20 +132,32 @@ to a process or a container, or prints, it is supervision.
 
 ## Around the file
 
-- `<repo>-forks` is an ordinary workspace directory, but its host-owned `.coop` child is a real
-  `0700` directory. New lifecycle, generation, execution, reservation, assignment, candidate,
-  proposal, land, discard, lock and log records are `0600`; opening an existing lock or log also
-  tightens its mode.
-- A box whose mount holds the forks folder can swap `.coop` for a link between any check by name
-  and the write, and one whose mount holds the folder above can swap the forks folder itself. So
-  `openStateDir` (behind `EnsureStateDir`) opens the forks folder and then `.coop` without following
-  a link and sets `.coop`'s mode through that handle, and the lock, the log and the worker record
-  are created, renamed and removed only relative to it (`openStateFile`, the readers' open with a
-  folder handle). A lock or log name that holds a link, pipe, folder, socket or device is refused as
-  `ErrNotAStateFile` before any mode change; start and stop then say to remove it. Trap: the other
-  `.coop` writers (generation, executions, reservations, land intents, isolated candidates and the
-  internal/tasks registries) still go by path or through `os.OpenRoot`, which follows a `.coop`
-  link.
+- Fork records live in Coop's private folder, `~/.local/state/coop/forks/<key>/` (`StateDir`;
+  `<key>` is the SHA-256 of the project's real path), which no box can mount. `<repo>-forks` holds
+  only workspaces and `.discarding`, and a box may mount it. The records folder is a real `0700`
+  directory. New lifecycle, generation, execution, reservation, assignment, candidate, proposal,
+  land, discard, lock and log records are `0600`; opening an existing lock or log also tightens its
+  mode. A fork's anchor is a hard link, so a fork needs the forks folder and the private folder on
+  one disk (`requireOneDisk` refuses otherwise, naming both).
+- Builds up to v11.3.0 kept the records in `<repo>-forks/.coop`, which a box could write. The first
+  open by a later build moves them (`MoveLegacyForkRecords`, internal/forkspace/legacy_records.go,
+  which every box launch also runs before the box starts): the one time Coop trusts the old place.
+  It opens the forks folder and `.coop` following no link (`openForkHome`), so a box cannot point it
+  at another project's records; copies each record into folders it makes in a staging folder, so a
+  box that held an old folder or file open keeps writing the old copy; moves generation anchors
+  (each must stay one file with its workspace marker) and logs; publishes with a no-replace rename;
+  then removes the old folder. One move runs at a time (`forks/.moving.lock`). A project with
+  nothing to move gets an empty folder at once, so a `.coop` planted later is never read. On
+  another disk an anchor cannot move: it stays, and so does the whole old folder, for an older
+  build. Trap: a project nobody has opened since the upgrade still has its old place open to a box.
+- `<repo>-forks` still matters: fork commands work in it by name. A writable mount that contains a
+  project's own forks folder is refused (`checkAuthoritySource`, `forkHomes`), as it was while
+  `.coop` lived there, and `Destroy` removes a fork through the folder's no-follow handle.
+- `openStateDir` (behind `EnsureStateDir`) opens the private root, `forks` and the project's folder
+  without following a link, and the lock, the log and the worker record are created, renamed and
+  removed only relative to that handle (`openStateFile`, the readers' open with a folder handle). A
+  lock or log name that holds a link, pipe, folder, socket or device is refused as
+  `ErrNotAStateFile` before any mode change; start and stop then say to remove it.
 - The host-owned `<name>.generation.json` binds name and generation to a private two-link anchor
   ([[identity-fences-compare-the-inode]]). Workers, runtime labels, executions, assignments,
   candidates and cleanup all carry that exact identity, so `--fresh` cannot rebind a stale
@@ -168,11 +182,12 @@ to a process or a container, or prints, it is supervision.
   not a regular file gets "remove it", not the permissions advice: a log only holds output.
 
 **Folders in the forks tree open without waiting.** `forkspace.OpenFolder` opens a folder with
-`O_DIRECTORY|O_NONBLOCK` and, unless told to follow, `O_NOFOLLOW`, so a FIFO or link a box put where
-`.coop`, the forks folder or the staged-discard folder belongs fails at once; the listings
+`O_DIRECTORY|O_NONBLOCK` and, unless told to follow, `O_NOFOLLOW`, so a FIFO or link where the
+records folder, the forks folder or the staged-discard folder belongs fails at once; the listings
 (`Names`, `LifecycleNames`, `StagedDiscards`) and the folder syncs use it. Only the fork home's
 parent, the project's own parent folder, may be reached through a link (`confirmForkHomeEntry`).
-forkctl's `syncIsolatedPath` opens files and folders under `.coop` with `O_NONBLOCK|O_NOFOLLOW`.
+forkctl's `syncIsolatedPath` opens files and folders under the records folder with
+`O_NONBLOCK|O_NOFOLLOW`.
 
 **Removal rechecks the fork once its services stop.** `DestroyFork(rt, repo, name, force)` is rm's
 and `--fresh`'s removal, under the fork's lifecycle lock. A service with a writable bind can write
@@ -181,8 +196,9 @@ when `stopForkServices` returned a failure, and runs `ForkWorktreeClean` (recurs
 populated submodules) once more before `forkspace.Destroy`. Merge's `destroyLandedFork` keeps its
 own after-teardown `validateRemoval` and treats teardown as best effort.
 
-**Every `.coop` record is written through `.coop`'s own folder.** `forkspace.OpenStateRoot(repo,
-sub, create)` opens `.coop`, or a folder below it (several components), by descriptor without
+**Every fork record is written through the records folder's own handle.**
+`forkspace.OpenStateRoot(repo, sub, create)` opens the records folder, or a folder below it (several
+components), by descriptor without
 following a link at any step (made owner-only when `create`), then opens
 it as an `os.Root` and requires the two to be the same folder, so every open, rename and removal
 through the root stays there even if a box swaps the name afterwards. `CreateTempIn`,
@@ -193,11 +209,16 @@ leaves out (owner decision, 2026-10-15). `folderChecked` is the tests' schedulin
 box could swap a folder Coop just checked. Generation records, the reservation and execution registries, forkctl's land
 journal, isolated records and candidate folders, and tasks' assignment, proposal and candidate
 registries, discard intent and projection snapshots all use it (tasks' `openStateRoot` takes a
-path under `.coop`). `.discarding`, beside `.coop`, is opened the same way from the forks folder's
-handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` moves the workspace with a
+path under `StateDir`). `.discarding`, in the forks folder, is opened the same way from that
+folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` moves the workspace with a
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-10-19 — fork records moved from `<repo>-forks/.coop` into `~/.local/state/coop/forks/<key>/`,
+  copied once by the first open or box launch, following no link; forks need one disk (task
+  2026-10-15-fence-other-projects-fork-records-inside-a-box-m). Review fixes: copy instead of rename
+  (held handles), no-follow opens, an empty folder when nothing moves, a writable mount holding the
+  forks folder refused, `Destroy` through a handle. Dropped the trap about by-path `.coop` writers.
 - 2026-10-18 — directory fsyncs and their retries removed; the race tests swap at `folderChecked`
   (task 2026-10-15-drop-directory-fsyncs-and-sync-retry-ladders).
 - 2026-10-18 — staging a discard goes through the forks folder's and .discarding's descriptors (task

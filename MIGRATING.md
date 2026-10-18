@@ -1,5 +1,26 @@
 # Migrating
 
+## Unreleased: fork records move into Coop's private folder
+
+Coop now keeps each project's fork records in `~/.local/state/coop/forks/<key>/` instead of
+`<project>-forks/.coop`. Fork workspaces stay in `<project>-forks/`.
+
+- Stop every Coop process that uses forks before you upgrade: fork loops, `coop fork <name> acp`
+  sessions and the session service. The first command of the new version in a project moves its
+  records in one step; an older process still running would keep writing the old place, which the
+  new version never reads.
+- After upgrading, start a box or run `coop fork ls` once in each project that has forks before you
+  start a box from a folder that holds several projects. Until a project's records move, a box that
+  can write that project's forks folder could change them.
+- Forks need each fork's folder and your home folder on one disk. Coop refuses forks for a project
+  on another disk (an external drive, a separate APFS volume) and names both folders. Such a
+  project's old folder stays in place, so an older Coop can still use its forks. On a session
+  worker, check before you upgrade that its state root (`--state`) is on the same disk as the
+  worker's home folder: its job forks live under the state root.
+- To go back to an older Coop, move the folder back first:
+  `mv ~/.local/state/coop/forks/<key> <project>-forks/.coop`. `<key>` is the SHA-256 of the
+  project's real path: `printf %s "$(cd <project> && pwd -P)" | shasum -a 256`.
+
 ## v11.1.0: project image preparation
 
 When upgrading from v11.0.2 or earlier, run `coop update --box-only` once with the newly

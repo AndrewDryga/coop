@@ -173,7 +173,7 @@ coop fork stop perf             # halt one; coop fork logs perf -f to watch just
 
 With no `--tasks`, a fork schedules from every queue co:op knows about: the repo's own `.agent/tasks` plus each [monorepo](#monorepos) member's. `--tasks <path>` narrows the scheduler to one canonical queue, including an explicit absolute queue outside the project. It never copies or remaps that queue. At any moment, the fork receives only its assigned task, under `.coop/task-executions/`. A restart in the same generation resumes it, and another fork can't claim it.
 
-`-d` (`--detach`) runs the worker in the background and captures its output in `../<repo>-forks/.coop/<name>.log`. When a fork drains its available work, review and [land it](forks.md#land-it) like a pull request, then `git push`. Add agents until review is your bottleneck.
+`-d` (`--detach`) runs the worker in the background and captures its output in a log co:op keeps in its private folder; `coop fork logs <name>` shows it. When a fork drains its available work, review and [land it](forks.md#land-it) like a pull request, then `git push`. Add agents until review is your bottleneck.
 
 `coop fork merge --all` lands all forks at once. It's a revalidating rebase queue: it
 rebases each fork onto the result of the last one and re-runs the configured gate

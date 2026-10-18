@@ -97,6 +97,35 @@ func generationAnchorName(record generationRecord) string {
 	return forkGenerationAnchorName(record.Name, record.Generation)
 }
 
+// sameDisk reports whether two existing folders are on one filesystem; tests replace it.
+var sameDisk = func(a, b string) (bool, error) {
+	first, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	second, err := os.Stat(b)
+	if err != nil {
+		return false, err
+	}
+	x, xok := first.Sys().(*syscall.Stat_t)
+	y, yok := second.Sys().(*syscall.Stat_t)
+	return xok && yok && x.Dev == y.Dev, nil
+}
+
+// requireOneDisk refuses a fork whose folder is on another disk than Coop's private state folder:
+// a fork is bound to its record by a hard link from its folder, and a hard link cannot cross disks,
+// the rule network and service approvals already have.
+func requireOneDisk(repo, name string) error {
+	one, err := sameDisk(Workspace(repo, name), StateDir(repo))
+	if err != nil {
+		return err
+	}
+	if !one {
+		return fmt.Errorf("forks need the fork's folder %s and Coop's fork records folder %s on one disk, and these are on different disks; keep the project on the disk that holds your home folder to use forks", Workspace(repo, name), StateDir(repo))
+	}
+	return nil
+}
+
 func forkGenerationBinding(repo string, record generationRecord, state *os.Root) fsidentity.Binding {
 	body := forkGenerationAnchorBody(record.Name, record.Generation)
 	if record.Isolated {
@@ -156,8 +185,8 @@ func validateGenerationRecord(record generationRecord, name string) error {
 	return nil
 }
 
-// Stays bounded and no-follow: fork records sit in <repo>-forks/.coop, which a box can reach
-// through a nested mount.
+// Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
+// could write, move into Coop's private state once, as they are.
 func readGenerationRecord(repo, name string) (generationRecord, error) {
 	path := GenerationPath(repo, name)
 	data, err := ReadRecord(path, fmt.Sprintf("fork generation record %q", path), forkGenerationLimit)
@@ -477,6 +506,9 @@ func ensureGenerationLocked(repo, name string, isolated bool) (Identity, error) 
 		}
 	}
 	record.WorkspaceAnchor = generationAnchorName(record)
+	if err := requireOneDisk(repo, record.Name); err != nil {
+		return Identity{}, err
+	}
 	root, err := fsidentity.Create(forkGenerationBinding(repo, record, state))
 	if err != nil {
 		return Identity{}, fmt.Errorf("anchor fork workspace generation: %w", err)
@@ -557,6 +589,9 @@ func migrateLegacyGenerationLocked(repo string, record generationRecord) error {
 		}
 		if !markerMissing || !anchorMissing {
 			return fmt.Errorf("legacy fork identity has incomplete anchor state; remove neither file and retry recovery: %w", openErr)
+		}
+		if err := requireOneDisk(repo, record.Name); err != nil {
+			return err
 		}
 		root, err = fsidentity.Create(binding)
 		if err != nil {
