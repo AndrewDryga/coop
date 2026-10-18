@@ -95,7 +95,7 @@ func TestAnUnreadableCoopignoreStopsWhatTheBoxSees(t *testing.T) {
 					if mounts != nil {
 						mountErr = errors.Join(mountErr, fmt.Errorf("the refusal came with a mount plan: %+v", mounts))
 					}
-					_, _, serviceErr := serviceShadowPlan(repo, compose, data)
+					_, _, _, serviceErr := serviceShadowPlan(repo, compose, data)
 					_, buildErr := buildContextSelection(context.Background(), repo)
 					done <- []error{mountErr, serviceErr, buildErr}
 				}()
@@ -167,7 +167,7 @@ func TestAnUnreadableCoopignoreStopsTheBoxPastWhatTheRulesHide(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, mountErr := ComputeMounts(repo, "/workspace")
-	_, _, serviceErr := serviceShadowPlan(repo, compose, data)
+	_, _, _, serviceErr := serviceShadowPlan(repo, compose, data)
 	_, buildErr := buildContextSelection(context.Background(), repo)
 	for i, plan := range []string{"mounts", "service binds", "build context"} {
 		var got UnreadableCoopignore

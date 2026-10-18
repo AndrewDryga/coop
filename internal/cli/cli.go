@@ -290,24 +290,25 @@ func asUsage(err error) *ui.UsageError {
 	}
 	var uncovered *box.UncoveredSpellings
 	if errors.As(err, &uncovered) {
-		headline, reason, fix := uncoveredSpellingsBlock(uncovered)
+		headline, reason, fix := uncoveredSpellingsBlock(uncovered.Paths, "the box", "the box")
 		return ui.CommandFailed(headline, reason, [2]string{"", fix})
 	}
 	return nil
 }
 
-// uncoveredSpellingsBlock is a launch refusing hidden files a box could read under another letter
-// case. A box can name files in the checkout, so the names are escaped.
-func uncoveredSpellingsBlock(uncovered *box.UncoveredSpellings) (headline, reason, fix string) {
-	names := make([]string, len(uncovered.Paths))
-	for i, path := range uncovered.Paths {
+// uncoveredSpellingsBlock is a launch refusing hidden files the box or a service (who: "the box",
+// "your services"; one: "the box", "a service") could read under another letter case. A box can
+// name files in the checkout, so the names are escaped.
+func uncoveredSpellingsBlock(paths []string, who, one string) (headline, reason, fix string) {
+	names := make([]string, len(paths))
+	for i, path := range paths {
 		names[i] = ui.SafeInline(path)
 	}
-	headline = "Coop cannot hide " + names[0] + " from the box"
+	headline = "Coop cannot hide " + names[0] + " from " + who
 	if len(names) > 1 {
-		headline = fmt.Sprintf("Coop cannot hide %d files from the box", len(names))
+		headline = fmt.Sprintf("Coop cannot hide %d files from %s", len(names), who)
 	}
-	reason = "This disk ignores letter case, so the box could open " + strings.Join(names, ", ") +
+	reason = "This disk ignores letter case, so " + one + " could open " + strings.Join(names, ", ") +
 		" under another spelling and read the real file. Coop covers every spelling of a hidden name only for names of up to 11 letters, and only so many in one launch."
 	fix = "Move the file into a hidden folder (a folder is hidden under every spelling), give it a shorter name, or set COOP_ALLOW_CASE_EXPOSED_SECRETS=1 to start anyway."
 	return headline, reason, fix

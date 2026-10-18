@@ -4,14 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-- **A box on a Mac can no longer read a hidden file under another letter case.** Coop hides a
-  secret file such as `.env` by covering it with an empty file. A Mac's disk ignores letter case,
-  so a box could `cat .ENV` and read the real file, or edit a `.coopignore` by writing
-  `.COOPIGNORE`. Coop now covers every spelling of each hidden file's name and of each
-  `.coopignore`. A name too long to cover that way (more than 12 letters, such as
-  `.env.production`) stops the launch: move the file into a hidden folder (a folder is hidden
-  under every spelling), give it a shorter name, or set `COOP_ALLOW_CASE_EXPOSED_SECRETS=1` to
-  start anyway. Linux disks, which keep letter case, are not affected.
+- **A box or service on a Mac can no longer read a hidden file under another letter case.** Coop
+  hides a secret file such as `.env` by covering it with an empty file. A Mac's disk ignores letter
+  case, so a box or a project service could `cat .ENV` and read the real file, or edit a
+  `.coopignore` by writing `.COOPIGNORE`. Coop now covers every spelling of each hidden file's name
+  and of each `.coopignore`, in the box and in each service that binds the repository. A name too
+  long to cover that way (more than 11 letters, such as `.env.production`) stops the launch or
+  `coop up`: move the file into a hidden folder (a folder is hidden under every spelling), give it
+  a shorter name, or set `COOP_ALLOW_CASE_EXPOSED_SECRETS=1` to start anyway. Linux disks, which
+  keep letter case, are not affected.
 
 - **Fork merges and reviews check every spelling of a file.** A Mac's disk ignores letter case, so
   a commit that adds `.GITHOOKS/pre-commit`, `.AGENT/compose.yml` or `.GITATTRIBUTES` puts a file

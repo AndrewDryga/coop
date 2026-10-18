@@ -59,7 +59,7 @@ func pinsForServiceGrant(workspace, file string, data []byte, approval ServiceAp
 // elevatedServiceNames is the exact set that can receive approved host data.
 // A blocked secret bind remains a decoy and does not elevate its service.
 func elevatedServiceNames(workspace, file string, data []byte, volumes []ServiceVolumeAccess) ([]string, error) {
-	decoys, _, err := serviceShadowPlan(workspace, file, data)
+	decoys, _, _, err := serviceShadowPlan(workspace, file, data)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func reviewServiceImages(ctx context.Context, rt runtime.Runtime, workspace, fil
 }
 
 func activeElevatedServiceNames(workspace, file string, data []byte, approval ServiceApproval) ([]string, error) {
-	decoys, _, err := serviceShadowPlan(workspace, file, data)
+	decoys, _, _, err := serviceShadowPlan(workspace, file, data)
 	if err != nil {
 		return nil, err
 	}

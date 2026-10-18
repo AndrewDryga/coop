@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -25,28 +26,55 @@ type serviceDecoy struct {
 	writable   bool   // the original bind or its ancestor lets the service modify this source
 }
 
+// serviceCoverLimit bounds the spelling covers one service gets: each is a bind mount, and 8,192
+// of them start a container in about 2.3 s on OrbStack (spellings.go).
+const serviceCoverLimit = 8192
+
 // serviceShadowPlan decides, per service, which bind targets get a decoy, and lists the
 // repo-relative sources being hidden (sorted, unique) — what a human must see before approving
-// the file (ReviewServiceSecrets) and what the auto-up warning names.
-func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serviceDecoy, []string, error) {
+// the file (ReviewServiceSecrets) and what the auto-up warning names. On a disk that ignores
+// letter case, a hidden file or .coopignore inside a folder bind also gets a cover for every other
+// spelling of its name, as a box's does (ComputeMounts); uncovered lists those it could not cover.
+func serviceShadowPlan(repo, composeFile string, data []byte) (decoys map[string][]serviceDecoy, hiddenPaths, uncovered []string, err error) {
 	var doc composeDoc
 	if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&doc); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	realRepo, err := resolveExisting(repo)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	composeDir := filepath.Dir(composeFile)
 	shadowed := NewShadowDecider(realRepo)
-	decoys := map[string][]serviceDecoy{}
+	decoys = map[string][]serviceDecoy{}
 	hidden := map[string]bool{}
+	missed := map[string]bool{}
 	names := make([]string, 0, len(doc.Services))
 	for name := range doc.Services {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		covers := 0
+		// spelled adds decoy and a copy of it at every other spelling of its name. A folder needs
+		// none: Linux keeps one entry per folder, so CONFIG/ lands on config/'s cover.
+		spelled := func(decoy serviceDecoy, p string) {
+			decoys[name] = append(decoys[name], decoy)
+			if !foldsCase(p) {
+				return
+			}
+			spellings, ok := otherSpellings(filepath.Base(p))
+			if !ok || covers+len(spellings) > serviceCoverLimit {
+				missed[decoy.source] = true
+				return
+			}
+			covers += len(spellings)
+			for _, spelling := range spellings {
+				cover := decoy
+				cover.target = path.Join(path.Dir(decoy.target), spelling)
+				decoys[name] = append(decoys[name], cover)
+			}
+		}
 		for _, entry := range doc.Services[name].Volumes {
 			source, target := bindSourceTarget(entry)
 			if target == "" || !serviceVolumeIsBind(entry, source) {
@@ -58,7 +86,7 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 			}
 			real, err := resolveExisting(abs)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			rel, err := filepath.Rel(realRepo, real)
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -72,7 +100,7 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 			if rel != "." {
 				secret, err := shadowed(filepath.ToSlash(rel))
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 				if secret {
 					decoys[name] = append(decoys[name], serviceDecoy{target: target, dir: info.IsDir(), source: filepath.ToSlash(rel), writable: writable})
@@ -105,30 +133,48 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 					return err
 				}
 				if d.Type().IsRegular() && isCoopignore(p) {
-					decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), source: filepath.ToSlash(relRepo), bindSource: p})
+					spelled(serviceDecoy{target: target + "/" + filepath.ToSlash(under), source: filepath.ToSlash(relRepo), bindSource: p}, p)
 					return nil
 				}
 				if secret, err := shadowed(filepath.ToSlash(relRepo)); err != nil || !secret {
 					return err
 				}
-				decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), dir: d.IsDir(), source: filepath.ToSlash(relRepo), writable: writable})
 				hidden[filepath.ToSlash(relRepo)] = true
+				decoy := serviceDecoy{target: target + "/" + filepath.ToSlash(under), dir: d.IsDir(), source: filepath.ToSlash(relRepo), writable: writable}
 				if d.IsDir() {
+					decoys[name] = append(decoys[name], decoy)
 					return fs.SkipDir
 				}
+				spelled(decoy, p)
 				return nil
 			})
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 		}
 	}
-	paths := make([]string, 0, len(hidden))
-	for p := range hidden {
-		paths = append(paths, p)
+	return decoys, sortedKeys(hidden), sortedKeys(missed), nil
+}
+
+func sortedKeys(set map[string]bool) []string {
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
 	}
-	sort.Strings(paths)
-	return decoys, paths, nil
+	sort.Strings(keys)
+	return keys
+}
+
+// CaseExposed names the hidden files this review's services could still read under another letter
+// case: on a disk that ignores case, the names too long to cover under every spelling
+// (serviceShadowPlan). coop up refuses them unless the owner accepted that risk.
+func (r *ServiceStartReview) CaseExposed() ([]string, error) {
+	abs, err := filepath.Abs(r.file)
+	if err != nil {
+		return nil, err
+	}
+	_, _, uncovered, err := serviceShadowPlan(r.workspace, abs, r.data)
+	return uncovered, err
 }
 
 // keepDecoysOutside drops the decoys whose source a human approved, and reports the sources still
@@ -160,12 +206,7 @@ func keepDecoysOutside(decoys map[string][]serviceDecoy, approved []string) (map
 			}
 		}
 	}
-	paths := make([]string, 0, len(hidden))
-	for p := range hidden {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	return kept, paths
+	return kept, sortedKeys(hidden)
 }
 
 // writeServiceShadowOverride writes the override that mounts an empty decoy over every planned
@@ -231,6 +272,8 @@ func writeServiceShadowOverride(repo string, decoys map[string][]serviceDecoy, d
 			_ = sources.Close()
 		}
 	}()
+	// A .coopignore's covers share its snapshot: one read and one stored copy per file.
+	policies := map[string]string{}
 	var b strings.Builder
 	b.WriteString("services:\n")
 	for _, name := range names {
@@ -243,19 +286,22 @@ func writeServiceShadowOverride(repo string, decoys map[string][]serviceDecoy, d
 		for _, d := range list {
 			source := decoyFile
 			if d.bindSource != "" {
-				if sources == nil {
-					sources, err = openRepositorySources(repo)
+				if source = policies[d.source]; source == "" {
+					if sources == nil {
+						sources, err = openRepositorySources(repo)
+						if err != nil {
+							return "", false, err
+						}
+					}
+					policy, readErr := sources.readRegularFileNoFollow(filepath.FromSlash(d.source), coopIgnoreSnapshotLimit)
+					if readErr != nil {
+						return "", false, fmt.Errorf("snapshot service policy %s: %w", d.source, readErr)
+					}
+					source, err = durableServicePolicySnapshot(policy)
 					if err != nil {
 						return "", false, err
 					}
-				}
-				policy, readErr := sources.readRegularFileNoFollow(filepath.FromSlash(d.source), coopIgnoreSnapshotLimit)
-				if readErr != nil {
-					return "", false, fmt.Errorf("snapshot service policy %s: %w", d.source, readErr)
-				}
-				source, err = durableServicePolicySnapshot(policy)
-				if err != nil {
-					return "", false, err
+					policies[d.source] = source
 				}
 			} else if d.dir {
 				source = decoyDir

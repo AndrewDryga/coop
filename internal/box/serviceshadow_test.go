@@ -1,8 +1,10 @@
 package box
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -147,7 +149,7 @@ func TestServiceShadowCoversExplicitBareBind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoys, hidden, err := serviceShadowPlan(repo, compose, data)
+	decoys, hidden, _, err := serviceShadowPlan(repo, compose, data)
 	if err != nil || len(hidden) != 1 || hidden[0] != ".agent/secret.key" || len(decoys["probe"]) != 1 || decoys["probe"][0].target != "/key" {
 		t.Fatalf("explicit bare secret bind was not shadowed: decoys=%v hidden=%v err=%v", decoys, hidden, err)
 	}
@@ -178,9 +180,116 @@ func TestServiceSecretApprovalKeepsPolicyReadOnly(t *testing.T) {
 // Returns the override path and true when at least one decoy was needed; decoy sources live in
 // dir, the private per-start temp dir, beside the frozen compose snapshot.
 func serviceShadowOverride(repo, composeFile string, data []byte, dir string) (string, bool, error) {
-	decoys, _, err := serviceShadowPlan(repo, composeFile, data)
+	decoys, _, _, err := serviceShadowPlan(repo, composeFile, data)
 	if err != nil {
 		return "", false, err
 	}
 	return writeServiceShadowOverride(repo, decoys, dir)
+}
+
+// On a disk that ignores letter case a service opens a hidden file under any spelling of its name,
+// so inside a folder bind every spelling gets the decoy and every spelling of a .coopignore the
+// read-only policy. A name too long to cover, or past the service's bound, comes back for coop up
+// to refuse. On a disk that keeps case none of this applies, so the test asks the disk which it is.
+func TestServiceShadowCoversEverySpellingWhereTheDiskIgnoresCase(t *testing.T) {
+	pinHome(t)
+	repo, compose := writeCompose(t, "services:\n  app:\n    image: alpine\n    volumes: [\"../:/app:ro\"]\n")
+	for rel, body := range map[string]string{".env": "SECRET=inert\n", ".coopignore": "notes/\n", "config/credentials.json": `{"token":"inert"}`} {
+		writeRepoFile(t, filepath.Join(repo, rel), body)
+	}
+	folds := foldsCase(filepath.Join(repo, ".env"))
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	plan := func() (map[string][]serviceDecoy, []string, []string) {
+		t.Helper()
+		data, err := readValidatedCompose(compose, repo, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoys, hidden, uncovered, err := serviceShadowPlan(repo, compose, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decoys, hidden, uncovered
+	}
+	count := func(decoys []serviceDecoy, source string) int {
+		n := 0
+		for _, d := range decoys {
+			if d.source == source {
+				n++
+			}
+		}
+		return n
+	}
+
+	decoys, hidden, uncovered := plan()
+	wantEnv, wantPolicy := 1, 1
+	var wantUncovered []string
+	if folds {
+		wantEnv, wantPolicy, wantUncovered = 1<<3, 1<<10, []string{"config/credentials.json"}
+	}
+	if got := count(decoys["app"], ".env"); got != wantEnv {
+		t.Errorf(".env has %d mounts, want %d on this disk (folds case: %v)", got, wantEnv, folds)
+	}
+	if got := count(decoys["app"], ".coopignore"); got != wantPolicy {
+		t.Errorf(".coopignore has %d mounts, want %d on this disk (folds case: %v)", got, wantPolicy, folds)
+	}
+	if count(decoys["app"], "config/credentials.json") != 1 || !slices.Equal(uncovered, wantUncovered) {
+		t.Errorf("long name: %d mounts, uncovered %v; want its decoy kept and %v named", count(decoys["app"], "config/credentials.json"), uncovered, wantUncovered)
+	}
+	if !slices.Equal(hidden, []string{".env", "config/credentials.json"}) {
+		t.Errorf("hidden = %v: covers of other spellings are no extra hidden paths", hidden)
+	}
+	path, _, err := writeServiceShadowOverride(repo, decoys, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoyFile, _, err := serviceDecoyPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := durableServicePolicySnapshot([]byte("notes/\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		target, source string
+		present        bool
+	}{
+		{"/app/.env", decoyFile, true}, {"/app/.coopignore", policy, true},
+		{"/app/.ENV", decoyFile, folds}, {"/app/.COOPIGNORE", policy, folds},
+	} {
+		mount := "source: " + quoted(want.source) + "\n        target: " + quoted(want.target) + "\n        read_only: true"
+		if strings.Contains(string(body), mount) != want.present {
+			t.Errorf("override mount at %s from %s: want present %v (folds case: %v)", want.target, want.source, want.present, folds)
+		}
+	}
+	if stored, err := os.ReadDir(filepath.Dir(policy)); err != nil || len(stored) != 1 {
+		t.Errorf("stored policies = %v, %v; want one copy however many spellings bind it", stored, err)
+	}
+	if !folds {
+		return
+	}
+
+	// Covers stop at the service's bound: past it a name is named, never half covered.
+	for i := range 9 {
+		writeRepoFile(t, filepath.Join(repo, fmt.Sprintf("k%dabcdef.pem", i)), "key\n")
+	}
+	decoys, hidden, uncovered = plan()
+	// One decoy per hidden file, one policy mount, and the rest are covers.
+	if covers := len(decoys["app"]) - len(hidden) - 1; covers > serviceCoverLimit {
+		t.Fatalf("app has %d covers, more than its bound of %d", covers, serviceCoverLimit)
+	}
+	for i := range 9 {
+		name := fmt.Sprintf("k%dabcdef.pem", i)
+		if got := count(decoys["app"], name); got != 1<<10 && !slices.Contains(uncovered, name) {
+			t.Errorf("%s has %d mounts and is not named uncovered: half covered", name, got)
+		}
+	}
+	if !slices.Contains(uncovered, "k8abcdef.pem") {
+		t.Errorf("uncovered = %v; want the names past the bound named", uncovered)
+	}
 }

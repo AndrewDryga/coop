@@ -188,7 +188,7 @@ func reviewServiceSecretsData(workspace, file string, data []byte, force bool) (
 	if err != nil {
 		return nil, err
 	}
-	decoys, hidden, err := serviceShadowPlan(workspace, abs, data)
+	decoys, hidden, _, err := serviceShadowPlan(workspace, abs, data)
 	if err != nil {
 		return nil, err
 	}

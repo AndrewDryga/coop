@@ -240,7 +240,9 @@ func snapshotComposeArgsForStartData(workspace, file, owner string, data []byte,
 	// exact file's content on this host, which is the one way a service legitimately reads a
 	// secret-looking file (a generated dev TLS key). Every compose invocation — start, port
 	// discovery, teardown — carries the same decision, so the project definition is one and the same.
-	decoys, hidden, err := serviceShadowPlan(workspace, abs, data)
+	// A name too long to cover under every spelling is refused before services start: by the box's
+	// launch, which covers the same repository, or by coop up's review (ServiceStartReview).
+	decoys, hidden, _, err := serviceShadowPlan(workspace, abs, data)
 	if err != nil {
 		cleanup()
 		return nil, nil, nil, fmt.Errorf("project secret shadowing into sibling services: %w", err)

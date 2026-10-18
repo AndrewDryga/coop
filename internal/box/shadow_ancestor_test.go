@@ -61,7 +61,7 @@ func TestServiceShadowHiddenAncestors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			decoys, hidden, err := serviceShadowPlan(repo, file, data)
+			decoys, hidden, _, err := serviceShadowPlan(repo, file, data)
 			if err != nil {
 				t.Fatal(err)
 			}

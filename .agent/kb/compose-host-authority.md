@@ -2,8 +2,8 @@
 name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
-sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go]
-updated: 2026-09-23
+sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go, internal/box/spellings.go, internal/cli/services_cmd.go]
+updated: 2026-10-19
 ---
 
 Sibling service definitions are agent-writable but execute on the host daemon. `readValidatedCompose`
@@ -62,6 +62,18 @@ entry. `snapshotComposeArgs` appends it to EVERY compose invocation (start, port
 teardown), so the project definition never differs between them. Sources that do not exist yet,
 named volumes, tmpfs, and public files are untouched.
 
+On a disk that ignores letter case (a Mac's), a hidden file or `.coopignore` inside a folder bind
+also gets a copy of its decoy at every other spelling of its name (`.ENV`, `.COOPIGNORE`), as the
+box's mounts do: Linux keeps one entry per folder but one per file name, so a service opening
+`.ENV` would otherwise reach the real file through the bind. A folder needs no copies, and a bind
+whose own target is the secret needs none (no other spelling reaches the host through it). Covers
+stop at `serviceCoverLimit` per service; a name past it, or too long (`otherSpellings`), comes back
+as `uncovered`. A box launch has already refused those for the same repository; `coop up` refuses
+them through `ServiceStartReview.CaseExposed` unless `COOP_ALLOW_CASE_EXPOSED_SECRETS` is set. A
+`.coopignore`'s copies share one policy snapshot. Measured on OrbStack 2026-10-19: without the
+copies a service read the real `.env` as `.ENV` and appended to `.coopignore` as `.COOPIGNORE`;
+with them both read the decoy or failed read-only.
+
 The shared decision checks ancestor prefixes as well as the leaf. A direct bind
 of `private/notes.txt` or a directory below `private/` remains hidden when that
 parent matches a rule, even though the leaf name is ordinary or allowed. This
@@ -117,6 +129,9 @@ like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" 
 containers as users (`ps -a --filter network=`), because they reconnect on the next start.
 
 ## Changelog
+- 2026-10-19: services get covers for every letter-case spelling of hidden files and `.coopignore`
+  on a case-insensitive disk; `coop up` refuses names it cannot cover (task
+  2026-10-18-cover-every-letter-case-spelling-of-hidden-files).
 - 2026-09-23: verified exact-image approval and private start override against service review,
   automatic and filtered start paths; only elevated consumers are pinned, and v4 grants fail closed.
 - 2026-09-23: repository-anchored secret and external-volume approvals, terminal-only volume
