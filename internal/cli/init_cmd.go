@@ -193,25 +193,25 @@ func (a *app) cmdInit(args []string) (int, error) {
 			if stack != "" {
 				rerun += " --stack " + stack
 			}
-			return 1, reported("Could not read .tool-versions", sentence(firstLine(err)),
+			return 1, initFailed("Could not read .tool-versions", sentence(firstLine(err)),
 				"Make .tool-versions a readable regular file of at most 1 MiB, or a link to one inside the project, then run "+rerun+" again.",
 				"No files were changed.")
 		}
 		if errors.As(err, new(scaffold.UnknownStack)) {
-			return 1, reported("Could not use --stack "+stack, "Coop sets up a project's tools from its .tool-versions, and the only stack it knows is asdf.",
+			return 1, initFailed("Could not use --stack "+stack, "Coop sets up a project's tools from its .tool-versions, and the only stack it knows is asdf.",
 				"Pin the versions in .tool-versions and run coop init, or run coop init --stack asdf.",
 				"No files were changed.")
 		}
-		return 1, reported("Could not use --stack "+stack, sentence(firstLine(err)),
+		return 1, initFailed("Could not use --stack "+stack, sentence(firstLine(err)),
 			"Add the tool versions this project needs, then run coop init --stack "+stack+".")
 	}
 	// A .gitignore init could not edit stops it here, before it writes anything, rather than after
 	// it has created half of the project's files.
 	if err := scaffold.CheckGitignore(repo); err != nil {
-		if refused := reportUnreadableCoopignore(err, "coop init", "No files were changed."); refused != nil {
+		if refused := initUnreadableCoopignore(err, "coop init", "No files were changed."); refused != nil {
 			return 1, refused
 		}
-		return 1, reported("Could not update .gitignore", sentence(firstLine(err)), initFix(err),
+		return 1, initFailed("Could not update .gitignore", sentence(firstLine(err)), initFix(err),
 			"No files were changed.")
 	}
 	// Detect the repo's stack(s) for the commit gate; if nothing's detected and we're at a
@@ -375,13 +375,37 @@ func (a *app) reportUnfilteredRuntime(repo string) {
 // setupFailure reports a scaffold that stopped partway. The writes it already made are real files
 // on disk, so it says so: claiming a rollback that did not happen is worse than the partial state.
 func setupFailure(repo string, err error) error {
-	if refused := reportUnreadableCoopignore(err, "coop init", "Files already created have been kept."); refused != nil {
+	if refused := initUnreadableCoopignore(err, "coop init", "Files already created have been kept."); refused != nil {
 		return refused
 	}
 	// The reason can name a folder a box created, so anything in it that would act on the terminal
 	// is shown escaped.
-	return reported("Could not finish Coop setup", sentence(ui.SafeInline(pathReason(repo, "create", err))),
+	return initFailed("Could not finish Coop setup", sentence(ui.SafeInline(pathReason(repo, "create", err))),
 		initFix(err), "Files already created have been kept.")
+}
+
+// initFailed is a coop init failure in the block every command's returned failure uses
+// (ui.CommandFailed): a blank line, the headline, the cause, then each action as a plain row.
+func initFailed(headline, cause string, actions ...string) error {
+	rows := make([][2]string, 0, len(actions))
+	for _, action := range actions {
+		rows = append(rows, [2]string{"", action})
+	}
+	return ui.CommandFailed(headline, cause, rows...)
+}
+
+// initUnreadableCoopignore is reportUnreadableCoopignore drawn like init's other failures.
+func initUnreadableCoopignore(err error, rerun, kept string) error {
+	var unreadable box.UnreadableCoopignore
+	if !errors.As(err, &unreadable) {
+		return nil
+	}
+	headline, reason, fix := unreadableCoopignoreBlock(unreadable, rerun)
+	actions := []string{fix}
+	if kept != "" {
+		actions = append(actions, kept)
+	}
+	return initFailed(headline, reason, actions...)
 }
 
 // initFix is the action after coop init refused a path. A file .coopignore hides from the box is
@@ -433,12 +457,12 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 	if err != nil {
 		var collision *scaffold.ComposeCollision
 		if errors.As(err, &collision) {
-			return 1, reported(fmt.Sprintf("Could not add %s to %s", collision.Catalog, shown),
+			return 1, initFailed(fmt.Sprintf("Could not add %s to %s", collision.Catalog, shown),
 				sentence(collision.Error()),
 				fmt.Sprintf("Review %s before adding %s.", shown, titleName(collision.Catalog)),
 				"No services were changed.")
 		}
-		if refused := reportUnreadableCoopignore(err, "coop init --services", "No services were changed."); refused != nil {
+		if refused := initUnreadableCoopignore(err, "coop init --services", "No services were changed."); refused != nil {
 			return 1, refused
 		}
 		fix := fmt.Sprintf("Fix %s, then run coop init --services again.", shown)
@@ -446,7 +470,7 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 			// The box can write box.compose, so the path, not the hidden file, is what to fix.
 			fix = fmt.Sprintf("Point box.compose in %s at a file the box can see.", project.File)
 		}
-		return 1, reported("Could not add services to "+shown, sentence(ui.SafeInline(firstLine(err))), fix,
+		return 1, initFailed("Could not add services to "+shown, sentence(ui.SafeInline(firstLine(err))), fix,
 			"No services were changed.")
 	}
 	if len(added.Added) == 0 {
@@ -667,8 +691,7 @@ func askGitInit(ask *bufio.Scanner, repo string) error {
 		return nil
 	}
 	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
-		ui.Note("")
-		return reported("Could not initialize Git in "+repo, sentence(gitInitCause(string(out), err)+" while creating .git"),
+		return initFailed("Could not initialize Git in "+repo, sentence(gitInitCause(string(out), err)+" while creating .git"),
 			"Fix the folder permissions, then run coop init again.")
 	}
 	return nil

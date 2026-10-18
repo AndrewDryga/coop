@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +12,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // The approved `coop init` transcripts. The interactive first run is pinned in the task's own
@@ -137,7 +135,7 @@ func TestApprovedFirstRun(t *testing.T) {
 			signIn(t, a, "codex")
 			typedAnswers(t, tc.answers...)
 			var code int
-			out := captureTerminal(t, func() { code, _ = a.cmdInit(tc.args) })
+			out := captureTerminal(t, func() { code = reportExit(a.cmdInit(tc.args)) })
 			if code != 0 {
 				t.Fatalf("cmdInit = %d:\n%s", code, out)
 			}
@@ -162,10 +160,9 @@ func TestApprovedInitFailures(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = os.Chmod(repo, 0o700) })
 		var code int
-		var err error
-		out := captureTerminal(t, func() { code, err = a.cmdInit(nil) })
-		if code != 1 || !errors.Is(err, ui.ErrReported) {
-			t.Fatalf("a failed git init = (%d, %v), want (1, a reported failure)", code, err)
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
+		if code != 1 {
+			t.Fatalf("a failed git init exited %d, want 1:\n%s", code, out)
 		}
 		assertApprovedSession(t, "13v-init-git-failed", normalize(out))
 	})
@@ -185,7 +182,7 @@ func TestApprovedInitFailures(t *testing.T) {
 		t.Cleanup(func() { _ = os.Chmod(blocked, 0o700) })
 		a, _ := initApp(t, repo)
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 		if code != 1 {
 			t.Fatalf("a blocked scaffold write exited %d, want 1:\n%s", code, out)
 		}
@@ -207,7 +204,7 @@ func TestApprovedInitFailures(t *testing.T) {
 		}
 		a, _ := initApp(t, repo)
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 		if code != 1 {
 			t.Fatalf("a non-regular scaffold path exited %d, want 1:\n%s", code, out)
 		}
@@ -225,7 +222,7 @@ func TestApprovedInitFailures(t *testing.T) {
 		a, _ := initApp(t, repo)
 		a.cfg.MCPFile = filepath.Join(home, "agents", "mcp.json")
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 		if code != 1 {
 			t.Fatalf("a blocked MCP stub exited %d, want 1:\n%s", code, out)
 		}
@@ -274,7 +271,7 @@ func TestApprovedInitWithoutATerminal(t *testing.T) {
 	repo := t.TempDir()
 	a, normalize := initApp(t, repo)
 	var code int
-	out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+	out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 	if code != 0 {
 		t.Fatalf("cmdInit = %d:\n%s", code, out)
 	}
@@ -288,7 +285,7 @@ func TestApprovedReinit(t *testing.T) {
 			t.Fatalf("first init = (%d, %v)", code, err)
 		}
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 		if code != 0 {
 			t.Fatalf("re-init = %d:\n%s", code, out)
 		}
@@ -308,7 +305,7 @@ func TestApprovedReinit(t *testing.T) {
 			}
 		}
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 		if code != 0 {
 			t.Fatalf("re-init = %d:\n%s", code, out)
 		}
@@ -333,7 +330,7 @@ func TestApprovedReinit(t *testing.T) {
 			t.Fatal(err)
 		}
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 		if code != 0 {
 			t.Fatalf("re-init = %d:\n%s", code, out)
 		}
@@ -353,7 +350,7 @@ func TestApprovedReinit(t *testing.T) {
 			[]byte("subprojects: [docs]\nbox:\n  egress: filtered\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out := captureTerminal(t, func() { _, _ = a.cmdInit(nil) })
+		out := captureTerminal(t, func() { _ = reportExit(a.cmdInit(nil)) })
 		if !strings.Contains(out, "One task queue still needs to be registered\n") {
 			t.Errorf("the warning for one queue is not singular:\n%s", out)
 		}
@@ -385,7 +382,7 @@ func TestApprovedDockerSetupSuggestion(t *testing.T) {
 				}
 			}
 			var code int
-			out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+			out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 			if code != 0 {
 				t.Fatalf("re-init = %d:\n%s", code, out)
 			}
@@ -408,7 +405,7 @@ func TestApprovedReinitHookNotices(t *testing.T) {
 			t.Fatalf("git config: %v\n%s", err, out)
 		}
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 		if code != 0 {
 			t.Fatalf("re-init = %d:\n%s", code, out)
 		}
@@ -425,7 +422,7 @@ func TestApprovedReinitHookNotices(t *testing.T) {
 			t.Fatal(err)
 		}
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 		if code != 0 {
 			t.Fatalf("re-init = %d:\n%s", code, out)
 		}
@@ -441,7 +438,7 @@ func TestApprovedServiceChooser(t *testing.T) {
 		a, _ := initApp(t, repo)
 		typedAnswers(t, "postgres redis")
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--services"}) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services"})) })
 		if code != 0 {
 			t.Fatalf("chooser = %d:\n%s", code, out)
 		}
@@ -454,7 +451,7 @@ func TestApprovedServiceChooser(t *testing.T) {
 		a, _ := initApp(t, repo)
 		typedAnswers(t, "")
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--services"}) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services"})) })
 		if code != 0 {
 			t.Fatalf("chooser = %d:\n%s", code, out)
 		}
@@ -470,7 +467,7 @@ func TestApprovedServiceChooser(t *testing.T) {
 		a, _ := initApp(t, repo)
 		typedAnswers(t, "mysql", "redis")
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--services"}) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services"})) })
 		if code != 0 {
 			t.Fatalf("chooser = %d:\n%s", code, out)
 		}
@@ -483,7 +480,7 @@ func TestApprovedServiceChooser(t *testing.T) {
 		repo := customComposeProject(t, "services:\n  db:\n    image: postgres:18\n")
 		a, _ := initApp(t, repo)
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--services", "postgres,redis"}) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services", "postgres,redis"})) })
 		if code != 0 {
 			t.Fatalf("add to a custom path = %d:\n%s", code, out)
 		}
@@ -497,7 +494,7 @@ func TestApprovedServiceChooser(t *testing.T) {
 		repo := customComposeProject(t, before)
 		a, _ := initApp(t, repo)
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--services", "redis"}) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services", "redis"})) })
 		if code != 1 {
 			t.Errorf("a malformed Compose file exited %d, want 1", code)
 		}
@@ -541,7 +538,7 @@ func TestApprovedServiceChooser(t *testing.T) {
 		repo := initializedProject(t)
 		a, _ := initApp(t, repo)
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--services", "none"}) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services", "none"})) })
 		if code != 0 {
 			t.Fatalf("--services none = %d:\n%s", code, out)
 		}
@@ -556,7 +553,7 @@ func TestApprovedServiceChooser(t *testing.T) {
 			t.Fatalf("first add = (%d, %v)", code, err)
 		}
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--services", "postgres,redis"}) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services", "postgres,redis"})) })
 		if code != 0 {
 			t.Fatalf("repeat add = %d:\n%s", code, out)
 		}
@@ -568,7 +565,7 @@ func TestApprovedServiceChooser(t *testing.T) {
 		repo := initializedProject(t)
 		a, _ := initApp(t, repo)
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--services"}) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services"})) })
 		if code != 2 {
 			t.Errorf("a chooser without a terminal exited %d, want 2", code)
 		}
@@ -586,7 +583,7 @@ func TestApprovedServiceChooser(t *testing.T) {
 		}
 		a, _ := initApp(t, repo)
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--services", "postgres"}) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services", "postgres"})) })
 		if code != 1 {
 			t.Errorf("a name collision exited %d, want 1", code)
 		}
@@ -602,7 +599,7 @@ func TestApprovedInitStackRefusal(t *testing.T) {
 	repo := t.TempDir()
 	a, normalize := initApp(t, repo)
 	var code int
-	out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--stack", "asdf"}) })
+	out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--stack", "asdf"})) })
 	if code != 1 {
 		t.Errorf("a stack with no .tool-versions exited %d, want 1", code)
 	}
@@ -619,7 +616,7 @@ func TestInitRefusesAToolVersionsItCannotRead(t *testing.T) {
 		}
 		a, _ := initApp(t, repo)
 		var code int
-		out := captureTerminal(t, func() { code, _ = a.cmdInit(args) })
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit(args)) })
 		rerun := strings.TrimSpace("coop init " + strings.Join(args, " "))
 		for _, want := range []string{"Could not read .tool-versions", ".tool-versions must be a regular file",
 			"Make .tool-versions a readable regular file of at most 1 MiB, or a link to one inside the project, then run " + rerun + " again."} {
@@ -691,7 +688,7 @@ func TestSettledProjectIgnoresAmbientHooks(t *testing.T) {
 				t.Fatalf("first init = (%d, %v)", code, err)
 			}
 			var code int
-			out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+			out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 			if code != 0 {
 				t.Fatalf("init = %d:\n%s", code, out)
 			}
@@ -705,7 +702,7 @@ func TestApprovedInitUnknownStack(t *testing.T) {
 	repo := t.TempDir()
 	a, normalize := initApp(t, repo)
 	var code int
-	out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--stack", "node"}) })
+	out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--stack", "node"})) })
 	if code != 1 {
 		t.Errorf("an unknown stack exited %d, want 1", code)
 	}

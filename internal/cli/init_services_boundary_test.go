@@ -36,7 +36,7 @@ func TestInitServicesRefusesComposeSymlinks(t *testing.T) {
 			}
 			a, _ := initApp(t, repo)
 			var code int
-			out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--services", "postgres"}) })
+			out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services", "postgres"})) })
 			if code != 1 {
 				t.Fatalf("unsafe Compose exited %d:\n%s", code, out)
 			}
@@ -77,7 +77,7 @@ func TestInitServicesRefusesHiddenCompose(t *testing.T) {
 	}
 	a, _ := initApp(t, repo)
 	var code int
-	out := captureTerminal(t, func() { code, _ = a.cmdInit([]string{"--services", "postgres"}) })
+	out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services", "postgres"})) })
 	if code != 1 {
 		t.Fatalf("hidden Compose exited %d:\n%s", code, out)
 	}

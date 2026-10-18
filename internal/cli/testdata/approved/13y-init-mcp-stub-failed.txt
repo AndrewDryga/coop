@@ -1,3 +1,4 @@
+
 ✗ Could not finish Coop setup
 
       Could not create /Users/alex/.config/coop/agents/mcp.json: permission denied.

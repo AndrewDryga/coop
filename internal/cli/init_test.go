@@ -324,7 +324,8 @@ func TestInitStackPreflightPreservesTree(t *testing.T) {
 							_, err := scaffold.Init(repo, stack, []string{"go"}, []string{"claude", "codex", "gemini"})
 							return err
 						}
-						_, err := a.cmdInit([]string{"--stack", stack, "--services", "postgres", "--agents", "all"})
+						code, err := a.cmdInit([]string{"--stack", stack, "--services", "postgres", "--agents", "all"})
+						reportExit(code, err) // the dispatcher draws a returned failure
 						return err
 					}
 					before := snapshotInitTree(t, root)
@@ -466,7 +467,7 @@ func TestInitRefusesAHiddenGitignore(t *testing.T) {
 			before := snapshotInitTree(t, repo)
 			a, _ := initApp(t, repo)
 			var code int
-			out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+			out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
 			if code != 1 {
 				t.Fatalf("init with a hidden .gitignore exited %d:\n%s", code, out)
 			}
@@ -552,7 +553,7 @@ func TestInitNamesAnUnreadableCoopignore(t *testing.T) {
 			before := snapshotInitTree(t, repo)
 			a, _ := initApp(t, repo)
 			var code int
-			out := captureTerminal(t, func() { code, _ = a.cmdInit(tc.args) })
+			out := captureTerminal(t, func() { code = reportExit(a.cmdInit(tc.args)) })
 			if code != 1 {
 				t.Fatalf("exited %d:\n%s", code, out)
 			}
@@ -655,7 +656,7 @@ func TestInitEscapesNamesABoxChose(t *testing.T) {
 			tc.plant(t, repo)
 			a, _ := initApp(t, repo)
 			var code int
-			out := captureTerminal(t, func() { code, _ = a.cmdInit(tc.args) })
+			out := captureTerminal(t, func() { code = reportExit(a.cmdInit(tc.args)) })
 			if !strings.Contains(out, tc.want) {
 				t.Errorf("exited %d without %q:\n%s", code, tc.want, out)
 			}
@@ -675,7 +676,7 @@ func TestInitNetworkWarningKeepsEachYAMLProblemOnItsOwnLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := initApp(t, repo)
-	out := captureTerminal(t, func() { _, _ = a.cmdInit(nil) })
+	out := captureTerminal(t, func() { _ = reportExit(a.cmdInit(nil)) })
 	if !strings.Contains(out, "could not be checked: ") || !strings.Contains(out, "\n  line 1: field fo not found in type ") {
 		t.Errorf("the yaml problem is not on a line of its own:\n%s", out)
 	}

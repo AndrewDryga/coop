@@ -1,3 +1,4 @@
+
 ✗ Could not use --stack node
 
       Coop sets up a project's tools from its .tool-versions, and the only stack it knows is asdf.
