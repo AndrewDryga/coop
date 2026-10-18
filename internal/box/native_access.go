@@ -9,7 +9,6 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
 // NativeAccessSnapshot is a nonrenewable host-side copy for isolated, bounded live
@@ -83,27 +82,8 @@ func readNativeAccountSnapshot(cfg *config.Config, ag agents.Agent, account stri
 	} else if err != nil {
 		return nil, true, err
 	}
-	base, err := safefile.OpenRoot(cfg.ConfigDir)
-	if err != nil {
-		return nil, true, err
-	}
-	root := &accountAuthorityRoot{path: cfg.ConfigDir, base: base}
-	defer root.close()
-	if err := privateAccountDirectory(base); err != nil {
-		return nil, true, err
-	}
-	parent := base
-	for _, name := range []string{ag.Name(), "credentials", account} {
-		dir, err := safefile.OpenDir(parent, name)
-		if err != nil {
-			return nil, true, err
-		}
-		root.pins = append(root.pins, accountDirectoryPin{parent: parent, name: name, dir: dir})
-		if err := privateAccountDirectory(dir); err != nil {
-			return nil, true, err
-		}
-		parent = dir
-	}
+	// Reads only: no descriptor, no lock.
+	root := &accountAuthorityRoot{path: path}
 	if pending, err := root.readRenewal(); err != nil || pending != nil {
 		return nil, true, errors.Join(errAccountRenewalUncertain, err)
 	}
@@ -113,9 +93,6 @@ func readNativeAccountSnapshot(cfg *config.Config, ag agents.Agent, account stri
 	}
 	if record == nil {
 		return nil, true, errors.New("canonical account initialization is incomplete")
-	}
-	if err := root.checkNamed(); err != nil {
-		return nil, true, err
 	}
 	return record, true, nil
 }

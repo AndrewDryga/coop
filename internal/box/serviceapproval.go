@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"go.yaml.in/yaml/v3"
@@ -340,21 +341,7 @@ func writeServiceApproval(root, key string, approval ServiceApproval) error {
 	if err != nil {
 		return err
 	}
-	final := filepath.Join(root, key+".json")
-	tmp, err := os.CreateTemp(root, "approval-*.tmp")
-	if err != nil {
-		return err
-	}
-	if _, err := tmp.Write(raw); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
-		return err
-	}
-	return os.Rename(tmp.Name(), final)
+	return config.WriteFileAtomic(filepath.Join(root, key+".json"), raw)
 }
 
 // ServiceStartReview freezes one validated Compose file for the terminal review and subsequent

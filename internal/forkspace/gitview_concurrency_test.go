@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 func TestGitViewConcurrentProcesses(t *testing.T) {
@@ -116,7 +118,7 @@ func TestGitViewTemporaryFilesAreInvocationOwned(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			err := writeViewFile(path, []byte("complete published bytes\n"))
+			err := config.WriteFileAtomic(path, []byte("complete published bytes\n"))
 			if (err != nil) != failure {
 				t.Fatalf("publish failure=%v: %v", failure, err)
 			}

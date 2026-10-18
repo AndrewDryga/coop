@@ -11,6 +11,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
@@ -156,31 +157,9 @@ func (j *journal) save(entry journalEntry) (journalEntry, error) {
 	if err != nil {
 		return journalEntry{}, fmt.Errorf("encode completed worker command receipt: %w", err)
 	}
-	path := j.path(entry.CommandID)
-	temporary, err := os.CreateTemp(j.dir, ".command-result-*")
-	if err != nil {
-		return journalEntry{}, fmt.Errorf("create worker command result: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return journalEntry{}, fmt.Errorf("protect worker command result: %w", err)
-	}
-	if _, err := temporary.Write(encoded); err != nil {
-		_ = temporary.Close()
-		return journalEntry{}, fmt.Errorf("write worker command result: %w", err)
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return journalEntry{}, fmt.Errorf("sync worker command result: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return journalEntry{}, fmt.Errorf("close worker command result: %w", err)
-	}
 	j.publication.Lock()
 	defer j.publication.Unlock()
-	if err := os.Rename(temporaryPath, path); err != nil {
+	if err := config.WriteFileAtomic(j.path(entry.CommandID), encoded); err != nil {
 		return journalEntry{}, fmt.Errorf("publish worker command result: %w", err)
 	}
 	return entry, nil

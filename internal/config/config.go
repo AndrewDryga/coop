@@ -489,12 +489,11 @@ func WithLock(path string, fn func() error) error {
 	return fn()
 }
 
-// WriteFileAtomic writes data to path via a uniquely-named temp file in the same dir, fsyncs it,
-// then renames it into place and fsyncs the parent dir. The rename is atomic (no truncated file on
-// a crash) and a UNIQUE temp name means concurrent writers don't clobber a shared "<path>.tmp"
-// mid-write; the two fsyncs mean a power loss leaves either the old contents or the new ones —
-// never a live-but-empty file, which for a credential pointer reads back as "unset" and silently
-// changes which account the next run picks.
+// WriteFileAtomic is the one path-based atomic writer for Coop's own files: data goes to a
+// uniquely-named temp file beside path, is fsynced, and is renamed into place, so a crash leaves
+// the old contents or the new ones, never a truncated file, and concurrent writers never clobber a
+// shared "<path>.tmp". A new file is owner-only. The variants that write through a held directory
+// descriptor or compare before replacing stay with their callers.
 func WriteFileAtomic(path string, data []byte) error {
 	return writeFileAtomic(path, data, 0o600, false)
 }
@@ -542,27 +541,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode, preserveMode bo
 		os.Remove(name)
 		return err
 	}
-	if err := syncDir(filepath.Dir(path)); err != nil {
-		// The new contents are already in place — only their survival of a crash is unconfirmed.
-		// Say that, so this doesn't read as "the write was lost" and get retried blind.
-		return &Failure{
-			Headline: "Could not finish saving the change",
-			Problem:  "The file was written, but its folder could not be synced.",
-			Action:   "Check the file before retrying.",
-		}
-	}
 	return nil
-}
-
-// syncDir fsyncs a directory so a rename into it survives a power loss: the renamed file's contents
-// are already durable, but without this the directory entry pointing at them may not be.
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
 }
 
 // SetActiveProfile selects which credential profile of agent AgentDir resolves to —

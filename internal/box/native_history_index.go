@@ -98,7 +98,7 @@ func nativeIndexConsumed(root *os.File, path string) (map[string]bool, bool, err
 // Callers fence legacy AND destination writers before a pending index merge.
 // The private staged image and before/after digests make publication recoverable
 // without treating a native edit after a crash as permission to overwrite it.
-func importNativeIndex(root *accountAuthorityRoot, lock, origin, destination *os.File, source string, witness agents.NativeHistoryFile, indexKey string, spans []agents.NativeHistorySpan, dependencies []agents.NativeHistoryFile) error {
+func importNativeIndex(root *accountAuthorityRoot, origin, destination *os.File, source string, witness agents.NativeHistoryFile, indexKey string, spans []agents.NativeHistorySpan, dependencies []agents.NativeHistoryFile) error {
 	if !filepath.IsLocal(witness.Path) || filepath.Clean(witness.Path) != witness.Path || witness.Path == "." {
 		return errors.New("invalid native index path")
 	}
@@ -109,7 +109,7 @@ func importNativeIndex(root *accountAuthorityRoot, lock, origin, destination *os
 	consumed := map[string]bool{}
 	for name, receipt := range receipts {
 		if !receipt.Done {
-			if err := publishNativeIndex(root, lock, destination, name, receipt); err != nil {
+			if err := publishNativeIndex(root, destination, name, receipt); err != nil {
 				return err
 			}
 		}
@@ -236,17 +236,14 @@ func importNativeIndex(root *accountAuthorityRoot, lock, origin, destination *os
 	// Receipt publication can have taken effect even if its final sync fails.
 	// Keep the complete stage whenever that uncertainty is possible.
 	journaled = true
-	if err := writeNativeHistoryReceipt(root, lock, name, receipt, true); err != nil {
+	if err := writeNativeHistoryReceipt(root, name, receipt, true); err != nil {
 		return err
 	}
-	return publishNativeIndex(root, lock, destination, name, receipt)
+	return publishNativeIndex(root, destination, name, receipt)
 }
 
-func publishNativeIndex(root *accountAuthorityRoot, lock, destination *os.File, name string, receipt nativeIndexReceipt) error {
+func publishNativeIndex(root *accountAuthorityRoot, destination *os.File, name string, receipt nativeIndexReceipt) error {
 	stageName := strings.TrimSuffix(name, ".json") + ".data"
-	if err := root.checkLock(lock); err != nil {
-		return err
-	}
 	parent, err := nativeHistoryParent(destination, filepath.Dir(receipt.Path))
 	if err != nil {
 		return err
@@ -275,8 +272,8 @@ func publishNativeIndex(root *accountAuthorityRoot, lock, destination *os.File, 
 		return err
 	}
 	receipt.Done = true
-	if err := writeNativeHistoryReceipt(root, lock, name, receipt, false); err != nil {
+	if err := writeNativeHistoryReceipt(root, name, receipt, false); err != nil {
 		return err
 	}
-	return clearNativeHistoryStage(root, lock, stageName)
+	return clearNativeHistoryStage(root, stageName)
 }

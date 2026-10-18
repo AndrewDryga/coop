@@ -1,12 +1,10 @@
 package box
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,7 +15,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/safefile"
-	"golang.org/x/sys/unix"
 )
 
 // Ownership is outside the mounted home. A writable native index or settings file
@@ -37,6 +34,12 @@ func PrepareNativeHome(ctx context.Context, cfg *config.Config, rt runtime.Runti
 	source := cfg.AgentProfileDir(provider, account)
 	if acp {
 		source = acpSharedDir(cfg, provider)
+	} else {
+		release, err := lockAccountHomes(ctx, HistoryAccountRoot(cfg, provider, account), false)
+		if err != nil {
+			return "", err
+		}
+		defer release()
 	}
 	_, project, err := HistoryKey(repo)
 	if err != nil {
@@ -185,19 +188,13 @@ func prepareNativeHomeFromSource(ctx context.Context, cfg *config.Config, rt run
 
 // setAsideUnpublishedHome moves a home whose setup never published to a unique name beside it. A
 // home that anything used (its auth custody or history imports exist) is refused instead.
-func setAsideUnpublishedHome(root *accountAuthorityRoot, lock *os.File) error {
+func setAsideUnpublishedHome(root *accountAuthorityRoot) error {
 	for _, used := range []string{"auth", "imports"} {
-		if _, err := safefile.LstatMode(root.dir(), used); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Lstat(filepath.Join(root.path, used)); !errors.Is(err, os.ErrNotExist) {
 			return errors.Join(errors.New("the home was used before its setup finished; preserve it for recovery"), err)
 		}
 	}
-	if err := root.checkLock(lock); err != nil {
-		return err
-	}
-	if err := unix.Renameat(int(root.dir().Fd()), "home", int(root.dir().Fd()), ".home-abandoned-"+randid.Hex(8)); err != nil {
-		return err
-	}
-	return root.dir().Sync()
+	return os.Rename(filepath.Join(root.path, "home"), filepath.Join(root.path, ".home-abandoned-"+randid.Hex(8)))
 }
 
 // prepareNativeHome creates one complete native rename domain. The seed callback
@@ -232,72 +229,49 @@ func prepareNativeHome(ctx context.Context, cfg *config.Config, provider, accoun
 	}
 	defer lock.Close()
 	want := nativeHomeOwner{Version: 1, Provider: provider, Account: account, Project: project, ACP: acp}
-	home := filepath.Join(append([]string{cfg.ConfigDir}, append(parts, "home")...)...)
-	file, err := safefile.OpenRegular(root.dir(), "owner.json")
-	if err == nil {
-		defer file.Close()
-		if err := privateAccountFile(file); err != nil {
-			return "", err
-		}
-		data, err := io.ReadAll(io.LimitReader(file, (16<<10)+1))
-		if err != nil || len(data) > 16<<10 {
-			return "", errors.New("native home ownership exceeds its bound or cannot be read")
-		}
-		var owner nativeHomeOwner
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		if decoder.Decode(&owner) != nil || decoder.Decode(new(any)) != io.EOF || owner != want {
+	home := filepath.Join(root.path, "home")
+	var owner nativeHomeOwner
+	published, err := config.ReadRecord(filepath.Join(root.path, "owner.json"), &owner)
+	if err != nil {
+		return "", fmt.Errorf("read native home ownership: %w", err)
+	}
+	if published {
+		if owner != want {
 			return "", errors.New("native home belongs to another repository or account")
 		}
-		child, err := safefile.OpenDir(root.dir(), "home")
+		child, err := os.Open(home)
 		if err != nil {
 			return "", fmt.Errorf("open published native home: %w", err)
 		}
 		defer child.Close()
+		// The box mounts this home and can widen its mode; refuse to serve it then.
 		if err := privateAccountDirectory(child); err != nil {
 			return "", err
 		}
-		if err := root.checkLock(lock); err != nil {
-			return "", fmt.Errorf("confirm published native home custody: %w", err)
-		}
 		return home, nil
 	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	err = unix.Mkdirat(int(root.dir().Fd()), "home", 0o700)
-	if errors.Is(err, unix.EEXIST) {
+	err = os.Mkdir(home, 0o700)
+	if errors.Is(err, os.ErrExist) {
 		// A first setup that never published left this home behind, and no box has seen it: set it
 		// aside, never delete it, and set up afresh.
-		if err = setAsideUnpublishedHome(root, lock); err == nil {
-			err = unix.Mkdirat(int(root.dir().Fd()), "home", 0o700)
+		if err = setAsideUnpublishedHome(root); err == nil {
+			err = os.Mkdir(home, 0o700)
 		}
 	}
 	if err != nil {
 		return "", fmt.Errorf("native home initialization is incomplete at %s: %w", home, err)
 	}
-	child, err := safefile.OpenDir(root.dir(), "home")
-	if err != nil {
-		return "", fmt.Errorf("open initial native home: %w", err)
-	}
-	defer child.Close()
 	if seed != nil {
 		if err := seed(home); err != nil {
 			return "", fmt.Errorf("initialize native home (retained at %s): %w", home, err)
 		}
 	}
-	if err := root.checkLock(lock); err != nil {
-		return "", fmt.Errorf("confirm initial native home custody: %w", err)
-	}
-	current, err := safefile.OpenDir(root.dir(), "home")
+	// The seed is provider code; never publish a home it left readable by others.
+	child, err := os.Open(home)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("open initial native home: %w", err)
 	}
-	same := sameAccountInode(child, current)
-	_ = current.Close()
-	if !same {
-		return "", errors.New("native home changed during initialization")
-	}
+	defer child.Close()
 	if err := privateAccountDirectory(child); err != nil {
 		return "", err
 	}
@@ -306,11 +280,8 @@ func prepareNativeHome(ctx context.Context, cfg *config.Config, provider, accoun
 		return "", err
 	}
 	// All or nothing: a half-written owner record would refuse this home forever.
-	if err := writeAccountPrivate(root, lock, "owner.json", append(data, '\n')); err != nil {
+	if err := writeAccountPrivate(root, "owner.json", append(data, '\n')); err != nil {
 		return "", fmt.Errorf("native home publication needs recovery: %w", err)
-	}
-	if err := root.checkLock(lock); err != nil {
-		return "", err
 	}
 	return home, nil
 }

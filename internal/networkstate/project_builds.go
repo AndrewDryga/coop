@@ -52,12 +52,12 @@ func (s *Store) ProjectBuildStatus(tag, inputs string) (image, reason string) {
 	if err != nil {
 		return "", "the saved project build approval is unavailable"
 	}
-	data, err := s.read(projectBuildRecordName(id), maxPrivateRecordBytes)
+	data, err := s.read(projectBuildRecordName(id))
 	if err != nil {
 		return "", "no explicit project build is recorded for this client image"
 	}
 	var record projectBuildRecord
-	if strictJSON(data, &record) != nil || record.Version != 2 || record.ID != id || record.Tag != tag || !imageDigest(record.Image) {
+	if json.Unmarshal(data, &record) != nil || record.Version != 2 || record.ID != id || record.Tag != tag || !imageDigest(record.Image) {
 		return "", "the saved project build approval is no longer usable"
 	}
 	if record.Inputs != inputs {

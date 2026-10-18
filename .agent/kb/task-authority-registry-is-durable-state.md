@@ -1,9 +1,9 @@
 ---
 name: task-authority-registry-is-durable-state
-description: host-global task ownership and completion trust live in ~/.local/state/coop/task-leases; every authority flock rechecks its inode
+description: host-global task ownership and completion trust live in ~/.local/state/coop/task-leases; records are read plainly, and only completion-window locks are ever unlinked
 subsystem: tasks
 sources: [internal/tasks/lease.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/tasks/owner.go, internal/tasks/assignment_registry.go, internal/tasks/main_test.go, internal/tasks/pending_review.go, internal/sessionsvc/http.go, internal/testutil/teststate/teststate.go]
-updated: 2026-10-16
+updated: 2026-10-18
 ---
 Everything that decides whether a task is *really* finished lives OUTSIDE the repo, in one
 host-global registry: the `<sha>.lock` files whose kernel flock makes one controller the single
@@ -25,17 +25,21 @@ into a task's provider-writable `tmp/`; observation and recovery consult only th
 `leaseAuthorityRoot` (`internal/tasks/lease.go`) resolves
 `$HOME/.local/state/coop/task-leases/v1` on both Darwin and Linux, the same durable family as the
 session store's `defaultSessionStateRoot` (`internal/sessionsvc/http.go`) and intentionally not
-XDG-configurable. `OpenLeaseAuthorityRoot` creates that directory with owner-only permissions and
-rejects a final path that is a symlink or not a directory.
+XDG-configurable. `OpenLeaseAuthorityRoot` creates that directory with owner-only permissions.
 
-**Every authority flock is proved after the fact.** Take authority locks through
-`lockLeaseAuthority` / `lockLeaseAuthorityForAudit` (`internal/tasks/lease.go`), never a bare `syscall.Flock`
-on an `openLeaseAuthority` result: they open → lock → `fstat(fd)` vs a fresh `lstat(name)` → on a
-mismatch drop the lock and retry on the inode that answers the name now, bounded by
-`leaseAuthorityIdentityAttempts`, then `errLeaseAuthorityIdentity`. flock binds a process to an
-INODE, never to a name; without the recheck a deleted-underfoot lock is silently non-exclusive.
-`openLeaseAuthority` survives for unlocked reads and tests only. See [[task-state-is-the-folder]]
-for the repo-local queue, which did NOT move.
+**No box reaches the registry, so it is read plainly.** Its records go through `readLeaseRecord`
+(`config.ReadRecord`: read, decode; the caller checks version and meaning), not the bounded,
+no-follow `ReadTaskMetadataFile` that task folders need. A same-user host process is not in the
+threat model (owner decision 2026-10-15).
+
+**A lock is exclusive only while nobody unlinks it.** flock binds a process to an INODE, never to a
+name, and `lockLeaseAuthorityWith` no longer re-checks the inode after locking: the only lock files
+coop unlinks are completion-window locks (`removeLeaseAuthorityLock`), and only once their id has
+left the completion-window index, while every other acquire of one happens under the index lock
+while the id is listed. A cleaner that unlinks any other lock must bring back a post-flock
+`fstat(fd)` vs `lstat(name)` re-check. Opening keeps an `O_EXCL` creator election: `os.Root`'s
+plain `O_CREATE` returns "no such file" to a racing creator on darwin. See
+[[task-state-is-the-folder]] for the repo-local queue, which did NOT move.
 
 **Tests never touch the real registry.** A test binary must set `COOP_TEST_LEASE_AUTHORITY_ROOT`
 (its `TestMain` calls `teststate.Isolate`, which sets it with Coop's other state roots; see
@@ -47,16 +51,17 @@ about 250 files in the developer's registry: on 2026-10-06 the owner's held 121,
 selected queues' records; counting every queue's let leftovers elsewhere stop a final review.
 
 **Cleaning the registry is not free space.** Of those 180 MB, 75,613 empty `.lock` files took
-0 bytes; the space was one 4 KB block per small record (`.windows.json` alone 94 MB). Unlinking a
-lock is compatible with the recheck above, but a cleaner must not take `LOCK_EX` on a done task's
+0 bytes; the space was one 4 KB block per small record (`.windows.json` alone 94 MB). A cleaner
+that unlinks locks needs the inode re-check above, and must not take `LOCK_EX` on a done task's
 lock: `inspectTaskCompletionReceipt` probes it with `LOCK_SH|LOCK_NB`, and a busy probe makes the
-completion-window scan treat that task as changed, which can move it out of done. Two opener
-races also turn fatal once anything unlinks locks: a lock unlinked between open and fstat fails
-the single-link check, and an `O_EXCL` collision followed by an unlink fails the reopen. Both must
-retry first. The two design reviews of 2026-10-06 are in the archived task
+completion-window scan treat that task as changed, which can move it out of done. An `O_EXCL`
+collision followed by an unlink also fails the reopen, so it must retry first. The two design reviews of 2026-10-06 are in the archived task
 2026-10-05-task-lease-authority-keeps-every-lock-file-it-ev.
 
 ## Changelog
+- 2026-10-18 — records read plainly through `readLeaseRecord`; the post-flock inode re-check and
+  the single-link checks went (task 2026-10-15-read-coop-s-host-only-records-with-one-plain-hel);
+  recorded why the re-check is not needed today and when it must come back.
 - 2026-10-16 — the per-package lease TestMains became the shared `teststate.Isolate`.
 - 2026-10-06 — LoadPendingReviews bounds only the selected queues' records.
 - 2026-10-06 — test binaries must name their own registry (internal/loop leaked ~250 files per

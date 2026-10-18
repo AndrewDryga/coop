@@ -872,57 +872,6 @@ func TestPendingReviewAnchorsAVersion1RecordFromBeforeTheRun(t *testing.T) {
 	}
 }
 
-func TestPendingReviewRecordRejectsUnknownAndOversizeData(t *testing.T) {
-	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
-		t.Fatal(err)
-	}
-	if err := assignment.Lease.Release(); err != nil {
-		t.Fatal(err)
-	}
-	name, err := pendingReviewRecordName(root, done.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer registry.Close()
-	registryPath, err := leaseAuthorityRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	hardlink := filepath.Join(registryPath, "pending-review-hardlink")
-	if err := os.Link(filepath.Join(registryPath, name), hardlink); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := readPendingReviewRecord(root, done.ID); err == nil || !strings.Contains(err.Error(), "single-link") {
-		t.Fatalf("hard-linked record error = %v", err)
-	}
-	if err := os.Remove(hardlink); err != nil {
-		t.Fatal(err)
-	}
-	record, _, err := readPendingReviewRecord(root, done.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := json.Marshal(record)
-	raw = append(raw[:len(raw)-1], []byte(`,"unknown":true}`)...)
-	if err := AtomicWriteTaskFile(registry, name, append(raw, '\n')); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := readPendingReviewRecord(root, done.ID); err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("unknown field error = %v", err)
-	}
-	if err := AtomicWriteTaskFile(registry, name, []byte(strings.Repeat("x", pendingReviewFileLimit+1))); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := readPendingReviewRecord(root, done.ID); err == nil || !strings.Contains(err.Error(), "bounded") {
-		t.Fatalf("oversize error = %v", err)
-	}
-}
-
 func TestPendingReviewRecordRejectsMalformedRollbackState(t *testing.T) {
 	repo, _, _, assignment, done, plan := pendingReviewTestCompletion(t)
 	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {

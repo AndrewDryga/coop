@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -218,7 +217,7 @@ func TestBundleMaintenanceAndFrozenSnapshots(t *testing.T) {
 	}
 }
 
-func TestPrivateStoreDeniesMountOverlapAndSpecialFiles(t *testing.T) {
+func TestPrivateStoreDeniesMountOverlap(t *testing.T) {
 	project := t.TempDir()
 	if s, err := Open(filepath.Join(project, "network"), []string{project}); err == nil {
 		_ = s.Close()
@@ -247,24 +246,6 @@ func TestPrivateStoreDeniesMountOverlapAndSpecialFiles(t *testing.T) {
 	if duplicate, err := Open(s.Path(), []string{filepath.Join(s.Path(), "owner.key")}); err == nil {
 		_ = duplicate.Close()
 		t.Fatal("individual authority record allowed as an agent mount")
-	}
-	if err := os.Symlink("owner.key", filepath.Join(s.Path(), "key-link")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.read("key-link", 32); err == nil {
-		t.Fatal("followed a record symlink")
-	}
-	if err := syscall.Mkfifo(filepath.Join(s.Path(), "fifo"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.read("fifo", 32); err == nil {
-		t.Fatal("accepted FIFO as a record")
-	}
-	if err := os.WriteFile(filepath.Join(s.Path(), "large"), bytes.Repeat([]byte{1}, 33), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.read("large", 32); err == nil {
-		t.Fatal("record byte bound ignored")
 	}
 	if _, err := s.LoadSnapshot(project, "../owner.key"); err == nil {
 		t.Fatal("snapshot traversal accepted")

@@ -1,7 +1,6 @@
 package tasks
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -540,21 +539,6 @@ func backToSignoff(record *PendingReviewRecord) {
 	record.Reviewed = nil
 }
 
-func decodePendingReviewJSON(data []byte, value any) error {
-	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(data), pendingReviewFileLimit+1))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(value); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("pending-review record contains multiple JSON values")
-		}
-		return err
-	}
-	return nil
-}
-
 // decodePendingReviewRecord reads a record, converting a version 1 one (legacy) to version 2.
 func decodePendingReviewRecord(data []byte) (record PendingReviewRecord, legacy bool, err error) {
 	var header struct {
@@ -565,7 +549,7 @@ func decodePendingReviewRecord(data []byte) (record PendingReviewRecord, legacy 
 	}
 	if header.Version == pendingReviewLegacyVersion {
 		var old pendingReviewRecordV1
-		if err := decodePendingReviewJSON(data, &old); err != nil {
+		if err := json.Unmarshal(data, &old); err != nil {
 			return PendingReviewRecord{}, false, err
 		}
 		record = old.PendingReviewRecord
@@ -576,7 +560,7 @@ func decodePendingReviewRecord(data []byte) (record PendingReviewRecord, legacy 
 		}
 		return record, true, nil
 	}
-	if err := decodePendingReviewJSON(data, &record); err != nil {
+	if err := json.Unmarshal(data, &record); err != nil {
 		return PendingReviewRecord{}, false, err
 	}
 	return record, false, nil
@@ -681,35 +665,12 @@ func readPendingReviewRecord(root, id string) (PendingReviewRecord, bool, error)
 		return PendingReviewRecord{}, false, err
 	}
 	defer registry.Close()
-	before, err := registry.Lstat(name)
+	data, err := registry.ReadFile(name)
 	if errors.Is(err, os.ErrNotExist) {
 		return PendingReviewRecord{}, false, nil
 	}
 	if err != nil {
 		return PendingReviewRecord{}, false, err
-	}
-	stat, ok := before.Sys().(*syscall.Stat_t)
-	if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || !ok || stat.Nlink != 1 || before.Size() > pendingReviewFileLimit {
-		return PendingReviewRecord{}, false, fmt.Errorf("pending-review record %q is not a bounded single-link regular file", name)
-	}
-	file, err := registry.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return PendingReviewRecord{}, false, err
-	}
-	defer file.Close()
-	after, err := file.Stat()
-	if err != nil || !os.SameFile(before, after) {
-		if err != nil {
-			return PendingReviewRecord{}, false, err
-		}
-		return PendingReviewRecord{}, false, fmt.Errorf("pending-review record %q changed while opening", name)
-	}
-	data, err := io.ReadAll(io.LimitReader(file, pendingReviewFileLimit+1))
-	if err != nil {
-		return PendingReviewRecord{}, false, err
-	}
-	if len(data) > pendingReviewFileLimit {
-		return PendingReviewRecord{}, false, fmt.Errorf("pending-review record %q exceeds %d bytes", name, pendingReviewFileLimit)
 	}
 	record, _, err := decodePendingReviewRecord(data)
 	if err != nil {
@@ -999,7 +960,7 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 		if openErr != nil {
 			return PendingReviewCohort{}, openErr
 		}
-		data, readErr := ReadTaskMetadataFile(registry, entry.Name())
+		data, readErr := registry.ReadFile(entry.Name())
 		registry.Close()
 		if readErr != nil {
 			return PendingReviewCohort{}, readErr
@@ -1319,7 +1280,7 @@ func workspacePendingReviews(workspace string) ([]PendingReviewRecord, error) {
 			if !strings.HasSuffix(entry.Name(), pendingReviewFileSuffix) {
 				continue
 			}
-			data, err := ReadTaskMetadataFile(registry, entry.Name())
+			data, err := registry.ReadFile(entry.Name())
 			if err != nil {
 				continue
 			}

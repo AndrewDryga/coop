@@ -230,6 +230,15 @@ func renewalRetryable(err error) bool {
 // to publish account-wide credentials; unexpected local grants are preserved
 // and refused on reuse, never overwritten by a later launch.
 func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCredentialSpec, seed *agents.NativeBrokerSeed) error {
+	// An account's home sits at .../native-homes/<account>/<key>/home, and `coop credentials rm`
+	// deletes <account>; an ACP home is never removed that way.
+	if folder := filepath.Dir(filepath.Dir(home)); filepath.Base(filepath.Dir(folder)) == "native-homes" {
+		release, err := lockAccountHomes(ctx, folder, false)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	custody, err := openPrivateAccountTree(filepath.Dir(home), "auth")
 	if err != nil {
 		return err
@@ -251,7 +260,7 @@ func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCre
 		Hostname, Username string
 	}
 	want := authReceipt{Version: 1, Family: seed.Family, Hostname: "coop-native-" + randid.Hex(12), Username: "node"}
-	receipt, err := safefile.ReadRegular(custody.dir(), "seed.json", 4096)
+	receipt, err := os.ReadFile(filepath.Join(custody.path, "seed.json"))
 	if err == nil {
 		want = authReceipt{}
 		if json.Unmarshal(receipt, &want) != nil || want.Version != 1 || want.Family == "" || len(want.Hostname) != 36 || !strings.HasPrefix(want.Hostname, "coop-native-") || want.Username != "node" {
@@ -301,7 +310,7 @@ func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCre
 				return err
 			}
 			for _, name := range missing {
-				if err := publishMissingNativeAuth(custody, lock, root, name, seed.Files[name]); err != nil {
+				if err := publishMissingNativeAuth(custody, root, name, seed.Files[name]); err != nil {
 					return err
 				}
 			}
@@ -332,7 +341,7 @@ func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCre
 			return err
 		}
 		for _, name := range missing {
-			if err := publishMissingNativeAuth(custody, lock, root, name, seed.Files[name]); err != nil {
+			if err := publishMissingNativeAuth(custody, root, name, seed.Files[name]); err != nil {
 				return err
 			}
 		}
@@ -351,7 +360,7 @@ func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCre
 		if err != nil {
 			return err
 		}
-		return writeAccountPrivate(custody, lock, "seed.json", data)
+		return writeAccountPrivate(custody, "seed.json", data)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -426,14 +435,11 @@ func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCre
 			}
 		}
 	}
-	if err := custody.checkLock(lock); err != nil {
-		return err
-	}
 	data, err := json.Marshal(want)
 	if err != nil {
 		return err
 	}
-	if err := writeAccountPrivate(custody, lock, "seed.json", data); err != nil {
+	if err := writeAccountPrivate(custody, "seed.json", data); err != nil {
 		return err
 	}
 	for _, name := range names {
@@ -463,25 +469,23 @@ func withMissingSeedFiles(files, seed map[string][]byte) ([]string, error) {
 	return missing, nil
 }
 
-func publishMissingNativeAuth(custody *accountAuthorityRoot, lock, home *os.File, name string, data []byte) (result error) {
+func publishMissingNativeAuth(custody *accountAuthorityRoot, home *os.File, name string, data []byte) (result error) {
 	if !accountNameValid(name) {
 		return errors.New("invalid native seed filename")
 	}
 	stage := "public-seed-" + randid.Hex(12)
-	if err := writeAccountPrivate(custody, lock, stage, data); err != nil {
+	if err := writeAccountPrivate(custody, stage, data); err != nil {
 		return err
 	}
 	defer func() {
-		result = errors.Join(result, unix.Unlinkat(int(custody.dir().Fd()), stage, 0), custody.dir().Sync())
+		result = errors.Join(result, unix.Unlinkat(int(custody.dir().Fd()), stage, 0))
 	}()
-	if err := custody.checkLock(lock); err != nil {
-		return err
-	}
+	// Linked through the home's descriptor: the box mounts the home, so its path is not trusted.
 	err := unix.Linkat(int(custody.dir().Fd()), stage, int(home.Fd()), name, 0)
 	if err != nil && !errors.Is(err, unix.EEXIST) {
 		return err
 	}
-	return home.Sync()
+	return nil
 }
 
 func (r *nativeRun) hostname() string {

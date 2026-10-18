@@ -31,7 +31,7 @@ func validateQualificationEvidence(data []byte, receipt *networkview.Receipt) er
 		return errors.New("qualification requires bounded evidence from its sealed receipt")
 	}
 	var evidence QualificationEvidence
-	if strictJSON(data, &evidence) != nil || evidence.Version != 1 || !equalJSON(evidence.Snapshot, receipt.Snapshot) ||
+	if json.Unmarshal(data, &evidence) != nil || evidence.Version != 1 || !equalJSON(evidence.Snapshot, receipt.Snapshot) ||
 		len(evidence.Facts) == 0 || len(evidence.Facts) > 128 {
 		return errors.New("qualification evidence differs from its sealed terminal observation")
 	}

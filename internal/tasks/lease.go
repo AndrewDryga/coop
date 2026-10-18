@@ -15,25 +15,22 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const (
-	LeaseAuthorityVersion          = "v1"
-	leaseAuthorityIdentityAttempts = 5
-	auditReopenVersion             = 3
-	auditReopenPendingVersion      = 4
-	leaseHeartbeatInterval         = 10 * time.Second
-	leaseStaleAfter                = time.Minute
-	leaseMetadataVersion           = 1
+	LeaseAuthorityVersion     = "v1"
+	auditReopenVersion        = 3
+	auditReopenPendingVersion = 4
+	leaseHeartbeatInterval    = 10 * time.Second
+	leaseStaleAfter           = time.Minute
+	leaseMetadataVersion      = 1
 )
 
 const TestLeaseAuthorityRootEnv = "COOP_TEST_LEASE_AUTHORITY_ROOT"
 
-var (
-	errLeaseCandidateGone     = errors.New("lease candidate changed state")
-	errLeaseAuthorityIdentity = errors.New("task lease authority changed identity while locking")
-)
+var errLeaseCandidateGone = errors.New("lease candidate changed state")
 
 type leaseCompletionReceipt struct {
 	Version               int    `json:"version"`
@@ -260,80 +257,35 @@ func OpenLeaseAuthorityRoot() (*os.Root, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return openLeaseAuthorityRoot(dir)
-}
-
-func openLeaseAuthorityRoot(dir string) (*os.Root, error) {
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("task lease authority %q is not a real directory", dir)
-	}
 	return os.OpenRoot(dir)
 }
 
-// leaseAuthorityIsCurrent proves, with the kernel lock already held, that the locked inode is still
-// the one the registry name resolves to. flock binds a process to an INODE, never to a name: if the
-// record is unlinked and recreated between open and flock, two controllers each hold an "exclusive"
-// lock on a different inode and the single-writer invariant dissolves in silence. Comparing
-// fstat(fd) against a fresh lstat(name) is the only evidence that the lock we hold is the lock every
-// other controller contends for.
-func leaseAuthorityIsCurrent(file *os.File, name string) (bool, error) {
-	registry, err := OpenLeaseAuthorityRoot()
+// readLeaseRecord decodes one of coop's own records in the host-only lease registry and reports
+// whether it exists (see config.ReadRecord: no box mounts the registry).
+func readLeaseRecord(name string, v any) (bool, error) {
+	dir, err := leaseAuthorityRoot()
 	if err != nil {
 		return false, err
 	}
-	defer registry.Close()
-	named, err := registry.Lstat(name)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil // unlinked underfoot: the lock we hold now guards an orphan
-	}
-	if err != nil {
-		return false, err
-	}
-	locked, err := file.Stat()
-	if err != nil {
-		return false, err
-	}
-	return os.SameFile(locked, named), nil
+	return config.ReadRecord(filepath.Join(dir, name), v)
 }
 
-// lockLeaseAuthorityWith opens the registry record for id, takes the caller's kernel lock on it, and
-// only then proves the locked inode still answers the registry name. On a mismatch it drops the lock
-// and retries the whole open-and-lock, because the inode that answers the name NOW is the one every
-// other controller will contend for. Retries are bounded: a name whose identity keeps changing is a
-// purge or an attack, and the caller must see an error rather than silently hold an exclusive lock
-// on an inode nobody else can reach.
+// lockLeaseAuthorityWith opens the registry lock file for id and takes the caller's kernel lock on
+// it. flock binds to an inode, not a name, so this is exclusive only while nobody unlinks a lock
+// file someone may hold or be opening; removeLeaseAuthorityLock keeps that true.
 func lockLeaseAuthorityWith(root, id string, create bool, lock func(*os.File) error) (*os.File, error) {
 	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return nil, err
 	}
-	name := key + ".lock"
-	for attempt := 0; ; attempt++ {
-		file, err := openLeaseAuthorityRecord(name, create)
-		if err != nil {
-			return nil, err
-		}
-		if err := lock(file); err != nil {
-			return nil, errors.Join(err, file.Close())
-		}
-		current, err := leaseAuthorityIsCurrent(file, name)
-		if err != nil {
-			return nil, errors.Join(err, unlockLeaseFile(file))
-		}
-		if current {
-			return file, nil
-		}
-		if err := unlockLeaseFile(file); err != nil {
-			return nil, err
-		}
-		if attempt+1 >= leaseAuthorityIdentityAttempts {
-			return nil, fmt.Errorf("%w: %s", errLeaseAuthorityIdentity, name)
-		}
+	file, err := openLeaseAuthorityRecord(key+".lock", create)
+	if err != nil {
+		return nil, err
 	}
+	if err := lock(file); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return file, nil
 }
 
 func lockLeaseAuthority(root, id string, create bool, how int) (*os.File, error) {
@@ -354,27 +306,16 @@ func openLeaseAuthorityRecord(name string, create bool) (*os.File, error) {
 		return nil, err
 	}
 	defer registry.Close()
-	file, err := registry.OpenFile(name, os.O_RDWR|syscall.O_NOFOLLOW, 0)
+	file, err := registry.OpenFile(name, os.O_RDWR, 0)
 	if errors.Is(err, os.ErrNotExist) && create {
-		file, err = registry.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+		// Elect one creator, then open the inode it made: os.Root's plain O_CREATE can report
+		// "no such file" to a process that races another creator.
+		file, err = registry.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 		if errors.Is(err, os.ErrExist) {
-			file, err = registry.OpenFile(name, os.O_RDWR|syscall.O_NOFOLLOW, 0)
+			file, err = registry.OpenFile(name, os.O_RDWR, 0)
 		}
 	}
-	if err != nil {
-		return nil, err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !info.Mode().IsRegular() || !ok || stat.Nlink != 1 {
-		_ = file.Close()
-		return nil, errors.New("task lease authority is not a single-link regular file")
-	}
-	return file, nil
+	return file, err
 }
 
 func completionReceiptFor(taskDir string) (leaseCompletionReceipt, error) {
@@ -472,20 +413,9 @@ func readTrustedDoneDeparture(root, id string) (trustedDoneDeparture, bool, erro
 	if err != nil {
 		return trustedDoneDeparture{}, false, err
 	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return trustedDoneDeparture{}, false, err
-	}
-	defer registry.Close()
-	data, err := ReadTaskMetadataFile(registry, name)
-	if errors.Is(err, os.ErrNotExist) {
-		return trustedDoneDeparture{}, false, nil
-	}
-	if err != nil {
-		return trustedDoneDeparture{}, false, err
-	}
 	var record trustedDoneDeparture
-	if err := json.Unmarshal(data, &record); err != nil {
+	ok, err := readLeaseRecord(name, &record)
+	if err != nil || !ok {
 		return trustedDoneDeparture{}, false, err
 	}
 	if err := validateTrustedDoneDeparture(record, id); err != nil {
@@ -601,32 +531,13 @@ func ReadAuditReopenRecord(root, id string) (AuditReopenRecord, bool, error) {
 	if err != nil {
 		return AuditReopenRecord{}, false, err
 	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return AuditReopenRecord{}, false, err
-	}
-	defer registry.Close()
-	data, err := ReadTaskMetadataFile(registry, name)
-	if errors.Is(err, os.ErrNotExist) {
-		return AuditReopenRecord{}, false, nil
-	}
-	if err != nil {
-		return AuditReopenRecord{}, false, err
-	}
-	var envelope struct {
-		Version int `json:"version"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil {
-		return AuditReopenRecord{}, false, err
-	}
-	if envelope.Version != auditReopenVersion && envelope.Version != auditReopenPendingVersion {
-		return AuditReopenRecord{}, false, fmt.Errorf("unsupported audit reopen record version %d", envelope.Version)
-	}
 	var record AuditReopenRecord
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&record); err != nil {
+	ok, err := readLeaseRecord(name, &record)
+	if err != nil || !ok {
 		return AuditReopenRecord{}, false, err
+	}
+	if record.Version != auditReopenVersion && record.Version != auditReopenPendingVersion {
+		return AuditReopenRecord{}, false, fmt.Errorf("unsupported audit reopen record version %d", record.Version)
 	}
 	if err := validateAuditReopenRecord(record, id); err != nil {
 		return AuditReopenRecord{}, false, err
@@ -819,17 +730,8 @@ func readLeaseAuthorityMetadata(root, id string) (taskLeaseMetadata, bool) {
 	if err != nil {
 		return taskLeaseMetadata{}, false
 	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return taskLeaseMetadata{}, false
-	}
-	defer registry.Close()
-	data, err := ReadTaskMetadataFile(registry, key+".json")
-	if err != nil {
-		return taskLeaseMetadata{}, false
-	}
 	var meta taskLeaseMetadata
-	if err := json.Unmarshal(data, &meta); err != nil || meta.Version != leaseMetadataVersion {
+	if ok, err := readLeaseRecord(key+".json", &meta); err != nil || !ok || meta.Version != leaseMetadataVersion {
 		return taskLeaseMetadata{}, false
 	}
 	return meta, true
@@ -845,12 +747,8 @@ func leaseAuthorityMetadataExists(root, id string) bool {
 		return false
 	}
 	defer registry.Close()
-	info, err := registry.Lstat(key + ".json")
-	if err != nil {
-		return false
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	return info.Mode().IsRegular() && ok && stat.Nlink == 1
+	_, err = registry.Lstat(key + ".json")
+	return err == nil
 }
 
 func removeLeaseAuthorityMetadata(root, id string) error {
@@ -869,6 +767,12 @@ func removeLeaseAuthorityMetadata(root, id string) error {
 	return nil
 }
 
+// removeLeaseAuthorityLock unlinks a completion-window lock, the only lock file coop ever removes.
+// It runs only once the window's id has left the completion-window index (or never reached it),
+// and every other acquire of that lock happens under the index lock while the id is listed, so no
+// process can still hold or be opening the old inode when the name goes. A cleaner that unlinks
+// other lock files would let two processes lock different inodes under one name: it must bring
+// back an inode re-check after each flock.
 func removeLeaseAuthorityLock(root, id string) error {
 	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {

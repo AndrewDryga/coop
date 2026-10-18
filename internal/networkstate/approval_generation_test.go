@@ -186,13 +186,6 @@ func TestApprovalGenerationIsPrivateAndNamesNoProject(t *testing.T) {
 	if err := json.Unmarshal(data, &fields); err != nil || len(fields) != 2 || fields["version"] == nil || fields["generation"] == nil {
 		t.Fatalf("the approval generation holds more than a version and a count: %s (%v)", data, err)
 	}
-	// A copy another user can read is not a record coop wrote.
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.ApprovalGeneration(); err == nil {
-		t.Fatal("a group-readable approval generation was trusted")
-	}
 }
 
 // An unreadable counter is never read as "nothing changed", and the next change repairs it from a

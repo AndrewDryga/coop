@@ -156,6 +156,8 @@ func validateGenerationRecord(record generationRecord, name string) error {
 	return nil
 }
 
+// Stays bounded and no-follow: fork records sit in <repo>-forks/.coop, which a box can reach
+// through a nested mount.
 func readGenerationRecord(repo, name string) (generationRecord, error) {
 	path := GenerationPath(repo, name)
 	data, err := ReadRecord(path, fmt.Sprintf("fork generation record %q", path), forkGenerationLimit)

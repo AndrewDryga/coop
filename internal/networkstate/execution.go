@@ -239,7 +239,7 @@ func (s *Store) execution(id string) (Execution, error) {
 	if !lowerHex(id, 32) {
 		return Execution{}, ErrEvidenceUnavailable
 	}
-	data, err := s.read("execution-"+id+".json", maxPrivateRecordBytes)
+	data, err := s.read("execution-" + id + ".json")
 	if errors.Is(err, os.ErrNotExist) {
 		return Execution{}, ErrEvidenceUnavailable
 	}
@@ -247,7 +247,7 @@ func (s *Store) execution(id string) (Execution, error) {
 		return Execution{}, err
 	}
 	var record Execution
-	if err := strictJSON(data, &record); err != nil {
+	if err := json.Unmarshal(data, &record); err != nil {
 		return Execution{}, err
 	}
 	if record.ID != id {
@@ -388,7 +388,8 @@ func (s *Store) LockSetup(ctx context.Context, operation func() error) error {
 }
 
 // lockFile holds an exclusive flock on one private file under the store root
-// for the duration of operation, waiting until ctx expires.
+// for the duration of operation, waiting until ctx expires. Nothing unlinks
+// these files, so the flock on the inode the name answers is the exclusion.
 func (s *Store) lockFile(ctx context.Context, name string, operation func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -410,13 +411,6 @@ func (s *Store) lockFile(ctx context.Context, name string, operation func() erro
 	}
 	file := os.NewFile(uintptr(fd), name)
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	if err := privateInfo(info, false); err != nil {
-		return err
-	}
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -434,10 +428,6 @@ func (s *Store) lockFile(ctx context.Context, name string, operation func() erro
 		}
 	}
 	defer unix.Flock(fd, unix.LOCK_UN)
-	current, err := s.root.Lstat(name)
-	if err != nil || !os.SameFile(info, current) {
-		return fmt.Errorf("network lock %s identity changed", name)
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

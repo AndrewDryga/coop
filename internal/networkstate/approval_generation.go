@@ -35,7 +35,7 @@ type approvalGeneration struct {
 // ApprovalGeneration reads the counter: zero until an approval changes on this host. A record
 // coop cannot read is an error, never zero, so a reader cannot mistake it for "nothing changed".
 func (s *Store) ApprovalGeneration() (uint64, error) {
-	data, err := s.read(approvalGenerationRecord, 256)
+	data, err := s.read(approvalGenerationRecord)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
@@ -43,7 +43,7 @@ func (s *Store) ApprovalGeneration() (uint64, error) {
 		return 0, err
 	}
 	var record approvalGeneration
-	if err := strictJSON(data, &record); err != nil {
+	if err := json.Unmarshal(data, &record); err != nil {
 		return 0, err
 	}
 	if record.Version != 1 || record.Generation == 0 {

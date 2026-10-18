@@ -106,14 +106,10 @@ func credentialUseLease(ctx context.Context, cfg *config.Config, profile string,
 	}
 	key := fmt.Sprintf("%x", sha256.Sum256([]byte(canonical)))
 	path := filepath.Join(dir, key+".lock")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+	// A host-only lock nothing unlinks: the flock on the inode the name answers is the lease.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, errors.New("credential lease is unavailable")
-	}
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		file.Close()
-		return nil, errors.New("credential lease is unsafe")
 	}
 	mode := syscall.LOCK_SH
 	if exclusive {
@@ -126,11 +122,6 @@ func credentialUseLease(ctx context.Context, cfg *config.Config, profile string,
 		}
 		err = syscall.Flock(int(file.Fd()), mode|syscall.LOCK_NB)
 		if err == nil {
-			current, statErr := os.Lstat(path)
-			if statErr != nil || !os.SameFile(info, current) {
-				file.Close()
-				return nil, errors.New("credential lease changed while opening")
-			}
 			return &credentialLease{file: file, key: key}, nil
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) {

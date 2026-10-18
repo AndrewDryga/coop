@@ -413,7 +413,7 @@ func TestRetentionKeepsASetupCheckRecordWhileItsSnapshotCannotBeRead(t *testing.
 	}
 	s, live := executionFixture(t)
 	setup := egress.Input{Origin: SetupOrigin(), Rules: []egress.Rule{rule("example.com")}}
-	unreadable, gone, linked := unmarkedRun(t, s, live, setup), unmarkedRun(t, s, live, setup), unmarkedRun(t, s, live, setup)
+	unreadable, gone := unmarkedRun(t, s, live, setup), unmarkedRun(t, s, live, setup)
 	evidence := retentionEvidence(t, s)
 	ctx := context.Background()
 	later := time.Now().Add(ExecutionRetention + time.Hour)
@@ -440,18 +440,9 @@ func TestRetentionKeepsASetupCheckRecordWhileItsSnapshotCannotBeRead(t *testing.
 	if err := os.Remove(path(gone)); err != nil {
 		t.Fatal(err)
 	}
-	moved := filepath.Join(t.TempDir(), "elsewhere.json")
-	if err := os.Rename(path(linked), moved); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(moved, path(linked)); err != nil {
-		t.Fatal(err)
-	}
-	for _, run := range []Execution{gone, linked} {
-		if removed, err := evidence.RemoveExpired(ctx, run.ID, later); !removed || err != nil || marked(run) {
-			t.Fatalf("RemoveExpired with the snapshot gone or a link = %v, %v, snapshot marked %v; want the record removed and nothing marked",
-				removed, err, marked(run))
-		}
+	if removed, err := evidence.RemoveExpired(ctx, gone.ID, later); !removed || err != nil || marked(gone) {
+		t.Fatalf("RemoveExpired with the snapshot gone = %v, %v, snapshot marked %v; want the record removed and nothing marked",
+			removed, err, marked(gone))
 	}
 }
 

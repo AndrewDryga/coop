@@ -143,7 +143,7 @@ func (t *QualificationSmoke) RecordEvidence(runID string, data []byte) (string, 
 		if !errors.Is(err, os.ErrExist) {
 			return "", err
 		}
-		prior, err := t.store.read(name, MaxQualificationEvidenceBytes)
+		prior, err := t.store.read(name)
 		if err != nil || !bytes.Equal(prior, data) {
 			return "", errors.New("qualification observations cannot be replaced")
 		}
@@ -178,7 +178,7 @@ func (t *QualificationSmoke) Complete(domain string) (Qualification, error) {
 	if err := validateSmokeOutcome(r, domain); err != nil {
 		return Qualification{}, err
 	}
-	evidence, err := t.store.read("qualification-evidence-"+r.ID+".json", MaxQualificationEvidenceBytes)
+	evidence, err := t.store.read("qualification-evidence-" + r.ID + ".json")
 	if err != nil {
 		return Qualification{}, errors.New("qualification observation artifact is unavailable")
 	}
@@ -203,7 +203,7 @@ func (t *QualificationSmoke) Complete(domain string) (Qualification, error) {
 		if !errors.Is(err, os.ErrExist) {
 			return Qualification{}, err
 		}
-		prior, err := t.store.read(name, maxQualificationBytes)
+		prior, err := t.store.read(name)
 		if err != nil || !bytes.Equal(prior, data) {
 			return Qualification{}, errors.New("network qualification identity collision or invalid content")
 		}
@@ -315,12 +315,12 @@ func (s *Store) Qualification(id string) (Qualification, error) {
 	if err := s.intactAuthority(); err != nil {
 		return Qualification{}, err
 	}
-	data, err := s.read("qualification-"+id+".json", maxQualificationBytes)
+	data, err := s.read("qualification-" + id + ".json")
 	if err != nil {
 		return Qualification{}, err
 	}
 	var q Qualification
-	if err := strictJSON(data, &q); err != nil {
+	if err := json.Unmarshal(data, &q); err != nil {
 		return Qualification{}, err
 	}
 	canonical, err := canonicalQualification(q)
@@ -415,7 +415,7 @@ func dependencyReference(d egress.Dependency) string {
 // qualificationIsCurrent reports whether the record file names the current contract.
 // It reads only the contract field; verification happens in Qualification.
 func (s *Store) qualificationIsCurrent(name string) bool {
-	data, err := s.read(name, maxQualificationBytes)
+	data, err := s.read(name)
 	if err != nil {
 		return false
 	}

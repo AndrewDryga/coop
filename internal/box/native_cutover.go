@@ -376,16 +376,14 @@ func migrateNativeAccount(ctx context.Context, cfg *config.Config, ag agents.Age
 		return current, true, nil
 	}
 	var journal nativeCutover
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&journal) != nil || decoder.Decode(new(any)) != io.EOF {
+	if json.Unmarshal(data, &journal) != nil {
 		return nil, true, errors.New("invalid credential cutover receipt; preserve for recovery")
 	}
 	if err := validateNativeCutover(cfg, ag, account, journal); err != nil {
 		return nil, true, err
 	}
-	if saved, readErr := safefile.ReadRegular(root.dir(), "cutover.json", accountAuthorityLimit); errors.Is(readErr, os.ErrNotExist) {
-		if err := writeAccountPrivate(root, lock, "cutover.json", data); err != nil {
+	if saved, readErr := os.ReadFile(filepath.Join(root.path, "cutover.json")); errors.Is(readErr, os.ErrNotExist) {
+		if err := writeAccountPrivate(root, "cutover.json", data); err != nil {
 			return nil, true, err
 		}
 	} else if readErr != nil || !bytes.Equal(saved, data) {
@@ -405,14 +403,9 @@ func migrateNativeAccount(ctx context.Context, cfg *config.Config, ag agents.Age
 	if err := checkWriters(); err != nil {
 		return nil, true, err
 	}
-	next, _, err := root.publish(lock, spec, account, nil, journal.Next, nil)
+	next, _, err := root.publish(spec, account, nil, journal.Next, nil)
 	if err == nil {
-		if err = bootstrap.checkLock(bootstrapLock); err == nil {
-			err = unix.Unlinkat(int(bootstrap.dir().Fd()), "cutover.json", 0)
-		}
-		if err == nil {
-			err = bootstrap.dir().Sync()
-		}
+		err = os.Remove(filepath.Join(bootstrap.path, "cutover.json"))
 	}
 	return next, true, err
 }
@@ -432,7 +425,7 @@ func prepareNativeCutover(ctx context.Context, cfg *config.Config, ag agents.Age
 		root.close()
 		return nil, nil, nil, err
 	}
-	data, err := safefile.ReadRegular(root.dir(), "cutover.json", accountAuthorityLimit)
+	data, err := os.ReadFile(filepath.Join(root.path, "cutover.json"))
 	if err == nil {
 		return root, lock, data, nil
 	}
@@ -441,13 +434,7 @@ func prepareNativeCutover(ctx context.Context, cfg *config.Config, ag agents.Age
 	}
 	// If a prior publish retired sources but cleanup removed the bootstrap,
 	// recover only its exact canonical journal, never newly discovered grants.
-	canonical, openErr := safefile.OpenRoot(filepath.Join(cfg.ConfigDir, ag.Name(), "credentials", account))
-	if openErr == nil {
-		data, err = safefile.ReadRegular(canonical, "cutover.json", accountAuthorityLimit)
-		_ = canonical.Close()
-	} else {
-		err = openErr
-	}
+	data, err = os.ReadFile(filepath.Join(cfg.ConfigDir, ag.Name(), "credentials", account, "cutover.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fail(err)
 	}
@@ -467,7 +454,7 @@ func prepareNativeCutover(ctx context.Context, cfg *config.Config, ag agents.Age
 			return fail(err)
 		}
 	}
-	if err := writeAccountPrivate(root, lock, "cutover.json", data); err != nil {
+	if err := writeAccountPrivate(root, "cutover.json", data); err != nil {
 		return fail(err)
 	}
 	return root, lock, data, nil
@@ -554,36 +541,4 @@ func retireCutoverSource(source nativeCutoverSource) error {
 		return err
 	}
 	return root.Sync()
-}
-
-// Callers hold the permanent authority lock. Atomic rename prevents a crash
-// from leaving a partial receipt; original grants are retired only afterward.
-func writeAccountPrivate(root *accountAuthorityRoot, lock *os.File, name string, data []byte) error {
-	if !accountNameValid(name) || len(data) > accountAuthorityLimit {
-		return errors.New("invalid private account publication")
-	}
-	temporary := ".private-" + randid.Hex(16)
-	fd, err := unix.Openat(int(root.dir().Fd()), temporary, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
-	if err != nil {
-		return err
-	}
-	f := os.NewFile(uintptr(fd), temporary)
-	defer unix.Unlinkat(int(root.dir().Fd()), temporary, 0)
-	_, err = f.Write(data)
-	if err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	if err := root.checkLock(lock); err != nil {
-		return err
-	}
-	if err := unix.Renameat(int(root.dir().Fd()), temporary, int(root.dir().Fd()), name); err != nil {
-		return err
-	}
-	return errors.Join(root.dir().Sync(), root.checkLock(lock))
 }

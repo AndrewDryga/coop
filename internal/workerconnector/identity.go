@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
@@ -355,38 +356,11 @@ func readEnrollmentToken(path string) (string, error) {
 }
 
 func atomicWriteIdentity(path string, contents []byte) error {
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create worker identity directory: %w", err)
 	}
-	temporary, err := os.CreateTemp(directory, ".worker-identity-*")
-	if err != nil {
-		return fmt.Errorf("create worker identity file: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(contents); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
+	if err := config.WriteFileAtomic(path, contents); err != nil {
 		return fmt.Errorf("install worker identity: %w", err)
 	}
-	directoryHandle, err := os.Open(directory)
-	if err != nil {
-		return err
-	}
-	defer directoryHandle.Close()
-	return directoryHandle.Sync()
+	return nil
 }

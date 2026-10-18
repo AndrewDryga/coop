@@ -77,12 +77,12 @@ func (s *Store) ImageFileDigests(image string, paths []string) map[string]ImageF
 	if err != nil {
 		return nil
 	}
-	data, err := s.read(imageFilesRecord(id), maxPrivateRecordBytes)
+	data, err := s.read(imageFilesRecord(id))
 	if err != nil {
 		return nil
 	}
 	var record ImageFileRecord
-	if strictJSON(data, &record) != nil {
+	if json.Unmarshal(data, &record) != nil {
 		return nil
 	}
 	if record.Version != 1 || record.ID != id || record.Image != image || len(record.Files) != len(sorted) {

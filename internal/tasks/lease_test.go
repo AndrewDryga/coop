@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -232,25 +231,6 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 					t.Fatalf("unsupported authority changed: %q err=%v", got, readErr)
 				}
 			})
-		}
-	})
-	t.Run("removed fields fail closed", func(t *testing.T) {
-		root := t.TempDir()
-		task := taskWithCompletedChecklist(t, root, StateInProgress, "unknown-field")
-		record := testAuditReopenRecord(task.ID, "unknown-field-generation")
-		body, err := json.Marshal(record)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body = []byte(strings.Replace(string(body), `"version":3`, `"version":3,"descendants":[]`, 1))
-		writeRawAuditReopenRecord(t, root, task.ID, body)
-		if _, ok, err := ReadAuditReopenRecord(root, task.ID); err == nil || ok ||
-			!strings.Contains(err.Error(), `unknown field "descendants"`) {
-			t.Fatalf("removed field read = ok=%v err=%v", ok, err)
-		}
-		if lease, _, err := TryTaskLease(root, task, testLeaseOwner()); lease != nil || err == nil ||
-			!strings.Contains(err.Error(), `unknown field "descendants"`) {
-			t.Fatalf("removed field lease = %#v err=%v", lease, err)
 		}
 	})
 	t.Run("unsupported blocked authority cannot unblock", func(t *testing.T) {
@@ -1050,23 +1030,15 @@ func TestLeaseAuthorityRootCreatesOwnerOnlyRealDirectory(t *testing.T) {
 	}
 }
 
-func TestLeaseAuthorityRootRejectsUnsafePath(t *testing.T) {
-	for _, kind := range []string{"file", "symlink"} {
-		t.Run(kind, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "authority")
-			if kind == "file" {
-				if err := os.WriteFile(dir, []byte("not a directory"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			} else if err := os.Symlink(t.TempDir(), dir); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv(TestLeaseAuthorityRootEnv, dir)
-			registry, err := OpenLeaseAuthorityRoot()
-			if registry != nil || err == nil {
-				t.Fatalf("open %s authority path = (%v, %v), want refusal", kind, registry, err)
-			}
-		})
+func TestLeaseAuthorityRootRejectsAFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "authority")
+	if err := os.WriteFile(dir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(TestLeaseAuthorityRootEnv, dir)
+	registry, err := OpenLeaseAuthorityRoot()
+	if registry != nil || err == nil {
+		t.Fatalf("open file authority path = (%v, %v), want refusal", registry, err)
 	}
 }
 
@@ -1097,99 +1069,4 @@ func TestLeaseAuthorityConcurrentFreshOpensConverge(t *testing.T) {
 	if !pathExists(dir) {
 		t.Fatalf("concurrent opens did not create %s", dir)
 	}
-}
-
-// replaceLeaseAuthorityRecord unlinks a record and recreates its name. The caller still holds an fd
-// on the original inode, so the kernel cannot recycle that inode number — the swap is guaranteed to
-// produce a different identity, which is exactly the purge-underfoot race the recheck must catch.
-func replaceLeaseAuthorityRecord(t *testing.T, name string) {
-	t.Helper()
-	path := filepath.Join(os.Getenv(TestLeaseAuthorityRootEnv), name)
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestLeaseAuthorityLockRechecksInodeIdentity(t *testing.T) {
-	root := t.TempDir()
-	task := taskForLease(t, root, StateTodo, "identity")
-	key, err := LeaseAuthorityKey(root, task.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	name := key + ".lock"
-	flock := func(f *os.File) error {
-		return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-	}
-
-	t.Run("a swapped inode is dropped and the lock retaken on the current one", func(t *testing.T) {
-		attempts := 0
-		file, err := lockLeaseAuthorityWith(root, task.ID, true, func(f *os.File) error {
-			if err := flock(f); err != nil {
-				return err
-			}
-			attempts++
-			if attempts == 1 {
-				replaceLeaseAuthorityRecord(t, name)
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if attempts != 2 {
-			t.Fatalf("lock attempts = %d, want 2 (one swap, one retry)", attempts)
-		}
-		locked, err := file.Stat()
-		if err != nil {
-			t.Fatal(err)
-		}
-		named, err := os.Lstat(filepath.Join(os.Getenv(TestLeaseAuthorityRootEnv), name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !os.SameFile(locked, named) {
-			t.Fatal("returned lock is not held on the inode the registry name resolves to")
-		}
-		if err := unlockLeaseFile(file); err != nil {
-			t.Fatal(err)
-		}
-	})
-
-	t.Run("a name that keeps changing identity fails instead of holding an orphan", func(t *testing.T) {
-		attempts := 0
-		file, err := lockLeaseAuthorityWith(root, task.ID, true, func(f *os.File) error {
-			if err := flock(f); err != nil {
-				return err
-			}
-			attempts++
-			replaceLeaseAuthorityRecord(t, name)
-			return nil
-		})
-		if file != nil || !errors.Is(err, errLeaseAuthorityIdentity) {
-			t.Fatalf("relentless swap = %v, %v; want errLeaseAuthorityIdentity", file, err)
-		}
-		if attempts != leaseAuthorityIdentityAttempts {
-			t.Fatalf("lock attempts = %d, want the bound %d", attempts, leaseAuthorityIdentityAttempts)
-		}
-	})
-
-	t.Run("a record removed underfoot surfaces as gone, not as a held lock", func(t *testing.T) {
-		file, err := lockLeaseAuthorityWith(root, task.ID, false, func(f *os.File) error {
-			if err := flock(f); err != nil {
-				return err
-			}
-			return os.Remove(filepath.Join(os.Getenv(TestLeaseAuthorityRootEnv), name))
-		})
-		if file != nil || !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("removed record = %v, %v; want os.ErrNotExist", file, err)
-		}
-	})
 }

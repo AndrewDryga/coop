@@ -102,7 +102,7 @@ func writeKeptAnswer(t *testing.T, cfg *config.Config, spec accountAuthoritySpec
 	if !at.IsZero() {
 		pending.ReceivedAt = at.UnixMilli()
 	}
-	if err := root.writeRenewal(lock, nil, pending); err != nil {
+	if err := root.beginRenewal(pending); err != nil {
 		t.Fatal(err)
 	}
 	return pending
@@ -258,7 +258,7 @@ func TestAccountRenewalArchivesASupersededJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := authorityTestRecord(current.Epoch + 1)
-	if _, _, err := root.publish(lock, spec, "work", current, next, nil); err != nil {
+	if _, _, err := root.publish(spec, "work", current, next, nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = lock.Close()
@@ -281,7 +281,7 @@ func TestAccountRenewalRecoversOnlyExactPublishedReceipt(t *testing.T) {
 			}
 			pending := accountRenewal{Version: 1, ID: strings.Repeat("a", 32), Provider: current.Provider, Account: current.Account,
 				Epoch: current.Epoch, Revision: current.Revision, Received: []byte("inert issued grant")}
-			if err := root.writeRenewal(lock, nil, pending); err != nil {
+			if err := root.beginRenewal(pending); err != nil {
 				t.Fatal(err)
 			}
 			next := cloneAccountAuthority(current)
@@ -289,7 +289,7 @@ func TestAccountRenewalRecoversOnlyExactPublishedReceipt(t *testing.T) {
 			if matches {
 				next.Renewal = pending.ID
 			}
-			if _, effect, err := root.publish(lock, spec, "work", current, next, nil); err != nil || !effect {
+			if _, effect, err := root.publish(spec, "work", current, next, nil); err != nil || !effect {
 				t.Fatal(err)
 			}
 			_ = lock.Close()

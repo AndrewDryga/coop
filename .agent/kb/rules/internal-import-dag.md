@@ -46,6 +46,11 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-18 — eval, forkspace and workerconnector import config for `config.WriteFileAtomic`, the one
+  path-based atomic writer: each carried its own temp-file-and-rename copy (eval's store, the trusted
+  git view, the worker's identity, journal, cursors and activity records), as did cli and box (task
+  2026-10-15-read-coop-s-host-only-records-with-one-plain-hel). config is a leaf, so no cycle; eval
+  is no longer one.
 - 2026-10-18 — new leaf `randid` (stdlib only): one random-ID helper for box, cli, forkspace, loop,
   networkgateway, networkstate, session and tasks, which each carried their own crypto/rand
   wrapper with an error branch that cannot run since Go 1.24 (task

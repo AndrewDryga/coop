@@ -79,7 +79,7 @@ func stampNativeHistory(ctx context.Context, home, source, scope, fingerprint st
 		return
 	}
 	defer lock.Close()
-	_ = writeNativeHistoryReceipt(root, lock, nativeHistoryStampName(source, scope),
+	_ = writeNativeHistoryReceipt(root, nativeHistoryStampName(source, scope),
 		nativeHistoryStamp{Version: 1, Source: source, Scope: scope, Fingerprint: fingerprint}, false)
 }
 

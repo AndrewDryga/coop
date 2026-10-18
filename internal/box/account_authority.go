@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -17,11 +16,8 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/randid"
-	"github.com/AndrewDryga/coop/internal/safefile"
 	"golang.org/x/sys/unix"
 )
-
-const accountAuthorityLimit = 12 << 20
 
 // errAccountAuthorityBusy is another process holding the account's lock for longer than this one waits.
 var errAccountAuthorityBusy = errors.New("canonical credential transaction is busy — retry")
@@ -50,16 +46,15 @@ type accountAuthoritySpec struct {
 	Complete func(files map[string][]byte, received []byte, at time.Time) (map[string][]byte, error)
 }
 
-type accountDirectoryPin struct {
-	parent *os.File
-	name   string
-	dir    *os.File
-}
-
+// accountAuthorityRoot is one account's custody folder under ConfigDir: its credential envelope,
+// renewal journal and lock, or a native home's owner record beside the home it publishes. No box
+// mounts the folder (a native home's box mounts only its home child) and only coop writes it, so
+// its records are read plainly and its lock is a plain flock. The one thing that deletes custody
+// folders, `coop credentials rm`, does so only under lockAccountHomes, when no launch is inside
+// one. The descriptor serves the links and renames that move files between it and a native home.
 type accountAuthorityRoot struct {
 	path string
-	base *os.File
-	pins []accountDirectoryPin
+	fd   *os.File
 }
 
 func accountNameValid(name string) bool {
@@ -80,8 +75,10 @@ func openAccountAuthorityRoot(cfg *config.Config, spec accountAuthoritySpec, acc
 	return openPrivateAccountTree(cfg.ConfigDir, spec.Provider, "credentials", account)
 }
 
-// The credential envelope and native-home owner record use the same host-only custody:
-// descriptors pin each component, and no guest ever mounts their parent directory.
+// openPrivateAccountTree opens path/names... as custody, creating each folder owner-only. The
+// names come from provider and account settings, so each must be one plain folder name. Each is
+// also refused as a link: ConfigDir/<provider> was a box mount before 2026-07, so a box of that
+// time could have left a link in a name custody uses now.
 func openPrivateAccountTree(path string, names ...string) (*accountAuthorityRoot, error) {
 	if !filepath.IsAbs(path) || len(names) == 0 {
 		return nil, errors.New("invalid private account directory")
@@ -94,36 +91,25 @@ func openPrivateAccountTree(path string, names ...string) (*accountAuthorityRoot
 	if err := config.EnsurePrivateDir(path); err != nil {
 		return nil, err
 	}
-	base, err := safefile.OpenRoot(path)
-	if err != nil {
-		return nil, err
-	}
-	root := &accountAuthorityRoot{path: path, base: base}
-	if err := privateAccountDirectory(base); err != nil {
-		root.close()
-		return nil, err
-	}
-	parent := base
+	dir := path
 	for _, name := range names {
-		if err := unix.Mkdirat(int(parent.Fd()), name, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
-			root.close()
+		dir = filepath.Join(dir, name)
+		if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 			return nil, fmt.Errorf("create canonical credential directory: %w", err)
 		}
-		dir, err := safefile.OpenDir(parent, name)
-		if err != nil {
-			root.close()
-			return nil, fmt.Errorf("open canonical credential directory: %w", err)
+		if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, errors.Join(fmt.Errorf("canonical credential path %s must be a real directory", dir), err)
 		}
-		root.pins = append(root.pins, accountDirectoryPin{parent: parent, name: name, dir: dir})
-		if err := privateAccountDirectory(dir); err != nil {
-			root.close()
-			return nil, err
-		}
-		parent = dir
 	}
-	return root, nil
+	fd, err := os.Open(dir)
+	if err != nil {
+		return nil, fmt.Errorf("open canonical credential directory: %w", err)
+	}
+	return &accountAuthorityRoot{path: dir, fd: fd}, nil
 }
 
+// privateAccountDirectory refuses a folder others can read. It guards what a box can reach: a
+// native home's box can chmod the home it mounts, and a legacy profile folder was a box mount.
 func privateAccountDirectory(dir *os.File) error {
 	info, err := dir.Stat()
 	if err != nil {
@@ -136,6 +122,8 @@ func privateAccountDirectory(dir *os.File) error {
 	return nil
 }
 
+// privateAccountFile is privateAccountDirectory's check for a legacy writer lock, which lives in a
+// folder a box could reach.
 func privateAccountFile(file *os.File) error {
 	info, err := file.Stat()
 	if err != nil {
@@ -148,14 +136,9 @@ func privateAccountFile(file *os.File) error {
 	return nil
 }
 
-func (r *accountAuthorityRoot) close() {
-	for i := len(r.pins) - 1; i >= 0; i-- {
-		_ = r.pins[i].dir.Close()
-	}
-	_ = r.base.Close()
-}
+func (r *accountAuthorityRoot) close() { _ = r.fd.Close() }
 
-func (r *accountAuthorityRoot) dir() *os.File { return r.pins[len(r.pins)-1].dir }
+func (r *accountAuthorityRoot) dir() *os.File { return r.fd }
 
 func sameAccountInode(a, b *os.File) bool {
 	x, err := a.Stat()
@@ -166,132 +149,85 @@ func sameAccountInode(a, b *os.File) bool {
 	return err == nil && os.SameFile(x, y)
 }
 
-// Directory descriptors confine writes; checking every named pin also prevents reporting
-// a successful publication into a detached directory after its name was replaced.
-func (r *accountAuthorityRoot) checkNamed() error {
-	base, err := safefile.OpenRoot(r.path)
-	if err != nil {
-		return err
-	}
-	valid := sameAccountInode(base, r.base)
-	_ = base.Close()
-	if !valid {
-		return errors.New("canonical credential root changed")
-	}
-	for _, pin := range r.pins {
-		current, err := safefile.OpenDir(pin.parent, pin.name)
-		if err != nil {
-			return fmt.Errorf("reopen private directory %s: %w", pin.name, err)
-		}
-		valid := sameAccountInode(current, pin.dir)
-		_ = current.Close()
-		if !valid {
-			return errors.New("canonical credential directory changed")
-		}
-	}
-	return nil
-}
-
-func (r *accountAuthorityRoot) checkLock(lock *os.File) error {
-	if err := r.checkNamed(); err != nil {
-		return err
-	}
-	current, err := safefile.OpenRegular(r.dir(), ".authority.lock")
-	if err != nil {
-		return fmt.Errorf("reopen canonical lock: %w", err)
-	}
-	defer current.Close()
-	if err := privateAccountFile(current); err != nil {
-		return err
-	}
-	if !sameAccountInode(lock, current) {
-		return errors.New("canonical credential lock changed")
-	}
-	return nil
-}
-
+// lock takes the custody's lock, waiting up to 30 seconds (or ctx's deadline) for another process
+// to finish its transaction.
 func (r *accountAuthorityRoot) lock(ctx context.Context) (*os.File, error) {
-	// Elect one creator, then open the permanent inode without another create attempt.
-	flags := unix.O_RDWR | unix.O_CLOEXEC | unix.O_NOFOLLOW | unix.O_NONBLOCK
-	fd, err := unix.Openat(int(r.dir().Fd()), ".authority.lock", flags|unix.O_CREAT|unix.O_EXCL, 0o600)
-	if errors.Is(err, unix.EEXIST) {
-		fd, err = unix.Openat(int(r.dir().Fd()), ".authority.lock", flags, 0)
-	}
+	lock, err := os.OpenFile(filepath.Join(r.path, ".authority.lock"), os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open canonical lock: %w", err)
 	}
-	lock := os.NewFile(uintptr(fd), ".authority.lock")
-	if err := privateAccountFile(lock); err != nil {
+	if err := flockWait(ctx, lock, unix.LOCK_EX); err != nil {
 		_ = lock.Close()
 		return nil, err
 	}
+	return lock, nil
+}
+
+// flockWait takes how on file, waiting up to 30 seconds (or ctx's deadline) for another process
+// to let go.
+func flockWait(ctx context.Context, file *os.File, how int) error {
 	until := time.Now().Add(30 * time.Second)
 	if deadline, ok := ctx.Deadline(); ok && deadline.Before(until) {
 		until = deadline
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			_ = lock.Close()
-			return nil, err
+			return err
 		}
 		if !time.Now().Before(until) {
-			_ = lock.Close()
-			return nil, errAccountAuthorityBusy
+			return errAccountAuthorityBusy
 		}
-		err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		err := unix.Flock(int(file.Fd()), how|unix.LOCK_NB)
 		if err == nil {
-			if err := r.checkLock(lock); err != nil {
-				_ = lock.Close()
-				return nil, err
-			}
-			return lock, nil
+			return nil
 		}
 		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) {
-			_ = lock.Close()
-			return nil, err
+			return err
 		}
 		timer := time.NewTimer(min(20*time.Millisecond, time.Until(until)))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			_ = lock.Close()
-			return nil, ctx.Err()
+			return ctx.Err()
 		case <-timer.C:
 		}
 	}
 }
 
+// lockAccountHomes guards an account's native-homes folder against `coop credentials rm`:
+// launches hold it shared while they work in one of its homes, and removal holds it exclusive while
+// it deletes the folder, custody lock files and all. The lock sits beside the folder, where removal
+// does not reach, so both sides contend for one inode.
+func lockAccountHomes(ctx context.Context, folder string, exclusive bool) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(folder), 0o700); err != nil {
+		return nil, err
+	}
+	lock, err := os.OpenFile(filepath.Join(filepath.Dir(folder), "."+filepath.Base(folder)+".lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open native homes lock: %w", err)
+	}
+	how := unix.LOCK_SH
+	if exclusive {
+		how = unix.LOCK_EX
+	}
+	if err := flockWait(ctx, lock, how); err != nil {
+		_ = lock.Close()
+		return nil, err
+	}
+	return func() { _ = lock.Close() }, nil
+}
+
+// LockAccountHomesForRemoval holds every native home of account so `coop credentials rm` can delete
+// them: it waits for launches working in one to finish and keeps new ones out until release.
+func LockAccountHomesForRemoval(ctx context.Context, cfg *config.Config, provider, account string) (func(), error) {
+	return lockAccountHomes(ctx, HistoryAccountRoot(cfg, provider, account), true)
+}
+
 func (r *accountAuthorityRoot) read(spec accountAuthoritySpec, account string) (*accountAuthority, error) {
-	file, err := safefile.OpenRegular(r.dir(), "authority.json")
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	if err := privateAccountFile(file); err != nil {
-		return nil, err
-	}
-	info, err := file.Stat()
-	if err != nil || info.Size() < 0 || info.Size() > accountAuthorityLimit {
-		return nil, errors.New("canonical credential exceeds its bound")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, accountAuthorityLimit+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > accountAuthorityLimit {
-		return nil, errors.New("canonical credential exceeds its bound")
-	}
 	var record accountAuthority
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&record); err != nil {
-		return nil, errors.New("invalid canonical credential document")
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return nil, errors.New("trailing canonical credential data")
+	ok, err := config.ReadRecord(filepath.Join(r.path, "authority.json"), &record)
+	if err != nil || !ok {
+		return nil, err
 	}
 	if err := validateAccountAuthority(spec, account, &record); err != nil {
 		return nil, err
@@ -342,7 +278,7 @@ func lockAccountAuthority(ctx context.Context, cfg *config.Config, spec accountA
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	current, err = root.settleRenewal(lock, spec, account, current)
+	current, err = root.settleRenewal(spec, account, current)
 	if err != nil {
 		_ = lock.Close()
 		root.close()
@@ -385,7 +321,9 @@ func cloneAccountAuthority(current *accountAuthority) *accountAuthority {
 	return &copy
 }
 
-func (root *accountAuthorityRoot) publish(lock *os.File, spec accountAuthoritySpec, account string,
+// publish replaces the envelope with next if its generation follows current coherently. Callers
+// hold the custody lock, so current is what is on disk.
+func (root *accountAuthorityRoot) publish(spec accountAuthoritySpec, account string,
 	current, next *accountAuthority, readinessErr error) (*accountAuthority, bool, error) {
 	if next == nil {
 		return current, false, readinessErr
@@ -406,52 +344,33 @@ func (root *accountAuthorityRoot) publish(lock *os.File, spec accountAuthoritySp
 		return current, false, err
 	}
 	data, err := json.Marshal(next)
-	if err != nil || len(data) >= accountAuthorityLimit {
+	if err != nil {
 		return current, false, errors.New("canonical credential serialization failed")
 	}
-	name := ".authority-" + randid.Hex(16)
-	fd, err := unix.Openat(int(root.dir().Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
-	if err != nil {
+	if err := writeAccountPrivate(root, "authority.json", append(data, '\n')); err != nil {
 		return current, false, err
-	}
-	file := os.NewFile(uintptr(fd), name)
-	defer unix.Unlinkat(int(root.dir().Fd()), name, 0)
-	_, writeErr := file.Write(append(data, '\n'))
-	if writeErr == nil {
-		writeErr = file.Sync()
-	}
-	closeErr := file.Close()
-	if writeErr != nil || closeErr != nil {
-		return current, false, errors.Join(writeErr, closeErr)
-	}
-	if err := root.checkLock(lock); err != nil {
-		return current, false, err
-	}
-	latest, err := root.read(spec, account)
-	if err != nil {
-		return current, false, err
-	}
-	originalData, err := json.Marshal(current)
-	if err != nil {
-		return current, false, err
-	}
-	latestData, err := json.Marshal(latest)
-	if err != nil {
-		return current, false, err
-	}
-	if !bytes.Equal(originalData, latestData) {
-		return current, false, errors.New("canonical credential changed during transaction — preserve and recover")
-	}
-	if err := unix.Renameat(int(root.dir().Fd()), name, int(root.dir().Fd()), "authority.json"); err != nil {
-		return current, false, err
-	}
-	// This error is post-publication: return the new authority and effect truth even when
-	// durability or the named-root postcondition is unconfirmed. Never blindly repeat refresh.
-	if err := root.dir().Sync(); err != nil {
-		return next, true, fmt.Errorf("canonical credential published; directory sync failed: %w", err)
-	}
-	if err := root.checkLock(lock); err != nil {
-		return next, true, fmt.Errorf("canonical credential published into changed custody: %w", err)
 	}
 	return next, true, readinessErr
+}
+
+// writeAccountPrivate publishes one custody record whole: a temp file, fsynced, renamed over name.
+// Callers hold the custody lock.
+func writeAccountPrivate(root *accountAuthorityRoot, name string, data []byte) error {
+	if !accountNameValid(name) {
+		return errors.New("invalid private account publication")
+	}
+	temporary := filepath.Join(root.path, ".private-"+randid.Hex(16))
+	f, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temporary)
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if err = errors.Join(err, f.Close()); err != nil {
+		return err
+	}
+	return os.Rename(temporary, filepath.Join(root.path, name))
 }

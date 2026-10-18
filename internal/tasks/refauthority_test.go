@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -365,47 +364,4 @@ func TestLockRefAuthorityKeyedOnResolvedPathNotName(t *testing.T) {
 		t.Fatalf("lock on %q = %v, want a same-named-but-different worktree to stay parallel", b, err)
 	}
 	defer releaseB()
-}
-
-// refAuthorityIsCurrent is what makes the lock proof against a purge or a careless `rm -rf .locks`:
-// flock binds a process to an INODE, never the name every other controller opens, so a record
-// removed and recreated between open and flock must never leave two controllers each holding an
-// "exclusive" lock on a different inode. Mirrors lease_test.go's identical race on the task-lease
-// registry (TestLeaseAuthorityLockRechecksInodeIdentity / replaceLeaseAuthorityRecord). Moved from
-// fork_loop_test.go with the function.
-func TestRefAuthorityIsCurrentDetectsSwappedInode(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "ref-test.lock")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		t.Fatal(err)
-	}
-	if current, err := refAuthorityIsCurrent(f, path); err != nil || !current {
-		t.Fatalf("freshly opened lock current = (%v, %v), want (true, nil)", current, err)
-	}
-
-	// This process still holds an fd on the original inode, so the kernel cannot recycle its
-	// number — the swap below is guaranteed to produce a different identity.
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	swapped, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	swapped.Close()
-	if current, err := refAuthorityIsCurrent(f, path); err != nil || current {
-		t.Fatalf("swapped-inode lock current = (%v, %v), want (false, nil)", current, err)
-	}
-
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	if current, err := refAuthorityIsCurrent(f, path); err != nil || current {
-		t.Fatalf("unlinked lock current = (%v, %v), want (false, nil)", current, err)
-	}
 }

@@ -48,12 +48,12 @@ var allowedEdges = map[string][]string{
 	"config":                nil,
 	"contextc":              {"project"},
 	"egress":                {"safetext"},
-	"eval":                  nil,
+	"eval":                  {"config"},
 	"fsidentity":            nil,
 	"gatewayimage":          {"runtime"},
 	"forkctl":               {"agent", "box", "config", "forkspace", "hostsurface", "project", "runtime", "sessionsvc", "tasks", "ui"},
 	"hostsurface":           nil,
-	"forkspace":             {"fsidentity", "processidentity", "randid", "safefile", "shadowpath"},
+	"forkspace":             {"config", "fsidentity", "processidentity", "randid", "safefile", "shadowpath"},
 	"consult":               {"agent"},
 	"ladder":                {"agent"},
 	"loop":                  {"agent", "box", "config", "contextc", "forkspace", "ladder", "loopcfg", "preset", "project", "randid", "runtime", "taskmcp", "tasks", "ui"},
@@ -90,7 +90,7 @@ var allowedEdges = map[string][]string{
 	"testutil/wait":         nil,
 	"testutil/workertls":    nil,
 	"ui":                    {"safetext"},
-	"workerconnector":       {"forkspace", "secretscan", "workerproto"},
+	"workerconnector":       {"config", "forkspace", "secretscan", "workerproto"},
 	"workerproto":           {"session"},
 }
 

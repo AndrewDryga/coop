@@ -1,12 +1,10 @@
 package tasks
 
 import (
-	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -191,41 +189,14 @@ func validateTaskOwnerRecord(record TaskOwnerRecord, id string) error {
 	}
 }
 
-func decodeTaskOwnerRecord(data []byte) (TaskOwnerRecord, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	var record TaskOwnerRecord
-	if err := dec.Decode(&record); err != nil {
-		return TaskOwnerRecord{}, err
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return TaskOwnerRecord{}, errors.New("task owner record contains multiple JSON values")
-		}
-		return TaskOwnerRecord{}, err
-	}
-	return record, nil
-}
-
 func readTaskOwnerRecordUnvalidated(root, id string) (TaskOwnerRecord, bool, error) {
 	name, err := taskOwnerRecordName(root, id)
 	if err != nil {
 		return TaskOwnerRecord{}, false, err
 	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return TaskOwnerRecord{}, false, err
-	}
-	defer registry.Close()
-	data, err := ReadTaskMetadataFile(registry, name)
-	if errors.Is(err, os.ErrNotExist) {
-		return TaskOwnerRecord{}, false, nil
-	}
-	if err != nil {
-		return TaskOwnerRecord{}, false, err
-	}
-	record, err := decodeTaskOwnerRecord(data)
-	if err != nil {
+	var record TaskOwnerRecord
+	ok, err := readLeaseRecord(name, &record)
+	if err != nil || !ok {
 		return TaskOwnerRecord{}, false, err
 	}
 	if err := validateTaskOwnerRecord(record, id); err != nil {

@@ -184,6 +184,8 @@ func validateForkDiscard(intent forkDiscardIntent) error {
 	return nil
 }
 
+// Stays bounded and no-follow: fork records sit in <repo>-forks/.coop, which a box can reach
+// through a nested mount.
 func readForkDiscard(repo string, identity forkspace.Identity) (forkDiscardIntent, bool, error) {
 	path := forkDiscardPath(repo, identity)
 	info, err := os.Lstat(path)

@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"slices"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -240,8 +239,8 @@ func TestNetworkQualificationCoversOnlyTheClientsInItsImage(t *testing.T) {
 	}
 }
 
-func TestNetworkQualificationRejectsTamperAndFilesystemTraps(t *testing.T) {
-	for _, kind := range []string{"content", "unknown-field", "noncanonical", "symlink", "fifo", "oversized", "public", "key-loss"} {
+func TestNetworkQualificationRejectsTamper(t *testing.T) {
+	for _, kind := range []string{"content", "noncanonical", "key-loss"} {
 		t.Run(kind, func(t *testing.T) {
 			smoke, _ := qualificationFixture(t)
 			q, err := smoke.Complete(smokeDomain)
@@ -257,37 +256,15 @@ func TestNetworkQualificationRejectsTamperAndFilesystemTraps(t *testing.T) {
 			case "content":
 				q.Candidate.ClientImage = "sha256:" + strings.Repeat("f", 64)
 				data, _ = json.Marshal(q)
-			case "unknown-field":
-				data = append([]byte(`{"passed":true,`), data[1:]...)
 			case "noncanonical":
 				slices.Reverse(q.Clients)
 				data, _ = json.Marshal(q)
-			case "symlink":
-				if err := os.Rename(path, path+".target"); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(path+".target", path); err != nil {
-					t.Fatal(err)
-				}
-			case "fifo":
-				if err := os.Remove(path); err != nil {
-					t.Fatal(err)
-				}
-				if err := syscall.Mkfifo(path, 0600); err != nil {
-					t.Fatal(err)
-				}
-			case "oversized":
-				data = []byte(strings.Repeat(" ", maxQualificationBytes+1))
-			case "public":
-				if err := os.Chmod(path, 0644); err != nil {
-					t.Fatal(err)
-				}
 			case "key-loss":
 				if err := smoke.store.root.Remove("owner.key"); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if slices.Contains([]string{"content", "unknown-field", "noncanonical", "oversized"}, kind) {
+			if slices.Contains([]string{"content", "noncanonical"}, kind) {
 				if err := os.WriteFile(path, data, 0600); err != nil {
 					t.Fatal(err)
 				}

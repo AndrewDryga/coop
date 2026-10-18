@@ -132,10 +132,6 @@ func ImportACPThreadBindings(ctx context.Context, cfg *config.Config, repo strin
 	if err != nil {
 		return "", err
 	}
-	if err := root.checkNamed(); err != nil {
-		root.close()
-		return "", err
-	}
 	root.close()
 	source := filepath.Join(cfg.ConfigDir, "acp-threads")
 	destination := filepath.Join(source, key, "bindings")
@@ -215,9 +211,9 @@ func importNativeHistory(ctx context.Context, home, source string, plan agents.N
 		}
 		var importErr error
 		if indexKey, index := plan.Indexes[file.Path]; index {
-			importErr = importNativeIndex(root, lock, origin, destination, source, file, indexKey, plan.Filtered[file.Path], plan.Dependencies[file.Path])
+			importErr = importNativeIndex(root, origin, destination, source, file, indexKey, plan.Filtered[file.Path], plan.Dependencies[file.Path])
 		} else {
-			importErr = importNativeHistoryFile(root, lock, origin, destination, source, file, plan.Filtered[file.Path], plan.Dependencies[file.Path]...)
+			importErr = importNativeHistoryFile(root, origin, destination, source, file, plan.Filtered[file.Path], plan.Dependencies[file.Path]...)
 		}
 		if importErr != nil {
 			return fmt.Errorf("import native history %s (original retained): %w", file.Path, importErr)
@@ -244,7 +240,7 @@ func checkNativeHistoryHome(home string, destination *os.File) error {
 	return nil
 }
 
-func importNativeHistoryFile(root *accountAuthorityRoot, lock, origin, destination *os.File,
+func importNativeHistoryFile(root *accountAuthorityRoot, origin, destination *os.File,
 	source string, witness agents.NativeHistoryFile, spans []agents.NativeHistorySpan, dependencies ...agents.NativeHistoryFile) error {
 	if !filepath.IsLocal(witness.Path) || filepath.Clean(witness.Path) != witness.Path || witness.Path == "." {
 		return errors.New("invalid native history path")
@@ -261,7 +257,7 @@ func importNativeHistoryFile(root *accountAuthorityRoot, lock, origin, destinati
 	}
 	proofDigest := hex.EncodeToString(proofHash.Sum(nil))
 	var receipt nativeHistoryReceipt
-	data, err := safefile.ReadRegular(root.dir(), receiptName, 16<<10)
+	data, err := os.ReadFile(filepath.Join(root.path, receiptName))
 	if err == nil {
 		if json.Unmarshal(data, &receipt) != nil || receipt.Version != 1 || receipt.Source != source ||
 			receipt.Path != witness.Path || len(receipt.Digest) != 64 || receipt.Size < 0 ||
@@ -269,7 +265,7 @@ func importNativeHistoryFile(root *accountAuthorityRoot, lock, origin, destinati
 			return errors.New("invalid native import receipt; preserve for recovery")
 		}
 		if receipt.Done {
-			return clearNativeHistoryStage(root, lock, stageName)
+			return clearNativeHistoryStage(root, stageName)
 		}
 		if receipt.DependenciesDigest != proofDigest {
 			return errors.New("native ownership proofs changed during interrupted import; originals retained")
@@ -285,17 +281,8 @@ func importNativeHistoryFile(root *accountAuthorityRoot, lock, origin, destinati
 	} else {
 		// Without a receipt, no link into the native home could have been
 		// published. An interrupted private scratch copy is safe to retry.
-		if prior, openErr := safefile.OpenRegular(root.dir(), stageName); openErr == nil {
-			privateErr := privateAccountFile(prior)
-			_ = prior.Close()
-			if privateErr != nil {
-				return privateErr
-			}
-			if err := unix.Unlinkat(int(root.dir().Fd()), stageName, 0); err != nil {
-				return err
-			}
-		} else if !errors.Is(openErr, os.ErrNotExist) {
-			return openErr
+		if err := clearNativeHistoryStage(root, stageName); err != nil {
+			return err
 		}
 		fd, err := unix.Openat(int(root.dir().Fd()), stageName,
 			unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
@@ -312,12 +299,12 @@ func importNativeHistoryFile(root *accountAuthorityRoot, lock, origin, destinati
 		if copyErr != nil {
 			// No receipt or native file exists yet; an ordinary retry can safely
 			// recreate this owned scratch file after the legacy writer exits.
-			return errors.Join(copyErr, unix.Unlinkat(int(root.dir().Fd()), stageName, 0), root.dir().Sync())
+			return errors.Join(copyErr, unix.Unlinkat(int(root.dir().Fd()), stageName, 0))
 		}
 		receipt = nativeHistoryReceipt{Version: 1, Source: source, Path: witness.Path,
 			SourceDigest: witness.SHA256, SourceSize: witness.Size,
 			Digest: hex.EncodeToString(digest.Sum(nil)), Size: count, DependenciesDigest: proofDigest}
-		if err := writeNativeHistoryReceipt(root, lock, receiptName, receipt, true); err != nil {
+		if err := writeNativeHistoryReceipt(root, receiptName, receipt, true); err != nil {
 			return err
 		}
 	}
@@ -326,9 +313,6 @@ func importNativeHistoryFile(root *accountAuthorityRoot, lock, origin, destinati
 		return err
 	}
 	defer parent.Close()
-	if err := root.checkLock(lock); err != nil {
-		return err
-	}
 	if err := matchNativeHistoryReceipt(root.dir(), stageName, receipt); err != nil {
 		return err
 	}
@@ -350,20 +334,19 @@ func importNativeHistoryFile(root *accountAuthorityRoot, lock, origin, destinati
 		return err
 	}
 	receipt.Done = true
-	if err := writeNativeHistoryReceipt(root, lock, receiptName, receipt, false); err != nil {
+	if err := writeNativeHistoryReceipt(root, receiptName, receipt, false); err != nil {
 		return err
 	}
-	return clearNativeHistoryStage(root, lock, stageName)
+	return clearNativeHistoryStage(root, stageName)
 }
 
-func clearNativeHistoryStage(root *accountAuthorityRoot, lock *os.File, stageName string) error {
-	if err := root.checkLock(lock); err != nil {
-		return err
-	}
+// clearNativeHistoryStage removes the private scratch copy. Without a receipt no link into the
+// native home was published, so an interrupted copy is safe to drop and retry.
+func clearNativeHistoryStage(root *accountAuthorityRoot, stageName string) error {
 	if err := unix.Unlinkat(int(root.dir().Fd()), stageName, 0); err != nil && !errors.Is(err, unix.ENOENT) {
 		return err
 	}
-	return root.dir().Sync()
+	return nil
 }
 
 func copyNativeHistory(root *os.File, witness agents.NativeHistoryFile, out io.Writer, spans []agents.NativeHistorySpan) (int64, error) {
@@ -465,10 +448,7 @@ func matchNativeHistoryReceipt(root *os.File, name string, receipt nativeHistory
 	return nil
 }
 
-func writeNativeHistoryReceipt(root *accountAuthorityRoot, lock *os.File, name string, receipt any, create bool) error {
-	if err := root.checkLock(lock); err != nil {
-		return err
-	}
+func writeNativeHistoryReceipt(root *accountAuthorityRoot, name string, receipt any, create bool) error {
 	data, err := json.Marshal(receipt)
 	if err != nil {
 		return err
@@ -497,5 +477,5 @@ func writeNativeHistoryReceipt(root *accountAuthorityRoot, lock *os.File, name s
 			return err
 		}
 	}
-	return errors.Join(root.dir().Sync(), root.checkLock(lock))
+	return nil
 }

@@ -128,20 +128,18 @@ func (s *Store) markSetupCheck(ctx context.Context, fingerprint string, ended ti
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		// read opens without following links and accepts only a private regular
-		// file. A snapshot that is gone needs no mark, and a link, which read
-		// refuses with ELOOP, proves nothing, so the record goes and nothing is
-		// marked. Any other error, a file that is not private or a failed read
-		// such as one out of descriptors, keeps the record for the next pass.
-		data, err := s.read(snapshotRecord(fingerprint), maxPrivateRecordBytes)
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, unix.ELOOP) {
+		// A snapshot that is gone needs no mark, so the record goes and nothing is
+		// marked. Any other error, such as a failed read out of descriptors, keeps
+		// the record for the next pass.
+		data, err := s.read(snapshotRecord(fingerprint))
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
 		var snapshot egress.Snapshot
-		if strictJSON(data, &snapshot) != nil || snapshot.ValidateRecorded() != nil || snapshot.Fingerprint != fingerprint || !fromSetupCheck(snapshot) {
+		if json.Unmarshal(data, &snapshot) != nil || snapshot.ValidateRecorded() != nil || snapshot.Fingerprint != fingerprint || !fromSetupCheck(snapshot) {
 			return nil
 		}
 		if err := s.markAdmitted(fingerprint); err != nil {
@@ -226,8 +224,7 @@ func (s *Store) removeUnusedSnapshot(ctx context.Context, fingerprint string, no
 			return nil
 		}
 		name := snapshotRecord(fingerprint)
-		// read opens without following links and accepts only a private regular file.
-		data, err := s.read(name, maxPrivateRecordBytes)
+		data, err := s.read(name)
 		if errors.Is(err, os.ErrNotExist) {
 			return s.root.Remove(admittedRecord(fingerprint)) // it marks nothing
 		}
@@ -235,7 +232,7 @@ func (s *Store) removeUnusedSnapshot(ctx context.Context, fingerprint string, no
 			return err
 		}
 		var snapshot egress.Snapshot
-		if strictJSON(data, &snapshot) != nil || snapshot.ValidateRecorded() != nil || snapshot.Fingerprint != fingerprint {
+		if json.Unmarshal(data, &snapshot) != nil || snapshot.ValidateRecorded() != nil || snapshot.Fingerprint != fingerprint {
 			return nil
 		}
 		// os.Root unlinks the names themselves. No directory sync: a removal a

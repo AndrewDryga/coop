@@ -13,7 +13,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/safefile"
-	"golang.org/x/sys/unix"
 )
 
 func nativeAccountSpec(ag agents.Agent) accountAuthoritySpec {
@@ -99,14 +98,13 @@ func readNativeAccount(ctx context.Context, cfg *config.Config, ag agents.Agent,
 // holdsOnlyUnpublished reports whether the account folder holds nothing but its lock and the
 // temporary files of a publication that never landed.
 func (root *accountAuthorityRoot) holdsOnlyUnpublished() (bool, error) {
-	dir, err := safefile.CloneDir(root.dir())
+	entries, err := os.ReadDir(root.path)
 	if err != nil {
 		return false, err
 	}
-	defer dir.Close()
-	names, err := dir.Readdirnames(-1)
-	if err != nil {
-		return false, err
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
 	}
 	for _, name := range names {
 		if name != ".authority.lock" && !strings.HasPrefix(name, ".authority-") {
@@ -238,10 +236,7 @@ func RemoveNativeAccount(ctx context.Context, cfg *config.Config, provider, acco
 		return err
 	}
 	defer lock.Close()
-	if err := root.checkLock(lock); err != nil {
-		return err
-	}
-	entries, err := root.dir().ReadDir(-1)
+	entries, err := os.ReadDir(root.path)
 	if err != nil {
 		return err
 	}
@@ -250,20 +245,11 @@ func RemoveNativeAccount(ctx context.Context, cfg *config.Config, provider, acco
 		if name != "cutover.json" && !strings.HasPrefix(name, ".private-") {
 			continue
 		}
-		file, err := safefile.OpenRegular(root.dir(), name)
-		if err != nil {
-			return err
-		}
-		err = privateAccountFile(file)
-		_ = file.Close()
-		if err != nil {
-			return err
-		}
-		if err := unix.Unlinkat(int(root.dir().Fd()), name, 0); err != nil {
+		if err := os.Remove(filepath.Join(root.path, name)); err != nil {
 			return err
 		}
 	}
-	return errors.Join(root.dir().Sync(), root.checkLock(lock))
+	return nil
 }
 
 func removeNativeAuthority(ctx context.Context, cfg *config.Config, provider, account string) error {
@@ -283,11 +269,11 @@ func removeNativeAuthority(ctx context.Context, cfg *config.Config, provider, ac
 		if current != nil {
 			epoch = current.Epoch + 1
 		}
-		if _, _, err := root.publish(lock, spec, account, current, &accountAuthority{Epoch: epoch, Revoked: true}, nil); err != nil {
+		if _, _, err := root.publish(spec, account, current, &accountAuthority{Epoch: epoch, Revoked: true}, nil); err != nil {
 			return err
 		}
 	}
-	entries, err := root.dir().ReadDir(-1)
+	entries, err := os.ReadDir(root.path)
 	if err != nil {
 		return err
 	}
@@ -296,23 +282,11 @@ func removeNativeAuthority(ctx context.Context, cfg *config.Config, provider, ac
 		if name != accountRenewalName && name != accountRetryName && name != "cutover.json" && !strings.HasPrefix(name, "recovery-") && !strings.HasPrefix(name, ".private-") && !strings.HasPrefix(name, ".authority-") && !strings.HasPrefix(name, ".renewal-") {
 			continue
 		}
-		file, err := safefile.OpenRegular(root.dir(), name)
-		if err != nil {
-			return err
-		}
-		err = privateAccountFile(file)
-		_ = file.Close()
-		if err != nil {
-			return err
-		}
-		if err := root.checkLock(lock); err != nil {
-			return err
-		}
-		if err := unix.Unlinkat(int(root.dir().Fd()), name, 0); err != nil {
+		if err := os.Remove(filepath.Join(root.path, name)); err != nil {
 			return err
 		}
 	}
-	return errors.Join(root.dir().Sync(), root.checkLock(lock))
+	return nil
 }
 
 // NativeAccountRemoved lets a confirmed removal retry finish cleanup while a

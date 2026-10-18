@@ -134,29 +134,14 @@ func recordModelsFetchFailure(cfg *config.Config, agent, cause string) error {
 // (unlike config.WriteFileAtomic): this is a cache of a remote catalog, so a crash losing the last
 // write costs one refetch — paying for durability would be theater.
 func storeModelsCache(cfg *config.Config, agent string, mc modelsCache) error {
-	dir := filepath.Join(cfg.ConfigDir, agent)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(cfg.ConfigDir, agent), 0o700); err != nil {
 		return err
 	}
 	b, err := json.Marshal(mc)
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, "models_cache-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, modelsCachePath(cfg, agent))
+	return config.WriteFileAtomic(modelsCachePath(cfg, agent), b)
 }
 
 // runModelCLI runs an agent's list command on the host and returns its stdout, timeout-bounded. An

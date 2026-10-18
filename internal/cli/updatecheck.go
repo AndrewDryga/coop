@@ -56,19 +56,7 @@ func touchUpdateCheck(path string) {
 // config.WriteFileAtomic): losing this to a power cut just means the next run re-checks
 // GitHub for the latest release — nothing depends on the cached tag being there.
 func cacheLatest(path, tag string) {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".update-check-*")
-	if err != nil {
-		return
-	}
-	name := tmp.Name()
-	_, werr := tmp.WriteString(tag + "\n")
-	if cerr := tmp.Close(); werr != nil || cerr != nil {
-		_ = os.Remove(name)
-		return
-	}
-	if os.Rename(name, path) != nil {
-		_ = os.Remove(name)
-	}
+	_ = config.WriteFileAtomic(path, []byte(tag+"\n"))
 }
 
 func cachedLatest(path string) string {

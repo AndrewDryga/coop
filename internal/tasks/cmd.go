@@ -1597,6 +1597,8 @@ func OpenTaskMetadataRoot(taskDir string) (*os.Root, error) {
 	return root, nil
 }
 
+// ReadTaskMetadataFile stays bounded and no-follow: a box can write task folders, so a task file
+// may be a link, a FIFO or huge. Coop's own host-only records use config.ReadRecord instead.
 func ReadTaskMetadataFile(root *os.Root, name string) ([]byte, error) {
 	before, err := root.Lstat(name)
 	if err != nil {

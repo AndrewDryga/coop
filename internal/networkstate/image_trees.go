@@ -44,12 +44,12 @@ func (s *Store) ImageTreeDigest(image, root string) (ImageTree, bool) {
 	if err != nil {
 		return ImageTree{}, false
 	}
-	data, err := s.read(imageTreeRecordName(id), maxPrivateRecordBytes)
+	data, err := s.read(imageTreeRecordName(id))
 	if err != nil {
 		return ImageTree{}, false
 	}
 	var record imageTreeRecord
-	if strictJSON(data, &record) != nil || record.Version != 1 || record.ID != id || record.Image != image || record.Root != root || !validImageTree(record.Tree) {
+	if json.Unmarshal(data, &record) != nil || record.Version != 1 || record.ID != id || record.Image != image || record.Root != root || !validImageTree(record.Tree) {
 		return ImageTree{}, false
 	}
 	return record.Tree, true

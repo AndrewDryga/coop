@@ -44,7 +44,7 @@ func (s *Store) bundleContent(bundles []egress.Bundle, pin bool) error {
 		_, _ = mac.Write(identity)
 		name := "bundle-" + hex.EncodeToString(mac.Sum(nil)) + ".json"
 		if !pin {
-			existing, err := s.read(name, egress.MaxDocumentBytes)
+			existing, err := s.read(name)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
@@ -57,7 +57,7 @@ func (s *Store) bundleContent(bundles []egress.Bundle, pin bool) error {
 			if !errors.Is(err, os.ErrExist) {
 				return err
 			}
-			existing, err := s.read(name, egress.MaxDocumentBytes)
+			existing, err := s.read(name)
 			if err != nil || !bytes.Equal(existing, data) {
 				return errors.New("provider bundle integrity drift: content changed without a new version")
 			}

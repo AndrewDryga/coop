@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
@@ -107,26 +108,8 @@ func (j *journal) advanceReceiptScan(commandID string) error {
 	if !reference(commandID, 256) {
 		return errors.New("worker receipt scan cursor is malformed")
 	}
-	temporary, err := os.CreateTemp(j.dir, ".receipt-scan-*")
-	if err != nil {
-		return fmt.Errorf("create worker receipt scan cursor: %w", err)
+	if err := config.WriteFileAtomic(j.receiptScanPath(), []byte(commandID)); err != nil {
+		return fmt.Errorf("write worker receipt scan cursor: %w", err)
 	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if _, err := temporary.WriteString(commandID); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporaryPath, j.receiptScanPath())
+	return nil
 }

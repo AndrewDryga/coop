@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -344,48 +343,13 @@ func ReadCompletionWindowIndex(root string) (completionWindowIndex, error) {
 	if err != nil {
 		return completionWindowIndex{}, err
 	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return completionWindowIndex{}, err
-	}
-	defer registry.Close()
-	before, err := registry.Lstat(name)
-	if errors.Is(err, os.ErrNotExist) {
-		return completionWindowIndex{Version: completionWindowVersion, Windows: map[string]CompletionWindowRecord{}}, nil
-	}
-	if err != nil {
-		return completionWindowIndex{}, err
-	}
-	stat, ok := before.Sys().(*syscall.Stat_t)
-	if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || !ok || stat.Nlink != 1 || before.Size() > completionWindowIndexLimit {
-		return completionWindowIndex{}, fmt.Errorf("completion window index %q is not a bounded single-link regular file", name)
-	}
-	file, err := registry.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return completionWindowIndex{}, err
-	}
-	defer file.Close()
-	after, err := file.Stat()
-	if err != nil || !os.SameFile(before, after) {
-		if err != nil {
-			return completionWindowIndex{}, err
-		}
-		return completionWindowIndex{}, fmt.Errorf("completion window index %q changed while opening", name)
-	}
-	afterStat, ok := after.Sys().(*syscall.Stat_t)
-	if !after.Mode().IsRegular() || !ok || afterStat.Nlink != 1 || after.Size() > completionWindowIndexLimit {
-		return completionWindowIndex{}, fmt.Errorf("completion window index %q is not a bounded single-link regular file", name)
-	}
-	data, err := io.ReadAll(io.LimitReader(file, completionWindowIndexLimit+1))
-	if err != nil {
-		return completionWindowIndex{}, err
-	}
-	if len(data) > completionWindowIndexLimit {
-		return completionWindowIndex{}, fmt.Errorf("completion window index %q exceeds %d bytes", name, completionWindowIndexLimit)
-	}
 	var index completionWindowIndex
-	if err := json.Unmarshal(data, &index); err != nil {
-		return completionWindowIndex{}, fmt.Errorf("decode completion window index %q: %w", name, err)
+	ok, err := readLeaseRecord(name, &index)
+	if err != nil {
+		return completionWindowIndex{}, fmt.Errorf("read completion window index: %w", err)
+	}
+	if !ok {
+		return completionWindowIndex{Version: completionWindowVersion, Windows: map[string]CompletionWindowRecord{}}, nil
 	}
 	if index.Version != completionWindowVersion {
 		return completionWindowIndex{}, fmt.Errorf("completion window index %q has unsupported version %d", name, index.Version)

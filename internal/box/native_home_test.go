@@ -152,36 +152,18 @@ func TestNativeHomeSetsAsideAnInterruptedSetup(t *testing.T) {
 	}
 }
 
-func TestNativeHomeRefusesAmbiguousAndRedirectedHomes(t *testing.T) {
-	for _, kind := range []string{"wrong-owner", "linked-owner", "linked-home"} {
-		t.Run(kind, func(t *testing.T) {
-			cfg, repo := &config.Config{ConfigDir: t.TempDir()}, t.TempDir()
-			home, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { return nil })
-			if err != nil {
-				t.Fatal(err)
-			}
-			owner := filepath.Join(filepath.Dir(home), "owner.json")
-			switch kind {
-			case "wrong-owner":
-				if err := os.WriteFile(owner, []byte(`{"version":1,"project":"/another"}`), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			case "linked-owner":
-				if err := os.Link(owner, filepath.Join(t.TempDir(), "alias")); err != nil {
-					t.Fatal(err)
-				}
-			case "linked-home":
-				if err := os.Rename(home, home+".retained"); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(t.TempDir(), home); err != nil {
-					t.Fatal(err)
-				}
-			}
-			called := false
-			if _, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { called = true; return nil }); err == nil || called {
-				t.Fatal("ambiguous state was silently replaced or admitted")
-			}
-		})
+func TestNativeHomeRefusesAnotherOwnersHome(t *testing.T) {
+	cfg, repo := &config.Config{ConfigDir: t.TempDir()}, t.TempDir()
+	home, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := filepath.Join(filepath.Dir(home), "owner.json")
+	if err := os.WriteFile(owner, []byte(`{"version":1,"project":"/another"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if _, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { called = true; return nil }); err == nil || called {
+		t.Fatal("another owner's home was replaced or admitted")
 	}
 }

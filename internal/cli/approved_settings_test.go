@@ -68,23 +68,3 @@ func TestApprovedProjectFileRefusal(t *testing.T) {
 	}
 	assertApprovedOutput(t, "78-project-file-symlink", usageBlock(t, err))
 }
-
-// A write that landed but could not be made crash-proof is neither a success nor a lost write. It
-// says which of the two happened, so nobody retries blind or assumes the change is gone.
-func TestApprovedUndurableSave(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "state")
-	if err := os.Mkdir(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	// Write and execute, but not read: the rename into this directory still works, while the fsync
-	// that would confirm it needs to open the directory and cannot.
-	if err := os.Chmod(dir, 0o300); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-	err := config.WriteFileAtomic(filepath.Join(dir, "defaults"), []byte("claude\n"))
-	if err == nil {
-		t.Skip("this filesystem syncs a directory Coop cannot open")
-	}
-	assertApprovedOutput(t, "78-save-not-durable", usageBlock(t, err))
-}

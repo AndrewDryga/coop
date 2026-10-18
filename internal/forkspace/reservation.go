@@ -106,6 +106,8 @@ func decodeWorkspaceReservation(data []byte) (WorkspaceReservation, error) {
 	return record, validateWorkspaceReservation(record)
 }
 
+// Stays bounded and no-follow: fork records sit in <repo>-forks/.coop, which a box can reach
+// through a nested mount.
 func readWorkspaceReservationFile(root *os.Root, name string) (WorkspaceReservation, error) {
 	data, err := ReadRecordIn(root, name, "workspace reservation", workspaceReservationLimit)
 	if err != nil {

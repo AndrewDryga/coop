@@ -1197,7 +1197,7 @@ func TestCompletionWindowSetupFailureRemovesUnregisteredLivenessLock(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := BeginCompletionWindows([]string{root}); err == nil || !strings.Contains(err.Error(), "decode completion window index") {
+	if _, err := BeginCompletionWindows([]string{root}); err == nil || !strings.Contains(err.Error(), "read completion window index") {
 		t.Fatalf("completion window setup = %v, want corrupt-index failure", err)
 	}
 	after, err := os.ReadDir(os.Getenv(TestLeaseAuthorityRootEnv))

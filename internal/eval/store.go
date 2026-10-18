@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 // Results live in an owner-private directory OUTSIDE every candidate mount, so a candidate can never
@@ -304,31 +306,7 @@ func writeJSONAtomic(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-"+filepath.Base(path)+"-")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	return nil
+	return config.WriteFileAtomic(path, append(data, '\n'))
 }
 
 func readJSON(path string, v any) error {

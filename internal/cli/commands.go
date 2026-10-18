@@ -2,14 +2,12 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -152,10 +150,6 @@ func (a *app) lockInteractiveSession(agent, repo string) (func(), error) {
 // scope while a fork attributes a new ID. ConfigDir/.locks is host-only and shared across repos.
 // Contention fails fast because an interactive session can remain open for hours.
 func lockSessionProducer(cfg *config.Config, provider, cwd string) (func(), error) {
-	dir := filepath.Join(cfg.ConfigDir, ".locks")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
 	profile, err := cfg.AgentSettingsDir(provider)
 	if err != nil {
 		return nil, err
@@ -165,23 +159,11 @@ func lockSessionProducer(cfg *config.Config, provider, cwd string) (func(), erro
 	} else if absolute, absErr := filepath.Abs(profile); absErr == nil {
 		profile = absolute
 	}
-	sum := sha256.Sum256([]byte(profile + "\x00" + cwd))
-	path := filepath.Join(dir, fmt.Sprintf("session-%x.lock", sum[:12]))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return nil, err
+	release, _, err := cfg.TryLock("session", profile+"\x00"+cwd)
+	if errors.Is(err, config.ErrLockHeld) {
+		return nil, fmt.Errorf("another interactive %s session is active for account %q in workdir %q", provider, cfg.ActiveProfile(provider), cwd)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return nil, fmt.Errorf("another interactive %s session is active for account %q in workdir %q", provider, cfg.ActiveProfile(provider), cwd)
-		}
-		return nil, err
-	}
-	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		_ = f.Close()
-	}, nil
+	return release, err
 }
 
 func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, session bool) (int, error) {

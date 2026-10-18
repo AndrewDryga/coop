@@ -18,8 +18,6 @@ import (
 	"strings"
 	"syscall"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/fsidentity"
 	"github.com/AndrewDryga/coop/internal/randid"
@@ -239,7 +237,7 @@ func (s *Store) CheckExposure(exposed []string) error {
 }
 
 func (s *Store) authorityAvailable() error {
-	current, err := s.read("owner.key", 32)
+	current, err := s.read("owner.key")
 	if err != nil || len(s.key) != 32 || !hmac.Equal(current, s.key) {
 		return errors.New("the key protecting coop's network records is missing or changed, so nothing new can be remembered")
 	}
@@ -268,7 +266,7 @@ func (s *Store) loadKey(create bool) error {
 		s.key = key
 		return nil
 	}
-	data, err := s.read("owner.key", 32)
+	data, err := s.read("owner.key")
 	if errors.Is(err, os.ErrNotExist) {
 		// A lost key is not a fresh authority root. Refuse regeneration when any
 		// durable records exist; otherwise a reset could erase remembered posture.
@@ -282,7 +280,7 @@ func (s *Store) loadKey(create bool) error {
 			return listErr
 		}
 		// Another first opener may have published the key while this one listed.
-		if current, currentErr := s.read("owner.key", 32); currentErr == nil {
+		if current, currentErr := s.read("owner.key"); currentErr == nil {
 			return accept(current)
 		} else if !errors.Is(currentErr, os.ErrNotExist) {
 			return currentErr
@@ -302,7 +300,7 @@ func (s *Store) loadKey(create bool) error {
 		if err := s.publish("owner.key", key, false); err != nil && !errors.Is(err, os.ErrExist) {
 			return err
 		}
-		data, err = s.read("owner.key", 32)
+		data, err = s.read("owner.key")
 	}
 	if err != nil {
 		return err
@@ -310,42 +308,13 @@ func (s *Store) loadKey(create bool) error {
 	return accept(data)
 }
 
-func (s *Store) read(name string, limit int64) ([]byte, error) {
+// read returns one of the store's own records. No box mounts the store (Open refuses one a mount
+// could reach) and only coop writes it, so this is a plain read.
+func (s *Store) read(name string) ([]byte, error) {
 	if filepath.Base(name) != name || name == "." || name == ".." {
 		return nil, errors.New("invalid network record name")
 	}
-	dir, err := s.root.Open(".")
-	if err != nil {
-		return nil, err
-	}
-	defer dir.Close()
-	// Root.OpenFile resolves symlinks itself after ELOOP, including when its
-	// caller supplies O_NOFOLLOW. Flat record names let openat enforce denial
-	// relative to the already-open private directory without a path race.
-	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
-	}
-	f := os.NewFile(uintptr(fd), name)
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if err := privateInfo(info, false); err != nil {
-		return nil, err
-	}
-	if info.Size() > limit {
-		return nil, errors.New("network record exceeds byte limit")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, errors.New("network record exceeds byte limit")
-	}
-	return data, nil
+	return s.root.ReadFile(name)
 }
 
 func (s *Store) publish(name string, data []byte, replace bool) error {
@@ -500,7 +469,7 @@ func (s *Store) Approval(project string) (*Approval, error) {
 }
 
 func (s *Store) approval(id string) (*Approval, error) {
-	data, err := s.read(approvalRecord(id), maxPrivateRecordBytes)
+	data, err := s.read(approvalRecord(id))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -508,7 +477,7 @@ func (s *Store) approval(id string) (*Approval, error) {
 		return nil, err
 	}
 	var approval Approval
-	if err := strictJSON(data, &approval); err != nil {
+	if err := json.Unmarshal(data, &approval); err != nil {
 		return nil, err
 	}
 	if approval.ProjectID != id || len(approval.Features) > egress.MaxFeatureExpansions {
@@ -676,7 +645,7 @@ func (s *Store) saveSnapshot(snapshot egress.Snapshot, removable bool) error {
 		if !errors.Is(err, os.ErrExist) {
 			return err
 		}
-		existing, readErr := s.read(name, maxPrivateRecordBytes)
+		existing, readErr := s.read(name)
 		if readErr != nil || !bytes.Equal(existing, data) {
 			return errors.New("network snapshot identity collision")
 		}
@@ -719,31 +688,18 @@ func (s *Store) loadSnapshotScope(id, fingerprint string) (egress.Snapshot, erro
 			return egress.Snapshot{}, err
 		}
 	}
-	data, err := s.read(snapshotRecord(fingerprint), maxPrivateRecordBytes)
+	data, err := s.read(snapshotRecord(fingerprint))
 	if err != nil {
 		return egress.Snapshot{}, err
 	}
 	var snapshot egress.Snapshot
-	if err := strictJSON(data, &snapshot); err != nil {
+	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return egress.Snapshot{}, err
 	}
 	if snapshot.Fingerprint != fingerprint || snapshot.Scope != id {
 		return egress.Snapshot{}, errors.New("network snapshot reference mismatch")
 	}
 	return snapshot, snapshot.Verify(s.key)
-}
-
-func strictJSON(data []byte, value any) error {
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	if err := d.Decode(value); err != nil {
-		return fmt.Errorf("invalid network record: %w", err)
-	}
-	var extra any
-	if err := d.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("network record has trailing content")
-	}
-	return nil
 }
 
 func equalJSON(a, b any) bool {

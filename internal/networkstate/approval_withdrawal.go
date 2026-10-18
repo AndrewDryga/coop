@@ -34,7 +34,7 @@ type Withdrawal struct {
 // An unreadable or malformed marker is an ERROR, never a quiet false: a barrier
 // coop cannot read is not a barrier it may ignore.
 func (s *Store) withdrawn(id string) (bool, error) {
-	data, err := s.read(withdrawalRecord(id), maxPrivateRecordBytes)
+	data, err := s.read(withdrawalRecord(id))
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -42,7 +42,7 @@ func (s *Store) withdrawn(id string) (bool, error) {
 		return false, err
 	}
 	var record Withdrawal
-	if err := strictJSON(data, &record); err != nil {
+	if err := json.Unmarshal(data, &record); err != nil {
 		return false, err
 	}
 	if record.Version != 1 || record.ProjectID != id {

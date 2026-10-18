@@ -48,7 +48,7 @@ func TestNativeAccessSnapshotRefreshOnlyNeedsHostRenewal(t *testing.T) {
 }
 
 func TestNativeAccessSnapshotCanonicalDenials(t *testing.T) {
-	for _, mode := range []string{"missing", "readable", "symlink", "revoked"} {
+	for _, mode := range []string{"missing", "revoked"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg := &config.Config{ConfigDir: t.TempDir()}
 			seedCanonicalFixture(t, cfg, "claude", "work")
@@ -57,12 +57,6 @@ func TestNativeAccessSnapshotCanonicalDenials(t *testing.T) {
 			switch mode {
 			case "missing":
 				err = os.Remove(path)
-			case "readable":
-				err = os.Chmod(path, 0644)
-			case "symlink":
-				if err = os.Rename(path, path+".real"); err == nil {
-					err = os.Symlink(path+".real", path)
-				}
 			case "revoked":
 				err = removeNativeAuthority(t.Context(), cfg, "claude", "work")
 			}

@@ -263,6 +263,8 @@ func (event UsageEvent) valid() bool {
 		max(event.Input, event.Read, event.Write, event.Write1h, event.UnknownWrite, event.Output) <= 1e12
 }
 
+// readRootUsageArtifact stays bounded and no-follow: it reads box-written transcripts, and the
+// usage cache shares it.
 func readRootUsageArtifact(root *os.Root, path string, limit int64) ([]byte, error) {
 	before, err := root.Lstat(path)
 	if err != nil {

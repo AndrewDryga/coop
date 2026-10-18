@@ -75,11 +75,11 @@ func TestGeminiHostCredentialScopesAccountsAndPreservesDefaultEnvPrecedence(t *t
 	}
 	// An environment value must never hide damaged canonical authority.
 	path := filepath.Join(cfg.ConfigDir, "gemini", "credentials", "personal", "authority.json")
-	if err := os.Chmod(path, 0644); err != nil {
+	if err := os.WriteFile(path, []byte("broken"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := previewNativeAuthority(context.Background(), cfg, gemini, "personal"); err == nil {
-		t.Fatal("environment bypassed unsafe canonical account")
+		t.Fatal("environment bypassed damaged canonical account")
 	}
 }
 
@@ -146,15 +146,6 @@ func TestHostCredentialRejectsUnsafeStateAndRemovalIsAccountScoped(t *testing.T)
 		t.Fatal("malformed canonical authority accepted")
 	}
 	if err := os.WriteFile(path, original, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(path, 0644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, err := LoadHostCredential(cfg, gemini, "work"); err == nil {
-		t.Fatal("group-readable authority accepted")
-	}
-	if err := os.Chmod(path, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := RemoveNativeAccount(context.Background(), cfg, gemini.Name(), "work"); err != nil {

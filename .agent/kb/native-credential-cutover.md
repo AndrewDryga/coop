@@ -3,7 +3,7 @@ name: native-credential-cutover
 description: existing native writer locks keep their inode during private normalization; uncertain legacy grants remain in custody
 subsystem: credentials
 sources: [internal/box/native_cutover.go, internal/box/account_authority.go, internal/box/native_writer_lock_test.go, internal/box/authority_mounts.go, internal/box/native_mount_paths_test.go, internal/runtime/mounts.go, internal/runtime/mounts_test.go, internal/agent/grok.go, internal/agent/gemini.go]
-updated: 2026-10-09
+updated: 2026-10-18
 ---
 
 `fenceLegacyAccount` holds the account lease, inventories existing credential mounts and locks
@@ -16,8 +16,15 @@ metadata, then tightens that same inode to 0600 (`legacyAccountFence.lockWriter`
 replaced, linked, foreign-owned or nonregular lock refuses without chmod. Replacing the lock
 would strand a native writer on another inode. Lock bytes do not change.
 
-This exception is for adapter-declared legacy writer locks only. Canonical credential and
-authority files still require the unchanged owner-private, regular, single-link validator.
+This exception is for adapter-declared legacy writer locks only, which live in a legacy profile
+folder a box could reach. Canonical credential custody (authority.json, the renewal journal,
+cutover.json) sits in folders no box mounts, so it is read plainly (`config.ReadRecord`) under a
+plain flock, with no per-file owner, link or inode checks. Two rules keep the plain flock sound:
+each folder of a custody path is refused as a link (`ConfigDir/<provider>` was a box mount before
+2026-07), and `coop credentials rm` deletes an account's native homes, custody lock files and all,
+only under `lockAccountHomes`, which launches hold shared while they work in one. The renewal
+journal's kept answer is the one record still synced to disk (`keepRenewal`): it can be the only
+copy of a single-use grant.
 Unknown encrypted Gemini legacy caches have no proven storage identity and are retained
 unchanged for explicit host recovery; presence in `coop credentials` is not cutover readiness.
 
@@ -37,6 +44,8 @@ live/paused/restarting/dead binds refuse: they can retain a deleted alias's inod
 paths, permissions and symlink loops are never inferred harmless or dropped from inventory.
 
 ## Changelog
+- 2026-10-18 — canonical custody is read plainly under a plain flock (task
+  2026-10-15-read-coop-s-host-only-records-with-one-plain-hel); the legacy writer-lock checks stay.
 - 2026-10-09 — traced the real Grok startup refusal to an owned 0644 PID lock; verified
   busy/replacement/link/type/ownership refusal and same-inode/byte normalization in tests.
 - 2026-10-09 — replaced serial container inspection with complete bounded batches and retained

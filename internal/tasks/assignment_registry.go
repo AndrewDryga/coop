@@ -85,6 +85,8 @@ func decodeForkAssignmentIndex(data []byte) (ForkAssignmentIndex, error) {
 	return record, nil
 }
 
+// Stays bounded and no-follow: fork records sit in <repo>-forks/.coop, which a box can reach
+// through a nested mount.
 func readForkAssignmentIndexFile(root *os.Root, name string) (ForkAssignmentIndex, error) {
 	info, err := root.Lstat(name)
 	if err != nil {

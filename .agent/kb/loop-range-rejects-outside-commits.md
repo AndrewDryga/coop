@@ -133,11 +133,9 @@ fork merge` landing onto the parent — the fork's OWN rebase stays unlocked, si
 fork's isolated worktree, a different lock key entirely), and the host-authorized completion of
 audit-reopened work reached via `coop tasks done` and fork-merge's queue reconciliation
 (`CompleteTrustedTask`'s reopened branch has the identical read-`HEAD`-then-consume-later shape as the
-loop's own completion, just driven by a human instead of a box). Unlike `lockLoopCheckout`'s bare
-flock, `LockRefAuthority` is proved after the fact the way task-lease authority already is
-(`lockLeaseAuthorityWith`, `internal/tasks/lease.go`): open, flock, then `fstat` the held descriptor against a
-fresh `lstat` of the name, so a lock file removed and recreated underfoot can never leave two
-controllers each holding an "exclusive" lock on a different inode.
+loop's own completion, just driven by a human instead of a box). Like `lockLoopCheckout`, it is a
+plain flock through `config.(*Config).TryLock` (`$ConfigDir/.locks/ref-<sha>.lock`): nothing unlinks
+`.locks` files, so the inode the name answers is the one every controller contends for.
 
 `internal/sessionsvc` (the ACP `coop run` session engine) was audited for the same shape but is
 out of scope here: it lands work through its own isolated per-session forkspace workspace, never the
@@ -148,6 +146,8 @@ See [[task-authority-model]] for the full four-authority map and the lock-orderi
 authority is acquired before lease authority, never the reverse) this ref-authority window is half of.
 
 ## Changelog
+- 2026-10-18 — the ref-authority lock dropped its post-flock inode re-check and shares
+  `config.TryLock` with the loop and session locks (task 2026-10-15-read-coop-s-host-only-records-with-one-plain-hel).
 - 2026-10-18 — the refusal runs at the end of every ordinary attempt, not only a completing one, and
   checks rewrites against the run's recorded base too; named the fail-first forger e2e.
 - 2026-10-17 — the snapshot is taken in `runIterationWithMode`, which `runIteration` calls.

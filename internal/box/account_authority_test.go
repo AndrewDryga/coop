@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
-	"golang.org/x/sys/unix"
 )
 
 // transactAccountAuthority exercises the production locking and publication primitives.
@@ -29,7 +28,7 @@ func transactAccountAuthority(ctx context.Context, cfg *config.Config, spec acco
 		return current, false, err
 	}
 	next, readinessErr := change(cloneAccountAuthority(current))
-	return root.publish(lock, spec, account, current, next, readinessErr)
+	return root.publish(spec, account, current, next, readinessErr)
 }
 
 func authorityTestSpec() accountAuthoritySpec {
@@ -126,7 +125,7 @@ func TestAccountAuthorityGenerationCannotResurrectOrSwitchInPlace(t *testing.T) 
 	}
 }
 
-func TestAccountAuthorityLockReplacementAndCancelledAdmission(t *testing.T) {
+func TestAccountAuthorityCancelledAdmission(t *testing.T) {
 	cfg, spec := &config.Config{ConfigDir: t.TempDir()}, authorityTestSpec()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -134,22 +133,6 @@ func TestAccountAuthorityLockReplacementAndCancelledAdmission(t *testing.T) {
 	_, effect, err := transactAccountAuthority(ctx, cfg, spec, "work", func(*accountAuthority) (*accountAuthority, error) { called = true; return authorityTestRecord(1), nil })
 	if called || effect || !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled admission: called=%v effect=%v err=%v", called, effect, err)
-	}
-	_, effect, err = transactAccountAuthority(context.Background(), cfg, spec, "work", func(*accountAuthority) (*accountAuthority, error) {
-		path := filepath.Join(filepath.Dir(authorityTestPath(cfg)), ".authority.lock")
-		if err := os.Rename(path, path+".retained"); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return authorityTestRecord(1), nil
-	})
-	if err == nil || effect || !strings.Contains(err.Error(), "lock changed") {
-		t.Fatalf("lock substitution: effect=%v err=%v", effect, err)
-	}
-	if _, err := os.Stat(authorityTestPath(cfg)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("lock substitution published authority")
 	}
 }
 
@@ -190,46 +173,6 @@ func TestAccountAuthorityCancellationDuringInspectionPreventsAdmission(t *testin
 	}
 }
 
-func TestAccountAuthorityRefusesChangedPublicationInput(t *testing.T) {
-	for _, existing := range []bool{false, true} {
-		t.Run(fmt.Sprintf("existing=%v", existing), func(t *testing.T) {
-			cfg, spec := &config.Config{ConfigDir: t.TempDir()}, authorityTestSpec()
-			if existing {
-				if _, _, err := transactAccountAuthority(context.Background(), cfg, spec, "work", func(*accountAuthority) (*accountAuthority, error) { return authorityTestRecord(1), nil }); err != nil {
-					t.Fatal(err)
-				}
-			}
-			_, effect, err := transactAccountAuthority(context.Background(), cfg, spec, "work", func(current *accountAuthority) (*accountAuthority, error) {
-				external := authorityTestRecord(1)
-				external.Version, external.Provider, external.Account, external.Revision = 1, "codex", "work", 1
-				external.Artifacts["auth.json"] = []byte(`{"principal":"inert-account","grant":"inert-external-change"}`)
-				data, err := json.Marshal(external)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(authorityTestPath(cfg), data, 0o600); err != nil {
-					t.Fatal(err)
-				}
-				return authorityTestRecord(1), nil
-			})
-			if err == nil || effect {
-				t.Fatalf("external authority overwritten: effect=%v err=%v", effect, err)
-			}
-			data, err := os.ReadFile(authorityTestPath(cfg))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var saved accountAuthority
-			if err := json.Unmarshal(data, &saved); err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(saved.Artifacts["auth.json"]), "inert-external-change") {
-				t.Fatal("external credential change lost")
-			}
-		})
-	}
-}
-
 func TestAccountAuthorityCancelledBusyTransactionDoesNotRun(t *testing.T) {
 	cfg, spec := &config.Config{ConfigDir: t.TempDir()}, authorityTestSpec()
 	root, err := openAccountAuthorityRoot(cfg, spec, "work")
@@ -251,62 +194,51 @@ func TestAccountAuthorityCancelledBusyTransactionDoesNotRun(t *testing.T) {
 	}
 }
 
-func TestAccountAuthorityRefusesLinkedAndSpecialInputs(t *testing.T) {
-	for _, kind := range []string{"provider-symlink", "lock-symlink", "lock-hardlink", "authority-hardlink", "authority-fifo", "extra-field", "oversized"} {
-		t.Run(kind, func(t *testing.T) {
-			cfg, spec := &config.Config{ConfigDir: t.TempDir()}, authorityTestSpec()
-			if kind == "provider-symlink" {
-				if err := os.Symlink(t.TempDir(), filepath.Join(cfg.ConfigDir, "codex")); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				root, err := openAccountAuthorityRoot(cfg, spec, "work")
-				if err != nil {
-					t.Fatal(err)
-				}
-				root.close()
-				dir := filepath.Dir(authorityTestPath(cfg))
-				lock := filepath.Join(dir, ".authority.lock")
-				switch kind {
-				case "lock-symlink":
-					if err := os.Symlink(filepath.Join(t.TempDir(), "outside"), lock); err != nil {
-						t.Fatal(err)
-					}
-				case "lock-hardlink":
-					if err := os.WriteFile(lock, nil, 0o600); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.Link(lock, filepath.Join(t.TempDir(), "alias")); err != nil {
-						t.Fatal(err)
-					}
-				case "authority-hardlink":
-					if _, _, err := transactAccountAuthority(context.Background(), cfg, spec, "work", func(*accountAuthority) (*accountAuthority, error) { return authorityTestRecord(1), nil }); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.Link(authorityTestPath(cfg), filepath.Join(t.TempDir(), "alias")); err != nil {
-						t.Fatal(err)
-					}
-				case "authority-fifo":
-					if err := unix.Mkfifo(authorityTestPath(cfg), 0o600); err != nil {
-						t.Fatal(err)
-					}
-				case "extra-field":
-					if err := os.WriteFile(authorityTestPath(cfg), []byte(`{"version":1,"unexpected":true}`), 0o600); err != nil {
-						t.Fatal(err)
-					}
-				case "oversized":
-					if err := os.WriteFile(authorityTestPath(cfg), make([]byte, accountAuthorityLimit+1), 0o600); err != nil {
-						t.Fatal(err)
-					}
-				}
-			}
-			called := false
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			_, effect, err := transactAccountAuthority(ctx, cfg, spec, "work", func(*accountAuthority) (*accountAuthority, error) { called = true; return authorityTestRecord(1), nil })
-			if called || effect || err == nil {
-				t.Fatalf("unsafe input admitted: called=%v effect=%v err=%v", called, effect, err)
-			}
-		})
+// `coop credentials rm` deletes an account's native homes, custody lock files and all, so it waits
+// for a launch working in one and keeps new ones out until it is done.
+func TestAccountHomesRemovalExcludesLaunches(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	folder := HistoryAccountRoot(cfg, "codex", "work")
+	launch, err := lockAccountHomes(context.Background(), folder, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	busy, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if release, err := LockAccountHomesForRemoval(busy, cfg, "codex", "work"); err == nil {
+		release()
+		t.Fatal("removal went ahead while a launch was working in a home")
+	}
+	launch()
+	removal, err := LockAccountHomesForRemoval(context.Background(), cfg, "codex", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer removal()
+	busy, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if release, err := lockAccountHomes(busy, folder, false); err == nil {
+		release()
+		t.Fatal("a launch entered the homes while removal held them")
+	}
+}
+
+// ConfigDir/<provider> was a box mount before 2026-07, so custody refuses a folder of its path that
+// is a link instead of following it to where a box could read the credential.
+func TestPrivateAccountTreeRefusesALinkedFolder(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfg.ConfigDir, "codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(cfg.ConfigDir, "codex", "credentials")); err != nil {
+		t.Fatal(err)
+	}
+	if root, err := openPrivateAccountTree(cfg.ConfigDir, "codex", "credentials", "work"); err == nil {
+		root.close()
+		t.Fatal("custody followed a linked folder")
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Fatalf("custody wrote through the link: %v, %v", entries, err)
 	}
 }

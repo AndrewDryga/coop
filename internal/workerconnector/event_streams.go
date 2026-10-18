@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
@@ -93,29 +94,10 @@ func (j *journal) advanceEventScan(sessionRef string) error {
 	if !reference(sessionRef, 256) {
 		return errors.New("worker event scan cursor is malformed")
 	}
-	path := j.eventScanPath()
-	temporary, err := os.CreateTemp(j.streams, ".event-scan-*")
-	if err != nil {
-		return fmt.Errorf("create worker event scan cursor: %w", err)
+	if err := config.WriteFileAtomic(j.eventScanPath(), []byte(sessionRef)); err != nil {
+		return fmt.Errorf("write worker event scan cursor: %w", err)
 	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if _, err := temporary.WriteString(sessionRef); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporaryPath, path)
+	return nil
 }
 
 func (j *journal) publishEventStream(stream eventStream, sequence, terminalSequence int64) error {
@@ -215,29 +197,7 @@ func (j *journal) writeActivityRecord(path string, record any) error {
 	if err != nil {
 		return fmt.Errorf("encode worker activity record: %w", err)
 	}
-	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".activity-record-*")
-	if err != nil {
-		return fmt.Errorf("create worker activity record: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("protect worker activity record: %w", err)
-	}
-	if _, err := temporary.Write(encoded); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("write worker activity record: %w", err)
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("sync worker activity record: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close worker activity record: %w", err)
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
+	if err := config.WriteFileAtomic(path, encoded); err != nil {
 		return fmt.Errorf("publish worker activity record: %w", err)
 	}
 	return nil

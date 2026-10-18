@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"golang.org/x/sys/unix"
 )
@@ -521,7 +522,7 @@ func (v *gitView) refresh(ctx context.Context) error {
 		}
 		v.configSource, v.config, v.projected = source, config, true
 	}
-	if err := writeViewFile(filepath.Join(v.dir, "config"), v.config); err != nil {
+	if err := config.WriteFileAtomic(filepath.Join(v.dir, "config"), v.config); err != nil {
 		return err
 	}
 	if v.operationInFlight() {
@@ -544,7 +545,7 @@ func (v *gitView) reconcileHead() error {
 	}
 	viewHead, viewInfo, err := readGitMetadata(viewPath, gitPointerLimit)
 	if errors.Is(err, os.ErrNotExist) {
-		return writeViewFile(viewPath, realHead)
+		return config.WriteFileAtomic(viewPath, realHead)
 	}
 	if err != nil {
 		return err
@@ -553,9 +554,9 @@ func (v *gitView) reconcileHead() error {
 		return nil
 	}
 	if viewInfo.ModTime().After(realInfo.ModTime()) {
-		return writeViewFile(realPath, viewHead)
+		return config.WriteFileAtomic(realPath, viewHead)
 	}
-	return writeViewFile(viewPath, realHead)
+	return config.WriteFileAtomic(viewPath, realHead)
 }
 
 // operationInFlight reports whether git left the state of an unfinished rebase, merge, cherry-pick
@@ -634,19 +635,6 @@ func ensureSymlink(path, source string, required bool) error {
 		return err
 	}
 	return nil
-}
-
-func writeViewFile(path string, data []byte) error {
-	file, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	_, writeErr := file.Write(data)
-	if err := errors.Join(writeErr, file.Close()); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
 }
 
 func (v *gitView) envFrom(base []string) []string {
