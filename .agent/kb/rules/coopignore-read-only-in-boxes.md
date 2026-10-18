@@ -30,6 +30,9 @@ does not by itself freeze the parent path, and read-only policy mounts alone do 
 on the next launch or build. Do not treat a mount-plan unit test as the complete runtime proof.
 
 ## Changelog
+- 2026-10-18 — fork merge and the session review scan flag a change to `.coopignore` in any case
+  (box.IsCoopignoreName), including a folder of that name (task
+  2026-10-18-flag-a-fork-or-session-change-to-a-coopignore-sp).
 - 2026-10-18 — a rules file under another spelling is read-only too: on a case-insensitive Mac
   disk the decider opens .coopignore and gets .COOPIGNORE, so the mount plan and both service-shadow
   walks now match by file identity (box.isCoopignore), not by spelling (task

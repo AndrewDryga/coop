@@ -1254,6 +1254,9 @@ func TestPolicyScanFlagsAnyChangeToACoopignore(t *testing.T) {
 		{"a nested one added", func(t *testing.T, repo string) {
 			writeTaskFile(t, filepath.Join(repo, "web", ".coopignore"), "build/\n")
 		}, "web/.coopignore"},
+		{"a nested one added in another case", func(t *testing.T, repo string) {
+			writeTaskFile(t, filepath.Join(repo, "web", ".COOPIGNORE"), "build/\n") // the rules on a Mac disk
+		}, "web/.COOPIGNORE"},
 		{"a removal", func(t *testing.T, repo string) {
 			git(t, repo, "rm", "-q", ".coopignore")
 		}, ".coopignore"},
@@ -1659,6 +1662,21 @@ func TestPolicyScanFlagsAForkThatLinksItsCoopignore(t *testing.T) {
 				t.Fatalf("PolicyScan = %q; want %q", got, want)
 			}
 		})
+	}
+}
+
+// A folder named .COOPIGNORE is what a case-insensitive Mac disk opens as the folder's .coopignore,
+// so a fork that adds one is named like any other rules file Coop cannot read.
+func TestPolicyScanFlagsARulesFolderInAnotherCase(t *testing.T) {
+	repo := initRepo(t)
+	git(t, repo, "checkout", "-q", "-b", "candidate")
+	writeTaskFile(t, filepath.Join(repo, "web", ".COOPIGNORE", "rules"), "x\n")
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "a rules folder")
+	git(t, repo, "checkout", "-q", "main")
+	want := "web/.COOPIGNORE/rules — the fork makes a .coopignore something other than a regular file, which Coop cannot read"
+	if got := mustPolicyScan(t, repo, "candidate"); !slices.Contains(got, want) {
+		t.Fatalf("PolicyScan = %q; want %q", got, want)
 	}
 }
 

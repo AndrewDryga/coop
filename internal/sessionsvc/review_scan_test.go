@@ -133,6 +133,25 @@ func TestReviewScanNamesAChangedCoopignore(t *testing.T) {
 	}
 }
 
+// A .COOPIGNORE is the folder's rules on a case-insensitive Mac disk, so the review names it too.
+func TestReviewScanNamesACoopignoreInAnotherCase(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	sessionWorkspaceWrite(t, filepath.Join(repo, "README.md"), "base\n")
+	git("add", ".")
+	git("commit", "-qm", "base")
+	parent := gitOut(repo, "rev-parse", "HEAD")
+	if err := os.Mkdir(filepath.Join(repo, "web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceWrite(t, filepath.Join(repo, "web", ".COOPIGNORE"), "build/\n")
+	git("add", ".")
+	git("commit", "-qm", "candidate")
+	findings, err := scanReviewCandidate(context.Background(), repo, parent, gitOut(repo, "rev-parse", "HEAD"))
+	if want := "web/.COOPIGNORE — the change edits a .coopignore, which decides what boxes are shown"; err != nil || !slices.Contains(findings, want) {
+		t.Fatalf("findings = %q, %v; want %q", findings, err, want)
+	}
+}
+
 // A file the readable rules hide is still named when another .coopignore above it cannot be read:
 // a rule in the root .coopignore, its own name or a folder's name above it. So the review never
 // reports only the .coopignore for a candidate that adds a db.prod.json or a .env; the file the

@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // MountKind distinguishes the ways a path enters (or is blocked from) the box.
@@ -107,7 +106,7 @@ func isCoopignore(path string) bool {
 	if name == CoopIgnoreFile {
 		return true
 	}
-	if !strings.EqualFold(name, CoopIgnoreFile) {
+	if !IsCoopignoreName(name) {
 		return false
 	}
 	spelled, err := os.Lstat(path)

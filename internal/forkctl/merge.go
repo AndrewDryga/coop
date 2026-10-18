@@ -60,7 +60,7 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		// or renames one waits for --force. One that is not a regular file is named below instead.
 		changed := ""
 		for _, p := range f[1:] {
-			if filepath.Base(p) == ".coopignore" {
+			if box.IsCoopignoreName(filepath.Base(p)) {
 				changed = p
 			}
 		}
@@ -126,14 +126,17 @@ func PolicyScan(repo, ref string) ([]string, error) {
 	return warns, nil
 }
 
-// notRegularCoopignore reports whether the fork's change at path leaves a .coopignore that is not a
-// regular file: a link named .coopignore, or anything inside a folder named .coopignore.
+// notRegularCoopignore reports whether the fork's change at path leaves a .coopignore, in any case,
+// that is not a regular file: a link named .coopignore, or anything inside a folder named .coopignore.
 func notRegularCoopignore(repo, ref, path string) bool {
 	slash := filepath.ToSlash(path)
-	if strings.HasPrefix(slash, ".coopignore/") || strings.Contains(slash, "/.coopignore/") {
-		return true
+	parts := strings.Split(slash, "/")
+	for _, folder := range parts[:len(parts)-1] {
+		if box.IsCoopignoreName(folder) {
+			return true
+		}
 	}
-	if filepath.Base(slash) != ".coopignore" {
+	if !box.IsCoopignoreName(parts[len(parts)-1]) {
 		return false
 	}
 	mode, _, _ := strings.Cut(forkspace.GitOut(repo, "ls-tree", ref, "--", path), " ")

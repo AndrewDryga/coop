@@ -8,7 +8,8 @@
   a folder's `.COOPIGNORE`, or the name in any other mix of cases, as its `.coopignore`, but it
   mounted only the exact lower-case name read-only. A box could edit such a file and change what
   the next launch hides. Every file Coop reads as a folder's rules is now read-only in boxes and
-  service containers.
+  service containers, and `coop fork merge` and session reviews flag a change to one as they do for
+  `.coopignore`.
 
 - **A loop attempt that fails is checked for forged task commits too.** `coop loop` refuses a
   completion whose commits carry another task's `Coop-Task` trailer or rewrite another task's
