@@ -419,7 +419,7 @@ func TestParkedEngineeringWorkspaceCheckpointCapturesExactCodeAndTaskState(t *te
 	if int64(len(bundle)) != checkpoint.Bundle.ByteSize || bundleSHA != checkpoint.Bundle.SHA256 {
 		t.Fatalf("bundle identity = bytes=%d sha=%s descriptor=%+v", len(bundle), bundleSHA, checkpoint.Bundle)
 	}
-	if _, err := workerproto.ValidateWorkspaceCheckpointBundle(checkpoint, bundle); err != nil {
+	if _, err := workerproto.ReadWorkspaceCheckpointBundle(checkpoint, bytes.NewReader(bundle), nil); err != nil {
 		t.Fatal(err)
 	}
 	reader := tar.NewReader(bytes.NewReader(bundle))
@@ -710,7 +710,7 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 		checkpoint := captured.Checkpoint
 		checkpoint.Task.Subtasks = append([]bool(nil), checkpoint.Task.Subtasks...)
 		checkpoint.Task.Subtasks[0] = !checkpoint.Task.Subtasks[0]
-		if _, err := workerproto.ValidateWorkspaceCheckpointBundle(checkpoint, bundle); err != nil {
+		if _, err := workerproto.ReadWorkspaceCheckpointBundle(checkpoint, bytes.NewReader(bundle), nil); err != nil {
 			t.Fatalf("fixture must reach post-restore verification: %v", err)
 		}
 		for range 2 {

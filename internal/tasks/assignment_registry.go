@@ -56,14 +56,6 @@ func validateForkAssignmentIndex(record ForkAssignmentIndex) error {
 	return nil
 }
 
-func ensureForkAssignmentIndexDir(repo string, identity forkspace.Identity) error {
-	root, err := openStateRoot(repo, forkAssignmentIndexDir(repo, identity), true)
-	if err != nil {
-		return err
-	}
-	return root.Close()
-}
-
 // openStateRoot opens dir, a folder in repo's <repo>-forks/.coop, through forkspace.OpenStateRoot:
 // never through a link a box put in place of .coop or any folder on the way, made when create.
 func openStateRoot(repo, dir string, create bool) (*os.Root, error) {

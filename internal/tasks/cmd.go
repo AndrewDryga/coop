@@ -733,13 +733,6 @@ func tasksFolderClaim(root string, args []string) (int, error) {
 	return tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", "claimed", opts)
 }
 
-// tasksFolderMove relocates a task's folder to newState (claim/done). verb is the imperative used
-// in the usage line ("claim"); pastVerb is the past tense for the success note ("claimed"). Moving
-// to the state it's already in is a no-op note, not an error.
-func tasksFolderMove(root string, args []string, newState, verb, pastVerb string) (int, error) {
-	return tasksFolderMoveWith(root, args, newState, verb, pastVerb, claimOptions{})
-}
-
 // tasksFolderMoveWith is tasksFolderMove with the claim's actor and takeover choice; done and every
 // non-CLI claim pass an empty claimOptions, which binds the claim to nothing.
 func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb string, opts claimOptions) (int, error) {

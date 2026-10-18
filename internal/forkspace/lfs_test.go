@@ -254,3 +254,7 @@ func TestLFSRefusesUnsupportedPointersInsteadOfLeavingThemAsPayload(t *testing.T
 		})
 	}
 }
+
+func lfsObjectPath(oid string) string {
+	return filepath.Join(".git", lfsMetadataObjectPath(oid))
+}

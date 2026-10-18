@@ -1,6 +1,7 @@
 package box
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
 
@@ -267,4 +269,44 @@ func TestNetworkMCPDependenciesRefuseUnqualifiedRouting(t *testing.T) {
 			t.Fatal("unqualified MCP routing was admitted:", snapshot)
 		}
 	}
+}
+
+// ReviewProjectNetwork prepares the approval a human confirms. The mode and
+// the rules come from .agent/project.yaml and nowhere else: to change access,
+// edit the file and review it again. It reads the repository ONCE: Commit posts
+// back the exact rules that were displayed, never a fresh read of a file an
+// agent could have rewritten during the prompt.
+//
+// A request that is already exactly what was approved — the same check every
+// launch makes — returns a review with nothing to decide, before any authority
+// state exists: a no-op must not create an owner key or refresh a record.
+func ReviewProjectNetwork(cfg *config.Config, repo string) (_ *ProjectNetworkApproval, err error) {
+	return ReviewProjectNetworkContext(context.Background(), cfg, repo)
+}
+
+// checkApprovedServices recomputes the digest of every approved service from the
+// Compose file a launch (or this project's current tree) would actually use.
+func checkApprovedServices(approval *networkstate.Approval, composeFile, repoRoot string, repoReadOnly bool) error {
+	if approval == nil || len(approval.Services) == 0 {
+		return nil
+	}
+	data, err := readValidatedCompose(composeFile, repoRoot, repoReadOnly)
+	if err != nil {
+		return err
+	}
+	return checkApprovedServicesData(approval, data)
+}
+
+// NetworkMCPDependencies returns the automatic HTTP destinations of the trusted
+// shared MCP configuration. They are Admission.Automatic, never operator
+// requests: the operator chose the servers, not their hostnames.
+//
+// Only what admission froze is enforced, so editing the MCP file after a launch
+// was admitted can produce a visible denial — never a wider policy.
+func NetworkMCPDependencies(cfg *config.Config, spec RunSpec) ([]egress.Input, error) {
+	snapshot, err := networkMCPSnapshot(cfg, spec)
+	if err != nil {
+		return nil, err
+	}
+	return networkMCPDependenciesOf(snapshot)
 }

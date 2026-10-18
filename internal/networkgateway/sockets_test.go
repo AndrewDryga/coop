@@ -240,3 +240,7 @@ func TestMaintenanceShutdownWaitsForDetachedDial(t *testing.T) {
 		t.Fatal("dial barrier did not finish")
 	}
 }
+
+func parseSocketInventory(reader io.Reader, b boundary) ([]SocketRow, error) {
+	return parseSocketTables([]socketTable{{reader: reader}}, b)
+}

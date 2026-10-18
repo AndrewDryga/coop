@@ -128,10 +128,6 @@ func profileMarkerSnapshot(cfg *config.Config) map[string]bool {
 	return markers
 }
 
-func envKeysOutsideScope(cfg *config.Config, scope []string) map[string]bool {
-	return envKeysOutsideScopeWithMarkers(cfg, scope, nil)
-}
-
 func envKeysOutsideScopeWithMarkers(cfg *config.Config, scope []string, markers map[string]bool) map[string]bool {
 	in := map[string]bool{}
 	for _, a := range scope {
@@ -176,12 +172,6 @@ func writeFilteredEnvFile(parent, path string, drop map[string]bool) (string, er
 		return "", err
 	}
 	return writeTempFile(parent, filteredEnvContent(data, drop))
-}
-
-// writeMergedEnvFile renders deterministic project defaults followed by the trusted user env.
-// Later duplicate entries win in Docker env files, so agents/env remains authoritative.
-func writeMergedEnvFile(parent string, projectEnv map[string]string, userPath string, drop map[string]bool) (string, error) {
-	return writeComposedEnvFile(parent, projectEnv, nil, userPath, drop)
 }
 
 // writeComposedEnvFile renders project defaults, then the selected account's Coop-owned key,

@@ -197,3 +197,6 @@ func TestFilesystemCapacityReportsTheVolumeHoldingThePath(t *testing.T) {
 		t.Fatal("a missing path reported a filesystem")
 	}
 }
+
+// MeasureUsage measures one tree on its own. Use a UsageScan when several trees may share inodes.
+func MeasureUsage(path string) (Usage, error) { return NewUsageScan().Measure(path) }

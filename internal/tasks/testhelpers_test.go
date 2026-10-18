@@ -1,11 +1,13 @@
 package tasks
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
@@ -196,4 +198,78 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// assignLoopTask scans in stable queue/id order and atomically leases exactly one task before the
+// box starts. An available in-progress task remains preferred, but a foreign-held one is skipped so
+// another controller can take independent todo work. The flock is obtained while a todo folder is
+// still in todo, then rides its atomic rename to in_progress by inode.
+func assignLoopTask(hosts []string, owner TaskLeaseOwner) (TaskAssignment, error) {
+	return AssignLoopTaskOnly(hosts, owner, "")
+}
+
+// tasksFolderMove relocates a task's folder to newState (claim/done). verb is the imperative used
+// in the usage line ("claim"); pastVerb is the past tense for the success note ("claimed"). Moving
+// to the state it's already in is a no-op note, not an error.
+func tasksFolderMove(root string, args []string, newState, verb, pastVerb string) (int, error) {
+	return tasksFolderMoveWith(root, args, newState, verb, pastVerb, claimOptions{})
+}
+
+// completionReplayCandidates separates lifecycle arrivals from mutations of folders that were
+// already archived when the window began. Startup recovery re-runs this classification from
+// authority-locked fingerprints before it writes markers or mutates lifecycle state.
+func completionReplayCandidates(
+	root string,
+	record CompletionWindowRecord,
+	candidates []QueuedTask,
+) (replay []QueuedTask, baselineMutations []QueuedTask, err error) {
+	for _, candidate := range candidates {
+		current, fingerprintErr := CompletionFingerprintFor(root, candidate.Item)
+		if fingerprintErr != nil {
+			return nil, nil, fingerprintErr
+		}
+		if current.ReceiptBusy {
+			return nil, nil, fmt.Errorf("task %s completion receipt is busy", candidate.Item.ID)
+		}
+		switch classifyCompletionCandidate(record, candidate.Item.ID, current) {
+		case completionCandidateReplay:
+			replay = append(replay, candidate)
+		case completionCandidateMutation:
+			baselineMutations = append(baselineMutations, candidate)
+		}
+	}
+	return replay, baselineMutations, nil
+}
+
+func beginCompletionWindowsAllowing(hosts []string, taskID string) (*CompletionWindowSet, error) {
+	return beginCompletionWindowsAllowingTasks(hosts, []string{taskID})
+}
+
+func ReconcileCompletionWindows(hosts []string) error {
+	_, err := ReconcileCompletionWindowsWithActivity(hosts)
+	return err
+}
+
+// openLeaseAuthority opens a task's authority record WITHOUT locking it. Production code takes the
+// lock through lockLeaseAuthority instead, so that every held lock has been proved to be on the
+// inode the registry name still resolves to; an unlocked open carries no such guarantee.
+func OpenLeaseAuthority(root, id string, create bool) (*os.File, error) {
+	key, err := LeaseAuthorityKey(root, id)
+	if err != nil {
+		return nil, err
+	}
+	return openLeaseAuthorityRecord(key+".lock", create)
+}
+
+func leaseCompletionReceiptMatches(authority *os.File, taskDir string) bool {
+	_, ok := readLeaseCompletionReceipt(authority, taskDir)
+	return ok
+}
+
+func ensureForkAssignmentIndexDir(repo string, identity forkspace.Identity) error {
+	root, err := openStateRoot(repo, forkAssignmentIndexDir(repo, identity), true)
+	if err != nil {
+		return err
+	}
+	return root.Close()
 }

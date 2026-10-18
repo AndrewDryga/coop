@@ -3451,11 +3451,6 @@ func chooseSessionACPAllow(options []permOption) string {
 	return ""
 }
 
-func accumulateSessionACPUpdate(agent agents.Agent, raw json.RawMessage, expectedSession string, assistant *[]byte) error {
-	_, err := accumulateSessionACPUpdateArtifacts(agent, raw, expectedSession, assistant, nil)
-	return err
-}
-
 // accumulateSessionACPUpdateArtifacts folds one session/update into the assistant text and output
 // artifacts of the admitted prompt. agent (nil when the rung's provider is unknown) decides which
 // assistant chunks are answer text rather than progress commentary — see Agent.ACPFinalChunk.

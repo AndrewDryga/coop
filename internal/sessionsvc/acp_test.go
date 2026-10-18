@@ -4060,3 +4060,8 @@ func TestCloseWarmExecutionsStopsWorkspacesTogether(t *testing.T) {
 		t.Fatalf("close error = %v, want the failed session's error kept", err)
 	}
 }
+
+func accumulateSessionACPUpdate(agent agents.Agent, raw json.RawMessage, expectedSession string, assistant *[]byte) error {
+	_, err := accumulateSessionACPUpdateArtifacts(agent, raw, expectedSession, assistant, nil)
+	return err
+}

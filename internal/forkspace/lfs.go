@@ -294,10 +294,6 @@ func VerifyLFS(ctx context.Context, repository, commit string) error {
 	})
 }
 
-func lfsObjectPath(oid string) string {
-	return filepath.Join(".git", lfsMetadataObjectPath(oid))
-}
-
 func lfsMetadataObjectPath(oid string) string {
 	return filepath.Join("lfs", "objects", oid[:2], oid[2:4], oid)
 }

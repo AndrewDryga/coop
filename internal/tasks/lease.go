@@ -344,17 +344,6 @@ func lockLeaseAuthorityForAudit(root, id string, create bool, label string, owne
 	})
 }
 
-// openLeaseAuthority opens a task's authority record WITHOUT locking it. Production code takes the
-// lock through lockLeaseAuthority instead, so that every held lock has been proved to be on the
-// inode the registry name still resolves to; an unlocked open carries no such guarantee.
-func OpenLeaseAuthority(root, id string, create bool) (*os.File, error) {
-	key, err := LeaseAuthorityKey(root, id)
-	if err != nil {
-		return nil, err
-	}
-	return openLeaseAuthorityRecord(key+".lock", create)
-}
-
 func openLeaseAuthorityRecord(name string, create bool) (*os.File, error) {
 	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
@@ -753,11 +742,6 @@ func readLeaseCompletionReceipt(authority *os.File, taskDir string) (leaseComple
 		return leaseCompletionReceipt{}, false
 	}
 	return got, true
-}
-
-func leaseCompletionReceiptMatches(authority *os.File, taskDir string) bool {
-	_, ok := readLeaseCompletionReceipt(authority, taskDir)
-	return ok
 }
 
 func inspectTaskCompletionReceipt(root string, task Item) (leaseCompletionReceipt, bool, bool) {

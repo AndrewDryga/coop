@@ -90,14 +90,6 @@ func validateWorkspaceReservation(record WorkspaceReservation) error {
 	return nil
 }
 
-func ensureReservationDir(repo string) error {
-	root, err := OpenStateRoot(repo, reservationFolder, true)
-	if err != nil {
-		return err
-	}
-	return root.Close()
-}
-
 func decodeWorkspaceReservation(data []byte) (WorkspaceReservation, error) {
 	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(data), workspaceReservationLimit+1))
 	dec.DisallowUnknownFields()

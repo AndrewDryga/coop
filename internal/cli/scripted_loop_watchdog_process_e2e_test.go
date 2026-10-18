@@ -355,7 +355,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 				t.Fatalf("retained completion window lost archived baseline %s", archiveID)
 			}
 		}
-		if err := tasks.ReconcileCompletionWindows([]string{root}); err == nil ||
+		if _, err := tasks.ReconcileCompletionWindowsWithActivity([]string{root}); err == nil ||
 			!strings.Contains(err.Error(), "archived task(s) "+archiveID+" left done") {
 			t.Fatalf("startup recovery archive departure = %v", err)
 		}

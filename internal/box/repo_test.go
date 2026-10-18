@@ -545,3 +545,12 @@ func TestFindRepoRefusesARepositoryAnotherUserOwns(t *testing.T) {
 		t.Fatalf("ownedRepository(your own repository) = %v", err)
 	}
 }
+
+// ComposeFile returns the sibling-services compose file, or "" if it's absent or empty (a zero-byte
+// file declares no services). It completes the config-source/runtime-identity split: the relative
+// PATH (box.compose, else .agent/compose.yml) is trusted config, read from policyRepo, while the
+// FILE itself is read from the workspace at that path — so a fork uses the parent's committed choice
+// of WHERE the compose file lives, but its OWN copy of the file. For a plain repo pass repo twice.
+func ComposeFile(workspace, policyRepo string) string {
+	return ComposeFileAt(workspace, project.ComposePath(policyRepo))
+}

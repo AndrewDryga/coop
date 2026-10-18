@@ -163,3 +163,24 @@ func TestServiceSecretApprovalKeepsPolicyReadOnly(t *testing.T) {
 		t.Fatalf("kept=%+v hidden=%v, want only the policy mount", kept, hidden)
 	}
 }
+
+// serviceShadowOverride extends the primary box's secret shadowing to sibling services. A
+// validated compose file may bind any path inside the repo into a sidecar — the repo root, a
+// directory, or a single file — and Compose would hand the sidecar the raw host files, including
+// every .env, key, and .coopignore'd path the box itself only ever sees as an empty decoy. The
+// override written here applies the SAME shadow decision (NewShadowDecider: SecretGlobs, AllowGlobs,
+// .coopignore) to each bind: a bind whose resolved source is itself a secret is replaced by a decoy
+// at the same target (Compose merges volumes by target, so the override wins), and a directory bind
+// gets a decoy over every shadowed descendant, pruning shadowed directories whole. Symlink aliases
+// are resolved before deciding, so `./alias -> .env` is shadowed like `.env`. Named volumes and
+// tmpfs entries carry no host source and are untouched.
+//
+// Returns the override path and true when at least one decoy was needed; decoy sources live in
+// dir, the private per-start temp dir, beside the frozen compose snapshot.
+func serviceShadowOverride(repo, composeFile string, data []byte, dir string) (string, bool, error) {
+	decoys, _, err := serviceShadowPlan(repo, composeFile, data)
+	if err != nil {
+		return "", false, err
+	}
+	return writeServiceShadowOverride(repo, decoys, dir)
+}

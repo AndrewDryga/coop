@@ -226,12 +226,6 @@ func ReloadSnapshot(err error) (*Snapshot, bool) {
 	return nil, false
 }
 
-// Run proxies the editor to a factory-spawned child, restarting it transparently — a thin wrapper
-// over RunWith with no resume/reload (the shape existing callers use).
-func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory, hooks *Hooks) error {
-	return RunWith(ctx, clientIn, clientOut, factory, hooks, RunOpts{})
-}
-
 // RunWith is Run plus resume/reload: opts.Resume seeds + replays session state onto the first child
 // (a resumed start), and a receive on opts.Reload snapshots, stops the child, and returns a
 // reloadError carrying the snapshot. Both are guarded by non-nil opts, so the zero value is
@@ -1396,17 +1390,6 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 	})
 }
 
-// forceSession starts an acknowledgement-gated settings chain for one established session. The
-// chain is serialized because model changes can reset effort, and prompts wait until it completes.
-func (p *proxy) forceSession(sid string) {
-	p.controlMu.Lock()
-	defer p.controlMu.Unlock()
-	p.mu.Lock()
-	child, generation := p.child, p.generation
-	p.mu.Unlock()
-	p.forceSessionFor(child, generation, sid)
-}
-
 // controlMu is held through gate installation and release.
 func (p *proxy) forceSessionFor(child *Child, generation uint64, sid string) {
 	if p.hooks == nil || p.hooks.SessionReady == nil {
@@ -1943,14 +1926,6 @@ func (p *proxy) remapToEditor(line []byte) []byte {
 	return line
 }
 
-// replay brings a freshly-started child up to the editor's current view: re-send
-// initialize and a session/load for each live session, consuming their responses
-// (and any chatter emitted while loading) so the editor doesn't see them; then fail
-// any requests that were in flight when the old child died.
-func (p *proxy) replay(c *Child, br *bufio.Reader) error {
-	return p.replayAt(c, br, p.currentRestartEpoch())
-}
-
 func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 	type snap struct {
 		editorID, adapterID, provider string
@@ -2444,25 +2419,6 @@ func (p *proxy) takeRestartHeldLocked() []clientLine {
 	p.restartHeld = map[string]clientLine{}
 	p.restartHeldLen = 0
 	return held
-}
-
-// swapChild publishes c as the live child AND fails the requests that were in flight, in one
-// critical section. The two MUST be atomic: a request that arrives during the swap is then
-// either (a) seen before the lock — added to pending, failed here, and (since p.child was still
-// the dead child) written there and dropped, so the editor's retry is the only delivery; or
-// (b) seen after the lock — routed to the live child and NOT in the failed snapshot. Splitting
-// setChild and failAllPending left a window where a request could be BOTH routed to the live
-// child AND failed — a duplicate response and a re-executed prompt. (Run publishes the initial
-// child via setChild; only swaps come through here.)
-//
-// keep spares request ids replay is about to re-send transparently (a turn in flight at a manual
-// switch): they get the resend's real response instead of an error, so the editor's turn completes
-// on the new box. The resend re-registers them as pending via fromClient right after the swap —
-// before the new child's pump starts, so no response can race the gap.
-func (p *proxy) swapChild(c *Child, keep map[string]bool, forces map[string][][]byte, bindings map[string]replayBinding) {
-	p.controlMu.Lock()
-	defer p.controlMu.Unlock()
-	_, _, _ = p.swapChildAt(c, keep, nil, forces, bindings, nil, nil, p.currentRestartEpoch(), false)
 }
 
 func (p *proxy) swapChildAt(

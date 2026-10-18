@@ -19,28 +19,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/project"
 )
 
-// ValidateComposeFile reports whether the sibling-services compose file at path declares ONLY
-// directives that are safe to auto-run on the HOST daemon — nil when safe, else an error naming
-// the first offending key/path/value. Coop runs this before every service `compose up`,
-// so the compose path no longer has to be shadowed read-only in the box: an in-box agent MAY
-// author the file, but the host refuses to run anything that reaches outside a repo-scoped,
-// loopback-only container. repoRoot bounds bind mounts; path's own dir anchors relative binds.
-//
-// The allowlist is the STRUCT SHAPE: composeDoc/serviceSpec model exactly the safe subset, and
-// the decoder runs with KnownFields(true), so every host-privilege / host-reaching directive
-// (privileged, cap_add, devices, security_opt, userns_mode, pid/ipc/network_mode, env_file,
-// secrets, configs, build, extends, include, a volume's driver_opts, …) is rejected because it
-// is simply absent from the structs — a deny-by-construction that also covers directives compose
-// hasn't invented yet. Values cannot import the host environment, bind sources must stay in
-// the repo, and every published port must explicitly bind loopback.
-// repoReadOnly is the run's repository mode: a read-only session (an investigation, a review
-// candidate) keeps its sidecars, but a bind of the repository into one of them must be read-only
-// too — otherwise the sidecar is a write path into a checkout the agent itself cannot write.
-func ValidateComposeFile(path, repoRoot string, repoReadOnly bool) error {
-	_, err := readValidatedCompose(path, repoRoot, repoReadOnly)
-	return err
-}
-
 const maxComposeFileBytes = 1 << 20
 
 func readValidatedCompose(path, repoRoot string, repoReadOnly bool) ([]byte, error) {

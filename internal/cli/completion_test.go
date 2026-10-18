@@ -613,3 +613,10 @@ func TestSessionsCompletionMatchesTheParsers(t *testing.T) {
 		}
 	}
 }
+
+// completionCandidates returns the possible values for the word after prev (the already-typed args
+// after `coop`). It mirrors the dispatch: top-level commands + agents first, then per-family verbs and
+// the local dynamic values (fork names, task ids, profiles).
+func (a *app) completionCandidates(prev []string) []string {
+	return a.completionCandidatesFor(prev, "")
+}

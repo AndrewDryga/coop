@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -118,8 +119,12 @@ func TestVolumeApprovalAndSecretDeclineKeepDecoy(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "[Compose output]") || !strings.Contains(out, "Services will receive empty files") {
 		t.Fatalf("volume approved and secret declined = %d:\n%s", code, out)
 	}
-	if review, err := box.ReviewServiceSecrets(repo, compose); err != nil || review == nil {
-		t.Fatalf("secret was accidentally approved: review=%v err=%v", review, err)
+	data, err := os.ReadFile(compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approval, ok := box.ApprovedServiceSecrets(repo, compose, data); ok && slices.Contains(approval.Paths, "tls.key") {
+		t.Fatalf("secret was accidentally approved: %v", approval.Paths)
 	}
 }
 

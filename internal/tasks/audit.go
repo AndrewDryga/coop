@@ -3089,14 +3089,6 @@ type TaskAssignment struct {
 
 const maxLeaseRescans = 3
 
-// assignLoopTask scans in stable queue/id order and atomically leases exactly one task before the
-// box starts. An available in-progress task remains preferred, but a foreign-held one is skipped so
-// another controller can take independent todo work. The flock is obtained while a todo folder is
-// still in todo, then rides its atomic rename to in_progress by inode.
-func assignLoopTask(hosts []string, owner TaskLeaseOwner) (TaskAssignment, error) {
-	return AssignLoopTaskOnly(hosts, owner, "")
-}
-
 // skipOwnedCandidate reports whether id carries a durable human-claim record (taskOwnerRecord) — if
 // so, the loop must not adopt it, lease or no lease: `coop tasks claim` holds no flock, so an
 // unheld lease proves nothing about whether a human still owns the work. Checked BEFORE

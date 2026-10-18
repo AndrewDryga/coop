@@ -11,15 +11,6 @@ import (
 	"time"
 )
 
-// ValidateWorkspaceCheckpointBundle authenticates every tar member against the external
-// descriptor and inner manifest before a caller uploads or restores any bytes.
-func ValidateWorkspaceCheckpointBundle(
-	checkpoint WorkspaceCheckpoint,
-	bundle []byte,
-) (WorkspaceCheckpointBundleManifest, error) {
-	return ReadWorkspaceCheckpointBundle(checkpoint, bytes.NewReader(bundle), nil)
-}
-
 // ReadWorkspaceCheckpointBundle validates a bounded manifest and streams each
 // declared member. Consumers must quarantine any writes until this call succeeds.
 func ReadWorkspaceCheckpointBundle(checkpoint WorkspaceCheckpoint, input io.Reader,

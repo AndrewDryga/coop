@@ -507,3 +507,7 @@ func TestPublicCABundlesNotShadowed(t *testing.T) {
 		}
 	}
 }
+
+func matchesAny(name string, globs []string) bool {
+	return shadowpath.MatchesAny(name, globs)
+}

@@ -164,19 +164,6 @@ func loadProjectNetworkReviewInputs(cfg *config.Config, repo string) (projectNet
 		admission: input, pending: pending, needs: modeChanged || pending != nil}, nil
 }
 
-// ReviewProjectNetwork prepares the approval a human confirms. The mode and
-// the rules come from .agent/project.yaml and nowhere else: to change access,
-// edit the file and review it again. It reads the repository ONCE: Commit posts
-// back the exact rules that were displayed, never a fresh read of a file an
-// agent could have rewritten during the prompt.
-//
-// A request that is already exactly what was approved — the same check every
-// launch makes — returns a review with nothing to decide, before any authority
-// state exists: a no-op must not create an owner key or refresh a record.
-func ReviewProjectNetwork(cfg *config.Config, repo string) (_ *ProjectNetworkApproval, err error) {
-	return ReviewProjectNetworkContext(context.Background(), cfg, repo)
-}
-
 // ReviewProjectNetworkContext is ReviewProjectNetwork with cancellation for the transition lock.
 // A first approval can legitimately wait for live sandbox mount windows; Ctrl-C must release that
 // wait without creating a project marker or owner decision.
@@ -367,19 +354,6 @@ func requestedServices(rules []egress.Rule) []string {
 	}
 	slices.Sort(out)
 	return out
-}
-
-// checkApprovedServices recomputes the digest of every approved service from the
-// Compose file a launch (or this project's current tree) would actually use.
-func checkApprovedServices(approval *networkstate.Approval, composeFile, repoRoot string, repoReadOnly bool) error {
-	if approval == nil || len(approval.Services) == 0 {
-		return nil
-	}
-	data, err := readValidatedCompose(composeFile, repoRoot, repoReadOnly)
-	if err != nil {
-		return err
-	}
-	return checkApprovedServicesData(approval, data)
 }
 
 func checkApprovedServicesData(approval *networkstate.Approval, data []byte) error {

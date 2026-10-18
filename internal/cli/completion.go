@@ -100,13 +100,6 @@ func (a *app) cmdComplete(words []string) (int, error) {
 	return 0, nil
 }
 
-// completionCandidates returns the possible values for the word after prev (the already-typed args
-// after `coop`). It mirrors the dispatch: top-level commands + agents first, then per-family verbs and
-// the local dynamic values (fork names, task ids, profiles).
-func (a *app) completionCandidates(prev []string) []string {
-	return a.completionCandidatesFor(prev, "")
-}
-
 // completionCandidatesFor returns candidates for prev (the already-complete words after `coop`)
 // and cur (the word currently being edited). Keeping cur here lets target completion stay useful
 // without dumping every model/effort/account combination into an empty completion menu.

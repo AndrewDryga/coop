@@ -30,8 +30,26 @@ var (
 	moveTaskDir           = tasks.MoveTaskDir
 	completeTrustedTask   = tasks.CompleteTrustedTask
 	readAuditReopenRecord = tasks.ReadAuditReopenRecord
-	openLeaseAuthority    = tasks.OpenLeaseAuthority
 )
+
+// openLeaseAuthority opens the task's lease authority file, which a test locks to stand in for
+// another controller's lease.
+func openLeaseAuthority(root, id string, create bool) (*os.File, error) {
+	key, err := tasks.LeaseAuthorityKey(root, id)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := tasks.OpenLeaseAuthorityRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer registry.Close()
+	flags := os.O_RDWR
+	if create {
+		flags |= os.O_CREATE
+	}
+	return registry.OpenFile(key+".lock", flags, 0o600)
+}
 
 func queueProgress(hosts []string) (tasks.TaskCounts, string) {
 	counts, active, err := tasks.QueueProgress(hosts)

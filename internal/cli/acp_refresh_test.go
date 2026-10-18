@@ -581,7 +581,7 @@ func TestACPReadmitRefusesAChangedOrWithdrawnProjectBeforeTheRuntime(t *testing.
 	}
 	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: repo}
 	project("proxy.golang.org")
-	review, err := box.ReviewProjectNetwork(cfg, repo)
+	review, err := box.ReviewProjectNetworkContext(context.Background(), cfg, repo)
 	if err != nil {
 		t.Fatal(err)
 	}

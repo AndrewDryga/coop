@@ -143,3 +143,5 @@ func TestPadRight(t *testing.T) {
 		t.Errorf("multibyte padRight = %q, want 2 trailing spaces", got)
 	}
 }
+
+func gitDirty(dir string) bool { return gitOut(dir, "status", "--porcelain") != "" }

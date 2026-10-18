@@ -928,14 +928,6 @@ func sessionWorkspaceStatusDigest(raw []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func planSessionWorkspaceDiscard(repo, workspace string, acceptDirty, acceptUnmerged bool) (WorkspaceDiscardPlan, error) {
-	parentHead, err := sessionWorkspaceCommit(repo, "HEAD")
-	if err != nil {
-		return WorkspaceDiscardPlan{}, fmt.Errorf("resolve discard parent: %w", err)
-	}
-	return planSessionWorkspaceDiscardAtParent(repo, workspace, parentHead, acceptDirty, acceptUnmerged)
-}
-
 func planSessionWorkspaceDiscardAtParent(
 	repo, workspace, parent string,
 	acceptDirty, acceptUnmerged bool,

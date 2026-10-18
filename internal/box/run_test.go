@@ -4484,3 +4484,20 @@ func TestCompanionRepositoryMountsBoundsTheInventory(t *testing.T) {
 		t.Fatalf("refused inventory still produced %d mounts and %d env entries; it must not be truncated to the cap", len(mounts), len(environment))
 	}
 }
+
+// Check the complete emitted mount plan, not only its config ancestors. The
+// sole authority-tree exception is an exact, locally generated mount source
+// recorded by composition; the runfiles directory itself is never exposed.
+func (f *filteredExecution) validateMounts(options, files, directories []string) error {
+	return f.validateMountsContext(context.Background(), options, files, directories)
+}
+
+// prepareBoxEnvFile picks the env file a run passes to the runtime. Credential scope: the shared
+// env file is passed in, but a scoped run strips token keys for agents it has no business reading
+// and for a provider whose selected named account must not be shadowed by its global env token.
+// Non-agent runtime vars always pass through; assembleArgs computes the same provider scope for
+// the home mounts. tmp is the generated file the caller removes after the run ("" when the shared
+// file is used as is, or none applies).
+func prepareBoxEnvFile(cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps, projectEnv map[string]string) (envFile, tmp string, err error) {
+	return prepareBoxEnvFileWithMarkers(cfg, spec, artifacts, projectEnv, nil)
+}

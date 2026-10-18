@@ -188,8 +188,6 @@ func gitSignTo(stderr io.Writer, dir string, args ...string) error {
 	return err
 }
 
-func gitDirty(dir string) bool { return gitOut(dir, "status", "--porcelain") != "" }
-
 // hasYes reports whether args carry the -y/--yes confirmation-skip flag that destructive commands
 // accept to run unattended (distinct from --force, which overrides a safety guard, not the prompt).
 func hasYes(args []string) bool {

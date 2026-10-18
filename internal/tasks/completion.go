@@ -289,32 +289,6 @@ func classifyCompletionCandidate(
 	return completionCandidateMutation
 }
 
-// completionReplayCandidates separates lifecycle arrivals from mutations of folders that were
-// already archived when the window began. Startup recovery re-runs this classification from
-// authority-locked fingerprints before it writes markers or mutates lifecycle state.
-func completionReplayCandidates(
-	root string,
-	record CompletionWindowRecord,
-	candidates []QueuedTask,
-) (replay []QueuedTask, baselineMutations []QueuedTask, err error) {
-	for _, candidate := range candidates {
-		current, fingerprintErr := CompletionFingerprintFor(root, candidate.Item)
-		if fingerprintErr != nil {
-			return nil, nil, fingerprintErr
-		}
-		if current.ReceiptBusy {
-			return nil, nil, fmt.Errorf("task %s completion receipt is busy", candidate.Item.ID)
-		}
-		switch classifyCompletionCandidate(record, candidate.Item.ID, current) {
-		case completionCandidateReplay:
-			replay = append(replay, candidate)
-		case completionCandidateMutation:
-			baselineMutations = append(baselineMutations, candidate)
-		}
-	}
-	return replay, baselineMutations, nil
-}
-
 func baselineCompletionMutationError(tasks []QueuedTask) error {
 	if len(tasks) == 0 {
 		return nil
@@ -527,10 +501,6 @@ func BeginWorkCompletionWindows(hosts []string, subject string) (*CompletionWind
 		return nil, fmt.Errorf("work subject id(s) %s exist in multiple task queues", strings.Join(duplicates, ", "))
 	}
 	return beginCompletionWindowsWithPolicy(hosts, nil, nil, false, nil, subject)
-}
-
-func beginCompletionWindowsAllowing(hosts []string, taskID string) (*CompletionWindowSet, error) {
-	return beginCompletionWindowsAllowingTasks(hosts, []string{taskID})
 }
 
 func beginCompletionWindowsAllowingTasks(hosts, taskIDs []string) (*CompletionWindowSet, error) {
@@ -1349,9 +1319,4 @@ func ReconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 		errs = append(errs, unlockLeaseFile(indexFile))
 	}
 	return slices.Compact(slices.Sorted(slices.Values(concurrent))), errors.Join(errs...)
-}
-
-func ReconcileCompletionWindows(hosts []string) error {
-	_, err := ReconcileCompletionWindowsWithActivity(hosts)
-	return err
 }

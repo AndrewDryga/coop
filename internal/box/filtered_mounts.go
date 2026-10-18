@@ -171,13 +171,6 @@ func bindMountShorthand(value string) (string, error) {
 	return source + ":" + target, nil
 }
 
-// Check the complete emitted mount plan, not only its config ancestors. The
-// sole authority-tree exception is an exact, locally generated mount source
-// recorded by composition; the runfiles directory itself is never exposed.
-func (f *filteredExecution) validateMounts(options, files, directories []string) error {
-	return f.validateMountsContext(context.Background(), options, files, directories)
-}
-
 func (f *filteredExecution) validateMountsContext(ctx context.Context, options, files, directories []string) error {
 	root, err := f.store.RunFilesPath(f.record.ID)
 	if err != nil || root != f.runfiles {

@@ -942,3 +942,11 @@ func TestSessionWorkspaceDiscardPlansAMissingWorkspaceAsAbsent(t *testing.T) {
 		t.Fatalf("uninspectable workspace plan = %v", err)
 	}
 }
+
+func planSessionWorkspaceDiscard(repo, workspace string, acceptDirty, acceptUnmerged bool) (WorkspaceDiscardPlan, error) {
+	parentHead, err := sessionWorkspaceCommit(repo, "HEAD")
+	if err != nil {
+		return WorkspaceDiscardPlan{}, fmt.Errorf("resolve discard parent: %w", err)
+	}
+	return planSessionWorkspaceDiscardAtParent(repo, workspace, parentHead, acceptDirty, acceptUnmerged)
+}

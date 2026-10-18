@@ -60,10 +60,6 @@ func readSocketInventory(b boundary) ([]SocketRow, error) {
 	return parseSocketTables(tables, b)
 }
 
-func parseSocketInventory(reader io.Reader, b boundary) ([]SocketRow, error) {
-	return parseSocketTables([]socketTable{{reader: reader}}, b)
-}
-
 func parseSocketTables(tables []socketTable, b boundary) ([]SocketRow, error) {
 	var retained [3][]SocketRow
 	var omitted uint64

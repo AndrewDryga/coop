@@ -148,7 +148,3 @@ func RenderMounts(mounts []Mount, decoyFile, decoyDir string) []string {
 	}
 	return args
 }
-
-func matchesAny(name string, globs []string) bool {
-	return shadowpath.MatchesAny(name, globs)
-}

@@ -77,9 +77,6 @@ type UsageScan struct {
 
 func NewUsageScan() *UsageScan { return &UsageScan{shared: make(map[[2]uint64]struct{})} }
 
-// MeasureUsage measures one tree on its own. Use a UsageScan when several trees may share inodes.
-func MeasureUsage(path string) (Usage, error) { return NewUsageScan().Measure(path) }
-
 // Measure walks one tree and reports what it physically holds. It never follows a symlink —
 // neither as the root nor inside — so a link planted in a workspace cannot charge an unrelated
 // volume to this fork or send the scan out of the fork root.

@@ -270,20 +270,6 @@ func nativeNetworkBundle(cfg *config.Config, ag agents.Agent, account string, cl
 		Version: agents.NetworkBundleVersion}, true, nil
 }
 
-// NetworkMCPDependencies returns the automatic HTTP destinations of the trusted
-// shared MCP configuration. They are Admission.Automatic, never operator
-// requests: the operator chose the servers, not their hostnames.
-//
-// Only what admission froze is enforced, so editing the MCP file after a launch
-// was admitted can produce a visible denial — never a wider policy.
-func NetworkMCPDependencies(cfg *config.Config, spec RunSpec) ([]egress.Input, error) {
-	snapshot, err := networkMCPSnapshot(cfg, spec)
-	if err != nil {
-		return nil, err
-	}
-	return networkMCPDependenciesOf(snapshot)
-}
-
 // networkMCPDependenciesOf derives the destinations from an already validated snapshot. It carries
 // the filtered gateway's MCP qualification rules — literal definitions only (an environment
 // variable could re-route a destination after approval), a literal HTTPS origin on 443, no
