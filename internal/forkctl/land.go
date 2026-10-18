@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -77,36 +76,12 @@ func validateLandIntent(intent landIntent) error {
 
 func readLandIntent(repo string, identity forkspace.Identity) (landIntent, bool, error) {
 	path := landIntentPath(repo, identity)
-	info, err := os.Lstat(path)
+	data, err := forkspace.ReadRecord(path, "fork land intent", landIntentLimit)
 	if errors.Is(err, os.ErrNotExist) {
 		return landIntent{}, false, nil
 	}
 	if err != nil {
 		return landIntent{}, false, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 ||
-		info.Size() < 0 || info.Size() > landIntentLimit {
-		return landIntent{}, false, errors.New("fork land intent is not a bounded single-link regular file")
-	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return landIntent{}, false, err
-	}
-	defer f.Close()
-	after, err := f.Stat()
-	if err != nil || !os.SameFile(info, after) {
-		if err != nil {
-			return landIntent{}, false, err
-		}
-		return landIntent{}, false, errors.New("fork land intent changed while opening")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, landIntentLimit+1))
-	if err != nil || len(data) > landIntentLimit {
-		if err != nil {
-			return landIntent{}, false, err
-		}
-		return landIntent{}, false, errors.New("fork land intent exceeds its size limit")
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()

@@ -107,33 +107,9 @@ func decodeWorkspaceReservation(data []byte) (WorkspaceReservation, error) {
 }
 
 func readWorkspaceReservationFile(root *os.Root, name string) (WorkspaceReservation, error) {
-	info, err := root.Lstat(name)
+	data, err := ReadRecordIn(root, name, "workspace reservation", workspaceReservationLimit)
 	if err != nil {
 		return WorkspaceReservation{}, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 ||
-		info.Size() < 0 || info.Size() > workspaceReservationLimit {
-		return WorkspaceReservation{}, errors.New("workspace reservation is not a bounded single-link regular file")
-	}
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return WorkspaceReservation{}, err
-	}
-	defer f.Close()
-	after, err := f.Stat()
-	if err != nil || !os.SameFile(info, after) {
-		if err != nil {
-			return WorkspaceReservation{}, err
-		}
-		return WorkspaceReservation{}, errors.New("workspace reservation changed while opening")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, workspaceReservationLimit+1))
-	if err != nil || len(data) > workspaceReservationLimit {
-		if err != nil {
-			return WorkspaceReservation{}, err
-		}
-		return WorkspaceReservation{}, errors.New("workspace reservation exceeds its size limit")
 	}
 	return decodeWorkspaceReservation(data)
 }

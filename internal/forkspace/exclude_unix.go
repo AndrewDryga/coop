@@ -166,34 +166,12 @@ func safeExcludeTarget(ws string) (string, os.FileInfo, error) {
 // or blocking on a FIFO/device. The pre/post identity check closes the replace-between-check-and-
 // open window; callers still validate where the pointer resolves before any host write.
 func readGitPointerFile(path string) ([]byte, bool, error) {
-	before, err := os.Lstat(path)
+	data, err := readRecord(byPath{}, path, "git pointer", gitPointerLimit, false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
-	}
-	if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() < 0 || before.Size() > gitPointerLimit {
-		return nil, false, errors.New("git pointer is not a bounded regular file")
-	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, false, err
-	}
-	defer f.Close()
-	after, err := f.Stat()
-	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) {
-		if err != nil {
-			return nil, false, err
-		}
-		return nil, false, errors.New("git pointer changed while opening")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, gitPointerLimit+1))
-	if err != nil {
-		return nil, false, err
-	}
-	if len(data) > gitPointerLimit {
-		return nil, false, fmt.Errorf("git pointer exceeds %d bytes", gitPointerLimit)
 	}
 	return data, true, nil
 }

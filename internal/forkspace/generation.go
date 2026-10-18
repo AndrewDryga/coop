@@ -158,33 +158,9 @@ func validateGenerationRecord(record generationRecord, name string) error {
 
 func readGenerationRecord(repo, name string) (generationRecord, error) {
 	path := GenerationPath(repo, name)
-	info, err := os.Lstat(path)
+	data, err := ReadRecord(path, fmt.Sprintf("fork generation record %q", path), forkGenerationLimit)
 	if err != nil {
 		return generationRecord{}, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 ||
-		info.Size() < 0 || info.Size() > forkGenerationLimit {
-		return generationRecord{}, fmt.Errorf("fork generation record %q is not a bounded single-link regular file", path)
-	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return generationRecord{}, err
-	}
-	defer f.Close()
-	after, err := f.Stat()
-	if err != nil || !os.SameFile(info, after) {
-		if err != nil {
-			return generationRecord{}, err
-		}
-		return generationRecord{}, errors.New("fork generation record changed while opening")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, forkGenerationLimit+1))
-	if err != nil {
-		return generationRecord{}, err
-	}
-	if len(data) > forkGenerationLimit {
-		return generationRecord{}, fmt.Errorf("fork generation record exceeds %d bytes", forkGenerationLimit)
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()

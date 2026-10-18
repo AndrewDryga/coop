@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -131,29 +130,12 @@ func isolatedSourcePublished(repo, workspace string, identity forkspace.Identity
 }
 
 func readIsolatedRecord(path string, target any) (bool, error) {
-	info, err := os.Lstat(path)
+	data, err := forkspace.ReadRecord(path, "isolated record", landIntentLimit)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || stat.Nlink != 1 || info.Size() < 0 || info.Size() > landIntentLimit {
-		return false, errors.New("isolated record is not a bounded independent regular file")
-	}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return false, err
-	}
-	defer file.Close()
-	after, err := file.Stat()
-	if err != nil || !os.SameFile(info, after) {
-		return false, errors.Join(errors.New("isolated record changed while opening"), err)
-	}
-	data, err := io.ReadAll(io.LimitReader(file, landIntentLimit+1))
-	if err != nil || len(data) > landIntentLimit {
-		return false, errors.Join(errors.New("isolated record exceeds its bound"), err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()

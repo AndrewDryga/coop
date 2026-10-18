@@ -515,32 +515,9 @@ func BeginExecution(repo string, spec ExecutionSpec) (ExecutionRecord, error) {
 }
 
 func readExecutionFile(root *os.Root, name string) (ExecutionRecord, error) {
-	info, err := root.Lstat(name)
+	data, err := ReadRecordIn(root, name, "project execution record", executionRecordLimit)
 	if err != nil {
 		return ExecutionRecord{}, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 || info.Size() > executionRecordLimit {
-		return ExecutionRecord{}, errors.New("project execution record is not a bounded single-link regular file")
-	}
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return ExecutionRecord{}, err
-	}
-	defer f.Close()
-	after, err := f.Stat()
-	if err != nil || !os.SameFile(info, after) {
-		if err != nil {
-			return ExecutionRecord{}, err
-		}
-		return ExecutionRecord{}, errors.New("project execution record changed while opening")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, executionRecordLimit+1))
-	if err != nil || len(data) > executionRecordLimit {
-		if err != nil {
-			return ExecutionRecord{}, err
-		}
-		return ExecutionRecord{}, errors.New("project execution record exceeds its size limit")
 	}
 	return decodeExecutionRecord(data)
 }
