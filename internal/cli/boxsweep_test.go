@@ -256,3 +256,11 @@ func TestOpenAndOfflineLaunchesNeverSettleFilteredRuns(t *testing.T) {
 		t.Fatalf("open and offline launches settled filtered runs %d times, want never", *calls)
 	}
 }
+
+// A pass that met run records it could not read still counts the runs it settled.
+func TestSettleNetworkRunsCountsRunsBesideUnreadableRecords(t *testing.T) {
+	stubRecoverNetworkRuns(t, []box.NetworkRecovery{{RunID: "r", Sealed: true}}, &box.UnreadableNetworkRuns{Records: []string{"execution-copy.json"}})
+	if settled := settleNetworkRuns(containerruntime.Runtime{}); settled != 1 {
+		t.Fatalf("settled = %d; want the readable run counted", settled)
+	}
+}

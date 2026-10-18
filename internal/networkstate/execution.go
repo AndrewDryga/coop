@@ -118,6 +118,9 @@ type ExecutionSpec struct {
 // coop's setup check snapshot once the check's record has marked it.
 type Evidence struct{ files *Store }
 
+// Path is the store's folder, where the records a page names live.
+func (e *Evidence) Path() string { return e.files.path }
+
 func OpenEvidence(path string, exposed []string) (*Evidence, error) {
 	files, err := openFiles(path, exposed, false)
 	if err != nil {
@@ -492,6 +495,9 @@ type ExecutionPage struct {
 	Next       string
 	Incomplete bool
 	Unreadable int
+	// UnreadableNames are the files the page counts as Unreadable, in the store's folder, so an
+	// operator can find each one.
+	UnreadableNames []string
 }
 
 type ExecutionSummary struct {
@@ -543,7 +549,11 @@ func (e *Evidence) Executions(after string) (ExecutionPage, error) {
 			}
 			id := strings.TrimSuffix(strings.TrimPrefix(name, "execution-"), ".json")
 			if !lowerHex(id, 32) {
-				page.Incomplete, page.Unreadable = true, page.Unreadable+1
+				// Every page lists the whole folder, so only the first counts a name no run has.
+				if after == "" {
+					page.Incomplete, page.Unreadable = true, page.Unreadable+1
+					page.UnreadableNames = append(page.UnreadableNames, name)
+				}
 				continue
 			}
 			if id > after {
@@ -567,6 +577,7 @@ func (e *Evidence) Executions(after string) (ExecutionPage, error) {
 		}
 		if err != nil {
 			page.Incomplete, page.Unreadable = true, page.Unreadable+1
+			page.UnreadableNames = append(page.UnreadableNames, "execution-"+id+".json")
 			continue
 		}
 		page.Executions = append(page.Executions, summarize(record))

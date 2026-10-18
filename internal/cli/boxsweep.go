@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -125,7 +126,8 @@ func settleNetworkRuns(rt runtime.Runtime) int {
 	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
 	defer cancel()
 	results, err := recoverNetworkRuns(ctx, rt, "")
-	if err != nil {
+	var unreadable *box.UnreadableNetworkRuns
+	if err != nil && !errors.As(err, &unreadable) {
 		return 0
 	}
 	settled := 0

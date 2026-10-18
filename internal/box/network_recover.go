@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"time"
@@ -99,6 +100,7 @@ func recoverNetworkRuns(ctx context.Context, evidence *networkstate.Evidence, ru
 // recoverNetworkRunsAt is recoverNetworkRuns at a given time, so a test can age a record past
 // retention without waiting 90 days.
 func recoverNetworkRunsAt(ctx context.Context, evidence *networkstate.Evidence, runID string, connect recoverConnect, now time.Time) ([]NetworkRecovery, error) {
+	// A record it cannot read leaves the others to settle: the pass reports it with the runs.
 	runs, err := pendingNetworkRuns(evidence, runID, now)
 	// Retention rides this pass because it already read every record, and a record it could not
 	// read does not make removing a finished one unsafe: RemoveExpired re-reads each under its lock.
@@ -115,14 +117,25 @@ func recoverNetworkRunsAt(ctx context.Context, evidence *networkstate.Evidence, 
 			_, _ = evidence.RemoveUnusedSnapshots(ctx, runs.policies, now)
 		}
 	}()
-	if err != nil {
+	var unreadable *UnreadableNetworkRuns
+	if err != nil && !errors.As(err, &unreadable) {
 		return nil, err
 	}
 	out := make([]NetworkRecovery, 0, len(runs.pending))
 	for _, record := range runs.pending {
 		out = append(out, recoverNetworkRun(ctx, evidence, record, connect))
 	}
-	return out, nil
+	return out, err
+}
+
+// UnreadableNetworkRuns comes back with a pass's recoveries when the listing held run records Coop
+// could not read. The pass settled every run it could read; it only cannot say that nothing else is
+// pending, and an unread record is never a reason to remove anything. Records are those files'
+// paths, for the operator to find.
+type UnreadableNetworkRuns struct{ Records []string }
+
+func (e *UnreadableNetworkRuns) Error() string {
+	return fmt.Sprintf("%d recorded network runs could not be read", len(e.Records))
 }
 
 // networkRunInventory is what one listing of the retained runs found.
@@ -138,11 +151,12 @@ type networkRunInventory struct {
 // pendingNetworkRuns lists the runs recovery may settle: an explicit id, or
 // every retained run whose cleanup is still pending or whose receipt was never
 // sealed — a supervisor that died between its own cleanup and its seal leaves
-// only the receipt, and retention never removes an unsealed run. A page it could
-// not read whole is an error — recovery must not report "nothing pending" from a
-// partial inventory. The unscoped pass also names the finished runs retention
-// may remove, from every page, including after such an error, and every policy a
-// listed run names, but only from a listing read whole.
+// only the receipt, and retention never removes an unsealed run. A record it
+// cannot read is skipped and counted (UnreadableNetworkRuns), so one bad record
+// does not hold back the others, and recovery never reports "nothing pending"
+// from a partial inventory. The unscoped pass also names the finished runs
+// retention may remove, from every page, and every policy a listed run names,
+// but only from a listing read whole.
 func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.Time) (networkRunInventory, error) {
 	var out networkRunInventory
 	if runID != "" {
@@ -154,22 +168,22 @@ func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.
 		return out, nil
 	}
 	policies := map[string]bool{}
-	var partial error
+	var unreadable []string
 	cursor := ""
 	for {
 		page, err := evidence.Executions(cursor)
 		if err != nil {
 			return networkRunInventory{expired: out.expired}, err
 		}
-		if page.Incomplete {
-			partial = errors.New("the list of recorded runs could not be read whole — recover one run by id instead")
+		for _, name := range page.UnreadableNames {
+			unreadable = append(unreadable, filepath.Join(evidence.Path(), name))
 		}
 		for _, summary := range page.Executions {
 			policies[summary.PolicyFingerprint] = true
 			if summary.Expired(now) {
 				out.expired = append(out.expired, summary.ID)
 			}
-			if summary.Final && !summary.CleanupPending || partial != nil {
+			if summary.Final && !summary.CleanupPending {
 				continue
 			}
 			record, err := evidence.Execution(summary.ID)
@@ -177,13 +191,14 @@ func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.
 				continue // gone since the page was read; only retention removes a record
 			}
 			if err != nil {
-				return networkRunInventory{expired: out.expired}, err
+				unreadable = append(unreadable, filepath.Join(evidence.Path(), "execution-"+summary.ID+".json"))
+				continue
 			}
 			out.pending = append(out.pending, record)
 		}
 		if page.Next == "" {
-			if partial != nil {
-				return networkRunInventory{expired: out.expired}, partial
+			if len(unreadable) > 0 {
+				return out, &UnreadableNetworkRuns{Records: unreadable}
 			}
 			out.policies = policies
 			return out, nil

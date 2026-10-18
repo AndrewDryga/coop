@@ -538,8 +538,8 @@ func (s *Store) CheckRequests(project string, requests []egress.Rule, bundles []
 	return s.checkRequests(approval, requests, bundles)
 }
 
-// checkRequests proves the request fits the approval. The bundle content check is the CALLER's,
-// because pinning a first-seen bundle is a write and not every caller may perform one.
+// checkRequests proves the request fits the approval. Its callers check the bundles first
+// (checkBundles), each before its own other checks.
 func (s *Store) checkRequests(approval *Approval, requests []egress.Rule, bundles []egress.Bundle) (*Approval, error) {
 	rules, err := checkRequestEnvelope(approval, requests)
 	if err != nil {

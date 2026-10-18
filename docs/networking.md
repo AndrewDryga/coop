@@ -590,8 +590,9 @@ To settle runs now:
     coop net recover <run>     # settle one run now
 
 When `coop net recover` can't finish a run, it prints `⚠ Cleanup incomplete for network run <run>`,
-then the causes and the next step.
+then the causes and the next step. A run record co:op can't read doesn't hold back the others:
+recovery settles every run it can read, names each record it couldn't read, and exits 1.
 
-Recovery removes exactly the resources that run recorded, by id and ownership labels. It never
+Recovery removes exactly that run's resources, by their fixed names and the run's labels. It never
 matches by name prefix and never prunes. It seals a final receipt marked `partial` with workload
 `supervisor_lost`. A run whose supervisor is still alive is left to that process.

@@ -10,7 +10,7 @@ import (
 // NetworkBundleVersion identifies the release-owned endpoint set, not an
 // adapter or CLI version. Changing any bundle's contents requires a new value:
 // the same version with different content is integrity drift, never an update
-// (networkstate.checkBundles pins each version's content on first admission).
+// (TestNetworkBundlesChangeOnlyWithANewVersion pins each bundle's content).
 const NetworkBundleVersion = "2026-09-30.1"
 
 // NetworkBundleInput names an ALREADY SELECTED target: the client this run

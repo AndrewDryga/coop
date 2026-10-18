@@ -3,7 +3,6 @@ package networkstate
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -16,7 +15,7 @@ func featureBundle(client egress.Client, auth string) egress.Bundle {
 		Core: []egress.Rule{rule("api.example.com")}, Features: map[string][]egress.Rule{"cloud-mcp": {rule("mcp.example.com")}}}
 }
 
-func TestOversizedBundleSelectionCannotPartiallyPublish(t *testing.T) {
+func TestOversizedBundleSelectionIsRefused(t *testing.T) {
 	s := openStore(t)
 	first, second := featureBundle(egress.ClientACP, "key"), featureBundle(egress.ClientCLI, "key")
 	for i := range egress.MaxConstraints {
@@ -24,33 +23,6 @@ func TestOversizedBundleSelectionCannotPartiallyPublish(t *testing.T) {
 	}
 	if err := s.checkBundles([]egress.Bundle{first, second}); err == nil {
 		t.Fatal("oversized bundle accepted")
-	}
-	files, err := os.ReadDir(s.Path())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range files {
-		if strings.HasPrefix(file.Name(), "bundle-") {
-			t.Fatal("byte validation occurred after a partial publication")
-		}
-	}
-}
-
-func TestBundleSourceOrderAndEmptyShapeDoNotCauseIntegrityDrift(t *testing.T) {
-	s := openStore(t)
-	bundle := featureBundle(egress.ClientCLI, "key")
-	for _, sources := range [][]string{nil, {}} {
-		bundle.Sources = sources
-		if err := s.checkBundles([]egress.Bundle{bundle}); err != nil {
-			t.Fatal("empty shape caused false drift", err)
-		}
-	}
-	bundle.Version = "2"
-	for _, sources := range [][]string{{"https://b.example.com", "https://a.example.com"}, {"https://a.example.com", "https://b.example.com", "https://a.example.com"}} {
-		bundle.Sources = sources
-		if err := s.checkBundles([]egress.Bundle{bundle}); err != nil {
-			t.Fatal("source order caused false drift", err)
-		}
 	}
 }
 
@@ -176,33 +148,6 @@ func TestFeatureApprovalBindsVariantButAllowsUnchangedReleaseExpansion(t *testin
 		}
 		if got, err := s.Admit(project, Admission{Requests: requests, Bundles: changed}); err == nil || got.Fingerprint != "" || !strings.Contains(err.Error(), "network_approval_required") {
 			t.Fatal("variant or optional expansion reused unrelated approval", change, got, err)
-		}
-	}
-}
-
-func TestBundleIntegrityIncludesClientAndValidationPrecedesPersistence(t *testing.T) {
-	s := openStore(t)
-	cli, acp := featureBundle(egress.ClientCLI, "oauth"), featureBundle(egress.ClientACP, "oauth")
-	acp.Core = []egress.Rule{rule("acp.example.com")}
-	if err := s.checkBundles([]egress.Bundle{cli, acp}); err != nil {
-		t.Fatal("different clients collided", err)
-	}
-	cli.Core = []egress.Rule{rule("changed.example.com")}
-	if err := s.checkBundles([]egress.Bundle{cli}); err == nil {
-		t.Fatal("same client/version drift accepted")
-	}
-	clean := openStore(t)
-	acp.Client = ""
-	if err := clean.checkBundles([]egress.Bundle{cli, acp}); err == nil {
-		t.Fatal("missing client accepted")
-	}
-	files, err := os.ReadDir(clean.Path())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range files {
-		if strings.HasPrefix(file.Name(), "bundle-") {
-			t.Fatal("invalid selection partially persisted bundles")
 		}
 	}
 }

@@ -243,17 +243,10 @@ func (a Admission) preview(approval *Approval, withdrawn bool) (AdmissionPreview
 	return AdmissionPreview{Mode: mode, Pending: pending}, nil
 }
 
-// A bundle this host has never seen is pinned the first time an admission uses it, and every
-// later admission must match that copy exactly (integrity drift, not an update).
-const (
-	pinFirstSeenBundles = true
-	matchPinnedBundles  = false
-)
-
 // Admit is the shared new-run authority boundary. A concurrent approval change
 // applies to subsequent captures.
 func (s *Store) Admit(project string, input Admission) (egress.Snapshot, error) {
-	id, mode, operator, err := s.authorized(project, input, pinFirstSeenBundles)
+	id, mode, operator, err := s.authorized(project, input)
 	if err != nil {
 		return egress.Snapshot{}, err
 	}
@@ -266,7 +259,7 @@ func (s *Store) Admit(project string, input Admission) (egress.Snapshot, error) 
 // this launch run under" for a host that has to publish a fence before anyone
 // asks for a launch. A launch still has to Admit.
 func (s *Store) Resolve(project string, input Admission) (egress.Snapshot, error) {
-	id, mode, operator, err := s.authorized(project, input, matchPinnedBundles)
+	id, mode, operator, err := s.authorized(project, input)
 	if err != nil {
 		return egress.Snapshot{}, err
 	}
@@ -278,10 +271,7 @@ func (s *Store) Resolve(project string, input Admission) (egress.Snapshot, error
 // different operator decisions. Publishing is the only difference between Admit
 // and Resolve, so a resolved fingerprint cannot describe authority the capture
 // would have compiled differently.
-//
-// pinBundles is the one thing the two cannot share: a bundle this host has never seen is pinned
-// the first time an admission uses it, and a resolve is not a use.
-func (s *Store) authorized(project string, input Admission, pinBundles bool) (string, egress.Mode, []egress.Input, error) {
+func (s *Store) authorized(project string, input Admission) (string, egress.Mode, []egress.Input, error) {
 	if err := s.authorityAvailable(); err != nil {
 		return "", "", nil, err
 	}
@@ -310,12 +300,7 @@ func (s *Store) authorized(project string, input Admission, pinBundles bool) (st
 	if barrier := withdrawalBarrier(withdrawn, mode); barrier != nil {
 		return "", "", nil, barrier
 	}
-	if pinBundles {
-		err = s.checkBundles(input.Bundles)
-	} else {
-		err = s.matchBundles(input.Bundles)
-	}
-	if err != nil {
+	if err := s.checkBundles(input.Bundles); err != nil {
 		return "", "", nil, err
 	}
 	if _, err := s.checkRequests(approval, input.Requests, input.Bundles); err != nil {

@@ -1483,3 +1483,27 @@ func TestNetEventBoundRefusesAnOversizedView(t *testing.T) {
 		t.Errorf("netEventBound(10) = %v", err)
 	}
 }
+
+// A recovery pass that met run records it could not read reports the runs it settled, then says
+// how many it could not check, and exits 1: it cannot claim nothing is left.
+func TestNetRecoverReportsRunRecordsItCouldNotRead(t *testing.T) {
+	store := netHostFixture(t)
+	record := netCleanUpWithoutSeal(t, store, netRecordRun(t, store, netFixtureProject(t)))
+	broken := []string{filepath.Join(store.Path(), "execution-"+strings.Repeat("f", 32)+".json"), filepath.Join(store.Path(), "execution-copy.json")}
+	stubRecoverNetworkRuns(t, []box.NetworkRecovery{{RunID: record.ID, Sealed: true}}, &box.UnreadableNetworkRuns{Records: broken})
+	a := &app{cfg: &config.Config{RuntimeName: "definitely-not-a-runtime"}}
+	var code int
+	var err error
+	var stdout string
+	stderr := captureStderr(t, func() { stdout = captureStdout(t, func() { code, err = a.cmdNetRecover(nil) }) })
+	if code != 1 || err != nil {
+		t.Fatalf("recover = (%d, %v); want 1 when records could not be read", code, err)
+	}
+	if !strings.Contains(stdout, networkreport.ShortID(record.ID)) {
+		t.Fatalf("the settled run is missing from the report:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "Coop could not read 2 network run records") || !strings.Contains(stderr, "execution-copy.json") ||
+		!strings.Contains(stderr, "execution-"+strings.Repeat("f", 32)+".json") {
+		t.Fatalf("the unreadable records were not named:\n%s", stderr)
+	}
+}

@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **One unreadable network run record no longer stops cleanup of the others.** `coop net recover`
+  and the pass before each filtered launch cleaned up nothing when one recorded run could not be
+  read. They now clean up every run they can read and never remove anything because of a record
+  they could not read, and `coop net recover` names each record it could not read.
+
 - **A box can no longer fake another project's fork records.** Coop kept each project's fork
   records (which forks exist, their workers, locks and logs, reviews, and lands and discards in
   progress) in `<project>-forks/.coop`, next to the project. A box whose folder held another

@@ -138,11 +138,12 @@ func (a *app) cmdNetRecover(args []string) (int, error) {
 			return -1, err
 		}
 	}
-	results, err := box.RecoverNetworkRuns(context.Background(), a.rt, runID)
-	if err != nil {
+	results, err := recoverNetworkRuns(context.Background(), a.rt, runID)
+	var unreadable *box.UnreadableNetworkRuns
+	if err != nil && !errors.As(err, &unreadable) {
 		return 1, err
 	}
-	if len(results) == 0 {
+	if len(results) == 0 && unreadable == nil {
 		ui.Note("No interrupted network runs need cleanup.")
 		return 0, nil
 	}
@@ -155,6 +156,18 @@ func (a *app) cmdNetRecover(args []string) (int, error) {
 		if len(result.Failures) != 0 || len(result.Pending) != 0 {
 			code = 1
 		}
+	}
+	if unreadable != nil {
+		// The runs it could read are settled; the ones it could not may still need cleanup, and only
+		// the operator can find out what those files are.
+		paths := make([]string, len(unreadable.Records))
+		for i, path := range unreadable.Records {
+			paths[i] = ui.SafeInline(tildeify(path))
+		}
+		ui.Warning("Coop could not read "+ui.Count(len(paths), "network run record"),
+			"So it could not check whether those runs need cleanup:\n"+strings.Join(paths, "\n"),
+			"Move each one out of that folder once you have checked it, then run coop net recover again.")
+		code = 1
 	}
 	return code, nil
 }

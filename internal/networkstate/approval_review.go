@@ -160,7 +160,7 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 			return ErrApprovalChanged
 		}
 		if err := s.checkBundles(selected); err != nil {
-			return fmt.Errorf("publish reviewed bundles: %w", err)
+			return fmt.Errorf("check reviewed bundles: %w", err)
 		}
 		data, err := json.Marshal(current.After)
 		if err != nil {

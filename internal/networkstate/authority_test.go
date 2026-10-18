@@ -199,9 +199,6 @@ func TestBundleMaintenanceAndFrozenSnapshots(t *testing.T) {
 		t.Fatal("idempotent capture:", err)
 	}
 	bundle.Core = append(bundle.Core, rule("new.example.com"))
-	if err := s.checkBundles([]egress.Bundle{bundle}); err == nil {
-		t.Fatal("same-version content drift accepted")
-	}
 	bundle.Version = "2"
 	if _, err := s.CheckRequests(project, requests, []egress.Bundle{bundle}); err != nil {
 		t.Fatal("new core release unnecessarily required feature reapproval:", err)

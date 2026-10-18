@@ -3,8 +3,8 @@ name: provider-bundles-carry-function-not-chatter
 description: a provider bundle grants what the client needs to function; the client's own update/telemetry chatter is switched off in the box, never granted and never hidden
 scope: security
 sources: [internal/agent/network_bundle.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/codex_test.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/locked_clients_test.go, internal/mcp/mcp.go, internal/cli/provider_network_live_e2e_test.go]
-check: "go test ./internal/agent -run 'TestProviderBundlesCarryFunctionNotChatter|TestManagedClientDefaultsAreBoxOnly|TestCodexManagedLayersKeepTheBackgroundServerOff'"
-updated: 2026-10-16
+check: "go test ./internal/agent -run 'TestProviderBundlesCarryFunctionNotChatter|TestManagedClientDefaultsAreBoxOnly|TestCodexManagedLayersKeepTheBackgroundServerOff|TestNetworkBundlesChangeOnlyWithANewVersion'"
+updated: 2026-10-19
 ---
 
 # A provider bundle carries function; a managed client's chatter is switched off, not granted or hidden
@@ -32,9 +32,9 @@ talking to itself.
 **How to apply:**
 - Adding a host to a bundle needs an answer to "what does the login fail to DO without it?". A
   feature that is on by default for that login qualifies (the connector proxy); "the client asks
-  for it" does not. Bump `NetworkBundleVersion` with the content — the store pins each version's
-  bytes on first admission (`networkstate.checkBundles`), so the same version with new content is
-  refused as integrity drift.
+  for it" does not. Bump `NetworkBundleVersion` with the content, and the digests in
+  `TestNetworkBundlesChangeOnlyWithANewVersion` with it: the same version with new content fails
+  that test as integrity drift.
 - Stop chatter with the client's own controls, read out of the LOCKED version (strings in the
   binary, then the vendor docs), and project them box-only: Claude through `BoxEnv`
   (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, `DISABLE_UPDATES=1`), codex through the generated
@@ -72,6 +72,8 @@ Background: [[restricted-networking]] (bundles are one of five layers),
 [[mcp-authority-projection]] (the overlays are projections of the host profile, never edits).
 
 ## Changelog
+- 2026-10-19 — the version-moves-with-content rule is now checked by
+  TestNetworkBundlesChangeOnlyWithANewVersion (added to `check:`), not by the host store.
 - 2026-10-16 — the overlay's update check never reached Codex 0.159.2's background server. Its
   interactive screen starts one by default (any `-c` or `--profile` skips it), and the server's
   updater, five minutes in, downloads `chatgpt.com/codex/install.sh`, runs it with `/bin/sh` and

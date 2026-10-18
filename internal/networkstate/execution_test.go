@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -303,5 +304,27 @@ func TestExecutionListingHasBoundedSummaryPagesAndContinuation(t *testing.T) {
 	second, err := evidence.Executions(first.Next)
 	if err != nil || len(second.Executions) != 1 || second.Next != "" || second.Incomplete || second.Executions[0].ID <= first.Next {
 		t.Fatal("summary pagination lost or repeated execution", err)
+	}
+}
+
+// Every page of the run listing reads the whole folder, so a file no run is named after counts as
+// unreadable on the first page only, and is named there for the operator to find.
+func TestExecutionsCountAStrayFileOnce(t *testing.T) {
+	s := openStore(t)
+	if err := os.WriteFile(filepath.Join(s.Path(), "execution-copy.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := OpenEvidence(s.Path(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer evidence.Close()
+	first, err := evidence.Executions("")
+	if err != nil || first.Unreadable != 1 || !slices.Equal(first.UnreadableNames, []string{"execution-copy.json"}) {
+		t.Fatalf("first page = %+v, %v; want the stray file counted and named", first, err)
+	}
+	later, err := evidence.Executions(strings.Repeat("0", 32))
+	if err != nil || later.Unreadable != 0 || len(later.UnreadableNames) != 0 {
+		t.Fatalf("a later page = %+v, %v; want the stray file counted once", later, err)
 	}
 }
