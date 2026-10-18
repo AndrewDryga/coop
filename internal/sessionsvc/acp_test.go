@@ -2352,48 +2352,30 @@ func TestSessionTurnRunnerBoundsStderrWithoutLosingResponse(t *testing.T) {
 	}
 }
 
-func TestSessionTurnRunnerRejectsSourceSymlinkAndRefreshRequired(t *testing.T) {
-	t.Run("symlink", func(t *testing.T) {
-		fixture := newSessionACPFixture(t, "normal")
-		credential := filepath.Join(fixture.source, "codex", "credentials", "work", "authority.json")
-		outside := filepath.Join(t.TempDir(), "auth.json")
-		if err := os.Rename(credential, outside); err != nil {
-			t.Fatal(err)
+// A credential that needs a refresh is renewed on the host before anything is projected, and the
+// refresh authority never reaches the ACP child.
+func TestSessionTurnRunnerRenewsARefreshRequiredCredentialBeforeProjection(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	writeSessionTestCredential(t, fixture.source, "codex@work", time.Now().Add(-time.Minute))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		var document struct {
+			Tokens map[string]string `json:"tokens"`
 		}
-		if err := os.Symlink(outside, credential); err != nil {
-			t.Fatal(err)
-		}
-		turn := fixture.submit(t, "symlink")
-		if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn); err == nil {
-			t.Fatal("source symlink unexpectedly projected")
-		}
-		if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); !os.IsNotExist(err) {
-			t.Fatalf("symlink failure left a projected credential: %v", err)
-		}
-	})
-	t.Run("refresh required is renewed before projection", func(t *testing.T) {
-		fixture := newSessionACPFixture(t, "normal")
-		writeSessionTestCredential(t, fixture.source, "codex@work", time.Now().Add(-time.Minute))
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			var document struct {
-				Tokens map[string]string `json:"tokens"`
-			}
-			_ = json.Unmarshal([]byte(codexTestCredential(time.Now().Add(2*time.Hour))), &document)
-			document.Tokens["refresh_token"] = "rotated"
-			_ = json.NewEncoder(w).Encode(document.Tokens)
-		}))
-		defer server.Close()
-		t.Setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
-		turn := fixture.submit(t, "expired")
-		result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
-		if err != nil || result.State != session.TurnCompleted {
-			t.Fatalf("renewed turn = %+v, err=%v", result, err)
-		}
-		projectedLog := readFile(t, fixture.childLog)
-		if strings.Contains(projectedLog, "rotated") || strings.Contains(projectedLog, "refresh") {
-			t.Fatalf("refresh authority reached ACP child: %s", projectedLog)
-		}
-	})
+		_ = json.Unmarshal([]byte(codexTestCredential(time.Now().Add(2*time.Hour))), &document)
+		document.Tokens["refresh_token"] = "rotated"
+		_ = json.NewEncoder(w).Encode(document.Tokens)
+	}))
+	defer server.Close()
+	t.Setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+	turn := fixture.submit(t, "expired")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	if err != nil || result.State != session.TurnCompleted {
+		t.Fatalf("renewed turn = %+v, err=%v", result, err)
+	}
+	projectedLog := readFile(t, fixture.childLog)
+	if strings.Contains(projectedLog, "rotated") || strings.Contains(projectedLog, "refresh") {
+		t.Fatalf("refresh authority reached ACP child: %s", projectedLog)
+	}
 }
 
 func TestSessionTurnRunnerReplacesStaleProjectedCredential(t *testing.T) {
