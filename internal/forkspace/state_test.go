@@ -878,3 +878,30 @@ func TestClearForkPidIfMine(t *testing.T) {
 		})
 	}
 }
+
+// On a disk that ignores letter case, two spellings of one project share one record folder; on a
+// disk that keeps case they are two projects with two folders. The test asks the disk which it is.
+func TestForkRecordsShareAFolderAcrossSpellings(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, other := filepath.Join(root, "Project"), filepath.Join(root, "project")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a, err := os.Lstat(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.Lstat(other)
+	folds := err == nil && os.SameFile(a, b)
+	if !folds {
+		if err := os.Mkdir(other, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if shared := StateDir(repo) == StateDir(other); shared != folds {
+		t.Fatalf("records of %s and %s shared = %v; want %v where the disk folds case", repo, other, shared, folds)
+	}
+}

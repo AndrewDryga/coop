@@ -133,7 +133,9 @@ to a process or a container, or prints, it is supervision.
 ## Around the file
 
 - Fork records live in Coop's private folder, `~/.local/state/coop/forks/<key>/` (`StateDir`;
-  `<key>` is the SHA-256 of the project's real path), which no box can mount. `<repo>-forks` holds
+  `<key>` is the SHA-256 of the project's real path in the spelling the disk stores,
+  `fsidentity.StoredPath`, so `~/projects/APP` and `~/Projects/app` on a Mac share one folder),
+  which no box can mount. `<repo>-forks` holds
   only workspaces and `.discarding`, and a box may mount it. The records folder is a real `0700`
   directory. New lifecycle, generation, execution, reservation, assignment, candidate, proposal,
   land, discard, lock and log records are `0600`; opening an existing lock or log also tightens its
@@ -214,6 +216,8 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-10-19 — the records key uses the disk's own spelling (fsidentity.StoredPath, remembered per
+  process for an existing folder) (task 2026-10-18-key-coop-s-per-project-host-records-by-the-folde).
 - 2026-10-19 — fork records moved from `<repo>-forks/.coop` into `~/.local/state/coop/forks/<key>/`,
   copied once by the first open or box launch, following no link; forks need one disk (task
   2026-10-15-fence-other-projects-fork-records-inside-a-box-m). Review fixes: copy instead of rename

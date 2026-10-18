@@ -12,11 +12,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/AndrewDryga/coop/internal/fsidentity"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/safefile"
 )
@@ -72,17 +74,27 @@ func PrivateStateRoot() (string, error) {
 	return filepath.Join(home, ".local", "state", "coop"), nil
 }
 
-// forkRecordsKey names repo's record folder: the sha256 of its real path, as the execution
-// registry fallback names its folders.
+// forkRecordsKey names repo's record folder: the sha256 of its real path in the spelling the disk
+// stores (fsidentity.StoredPath), so two spellings of one folder on a disk that ignores letter case
+// share one record folder. StateDir runs for every record and StoredPath reads the folders on the
+// way, so an existing folder's key is remembered for the process.
 func forkRecordsKey(repo string) string {
-	canonical := repo
-	if resolved, err := filepath.EvalSymlinks(repo); err == nil {
-		canonical = resolved
-	} else if absolute, err := filepath.Abs(repo); err == nil {
-		canonical = absolute
+	if key, ok := recordsKeys.Load(repo); ok {
+		return key.(string)
 	}
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(canonical)))
+	canonical, err := fsidentity.StoredPath(repo)
+	if err != nil {
+		canonical = filepath.Clean(repo)
+	}
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(canonical)))
+	// A folder made later could be spelled otherwise, so only an existing one is remembered.
+	if _, err := os.Lstat(repo); err == nil {
+		recordsKeys.Store(repo, key)
+	}
+	return key
 }
+
+var recordsKeys sync.Map
 
 // StateDir holds repo's fork records — lifecycle locks, pidfiles and logs, generations,
 // reservations, candidates, assignments, land journals, execution records — at

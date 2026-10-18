@@ -83,7 +83,8 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 
 `<state>` is the session state root (`--state`, default `~/.local/state/coop/sessions`). A worker's
 job forks live under it too, in `<state>/job-sources/<key>/repository-forks/`. Fork records are in
-`~/.local/state/coop/forks/<key>/`, where `<key>` is the SHA-256 of the project's real path. The `check:` test
+`~/.local/state/coop/forks/<key>/`, where `<key>` is the SHA-256 of the project's real path in the
+spelling the disk stores. The `check:` test
 pins each row's Current and Oldest read to the constants named in `waypointConstants` in
 `internal/oneupgrade_test.go`. A row whose oldest version has no constant yet pins only Current.
 The box supervisor label's versions are the string prefixes `v2` and `v1` (`internal/box/sweep.go`),
