@@ -91,29 +91,6 @@ func TestArtifactsPrepareOneOwnedDirectoryBeforeAnyContainer(t *testing.T) {
 	}
 }
 
-func TestArtifactsPublicationFaultRequiresRereadAndDurability(t *testing.T) {
-	s, record := executionFixture(t)
-	failure := errors.New("fixture directory-sync failure")
-	s.syncDir = func(*os.File) error { return failure }
-	if _, err := s.PrepareArtifacts(context.Background(), record.ID, record.Revision, fixtureLaunchData); !errors.Is(err, failure) {
-		t.Fatal("ambiguous publication returned usable artifacts", err)
-	}
-	if _, err := s.LaunchConfigPath(record.ID); err == nil {
-		t.Fatal("visible bytes bypassed failed durability")
-	}
-	s.syncDir = nil
-	current, err := s.Execution(record.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.PrepareArtifacts(context.Background(), current.ID, current.Revision, fixtureLaunchData); err != nil {
-		t.Fatal("retry could not confirm publication", err)
-	}
-	if _, err := s.LaunchConfigPath(record.ID); err != nil {
-		t.Fatal("confirmed artifacts stayed unreadable", err)
-	}
-}
-
 func TestArtifactsRefuseAnOccupiedOrTamperedDestination(t *testing.T) {
 	for _, kind := range []string{"occupied", "symlink", "replaced-content", "public-directory"} {
 		t.Run(kind, func(t *testing.T) {

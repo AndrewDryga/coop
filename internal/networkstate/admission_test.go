@@ -242,14 +242,14 @@ func TestAdmitUsesOneApprovalForModeAndEnvelope(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := false
-	s.syncDir = func(dir *os.File) error {
+	s.afterPublish = func(string) error {
 		if !changed {
 			changed = true
 			if err := approve(s, project, egress.None, nil, nil); err != nil {
 				return err
 			}
 		}
-		return dir.Sync()
+		return nil
 	}
 	bundle := egress.Bundle{Provider: "model", Client: egress.ClientCLI, Version: "1", Backend: "direct", AuthMode: "key"}
 	got, err := s.Admit(project, Admission{Requests: requests, Bundles: []egress.Bundle{bundle}})
@@ -323,31 +323,13 @@ func TestAdmitNoneHasNoProviderExceptionAndPersistenceFailureReturnsNoCapture(t 
 	if err != nil || len(got.Grants) != 0 || len(got.Dependencies) != 0 {
 		t.Fatal("none admitted a provider exception", got, err)
 	}
-	s.syncDir = func(*os.File) error { return errors.New("fixture storage failure") }
-	for attempt := 0; attempt < 3; attempt++ {
-		got, err = s.Admit(project, Admission{})
-		if err == nil || got.Fingerprint != "" {
-			t.Fatal("failed durable capture returned authority", attempt, got, err)
-		}
+	s.afterPublish = func(string) error { return errors.New("fixture storage failure") }
+	if got, err = s.Admit(project, Admission{}); err == nil || got.Fingerprint != "" {
+		t.Fatal("a failed capture returned authority", got, err)
 	}
-	s.syncDir = nil
+	s.afterPublish = nil
 	if got, err := s.Admit(project, Admission{}); err != nil || got.Fingerprint == "" {
-		t.Fatal("capture did not recover after storage sync recovered", got, err)
-	}
-}
-
-func TestBundlePublicationRetryConfirmsDurability(t *testing.T) {
-	s := openStore(t)
-	bundles := []egress.Bundle{{Provider: "model", Client: egress.ClientCLI, Version: "1", Backend: "direct", AuthMode: "key"}}
-	s.syncDir = func(*os.File) error { return errors.New("fixture storage failure") }
-	for attempt := 0; attempt < 3; attempt++ {
-		if err := s.checkBundles(bundles); err == nil {
-			t.Fatal("bundle retry ignored persistent directory sync failure", attempt)
-		}
-	}
-	s.syncDir = nil
-	if err := s.checkBundles(bundles); err != nil {
-		t.Fatal("bundle publication failed after storage recovered", err)
+		t.Fatal("capture did not recover after storage recovered", got, err)
 	}
 }
 

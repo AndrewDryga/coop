@@ -58,12 +58,6 @@ func byteSize(n int64) string {
 	return fmt.Sprintf("%d bytes", n)
 }
 
-var (
-	syncLocalExcludeFile      = func(file *os.File) error { return file.Sync() }
-	syncLocalExcludeDirectory = func(dir *os.File) error { return dir.Sync() }
-	syncLocalGitDirectory     = func(dir *os.File) error { return dir.Sync() }
-)
-
 // ExcludeIfRepository is Exclude for project roots that Coop may run without Git. A hidden
 // identity marker needs no Git rule there; every other lookup or write failure remains fatal.
 func ExcludeIfRepository(ws, pattern string) error {
@@ -287,11 +281,6 @@ func excludeAt(commonDir string, expected os.FileInfo, pattern string) error {
 		if err := unix.Mkdirat(int(commonFile.Fd()), "info", 0o755); err != nil && !errors.Is(err, syscall.EEXIST) {
 			return err
 		}
-		// Confirm the info directory's name before using it as the durability boundary for the
-		// exclude file it contains. Retrying this barrier is harmless when another caller won.
-		if err := syncLocalGitDirectory(commonFile); err != nil {
-			return err
-		}
 		infoFD, err = unix.Openat(int(commonFile.Fd()), "info",
 			unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_DIRECTORY, 0)
 	}
@@ -325,16 +314,11 @@ func excludeAt(commonDir string, expected os.FileInfo, pattern string) error {
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.TrimSpace(line) == pattern {
-			// A prior append can be visible even though its file or directory fsync failed. An
-			// idempotent retry must repeat both barriers before declaring the exclusion durable.
-			return errors.Join(syncLocalExcludeFile(exclude), syncLocalExcludeDirectory(info))
+			return nil
 		}
 	}
 	if _, err := exclude.WriteString("\n# coop: host state, never committed\n" + pattern + "\n"); err != nil {
 		return err
 	}
-	if err := syncLocalExcludeFile(exclude); err != nil {
-		return err
-	}
-	return syncLocalExcludeDirectory(info)
+	return exclude.Sync()
 }

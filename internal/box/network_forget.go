@@ -59,9 +59,6 @@ func ReviewProjectNetworkForget(project string) (_ *ProjectNetworkForget, err er
 	if err != nil {
 		return nil, err
 	}
-	if err := confirmNetworkStoreDurability(store); err != nil {
-		return nil, err
-	}
 	return &ProjectNetworkForget{store: store, record: record, gone: gone}, nil
 }
 

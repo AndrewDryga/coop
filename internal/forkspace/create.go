@@ -68,16 +68,8 @@ func setupContext(ctx context.Context, repo, name, commit string, isolated bool)
 		}
 		if cleanupErr := os.RemoveAll(ws); cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("remove incomplete fork workspace %s: %w", ws, cleanupErr))
-		} else if syncErr := confirmForkDirectoryEntry(ws); syncErr != nil {
-			err = errors.Join(err, fmt.Errorf("confirm removal of incomplete fork workspace %s: %w", ws, syncErr))
 		}
 	}()
-	// The clone's directory name is the workspace users and later generation authority rely on.
-	// Sync its parent before returning or publishing an identity; on failure the defer removes the
-	// volatile clone and confirms that absence so a retry starts from one unambiguous state.
-	if err := confirmForkDirectoryEntry(ws); err != nil {
-		return ws, fmt.Errorf("confirm fork workspace creation: %w", err)
-	}
 	var checkoutErr error
 	if isolated {
 		checkoutErr = CheckoutIndependent(ctx, ws, commit, name)
@@ -234,16 +226,9 @@ func Destroy(repo, name string) error {
 	if err := os.RemoveAll(Workspace(repo, name)); err != nil {
 		return err
 	}
-	if err := confirmForkDirectoryEntry(Workspace(repo, name)); err != nil {
-		return fmt.Errorf("confirm fork workspace removal: %w", err)
-	}
 	home := Home(repo)
 	if entries, _ := readFolder(home); len(entries) == 0 {
-		if err := os.Remove(home); err == nil {
-			if err := confirmForkHomeEntry(home); err != nil {
-				return fmt.Errorf("confirm empty fork home removal: %w", err)
-			}
-		}
+		_ = os.Remove(home)
 	}
 	return nil
 }

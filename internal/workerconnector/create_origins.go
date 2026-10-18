@@ -87,11 +87,6 @@ func (j *journal) preserveCreateOriginLocked(entry journalEntry) error {
 	}
 	current, err := j.readCreateOrigin(j.createOriginPath(origin.SessionRef))
 	if err == nil {
-		// A prior rename can be visible after its directory sync failed. Retry durability
-		// before treating any existing generation marker as authority to release a receipt.
-		if err := j.syncActivityDir(j.origins); err != nil {
-			return err
-		}
 		if current.PlacementGeneration > origin.PlacementGeneration {
 			return nil
 		}
@@ -110,7 +105,7 @@ func (j *journal) preserveCreateOriginLocked(entry journalEntry) error {
 	stream, err := j.readEventStream(j.eventStreamPath(origin.SessionRef))
 	if err == nil {
 		if stream.PlacementGeneration > origin.PlacementGeneration {
-			return j.syncActivityDir(j.streams)
+			return nil
 		}
 		if stream.PlacementGeneration == origin.PlacementGeneration && origin.CoopSessionID != "" && stream.CoopSessionID != origin.CoopSessionID {
 			return errors.New("worker create origin conflicts with existing stream")
@@ -178,7 +173,7 @@ func (j *journal) bindCreateOriginLocked(origin createOrigin, sessionID string) 
 		return errors.New("worker create origin changed before binding")
 	}
 	if current.State != "pending" {
-		return j.syncActivityDir(j.origins)
+		return nil
 	}
 	if !reference(sessionID, 1024) || (current.CoopSessionID != "" && current.CoopSessionID != sessionID) {
 		return errors.New("worker create session identity conflicts")
@@ -186,7 +181,7 @@ func (j *journal) bindCreateOriginLocked(origin createOrigin, sessionID string) 
 	if err := j.bindEventStream(workerproto.Command{SessionRef: origin.SessionRef, PlacementGeneration: origin.PlacementGeneration}, sessionID); err != nil {
 		return err
 	}
-	// A pending origin suppresses the stream until BOTH publications are durable. On retry,
+	// A pending origin suppresses the stream until both are published. On retry,
 	// bindEventStream adopts the exact existing stream without resetting its published cursors.
 	current.State, current.CoopSessionID = "bound", sessionID
 	return j.writeActivityRecord(j.createOriginPath(origin.SessionRef), current)
@@ -297,7 +292,7 @@ func (e *Executor) activityTargets() ([]activityTarget, error) {
 
 func (j *journal) eventStreamAuthorized(stream eventStream) bool {
 	origin, err := j.readCreateOrigin(j.createOriginPath(stream.SessionRef))
-	return errors.Is(err, os.ErrNotExist) || (err == nil && j.syncActivityDir(j.origins) == nil && (origin.PlacementGeneration < stream.PlacementGeneration ||
+	return errors.Is(err, os.ErrNotExist) || (err == nil && (origin.PlacementGeneration < stream.PlacementGeneration ||
 		(origin.State == "bound" && origin.PlacementGeneration == stream.PlacementGeneration && origin.CoopSessionID == stream.CoopSessionID)))
 }
 
@@ -320,11 +315,4 @@ func (j *journal) withActivityLock(action func() error) error {
 		return errors.New("worker activity authority lock changed")
 	}
 	return action()
-}
-
-func (j *journal) syncActivityDir(directory string) error {
-	if j.testSyncActivityDir != nil {
-		return j.testSyncActivityDir(directory)
-	}
-	return syncDir(directory)
 }

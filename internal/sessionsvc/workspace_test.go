@@ -306,28 +306,6 @@ func TestSessionWorkspaceCreateRemovesItsOwnersStaleReservationAfterRollbackCras
 	}
 }
 
-func TestSessionWorkspaceCreateConfirmsMissingReservationBeforeSetup(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
-	failure := errors.New("synthetic missing-reservation durability failure")
-	previous := confirmSessionReservationState
-	confirmSessionReservationState = func(string) error { return failure }
-	t.Cleanup(func() { confirmSessionReservationState = previous })
-
-	_, err := ensureSessionWorkspaceContext(
-		context.Background(), nil, repo, "reservation-sync", base,
-		testSessionStoreID,
-		"remote_66666666666666666666666666666666",
-	)
-	if !errors.Is(err, failure) {
-		t.Fatalf("create error = %v, want %v", err, failure)
-	}
-	if _, statErr := os.Lstat(forkspace.Workspace(repo, "reservation-sync")); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("reservation durability failure still created a workspace: %v", statErr)
-	}
-}
-
 func TestSessionWorkspaceRetryChecksOwnerBeforeHydration(t *testing.T) {
 	for _, version := range []int{1, forkspace.WorkspaceReservationVersion} {
 		t.Run(fmt.Sprintf("reservation-v%d", version), func(t *testing.T) {
@@ -962,32 +940,5 @@ func TestSessionWorkspaceDiscardPlansAMissingWorkspaceAsAbsent(t *testing.T) {
 	if _, err := planSessionWorkspaceDiscard(repo, broken, false, false); err == nil ||
 		!strings.Contains(err.Error(), "pin session workspace") {
 		t.Fatalf("uninspectable workspace plan = %v", err)
-	}
-}
-
-func TestCreatedSessionWorkspaceCleanupConfirmsRemovalDurability(t *testing.T) {
-	repo := t.TempDir()
-	path := forkspace.Workspace(repo, "partial")
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cause := errors.New("original create failure")
-	barrier := errors.New("parent directory sync failed")
-	previous := confirmSessionDiscardState
-	defer func() { confirmSessionDiscardState = previous }()
-	called := false
-	confirmSessionDiscardState = func(got string) error {
-		called = true
-		if got != repo {
-			t.Errorf("synced %q, want %q", got, repo)
-		}
-		return barrier
-	}
-	err := removeCreatedSessionWorkspace(repo, path, cause)
-	if !called || !errors.Is(err, cause) || !errors.Is(err, barrier) {
-		t.Fatalf("cleanup = %v; want original failure and sync failure", err)
-	}
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("workspace remains after cleanup: %v", err)
 	}
 }

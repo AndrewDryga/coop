@@ -1,7 +1,6 @@
 package forkspace
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -109,7 +108,10 @@ func TestForksTreeFoldersRefuseAPlantedFIFOOrLinkAtOnce(t *testing.T) {
 				go func() {
 					_, err := LifecycleNames(repo)
 					if at == "state" && err == nil {
-						err = errors.Join(err, syncGenerationStateDir(repo))
+						var root *os.Root
+						if root, err = OpenStateRoot(repo, "", false); err == nil {
+							err = root.Close()
+						}
 					}
 					done <- err
 				}()

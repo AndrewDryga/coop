@@ -61,7 +61,7 @@ func (s *Store) bundleContent(bundles []egress.Bundle, pin bool) error {
 			if err != nil || !bytes.Equal(existing, data) {
 				return errors.New("provider bundle integrity drift: content changed without a new version")
 			}
-			if err := s.confirmPublication(); err != nil {
+			if err := s.checkRootPath(); err != nil {
 				return err
 			}
 		}

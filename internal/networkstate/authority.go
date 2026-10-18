@@ -27,15 +27,13 @@ import (
 
 const maxPrivateRecordBytes = 4 << 20
 
-// Injectable only inside this package to qualify first-create parent-directory barriers.
-var syncAuthorityDirectoryEntry = func(dir *os.File) error { return dir.Sync() }
-
 type Store struct {
 	root *os.Root
 	path string
 	key  []byte
-	// Injectable only inside this package to qualify rename-before-fsync faults.
-	syncDir func(*os.File) error
+	// afterPublish, set only by tests, runs once a record is in place under its final name: where an
+	// interruption would leave it published and the steps after it undone.
+	afterPublish func(name string) error
 }
 
 // Open must be given all wholesale mount sources, including repo, companions,
@@ -96,13 +94,6 @@ func openFiles(path string, exposed []string, create bool) (*Store, error) {
 		if err := os.MkdirAll(canonical, 0o700); err != nil {
 			return nil, err
 		}
-		// Mkdir visibility is not durable publication. Confirm every directory entry in the
-		// canonical path before a public project marker or private approval can depend on this
-		// store. Repeating the full chain also resolves a previous create whose parent fsync failed
-		// after the directory became visible.
-		if err := confirmAuthorityDirectoryEntries(canonical); err != nil {
-			return nil, err
-		}
 		// Prospective descendants have no inode. Once the root exists, repeat
 		// the identity check before publishing any key, including case or
 		// normalization aliases that lexical comparisons could not prove.
@@ -122,30 +113,6 @@ func openFiles(path string, exposed []string, create bool) (*Store, error) {
 		return nil, err
 	}
 	return &Store{root: root, path: canonical}, nil
-}
-
-func confirmAuthorityDirectoryEntries(path string) error {
-	var parents []string
-	for current := filepath.Clean(path); ; {
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
-		}
-		parents = append(parents, parent)
-		current = parent
-	}
-	slices.Reverse(parents)
-	for _, parent := range parents {
-		dir, err := os.Open(parent)
-		if err != nil {
-			return err
-		}
-		err = errors.Join(syncAuthorityDirectoryEntry(dir), dir.Close())
-		if err != nil {
-			return fmt.Errorf("confirm network authority directory %q: %w", parent, err)
-		}
-	}
-	return nil
 }
 
 // CheckPathExposure protects even a not-yet-created authority tree without
@@ -293,10 +260,8 @@ func (s *Store) loadKey(create bool) error {
 		if len(key) != 32 {
 			return errors.New("invalid network owner key")
 		}
-		// An existing key may have been linked by a first opener whose directory
-		// sync failed. Every successful opener confirms that publication.
 		if create {
-			if err := s.confirmPublication(); err != nil {
+			if err := s.checkRootPath(); err != nil {
 				return err
 			}
 		}
@@ -432,38 +397,12 @@ func (s *Store) publishBounded(name string, data []byte, replace bool, mode os.F
 	if err != nil {
 		return err
 	}
-	return s.confirmPublication()
-}
-
-// An existing equal file may be the result of a previous publication whose
-// directory sync failed. Its bytes alone cannot establish durable publication.
-func (s *Store) confirmPublication() error {
-	if err := s.checkRootPath(); err != nil {
-		return err
+	if s.afterPublish != nil {
+		if err := s.afterPublish(name); err != nil {
+			return err
+		}
 	}
-	dir, err := s.root.Open(".")
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return s.syncDirectory(dir)
-}
-
-// ConfirmDurability repeats the store directory barrier without publishing anything. Read-only
-// host commands use it before reporting an already-visible approval/removal as settled: that state
-// may be the result of a prior rename or unlink whose fsync failed after the change became visible.
-func (s *Store) ConfirmDurability() error {
-	if s == nil {
-		return errors.New("network authority store is not open")
-	}
-	return s.confirmPublication()
-}
-
-func (s *Store) syncDirectory(dir *os.File) error {
-	if s.syncDir != nil {
-		return s.syncDir(dir)
-	}
-	return dir.Sync()
+	return s.checkRootPath()
 }
 
 func (s *Store) projectID(project string) (string, error) {
@@ -754,7 +693,7 @@ func (s *Store) saveSnapshot(snapshot egress.Snapshot, removable bool) error {
 		if err := s.touchAdmitted(snapshot.Fingerprint); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		return s.confirmPublication()
+		return s.checkRootPath()
 	})
 }
 

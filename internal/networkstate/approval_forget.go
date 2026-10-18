@@ -73,7 +73,7 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 		if err != nil {
 			return err
 		}
-		// The barrier goes down FIRST and durably. Removing the grant is what
+		// The barrier goes down FIRST. Removing the grant is what
 		// makes this project's mode fall back to coop's open default, so the
 		// order is the guarantee: after this line no ordinary launch of this
 		// project starts until a human approves again.
@@ -89,9 +89,7 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 		name := approvalRecord(record.ID)
 		err = s.root.Remove(name)
 		if errors.Is(err, os.ErrNotExist) {
-			// The missing name may be a prior unlink whose directory sync failed. Repeat the
-			// barrier before an idempotent retry reports that nothing remained to remove.
-			return s.confirmPublication()
+			return s.checkRootPath()
 		}
 		if err != nil {
 			return err
@@ -99,9 +97,7 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 		if _, err := s.root.Lstat(name); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("this approval could not be proven removed")
 		}
-		// An unlink is durable only once its directory entry is — the same fsync
-		// a publication needs, for the same reason.
-		if err := s.confirmPublication(); err != nil {
+		if err := s.checkRootPath(); err != nil {
 			return err
 		}
 		removed = true
@@ -116,7 +112,7 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 	if !removed {
 		return false, nil // nothing changed that a running session has to hear about
 	}
-	// After the withdrawal is durable, as in Approve: a running editor session admits again and
+	// After the withdrawal is in place, as in Approve: a running editor session admits again and
 	// finds this project withdrawn.
 	return true, s.announceApprovalChange(ctx)
 }

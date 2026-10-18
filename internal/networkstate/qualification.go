@@ -148,7 +148,7 @@ func (t *QualificationSmoke) RecordEvidence(runID string, data []byte) (string, 
 			return "", errors.New("qualification observations cannot be replaced")
 		}
 	}
-	if err := t.store.confirmPublication(); err != nil {
+	if err := t.store.checkRootPath(); err != nil {
 		return "", err
 	}
 	if err := t.intact(); err != nil {
@@ -208,7 +208,7 @@ func (t *QualificationSmoke) Complete(domain string) (Qualification, error) {
 			return Qualification{}, errors.New("network qualification identity collision or invalid content")
 		}
 	}
-	if err := t.store.confirmPublication(); err != nil {
+	if err := t.store.checkRootPath(); err != nil {
 		return Qualification{}, err
 	}
 	if err := t.intact(); err != nil {
@@ -327,7 +327,7 @@ func (s *Store) Qualification(id string) (Qualification, error) {
 	if err != nil || q.ID != id || !equalJSON(canonical, q) || !hmac.Equal([]byte(s.qualificationID(q)), []byte(id)) {
 		return Qualification{}, errors.New("a setup record on this host is unreadable, or was not written by this coop — run 'coop net setup'")
 	}
-	if err := s.confirmPublication(); err != nil {
+	if err := s.checkRootPath(); err != nil {
 		return Qualification{}, err
 	}
 	if err := s.intactAuthority(); err != nil {

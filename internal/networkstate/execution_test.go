@@ -261,13 +261,13 @@ func TestExecutionKnownDetailLossCannotProduceCompleteReceipt(t *testing.T) {
 	}
 }
 
-func TestExecutionRenameBeforeFsyncErrorRetainsIntentForDurableReconciliation(t *testing.T) {
+// An interruption right after the creating intent is published leaves the intent in place: it
+// refuses a second create, and reconciliation settles it.
+func TestExecutionInterruptedAfterItsIntentRetainsItForReconciliation(t *testing.T) {
 	s, record := executionFixture(t)
 	record = prepareFixtureLaunch(t, s, record)
-	wanted := errors.New("injected directory sync failure")
-	s.syncDir = func(dir *os.File) error {
-		// Qualification/input reads also confirm durability. Inject only after
-		// this execution's intended rename, not during those preflight reads.
+	wanted := errors.New("injected interruption after publication")
+	s.afterPublish = func(string) error {
 		current, err := s.Execution(record.ID)
 		if err != nil {
 			return err
@@ -275,7 +275,7 @@ func TestExecutionRenameBeforeFsyncErrorRetainsIntentForDurableReconciliation(t 
 		if current.Resources[0].State == "creating" {
 			return wanted
 		}
-		return dir.Sync()
+		return nil
 	}
 	uncertain, err := s.BeginResourceCreation(context.Background(), record.ID, record.Revision, "controller")
 	if !errors.Is(err, wanted) || uncertain.ID != record.ID {
@@ -283,15 +283,14 @@ func TestExecutionRenameBeforeFsyncErrorRetainsIntentForDurableReconciliation(t 
 	}
 	got, err := s.Execution(record.ID)
 	if err != nil || got.Resources[0].State != "creating" || got.Revision != record.Revision+1 {
-		t.Fatal("rename-before-sync outcome silently treated as absent", err)
+		t.Fatal("the interrupted outcome was treated as absent", err)
 	}
-	// Reading the intent back is not proof it was published durably, and the
-	// retained intent refuses a second create rather than repeating it.
+	// The retained intent refuses a second create rather than repeating it.
 	if _, err := s.BeginResourceCreation(context.Background(), got.ID, got.Revision, "controller"); err == nil ||
 		!strings.Contains(err.Error(), "already intended") {
 		t.Fatal("uncertain outcome authorized a second runtime operation", err)
 	}
-	s.syncDir = nil
+	s.afterPublish = nil
 	confirmed, err := s.RecordResourceCreated(context.Background(), got.ID, got.Revision, "controller", strings.Repeat("a", 64))
 	if err != nil || confirmed.Revision != got.Revision+1 || confirmed.Resources[0].State != "created" {
 		t.Fatal("reconciliation could not settle the uncertain outcome", err)

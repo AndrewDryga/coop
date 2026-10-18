@@ -23,8 +23,6 @@ type journal struct {
 	dir         string
 	streams     string
 	origins     string
-	// Fault injection for the rename-visible / directory-not-yet-durable crash window.
-	testSyncActivityDir func(string) error
 }
 
 type journalEntry struct {
@@ -76,9 +74,6 @@ func openJournal(dir string) (*journal, error) {
 	}
 	if err := os.Chmod(streams, 0o700); err != nil {
 		return nil, fmt.Errorf("protect worker event stream directory: %w", err)
-	}
-	if err := syncDir(dir); err != nil {
-		return nil, err // persist new child journal directories before any receipt uses them
 	}
 	return &journal{dir: commands, streams: streams, origins: origins}, nil
 }
@@ -141,9 +136,6 @@ func (j *journal) begin(command workerproto.Command) (journalEntry, error) {
 		return journalEntry{}, fmt.Errorf("publish worker command receipt: %w", err)
 	}
 	defer j.publication.Unlock()
-	if err := syncDir(j.dir); err != nil {
-		return journalEntry{}, err
-	}
 	return entry, nil
 }
 
@@ -190,9 +182,6 @@ func (j *journal) save(entry journalEntry) (journalEntry, error) {
 	defer j.publication.Unlock()
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return journalEntry{}, fmt.Errorf("publish worker command result: %w", err)
-	}
-	if err := syncDir(j.dir); err != nil {
-		return journalEntry{}, err
 	}
 	return entry, nil
 }
@@ -266,9 +255,6 @@ func (j *journal) acknowledgeResults(commandIDs []string) error {
 			return fmt.Errorf("remove acknowledged worker command result: %w", err)
 		}
 	}
-	if len(commandIDs) > 0 {
-		return errors.Join(failures, syncDir(j.dir))
-	}
 	return failures
 }
 
@@ -295,16 +281,4 @@ func sameResult(left, right workerproto.CommandResult) bool {
 	leftJSON, leftErr := json.Marshal(left)
 	rightJSON, rightErr := json.Marshal(right)
 	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
-}
-
-func syncDir(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open worker command journal directory: %w", err)
-	}
-	defer dir.Close()
-	if err := dir.Sync(); err != nil {
-		return fmt.Errorf("sync worker command journal directory: %w", err)
-	}
-	return nil
 }

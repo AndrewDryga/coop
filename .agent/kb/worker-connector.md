@@ -3,7 +3,7 @@ name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
 sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -71,7 +71,7 @@ The traps the code does not make obvious:
   controller acknowledges them. A successful asynchronous create carries an operation, not a
   session: its metadata-only origin must be durable before receipt deletion. The fair activity scan
   resolves only that original key and operation ID, verifies a succeeded CreateRemoteSession/session
-  resource, then fsyncs the stream before marking its origin bound. Uncertain operations remain
+  resource, then writes the stream before marking its origin bound. Uncertain operations remain
   pending. Only exact event ACKs advance cursors; lookup/activity errors cannot block response commands.
 - **Slow commands do not serialize fleet reads.** Run owns one FIFO mutation lane and four
   read slots for strictly decoded GET/HEAD requests. Invalid requests and every other method
@@ -105,8 +105,7 @@ The traps the code does not make obvious:
   a discarded or superseded stream. Legacy v1 streams remain readable; an acknowledged terminal
   legacy stream stays dormant if it is the only generation floor. Short metadata transitions use a
   nonblocking journal lock; network lookups happen outside it and recheck origin identity when binding.
-  A visible rename is not durable proof after a failed directory sync: retries re-sync before receipt
-  release, stream adoption or event publication. A corrupt origin suppresses its corresponding stream
+  A corrupt origin suppresses its corresponding stream
   and reports an error while healthy siblings continue; it never enables legacy fallback.
 - **Checkpoints preserve complete custody.** V2 streams raw typed Git objects and LFS payloads,
   including intermediate new history, plus the final tracked tree, untracked files and task state.
@@ -139,6 +138,7 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-10-18 — the journal syncs its files before each rename and no folder (task 2026-10-15-drop-directory-fsyncs-and-sync-retry-ladders).
 - 2026-10-17 — marked `sourceSelector` and `fenceExpectedPolicyDigests` in older entries as removed
   with session policies (0e7c5c45); `decodeAPIError` remains in internal/workerconnector/unixapi.go.
 - 2026-10-10 — refreshed the outbound clock after activity/capacity collection; fake-clock

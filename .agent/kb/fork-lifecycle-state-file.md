@@ -3,7 +3,7 @@ name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
 sources: [internal/forkspace/state_root.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 A fork's detached loop is recorded in ONE small file, `<repo>-forks/.coop/<name>.pid`, read and
 written only through `forkspace.WorkerState` (`internal/forkspace/state.go`). It has one shape:
@@ -147,9 +147,8 @@ to a process or a container, or prints, it is supervision.
 - The host-owned `<name>.generation.json` binds name and generation to a private two-link anchor
   ([[identity-fences-compare-the-inode]]). Workers, runtime labels, executions, assignments,
   candidates and cleanup all carry that exact identity, so `--fresh` cannot rebind a stale
-  namesake. Generation publication is crash-replayable: a record rename that becomes visible before
-  its directory sync reports failure keeps anchor and workspace, and a session-create retry adopts
-  it. Reservation rollback retires the generation before deleting the workspace.
+  namesake. Generation publication is crash-replayable: a session-create retry adopts a published
+  record with its anchor and workspace. Reservation rollback retires the generation before deleting the workspace.
 - Workspace creation is all-or-nothing before generation authority exists: `SetupContext` keeps the
   clone only once `HEAD` is on the requested branch, Git identity and signing settings have
   propagated, and `.coop/` plus the root identity marker are excluded. Discovery treats a missing
@@ -184,11 +183,14 @@ own after-teardown `validateRemoval` and treats teardown as best effort.
 
 **Every `.coop` record is written through `.coop`'s own folder.** `forkspace.OpenStateRoot(repo,
 sub, create)` opens `.coop`, or a folder below it (several components), by descriptor without
-following a link at any step (made owner-only, with the parent barrier, when `create`), then opens
+following a link at any step (made owner-only when `create`), then opens
 it as an `os.Root` and requires the two to be the same folder, so every open, rename and removal
 through the root stays there even if a box swaps the name afterwards. `CreateTempIn`,
-`MkdirTempIn`, `PublishNoReplace` (hard link, then unlink: never replaces) and `SyncRoot` work
-through that root. Generation records, the reservation and execution registries, forkctl's land
+`MkdirTempIn` and `PublishNoReplace` (hard link, then unlink: never replaces) work through that
+root. A record's file is synced before its rename; no folder is: directory fsyncs and their
+"visible but not yet synced" retries guarded only against power loss, which coop's threat model
+leaves out (owner decision, 2026-10-15). `folderChecked` is the tests' scheduling point where a
+box could swap a folder Coop just checked. Generation records, the reservation and execution registries, forkctl's land
 journal, isolated records and candidate folders, and tasks' assignment, proposal and candidate
 registries, discard intent and projection snapshots all use it (tasks' `openStateRoot` takes a
 path under `.coop`). `.discarding`, beside `.coop`, is opened the same way from the forks folder's
@@ -196,6 +198,8 @@ handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` moves the wor
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-10-18 — directory fsyncs and their retries removed; the race tests swap at `folderChecked`
+  (task 2026-10-15-drop-directory-fsyncs-and-sync-retry-ladders).
 - 2026-10-18 — staging a discard goes through the forks folder's and .discarding's descriptors (task
   2026-10-18-stage-a-fork-discard-through-the-forks-folder-s).
 - 2026-10-18 — the remaining `.coop` writers go through `OpenStateRoot` (task

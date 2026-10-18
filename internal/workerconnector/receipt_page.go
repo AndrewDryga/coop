@@ -128,8 +128,5 @@ func (j *journal) advanceReceiptScan(commandID string) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryPath, j.receiptScanPath()); err != nil {
-		return err
-	}
-	return syncDir(j.dir)
+	return os.Rename(temporaryPath, j.receiptScanPath())
 }

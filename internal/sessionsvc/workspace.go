@@ -33,8 +33,6 @@ var (
 	removeSessionGenerationIfMatches  = forkspace.RemoveGenerationIfMatchesLocked
 	removeSessionReservationIfMatches = forkspace.RemoveWorkspaceReservationIfMatchesLocked
 	stageSessionWorkspaceDiscard      = forkspace.StageWorkspaceDiscardLocked
-	confirmSessionDiscardState        = forkspace.ConfirmWorkspaceDiscardState
-	confirmSessionReservationState    = forkspace.ConfirmWorkspaceReservationState
 )
 
 // sessionWorkspace is the host-owned identity captured when a remote session fork is created.
@@ -414,13 +412,6 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 		}
 	}
 	if created {
-		// A previous create rollback may have removed this name but lost the parent-directory
-		// sync. Confirm that visible absence before allocating a new generation under it.
-		if err := confirmSessionDiscardState(repo); err != nil {
-			return sessionWorkspace{}, fmt.Errorf("confirm absent session workspace before create: %w", err)
-		}
-	}
-	if created {
 		// Create rollback retires generation authority before its reservation. A crash between
 		// those durable steps leaves an exact old reservation but no workspace or generation for
 		// name-based planning to discover. Remove only this session owner's now-unbound records
@@ -461,7 +452,7 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 			if removeErr := os.RemoveAll(ws); removeErr != nil {
 				return errors.Join(cause, fmt.Errorf("remove partial workspace %q: %w", ws, removeErr))
 			}
-			return errors.Join(cause, confirmSessionDiscardState(repo))
+			return cause
 		}
 		if head, headErr := sessionWorkspaceCommitContext(ctx, ws, "HEAD"); headErr != nil {
 			return sessionWorkspace{}, cleanupPartial(fmt.Errorf("verify new session workspace HEAD: %w", headErr))
@@ -536,9 +527,6 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 var errSessionWorkspacePublicationPending = errors.New("session workspace authority publication needs replay")
 
 func preflightExistingSessionReservationLocked(repo, name, storeID, sessionID string) error {
-	if err := forkspace.ConfirmWorkspaceReservationState(repo); err != nil {
-		return err
-	}
 	identity, hasGeneration, err := forkspace.ReadGeneration(repo, name)
 	if err != nil {
 		return err
@@ -557,12 +545,6 @@ func preflightExistingSessionReservationLocked(repo, name, storeID, sessionID st
 }
 
 func removeStaleSessionWorkspaceReservationsLocked(repo, name, storeID, sessionID string) error {
-	// A prior unlink may be visible even though its reservation-directory sync failed. There is no
-	// record left to rediscover in that crash prefix, so confirm the visible registry snapshot
-	// before using it to authorize a new generation.
-	if err := confirmSessionReservationState(repo); err != nil {
-		return err
-	}
 	staged, err := forkspace.StagedDiscards(repo, name)
 	if err != nil {
 		return err
@@ -604,7 +586,7 @@ func removeCreatedSessionWorkspace(repo, path string, cause error) error {
 	if err := os.RemoveAll(path); err != nil {
 		return errors.Join(cause, fmt.Errorf("remove new workspace %q: %w", path, err))
 	}
-	return errors.Join(cause, confirmSessionDiscardState(repo))
+	return cause
 }
 
 func verifySessionWorkspaceContext(ctx context.Context, repo, name, workspace, base string) (sessionWorkspace, error) {
@@ -1231,11 +1213,6 @@ func applySessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan, validated *va
 		return errors.New("session workspace discard was not validated")
 	}
 	if !validated.workspacePresent {
-		// A prior attempt may have completed the visible rename but failed its directory barrier.
-		// Repeat that barrier before retiring the last durable names for the workspace.
-		if err := confirmSessionDiscardState(plan.Repo); err != nil {
-			return fmt.Errorf("confirm staged session workspace discard: %w", err)
-		}
 		if plan.Fork != nil {
 			if err := removeSessionGenerationIfMatches(plan.Repo, *plan.Fork); err != nil {
 				return err

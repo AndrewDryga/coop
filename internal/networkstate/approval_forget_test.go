@@ -2,7 +2,6 @@ package networkstate
 
 import (
 	"context"
-	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -220,44 +219,5 @@ func TestForgetNeedsTheRecordItWasReadFrom(t *testing.T) {
 	}
 	if _, err := s.ApprovalAt("relative/path"); err == nil {
 		t.Error("a relative project path was resolved to a record id")
-	}
-}
-
-func TestForgetRetryConfirmsAlreadyVisibleRemoval(t *testing.T) {
-	s := openStore(t)
-	project := t.TempDir()
-	if err := approve(s, project, egress.Filtered, []egress.Rule{rule("retry.example.com")}, nil); err != nil {
-		t.Fatal(err)
-	}
-	record, err := s.ApprovalAt(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	failure := errors.New("synthetic approval unlink sync failure")
-	calls := 0
-	s.syncDir = func(dir *os.File) error {
-		calls++
-		if calls == 2 {
-			return failure
-		}
-		return dir.Sync()
-	}
-	if removed, err := s.Forget(context.Background(), record); !errors.Is(err, failure) || removed {
-		t.Fatalf("first Forget = (%v, %v), want visible removal plus sync failure", removed, err)
-	}
-	if _, err := s.root.Lstat(approvalRecord(record.ID)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("approval was not visibly absent after failed unlink barrier: %v", err)
-	}
-
-	calls = 0
-	s.syncDir = func(dir *os.File) error {
-		calls++
-		return dir.Sync()
-	}
-	if removed, err := s.Forget(context.Background(), record); err != nil || removed {
-		t.Fatalf("Forget retry = (%v, %v), want confirmed no second removal", removed, err)
-	}
-	if calls < 2 {
-		t.Fatalf("Forget retry used %d directory barriers, want withdrawal plus absent-approval confirmation", calls)
 	}
 }

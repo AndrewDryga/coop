@@ -24,9 +24,6 @@ const (
 
 const WorkspaceReservationVersion = workspaceReservationVersion
 
-// Injectable only inside this package to qualify visible-create/unlink recovery.
-var syncReservationDirectory = func(dir *os.File) error { return dir.Sync() }
-
 // Injectable only inside this package to qualify an entry released between the registry's
 // directory read and the read of the entry itself.
 var afterReservationDirectoryRead = func() {}
@@ -169,9 +166,7 @@ func ReserveWorkspaceLocked(repo string, record WorkspaceReservation) error {
 	name := reservationName(record.Fork)
 	if current, err := readWorkspaceReservationFile(root, name); err == nil {
 		if reflect.DeepEqual(current, record) || sameWorkspaceReservationOwner(current, record) {
-			// A prior create may have become visible before its directory sync failed.
-			// Repeat the durability barrier before acknowledging the idempotent retry.
-			return syncWorkspaceReservationRoot(root)
+			return nil
 		}
 		return errors.New("fork workspace generation is reserved by another owner")
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -208,7 +203,7 @@ func ReserveWorkspaceLocked(repo string, record WorkspaceReservation) error {
 		return err
 	}
 	tmp = ""
-	return syncWorkspaceReservationRoot(root)
+	return nil
 }
 
 func ReadWorkspaceReservation(repo string, identity Identity) (WorkspaceReservation, bool, error) {
@@ -244,30 +239,6 @@ func RequireNoWorkspaceReservationLocked(repo string, identity Identity) error {
 	return nil
 }
 
-// ConfirmWorkspaceReservationState repeats the directory barrier that makes a visible
-// reservation create or removal durable. It is intentionally useful without an identity: after
-// an unlink became visible but its sync failed, a retry can no longer discover the removed record
-// in order to repeat RemoveWorkspaceReservationIfMatchesLocked. Syncing the registry itself (or
-// its state-directory parent when the registry is absent) confirms that visible absence before a
-// replacement owner is allowed to publish.
-func ConfirmWorkspaceReservationState(repo string) error {
-	root, err := OpenStateRoot(repo, reservationFolder, false)
-	if errors.Is(err, os.ErrNotExist) {
-		root, err = OpenStateRoot(repo, "", false)
-	}
-	// No Coop state directory means no reservation registry has ever been published by this
-	// checkout. Coop never removes StateDir, so there is no deleted registry whose absence needs
-	// a parent barrier in this case.
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	return syncWorkspaceReservationRoot(root)
-}
-
 // RequireForkNameAvailable reports any durable cleanup or owner that still claims a fork name.
 // The caller must hold LockState(repo,name) across this check and subsequent creation for the
 // result to authorize reuse. Generation-specific checks are insufficient here: a crash can leave
@@ -275,9 +246,6 @@ func ConfirmWorkspaceReservationState(repo string) error {
 func RequireForkNameAvailable(repo, name string) error {
 	if !ValidExistingName(name) {
 		return fmt.Errorf("invalid fork name %q", name)
-	}
-	if err := ConfirmWorkspaceReservationState(repo); err != nil {
-		return fmt.Errorf("confirm fork reservation state: %w", err)
 	}
 	staged, err := StagedDiscards(repo, name)
 	if err != nil {
@@ -324,9 +292,7 @@ func RemoveWorkspaceReservationIfMatchesLocked(repo string, expected WorkspaceRe
 	name := reservationName(expected.Fork)
 	current, err := readWorkspaceReservationFile(root, name)
 	if errors.Is(err, os.ErrNotExist) {
-		// A prior removal may have unlinked the record before its directory sync
-		// failed. Repeat that barrier before reporting the retry complete.
-		return syncWorkspaceReservationRoot(root)
+		return nil
 	}
 	if err != nil {
 		return err
@@ -337,15 +303,7 @@ func RemoveWorkspaceReservationIfMatchesLocked(repo string, expected WorkspaceRe
 	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return syncWorkspaceReservationRoot(root)
-}
-
-func syncWorkspaceReservationRoot(root *os.Root) error {
-	dir, err := root.OpenFile(".", os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return err
-	}
-	return errors.Join(syncReservationDirectory(dir), dir.Close())
+	return nil
 }
 
 func WorkspaceReservations(repo string) ([]WorkspaceReservation, []error) {

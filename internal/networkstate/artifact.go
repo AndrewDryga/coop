@@ -136,12 +136,9 @@ func (s *Store) PrepareArtifacts(ctx context.Context, id string, revision networ
 			return err
 		}
 		defer files.Close()
-		// Generation begins only after this record is durable, so a planned
+		// Generation begins only after this record is written, so a planned
 		// artifact with generated content is not ours to adopt.
 		if err := emptyDirectory(files); err != nil {
-			return err
-		}
-		if err := s.syncDirectory(dir); err != nil {
 			return err
 		}
 		stat := info.Sys().(*syscall.Stat_t)

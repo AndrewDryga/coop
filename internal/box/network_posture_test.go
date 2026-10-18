@@ -493,30 +493,6 @@ func TestReviewOfAnUnchangedRequestWritesNothing(t *testing.T) {
 	}
 }
 
-func TestReviewOfUnchangedApprovalConfirmsPriorPublication(t *testing.T) {
-	cfg, repo, _ := postureFixture(t, requestFixtureYAML)
-	approveFixture(t, cfg, repo)
-	previous := confirmNetworkStoreDurability
-	t.Cleanup(func() { confirmNetworkStoreDurability = previous })
-	failure := errors.New("synthetic approval directory sync failure")
-	confirmNetworkStoreDurability = func(*networkstate.Store) error { return failure }
-	if review, err := ReviewProjectNetwork(cfg, repo); !errors.Is(err, failure) {
-		if review != nil {
-			_ = review.Close()
-		}
-		t.Fatalf("unchanged review = %v, want durability failure", err)
-	}
-	confirmNetworkStoreDurability = previous
-	review, err := ReviewProjectNetwork(cfg, repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer review.Close()
-	if !review.Unchanged() {
-		t.Fatal("durability retry no longer recognized the unchanged approval")
-	}
-}
-
 func TestApprovalRecoversAnEmptyRootLeftByFailedFirstCreation(t *testing.T) {
 	cfg, repo, root := postureFixture(t, requestFixtureYAML)
 	if err := os.MkdirAll(root, 0o700); err != nil {

@@ -83,7 +83,7 @@ func (s *Store) clearWithdrawal(id string) error {
 	if _, err := s.root.Lstat(withdrawalRecord(id)); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("this network withdrawal could not be proven removed")
 	}
-	return s.confirmPublication()
+	return s.checkRootPath()
 }
 
 // withdrawalBarrier is the pending review a withdrawal leaves behind. It

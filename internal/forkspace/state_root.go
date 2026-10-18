@@ -89,9 +89,8 @@ func openStateChild(dir *os.File, path, name string, create bool) (*os.File, err
 	}
 	folder := os.NewFile(uintptr(fd), path)
 	if create {
-		// Repeat the parent barrier even when the folder was already there: a previous creation
-		// may have failed its sync after the mkdir, and this retry is what confirms it.
-		if err := errors.Join(syncForkDirectoryEntry(dir), folder.Chmod(0o700)); err != nil {
+		folderChecked(dir.Name())
+		if err := folder.Chmod(0o700); err != nil {
 			_ = folder.Close()
 			return nil, fmt.Errorf("make fork state path %q: %w", path, err)
 		}
@@ -159,15 +158,6 @@ func PublishNoReplace(root *os.Root, tmp, name string) error {
 		return err
 	}
 	return root.Remove(tmp)
-}
-
-// SyncRoot makes the entries just written in root durable.
-func SyncRoot(root *os.Root) error {
-	dir, err := root.OpenFile(".", os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return err
-	}
-	return errors.Join(dir.Sync(), dir.Close())
 }
 
 // tempName is prefix plus 8 random hex digits, no longer than os.CreateTemp's suffix, so a name

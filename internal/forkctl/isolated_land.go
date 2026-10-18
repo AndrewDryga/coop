@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,48 +166,33 @@ func readIsolatedRecord(path string, target any) (bool, error) {
 	return true, nil
 }
 
-// published is true even when the containing-directory sync fails. Callers must
-// then preserve everything the visible record references for conservative replay.
-//
-// path names a record in repo's .coop, written through .coop's own folder, never by name.
-func writeIsolatedRecord(repo, path string, value any) (published bool, err error) {
+// writeIsolatedRecord writes path, a record in repo's .coop, through .coop's own folder, never by
+// name.
+func writeIsolatedRecord(repo, path string, value any) error {
 	data, err := json.Marshal(value)
 	if err != nil || len(data) > landIntentLimit {
-		return false, errors.Join(errors.New("isolated record exceeds its bound"), err)
+		return errors.Join(errors.New("isolated record exceeds its bound"), err)
 	}
 	if filepath.Dir(path) != forkspace.StateDir(repo) {
-		return false, fmt.Errorf("isolated record %s is not in the fork state folder", path)
+		return fmt.Errorf("isolated record %s is not in the fork state folder", path)
 	}
 	state, err := forkspace.OpenStateRoot(repo, "", true)
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer state.Close()
 	file, tmp, err := forkspace.CreateTempIn(state, ".isolated-record-")
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer state.Remove(tmp)
 	if _, err := file.Write(append(data, '\n')); err != nil {
-		return false, errors.Join(err, file.Close())
+		return errors.Join(err, file.Close())
 	}
 	if err := errors.Join(file.Sync(), file.Close()); err != nil {
-		return false, err
-	}
-	if err := state.Rename(tmp, filepath.Base(path)); err != nil {
-		return false, err
-	}
-	return true, forkspace.SyncRoot(state)
-}
-
-// syncIsolatedPath syncs a file or folder the land wrote under .coop, opened without waiting on a
-// FIFO a box put there and without following a link.
-func syncIsolatedPath(path string) error {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
-	if err != nil {
 		return err
 	}
-	return errors.Join(file.Sync(), file.Close())
+	return state.Rename(tmp, filepath.Base(path))
 }
 
 func validateIsolatedIntent(repo string, identity forkspace.Identity, intent isolatedLandIntent) error {
@@ -252,21 +236,6 @@ func intentCandidate(repo string, intent isolatedLandIntent) isolatedCandidate {
 	return isolatedCandidate{dir: filepath.Join(forkspace.StateDir(repo), intent.Custody), identity: intent.Fork,
 		parent: intent.Parent, sourceHead: intent.SourceHead, sourceTree: intent.SourceTree,
 		upstream: intent.Upstream, head: intent.PublicationHead, tree: intent.PublicationTree}
-}
-
-func syncIsolatedCustody(candidate isolatedCandidate) error {
-	if err := forkspace.ValidateIndependentGit(candidate.dir); err != nil {
-		return err
-	}
-	// Only immutable Git/object/LFS custody is needed for replay. Worktree symlinks
-	// are committed data, never followed while syncing metadata.
-	err := filepath.WalkDir(filepath.Join(candidate.dir, ".git"), func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		return syncIsolatedPath(path)
-	})
-	return errors.Join(err, syncIsolatedPath(candidate.dir), syncIsolatedPath(filepath.Dir(candidate.dir)))
 }
 
 func (c *Control) advanceIsolatedLand(repo string, intent isolatedLandIntent) (bool, error) {
@@ -334,7 +303,7 @@ func (c *Control) advanceIsolatedLand(repo string, intent isolatedLandIntent) (b
 		// Bind the verified hydrated/native checkout before CAS. A crash after
 		// ref publication must not mint this proof from whatever bytes exist later.
 		intent.PublicationContent = checked.Content
-		if _, err := writeIsolatedRecord(repo, landIntentPath(repo, intent.Fork), intent); err != nil {
+		if err := writeIsolatedRecord(repo, landIntentPath(repo, intent.Fork), intent); err != nil {
 			return false, err
 		}
 		cas := forkspace.GitRefCommand(ctx, repo, "update-ref", "-m", "Coop isolated publication", intent.Parent.Target, intent.PublicationHead, intent.Parent.Head)
@@ -360,7 +329,7 @@ func (c *Control) advanceIsolatedLand(repo string, intent isolatedLandIntent) (b
 		return landed, fmt.Errorf("isolated published payload is incomplete or changed; preserve journal/custody and reconcile: %w", err)
 	}
 	intent.Phase = "landed"
-	if _, err := writeIsolatedRecord(repo, landIntentPath(repo, intent.Fork), intent); err != nil {
+	if err := writeIsolatedRecord(repo, landIntentPath(repo, intent.Fork), intent); err != nil {
 		return landed, err
 	}
 	if intent.Candidate != nil {
@@ -376,7 +345,7 @@ func (c *Control) advanceIsolatedLand(repo string, intent isolatedLandIntent) (b
 	}
 	record := isolatedSourceRecord{Version: 2, Fork: intent.Fork, Head: intent.SourceHead, Tree: intent.SourceTree,
 		PublicationHead: intent.PublicationHead, PublicationTree: intent.PublicationTree}
-	if _, err := writeIsolatedRecord(repo, isolatedSourcePath(repo, intent.Fork), record); err != nil {
+	if err := writeIsolatedRecord(repo, isolatedSourcePath(repo, intent.Fork), record); err != nil {
 		return true, err
 	}
 	if err := removeStateRecord(repo, landIntentPath(repo, intent.Fork)); err != nil {
@@ -463,9 +432,6 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 	if err := c.gateIsolatedCandidate(repo, img, candidate, false); err != nil {
 		return mergeOutcome{}, err
 	}
-	if err := syncIsolatedCustody(candidate); err != nil {
-		return mergeOutcome{}, err
-	}
 	intent := isolatedLandIntent{Version: 2, Fork: identity, SourceHead: candidate.sourceHead,
 		SourceTree: candidate.sourceTree, Upstream: candidate.upstream, Parent: candidate.parent,
 		PublicationHead: candidate.head, PublicationTree: candidate.tree, Custody: filepath.Base(candidate.dir),
@@ -485,25 +451,20 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 	if err := candidate.validateSource(repo); err != nil {
 		return mergeOutcome{}, err
 	}
-	published, err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent)
-	retain = published
-	if err != nil {
+	if err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent); err != nil {
 		return mergeOutcome{}, err
 	}
+	retain = true
 	landed, err := c.advanceIsolatedLand(repo, intent)
 	return finish(landed, candidate.sourceHead, candidate.head, err)
 }
 
-// removeStateRecord removes path, a record in repo's .coop, through .coop's own folder, and makes
-// the removal durable.
+// removeStateRecord removes path, a record in repo's .coop, through .coop's own folder.
 func removeStateRecord(repo, path string) error {
 	state, err := forkspace.OpenStateRoot(repo, "", false)
 	if err != nil {
 		return err
 	}
 	defer state.Close()
-	if err := state.Remove(filepath.Base(path)); err != nil {
-		return err
-	}
-	return forkspace.SyncRoot(state)
+	return state.Remove(filepath.Base(path))
 }

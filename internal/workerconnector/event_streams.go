@@ -45,9 +45,9 @@ func (j *journal) bindEventStream(command workerproto.Command, coopSessionID str
 	if err == nil {
 		switch {
 		case current.PlacementGeneration > command.PlacementGeneration:
-			return j.syncActivityDir(j.streams)
+			return nil
 		case current.PlacementGeneration == command.PlacementGeneration && current.CoopSessionID == coopSessionID:
-			return j.syncActivityDir(j.streams)
+			return nil
 		case current.PlacementGeneration == command.PlacementGeneration:
 			return errors.New("worker event stream session identity conflicts")
 		}
@@ -115,10 +115,7 @@ func (j *journal) advanceEventScan(sessionRef string) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return err
-	}
-	return syncDir(j.streams)
+	return os.Rename(temporaryPath, path)
 }
 
 func (j *journal) publishEventStream(stream eventStream, sequence, terminalSequence int64) error {
@@ -182,9 +179,6 @@ func (j *journal) acknowledgeEventsLocked(acknowledgements []workerproto.EventAc
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("remove terminal worker event stream: %w", err)
 			}
-			if err := j.syncActivityDir(j.streams); err != nil {
-				return err
-			}
 			continue
 		}
 		if err := j.writeEventStream(path, stream); err != nil {
@@ -246,7 +240,7 @@ func (j *journal) writeActivityRecord(path string, record any) error {
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return fmt.Errorf("publish worker activity record: %w", err)
 	}
-	return j.syncActivityDir(directory)
+	return nil
 }
 
 func (j *journal) eventStreamPath(sessionRef string) string {

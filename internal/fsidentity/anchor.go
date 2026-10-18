@@ -18,13 +18,7 @@ import (
 
 const maxAnchorBody = 512
 
-var (
-	linkNames                   = linkRootNames
-	syncPrivateAnchorRoot       = syncRoot
-	syncCreatedPublicRoot       = syncRoot
-	syncCreateCleanupPublicRoot = syncRoot
-	syncRetiredPublicRoot       = syncRoot
-)
+var linkNames = linkRootNames
 
 // Binding names one marker inside a protected root and its second name inside
 // an already-open private state root. Body identifies the intended binding for
@@ -87,16 +81,12 @@ func Create(binding Binding) (*os.Root, error) {
 	createdAnchor := true
 	createdMarker := false
 	cleanup := func(cause error) error {
-		// Never remove the last private recovery name until absence of the public name is
-		// durable. Otherwise a crash during error cleanup can resurrect an authoritative-looking
-		// marker whose anchor was already lost, wedging every future Open/Create attempt.
+		// Remove the public name before the last private one: a marker whose anchor is gone would
+		// look authoritative and wedge every later Open or Create.
 		if createdMarker {
 			removeErr := root.Remove(binding.MarkerName)
 			if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 				return errors.Join(cause, removeErr)
-			}
-			if syncErr := syncCreateCleanupPublicRoot(root); syncErr != nil {
-				return errors.Join(cause, syncErr)
 			}
 		}
 		if createdAnchor {
@@ -104,7 +94,6 @@ func Create(binding Binding) (*os.Root, error) {
 			if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 				return errors.Join(cause, removeErr)
 			}
-			return errors.Join(cause, syncRoot(binding.AnchorRoot))
 		}
 		return cause
 	}
@@ -119,23 +108,10 @@ func Create(binding Binding) (*os.Root, error) {
 	if err := anchor.Close(); err != nil {
 		return nil, cleanup(err)
 	}
-	// Make the private name durable before publishing its public hard link. If the
-	// machine stops after the marker directory is synced, recovery must never see a
-	// durable marker whose only private recovery name was still volatile.
-	if err := syncPrivateAnchorRoot(binding.AnchorRoot); err != nil {
-		return nil, cleanup(fmt.Errorf("sync private filesystem identity anchor: %w", err))
-	}
-
 	if err := linkNames(binding.AnchorRoot, binding.AnchorName, root, binding.MarkerName); err != nil {
 		return nil, cleanup(fmt.Errorf("link filesystem identity marker: %w (the project and Coop state must be on one filesystem with hard-link support)", err))
 	}
 	createdMarker = true
-	if err := syncCreatedPublicRoot(root); err != nil {
-		return nil, cleanup(fmt.Errorf("sync filesystem identity marker: %w", err))
-	}
-	if err := syncRoot(binding.AnchorRoot); err != nil {
-		return nil, cleanup(fmt.Errorf("sync private filesystem identity anchor: %w", err))
-	}
 	if _, err := validateOpen(root, rootInfo, stateInfo, binding); err != nil {
 		return nil, cleanup(err)
 	}
@@ -228,20 +204,18 @@ func Retire(binding Binding) error {
 	}
 	if root, err := Open(binding); err == nil {
 		removeErr := root.Remove(binding.MarkerName)
-		syncErr := syncRetiredPublicRoot(root)
 		closeErr := root.Close()
 		if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			return errors.Join(removeErr, syncErr, closeErr)
+			return errors.Join(removeErr, closeErr)
 		}
-		if err := errors.Join(syncErr, closeErr); err != nil {
-			return err
+		if closeErr != nil {
+			return closeErr
 		}
 	} else if root, _, pinErr := openPinnedRoot(binding.RootPath); pinErr == nil {
-		// A previous retirement may have unlinked the marker and then failed its
-		// directory sync. Open can no longer validate that one-link private anchor,
-		// so repeat the public durability barrier before deleting its last name.
-		// A marker that is still present is not this recovery prefix: retain the
-		// private name rather than making an unexplained public marker permanent.
+		// A previous retirement may have unlinked the marker and stopped before it removed the
+		// private anchor: Open can no longer validate that one-link anchor, so finish here. A
+		// marker that is still present is not that case: retain the private name rather than
+		// make an unexplained public marker permanent.
 		_, markerErr := root.Lstat(binding.MarkerName)
 		if markerErr == nil {
 			closeErr := root.Close()
@@ -250,8 +224,8 @@ func Retire(binding Binding) error {
 		if !errors.Is(markerErr, os.ErrNotExist) {
 			return errors.Join(markerErr, root.Close())
 		}
-		if syncErr := errors.Join(syncRetiredPublicRoot(root), root.Close()); syncErr != nil {
-			return syncErr
+		if err := root.Close(); err != nil {
+			return err
 		}
 	}
 	anchor, info, err := openRegular(binding.AnchorRoot, binding.AnchorName)
@@ -274,7 +248,7 @@ func Retire(binding Binding) error {
 	if err := binding.AnchorRoot.Remove(binding.AnchorName); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return syncRoot(binding.AnchorRoot)
+	return nil
 }
 
 func validateOpen(root *os.Root, rootInfo, stateInfo os.FileInfo, binding Binding) (os.FileInfo, error) {
@@ -402,12 +376,4 @@ func fileAuthority(info os.FileInfo) (links uint64, owner uint32, ok bool) {
 		return 0, 0, false
 	}
 	return uint64(stat.Nlink), stat.Uid, true
-}
-
-func syncRoot(root *os.Root) error {
-	dir, err := root.Open(".")
-	if err != nil {
-		return err
-	}
-	return errors.Join(dir.Sync(), dir.Close())
 }

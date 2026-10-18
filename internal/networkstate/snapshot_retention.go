@@ -83,7 +83,7 @@ func (s *Store) markAdmitted(fingerprint string) error {
 	if err := s.touchAdmitted(fingerprint); err != nil {
 		return err
 	}
-	return s.confirmPublication()
+	return s.checkRootPath()
 }
 
 // touchAdmitted restarts a removable snapshot's retention window. The caller

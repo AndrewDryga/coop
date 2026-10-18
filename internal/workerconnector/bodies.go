@@ -122,9 +122,6 @@ func (e *Executor) forwardRequest(ctx context.Context, entry journalEntry, comma
 	if err := os.Rename(file.Name(), e.journal.path(command.CommandID)+".body"); err != nil {
 		return nil, err
 	}
-	if err := syncDir(e.journal.dir); err != nil {
-		return nil, err
-	}
 	envelope.BodyRef = &ref
 	entry.Response = &envelope
 	if _, err := e.journal.save(entry); err != nil {

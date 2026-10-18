@@ -411,50 +411,6 @@ func TestForkGenerationRecoversAnchorPublishedBeforeRecord(t *testing.T) {
 	}
 }
 
-func TestForkGenerationRecoversAfterPostPublishDirectorySyncFailure(t *testing.T) {
-	repo := filepath.Join(t.TempDir(), "project")
-	makeGenerationWorkspace(t, repo, "recover-sync")
-	previousSync := syncGenerationDirectory
-	t.Cleanup(func() { syncGenerationDirectory = previousSync })
-	failure := errors.New("synthetic post-publish directory sync failure")
-	syncGenerationDirectory = func(*os.File) error { return failure }
-
-	unlock, err := LockState(repo, "recover-sync")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, firstErr := EnsureGenerationLocked(repo, "recover-sync")
-	unlock()
-	if !errors.Is(firstErr, failure) {
-		t.Fatalf("first publication error = %v, want %v", firstErr, failure)
-	}
-	published, present, err := ReadGeneration(repo, "recover-sync")
-	if err != nil || !present {
-		t.Fatalf("post-rename failure lost the generation record: %+v, present=%v, err=%v", published, present, err)
-	}
-	if err := ValidateGenerationWorkspace(repo, published); err != nil {
-		t.Fatalf("post-rename failure retired the published anchor: %v", err)
-	}
-
-	retrySyncs := 0
-	syncGenerationDirectory = func(dir *os.File) error {
-		retrySyncs++
-		return previousSync(dir)
-	}
-	unlock, err = LockState(repo, "recover-sync")
-	if err != nil {
-		t.Fatal(err)
-	}
-	recovered, retryErr := EnsureGenerationLocked(repo, "recover-sync")
-	unlock()
-	if retryErr != nil || recovered != published {
-		t.Fatalf("retry = %+v, %v; want published generation %+v", recovered, retryErr, published)
-	}
-	if retrySyncs == 0 {
-		t.Fatal("successful retry did not repeat the state-directory durability barrier")
-	}
-}
-
 func TestForkGenerationRemovalKeepsRecordUntilAnchorRetires(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "project")
 	makeGenerationWorkspace(t, repo, "retire")
@@ -501,44 +457,6 @@ func TestForkGenerationRemovalKeepsRecordUntilAnchorRetires(t *testing.T) {
 	}
 	if _, err := os.Lstat(anchor); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("retry left private anchor: %v", err)
-	}
-}
-
-func TestForkGenerationRemovalRetryRepeatsPostUnlinkDirectorySync(t *testing.T) {
-	repo := filepath.Join(t.TempDir(), "project")
-	makeGenerationWorkspace(t, repo, "remove-sync")
-	identity := ensureTestGeneration(t, repo, "remove-sync")
-	previousSync := syncGenerationDirectory
-	t.Cleanup(func() { syncGenerationDirectory = previousSync })
-	failure := errors.New("synthetic post-unlink directory sync failure")
-	syncGenerationDirectory = func(*os.File) error { return failure }
-
-	unlock, err := LockState(repo, identity.Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstErr := RemoveGenerationIfMatchesLocked(repo, identity)
-	unlock()
-	if !errors.Is(firstErr, failure) {
-		t.Fatalf("first removal error = %v, want %v", firstErr, failure)
-	}
-	if _, present, err := ReadGeneration(repo, identity.Name); err != nil || present {
-		t.Fatalf("post-unlink failure left visible record: present=%v, err=%v", present, err)
-	}
-
-	syncCalls := 0
-	syncGenerationDirectory = func(dir *os.File) error {
-		syncCalls++
-		return dir.Sync()
-	}
-	unlock, err = LockState(repo, identity.Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	retryErr := RemoveGenerationIfMatchesLocked(repo, identity)
-	unlock()
-	if retryErr != nil || syncCalls != 1 {
-		t.Fatalf("removal retry = %v with %d directory syncs; want success with one sync", retryErr, syncCalls)
 	}
 }
 

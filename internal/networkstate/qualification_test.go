@@ -299,28 +299,22 @@ func TestNetworkQualificationRejectsTamperAndFilesystemTraps(t *testing.T) {
 	}
 }
 
-func TestNetworkQualificationPublicationConfirmsDurability(t *testing.T) {
+func TestNetworkQualificationPublicationFailureReturnsNoAuthority(t *testing.T) {
 	smoke, _ := qualificationFixture(t)
-	wanted := errors.New("qualification directory fsync")
-	smoke.store.syncDir = func(dir *os.File) error {
-		entries, err := os.ReadDir(smoke.store.Path())
-		if err != nil {
-			return err
+	wanted := errors.New("interrupted qualification publication")
+	smoke.store.afterPublish = func(name string) error {
+		id := strings.TrimSuffix(strings.TrimPrefix(name, "qualification-"), ".json")
+		if strings.HasPrefix(name, "qualification-") && lowerHex(id, 64) {
+			return wanted
 		}
-		for _, entry := range entries {
-			id := strings.TrimSuffix(strings.TrimPrefix(entry.Name(), "qualification-"), ".json")
-			if strings.HasPrefix(entry.Name(), "qualification-") && lowerHex(id, 64) {
-				return wanted
-			}
-		}
-		return dir.Sync()
+		return nil
 	}
 	if q, err := smoke.Complete(smokeDomain); !errors.Is(err, wanted) || q.ID != "" {
-		t.Fatal("ambiguous durability returned authority", err)
+		t.Fatal("an interrupted publication returned authority", err)
 	}
-	smoke.store.syncDir = nil
+	smoke.store.afterPublish = nil
 	if q, err := smoke.Complete(smokeDomain); err != nil || q.ID == "" {
-		t.Fatal("retry did not confirm existing publication", err)
+		t.Fatal("retry did not complete the qualification", err)
 	}
 }
 

@@ -419,10 +419,7 @@ func writeForkCandidateManifest(repo string, manifest forkCandidateManifest) err
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := state.Rename(name, filepath.Base(ForkCandidatePath(repo, manifest.Fork))); err != nil {
-		return err
-	}
-	return forkspace.SyncRoot(state)
+	return state.Rename(name, filepath.Base(ForkCandidatePath(repo, manifest.Fork)))
 }
 
 func candidateFromManifest(repo string, manifest forkCandidateManifest) (ForkCandidate, error) {

@@ -128,10 +128,6 @@ type projectNetworkReviewInputs struct {
 // cross-box launch lock. Production leaves it nil.
 var afterNetworkReviewInputsLoaded func()
 
-// Test seam for visible-but-not-yet-durable rename/unlink recovery. Production always repeats the
-// store directory barrier before a read-only command reports settled state.
-var confirmNetworkStoreDurability = func(store *networkstate.Store) error { return store.ConfirmDurability() }
-
 func loadProjectNetworkReviewInputs(cfg *config.Config, repo string) (projectNetworkReviewInputs, error) {
 	canonical, p, root, exposed, input, err := networkProjectInputs(cfg, repo)
 	if err != nil {
@@ -148,9 +144,6 @@ func loadProjectNetworkReviewInputs(cfg *config.Config, repo string) (projectNet
 	var before *networkstate.Approval
 	if existing, openErr := networkstate.OpenExisting(root, exposed); openErr == nil {
 		before, err = existing.Approval(canonical)
-		if err == nil {
-			err = confirmNetworkStoreDurability(existing)
-		}
 		err = errors.Join(err, existing.Close())
 		if err != nil {
 			return projectNetworkReviewInputs{}, err

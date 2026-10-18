@@ -231,21 +231,24 @@ func TestWithdrawalIsPersistedBeforeTheGrantIsCleared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	failure := errors.New("interrupted withdrawal directory barrier")
+	failure := errors.New("interrupted right after the withdrawal was published")
 	observed := false
-	s.syncDir = func(dir *os.File) error {
+	s.afterPublish = func(name string) error {
+		if name != withdrawalRecord(id) {
+			return nil
+		}
 		observed = true
 		data, err := os.ReadFile(filepath.Join(s.Path(), withdrawalRecord(id)))
 		var marker Withdrawal
 		if err != nil || json.Unmarshal(data, &marker) != nil || marker.Version != 1 || marker.ProjectID != id {
-			t.Fatalf("withdrawal was not published before its barrier: %s, %v", data, err)
+			t.Fatalf("withdrawal was not published: %s, %v", data, err)
 		}
 		if _, err := s.root.Lstat(approvalRecord(id)); err != nil {
-			t.Fatalf("approval removed before durable withdrawal: %v", err)
+			t.Fatalf("approval removed before the withdrawal: %v", err)
 		}
-		return errors.Join(dir.Sync(), failure)
+		return failure
 	}
-	t.Cleanup(func() { s.syncDir = nil })
+	t.Cleanup(func() { s.afterPublish = nil })
 	if removed, err := s.Forget(context.Background(), record); removed || !errors.Is(err, failure) || !observed {
 		t.Fatalf("interrupted real Forget = removed%v, err%v, barrier observed%v", removed, err, observed)
 	}
@@ -254,14 +257,14 @@ func TestWithdrawalIsPersistedBeforeTheGrantIsCleared(t *testing.T) {
 		t.Fatalf("an interrupted withdrawal reused its stale approval: %v", pending)
 	}
 	if _, err := s.Admit(project, request); err == nil {
-		t.Fatal("Admit reused a stale approval after the withdrawal barrier was durable")
+		t.Fatal("Admit reused a stale approval after the withdrawal was published")
 	}
 	// A retry still finishes the retained anchor and approval cleanup.
 	record, err = s.ApprovalAt(project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.syncDir = nil
+	s.afterPublish = nil
 	if removed, err := s.Forget(context.Background(), record); err != nil || !removed {
 		t.Fatalf("Forget = (%v, %v)", removed, err)
 	}

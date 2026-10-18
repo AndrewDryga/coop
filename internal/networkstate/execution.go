@@ -479,12 +479,7 @@ func (s *Store) mutateExecution(ctx context.Context, id string, revision network
 // The caller holds the execution stripe across every bounded filesystem step.
 func (s *Store) writeExecution(record *Execution, changed bool) error {
 	if !changed {
-		dir, err := s.root.Open(".")
-		if err != nil {
-			return err
-		}
-		defer dir.Close()
-		return s.syncDirectory(dir) // resolves a prior ambiguous rename
+		return nil
 	}
 	if !networkview.Add(&record.Revision, 1) {
 		return errors.New("network execution revision exhausted")

@@ -40,8 +40,10 @@ var (
 	// larger than any Coop writes. A box whose mount holds the .coop folder can put any of them there,
 	// and reading one could wait forever or never end.
 	ErrNotAStateFile = errors.New("not a file Coop wrote")
-	// Injectable only inside this package to qualify first-create parent-directory barriers.
-	syncForkDirectoryEntry = func(dir *os.File) error { return dir.Sync() }
+	// folderChecked, swapped only by tests, runs where Coop has checked a folder of the forks tree
+	// and is about to work in it: the moment a box could swap that folder for a link. The work after
+	// it goes through the checked folder's descriptor, which the tests prove by swapping it here.
+	folderChecked = func(path string) {}
 )
 
 // SignalPID is the kill(2) the lifecycle probes and the supervisor share, as one seam so a test can
@@ -91,12 +93,7 @@ func openStateDir(repo string) (*os.File, error) {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
 	dir := os.NewFile(uintptr(fd), path)
-	// Repeat this barrier even when the directory was already visible. A previous creation may
-	// have returned an fsync error after mkdir; the idempotent retry is what confirms publication.
-	if err := syncForkDirectoryEntry(home); err != nil {
-		_ = dir.Close()
-		return nil, err
-	}
+	folderChecked(Home(repo))
 	if err := dir.Chmod(0o700); err != nil {
 		_ = dir.Close()
 		return nil, fmt.Errorf("make fork state path %q owner-only: %w", path, err)
@@ -106,8 +103,7 @@ func openStateDir(repo string) (*os.File, error) {
 
 func ensureForkHome(repo string) error {
 	home := Home(repo)
-	// A fork home is a direct sibling of an existing project, so its parent already exists. Avoid
-	// MkdirAll here: every directory Coop creates must have a specific parent durability barrier.
+	// A fork home is a direct sibling of an existing project, so its parent already exists.
 	if err := os.Mkdir(home, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
@@ -118,26 +114,8 @@ func ensureForkHome(repo string) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("fork home path %q is not a real directory", home)
 	}
-	return confirmForkHomeEntry(home)
-}
-
-// confirmForkDirectoryEntry syncs the folder that holds path, in the forks tree.
-func confirmForkDirectoryEntry(path string) error {
-	return syncParentFolder(path, false)
-}
-
-// confirmForkHomeEntry syncs the fork home's parent: the project's own parent folder, which a box
-// cannot write and a link may reach.
-func confirmForkHomeEntry(home string) error {
-	return syncParentFolder(home, true)
-}
-
-func syncParentFolder(path string, follow bool) error {
-	parent, err := OpenFolder(filepath.Dir(path), follow)
-	if err != nil {
-		return err
-	}
-	return errors.Join(syncForkDirectoryEntry(parent), parent.Close())
+	folderChecked(filepath.Dir(home))
+	return nil
 }
 
 // LockState serializes a detached start through its child's record, the child's confirmation and

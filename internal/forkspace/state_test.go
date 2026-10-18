@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,35 +47,6 @@ func TestForkStateRootAndFilesAreOwnerOnly(t *testing.T) {
 	assertForkStatePerm(t, StateDir(repo), 0o700)
 	assertForkStatePerm(t, LockPath(repo, "perf"), 0o600)
 	assertForkStatePerm(t, PidPath(repo, "perf"), 0o600)
-}
-
-func TestForkStateDirectoryCreationRetryRepeatsParentBarriers(t *testing.T) {
-	repo := filepath.Join(t.TempDir(), "project")
-	previous := syncForkDirectoryEntry
-	t.Cleanup(func() { syncForkDirectoryEntry = previous })
-	failure := errors.New("synthetic parent directory sync failure")
-	syncForkDirectoryEntry = func(*os.File) error { return failure }
-
-	if err := EnsureStateDir(repo); !errors.Is(err, failure) {
-		t.Fatalf("first state directory creation = %v, want %v", err, failure)
-	}
-	if _, err := os.Stat(Home(repo)); err != nil {
-		t.Fatalf("fork home was not visible after failed parent barrier: %v", err)
-	}
-
-	var synced []string
-	syncForkDirectoryEntry = func(dir *os.File) error {
-		synced = append(synced, filepath.Clean(dir.Name()))
-		return dir.Sync()
-	}
-	if err := EnsureStateDir(repo); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{filepath.Dir(Home(repo)), Home(repo)} {
-		if !slices.Contains(synced, filepath.Clean(want)) {
-			t.Errorf("retry did not confirm parent %q; synced %v", want, synced)
-		}
-	}
 }
 
 func TestForkStateRootRefusesUnsafeEntries(t *testing.T) {
@@ -464,7 +434,7 @@ func TestStateWritersKeepToTheStateFolderTheyOpened(t *testing.T) {
 				t.Fatal(err)
 			}
 			untouched := treeState(t, outside)
-			swapped := swapAtSync(t, Home(repo), w.nth, StateDir(repo), outside)
+			swapped := swapAtCheck(t, Home(repo), w.nth, StateDir(repo), outside)
 			if err := w.write(repo); err != nil {
 				t.Fatalf("%s across the swap = %v, want it to finish in the folder it opened", w.name, err)
 			}
@@ -495,7 +465,7 @@ func TestStateWritersRefuseASwappedForksFolder(t *testing.T) {
 		t.Run(w.name, func(t *testing.T) {
 			repo, outside := swapFixture(t, ".coop")
 			untouched, state := treeState(t, outside), treeState(t, StateDir(repo))
-			swapped := swapAtSync(t, filepath.Dir(Home(repo)), 1, Home(repo), outside)
+			swapped := swapAtCheck(t, filepath.Dir(Home(repo)), 1, Home(repo), outside)
 			err := w.write(repo)
 			if !*swapped {
 				t.Fatal("the swap never happened")
@@ -584,27 +554,28 @@ func writeModeFile(t *testing.T, path, data string) {
 	}
 }
 
-// swapAtSync swaps path for a link to target at the nth sync of the folder synced, as a box could
-// between Coop's check of that folder and its writes there, and reports whether it did. What was at
-// path moves to path+".pinned".
-func swapAtSync(t *testing.T, synced string, nth int, path, target string) *bool {
+// swapAtCheck swaps path for a link to target the nth time Coop checks the folder checked, as a box
+// could between Coop's check of that folder and its writes there, and reports whether it did. What
+// was at path moves to path+".pinned".
+func swapAtCheck(t *testing.T, checked string, nth int, path, target string) *bool {
 	t.Helper()
-	previous := syncForkDirectoryEntry
-	t.Cleanup(func() { syncForkDirectoryEntry = previous })
+	previous := folderChecked
+	t.Cleanup(func() { folderChecked = previous })
 	seen, swapped := 0, false
-	syncForkDirectoryEntry = func(dir *os.File) error {
-		if filepath.Clean(dir.Name()) == filepath.Clean(synced) {
+	folderChecked = func(folder string) {
+		if filepath.Clean(folder) == filepath.Clean(checked) {
 			if seen++; seen == nth {
 				if err := os.Rename(path, path+".pinned"); err != nil {
-					return err
+					t.Error(err)
+					return
 				}
 				if err := os.Symlink(target, path); err != nil {
-					return err
+					t.Error(err)
+					return
 				}
 				swapped = true
 			}
 		}
-		return dir.Sync()
 	}
 	return &swapped
 }
@@ -1080,7 +1051,7 @@ func TestCoopRecordWritersNeverWriteThroughALink(t *testing.T) {
 				if when == "planted before" {
 					*swapped = true
 				} else {
-					swapped = swapAtSync(t, Home(repo), 1, StateDir(repo), outside)
+					swapped = swapAtCheck(t, Home(repo), 1, StateDir(repo), outside)
 				}
 				err := w.write(repo)
 				if !*swapped {

@@ -141,70 +141,6 @@ func TestAnchorLinkFailureCleansBothNames(t *testing.T) {
 	}
 }
 
-func TestAnchorDoesNotPublishMarkerBeforePrivateNameIsDurable(t *testing.T) {
-	binding, closeState := testBinding(t)
-	defer closeState()
-	previousSync, previousLink := syncPrivateAnchorRoot, linkNames
-	syncPrivateAnchorRoot = func(*os.Root) error { return syscall.EIO }
-	linked := false
-	linkNames = func(*os.Root, string, *os.Root, string) error {
-		linked = true
-		return nil
-	}
-	t.Cleanup(func() {
-		syncPrivateAnchorRoot = previousSync
-		linkNames = previousLink
-	})
-
-	if _, err := Create(binding); err == nil || !strings.Contains(err.Error(), "sync private") {
-		t.Fatalf("Create error = %v, want private-directory sync failure", err)
-	}
-	if linked {
-		t.Fatal("Create linked the public marker before the private name was durable")
-	}
-	for _, path := range []string{
-		filepath.Join(binding.RootPath, binding.MarkerName),
-		filepath.Join(binding.AnchorRoot.Name(), binding.AnchorName),
-	} {
-		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("failed creation left %s: %v", path, err)
-		}
-	}
-}
-
-func TestAnchorCreateCleanupRetainsPrivateNameUntilPublicRemovalIsDurable(t *testing.T) {
-	binding, closeState := testBinding(t)
-	defer closeState()
-	previousPublish, previousCleanup := syncCreatedPublicRoot, syncCreateCleanupPublicRoot
-	publishFailure := errors.New("synthetic marker publication sync failure")
-	cleanupFailure := errors.New("synthetic marker removal sync failure")
-	syncCreatedPublicRoot = func(*os.Root) error { return publishFailure }
-	syncCreateCleanupPublicRoot = func(*os.Root) error { return cleanupFailure }
-	t.Cleanup(func() {
-		syncCreatedPublicRoot = previousPublish
-		syncCreateCleanupPublicRoot = previousCleanup
-	})
-
-	if _, err := Create(binding); !errors.Is(err, publishFailure) || !errors.Is(err, cleanupFailure) {
-		t.Fatalf("Create error = %v, want publication and cleanup barriers", err)
-	}
-	if _, err := os.Lstat(filepath.Join(binding.RootPath, binding.MarkerName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("failed cleanup left marker visibly present: %v", err)
-	}
-	if _, err := binding.AnchorRoot.Lstat(binding.AnchorName); err != nil {
-		t.Fatalf("failed public cleanup barrier removed the private recovery anchor: %v", err)
-	}
-
-	// Once the same public barrier succeeds, ordinary retirement can remove the retained name.
-	syncCreateCleanupPublicRoot = previousCleanup
-	if err := Retire(binding); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := binding.AnchorRoot.Lstat(binding.AnchorName); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("retirement left retained create anchor: %v", err)
-	}
-}
-
 func TestAnchorRemovalRequiresTheExactBinding(t *testing.T) {
 	binding, closeState := testBinding(t)
 	defer closeState()
@@ -255,7 +191,8 @@ func TestRetireCleansPrivateAnchorAfterRootRemoval(t *testing.T) {
 	}
 }
 
-func TestRetireRetrySyncsMissingPublicMarkerBeforeRemovingLastAnchor(t *testing.T) {
+// A retirement that unlinked the marker and stopped before the private anchor finishes on retry.
+func TestRetireFinishesAfterTheMarkerIsAlreadyGone(t *testing.T) {
 	binding, closeState := testBinding(t)
 	defer closeState()
 	root, err := Create(binding)
@@ -263,34 +200,11 @@ func TestRetireRetrySyncsMissingPublicMarkerBeforeRemovingLastAnchor(t *testing.
 		t.Fatal(err)
 	}
 	_ = root.Close()
-
-	previous := syncRetiredPublicRoot
-	t.Cleanup(func() { syncRetiredPublicRoot = previous })
-	failure := errors.New("synthetic public directory sync failure")
-	syncRetiredPublicRoot = func(*os.Root) error { return failure }
-	if err := Retire(binding); !errors.Is(err, failure) {
-		t.Fatalf("first retirement error = %v, want %v", err, failure)
-	}
-	if _, err := os.Lstat(filepath.Join(binding.RootPath, binding.MarkerName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("failed public sync left marker visible: %v", err)
-	}
-	if _, err := binding.AnchorRoot.Lstat(binding.AnchorName); err != nil {
-		t.Fatalf("failed public sync removed the last private anchor: %v", err)
-	}
-
-	publicSynced := false
-	syncRetiredPublicRoot = func(root *os.Root) error {
-		publicSynced = true
-		if _, err := binding.AnchorRoot.Lstat(binding.AnchorName); err != nil {
-			t.Fatalf("public retry barrier ran after private anchor removal: %v", err)
-		}
-		return syncRoot(root)
+	if err := os.Remove(filepath.Join(binding.RootPath, binding.MarkerName)); err != nil {
+		t.Fatal(err)
 	}
 	if err := Retire(binding); err != nil {
 		t.Fatal(err)
-	}
-	if !publicSynced {
-		t.Fatal("retirement retry skipped the public directory durability barrier")
 	}
 	if _, err := binding.AnchorRoot.Lstat(binding.AnchorName); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("retirement retry left private anchor: %v", err)

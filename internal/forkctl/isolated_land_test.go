@@ -349,17 +349,17 @@ func TestIsolatedUnmergedRequiresCurrentPublicationEvidence(t *testing.T) {
 		{Version: 2, Fork: identity, Head: record.Head, Tree: record.Tree, PublicationHead: record.PublicationHead, PublicationTree: record.Head},
 		{Version: 2, Fork: forkspace.Identity{Name: identity.Name, Generation: forkspace.Generation("other")}, Head: record.Head, Tree: record.Tree, PublicationHead: record.PublicationHead, PublicationTree: record.PublicationTree},
 	} {
-		if _, err := writeIsolatedRecord(repo, isolatedSourcePath(repo, identity), bad); err != nil {
+		if err := writeIsolatedRecord(repo, isolatedSourcePath(repo, identity), bad); err != nil {
 			t.Fatal(err)
 		}
 		if !ForkUnmerged(repo, ws) {
 			t.Fatalf("invalid/old receipt granted removal authority: %+v", bad)
 		}
 	}
-	if _, err := writeIsolatedRecord(repo, isolatedSourcePath(repo, identity), record); err != nil {
+	if err := writeIsolatedRecord(repo, isolatedSourcePath(repo, identity), record); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeIsolatedRecord(repo, landIntentPath(repo, identity), map[string]string{"phase": "started"}); err != nil {
+	if err := writeIsolatedRecord(repo, landIntentPath(repo, identity), map[string]string{"phase": "started"}); err != nil {
 		t.Fatal(err)
 	}
 	if !ForkUnmerged(repo, ws) {
@@ -482,7 +482,7 @@ func TestIsolatedPublicationBindsCheckedBytesAcrossCASAndReplay(t *testing.T) {
 						t.Fatal("missing replay journal", err)
 					}
 					intent.Phase = "landed"
-					if _, err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent); err != nil {
+					if err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -1120,7 +1120,7 @@ func TestIsolatedPublicationMissingContentProofPreservesCustody(t *testing.T) {
 					intent.Phase = "landed"
 				}
 			}
-			if _, err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent); err != nil {
+			if err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent); err != nil {
 				t.Fatal(err)
 			}
 			before, err := captureIsolatedParent(repo)
@@ -1157,7 +1157,7 @@ func TestIsolatedPublicationRefusesPartialCheckoutAndUncertainLock(t *testing.T)
 				SourceTree: candidate.sourceTree, Upstream: candidate.upstream, Parent: candidate.parent,
 				PublicationHead: candidate.head, PublicationTree: candidate.tree,
 				Custody: filepath.Base(candidate.dir), Phase: "started", CreatedAt: time.Now().UTC()}
-			if _, err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent); err != nil {
+			if err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent); err != nil {
 				t.Fatal(err)
 			}
 			if lock {
@@ -1240,7 +1240,7 @@ func TestLandStateNeverWritesThroughACoopLink(t *testing.T) {
 		write func(repo string) error
 	}{
 		{"isolated record", func(repo string) error {
-			_, err := writeIsolatedRecord(repo, landIntentPath(repo, identity), map[string]string{"phase": "started"})
+			err := writeIsolatedRecord(repo, landIntentPath(repo, identity), map[string]string{"phase": "started"})
 			return err
 		}},
 		{"candidate folder", func(repo string) error {

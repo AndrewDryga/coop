@@ -35,9 +35,6 @@ const (
 
 var forkGenerationRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
-// Injectable only inside this package to qualify rename/unlink-before-directory-sync recovery.
-var syncGenerationDirectory = func(dir *os.File) error { return dir.Sync() }
-
 // Generation is an immutable incarnation of one named fork. A name can be reused after --fresh
 // or rm; a generation cannot, so stale workers, boxes, task assignments, and candidates cannot
 // silently attach themselves to the replacement workspace.
@@ -444,12 +441,6 @@ func ensureGenerationLocked(repo, name string, isolated bool) (Identity, error) 
 			if err := ValidateGenerationWorkspace(repo, identity); err != nil {
 				return Identity{}, err
 			}
-			// A prior publication may have renamed this complete record and then failed the
-			// state-directory sync. Repeat the barrier on every successful observation so a
-			// retry cannot report durable authority while that directory entry is still volatile.
-			if err := syncGenerationStateDir(repo); err != nil {
-				return Identity{}, err
-			}
 			return identity, nil
 		}
 		if err := migrateLegacyGenerationLocked(repo, record); err != nil {
@@ -485,11 +476,6 @@ func ensureGenerationLocked(repo, name string, isolated bool) (Identity, error) 
 		if err := ExcludeIfRepository(Workspace(repo, name), pattern); err != nil {
 			return Identity{}, fmt.Errorf("exclude fork bookkeeping before binding generation: %w", err)
 		}
-	}
-	// Session-create recovery can adopt a clone that died before Setup returned. Establish the
-	// workspace name durably in its fork-home parent before publishing a marker, anchor or record.
-	if err := confirmForkDirectoryEntry(Workspace(repo, name)); err != nil {
-		return Identity{}, fmt.Errorf("confirm fork workspace before binding generation: %w", err)
 	}
 	state, err := OpenStateRoot(repo, "", true)
 	if err != nil {
@@ -749,11 +735,7 @@ func publishGenerationAtomic(repo, name string, data []byte, replace bool) (bool
 		return false, publishErr
 	}
 	tmp = ""
-	dir, err := state.OpenFile(".", os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return true, err
-	}
-	return true, errors.Join(syncGenerationDirectory(dir), dir.Close())
+	return true, nil
 }
 
 // RemoveGenerationIfMatchesLocked fences fresh/rm cleanup. A stale command may never erase the
@@ -768,9 +750,7 @@ func RemoveGenerationIfMatchesLocked(repo string, expected Identity) error {
 			WorkspaceAnchor: forkGenerationAnchorName(expected.Name, expected.Generation), CreatedAt: time.Unix(1, 0)}); err != nil {
 			return err
 		}
-		// A prior attempt may have unlinked the record and then failed its directory sync. Repeat
-		// that durability barrier before declaring cleanup complete.
-		return syncGenerationStateDir(repo)
+		return nil
 	}
 	if err != nil {
 		return err
@@ -795,18 +775,7 @@ func RemoveGenerationIfMatchesLocked(repo string, expected Identity) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return syncGenerationStateDir(repo)
-}
-
-func syncGenerationStateDir(repo string) error {
-	dir, err := OpenFolder(StateDir(repo), false)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return errors.Join(syncGenerationDirectory(dir), dir.Close())
+	return nil
 }
 
 func retireGenerationAnchor(repo string, record generationRecord) error {
