@@ -14,7 +14,11 @@ package teststate
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
 )
 
 // rootEnv names the folder Isolate made. A process the test binary starts for itself inherits it,
@@ -115,7 +119,42 @@ func Isolate(tests func() int) int {
 			return 1
 		}
 	}
+	if err := os.Setenv("PATH", developerToolsPath()); err != nil {
+		fmt.Fprintln(os.Stderr, "teststate:", err)
+		return 1
+	}
 	return tests()
+}
+
+// gitStub is the git macOS installs in /usr/bin: a stub that asks xcrun where the developer tools
+// are on every call before it runs the real git, about 6 ms a call against 3 for the real one. The
+// tests run tens of thousands of git commands, a session review alone some 240.
+const gitStub = "/usr/bin/git"
+
+// developerToolsPath is PATH with the folder of the git the stub runs just ahead of /usr/bin, when
+// PATH finds the stub, so the tests' git runs without it. A program found before /usr/bin is still
+// found first, and a name /usr/bin forwards to the developer tools reaches the same program. Not a
+// link to git: Apple's git looks for its helpers and templates beside the path it was started from.
+func developerToolsPath() string {
+	path := os.Getenv("PATH")
+	if runtime.GOOS != "darwin" {
+		return path
+	}
+	if git, err := exec.LookPath("git"); err != nil || git != gitStub {
+		return path
+	}
+	out, err := exec.Command("/usr/bin/xcrun", "--find", "git").Output()
+	tools := filepath.Dir(strings.TrimSpace(string(out)))
+	if err != nil || !filepath.IsAbs(tools) || tools == filepath.Dir(gitStub) {
+		return path
+	}
+	entries := filepath.SplitList(path)
+	for i, entry := range entries {
+		if filepath.Clean(entry) == filepath.Dir(gitStub) {
+			return strings.Join(slices.Insert(entries, i, tools), string(os.PathListSeparator))
+		}
+	}
+	return path
 }
 
 // Dir is the folder Isolate made for this test binary, for other files that should live and go

@@ -2,8 +2,11 @@ package sessionsvc
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,6 +81,7 @@ func setSyntheticSessionGeneration(t *testing.T, store *session.Store, id, gener
 // share of the developer's disk. Storage-policy tests still set their own explicit limits.
 func newSessionServiceWithTestStorage(t *testing.T, cfg Config) (*Service, error) {
 	t.Helper()
+	seedSessionStore(t, cfg.StateRoot)
 	if cfg.StorageLimits == nil {
 		limits := storageTestLimits(t)
 		limits.GraceWindow = DefaultStorageGraceWindow
@@ -84,6 +89,66 @@ func newSessionServiceWithTestStorage(t *testing.T, cfg Config) (*Service, error
 		cfg.StorageLimits = &limits
 	}
 	return NewService(cfg)
+}
+
+// sessionStoreSeed is a session database migrated once for this test binary. A fixture's state root
+// starts from a copy, under a store identity of its own, instead of replaying every schema
+// migration: about a quarter of a second each under the race detector, for hundreds of fixtures.
+// internal/session's own tests run the migrations.
+var sessionStoreSeed = sync.OnceValues(func() ([]byte, error) {
+	dir, err := os.MkdirTemp("", "coop-session-seed-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	store, err := session.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.Close(); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(filepath.Join(dir, "session.sqlite"))
+})
+
+// seedSessionStore copies the seed into a state root that has no session database yet. A root
+// that already holds one (a restart's own store, a fixture's historical one) or that is not a
+// plain new folder is left for the service to open or refuse.
+func seedSessionStore(t *testing.T, root string) {
+	t.Helper()
+	if root == "" {
+		return
+	}
+	if info, err := os.Lstat(root); err == nil && !info.IsDir() || err != nil && !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if _, err := os.Stat(filepath.Dir(root)); err != nil {
+		return
+	}
+	path := filepath.Join(root, "session.sqlite")
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	seed, err := sessionStoreSeed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, seed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var id [16]byte
+	_, _ = rand.Read(id[:])
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("UPDATE store_identity SET id = ? WHERE slot = 1", "store_"+hex.EncodeToString(id[:])); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // A recorded failure cannot become success by polling longer. Keep the real terminal

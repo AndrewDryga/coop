@@ -1,6 +1,7 @@
 package forkspace
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -65,6 +66,10 @@ type gitView struct {
 	gitDir    string // the worktree's own git dir (HEAD, index, logs/HEAD)
 	commonDir string // objects, refs, packed-refs, config — same as gitDir for a plain clone
 	dir       string
+	// configSource holds the repository config bytes the last refresh projected, and config their
+	// projection; projected says there is one.
+	configSource, config []byte
+	projected            bool
 }
 
 var (
@@ -502,11 +507,21 @@ func (v *gitView) refresh(ctx context.Context) error {
 			return err
 		}
 	}
-	config, err := trustedGitConfig(ctx, filepath.Join(v.commonDir, "config"), v.dir)
+	// The config is read for every command, but parsed only when its bytes changed: the projection
+	// is git's parse of those bytes, so the same bytes give the same one, and each parse is a git
+	// process of its own.
+	source, err := readGitConfigSource(filepath.Join(v.commonDir, "config"))
 	if err != nil {
 		return err
 	}
-	if err := writeViewFile(filepath.Join(v.dir, "config"), config); err != nil {
+	if !v.projected || !bytes.Equal(source, v.configSource) {
+		config, err := projectGitConfig(ctx, source, v.dir)
+		if err != nil {
+			return err
+		}
+		v.configSource, v.config, v.projected = source, config, true
+	}
+	if err := writeViewFile(filepath.Join(v.dir, "config"), v.config); err != nil {
 		return err
 	}
 	if v.operationInFlight() {

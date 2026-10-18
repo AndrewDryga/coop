@@ -34,16 +34,29 @@ var errRefStorageUnsupported = errors.New("repository uses reftable ref storage,
 
 // trustedGitConfig projects the repository's local config onto the allowlist. It reads a private
 // COPY of the file (git config --file, which follows no include), so the result is a snapshot: a
-// value the agent writes after the copy is never seen by anything that executes. The file is read
-// as a bounded regular file, so a FIFO or a device the agent put there fails fast. The returned
+// value the agent writes after the copy is never seen by anything that executes. The returned
 // bytes are a complete config file git reads verbatim as $GIT_DIR/config.
 func trustedGitConfig(ctx context.Context, localConfig, scratchDir string) ([]byte, error) {
-	data, _, err := readGitMetadata(localConfig, gitConfigLimit)
-	if errors.Is(err, os.ErrNotExist) {
-		data = nil
-	} else if err != nil {
+	data, err := readGitConfigSource(localConfig)
+	if err != nil {
 		return nil, err
 	}
+	return projectGitConfig(ctx, data, scratchDir)
+}
+
+// readGitConfigSource reads the repository's local config as a bounded regular file, so a FIFO or
+// a device the agent put there fails fast; a missing file is an empty config.
+func readGitConfigSource(localConfig string) ([]byte, error) {
+	data, _, err := readGitMetadata(localConfig, gitConfigLimit)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return data, err
+}
+
+// projectGitConfig is the allowlisted projection of config bytes already read: git's own parse
+// of exactly those bytes, so the same bytes always give the same projection.
+func projectGitConfig(ctx context.Context, data []byte, scratchDir string) ([]byte, error) {
 	entries, err := listGitConfig(ctx, data, scratchDir)
 	if err != nil {
 		return nil, err

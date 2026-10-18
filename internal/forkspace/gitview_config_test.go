@@ -129,3 +129,31 @@ func TestTrustedGitConfigProjectsOnlyOperationalData(t *testing.T) {
 		t.Fatalf("reftable config error = %v; want a refusal", err)
 	}
 }
+
+// The view parses the repository config again only when its bytes change, and every change still
+// reaches the next command: a remote added between two commands shows up, one removed is gone.
+func TestGitViewProjectsAChangedConfigForTheNextCommand(t *testing.T) {
+	repo, run := viewTestRepo(t)
+	remotes := func() string {
+		t.Helper()
+		out, err := viewRun(t, repo, "remote")
+		if err != nil {
+			t.Fatalf("git remote under the view: %v\n%s", err, out)
+		}
+		return strings.TrimSpace(out)
+	}
+	if got := remotes(); got != "" {
+		t.Fatalf("remotes = %q, want none", got)
+	}
+	if got := remotes(); got != "" {
+		t.Fatalf("remotes from the unchanged config = %q, want none", got)
+	}
+	run("remote", "add", "upstream", "https://example.invalid/repo.git")
+	if got := remotes(); got != "upstream" {
+		t.Fatalf("remotes after one was added = %q, want upstream", got)
+	}
+	run("remote", "remove", "upstream")
+	if got := remotes(); got != "" {
+		t.Fatalf("remotes after it was removed = %q, want none", got)
+	}
+}

@@ -3,7 +3,7 @@ name: test-state-isolation
 description: every test binary that can reach Coop's per-user state calls teststate.Isolate in TestMain; Coop refuses the real roots in a test binary, children inherit the folder, and live suites opt back into the real config and network state; the cli unit tests run with failing stubs for the host provider CLIs and runtimes
 subsystem: development
 sources: [internal/testutil/teststate/teststate.go, internal/forkspace/execution.go, internal/forkspace/service_lock_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview.go, internal/tasks/lease.go, internal/config/config.go, internal/config/runfiles.go, internal/box/network_admission.go, internal/box/serviceapproval.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/acpproxy/trace.go, internal/cli/provider_live_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/box/reap.go, internal/cli/main_test.go, internal/cli/hostclis_test.go, internal/sessionsvc/main_test.go, internal/sessionsvc/acp.go, internal/box/isolated_mounts_test.go, internal/box/mounts_test.go]
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 Coop's per-user state lives under the home folder: the execution registry with its
@@ -109,11 +109,21 @@ a pass) removes, while holding it exclusively without waiting, a lock whose path
 another folder, and an unnamed one older than a day. `LockServiceLaunch` takes its lock again when
 the file it locked is no longer the one at the path, so a removal never splits one lock in two.
 
+**The macOS git stub.** `/usr/bin/git` on macOS is a stub that asks xcrun where the developer
+tools are on every call, about 6 ms a call against 3 for the real git. A session review alone runs
+some 180 git commands, so Isolate puts the folder `xcrun --find git` names just ahead of `/usr/bin`
+on PATH when PATH finds the stub (`developerToolsPath`): what PATH finds before `/usr/bin` is still
+found first, and `TestIsolateRunsGitWithoutTheMacStub` checks git still finds its helpers. A link
+named git does not work: Apple's git looks for its helpers and templates beside the path it was
+started from ("'submodule' is not a git command").
+
 **Proving it.** Run the tests under `sandbox-exec` with a profile that denies `file-write*` on
 the two real roots, then read the denials with `/usr/bin/log show --predicate 'sender == "Sandbox"'`.
 Nothing reaches the real folders, and every attempted write is named with its process.
 
 ## Changelog
+- 2026-10-18 — Isolate runs the tests' git without the macOS stub, which cost a session review
+  about 40% of its time (task 2026-10-06-internal-sessionsvc-s-race-run-takes-15-to-20-mi).
 - 2026-10-17 — Isolate moves HOME into the state folder and keeps the go command's and Docker's
   folders, so a stray `.coopignore` above TMPDIR no longer changes test results (task
   2026-10-17-pin-home-and-tmpdir-in-tests-that-build-a-secret).

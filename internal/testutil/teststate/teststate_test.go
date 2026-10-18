@@ -4,7 +4,9 @@ import (
 	"errors"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -143,4 +145,26 @@ func TestIsolateReplacesInheritedXDGFoldersUnlessALiveHarnessChoseThem(t *testin
 		}
 		return 0
 	})
+}
+
+// On macOS the git in /usr/bin is a stub that asks xcrun where the developer tools are on every
+// call. The tests' PATH finds the real git first, and that git still finds the helpers beside it.
+func TestIsolateRunsGitWithoutTheMacStub(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("only macOS puts a stub in front of git")
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git on PATH")
+	}
+	if git == gitStub {
+		t.Fatalf("git = %s, the stub", git)
+	}
+	out, err := exec.Command(git, "--exec-path").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Join(strings.TrimSpace(string(out)), "git-submodule")); err != nil || info.IsDir() {
+		t.Fatalf("git %s finds no helpers at its exec path %q: %v", git, strings.TrimSpace(string(out)), err)
+	}
 }

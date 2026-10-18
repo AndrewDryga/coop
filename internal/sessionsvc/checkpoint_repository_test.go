@@ -52,7 +52,10 @@ func TestLargeCheckpointRestoresGitHistoryAndLFSPayloadWithoutBufferingBundle(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := bytes.Repeat([]byte("large\x00binary\n"), 6*1024*1024)
+	// Two copies, one in Git and one in LFS, each just over half the 64 MiB a v1 bundle was read
+	// into memory under: the smallest bundle that proves a v2 one streams past it.
+	unit := []byte("large\x00binary\n")
+	payload := bytes.Repeat(unit, workerproto.MaxWorkspaceCheckpointBundleBytes/2/len(unit)+1)
 	writeSessionLFSSource(t, source.Workspace, payload)
 	if err := os.WriteFile(filepath.Join(source.Workspace, "large.data"), payload, 0644); err != nil {
 		t.Fatal(err)
@@ -68,6 +71,9 @@ func TestLargeCheckpointRestoresGitHistoryAndLFSPayloadWithoutBufferingBundle(t 
 	}
 	if captured.Checkpoint.Bundle.ByteSize < int64(2*len(payload)) {
 		t.Fatal("checkpoint did not retain both large payloads")
+	}
+	if captured.Checkpoint.Bundle.ByteSize <= workerproto.MaxWorkspaceCheckpointBundleBytes {
+		t.Fatal("the bundle is not past the v1 cap it proves a stream outgrows")
 	}
 	body, _, err := service.OpenWorkspaceCheckpointBundle(ctx, captured.OperationID)
 	if err != nil {

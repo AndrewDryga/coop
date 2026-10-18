@@ -28,8 +28,9 @@ func TestReviewScansTheChangedCandidateIncludingLargeLFSPayloads(t *testing.T) {
 			}))
 			defer service.Stop()
 			sess := createReviewSession(t, service, "secret-scan")
-			// The literal is beyond both the old scanner's blob limit and the UI preview.
-			payload := append(bytes.Repeat([]byte{0, 1, 2, 3}, 2<<20), []byte("\nghp_"+strings.Repeat("Q7r9", 10)+"\n")...)
+			// The literal is beyond the old scanner's blob limit, the UI preview, and the 5 MiB of a
+			// blob the scanner keeps in memory.
+			payload := append(reviewBinaryPayload(5<<20), []byte("ghp_"+strings.Repeat("Q7r9", 10)+"\n")...)
 			if lfs {
 				writeSessionLFSSource(t, sess.Workspace, payload)
 			} else if err := os.WriteFile(filepath.Join(sess.Workspace, "ordinary file\tname.bin"), payload, 0600); err != nil {
@@ -48,12 +49,20 @@ func TestReviewScansTheChangedCandidateIncludingLargeLFSPayloads(t *testing.T) {
 	}
 }
 
+// reviewBinaryPayload is binary data just past size bytes, in 4 KiB lines. One unbounded line takes
+// the secret scanner's slow streaming engine, which internal/secretscan tests on its own; under the
+// race detector it cost each review test here a quarter of a minute.
+func reviewBinaryPayload(size int) []byte {
+	line := append(bytes.Repeat([]byte{0, 1, 2, 3}, 1023), '\n')
+	return bytes.Repeat(line, size/len(line)+1)
+}
+
 func TestReviewScanUsesPinnedDeltaAndDoesNotBlockOrdinaryLargeFiles(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "--allow-empty", "-qm", "base")
 	parent := gitOut(repo, "rev-parse", "HEAD")
 	for path, data := range map[string][]byte{
-		"ordinary large.bin":         bytes.Repeat([]byte{0, 1, 2, 3}, 2<<20),
+		"ordinary large.bin":         reviewBinaryPayload(5 << 20), // past the 5 MiB kept in memory
 		".githooks/white space hook": []byte("echo automatic\n"),
 		"package.json":               []byte(`{"scripts":{"postinstall":"node install.js"}}`),
 		".env":                       []byte("ordinary data\n"),

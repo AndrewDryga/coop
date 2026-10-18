@@ -20,6 +20,10 @@ credential helpers, submodule settings, hook/pager/editor paths); `objects`, `re
 `packed-refs`, `shallow`, `info/exclude` as symlinks into the real (common) git dir; `HEAD` as a
 copy; `GIT_INDEX_FILE` naming the real index; no `hooks`, `info/attributes`, `config.worktree`,
 `modules`. Git reads exactly the bytes coop wrote, so there is no enumerate-then-execute race.
+Every refresh reads the repository config again, but parses it (a `git config --file` process)
+only when its bytes differ from the ones the view last projected (`gitView.configSource`): a
+parse of the same bytes gives the same projection, and each parse is a git process of its own
+(`TestGitViewProjectsAChangedConfigForTheNextCommand`).
 `gc.auto`/`maintenance.auto`/`fetch.prune` are off under the view (a pack-refs rewrite would land
 in the view). Views live under `~/.local/state/coop/gitviews/<hash of git dir>` (`COOP_GITVIEW_ROOT`
 overrides, and a test binary that leaves it unset is refused; see [[test-state-isolation]]). The
@@ -225,6 +229,9 @@ prompt) is left to run. `GlobalGitConfig` reads `git config --global` from `/` w
 cannot exist, so it never searches a box's repository from coop's working folder.
 
 ## Changelog
+- 2026-10-18 — a view parses the repository config only when its bytes changed: a session review
+  ran 239 git processes, about 100 of them parses, and now runs 177, 44 of them parses (task
+  2026-10-06-internal-sessionsvc-s-race-run-takes-15-to-20-mi).
 - 2026-10-18 — the task audit reads history from the project its caller resolved, so member and
   --tasks queues of a home-folder project complete and unblock reopened tasks
   (task 2026-10-17-let-the-task-audit-read-history-for-every-queue).

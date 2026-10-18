@@ -821,7 +821,8 @@ func TestSessionServiceRunReviewKeepsBoundedPreviewAndExactCandidate(t *testing.
 	}))
 	defer service.Stop()
 	sess := createReviewSession(t, service, "truncated")
-	if err := os.WriteFile(filepath.Join(sess.Workspace, "large.txt"), []byte(strings.Repeat("large review line\n", (66<<20)/18)), 0o644); err != nil {
+	// Just over the 64 MiB a review's retained artifact was once capped at.
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "large.txt"), []byte(strings.Repeat("large review line\n", (64<<20)/18+1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	sessionWorkspaceGit(t, sess.Workspace, "add", "large.txt")
