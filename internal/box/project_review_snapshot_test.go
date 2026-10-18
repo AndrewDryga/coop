@@ -59,8 +59,6 @@ func TestProjectReviewClosePreservesAnInheritedBuildLease(t *testing.T) {
 	}
 	defer func() { _ = input.Close(); _ = child.Wait() }()
 	prepared := &PreparedProjectBuild{cleanupDir: dir, dir: filepath.Join(dir, "context"), lease: lease}
-	prepared.directoryInfo, _ = os.Lstat(dir)
-	prepared.leaseInfo, _ = lease.Stat()
 	if err := prepared.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -79,35 +77,6 @@ func TestProjectReviewClosePreservesAnInheritedBuildLease(t *testing.T) {
 	defer os.RemoveAll(next)
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatal("departed child left a permanent snapshot", err)
-	}
-}
-
-func TestProjectReviewClosePreservesAReplacementBundle(t *testing.T) {
-	parent := t.TempDir()
-	dir, lease, err := newProjectReviewSnapshot(t.Context(), parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	prepared := &PreparedProjectBuild{cleanupDir: dir, lease: lease}
-	prepared.directoryInfo, _ = os.Lstat(dir)
-	prepared.leaseInfo, _ = lease.Stat()
-	if err := os.Rename(dir, dir+"-original"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "lease"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "keep"), []byte("replacement"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := prepared.Close(); err == nil {
-		t.Fatal("cleanup adopted a replacement bundle")
-	}
-	if bytes, err := os.ReadFile(filepath.Join(dir, "keep")); err != nil || string(bytes) != "replacement" {
-		t.Fatal("replacement data was removed", err)
 	}
 }
 

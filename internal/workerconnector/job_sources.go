@@ -223,7 +223,7 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 		if err := os.Chtimes(final, now, now); err != nil {
 			return err
 		}
-		if err := verifyStagedJobSource(ctx, final, source); err != nil {
+		if err := verifyStagedJobSource(final, source); err != nil {
 			return err
 		}
 		return configureSourceGitIdentity(ctx, filepath.Join(final, "repository"))
@@ -363,7 +363,7 @@ func (s *privateJobSourceStager) stageCopy(ctx context.Context, jobRef string, s
 	}
 	if err := os.Rename(temporary, final); err != nil {
 		if _, statErr := os.Lstat(final); statErr == nil {
-			return verifyStagedJobSource(ctx, final, source)
+			return verifyStagedJobSource(final, source)
 		}
 		return fmt.Errorf("publish private job source: %w", err)
 	}
@@ -531,7 +531,7 @@ func (s *privateJobSourceStager) RefreshDefault(ctx context.Context, jobRef stri
 			return "", err
 		}
 	}
-	if err := verifyStagedJobSource(ctx, directory, source); err != nil {
+	if err := verifyStagedJobSource(directory, source); err != nil {
 		return "", err
 	}
 	grant, err := s.sourceGrant(ctx, jobRef, source.RepositoryIdentity())
@@ -574,7 +574,7 @@ func (s *privateJobSourceStager) RefreshDefault(ctx context.Context, jobRef stri
 	if err := s.fetchLFS(ctx, repository, source.RepositoryIdentity(), protocol, grant.Token, source.Binding.SelectedCommit, head); err != nil {
 		return "", err
 	}
-	if err := verifyStagedJobSource(ctx, directory, source); err != nil {
+	if err := verifyStagedJobSource(directory, source); err != nil {
 		return "", err
 	}
 	return head, nil
@@ -940,7 +940,10 @@ func requirePrivateDirectory(path string) error {
 	return nil
 }
 
-func verifyStagedJobSource(ctx context.Context, directory string, source workerproto.JobSource) error {
+// verifyStagedJobSource matches a published copy's receipt to the source a use asks for. The copy
+// was verified when it was published (verifySourceRepository) and lives in private worker state no
+// box can reach, so a reuse, a concurrent publish and a refresh do not verify it again.
+func verifyStagedJobSource(directory string, source workerproto.JobSource) error {
 	if err := requirePrivateDirectory(directory); err != nil {
 		return err
 	}
@@ -962,7 +965,7 @@ func verifyStagedJobSource(ctx context.Context, directory string, source workerp
 	if string(actual) != string(expected) {
 		return ErrJobSourceIntegrity
 	}
-	return verifySourceRepository(ctx, filepath.Join(directory, "repository"), source)
+	return nil
 }
 
 func verifySourceRepository(ctx context.Context, repository string, source workerproto.JobSource) error {

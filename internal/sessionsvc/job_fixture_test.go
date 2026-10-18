@@ -183,7 +183,7 @@ func stageTestJobBinding(t *testing.T, stateRoot, upstream string, source worker
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stagedJobRepository(context.Background(), stateRoot, source); err != nil {
+	if _, err := stagedJobRepository(stateRoot, source); err != nil {
 		t.Fatal(err)
 	}
 }

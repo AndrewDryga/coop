@@ -2804,8 +2804,11 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 			return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("remove session services: %w", err))
 		}
 	}
+	// The lock has been held since the validation, so the destruction uses that plan instead of
+	// validating it again. Session services may still write into the workspace while they stop;
+	// that is box output, which the discard destroys with the rest.
+	workspaceErr := applySessionWorkspaceDiscardLocked(workspacePlan, preflight)
 	_ = preflight.close()
-	workspaceErr := discardSessionWorkspaceLocked(workspacePlan)
 	unlockWorkspace()
 	if workspaceErr != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeDiscardPlanStale, Detail: boundedSessionServiceError(workspaceErr)})

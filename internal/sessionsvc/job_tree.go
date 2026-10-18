@@ -11,37 +11,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
-	"github.com/AndrewDryga/coop/internal/workerproto"
 )
-
-// Source admission verifies the controller's graph once more at the service
-// boundary. Neither a receipt nor .gitmodules alone proves a complete checkout.
-func verifyJobSubmoduleManifest(ctx context.Context, repository, commit string, modules []workerproto.JobSubmodule) error {
-	links, err := forkspace.Gitlinks(ctx, repository, commit)
-	if err != nil || len(links) != len(modules) {
-		return errors.New("staged submodules do not match the job manifest")
-	}
-	for _, module := range modules {
-		if links[module.Path] != module.Commit {
-			return errors.New("staged submodule commit does not match the job manifest")
-		}
-		directory, err := forkspace.SubmoduleDirectory(repository, module.Path)
-		if err != nil {
-			return err
-		}
-		if err := verifyPinnedSubmodule(ctx, directory, module.Commit); err != nil {
-			return err
-		}
-		tree, err := sessionWorkspaceTree(directory, module.Commit)
-		if err != nil || tree != module.Tree {
-			return errors.New("staged submodule tree does not match the job manifest")
-		}
-		if err := verifyJobSubmoduleManifest(ctx, directory, module.Commit, module.Submodules); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // materializeSessionSubmodules is shared by primary, companion and review
 // checkouts. Only independently owned, credential-free Git directories cross

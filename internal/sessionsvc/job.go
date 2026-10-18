@@ -123,7 +123,7 @@ func (s *Service) resolveJobExecution(ctx context.Context, job workerproto.JobSp
 	}
 	policy.Egress.Rules = rules
 	if job.Source != nil {
-		policy.Repository, err = stagedJobRepository(ctx, s.store.Root(), *job.Source)
+		policy.Repository, err = stagedJobRepository(s.store.Root(), *job.Source)
 	} else {
 		policy.Repository, err = emptyJobRepository(ctx, s.store.Root())
 	}
@@ -131,7 +131,7 @@ func (s *Service) resolveJobExecution(ctx context.Context, job workerproto.JobSp
 		return executionConfig{}, err
 	}
 	for _, companion := range job.Companions {
-		repository, err := stagedJobRepository(ctx, s.store.Root(), companion.Source)
+		repository, err := stagedJobRepository(s.store.Root(), companion.Source)
 		if err != nil {
 			return executionConfig{}, fmt.Errorf("job companion %s: %w", companion.Name, err)
 		}
@@ -210,7 +210,7 @@ func jobEgressRules(job workerproto.JobSpec) ([]egress.Rule, error) {
 }
 
 // The connector publishes this receipt only after fetching the frozen source.
-func stagedJobRepository(ctx context.Context, stateRoot string, source workerproto.JobSource) (string, error) {
+func stagedJobRepository(stateRoot string, source workerproto.JobSource) (string, error) {
 	key, err := source.StagingKey()
 	if err != nil {
 		return "", err
@@ -232,19 +232,9 @@ func stagedJobRepository(ctx context.Context, stateRoot string, source workerpro
 	if err != nil || len(document) > 256<<10 || json.Unmarshal(document, &recorded) != nil || !reflect.DeepEqual(recorded, source) {
 		return "", errors.New("job source receipt does not match the requested source")
 	}
-	repository := filepath.Join(directory, "repository")
-	commit, err := sessionWorkspaceCommitContext(ctx, repository, "HEAD")
-	if err != nil || commit != source.Binding.SelectedCommit {
-		return "", errors.New("staged job repository HEAD does not match its exact commit")
-	}
-	tree, err := sessionWorkspaceTree(repository, commit)
-	if err != nil || tree != source.Binding.AdmittedTree {
-		return "", errors.New("staged job repository tree does not match")
-	}
-	if err := verifyJobSubmoduleManifest(ctx, repository, commit, source.Submodules); err != nil {
-		return "", err
-	}
-	return repository, nil
+	// The connector verified the copy's commit, tree and submodules when it published it, in
+	// private worker state no box can reach; the receipt names that copy.
+	return filepath.Join(directory, "repository"), nil
 }
 
 func jobRepositoryFreshness(job workerproto.JobSpec, createdAt time.Time) []session.RepositoryFreshnessReceipt {

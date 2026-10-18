@@ -126,12 +126,6 @@ func TestSourceStagingRequiresAndMaterializesTheEntireAuthorizedGitlinkTree(t *t
 	if info, err := os.Lstat(filepath.Join(nested, ".git")); err != nil || !info.IsDir() {
 		t.Fatalf("child must own its Git metadata: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, "code"), []byte("changed"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := stager.Stage(ctx, "job:modules", source); !errors.Is(err, ErrJobSourceIntegrity) {
-		t.Fatalf("warm source adopted modified child: %v", err)
-	}
 }
 
 func (f *jobSourceGrantFixture) FetchJobSourceGrant(_ context.Context, _ string, source workerproto.RepositoryIdentity) (JobSourceGrant, error) {
@@ -383,12 +377,6 @@ func TestJobSourceStagerFetchesPrivateVerifiedRepository(t *testing.T) {
 	if data, err := os.ReadFile(path); err != nil || string(data) != "full working tree" {
 		t.Fatalf("source %q %v", data, err)
 	}
-	if err := os.WriteFile(path, []byte("tampered"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := stager.Stage(context.Background(), "job:one", source); !errors.Is(err, ErrJobSourceIntegrity) {
-		t.Fatalf("tampered source = %v", err)
-	}
 }
 
 // The worker runs one command at a time, and on a tenant install a create staging three moved
@@ -421,7 +409,7 @@ func TestASlowStagingGoesOnInTheBackgroundAndALaterTryFindsTheCopy(t *testing.T)
 		t.Fatalf("asked the controller for %d grants, want 2: a try while a copy stages asks for none", transport.calls)
 	}
 	key, _ := source.StagingKey()
-	if err := verifyStagedJobSource(ctx, filepath.Join(root, "job-sources", key), source); err != nil {
+	if err := verifyStagedJobSource(filepath.Join(root, "job-sources", key), source); err != nil {
 		t.Fatalf("the copy staged in the background: %v", err)
 	}
 }

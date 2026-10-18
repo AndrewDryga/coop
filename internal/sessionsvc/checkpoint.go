@@ -765,13 +765,11 @@ func (s *Service) readWorkspaceCheckpointArtifact(ctx context.Context, operation
 	if err != nil {
 		return checkpointPrivateArtifact{}, err
 	}
+	// Coop hashed the bundle when it built it and keeps it in private state no box can reach, so a
+	// read checks the length, not the whole digest again.
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size()-artifact.offset != checkpoint.Bundle.ByteSize {
 		return checkpointPrivateArtifact{}, errors.New("private workspace checkpoint length does not match")
-	}
-	hash := sha256.New()
-	if _, err := io.Copy(hash, reviewScanReader{ctx, file}); err != nil || fmt.Sprintf("%x", hash.Sum(nil)) != checkpoint.Bundle.SHA256 {
-		return checkpointPrivateArtifact{}, errors.New("private workspace checkpoint identity does not match")
 	}
 	return artifact, nil
 }

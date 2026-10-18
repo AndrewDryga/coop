@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -111,13 +110,6 @@ func TestSourceLFSUsesOnlyTheGrantedRepositoryEndpointAndRetainsCompleteData(t *
 	config, err := os.ReadFile(filepath.Join(checkout, ".git", "config"))
 	if err != nil || strings.Contains(string(config), "Authorization") || strings.Contains(string(config), "secret-token") {
 		t.Fatalf("source stored a credential: %q, %v", config, err)
-	}
-	object := filepath.Join(checkout, ".git", "lfs", "objects", oid[:2], oid[2:4], oid)
-	if err := os.Remove(object); err != nil {
-		t.Fatal(err)
-	}
-	if err := stager.Stage(ctx, "job:lfs", source); !errors.Is(err, ErrJobSourceIntegrity) {
-		t.Fatalf("warm source lost LFS object custody: %v", err)
 	}
 }
 

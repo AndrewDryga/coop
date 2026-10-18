@@ -1335,7 +1335,7 @@ func newHTTPTestSessionService(t *testing.T, ladder ...string) (*sessionFixture,
 	if len(ladder) > 0 {
 		fixture.Job.Targets = ladder
 	}
-	staged, err := stagedJobRepository(context.Background(), fixture.stateRoot, *fixture.Job.Source)
+	staged, err := stagedJobRepository(fixture.stateRoot, *fixture.Job.Source)
 	if err != nil {
 		t.Fatal(err)
 	}

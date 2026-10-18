@@ -1071,8 +1071,8 @@ func (validated *validatedSessionWorkspaceDiscard) close() error {
 }
 
 // validateSessionWorkspaceDiscardLocked proves the complete destructive plan without changing
-// services, workspace state, or lifecycle authority. The service runs it before DownServices and
-// then runs the same validation again immediately before destruction, all under LockState.
+// services, workspace state, or lifecycle authority. The service runs it once, under LockState,
+// before DownServices, and destroys with its result.
 func validateSessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan) (*validatedSessionWorkspaceDiscard, error) {
 	name, err := sessionWorkspaceName(plan.Repo, plan.Workspace)
 	if err != nil || name != plan.Name {

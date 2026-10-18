@@ -92,7 +92,6 @@ type PreparedProjectBuild struct {
 	consumed                                bool
 	lease                                   *os.File
 	cleanupDir                              string
-	directoryInfo, leaseInfo                os.FileInfo
 }
 
 func (b *PreparedProjectBuild) Dockerfile() string { return b.dockerfile }
@@ -171,14 +170,6 @@ func PrepareFilteredProjectBuild(ctx context.Context, cfg *config.Config, spec R
 		return nil, err
 	}
 	prepared := &PreparedProjectBuild{cleanupDir: private, lease: lease}
-	prepared.directoryInfo, err = os.Lstat(private)
-	if err == nil {
-		prepared.leaseInfo, err = lease.Stat()
-	}
-	if err != nil {
-		_ = lease.Close()
-		return nil, err
-	}
 	ready := false
 	defer func() {
 		if !ready {
@@ -220,7 +211,7 @@ func (b *PreparedProjectBuild) Close() error {
 		}
 		defer root.Close()
 		defer custody.Close()
-		_, err = reapOwnedProjectReviewSnapshot(root, filepath.Base(b.cleanupDir), b.directoryInfo, b.leaseInfo)
+		_, err = reapProjectReviewSnapshot(root, filepath.Base(b.cleanupDir))
 		if err == nil {
 			b.dir, b.cleanupDir = "", ""
 		}

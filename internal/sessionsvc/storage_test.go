@@ -61,7 +61,7 @@ func storageTestService(t *testing.T, repo string) *Service {
 func storageTestStagedRepository(t *testing.T, service *Service, upstream string) string {
 	t.Helper()
 	source := stageTestJobSource(t, service.stateRoot, upstream)
-	repository, err := stagedJobRepository(context.Background(), service.stateRoot, source)
+	repository, err := stagedJobRepository(service.stateRoot, source)
 	if err != nil {
 		t.Fatal(err)
 	}
