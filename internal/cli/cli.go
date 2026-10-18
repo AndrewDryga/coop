@@ -288,7 +288,29 @@ func asUsage(err error) *ui.UsageError {
 		headline, reason, fix := unreadableCoopignoreBlock(policy, "")
 		return ui.CommandFailed(headline, reason, [2]string{"", fix})
 	}
+	var uncovered *box.UncoveredSpellings
+	if errors.As(err, &uncovered) {
+		headline, reason, fix := uncoveredSpellingsBlock(uncovered)
+		return ui.CommandFailed(headline, reason, [2]string{"", fix})
+	}
 	return nil
+}
+
+// uncoveredSpellingsBlock is a launch refusing hidden files a box could read under another letter
+// case. A box can name files in the checkout, so the names are escaped.
+func uncoveredSpellingsBlock(uncovered *box.UncoveredSpellings) (headline, reason, fix string) {
+	names := make([]string, len(uncovered.Paths))
+	for i, path := range uncovered.Paths {
+		names[i] = ui.SafeInline(path)
+	}
+	headline = "Coop cannot hide " + names[0] + " from the box"
+	if len(names) > 1 {
+		headline = fmt.Sprintf("Coop cannot hide %d files from the box", len(names))
+	}
+	reason = "This disk ignores letter case, so the box could open " + strings.Join(names, ", ") +
+		" under another spelling and read the real file. Coop covers every spelling of a hidden name only for names of up to 11 letters, and only so many in one launch."
+	fix = "Move the file into a hidden folder (a folder is hidden under every spelling), give it a shorter name, or set COOP_ALLOW_CASE_EXPOSED_SECRETS=1 to start anyway."
+	return headline, reason, fix
 }
 
 // helpPath is the command path a help request is ABOUT: the leading plain words of argv, stopping

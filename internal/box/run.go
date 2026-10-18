@@ -702,6 +702,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	spec.mcpSnapshot = mcpSnapshot
 	var mounts []Mount
+	var caseExposed []string
 	switch {
 	case spec.Login:
 		// no repo mounts at all
@@ -713,7 +714,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// from ever being a way to expose a real repository to something that can talk to a model.
 		mounts = []Mount{{Kind: Bind, Source: spec.Repo, Target: workdir}}
 	default:
-		mounts, err = ComputeMounts(spec.Repo, workdir)
+		mounts, caseExposed, err = launchMounts(cfg, spec.Repo, workdir)
 		if err != nil {
 			return -1, err
 		}
@@ -758,6 +759,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		ui.Note("Hidden secret paths: %d", n)
 	}
 	sections.coopignoreComments(shadowpath.RepoCommentedEntries(spec.Repo), spec.Quiet)
+	sections.caseExposed(caseExposed, spec.Quiet)
 	// The sibling-services compose file is NOT shadowed: an in-box agent may author it, but coop
 	// validates it host-side before auto-running it (ValidateComposeFile), so
 	// it can only ever declare a repo-scoped, loopback-only container — never host root. That

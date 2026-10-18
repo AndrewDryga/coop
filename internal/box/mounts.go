@@ -1,10 +1,14 @@
 package box
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 // MountKind distinguishes the ways a path enters (or is blocked from) the box.
@@ -27,6 +31,10 @@ type Mount struct {
 	Source string // host path (Bind and Policy only)
 	Target string // path inside the box
 	RO     bool   // read-only bind
+	// Spellings are the other letter-case spellings of Target's last name, each covered the same
+	// way. A disk that ignores letter case (a Mac's) opens the file under any of them, and a cover
+	// hides only the spelling it sits on.
+	Spellings []string
 }
 
 // ComputeMounts is the security core: it returns the mounts that bind the repo
@@ -51,9 +59,26 @@ type Mount struct {
 // temp files), so it can be exhaustively unit-tested; the tests pin HOME so a stray .coopignore
 // above the machine's temp folder can't change their answers. This is the function that must
 // never let a secret leak.
+//
+// On a disk that ignores letter case (a Mac's), each hidden or policy file's mount also covers
+// every other spelling of its name (Spellings), since the box opens the file under any of them. A
+// name too long to cover that way comes back in an UncoveredSpellings error together with the
+// mounts, for the launch to refuse unless its owner accepted the risk.
 func ComputeMounts(repo, workdir string) ([]Mount, error) {
 	shadowed := NewShadowDecider(repo)
 	mounts := []Mount{{Kind: Bind, Source: repo, Target: workdir}}
+	var budget spellingBudget
+	var uncovered []string
+	// spelled covers the other spellings of the file at p. A folder needs none: Linux keeps one
+	// entry per folder, so CONFIG/ lands on config/'s cover.
+	spelled := func(m Mount, p, relSlash string) Mount {
+		spellings, ok := budget.covers(p, m.Target)
+		if !ok {
+			uncovered = append(uncovered, relSlash)
+		}
+		m.Spellings = spellings
+		return m
+	}
 	err := filepath.WalkDir(repo, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -78,7 +103,7 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 		relSlash := filepath.ToSlash(rel)
 		target := workdir + "/" + relSlash
 		if d.Type().IsRegular() && isCoopignore(p) {
-			mounts = append(mounts, Mount{Kind: Policy, Source: p, Target: target, RO: true})
+			mounts = append(mounts, spelled(Mount{Kind: Policy, Source: p, Target: target, RO: true}, p, relSlash))
 			return nil
 		}
 		if hidden, err := shadowed(relSlash); err != nil || !hidden {
@@ -88,13 +113,28 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 			mounts = append(mounts, Mount{Kind: DirDecoy, Target: target, RO: true})
 			return fs.SkipDir // prune: a shadowed dir hides everything within it
 		}
-		mounts = append(mounts, Mount{Kind: Decoy, Target: target, RO: true})
+		mounts = append(mounts, spelled(Mount{Kind: Decoy, Target: target, RO: true}, p, relSlash))
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	if len(uncovered) > 0 {
+		return mounts, &UncoveredSpellings{Paths: uncovered}
+	}
 	return mounts, nil
+}
+
+// launchMounts is ComputeMounts for a launch. Hidden files a box could read under another letter
+// case refuse it, unless its owner accepted that risk with COOP_ALLOW_CASE_EXPOSED_SECRETS; then
+// they come back to be named at launch.
+func launchMounts(cfg *config.Config, repo, workdir string) ([]Mount, []string, error) {
+	mounts, err := ComputeMounts(repo, workdir)
+	var uncovered *UncoveredSpellings
+	if errors.As(err, &uncovered) && cfg.AllowCaseExposedSecrets {
+		return mounts, uncovered.Paths, nil
+	}
+	return mounts, nil, err
 }
 
 // isCoopignore reports whether path is its folder's .coopignore as the secret decider reads it: that
@@ -145,10 +185,24 @@ func RenderMounts(mounts []Mount, decoyFile, decoyDir string) []string {
 			// repo bind by destination, so the repo bind can't re-cover it.
 			args = append(args, "-v", decoyDir+":"+m.Target+":ro")
 		case Decoy:
-			args = append(args, "-v", decoyFile+":"+m.Target+":ro")
+			for _, target := range m.targets() {
+				args = append(args, "-v", decoyFile+":"+target+":ro")
+			}
 		case Policy:
-			args = append(args, "-v", m.Source+":"+m.Target+":ro")
+			for _, target := range m.targets() {
+				args = append(args, "-v", m.Source+":"+target+":ro")
+			}
 		}
 	}
 	return args
+}
+
+// targets is m's Target followed by the paths of its other spellings.
+func (m Mount) targets() []string {
+	targets := []string{m.Target}
+	dir := path.Dir(m.Target)
+	for _, spelling := range m.Spellings {
+		targets = append(targets, path.Join(dir, spelling))
+	}
+	return targets
 }

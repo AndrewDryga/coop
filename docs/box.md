@@ -25,6 +25,13 @@ co:op shadows secret-looking files and directories, such as `.env`, `*.tfvars`, 
 - A secret file is covered by a read-only empty file.
 - A secret directory is covered by a read-only empty directory.
 
+On a Mac the disk ignores letter case, so a box could open `.ENV` and read the real `.env`. Coop
+covers every spelling of a hidden file's name, for names of up to 11 letters (`.env`, `id_rsa`,
+`database.yml`), and of every `.coopignore`. A hidden file with a longer name, such as
+`.env.production` or `credentials.json`, cannot be covered that way, so Coop refuses to start the
+box. Move the file into a hidden folder (a folder is hidden under every spelling), give it a
+shorter name, or set `COOP_ALLOW_CASE_EXPOSED_SECRETS=1` to start anyway.
+
 Templates (`*.example`, `*.sample`, `*.template`) stay visible. The defaults are compiled into
 co:op (`internal/shadowpath/shadowpath.go`).
 

@@ -63,7 +63,10 @@ type Config struct {
 	CPUs            string // COOP_CPUS — cpu cap, e.g. "2" (empty = unset)
 	Pids            string // COOP_PIDS — pids-limit (fork-bomb cap), default 4096; "0"/"unlimited"/"" = off
 	NoNewPrivileges bool   // COOP_NO_NEW_PRIVILEGES — pass --security-opt no-new-privileges (default on)
-	Egress          string // COOP_EGRESS — open, filtered (host-qualified), or none
+	// COOP_ALLOW_CASE_EXPOSED_SECRETS — start a box even when a hidden file's name is too long to
+	// cover under every letter case on a disk that ignores case (default off: refuse)
+	AllowCaseExposedSecrets bool
+	Egress                  string // COOP_EGRESS — open, filtered (host-qualified), or none
 
 	ConsultTimeout string // COOP_CONSULT_TIMEOUT — per-peer coop-consult timeout in seconds (empty/0 = unlimited)
 
@@ -219,6 +222,10 @@ func Load() (*Config, error) {
 	if _, err := environmentFlag("COOP_SPINNER", true); err != nil {
 		return nil, err
 	}
+	allowCaseExposedSecrets, err := flag("COOP_ALLOW_CASE_EXPOSED_SECRETS", false)
+	if err != nil {
+		return nil, err
+	}
 	noNewPrivileges, err := flag("COOP_NO_NEW_PRIVILEGES", true)
 	if err != nil {
 		return nil, err
@@ -272,11 +279,12 @@ func Load() (*Config, error) {
 		Gate:           shellSplit(get("COOP_GATE", "")),
 		ExtraRunArgs:   shellSplit(get("COOP_RUN_ARGS", "")),
 
-		Memory:          get("COOP_MEMORY", ""),
-		CPUs:            get("COOP_CPUS", ""),
-		Pids:            pids,
-		NoNewPrivileges: noNewPrivileges,
-		Egress:          egress,
+		Memory:                  get("COOP_MEMORY", ""),
+		CPUs:                    get("COOP_CPUS", ""),
+		Pids:                    pids,
+		NoNewPrivileges:         noNewPrivileges,
+		AllowCaseExposedSecrets: allowCaseExposedSecrets,
+		Egress:                  egress,
 
 		ConsultTimeout: consultTimeout,
 
@@ -863,37 +871,38 @@ func shellSplit(s string) []string {
 const maxMainConfLineBytes = 64 << 10
 
 var mainConfigKeys = map[string]struct{}{
-	"COOP_ACP_CARRY_TOKENS":  {},
-	"COOP_AUTO_UP":           {},
-	"COOP_BASE_IMAGE":        {},
-	"COOP_CACHE":             {},
-	"COOP_CAFFEINATE":        {},
-	"COOP_CONFIG_DIR":        {},
-	"COOP_CONSULT_TIMEOUT":   {},
-	"COOP_CPUS":              {},
-	"COOP_EDITOR":            {},
-	"COOP_EGRESS":            {},
-	"COOP_GATE":              {},
-	"COOP_HOMES":             {},
-	"COOP_HOME_IN_BOX":       {},
-	"COOP_IMAGE":             {},
-	"COOP_MCP_FILE":          {},
-	"COOP_MEMORY":            {},
-	"COOP_NETWORK":           {},
-	"COOP_NO_NEW_PRIVILEGES": {},
-	"COOP_NO_UPDATE_CHECK":   {},
-	"COOP_PIDS":              {},
-	"COOP_PRESETS_DIR":       {},
-	"COOP_PROVIDER_TIMEOUTS": {},
-	"COOP_REPO":              {},
-	"COOP_REVIEW_CMD":        {},
-	"COOP_RUNTIME":           {},
-	"COOP_RUN_ARGS":          {},
-	"COOP_SERVICES_NET":      {},
-	"COOP_SHELL":             {},
-	"COOP_STREAM_TRACE":      {},
-	"COOP_TASKS":             {},
-	"COOP_WORKDIR":           {},
+	"COOP_ACP_CARRY_TOKENS":           {},
+	"COOP_ALLOW_CASE_EXPOSED_SECRETS": {},
+	"COOP_AUTO_UP":                    {},
+	"COOP_BASE_IMAGE":                 {},
+	"COOP_CACHE":                      {},
+	"COOP_CAFFEINATE":                 {},
+	"COOP_CONFIG_DIR":                 {},
+	"COOP_CONSULT_TIMEOUT":            {},
+	"COOP_CPUS":                       {},
+	"COOP_EDITOR":                     {},
+	"COOP_EGRESS":                     {},
+	"COOP_GATE":                       {},
+	"COOP_HOMES":                      {},
+	"COOP_HOME_IN_BOX":                {},
+	"COOP_IMAGE":                      {},
+	"COOP_MCP_FILE":                   {},
+	"COOP_MEMORY":                     {},
+	"COOP_NETWORK":                    {},
+	"COOP_NO_NEW_PRIVILEGES":          {},
+	"COOP_NO_UPDATE_CHECK":            {},
+	"COOP_PIDS":                       {},
+	"COOP_PRESETS_DIR":                {},
+	"COOP_PROVIDER_TIMEOUTS":          {},
+	"COOP_REPO":                       {},
+	"COOP_REVIEW_CMD":                 {},
+	"COOP_RUNTIME":                    {},
+	"COOP_RUN_ARGS":                   {},
+	"COOP_SERVICES_NET":               {},
+	"COOP_SHELL":                      {},
+	"COOP_STREAM_TRACE":               {},
+	"COOP_TASKS":                      {},
+	"COOP_WORKDIR":                    {},
 }
 
 var retiredMainConfigKeys = map[string]struct{}{

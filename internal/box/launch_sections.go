@@ -165,6 +165,19 @@ func (s *launchSections) coopignoreComments(entries []string, quiet bool) {
 	}
 }
 
+// caseExposed warns about hidden files a box can still read under another letter case, which the
+// launch's owner accepted with COOP_ALLOW_CASE_EXPOSED_SECRETS.
+func (s *launchSections) caseExposed(paths []string, quiet bool) {
+	for _, path := range paths {
+		switch {
+		case s.on:
+			ui.Caution("%s is readable in the box under another letter case (COOP_ALLOW_CASE_EXPOSED_SECRETS)", ui.SafeInline(path))
+		case !quiet:
+			ui.Warn("%s is readable in the box under another letter case (COOP_ALLOW_CASE_EXPOSED_SECRETS)", ui.SafeInline(path))
+		}
+	}
+}
+
 // accountRow is one account a launch connects: the provider, the account, and whether its API key
 // is protected — kept on this computer — or it is a signed-in login. Names only: no credential value
 // ever reaches presentation.
