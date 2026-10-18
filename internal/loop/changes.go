@@ -397,8 +397,8 @@ func loopChanges(repo, base, head string, gateSources []string) (loopChangeSet, 
 // withEarlierReviewCommits adds the commit of each subject anchored before the run, a task another
 // session committed before the loop started, so the review's change block and diff show what its
 // verdict accepts. A task already in the set keeps its entry.
-func withEarlierReviewCommits(repo string, cs loopChangeSet, subjects []tasks.PendingReviewRecord) (loopChangeSet, error) {
-	earlier, err := tasks.PendingReviewEarlierCommits(repo, subjects)
+func withEarlierReviewCommits(repo, head string, cs loopChangeSet, subjects []tasks.PendingReviewRecord) (loopChangeSet, error) {
+	earlier, err := tasks.PendingReviewEarlierCommits(repo, head, subjects)
 	if err != nil || len(earlier) == 0 {
 		return cs, err
 	}
@@ -450,16 +450,12 @@ func finalVerificationChanges(repo, base string, gateSources []string) (loopChan
 // signoffChanges is a final-review round's change context: the run's changes plus each subject's
 // commit from before the run. An error stops the round, because a reviewer that is not shown the
 // files cannot be told which tasks changed the project checks.
-func signoffChanges(repo, base string, gateSources []string, subjects []tasks.PendingReviewRecord) (loopChangeSet, error) {
-	head, err := forkspace.GitOutErr(repo, "rev-parse", "HEAD")
-	if err != nil {
-		return loopChangeSet{}, fmt.Errorf("read final review HEAD: %w", err)
-	}
+func signoffChanges(repo, base, head string, gateSources []string, subjects []tasks.PendingReviewRecord) (loopChangeSet, error) {
 	cs, err := loopChanges(repo, base, head, gateSources)
 	if err != nil {
 		return loopChangeSet{}, err
 	}
-	return withEarlierReviewCommits(repo, cs, subjects)
+	return withEarlierReviewCommits(repo, head, cs, subjects)
 }
 
 // rangeFiles lists every file changed across a commit range.

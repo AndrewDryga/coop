@@ -1452,7 +1452,7 @@ reviewAgain:
 						observe := func(run reviewRunResult, start time.Time, headBefore string) {
 							c.recordStage(repo, runid, "between", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, auditGateFiles, run.usage)
 						}
-						btRun, rerr := c.runReviewVerdict(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), reviewCmd, hosts, finishedIDs, &reviewPlan, lc.Between.Writes, sink, peers, hardStop, observe)
+						btRun, rerr := c.runReviewVerdict(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), reviewCmd, hosts, finishedIDs, "", &reviewPlan, lc.Between.Writes, sink, peers, hardStop, observe)
 						reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, btRun.concurrent)
 						reopenedIDs := btRun.reopened
 						if len(reopenedIDs) > 0 {
@@ -1634,7 +1634,8 @@ reviewAgain:
 		if err := tasks.EnrollExistingPendingReviews(repo, hosts, subjectIDs, reviewPlan); err != nil {
 			return 1, fmt.Errorf("preserve final-review subjects: %w", err)
 		}
-		if err := tasks.BeginPendingReviewRound(hosts, subjectIDs, signoffRound); err != nil {
+		roundHead, err := tasks.BeginPendingReviewRound(hosts, subjectIDs, signoffRound)
+		if err != nil {
 			return 1, fmt.Errorf("record final-review round %d: %w", signoffRound, err)
 		}
 		roundCohort, err := tasks.LoadPendingReviews(repo, hosts)
@@ -1649,7 +1650,7 @@ reviewAgain:
 		// so a prompt like "e2e the affected features" resolves against a concrete list. Rebuilt each
 		// round because the range (loopStartHead..HEAD) grows as reopened work lands. Changes Coop
 		// cannot read stop the round; the pending review stays recorded for the next run.
-		cs, err := signoffChanges(repo, loopStartHead, gateSources, roundRecords)
+		cs, err := signoffChanges(repo, loopStartHead, roundHead, gateSources, roundRecords)
 		if err != nil {
 			ui.Failure("Could not read this run's changes",
 				fmt.Sprintf("%v\nThe final review did not run; the completed tasks still need it.", err),
@@ -1668,7 +1669,7 @@ reviewAgain:
 		observe := func(run reviewRunResult, start time.Time, headBefore string) {
 			c.recordStage(repo, runid, "signoff", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 		}
-		soRun, serr := c.runReviewVerdict(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), reviewCmd, hosts, subjectIDs, &reviewPlan, lc.Signoff.Writes, sink, peers, wake, observe)
+		soRun, serr := c.runReviewVerdict(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), reviewCmd, hosts, subjectIDs, roundHead, &reviewPlan, lc.Signoff.Writes, sink, peers, wake, observe)
 		// Preserve the exact tasks the host reopened before any early return.
 		reopenedIDs := soRun.reopened
 		if len(soRun.concurrent) > 0 {
@@ -1803,7 +1804,7 @@ reviewAgain:
 		}
 		cs, changeErr := finalVerificationChanges(repo, loopStartHead, gateSources)
 		if changeErr == nil {
-			cs, changeErr = withEarlierReviewCommits(repo, cs, verifyRecords)
+			cs, changeErr = withEarlierReviewCommits(repo, "HEAD", cs, verifyRecords)
 		}
 		if changeErr != nil {
 			verificationFailed = true
@@ -1839,7 +1840,7 @@ reviewAgain:
 			observe := func(run reviewRunResult, start time.Time, headBefore string) {
 				c.recordStage(repo, runid, "verify", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 			}
-			vRun, verr := c.runReviewVerdict(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, reviewCmd, hosts, verifyIDs, &reviewPlan, lc.Verify.Writes, sink, peers, wake, observe)
+			vRun, verr := c.runReviewVerdict(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, reviewCmd, hosts, verifyIDs, "", &reviewPlan, lc.Verify.Writes, sink, peers, wake, observe)
 			reopenedIDs := vRun.reopened
 			if len(vRun.concurrent) > 0 {
 				if err := tasks.EnrollExistingPendingReviews(repo, hosts, vRun.concurrent, reviewPlan); err != nil {

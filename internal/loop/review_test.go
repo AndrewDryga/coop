@@ -147,7 +147,7 @@ func TestReviewVerdictUsesOneExactSessionCorrection(t *testing.T) {
 	rot := ladder.NewRotation([]agents.Target{{Provider: "claude", Accounts: []string{"test"}}})
 	observed := 0
 	run, err := c.runReviewVerdict(context.Background(), repo, "image", rot, "", "review", "signoff", command,
-		[]string{repo}, []string{task.ID}, nil, loopcfg.ReviewWritesTasks, io.Discard, nil, nil,
+		[]string{repo}, []string{task.ID}, "", nil, loopcfg.ReviewWritesTasks, io.Discard, nil, nil,
 		func(reviewRunResult, time.Time, string) { observed++ })
 	if err != nil {
 		t.Fatalf("corrected review: %v\n%s", err, run.output)
@@ -199,12 +199,47 @@ func TestReviewVerdictRejectsSourceChangeBeforeCorrection(t *testing.T) {
 	}
 	rot := ladder.NewRotation([]agents.Target{{Provider: "claude", Accounts: []string{"test"}}})
 	_, err := c.runReviewVerdict(context.Background(), repo, "image", rot, "", "review", "signoff", command,
-		[]string{repo}, []string{task.ID}, nil, loopcfg.ReviewWritesTasks, io.Discard, nil, nil, nil)
+		[]string{repo}, []string{task.ID}, "", nil, loopcfg.ReviewWritesTasks, io.Discard, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "review source changed") {
 		t.Fatalf("source-changing review error = %v", err)
 	}
 	if launches != 1 {
 		t.Fatalf("source-changing malformed review launched %d corrections, want 0", launches-1)
+	}
+}
+
+// A final-review round records what it covers at one commit. A HEAD that moved after that, before the
+// review's own snapshot, stops the review before any reviewer runs: its verdict would otherwise
+// accept history nobody recorded.
+func TestReviewVerdictRefusesAHeadOtherThanTheRounds(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitignore")
+	git("commit", "-qm", "base")
+	roundHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "moved after the round started")
+	task := taskForLease(t, repo, stateDone, "task-a")
+
+	c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}, runtime.Runtime{Name: "true"}, "test", Host{})
+	c.net = newNetworkLog()
+	c.runID = "round-head-test"
+	launches := 0
+	c.boxRun = func(box.RunSpec) (int, error) { launches++; return 0, nil }
+	command := func(_ string, prompt, _ string, _ bool) ([]string, bool, bool) {
+		return []string{"claude", "-p", prompt}, true, true
+	}
+	rot := ladder.NewRotation([]agents.Target{{Provider: "claude", Accounts: []string{"test"}}})
+	_, err := c.runReviewVerdict(context.Background(), repo, "image", rot, "", "review", "signoff", command,
+		[]string{repo}, []string{task.ID}, roundHead, nil, loopcfg.ReviewWritesTasks, io.Discard, nil, nil, nil)
+	if !errors.Is(err, tasks.ErrCompletionWindowSetup) || !strings.Contains(err.Error(), "HEAD moved from "+roundHead) {
+		t.Fatalf("review on a moved HEAD = %v", err)
+	}
+	if launches != 0 {
+		t.Fatalf("the refused review launched %d reviewers", launches)
 	}
 }
 

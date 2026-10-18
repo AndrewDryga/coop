@@ -332,8 +332,8 @@ func pendingReviewSubjectBase(subject PendingReviewRecord) string {
 // recipe for a commit that lost its folder move) or re-signed still bounds it. Signing rewrites
 // commit IDs but keeps every trailer, so a signed run still finds its commits. A dropped or
 // duplicated commit is a *PendingReviewCommitsError.
-func pendingReviewSubjectCommits(repo string, subjects []PendingReviewRecord) (map[string]string, error) {
-	after, err := rawReachableAuditCommits(repo, "HEAD")
+func pendingReviewSubjectCommits(repo, head string, subjects []PendingReviewRecord) (map[string]string, error) {
+	after, err := rawReachableAuditCommits(repo, head)
 	if err != nil {
 		return nil, fmt.Errorf("read the history final review covers: %w", err)
 	}
@@ -376,12 +376,15 @@ func pendingReviewSubjectCommits(repo string, subjects []PendingReviewRecord) (m
 // started and completes during it, is anchored the way --review-task anchors an import: after its
 // parent. A recompletion keeps the Base it has.
 func pendingReviewNewBase(repo string, subject PendingReviewRecord) (string, error) {
-	_, err := pendingReviewSubjectCommits(repo, []PendingReviewRecord{subject})
+	head, err := pendingReviewHead(repo)
+	if err != nil {
+		return subject.Base, err
+	}
+	_, err = pendingReviewSubjectCommits(repo, head, []PendingReviewRecord{subject})
 	var missing *PendingReviewCommitsError
 	if subject.Base != "" || (err != nil && (!errors.As(err, &missing) || missing.Found != 0)) {
 		return subject.Base, err
 	}
-	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
 	bindings, ok := rawTaskBindings(repo, head)
 	if !ok {
 		return "", errors.New("read reachable task bindings for final review")
@@ -399,7 +402,7 @@ func pendingReviewNewBase(repo string, subject PendingReviewRecord) (string, err
 // PendingReviewEarlierCommits returns the commit of each subject anchored before the run's base, a
 // task another session committed before the loop started: the run's own range does not show it, and
 // a reviewer must see what its verdict accepts.
-func PendingReviewEarlierCommits(repo string, subjects []PendingReviewRecord) (map[string]string, error) {
+func PendingReviewEarlierCommits(repo, head string, subjects []PendingReviewRecord) (map[string]string, error) {
 	var anchored []PendingReviewRecord
 	for _, subject := range subjects {
 		if subject.Base != "" {
@@ -409,7 +412,17 @@ func PendingReviewEarlierCommits(repo string, subjects []PendingReviewRecord) (m
 	if len(anchored) == 0 {
 		return nil, nil
 	}
-	return pendingReviewSubjectCommits(repo, anchored)
+	return pendingReviewSubjectCommits(repo, head, anchored)
+}
+
+// pendingReviewHead resolves the one commit a final-review step reads all of its history from, so a
+// writer that moves HEAD between the step's reads cannot show each read a different history.
+func pendingReviewHead(repo string) (string, error) {
+	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	if !validAuditReopenHead(head) {
+		return "", errors.New("resolve the HEAD final review covers")
+	}
+	return head, nil
 }
 
 // pendingReviewAnchor returns the parent of id's one reachable commit, where a review range that
@@ -440,9 +453,9 @@ type pendingReviewHistory struct {
 	changes []string
 }
 
-// readPendingReviewHistory reads the window after base. It must be linear, as audit authority
-// already requires.
-func readPendingReviewHistory(repo, base string) (pendingReviewHistory, error) {
+// readPendingReviewHistory reads the window from base to head. It must be linear, as audit
+// authority already requires.
+func readPendingReviewHistory(repo, base, head string) (pendingReviewHistory, error) {
 	var history pendingReviewHistory
 	before, err := rawReachableAuditCommits(repo, base)
 	if err != nil {
@@ -451,10 +464,6 @@ func readPendingReviewHistory(repo, base string) (pendingReviewHistory, error) {
 	earlier := make(map[string]bool, len(before))
 	for _, commit := range before {
 		earlier[commit.sha] = true
-	}
-	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
-	if !validAuditReopenHead(head) {
-		return history, errors.New("resolve the HEAD final review covers")
 	}
 	if earlier[head] {
 		return history, nil
@@ -480,15 +489,15 @@ func readPendingReviewHistory(repo, base string) (pendingReviewHistory, error) {
 	return history, nil
 }
 
-// readPendingReviewWindows reads the window of each distinct base among subjects.
-func readPendingReviewWindows(repo string, subjects []PendingReviewRecord) (map[string]pendingReviewHistory, error) {
+// readPendingReviewWindows reads, up to head, the window of each distinct base among subjects.
+func readPendingReviewWindows(repo, head string, subjects []PendingReviewRecord) (map[string]pendingReviewHistory, error) {
 	windows := map[string]pendingReviewHistory{}
 	for _, subject := range subjects {
 		base := pendingReviewSubjectBase(subject)
 		if _, ok := windows[base]; ok {
 			continue
 		}
-		window, err := readPendingReviewHistory(repo, base)
+		window, err := readPendingReviewHistory(repo, base, head)
 		if err != nil {
 			return nil, err
 		}
@@ -1125,10 +1134,14 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 				return PendingReviewCohort{}, fmt.Errorf("keep final-review authority across task %s's interrupted rework: %w", record.TaskID, err)
 			}
 		}
-		if _, err := pendingReviewSubjectCommits(repo, cohort.Subjects); err != nil {
+		head, err := pendingReviewHead(repo)
+		if err != nil {
 			return PendingReviewCohort{}, err
 		}
-		if err := returnChangedToSignoff(repo, roots, cohort.Subjects); err != nil {
+		if _, err := pendingReviewSubjectCommits(repo, head, cohort.Subjects); err != nil {
+			return PendingReviewCohort{}, err
+		}
+		if err := returnChangedToSignoff(repo, head, roots, cohort.Subjects); err != nil {
 			return PendingReviewCohort{}, err
 		}
 	}
@@ -1139,14 +1152,14 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 // commits changed or disappeared: a later attempt amended one of them, such as its commit or the
 // repair after it, or someone rewrote them while the loop was stopped. Verification then cannot
 // clear content no reviewer saw.
-func returnChangedToSignoff(repo string, roots map[string]string, subjects []PendingReviewRecord) error {
+func returnChangedToSignoff(repo, head string, roots map[string]string, subjects []PendingReviewRecord) error {
 	var accepted []PendingReviewRecord
 	for _, subject := range subjects {
 		if subject.Phase == PendingReviewVerify {
 			accepted = append(accepted, subject)
 		}
 	}
-	windows, err := readPendingReviewWindows(repo, accepted)
+	windows, err := readPendingReviewWindows(repo, head, accepted)
 	if err != nil {
 		return err
 	}
@@ -1494,36 +1507,65 @@ func uniqueTaskAcrossRoots(hosts []string, id string) (QueuedTask, error) {
 	return found[0], nil
 }
 
+// pendingReviewSubjectsInWindows refuses a subject whose commit is outside its review window. The
+// round's digest covers only the window, so such a commit would pass review unseen. Read from one
+// HEAD, a linear window and the subject search agree today; this keeps a later change to either
+// from splitting them.
+func pendingReviewSubjectsInWindows(subjects []PendingReviewRecord, commits map[string]string, windows map[string]pendingReviewHistory) error {
+	for _, subject := range subjects {
+		id := subject.Task.Ref.ID
+		window := windows[pendingReviewSubjectBase(subject)]
+		if !slices.ContainsFunc(window.commits, func(commit rawAuditCommit) bool { return commit.sha == commits[id] }) {
+			return fmt.Errorf("task %s's commit %s is not in the history final review covers", id, commits[id])
+		}
+	}
+	return nil
+}
+
+// pendingReviewRoundReads runs between a round's subject search and its window read; tests move
+// HEAD there.
+var pendingReviewRoundReads = func() {}
+
 // BeginPendingReviewRound records that a signoff round starts for ids, with what each subject's
-// commits do now: the content that round's verdict covers.
-func BeginPendingReviewRound(hosts, ids []string, round int) error {
+// commits do now: the content that round's verdict covers. It reads all of that from one commit and
+// returns it; the review must start there.
+func BeginPendingReviewRound(hosts, ids []string, round int) (string, error) {
 	var subjects []PendingReviewRecord
 	for _, id := range slices.Compact(slices.Sorted(slices.Values(ids))) {
 		task, err := uniqueTaskAcrossRoots(hosts, id)
 		if err != nil {
-			return err
+			return "", err
 		}
 		record, ok, err := readPendingReviewRecord(task.Root, id)
 		if err == nil && !ok {
 			err = fmt.Errorf("pending-review record for %s is missing", id)
 		}
 		if err != nil {
-			return err
+			return "", err
 		}
 		subjects = append(subjects, record)
 	}
 	if len(subjects) == 0 {
-		return nil
+		return "", nil
 	}
 	repo := subjects[0].Plan.Workspace
-	if _, err := pendingReviewSubjectCommits(repo, subjects); err != nil {
-		return err
-	}
-	windows, err := readPendingReviewWindows(repo, subjects)
+	head, err := pendingReviewHead(repo)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return updatePendingReviewRecords(hosts, ids, func(record *PendingReviewRecord) {
+	commits, err := pendingReviewSubjectCommits(repo, head, subjects)
+	if err != nil {
+		return "", err
+	}
+	pendingReviewRoundReads()
+	windows, err := readPendingReviewWindows(repo, head, subjects)
+	if err != nil {
+		return "", err
+	}
+	if err := pendingReviewSubjectsInWindows(subjects, commits, windows); err != nil {
+		return "", err
+	}
+	return head, updatePendingReviewRecords(hosts, ids, func(record *PendingReviewRecord) {
 		record.Phase = PendingReviewSignoff
 		if round > record.Round {
 			record.Round = round
@@ -1568,10 +1610,14 @@ func ClearPendingReviews(hosts []string, expected []PendingReviewRecord) error {
 			return errors.New("pending-review subjects belong to different review cohorts")
 		}
 	}
-	if _, err := pendingReviewSubjectCommits(plan.Workspace, wanted); err != nil {
+	head, err := pendingReviewHead(plan.Workspace)
+	if err != nil {
+		return err
+	}
+	if _, err := pendingReviewSubjectCommits(plan.Workspace, head, wanted); err != nil {
 		return fmt.Errorf("history changed after the review verdict: %w", err)
 	}
-	windows, err := readPendingReviewWindows(plan.Workspace, wanted)
+	windows, err := readPendingReviewWindows(plan.Workspace, head, wanted)
 	if err != nil {
 		return err
 	}

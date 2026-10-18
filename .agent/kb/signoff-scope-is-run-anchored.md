@@ -3,7 +3,7 @@ name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
 sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/loop/pending_review.go, internal/tasks/pending_review.go, internal/tasks/completion.go, internal/cli/sign.go, internal/cli/cli.go, internal/loop/changes.go, internal/tasks/cmd.go]
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -89,6 +89,12 @@ start commit, changed HEAD's tree and still matched (`...TheTreeTheRunStartsFrom
 length-prefixed: NUL separators once let two different histories share a fingerprint, since git
 stores NUL in an author line (`TestPendingReviewDigestKeepsFieldsApart`); with the prefixes, unusual
 author lines read like any other. The window must be linear, as audit authority already requires.
+A round reads its subjects, its window and the reviewer's change set from one commit, which
+`BeginPendingReviewRound` returns; it refuses a subject whose commit is outside the window, and the
+review refuses to start anywhere else. Another session's box that moved HEAD between those reads
+could otherwise get a verdict whose digest covers commits nobody reviewed
+(`TestPendingReviewRoundReadsOneHead`, `TestReviewVerdictRefusesAHeadOtherThanTheRounds`). Loading
+and clearing read their two histories from one commit too.
 Without this, a later attempt that amended an accepted commit and exited nonzero (so no range check
 ran), a rewrite across a Ctrl-C, or a host completion during a review let verification clear code
 no reviewer saw (`TestPendingReviewRejectsArchiveAndHistoryMutation/history`, and end to end
@@ -169,6 +175,8 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-10-18 — a round reads its subjects, window and change set from one commit and the review
+  must start there (task 2026-10-17-read-a-pending-review-s-subjects-and-window-from).
 - 2026-10-17 — the baseline is no longer a POST-review rescan: `reviewBaselineAfterVerdict` computes
   it from the prior baseline and the round's subjects, minus reopened and concurrent ids; the gone
   `soSnap` local (a0946fa2) is now described rather than named, and "two wrong placements" counts

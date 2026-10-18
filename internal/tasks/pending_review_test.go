@@ -333,7 +333,7 @@ func TestPendingReviewAnchorsAHostCompletionFromBeforeTheRun(t *testing.T) {
 		if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Task.Ref.ID != host.ID {
 			t.Fatalf("cohort = %+v, %v", cohort, err)
 		}
-		if err := BeginPendingReviewRound([]string{root}, []string{host.ID}, 1); err != nil {
+		if _, err := BeginPendingReviewRound([]string{root}, []string{host.ID}, 1); err != nil {
 			t.Fatal(err)
 		}
 		round, _, _ := readPendingReviewRecord(root, host.ID)
@@ -581,7 +581,7 @@ func TestPendingReviewRejectsArchiveAndHistoryMutation(t *testing.T) {
 		if err := assignment.Lease.Release(); err != nil {
 			t.Fatal(err)
 		}
-		if err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 1); err != nil {
+		if _, err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 1); err != nil {
 			t.Fatal(err)
 		}
 		if err := MarkPendingReviewVerify([]string{root}, []string{done.ID}); err != nil {
@@ -604,6 +604,52 @@ func TestPendingReviewRejectsArchiveAndHistoryMutation(t *testing.T) {
 			t.Fatalf("changed accepted commit's debt = %+v, ok %v, %v", record, ok, err)
 		}
 	})
+}
+
+// A round reads its subjects and its review window from one commit, so a HEAD moved between the
+// two reads, as another session's box could move it, changes neither: the round records the window
+// at the commit it returns, and the review refuses to start anywhere else.
+func TestPendingReviewRoundReadsOneHead(t *testing.T) {
+	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	moved := false
+	pendingReviewRoundReads = func() {
+		writeTaskFile(t, filepath.Join(repo, "later.txt"), "landed between the reads\n")
+		git(t, repo, "add", "later.txt")
+		git(t, repo, "commit", "-qm", "landed between the reads")
+		moved = true
+	}
+	t.Cleanup(func() { pendingReviewRoundReads = func() {} })
+	got, err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 1)
+	if err != nil || got != head || !moved {
+		t.Fatalf("round head = %q, %v (HEAD moved: %v); want %q", got, err, moved, head)
+	}
+	record, ok, err := readPendingReviewRecord(root, done.ID)
+	if err != nil || !ok || record.Reviewed == nil {
+		t.Fatalf("record = %+v, ok %v, %v", record, ok, err)
+	}
+	window, err := readPendingReviewHistory(repo, pendingReviewSubjectBase(record), head)
+	if err != nil || *record.Reviewed != window.content() {
+		t.Fatalf("recorded content = %+v, %v; want the window at the round's commit, %+v", *record.Reviewed, err, window.content())
+	}
+}
+
+func TestPendingReviewSubjectsInWindowsRefusesACommitOutside(t *testing.T) {
+	subject := PendingReviewRecord{Task: TaskInstance{Ref: TaskRef{ID: "task-a"}}, Plan: PendingReviewPlan{BaseHead: "base"}}
+	windows := map[string]pendingReviewHistory{"base": {commits: []rawAuditCommit{{sha: "inside"}}}}
+	if err := pendingReviewSubjectsInWindows([]PendingReviewRecord{subject}, map[string]string{"task-a": "inside"}, windows); err != nil {
+		t.Fatalf("a subject inside its window = %v", err)
+	}
+	err := pendingReviewSubjectsInWindows([]PendingReviewRecord{subject}, map[string]string{"task-a": "outside"}, windows)
+	if err == nil || !strings.Contains(err.Error(), "not in the history final review covers") {
+		t.Fatalf("a subject outside its window = %v", err)
+	}
 }
 
 // resignSince rewrites every commit after base the way a host signing pass does: same trees, authors
@@ -631,7 +677,7 @@ func TestPendingReviewFindsSignedCommitsByTrailer(t *testing.T) {
 	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 1); err != nil {
+	if _, err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 1); err != nil {
 		t.Fatal(err)
 	}
 	before := CommitsForTask(repo, base+"..HEAD", done.ID)
@@ -969,7 +1015,7 @@ func TestPendingReviewStageTransitionsAndClear(t *testing.T) {
 	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 2); err != nil {
+	if _, err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 2); err != nil {
 		t.Fatal(err)
 	}
 	if err := MarkPendingReviewVerify([]string{root}, []string{done.ID}); err != nil {
@@ -1095,7 +1141,7 @@ func TestPendingReviewDigestKeepsFieldsApart(t *testing.T) {
 	if out, err := escaped.CombinedOutput(); err != nil {
 		t.Fatalf("commit with an escape in its author: %v\n%s", err, out)
 	}
-	if window, err := readPendingReviewHistory(repo, base); err != nil || len(window.commits) != 2 {
+	if window, err := readPendingReviewHistory(repo, base, forkspace.GitOut(repo, "rev-parse", "HEAD")); err != nil || len(window.commits) != 2 {
 		t.Fatalf("window with unusual author lines = %d commits, %v; want both read", len(window.commits), err)
 	}
 }
@@ -1180,7 +1226,7 @@ func TestPendingReviewVerdictCoversTheTreeTheRunStartsFrom(t *testing.T) {
 	if err := EnrollExistingPendingReviews(repo, []string{root}, []string{item.ID}, plan); err != nil {
 		t.Fatal(err)
 	}
-	if err := BeginPendingReviewRound([]string{root}, []string{item.ID}, 1); err != nil {
+	if _, err := BeginPendingReviewRound([]string{root}, []string{item.ID}, 1); err != nil {
 		t.Fatal(err)
 	}
 	if err := MarkPendingReviewVerify([]string{root}, []string{item.ID}); err != nil {
@@ -1223,7 +1269,7 @@ func TestPendingReviewVerdictCoversTheRunBeforeTheTasksCommit(t *testing.T) {
 		git(t, repo, "cherry-pick", subjectCommit)
 	}
 	hostCommitBelow("host work\n")
-	if err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 1); err != nil {
+	if _, err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 1); err != nil {
 		t.Fatal(err)
 	}
 	if err := MarkPendingReviewVerify([]string{root}, []string{done.ID}); err != nil {
@@ -1270,7 +1316,7 @@ func TestPendingReviewVerdictCoversTheCommitsAfterTheTasksOwn(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Round 2 accepts the task and its repair.
-		if err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 2); err != nil {
+		if _, err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 2); err != nil {
 			t.Fatal(err)
 		}
 		if err := MarkPendingReviewVerify([]string{root}, []string{done.ID}); err != nil {
@@ -1377,7 +1423,7 @@ func TestPendingReviewClearChecksTheVerdictStillApplies(t *testing.T) {
 		if err := assignment.Lease.Release(); err != nil {
 			t.Fatal(err)
 		}
-		if err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 1); err != nil {
+		if _, err := BeginPendingReviewRound([]string{root}, []string{done.ID}, 1); err != nil {
 			t.Fatal(err)
 		}
 		want, _, _ := readPendingReviewRecord(root, done.ID)

@@ -461,8 +461,9 @@ func (c *Control) runReviewCorrection(ctx context.Context, repo, img string, rev
 
 // runReviewVerdict owns the complete review under its configured writes policy and the host-side
 // verdict transaction. A successful process with malformed structured output gets one format-only
-// continuation in that exact native session; every other failure remains fail closed.
-func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, reviewCmd reviewCmdBuilder, hosts, subjects []string, pendingReview *tasks.PendingReviewPlan, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
+// continuation in that exact native session; every other failure remains fail closed. A set head is
+// the commit a final-review round recorded; the review refuses to start anywhere else.
+func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, reviewCmd reviewCmdBuilder, hosts, subjects []string, head string, pendingReview *tasks.PendingReviewPlan, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
 	hosts = slices.Clone(hosts)
 	subjects = slices.Clone(subjects)
 	subjectSnapshots, err := snapshotReviewSubjects(hosts, subjects)
@@ -472,6 +473,9 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 	sourceSnapshot, err := snapshotReviewSource(repo)
 	if err != nil {
 		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: snapshot review source: %v", tasks.ErrCompletionWindowSetup, err)
+	}
+	if head != "" && sourceSnapshot.head != head {
+		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: HEAD moved from %s to %s after the final-review round recorded what it covers", tasks.ErrCompletionWindowSetup, head, sourceSnapshot.head)
 	}
 	start, headBefore := time.Now(), forkspace.GitOut(repo, "rev-parse", "HEAD")
 	run, runErr := c.runReview(ctx, repo, img, rev, forkName, prompt, activity, reviewCmd, hosts, subjects, pendingReview, writes, sink, peers, wake, observe)

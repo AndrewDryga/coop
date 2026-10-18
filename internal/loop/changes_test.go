@@ -330,7 +330,7 @@ func TestWithEarlierReviewCommitsShowsAnAnchoredCommit(t *testing.T) {
 	}
 	subjects := []tasks.PendingReviewRecord{subject("early-host", anchor), subject("task-a", "")}
 
-	cs, err := withEarlierReviewCommits(repo, mustLoopChanges(t, repo, base, head), subjects)
+	cs, err := withEarlierReviewCommits(repo, head, mustLoopChanges(t, repo, base, head), subjects)
 	if err != nil || len(cs.tasks) != 2 || cs.tasks[0].id != "task-a" || cs.tasks[1].id != "early-host" {
 		t.Fatalf("change set = %+v, %v; want task-a, then the anchored early-host", cs.tasks, err)
 	}
@@ -348,7 +348,7 @@ func TestWithEarlierReviewCommitsShowsAnAnchoredCommit(t *testing.T) {
 		t.Fatalf("review diff does not show the anchored commit:\n%s", patch)
 	}
 
-	only, err := withEarlierReviewCommits(repo, mustLoopChanges(t, repo, head, head), subjects[:1])
+	only, err := withEarlierReviewCommits(repo, head, mustLoopChanges(t, repo, head, head), subjects[:1])
 	if err != nil || only.empty() {
 		t.Fatalf("an otherwise empty run range = %+v, %v; want the anchored commit kept", only, err)
 	}
@@ -416,7 +416,7 @@ func TestLoopChangesRefusesAnUnreadableRange(t *testing.T) {
 		if err != nil || !slices.Equal(cs.gateFiles(), []string{"Makefile"}) {
 			t.Fatalf("final verification gate files = %q, %v; want [Makefile]", cs.gateFiles(), err)
 		}
-		if cs, err = signoffChanges(repo, base, nil, earlier); err != nil || len(cs.tasks) != 2 ||
+		if cs, err = signoffChanges(repo, base, head, nil, earlier); err != nil || len(cs.tasks) != 2 ||
 			!slices.Equal(cs.gateFiles(), []string{"Makefile"}) || !slices.Equal(cs.tasks[1].files, []string{"code.go"}) {
 			t.Fatalf("final review changes = %+v, %v; want the gate commit and the anchored code.go", cs.tasks, err)
 		}
@@ -453,10 +453,10 @@ func TestLoopChangesRefusesAnUnreadableRange(t *testing.T) {
 		if _, err := finalVerificationChanges(repo, base, nil); err == nil {
 			t.Error("final verification read an unreadable range")
 		}
-		if _, err := signoffChanges(repo, base, nil, earlier); err == nil {
+		if _, err := signoffChanges(repo, base, head, nil, earlier); err == nil {
 			t.Error("the final review read an unreadable range")
 		}
-		if _, err := withEarlierReviewCommits(repo, loopChangeSet{}, earlier); err == nil {
+		if _, err := withEarlierReviewCommits(repo, head, loopChangeSet{}, earlier); err == nil {
 			t.Error("the final review read an anchored commit whose files it cannot list")
 		}
 		// Control: with the object back, every read names the gate file again.
