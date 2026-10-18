@@ -268,9 +268,6 @@ func publishNativeIndex(root *accountAuthorityRoot, destination *os.File, name s
 			return err
 		}
 	}
-	if err := parent.Sync(); err != nil {
-		return err
-	}
 	receipt.Done = true
 	if err := writeNativeHistoryReceipt(root, name, receipt, false); err != nil {
 		return err

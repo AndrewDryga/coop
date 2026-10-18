@@ -330,9 +330,6 @@ func importNativeHistoryFile(root *accountAuthorityRoot, origin, destination *os
 	if err := matchNativeHistoryReceipt(destination, witness.Path, receipt); err != nil {
 		return err
 	}
-	if err := parent.Sync(); err != nil {
-		return err
-	}
 	receipt.Done = true
 	if err := writeNativeHistoryReceipt(root, receiptName, receipt, false); err != nil {
 		return err
@@ -418,13 +415,9 @@ func nativeHistoryParent(root *os.File, rel string) (*os.File, error) {
 			return nil, err
 		}
 		next, err := safefile.OpenDir(dir, part)
-		syncErr := dir.Sync()
 		_ = dir.Close()
-		if err != nil || syncErr != nil {
-			if next != nil {
-				_ = next.Close()
-			}
-			return nil, errors.Join(err, syncErr)
+		if err != nil {
+			return nil, err
 		}
 		dir = next
 	}

@@ -537,8 +537,5 @@ func retireCutoverSource(source nativeCutoverSource) error {
 	if !ok || stat.Ino != source.Inode {
 		return errors.New("legacy credential replaced before retirement")
 	}
-	if err := unix.Unlinkat(int(root.Fd()), source.Name, 0); err != nil {
-		return err
-	}
-	return root.Sync()
+	return unix.Unlinkat(int(root.Fd()), source.Name, 0)
 }
