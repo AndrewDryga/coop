@@ -3,7 +3,9 @@ package box
 import (
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"strings"
 )
 
 // MountKind distinguishes the ways a path enters (or is blocked from) the box.
@@ -76,7 +78,7 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 		}
 		relSlash := filepath.ToSlash(rel)
 		target := workdir + "/" + relSlash
-		if d.Name() == CoopIgnoreFile && d.Type().IsRegular() {
+		if d.Type().IsRegular() && isCoopignore(p) {
 			mounts = append(mounts, Mount{Kind: Policy, Source: p, Target: target, RO: true})
 			return nil
 		}
@@ -94,6 +96,26 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 		return nil, err
 	}
 	return mounts, nil
+}
+
+// isCoopignore reports whether path is its folder's .coopignore as the secret decider reads it: that
+// exact name, or another spelling that names the same file, such as .COOPIGNORE on a case-insensitive
+// Mac disk. Matching the spelling alone left such a file writable in the box, where a box could
+// weaken the rules the next launch reads.
+func isCoopignore(path string) bool {
+	name := filepath.Base(path)
+	if name == CoopIgnoreFile {
+		return true
+	}
+	if !strings.EqualFold(name, CoopIgnoreFile) {
+		return false
+	}
+	spelled, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	read, err := os.Lstat(filepath.Join(filepath.Dir(path), CoopIgnoreFile))
+	return err == nil && os.SameFile(spelled, read)
 }
 
 // ShadowCount is the number of secret paths shadowed.

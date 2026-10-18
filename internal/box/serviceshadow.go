@@ -81,7 +81,7 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 				}
 			}
 			if !info.IsDir() {
-				if filepath.Base(real) == CoopIgnoreFile && info.Mode().IsRegular() {
+				if info.Mode().IsRegular() && isCoopignore(real) {
 					decoys[name] = append(decoys[name], serviceDecoy{target: target, source: filepath.ToSlash(rel), bindSource: real})
 				}
 				continue
@@ -104,7 +104,7 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 				if err != nil {
 					return err
 				}
-				if d.Name() == CoopIgnoreFile && d.Type().IsRegular() {
+				if d.Type().IsRegular() && isCoopignore(p) {
 					decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), source: filepath.ToSlash(relRepo), bindSource: p})
 					return nil
 				}

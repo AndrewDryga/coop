@@ -4,7 +4,7 @@ description: keep .coopignore readable but read-only in boxes, preserve ordinary
 scope: security
 sources: [internal/box/mounts.go, internal/box/secrets.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/image.go, internal/box/mounts_test.go, internal/shadowpath/shadowpath.go]
 check: none
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # Mount .coopignore read-only while preserving normal host editing
@@ -30,6 +30,12 @@ does not by itself freeze the parent path, and read-only policy mounts alone do 
 on the next launch or build. Do not treat a mount-plan unit test as the complete runtime proof.
 
 ## Changelog
+- 2026-10-18 — a rules file under another spelling is read-only too: on a case-insensitive Mac
+  disk the decider opens .coopignore and gets .COOPIGNORE, so the mount plan and both service-shadow
+  walks now match by file identity (box.isCoopignore), not by spelling (task
+  2026-10-17-mount-a-coopignore-spelled-in-another-case-read). Sweep: fork merge and the session
+  review scan compare git paths to .coopignore exactly; queued as task
+  2026-10-18-flag-a-fork-or-session-change-to-a-coopignore-sp.
 - 2026-10-17 — the box's own decider now fails safe too: a `.coopignore` it cannot read (link,
   folder, FIFO, no permission, over 1 MiB), in the repository or a folder above it, stops launches
   and is reported by name instead of becoming an empty rule set (task

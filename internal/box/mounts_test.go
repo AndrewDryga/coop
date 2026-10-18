@@ -205,6 +205,47 @@ func TestComputeMountsCoopIgnore(t *testing.T) {
 	}
 }
 
+// The decider reads a folder's rules from whatever file the name .coopignore opens, such as a
+// .COOPIGNORE on a case-insensitive Mac disk, so that file is mounted read-only like the exact name.
+// On a case-sensitive disk the other spelling is an ordinary file unless it is the rules file itself
+// under a second name.
+func TestComputeMountsProtectsTheRulesFileUnderAnotherSpelling(t *testing.T) {
+	pinHome(t)
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, ".COOPIGNORE"), []byte("notes.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "notes.txt"), []byte("hidden when the rules apply\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, lookupErr := os.Lstat(filepath.Join(repo, CoopIgnoreFile))
+	mounts, err := ComputeMounts(repo, "/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, hidden := find(mounts, "/workspace/.COOPIGNORE"), find(mounts, "/workspace/notes.txt") != nil
+	if lookupErr == nil { // a case-insensitive disk
+		if policy == nil || policy.Kind != Policy || !policy.RO || !hidden {
+			t.Fatalf(".COOPIGNORE is the rules file here: policy mount %+v, notes hidden %v", policy, hidden)
+		}
+		return
+	}
+	if policy != nil || hidden {
+		t.Fatalf(".COOPIGNORE is an ordinary file on a case-sensitive disk: policy mount %+v, notes hidden %v", policy, hidden)
+	}
+	if err := os.Link(filepath.Join(repo, ".COOPIGNORE"), filepath.Join(repo, CoopIgnoreFile)); err != nil {
+		t.Fatal(err)
+	}
+	if mounts, err = ComputeMounts(repo, "/workspace"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{CoopIgnoreFile, ".COOPIGNORE"} {
+		if m := find(mounts, "/workspace/"+name); m == nil || m.Kind != Policy || !m.RO {
+			t.Errorf("%s names the rules file but is not mounted read-only: %+v", name, m)
+		}
+	}
+}
+
 func TestCoopIgnorePathSurvivesParentRename(t *testing.T) {
 	pinHome(t)
 	repo := t.TempDir()
