@@ -717,6 +717,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if err != nil {
 			return -1, err
 		}
+		if err := RememberHiddenFiles(spec.Repo, workdir, mounts); err != nil {
+			return -1, err
+		}
 	}
 	if spec.FormatCorrection {
 		mounts = []Mount{{Kind: DirDecoy, Target: workdir, RO: true}}

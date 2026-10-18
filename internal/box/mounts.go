@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-
-	"github.com/AndrewDryga/coop/internal/shadowpath"
 )
 
 // MountKind distinguishes the ways a path enters (or is blocked from) the box.
@@ -96,21 +94,6 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 		return nil, err
 	}
 	return mounts, nil
-}
-
-// NewShadowDecider returns a predicate reporting whether a repo-relative slash path is
-// shadowed from the box: its basename matches SecretGlobs (and AllowGlobs doesn't whitelist
-// it), or a .coopignore in the root, an ancestor directory or a folder above the repo short of
-// the home folder matches it (AllowGlobs does NOT override an explicit .coopignore — it's the
-// user's final say). Each directory's .coopignore is loaded once into the closure's cache.
-// ComputeMounts and check-secrets share this visibility decision; the scanner still checks
-// hidden commit candidates because hiding a file from the box does not prevent committing it.
-// A hidden directory hides every descendant, including names an allow rule would otherwise
-// rescue. A path under a .coopignore coop cannot read comes back hidden with an
-// UnreadableCoopignore, which every caller that can refuse returns, unless a readable rule or a
-// secret name, its own or a folder's above it, already hides it.
-func NewShadowDecider(repo string) func(relSlash string) (bool, error) {
-	return shadowpath.NewDecider(repo)
 }
 
 // ShadowCount is the number of secret paths shadowed.

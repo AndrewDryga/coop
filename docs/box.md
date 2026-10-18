@@ -47,6 +47,13 @@ all, and a launch warns about it.
 An exact path entry keeps its final file or directory name hidden throughout that policy's scope.
 This stops a box from exposing the same secret later by renaming its parent directory.
 
+Anything a launch hides also stays hidden after a box moves it, or the folder holding it, to a
+path no rule names: a file `config/*.yml` hid that `mv config cfg` moved, or a folder moved out of
+a nested `.coopignore`'s scope. Coop remembers each file and folder it hid by its identity, and
+keeps hiding it, from the next box and from its own tools, wherever it turns up in the project.
+Back at the path it was hidden at, its rules decide it again, so taking a rule out of
+`.coopignore` still shows the file.
+
 A `.coopignore` covers everything below its folder, even when you run Coop from a repository
 inside it, such as a submodule or a worktree kept in your project. Coop reads the `.coopignore` of
 every folder above the project, up to but not including your home folder (for a project outside

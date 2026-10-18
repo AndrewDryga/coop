@@ -2,8 +2,8 @@
 name: secret-shadow-walk
 description: every launch walks the whole checkout from a real-folder root (a linked root and a link to home are refused, though a box that writes the root's parent can still swap it), gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs; the .coopignore files above the repository, short of home, apply too
 subsystem: box
-sources: [internal/box/mounts.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, internal/forkctl/merge.go, internal/sessionsvc/review_scan.go, tools/lifecyclebench]
-updated: 2026-10-17
+sources: [internal/box/mounts.go, internal/box/hidden_files.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, internal/forkctl/merge.go, internal/sessionsvc/review_scan.go, tools/lifecyclebench]
+updated: 2026-10-18
 ---
 
 `box.ComputeMounts` runs on every launch (`run.go`). It walks the whole repository, skipping only
@@ -11,6 +11,16 @@ updated: 2026-10-17
 the checkout is visible in the box, gitignored working state included, so `.agent/tasks`
 (artifacts, `tmp/` worktrees and clones) is walked too and can't be skipped. A secret in a task's
 scratch clone is still a secret.
+
+**What a launch hid stays hidden after a box moves it.** Rules decide by path, and a box can
+`mv config cfg` (out of a `config/*.yml` rule) or move a folder out of a nested `.coopignore`'s
+scope. It cannot read what it moves, so it cannot copy it, and a move keeps the inode: each launch
+(`RememberHiddenFiles`, after `ComputeMounts`) records the device and inode of every decoyed file
+and folder, with the path the rules hid it at, in the host-private service state root
+(`hidden-files/<sha256 of the repo path>.json`). `box.NewShadowDecider` — the decider the walk, the
+secret scanner, merge, review and init share — hides a remembered identity found at any other path,
+and its folders' contents with it. At its remembered path the rules decide again, so removing a
+rule still shows the file, which is then forgotten. A launch fails if it cannot write the record.
 
 **The root must be a real folder.** `filepath.WalkDir` lstats its root and never follows a link,
 so a repository path that is itself a link was walked as one entry and bound whole: no decoy, no
@@ -151,6 +161,8 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-10-18 — a launch remembers what it hid by identity, so a file or folder a box moves stays
+  hidden (task 2026-10-16-keep-wildcard-and-nested-coopignore-rules-on-a-f).
 - 2026-10-17 — every test binary's HOME is inside its teststate folder, so the stray-file run passes
   without per-test pins (task 2026-10-17-pin-home-and-tmpdir-in-tests-that-build-a-secret).
 - 2026-10-17 — below an unreadable `.coopignore` the readable rules still decide: the decider
