@@ -140,9 +140,14 @@ func lockLegacyMove(forks *os.File) (func(), error) {
 }
 
 // openLegacyRecords opens <repo>-forks as a root and its .coop as a folder, following a link at
-// neither, or returns no folder when there is nothing to move. A link at either is refused: Coop
-// never made one, and a box that did could point the move at another project's records.
+// neither, or returns no folder when there is nothing to move. Coop never made a link or other
+// special file at either place, so one there is nothing to move: it is never followed, a project's
+// box launches go on, and the fork commands that work in the forks folder refuse it themselves. A
+// box that could plant one could as well have deleted the records behind it.
 func openLegacyRecords(repo string) (*os.Root, *os.File, error) {
+	if info, err := os.Lstat(Home(repo)); errors.Is(err, os.ErrNotExist) || err == nil && !realFolder(info) {
+		return nil, nil, nil
+	}
 	home, err := openForkHome(repo)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil
@@ -151,8 +156,9 @@ func openLegacyRecords(repo string) (*os.Root, *os.File, error) {
 		return nil, nil, err
 	}
 	info, err := home.Lstat(".coop")
-	if err == nil && !info.IsDir() {
-		err = syscall.ENOTDIR
+	if errors.Is(err, os.ErrNotExist) || err == nil && !realFolder(info) {
+		_ = home.Close()
+		return nil, nil, nil
 	}
 	var legacy *os.File
 	if err == nil {
@@ -162,21 +168,17 @@ func openLegacyRecords(repo string) (*os.Root, *os.File, error) {
 		// The folder looked at, not one swapped in since.
 		if opened, statErr := legacy.Stat(); statErr != nil || !os.SameFile(info, opened) {
 			_ = legacy.Close()
-			err = errors.Join(statErr, syscall.ELOOP)
+			err = errors.Join(statErr, fmt.Errorf("the old fork records %s changed while Coop opened them", filepath.Join(Home(repo), ".coop")))
 		}
 	}
-	if err == nil {
-		return home, legacy, nil
+	if err != nil {
+		_ = home.Close()
+		return nil, nil, err
 	}
-	_ = home.Close()
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return nil, nil, nil
-	case errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP):
-		return nil, nil, fmt.Errorf("the old fork records %s are not a real folder, so Coop will not move them; remove it if you did not make it", filepath.Join(Home(repo), ".coop"))
-	}
-	return nil, nil, err
+	return home, legacy, nil
 }
+
+func realFolder(info os.FileInfo) bool { return info.IsDir() && info.Mode()&os.ModeSymlink == 0 }
 
 // restoreLeftoverMove gives the anchors and logs a crashed move took out of the old folder back to
 // it, then removes what that move left, so the move starts over from a whole old folder.

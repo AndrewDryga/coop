@@ -32,7 +32,7 @@ func legacyFolder(t *testing.T, repo string, files map[string]string) string {
 
 // A box that can write the folder holding a project's forks folder can replace it with a link to
 // another project's forks folder. The move follows no link, so it never takes that project's
-// records.
+// records: the project gets an empty records folder, and its box launches go on.
 func TestLegacyForkRecordsMoveFollowsNoLink(t *testing.T) {
 	parent := t.TempDir()
 	other := filepath.Join(parent, "other")
@@ -41,14 +41,23 @@ func TestLegacyForkRecordsMoveFollowsNoLink(t *testing.T) {
 	if err := os.Symlink(Home(other), Home(repo)); err != nil {
 		t.Fatal(err)
 	}
-	if err := MoveLegacyForkRecords(repo); err == nil {
-		t.Fatal("the move followed a link at the forks folder")
+	if err := MoveLegacyForkRecords(repo); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(otherRecords, "perf.pid")); err != nil {
 		t.Fatalf("the other project's records moved: %v", err)
 	}
-	if _, err := os.Lstat(recordsPath(repo)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a refused move left a records folder: %v", err)
+	if moved, err := os.ReadDir(recordsPath(repo)); err != nil || len(moved) != 0 {
+		t.Fatalf("records after a linked forks folder = %v, %v; want an empty folder", moved, err)
+	}
+	// A box launch records its execution all the same; fork commands in the folder still refuse.
+	record, err := BeginExecution(repo, ExecutionSpec{Kind: ExecutionInteractive, Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatalf("a launch beside a linked forks folder = %v", err)
+	}
+	t.Cleanup(func() { _ = EndExecution(repo, record) })
+	if _, err := Names(repo); err == nil {
+		t.Fatal("fork commands accepted a linked forks folder")
 	}
 }
 

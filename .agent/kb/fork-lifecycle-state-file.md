@@ -145,7 +145,9 @@ to a process or a container, or prints, it is supervision.
   open by a later build moves them (`MoveLegacyForkRecords`, internal/forkspace/legacy_records.go,
   which every box launch also runs before the box starts): the one time Coop trusts the old place.
   It opens the forks folder and `.coop` following no link (`openForkHome`), so a box cannot point it
-  at another project's records; copies each record into folders it makes in a staging folder, so a
+  at another project's records, and a link or other non-folder at either place is nothing to move:
+  the project gets its empty folder and its box launches go on, while fork commands in the forks
+  folder refuse it; copies each record into folders it makes in a staging folder, so a
   box that held an old folder or file open keeps writing the old copy; moves generation anchors
   (each must stay one file with its workspace marker) and logs; publishes with a no-replace rename;
   then removes the old folder. One move runs at a time (`forks/.moving.lock`). A project with
@@ -216,6 +218,8 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-10-19 — a planted link at the forks folder or at the old `.coop` is nothing to move, so box
+  launches no longer fail on one (task 2026-10-19-keep-box-launches-working-when-a-project-s-forks).
 - 2026-10-19 — the records key uses the disk's own spelling (fsidentity.StoredPath, remembered per
   process for an existing folder) (task 2026-10-18-key-coop-s-per-project-host-records-by-the-folde).
 - 2026-10-19 — fork records moved from `<repo>-forks/.coop` into `~/.local/state/coop/forks/<key>/`,

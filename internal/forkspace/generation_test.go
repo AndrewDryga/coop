@@ -605,8 +605,8 @@ func TestForkGenerationPublicationLeavesOneLinkAndNoTemporaryAuthority(t *testin
 }
 
 // A build before this one kept fork records in <repo>-forks/.coop. The first use moves them, once,
-// by one rename, and the fork still validates: its anchor and marker are still one inode. A .coop
-// planted afterwards is never read, and a link in its place is refused, not followed.
+// and the fork still validates: its anchor and marker are still one inode. A .coop planted
+// afterwards is never read, and a link in its place is never followed: nothing behind it moves.
 func TestForkRecordsMoveOnceFromTheForksFolder(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "project")
 	makeGenerationWorkspace(t, repo, "perf")
@@ -636,10 +636,20 @@ func TestForkRecordsMoveOnceFromTheForksFolder(t *testing.T) {
 	if err := os.MkdirAll(Home(other), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(t.TempDir(), filepath.Join(Home(other), ".coop")); err != nil {
+	behind := t.TempDir()
+	if err := os.WriteFile(filepath.Join(behind, "elsewhere.pid"), []byte("owner-v2\npid=1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := EnsureStateDir(other); err == nil || !strings.Contains(err.Error(), "not a real folder") {
-		t.Fatalf("a linked old records folder = %v; want it refused", err)
+	if err := os.Symlink(behind, filepath.Join(Home(other), ".coop")); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureStateDir(other); err != nil {
+		t.Fatal(err)
+	}
+	if moved, err := os.ReadDir(recordsPath(other)); err != nil || len(moved) != 0 {
+		t.Fatalf("records after a linked old folder = %v, %v; want an empty folder", moved, err)
+	}
+	if _, err := os.Stat(filepath.Join(behind, "elsewhere.pid")); err != nil {
+		t.Fatalf("what the link led to was moved: %v", err)
 	}
 }
