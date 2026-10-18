@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 const refAuthorityIdentityAttempts = 5 // mirrors leaseAuthorityIdentityAttempts (lease.go)
@@ -138,7 +139,7 @@ func EnterRefAuthorityWindow(cfg *config.Config, repo, headAfter string, beforeW
 	if err != nil {
 		return nil, "", fmt.Errorf("acquire ref authority for %s: %w", repo, err)
 	}
-	liveHead, err = gitOutErr(repo, "rev-parse", "HEAD")
+	liveHead, err = forkspace.GitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil {
 		release()
 		return nil, "", fmt.Errorf("re-read HEAD of %s inside the ref authority window: %w", repo, err)

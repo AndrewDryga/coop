@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/safefile"
 	"golang.org/x/sys/unix"
 )
@@ -144,7 +145,7 @@ func importNativeIndex(root *accountAuthorityRoot, lock, origin, destination *os
 			return err
 		}
 	}
-	name := nativeIndexPrefix(witness.Path) + randomHex(16) + ".json"
+	name := nativeIndexPrefix(witness.Path) + randid.Hex(16) + ".json"
 	stageName := strings.TrimSuffix(name, ".json") + ".data"
 	fd, err := unix.Openat(int(root.dir().Fd()), stageName, unix.O_RDWR|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if err != nil {

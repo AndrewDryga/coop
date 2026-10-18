@@ -22,7 +22,7 @@ import (
 // fetch is forced (+) because landing rebases the fork branch, so a re-fetch after a
 // rebase is not a fast-forward of the prior review ref.
 func gitFetchInto(repo, ws, name string) error {
-	return gitRun(repo, "fetch", "--quiet", ws, "+"+name+":review/"+name)
+	return forkspace.GitRun(repo, "fetch", "--quiet", ws, "+"+name+":review/"+name)
 }
 
 // forkReviewCandidate is a disposable, rebased view of a fork. base remains the parent commit the
@@ -83,7 +83,7 @@ func prepareForkReviewCandidate(repo, ws, name string) (c forkReviewCandidate, e
 	if err = forkspace.PropagateGitIdentity(repo, c.dir); err != nil {
 		return c, fmt.Errorf("prepare review scratch Git identity: %w", err)
 	}
-	c.base = gitOut(c.dir, "rev-parse", "HEAD")
+	c.base = forkspace.GitOut(c.dir, "rev-parse", "HEAD")
 	if c.base == "" {
 		return c, errors.New("review scratch has no parent HEAD")
 	}
@@ -93,11 +93,11 @@ func prepareForkReviewCandidate(repo, ws, name string) (c forkReviewCandidate, e
 		return c, fmt.Errorf("detach review scratch base: %w", err)
 	}
 	c.name = name
-	if err = gitRun(c.dir, "fetch", "--quiet", ws, "+"+name+":refs/heads/"+name); err != nil {
+	if err = forkspace.GitRun(c.dir, "fetch", "--quiet", ws, "+"+name+":refs/heads/"+name); err != nil {
 		return c, fmt.Errorf("fetch fork into review scratch: %w", err)
 	}
-	if err = gitRun(c.dir, "rebase", c.base, name); err != nil {
-		if abortErr := gitRun(c.dir, "rebase", "--abort"); abortErr != nil {
+	if err = forkspace.GitRun(c.dir, "rebase", c.base, name); err != nil {
+		if abortErr := forkspace.GitRun(c.dir, "rebase", "--abort"); abortErr != nil {
 			return c, fmt.Errorf("rebase review scratch failed and abort failed: %v; %w", err, abortErr)
 		}
 		c.conflict = true
@@ -189,10 +189,10 @@ func (c *Control) ForkReview(args []string) (int, error) {
 			}
 			if !sessionsvc.ReviewCandidateUnchanged(candidate.dir, candidate.name, candidateHead, candidateTree) {
 				outcome = forkReviewGateRed
-				if err := gitRun(candidate.dir, "reset", "--hard", candidateHead); err != nil {
+				if err := forkspace.GitRun(candidate.dir, "reset", "--hard", candidateHead); err != nil {
 					return -1, fmt.Errorf("restore review scratch after gate mutation: %w", err)
 				}
-				if err := gitRun(candidate.dir, "clean", "-fd"); err != nil {
+				if err := forkspace.GitRun(candidate.dir, "clean", "-fd"); err != nil {
 					return -1, fmt.Errorf("clean review scratch after gate mutation: %w", err)
 				}
 			}
@@ -203,14 +203,14 @@ func (c *Control) ForkReview(args []string) (int, error) {
 			return -1, fmt.Errorf("detach review scratch after gate: %w", err)
 		}
 		if outcome != forkReviewGateConflict {
-			if err := gitRun(candidate.dir, "branch", "-f", candidate.name, pinnedCandidateHead); err != nil {
+			if err := forkspace.GitRun(candidate.dir, "branch", "-f", candidate.name, pinnedCandidateHead); err != nil {
 				return -1, fmt.Errorf("restore pinned review branch after gate: %w", err)
 			}
 		}
 	} else if err := gitFetchInto(repo, ws, name); err != nil {
 		return -1, fmt.Errorf("%s: git fetch: %w", name, err)
 	}
-	uncommitted, err := gitOutErr(ws, "status", "--porcelain", "--untracked-files=all")
+	uncommitted, err := forkspace.GitOutErr(ws, "status", "--porcelain", "--untracked-files=all")
 	if err != nil {
 		return -1, fmt.Errorf("inspect fork worktree: %w", err)
 	}
@@ -335,17 +335,17 @@ func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref s
 func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) error {
 	p := ui.For(os.Stdout)
 	say := func(format string, a ...any) { fmt.Printf(format+"\n", a...) }
-	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
-	files := gitOut(repo, "diff", "--name-status", "HEAD..."+ref)
+	ins, del := parseShortstat(forkspace.GitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
+	files := forkspace.GitOut(repo, "diff", "--name-status", "HEAD..."+ref)
 	nfiles := 0
 	if files != "" {
 		nfiles = len(strings.Split(files, "\n"))
 	}
-	ahead, _ := strconv.Atoi(gitOut(repo, "rev-list", "--count", "HEAD.."+ref))
+	ahead, _ := strconv.Atoi(forkspace.GitOut(repo, "rev-list", "--count", "HEAD.."+ref))
 	say("Changes in fork %s", name)
 	say("  Into: %s", into)
 	say("  %s · %s · +%d −%d", ui.Count(ahead, "commit"), ui.Count(nfiles, "file"), ins, del)
-	if log := gitOut(repo, "log", "--oneline", "--no-decorate", "HEAD.."+ref); log != "" {
+	if log := forkspace.GitOut(repo, "log", "--oneline", "--no-decorate", "HEAD.."+ref); log != "" {
 		say("")
 		say("Commits")
 		say("%s", indent(log))
@@ -383,7 +383,7 @@ func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutco
 		}
 		say("")
 		say("Files")
-		for _, sec := range classifyChanged(files, gitOut(repo, "diff", "--numstat", "HEAD..."+ref)) {
+		for _, sec := range classifyChanged(files, forkspace.GitOut(repo, "diff", "--numstat", "HEAD..."+ref)) {
 			if sec.title != "" {
 				say("%s", indent(sec.title+":"))
 			}

@@ -16,6 +16,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -1012,14 +1013,12 @@ func runBuild(rt runtime.Runtime, stdin io.Reader, stdout, stderr io.Writer, arg
 
 // fileUntracked reports whether repo is a git repo in which name (a repo-relative path) is NOT
 // tracked (committed or staged) — the agent-authored case worth surfacing for files coop then
-// builds or auto-runs (.agent/Dockerfile, .agent/compose.yml). It uses read-only `ls-files`
-// (hardened: no fsmonitor/hooks fire on the agent-writable repo) and returns false for a non-git
-// repo, where "untracked" isn't a meaningful signal.
+// builds or auto-runs (.agent/Dockerfile, .agent/compose.yml). It uses read-only `ls-files` under
+// the trusted git view (no driver, hook or fsmonitor of the agent-writable repo runs) and returns
+// false for a non-git repo, where "untracked" isn't a meaningful signal.
 func fileUntracked(repo, name string) bool {
-	if exec.Command("git", "-C", repo, "rev-parse", "--git-dir").Run() != nil {
+	if forkspace.GitRun(repo, "rev-parse", "--git-dir") != nil {
 		return false // not a git repo — nothing to compare against
 	}
-	tracked := exec.Command("git", "-C", repo, "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null",
-		"ls-files", "--error-unmatch", "--", name).Run()
-	return tracked != nil // non-zero exit → the file isn't tracked
+	return forkspace.GitRun(repo, "ls-files", "--error-unmatch", "--", name) != nil // non-zero exit → the file isn't tracked
 }

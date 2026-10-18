@@ -1,7 +1,6 @@
 package box
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/processidentity"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
@@ -113,9 +113,7 @@ func readOrCreateHostID(path string) (string, error) {
 	if !errors.Is(err, fs.ErrNotExist) {
 		return unusable(err)
 	}
-	var raw [16]byte
-	_, _ = rand.Read(raw[:]) // never fails: crypto/rand stops the program instead
-	fresh := hex.EncodeToString(raw[:])
+	fresh := randid.Hex(16)
 	body, err := json.Marshal(hostIDRecord{Version: hostIDVersion, ID: fresh})
 	if err != nil {
 		return cannotCreate(err)

@@ -328,9 +328,7 @@ type answerRecord struct {
 
 func makeQuery(name string) (dnsmessage.Message, error) {
 	var id [2]byte
-	if _, err := rand.Read(id[:]); err != nil {
-		return dnsmessage.Message{}, Failure("dns_unavailable")
-	}
+	_, _ = rand.Read(id[:])
 	dnsName, err := dnsmessage.NewName(name + ".")
 	if err != nil {
 		return dnsmessage.Message{}, Failure("dns_name_invalid")

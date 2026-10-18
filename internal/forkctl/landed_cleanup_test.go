@@ -178,7 +178,7 @@ func TestDestroyLandedForkConsumesLegacyAndGeneratedApproval(t *testing.T) {
 	for _, generation := range []bool{false, true} {
 		t.Run(map[bool]string{false: "legacy", true: "generated"}[generation], func(t *testing.T) {
 			repo, ws, approval := prepareLandedFork(t, generation)
-			if approval.hasGeneration != generation || approval.head != gitOut(repo, "rev-parse", "HEAD") {
+			if approval.hasGeneration != generation || approval.head != forkspace.GitOut(repo, "rev-parse", "HEAD") {
 				t.Fatalf("approval = %+v", approval)
 			}
 			if err := destroyLandedFork(runtime.Runtime{}, repo, "landed", approval); err != nil {
@@ -212,7 +212,7 @@ func TestMergeOneTaskApprovalTransfersOnlyAfterFinalization(t *testing.T) {
 			if err != nil || !result.landed || result.approval == nil {
 				t.Fatalf("finished task land: %+v, %v", result, err)
 			}
-			if result.approval.identity != identity || result.approval.head != gitOut(ws, "rev-parse", "HEAD") {
+			if result.approval.identity != identity || result.approval.head != forkspace.GitOut(ws, "rev-parse", "HEAD") {
 				t.Fatalf("approval did not bind exact completed candidate: %+v", result.approval)
 			}
 			if err := destroyLandedFork(runtime.Runtime{}, repo, identity.Name, result.approval); err != nil {

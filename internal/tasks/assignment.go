@@ -265,11 +265,7 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 				_ = lock.Close()
 				return ForkAssignment{}, errors.Join(err, lease.Release())
 			}
-			assignmentID, err := newAssignmentID()
-			if err != nil {
-				_ = lock.Close()
-				return ForkAssignment{}, errors.Join(err, lease.Release())
-			}
+			assignmentID := newAssignmentID()
 			now := time.Now().UTC()
 			owner := ForkTaskOwner{
 				Fork: request.Fork, AssignmentID: assignmentID, Phase: ForkAssignmentPreparing,

@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/fsidentity"
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const maxPrivateRecordBytes = 4 << 20
@@ -298,10 +298,7 @@ func (s *Store) loadKey(create bool) error {
 		if !create {
 			return nil
 		}
-		key := make([]byte, 32)
-		if _, err := rand.Read(key); err != nil {
-			return err
-		}
+		key := randid.Bytes(32)
 		if err := s.publish("owner.key", key, false); err != nil && !errors.Is(err, os.ErrExist) {
 			return err
 		}
@@ -363,11 +360,7 @@ func (s *Store) publishBounded(name string, data []byte, replace bool, mode os.F
 	if len(data) > limit {
 		return errors.New("network record exceeds byte limit")
 	}
-	random := make([]byte, 16)
-	if _, err := rand.Read(random); err != nil {
-		return err
-	}
-	tmp := ".publish-" + hex.EncodeToString(random)
+	tmp := ".publish-" + randid.Hex(16)
 	f, err := s.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err

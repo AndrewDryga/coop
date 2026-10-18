@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -21,6 +20,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const (
@@ -115,9 +115,7 @@ func newCredentialBroker(config LaunchConfig, index int, secret CredentialBroker
 	}
 	route := config.Brokers[index]
 	var key [32]byte
-	if _, err := rand.Read(key[:]); err != nil {
-		return nil, Failure("credential_broker_unavailable")
-	}
+	_, _ = rand.Read(key[:])
 	rule := egress.Rule{To: egress.Destination{Domain: route.Upstream}, Protocol: "tls", Ports: []int{route.Port}}
 	policy, err := egress.Compile("broker", egress.Filtered, []egress.Input{{Rules: []egress.Rule{rule}, Origin: egress.Origin{Kind: "broker", Name: route.Name}}}, nil, false, key[:])
 	if err != nil {
@@ -353,11 +351,7 @@ func (b *credentialBroker) dial(ctx context.Context, network, address string) (n
 	if err != nil {
 		return nil, Failure("credential_broker_upstream_unavailable")
 	}
-	var random [16]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		return nil, Failure("credential_broker_unavailable")
-	}
-	flowID := hex.EncodeToString(random[:])
+	flowID := randid.Hex(16)
 	header, err := ProxyHeader(netip.AddrPortFrom(peer, uint16(b.route.Port)), flowID)
 	if err != nil {
 		return nil, Failure("credential_broker_unavailable")

@@ -257,7 +257,7 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 		return c.finishRejectedTaskLand(repo, ws, name, intent)
 	}
 	if intent.Phase == landPreparing {
-		parentHead := gitOut(repo, "rev-parse", "HEAD")
+		parentHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		if parentHead == "" {
 			return intent, false, errors.New("parent has no exact HEAD for task landing")
 		}
@@ -267,7 +267,7 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 				return intent, false, err
 			}
 		}
-		if gitOut(ws, "rev-parse", "HEAD") != intent.Candidate.Head {
+		if forkspace.GitOut(ws, "rev-parse", "HEAD") != intent.Candidate.Head {
 			if err := restoreCandidateWorkspace(repo, ws, name, intent.Candidate); err != nil {
 				return intent, false, err
 			}
@@ -275,8 +275,8 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 		if err := c.rebaseForkOntoParent(repo, ws, name); err != nil {
 			return intent, false, err
 		}
-		intent.RebasedHead = gitOut(ws, "rev-parse", "HEAD")
-		intent.RebasedTree = gitOut(ws, "rev-parse", "HEAD^{tree}")
+		intent.RebasedHead = forkspace.GitOut(ws, "rev-parse", "HEAD")
+		intent.RebasedTree = forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
 		intent.Phase = landRebased
 		if !validObjectID(intent.RebasedHead) || !validObjectID(intent.RebasedTree) {
 			return intent, false, errors.New("rebased fork has no exact HEAD/tree")
@@ -286,7 +286,7 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 		}
 	}
 	if intent.Phase == landRebased {
-		if gitOut(ws, "rev-parse", "HEAD") != intent.RebasedHead || gitOut(ws, "rev-parse", "HEAD^{tree}") != intent.RebasedTree {
+		if forkspace.GitOut(ws, "rev-parse", "HEAD") != intent.RebasedHead || forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}") != intent.RebasedTree {
 			return intent, false, errors.New("rebased fork changed before its merge gate")
 		}
 		if img != "" && !c.gatePasses(repo, ws, img) {
@@ -309,9 +309,9 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 		if err != nil {
 			return intent, false, err
 		}
-		parentContains := gitRun(repo, "merge-base", "--is-ancestor", intent.RebasedHead, "HEAD") == nil
+		parentContains := forkspace.GitRun(repo, "merge-base", "--is-ancestor", intent.RebasedHead, "HEAD") == nil
 		if !parentContains {
-			parentHead := gitOut(repo, "rev-parse", "HEAD")
+			parentHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			if parentHead != intent.ParentBefore {
 				release()
 				reset, resetErr := resetLandAfterParentAdvance(repo, ws, name, intent, parentHead)
@@ -320,11 +320,11 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 				}
 				return reset, false, fmt.Errorf("%s: parent advanced after candidate approval — candidate restored; retry the merge", name)
 			}
-			if gitOut(repo, "rev-parse", "review/"+name) != intent.RebasedHead {
+			if forkspace.GitOut(repo, "rev-parse", "review/"+name) != intent.RebasedHead {
 				release()
 				return intent, false, errors.New("fetched fork ref does not match approved rebased HEAD")
 			}
-			if err := gitRun(repo, "merge", "--ff-only", "review/"+name); err != nil {
+			if err := forkspace.GitRun(repo, "merge", "--ff-only", "review/"+name); err != nil {
 				release()
 				return intent, false, fmt.Errorf("%s: parent fast-forward failed; nothing landed", name)
 			}
@@ -343,7 +343,7 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 		}
 	}
 	if intent.Phase == landLanded {
-		if gitRun(repo, "merge-base", "--is-ancestor", intent.RebasedHead, "HEAD") != nil {
+		if forkspace.GitRun(repo, "merge-base", "--is-ancestor", intent.RebasedHead, "HEAD") != nil {
 			return intent, false, errors.New("land journal says landed but parent does not contain its exact commit")
 		}
 		for _, assignment := range intent.Candidate.Assignments {

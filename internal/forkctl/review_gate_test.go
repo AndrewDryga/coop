@@ -15,10 +15,10 @@ import (
 
 func reviewSourceSnapshot(dir string) string {
 	return strings.Join([]string{
-		gitOut(dir, "rev-parse", "HEAD"),
-		gitOut(dir, "rev-parse", "--abbrev-ref", "HEAD"),
-		gitOut(dir, "status", "--porcelain"),
-		gitOut(dir, "show-ref"),
+		forkspace.GitOut(dir, "rev-parse", "HEAD"),
+		forkspace.GitOut(dir, "rev-parse", "--abbrev-ref", "HEAD"),
+		forkspace.GitOut(dir, "status", "--porcelain"),
+		forkspace.GitOut(dir, "show-ref"),
 	}, "\n")
 }
 
@@ -217,7 +217,7 @@ func TestForkReviewWithoutGateKeepsExistingPath(t *testing.T) {
 	}
 	repo, ws := setupReviewGateFork(t, false)
 	forkBefore := reviewSourceSnapshot(ws)
-	parentHead := gitOut(repo, "rev-parse", "HEAD")
+	parentHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	badTmp := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(badTmp, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -238,10 +238,10 @@ func TestForkReviewWithoutGateKeepsExistingPath(t *testing.T) {
 	if !strings.Contains(out, "Project checks will run when you merge.") {
 		t.Errorf("flag-off dossier changed:\n%s", out)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD"); got != parentHead {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != parentHead {
 		t.Errorf("parent HEAD moved: %s -> %s", parentHead, got)
 	}
-	if got := gitOut(repo, "rev-parse", "review/perf"); got != gitOut(ws, "rev-parse", "perf") {
+	if got := forkspace.GitOut(repo, "rev-parse", "review/perf"); got != forkspace.GitOut(ws, "rev-parse", "perf") {
 		t.Errorf("review ref = %q, want fork tip", got)
 	}
 	if got := reviewSourceSnapshot(ws); got != forkBefore {
@@ -331,7 +331,7 @@ func TestForkReviewRejectsInvalidProjectBeforeDossierOrGitMutation(t *testing.T)
 	if got := reviewSourceSnapshot(ws); got != forkBefore {
 		t.Fatalf("fork changed before policy refusal:\n%s", got)
 	}
-	if got := gitOut(repo, "show-ref", "--verify", "refs/heads/review/perf"); got != "" {
+	if got := forkspace.GitOut(repo, "show-ref", "--verify", "refs/heads/review/perf"); got != "" {
 		t.Fatalf("invalid project created review ref: %s", got)
 	}
 }
@@ -344,7 +344,7 @@ func assertReviewSourcesUnchanged(t *testing.T, repo, ws, parentBefore, forkBefo
 	if got := reviewSourceSnapshot(ws); got != forkBefore {
 		t.Errorf("fork changed during review gate:\nbefore:\n%s\nafter:\n%s", forkBefore, got)
 	}
-	if got := gitOut(repo, "show-ref", "--verify", "refs/heads/review/perf"); got != "" {
+	if got := forkspace.GitOut(repo, "show-ref", "--verify", "refs/heads/review/perf"); got != "" {
 		t.Errorf("review gate created parent review ref: %s", got)
 	}
 }

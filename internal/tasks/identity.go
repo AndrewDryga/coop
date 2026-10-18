@@ -2,8 +2,6 @@ package tasks
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +11,8 @@ import (
 	"regexp"
 	"syscall"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const (
@@ -72,13 +72,7 @@ type TaskInstance struct {
 	Generation TaskGeneration `json:"task_generation"`
 }
 
-func newDurableIdentity() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw[:]), nil
-}
+func newDurableIdentity() string { return randid.Hex(16) }
 
 func decodeIdentityRecord(data []byte, out any) error {
 	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(data), taskMetadataFileLimit+1))
@@ -166,10 +160,7 @@ func EnsureQueueIdentity(root string) (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	id, err := newDurableIdentity()
-	if err != nil {
-		return "", err
-	}
+	id := newDurableIdentity()
 	record := queueIdentityRecord{Version: queueIdentityVersion, ID: id, CreatedAt: time.Now().UTC()}
 	body, err := json.Marshal(record)
 	if err != nil {
@@ -218,10 +209,7 @@ func ensureTaskIdentity(taskDir string) (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	id, err := newDurableIdentity()
-	if err != nil {
-		return "", err
-	}
+	id := newDurableIdentity()
 	record := taskIdentityRecord{Version: taskIdentityVersion, ID: id, CreatedAt: time.Now().UTC()}
 	body, err := json.Marshal(record)
 	if err != nil {

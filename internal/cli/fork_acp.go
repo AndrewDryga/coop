@@ -27,10 +27,7 @@ func (a *app) superviseForkACP(repo, workspace, name string, target agents.Targe
 	if err != nil {
 		return 1, err
 	}
-	superID, err := newSupervisorID()
-	if err != nil {
-		return 1, err
-	}
+	superID := newSupervisorID()
 	if account := a.cfg.ActiveProfile(target.Provider); account != "" {
 		target.Accounts = []string{account}
 	}

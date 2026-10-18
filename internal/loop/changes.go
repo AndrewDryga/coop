@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
@@ -378,7 +379,7 @@ func loopChanges(repo, base, head string, gateSources []string) (loopChangeSet, 
 	cs := loopChangeSet{
 		misc:                misc,
 		subsystems:          subsystemsOf(files),
-		stat:                strings.TrimSpace(gitOut(repo, "diff", "--ignore-submodules=dirty", "--submodule=short", "--stat", rng)),
+		stat:                strings.TrimSpace(forkspace.GitOut(repo, "diff", "--ignore-submodules=dirty", "--submodule=short", "--stat", rng)),
 		gateSources:         slices.Clone(gateSources),
 		invalidTaskBindings: invalid,
 	}
@@ -410,7 +411,7 @@ func withEarlierReviewCommits(repo string, cs loopChangeSet, subjects []tasks.Pe
 		if have[id] {
 			continue
 		}
-		line, err := gitOutErr(repo, "show", "-s", "--format=%h %s", earlier[id])
+		line, err := forkspace.GitOutErr(repo, "show", "-s", "--format=%h %s", earlier[id])
 		if err != nil {
 			return cs, err
 		}
@@ -432,7 +433,7 @@ func withEarlierReviewCommits(repo string, cs loopChangeSet, subjects []tasks.Pe
 // could not read or bind uniquely. An enabled verification cannot be silently skipped in the
 // latter case: without trustworthy subjects, an accepting provider verdict would prove nothing.
 func finalVerificationChanges(repo, base string, gateSources []string) (loopChangeSet, error) {
-	head, err := gitOutErr(repo, "rev-parse", "HEAD")
+	head, err := forkspace.GitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil {
 		return loopChangeSet{}, fmt.Errorf("read final verification HEAD: %w", err)
 	}
@@ -450,7 +451,7 @@ func finalVerificationChanges(repo, base string, gateSources []string) (loopChan
 // commit from before the run. An error stops the round, because a reviewer that is not shown the
 // files cannot be told which tasks changed the project checks.
 func signoffChanges(repo, base string, gateSources []string, subjects []tasks.PendingReviewRecord) (loopChangeSet, error) {
-	head, err := gitOutErr(repo, "rev-parse", "HEAD")
+	head, err := forkspace.GitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil {
 		return loopChangeSet{}, fmt.Errorf("read final review HEAD: %w", err)
 	}
@@ -469,7 +470,7 @@ func rangeFiles(repo, rng string) ([]string, error) {
 // gitNULPaths reads exact paths from a hardened Git command. A failed read is an error, never an
 // empty list: which files changed decides how hard the review looks at the gate.
 func gitNULPaths(repo string, args ...string) ([]string, error) {
-	out, err := gitRawOutErr(repo, args...)
+	out, err := forkspace.GitOutput(repo, args...)
 	if err != nil {
 		return nil, err
 	}

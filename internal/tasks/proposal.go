@@ -644,10 +644,7 @@ func newForkProposalRecord(index ForkAssignmentIndex, proposal ForkTaskProposal,
 	if queue.ID != index.Task.Ref.QueueID {
 		return ForkProposalRecord{}, errors.New("fork proposal assignment queue identity changed")
 	}
-	taskIdentity, err := newDurableIdentity()
-	if err != nil {
-		return ForkProposalRecord{}, err
-	}
+	taskIdentity := newDurableIdentity()
 	now := time.Now().UTC()
 	readableID := now.Format("2006-01-02") + "-" + slugify(proposal.Title) + "-" + proposal.ID[:8]
 	copyProposal := proposal

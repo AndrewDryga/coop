@@ -1,8 +1,6 @@
 package networkstate
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/fsidentity"
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const ProjectApprovalMarker = ".coop-network-approval"
@@ -18,13 +17,7 @@ var projectAnchorRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 var errProjectAnchorTransition = errors.New("project identity needs an exclusive transition")
 
-func newProjectAnchor() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw[:]), nil
-}
+func newProjectAnchor() string { return randid.Hex(16) }
 
 func projectAnchorName(projectID, anchor string) string {
 	return "project-" + projectID + "-" + anchor + ".anchor"
@@ -95,10 +88,7 @@ func (s *Store) ensureProjectAnchor(project, projectID string, allowTransition b
 			return "", fmt.Errorf("retire replaced project identity: %w", err)
 		}
 	}
-	anchor, err := newProjectAnchor()
-	if err != nil {
-		return "", err
-	}
+	anchor := newProjectAnchor()
 	root, err := fsidentity.Create(s.projectAnchorBinding(project, projectID, anchor))
 	if err != nil {
 		return "", fmt.Errorf("anchor project network approval: %w", err)

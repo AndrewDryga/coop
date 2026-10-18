@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 func pendingReviewTestCompletion(t *testing.T) (repo, root, base string, assignment TaskAssignment, done Item, plan PendingReviewPlan) {
@@ -35,7 +37,7 @@ func pendingReviewTestCompletion(t *testing.T) (repo, root, base string, assignm
 		t.Fatal(err)
 	}
 	assignment.Lease.Quiesce()
-	base = gitOut(repo, "rev-parse", "HEAD")
+	base = forkspace.GitOut(repo, "rev-parse", "HEAD")
 	writeTaskFile(t, filepath.Join(repo, "change.txt"), "review me\n")
 	git(t, repo, "add", "change.txt")
 	git(t, repo, "commit", "-qm", "implement review subject\n\nCoop-Task: review-me")
@@ -222,7 +224,7 @@ func TestPendingAwareReviewWindowEnrollsConcurrentCompletionBeforeRetirement(t *
 		t.Fatal(err)
 	}
 	foreign := taskWithCompletedChecklist(t, root, StateTodo, "foreign-completion")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	plan := pendingReviewTestPlan(t, repo, root, base)
 	windows, err := BeginReviewCompletionWindowsWithPending([]string{root}, []string{subject.ID}, plan)
 	if err != nil {
@@ -260,7 +262,7 @@ func TestPendingAwareReviewWindowRecoveryEnrollsBeforeJournalRetirement(t *testi
 		t.Fatalf("assign = %+v, %v", assignment, err)
 	}
 	assignment.Lease.Quiesce()
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	plan := pendingReviewTestPlan(t, repo, root, base)
 	windows, err := BeginReviewCompletionWindowsWithPending([]string{root}, []string{subject.ID}, plan)
 	if err != nil {
@@ -312,7 +314,7 @@ func earlyHostTask(t *testing.T, commits int) (repo, root string, host Item, pla
 	writeTaskFile(t, filepath.Join(repo, "start.txt"), "the run starts here\n")
 	git(t, repo, "add", "start.txt")
 	git(t, repo, "commit", "-qm", "run start")
-	return repo, root, host, pendingReviewTestPlan(t, repo, root, gitOut(repo, "rev-parse", "HEAD"))
+	return repo, root, host, pendingReviewTestPlan(t, repo, root, forkspace.GitOut(repo, "rev-parse", "HEAD"))
 }
 
 // Another session committed its task before the loop started and completes it while a review runs,
@@ -322,7 +324,7 @@ func earlyHostTask(t *testing.T, commits int) (repo, root string, host Item, pla
 func TestPendingReviewAnchorsAHostCompletionFromBeforeTheRun(t *testing.T) {
 	requireAnchored := func(t *testing.T, repo, root string, host Item) {
 		t.Helper()
-		anchor := gitOut(repo, "rev-parse", "HEAD~2")
+		anchor := forkspace.GitOut(repo, "rev-parse", "HEAD~2")
 		record, ok, err := readPendingReviewRecord(root, host.ID)
 		if err != nil || !ok || record.Base != anchor {
 			t.Fatalf("host completion record = %+v, ok %v, %v; want it anchored at %s", record, ok, err, anchor)
@@ -455,7 +457,7 @@ func TestPendingReviewRefusesAHostCompletionBesideAPlantedCommit(t *testing.T) {
 		t.Fatalf("enroll beside a planted commit = %v, want a refusal that found 2 in the branch", err)
 	}
 	// Only the person can tell the planted commit from their own, so the refusal names both.
-	planted, own := gitOut(repo, "rev-parse", "--short", "HEAD"), gitOut(repo, "rev-parse", "--short", "HEAD~2")
+	planted, own := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD"), forkspace.GitOut(repo, "rev-parse", "--short", "HEAD~2")
 	if len(duplicate.Commits) != 2 || !strings.Contains(duplicate.Cause(), planted+" by t <t@t>") ||
 		!strings.Contains(duplicate.Cause(), own+" by t <t@t>") {
 		t.Fatalf("refusal = %q, want both commits named with their author", duplicate.Cause())
@@ -469,7 +471,7 @@ func TestPendingReviewExplicitImportIsExactAndIdempotent(t *testing.T) {
 	repo := initRepo(t)
 	root := filepath.Join(repo, TasksRoot)
 	item := taskWithCompletedChecklist(t, root, StateTodo, "legacy-import")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	writeTaskFile(t, filepath.Join(repo, "import.txt"), "legacy completion\n")
 	git(t, repo, "add", "import.txt")
 	git(t, repo, "commit", "-qm", "finish legacy import\n\nCoop-Task: "+item.ID)
@@ -662,11 +664,11 @@ func TestPendingReviewSearchesOnlyTheRecordedRange(t *testing.T) {
 		writeTaskFile(t, filepath.Join(repo, "old.txt"), "older work\n")
 		git(t, repo, "add", "old.txt")
 		git(t, repo, "commit", "-qm", "older work")
-		older := gitOut(repo, "rev-parse", "HEAD")
+		older := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		writeTaskFile(t, filepath.Join(repo, "start.txt"), "the run starts here\n")
 		git(t, repo, "add", "start.txt")
 		git(t, repo, "commit", "-qm", "run start")
-		base := gitOut(repo, "rev-parse", "HEAD")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		writeTaskFile(t, filepath.Join(repo, "range.txt"), "the task's work\n")
 		git(t, repo, "add", "range.txt")
 		git(t, repo, "commit", "-qm", "the task's work\n\nCoop-Task: "+item.ID)
@@ -682,7 +684,7 @@ func TestPendingReviewSearchesOnlyTheRecordedRange(t *testing.T) {
 		}
 
 		resignSince(t, repo, older, "2032-03-04T05:06:07Z")
-		if gitOut(repo, "rev-parse", "HEAD~1") == base {
+		if forkspace.GitOut(repo, "rev-parse", "HEAD~1") == base {
 			t.Fatal("the rewrite kept the recorded start commit")
 		}
 		if cohort, err := LoadPendingReviews(repo, []string{root}); err != nil || len(cohort.Subjects) != 1 {
@@ -774,7 +776,7 @@ func TestPendingReviewReadsVersion1Records(t *testing.T) {
 // enrollment would, instead of refusing every start with "found 0" for a commit that exists.
 func TestPendingReviewAnchorsAVersion1RecordFromBeforeTheRun(t *testing.T) {
 	repo, root, host, plan := earlyHostTask(t, 1)
-	anchor := gitOut(repo, "rev-parse", "HEAD~2")
+	anchor := forkspace.GitOut(repo, "rev-parse", "HEAD~2")
 	if err := CompleteTrustedTask("", root, host); err != nil {
 		t.Fatal(err)
 	}
@@ -1076,8 +1078,8 @@ func TestPendingReviewDigestKeepsFieldsApart(t *testing.T) {
 	}
 
 	repo := initRepo(t)
-	base := gitOut(repo, "rev-parse", "HEAD")
-	raw := "tree " + gitOut(repo, "rev-parse", "HEAD^{tree}") + "\nparent " + base +
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	raw := "tree " + forkspace.GitOut(repo, "rev-parse", "HEAD^{tree}") + "\nparent " + base +
 		"\nauthor A <a@x\x00junk> 1760000000 +0000\ncommitter A <a@x> 1760000000 +0000\n\nsubject\n"
 	store := exec.Command("git", "-C", repo, "hash-object", "-t", "commit", "-w", "--literally", "--stdin")
 	store.Stdin = strings.NewReader(raw)
@@ -1105,7 +1107,7 @@ func TestDescribeTaskCommitsListsFiveAndCountsTheRest(t *testing.T) {
 	var shas []string
 	for i := range 7 {
 		git(t, repo, "commit", "-q", "--allow-empty", "-m", fmt.Sprintf("planted %d", i))
-		shas = append(shas, gitOut(repo, "rev-parse", "HEAD"))
+		shas = append(shas, forkspace.GitOut(repo, "rev-parse", "HEAD"))
 	}
 	got := describeTaskCommits(repo, shas)
 	if len(got) != 6 || got[5] != "and 2 more" {
@@ -1123,7 +1125,7 @@ func TestDescribeTaskCommitsEscapesAuthors(t *testing.T) {
 	if out, err := escaped.CombinedOutput(); err != nil {
 		t.Fatalf("commit with an escape in its author: %v\n%s", err, out)
 	}
-	got := describeTaskCommits(repo, []string{gitOut(repo, "rev-parse", "HEAD~1"), gitOut(repo, "rev-parse", "HEAD")})
+	got := describeTaskCommits(repo, []string{forkspace.GitOut(repo, "rev-parse", "HEAD~1"), forkspace.GitOut(repo, "rev-parse", "HEAD")})
 	if len(got) != 2 || !strings.HasSuffix(got[0], " by t <t@t>") || !strings.HasSuffix(got[1], " by Bo?[31mx?y?z <b@x>") {
 		t.Fatalf("described commits = %q, want the escape, the override and the line separator shown as ?", got)
 	}
@@ -1161,7 +1163,7 @@ func TestPendingReviewVerdictCoversTheTreeTheRunStartsFrom(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, "security.txt"), "fixed\n")
 	git(t, repo, "add", "security.txt")
 	git(t, repo, "commit", "-qm", "security fix")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	item := taskWithCompletedChecklist(t, root, StateTodo, "start-subject")
 	writeTaskFile(t, filepath.Join(repo, "change.txt"), "the task's work\n")
 	git(t, repo, "add", "change.txt")
@@ -1185,9 +1187,9 @@ func TestPendingReviewVerdictCoversTheTreeTheRunStartsFrom(t *testing.T) {
 		t.Fatal(err)
 	}
 	accepted, _, _ := readPendingReviewRecord(root, item.ID)
-	tree := gitOut(repo, "rev-parse", "HEAD^{tree}")
+	tree := forkspace.GitOut(repo, "rev-parse", "HEAD^{tree}")
 	git(t, repo, "rebase", "-q", "--onto", base+"~1", base)
-	if gitOut(repo, "rev-parse", "HEAD^{tree}") == tree {
+	if forkspace.GitOut(repo, "rev-parse", "HEAD^{tree}") == tree {
 		t.Fatal("dropping the run's start commit kept HEAD's tree")
 	}
 	cohort, err := LoadPendingReviews(repo, []string{root})
@@ -1213,7 +1215,7 @@ func TestPendingReviewVerdictCoversTheRunBeforeTheTasksCommit(t *testing.T) {
 	}
 	hostCommitBelow := func(content string) {
 		t.Helper()
-		subjectCommit := gitOut(repo, "rev-parse", "HEAD")
+		subjectCommit := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git(t, repo, "reset", "-q", "--hard", base)
 		writeTaskFile(t, filepath.Join(repo, "host.txt"), content)
 		git(t, repo, "add", "host.txt")
@@ -1314,7 +1316,7 @@ func TestPendingReviewVerdictCoversTheCommitsAfterTheTasksOwn(t *testing.T) {
 		writeTaskFile(t, filepath.Join(repo, "later.txt"), "another task's work\n")
 		git(t, repo, "add", "later.txt")
 		git(t, repo, "commit", "-qm", "later work")
-		resignSince(t, repo, gitOut(repo, "rev-parse", "HEAD~3"), "2036-07-08T09:10:11Z")
+		resignSince(t, repo, forkspace.GitOut(repo, "rev-parse", "HEAD~3"), "2036-07-08T09:10:11Z")
 		cohort, err := LoadPendingReviews(repo, []string{root})
 		if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Phase != PendingReviewVerify {
 			t.Fatalf("cohort after a later commit and signing = %+v, %v; want the task still accepted", cohort, err)
@@ -1474,7 +1476,7 @@ func TestPendingReviewKeepsEarlierDebtAcrossLaterTaskRework(t *testing.T) {
 	root := filepath.Join(repo, TasksRoot)
 	earlier := taskWithCompletedChecklist(t, root, StateTodo, "review-earlier")
 	later := taskWithCompletedChecklist(t, root, StateTodo, "review-later")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	writeTaskFile(t, filepath.Join(repo, "earlier.txt"), "earlier\n")
 	git(t, repo, "add", "earlier.txt")
 	git(t, repo, "commit", "-qm", "earlier implementation\n\nCoop-Task: "+earlier.ID)
@@ -1534,7 +1536,7 @@ func TestCarryReopenedReviewsAfterSigning(t *testing.T) {
 		t.Fatal(err)
 	}
 	reopen := reopenForRework(t, repo, root, done)
-	oldHead := gitOut(repo, "rev-parse", "HEAD")
+	oldHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	resignSince(t, repo, base, "2034-05-06T07:08:09Z")
 	if AuditReopenCurrentValid(repo, "HEAD", done.ID, reopen) {
 		t.Fatal("the signing rewrite left the recorded commits in place")
@@ -1542,7 +1544,7 @@ func TestCarryReopenedReviewsAfterSigning(t *testing.T) {
 	if err := CarryReopenedReviewsAfterSigning(repo, oldHead); err != nil {
 		t.Fatal(err)
 	}
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	got, ok, err := ReadAuditReopenRecord(root, done.ID)
 	if err != nil || !ok || got.Generation != reopen.Generation || got.BaselineHead != head ||
 		!AuditReopenCurrentValid(repo, head, done.ID, got) {
@@ -1605,7 +1607,7 @@ func TestCarryReopenedReviewsAcrossSiblingRework(t *testing.T) {
 	ids := []string{"task-a", "task-b"}
 	carried := func(t *testing.T, repo, root, id string, want AuditReopenRecord) AuditReopenRecord {
 		t.Helper()
-		head := gitOut(repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		got, ok, err := ReadAuditReopenRecord(root, id)
 		if err != nil || !ok || got.Generation != want.Generation || got.BaselineHead != head ||
 			!AuditReopenCurrentValid(repo, head, id, got) {
@@ -1616,7 +1618,7 @@ func TestCarryReopenedReviewsAcrossSiblingRework(t *testing.T) {
 
 	t.Run("the earlier task's rework replays the later one", func(t *testing.T) {
 		repo, root, earlier, later := setup(t)
-		oldHead := gitOut(repo, "rev-parse", "HEAD")
+		oldHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git(t, repo, "reset", "--hard", "HEAD~2")
 		writeTaskFile(t, filepath.Join(repo, "task-a.txt"), "task-a repaired\n")
 		git(t, repo, "add", "task-a.txt")
@@ -1630,7 +1632,7 @@ func TestCarryReopenedReviewsAcrossSiblingRework(t *testing.T) {
 
 	t.Run("the later task's rework changes the earlier one's history", func(t *testing.T) {
 		repo, root, earlier, later := setup(t)
-		oldHead := gitOut(repo, "rev-parse", "HEAD")
+		oldHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		writeTaskFile(t, filepath.Join(repo, "task-b.txt"), "task-b repaired\n")
 		git(t, repo, "add", "task-b.txt")
 		git(t, repo, "commit", "--amend", "--no-edit", "--no-gpg-sign", "--quiet")
@@ -1648,7 +1650,7 @@ func TestCarryReopenedReviewsAcrossSiblingRework(t *testing.T) {
 		writeTaskFile(t, filepath.Join(repo, "task-b.txt"), "task-b changed outside any rework\n")
 		git(t, repo, "add", "task-b.txt")
 		git(t, repo, "commit", "--amend", "--no-edit", "--no-gpg-sign", "--quiet")
-		stale := gitOut(repo, "rev-parse", "HEAD")
+		stale := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		resignSince(t, repo, "HEAD~1", "2035-06-07T08:09:10Z")
 		if err := CarryReopenedReviews(repo, []string{root}, ids, stale, nil); err != nil {
 			t.Fatal(err)
@@ -1667,7 +1669,7 @@ func TestPendingReviewResumesReworkAStoppedControllerLeft(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, "descendant.txt"), "descendant\n")
 	git(t, repo, "add", "descendant.txt")
 	git(t, repo, "commit", "-qm", "descendant implementation\n\nCoop-Task: descendant")
-	descendant := gitOut(repo, "rev-parse", "HEAD")
+	descendant := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
 		t.Fatal(err)
 	}
@@ -1685,7 +1687,7 @@ func TestPendingReviewResumesReworkAStoppedControllerLeft(t *testing.T) {
 	git(t, repo, "add", "change.txt")
 	git(t, repo, "commit", "-qm", "implement review subject\n\nCoop-Task: "+done.ID)
 	git(t, repo, "cherry-pick", descendant)
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	cohort, err := LoadPendingReviews(repo, []string{root})
 	if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Phase != PendingReviewReopened {
@@ -1704,7 +1706,7 @@ func TestPendingReviewResumesReworkAStoppedControllerLeft(t *testing.T) {
 func TestPendingReviewResumesInterruptedReworkForItsSiblings(t *testing.T) {
 	repo := initRepo(t)
 	root := filepath.Join(repo, TasksRoot)
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	ids := []string{"task-a", "task-b"}
 	for _, id := range ids {
 		task := taskWithCompletedChecklist(t, root, StateTodo, id)
@@ -1727,13 +1729,13 @@ func TestPendingReviewResumesInterruptedReworkForItsSiblings(t *testing.T) {
 	if err := MoveTaskDir(root, reworking, StateInProgress); err != nil {
 		t.Fatal(err)
 	}
-	reviewed := gitOut(repo, "rev-parse", "HEAD")
+	reviewed := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git(t, repo, "reset", "--hard", base)
 	writeTaskFile(t, filepath.Join(repo, "task-a.txt"), "task-a repaired\n")
 	git(t, repo, "add", "task-a.txt")
 	git(t, repo, "commit", "-qm", "task-a implementation\n\nCoop-Task: task-a")
 	git(t, repo, "cherry-pick", reviewed)
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	if cohort, err := LoadPendingReviews(repo, []string{root}); err != nil || len(cohort.Subjects) != 2 {
 		t.Fatalf("cohort after the interrupted rework = %+v, %v", cohort, err)
@@ -1861,7 +1863,7 @@ func TestPendingReviewIgnoresAmbientHooks(t *testing.T) {
 			t.Setenv("GIT_CONFIG_NOSYSTEM", "0")
 			t.Setenv(source, cfg)
 			repo, _, _, assignment, done, plan := pendingReviewTestCompletion(t)
-			message := gitOut(repo, "log", "-1", "--format=%B")
+			message := forkspace.GitOut(repo, "log", "-1", "--format=%B")
 			if strings.TrimSpace(message) != "implement review subject\n\nCoop-Task: review-me" {
 				t.Fatalf("fixture commit message changed: %q", message)
 			}

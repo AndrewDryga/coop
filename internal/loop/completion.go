@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/taskmcp"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
@@ -38,7 +39,7 @@ func boundedCorrectionDetail(detail string) string {
 // checkAssignedCompletion is early feedback, not completion authority. The box is still running,
 // so the full post-exit ref/lease/window audit must recheck everything before accepting the move.
 func checkAssignedCompletion(repo, base, id string, reopen *tasks.AuditReopenRecord, baseline map[string]string) error {
-	head, err := gitOutErr(repo, "rev-parse", "HEAD")
+	head, err := forkspace.GitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil {
 		return fmt.Errorf("read completion HEAD: %w", err)
 	}
@@ -59,7 +60,7 @@ func checkAssignedCompletion(repo, base, id string, reopen *tasks.AuditReopenRec
 }
 
 func checkNoChangeCompletion(repo, base, id, baseline string) error {
-	head, err := gitOutErr(repo, "rev-parse", "HEAD")
+	head, err := forkspace.GitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil {
 		return fmt.Errorf("read completion HEAD: %w", err)
 	}

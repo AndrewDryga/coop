@@ -1,8 +1,6 @@
 package tasks
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 // The host-side face of the in-box task channel (internal/taskmcp). Every mutation a box can
@@ -64,12 +64,8 @@ type TaskDraft struct {
 }
 
 func (d TaskDraft) proposal() (ForkTaskProposal, error) {
-	idbuf := make([]byte, 16)
-	if _, err := rand.Read(idbuf); err != nil {
-		return ForkTaskProposal{}, err
-	}
 	proposal := ForkTaskProposal{
-		Version: forkProposalVersion, ID: hex.EncodeToString(idbuf), Kind: d.Kind, Title: d.Title,
+		Version: forkProposalVersion, ID: randid.Hex(16), Kind: d.Kind, Title: d.Title,
 		Context: d.Context, Acceptance: d.Acceptance, Approach: d.Approach, Subtasks: d.Subtasks,
 	}
 	if err := validateForkTaskProposal(proposal); err != nil {

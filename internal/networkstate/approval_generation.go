@@ -2,12 +2,13 @@ package networkstate
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 // The approval generation tells a long-running supervisor — a running `coop acp` editor session —
@@ -64,9 +65,7 @@ func (s *Store) announceApprovalChange(ctx context.Context) error {
 		if err != nil || current == 0 {
 			// A missing or unreadable counter starts again at a random point, never at 1: a value
 			// a supervisor already saw would hide this change, and an unreadable one is repaired.
-			if next, err = randomApprovalGeneration(); err != nil {
-				return err
-			}
+			next = randomApprovalGeneration()
 		}
 		data, err := json.Marshal(approvalGeneration{Version: 1, Generation: next})
 		if err != nil {
@@ -82,10 +81,6 @@ func (s *Store) announceApprovalChange(ctx context.Context) error {
 
 // randomApprovalGeneration is a fresh starting point: never zero, which means "nothing changed
 // yet", and with room to count up from it.
-func randomApprovalGeneration() (uint64, error) {
-	var raw [8]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return 0, err
-	}
-	return binary.BigEndian.Uint64(raw[:])>>1 | 1, nil
+func randomApprovalGeneration() uint64 {
+	return binary.BigEndian.Uint64(randid.Bytes(8))>>1 | 1
 }

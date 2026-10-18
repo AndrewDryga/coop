@@ -2,7 +2,6 @@ package box
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +15,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/safefile"
 	"golang.org/x/sys/unix"
 )
@@ -473,11 +473,7 @@ func writeNativeHistoryReceipt(root *accountAuthorityRoot, lock *os.File, name s
 	if err != nil {
 		return err
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
-	}
-	target := ".receipt-" + hex.EncodeToString(nonce[:])
+	target := ".receipt-" + randid.Hex(16)
 	fd, err := unix.Openat(int(root.dir().Fd()), target,
 		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {

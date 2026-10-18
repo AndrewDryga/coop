@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 // CheckoutFingerprint binds a no-change completion to the index and actual checkout bytes.
@@ -49,7 +51,7 @@ func checkoutFingerprint(repo string, root *os.Root, ancestors []os.FileInfo) (s
 	if err := checkIdentity(); err != nil {
 		return "", err
 	}
-	head, err := gitRawOutErr(repo, "rev-parse", "--verify", "--quiet", "HEAD")
+	head, err := forkspace.GitOutput(repo, "rev-parse", "--verify", "--quiet", "HEAD")
 	if err != nil {
 		// An initialized, unborn nested repository is normal. Other Git failures are not
 		// evidence of an empty checkout.
@@ -57,21 +59,21 @@ func checkoutFingerprint(repo string, root *os.Root, ancestors []os.FileInfo) (s
 		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
 			return "", err
 		}
-		ref, refErr := gitRawOutErr(repo, "symbolic-ref", "--quiet", "HEAD")
+		ref, refErr := forkspace.GitOutput(repo, "symbolic-ref", "--quiet", "HEAD")
 		if refErr != nil {
 			return "", errors.Join(err, refErr)
 		}
 		head = "unborn:" + ref
 	}
-	status, err := gitRawOutErr(repo, "status", "--porcelain", "-z", "--untracked-files=all", "--ignore-submodules=all")
+	status, err := forkspace.GitOutput(repo, "status", "--porcelain", "-z", "--untracked-files=all", "--ignore-submodules=all")
 	if err != nil {
 		return "", err
 	}
-	index, err := gitRawOutErr(repo, "ls-files", "--stage", "-v", "-z")
+	index, err := forkspace.GitOutput(repo, "ls-files", "--stage", "-v", "-z")
 	if err != nil {
 		return "", err
 	}
-	untracked, err := gitRawOutErr(repo, "ls-files", "--others", "--exclude-standard", "-z")
+	untracked, err := forkspace.GitOutput(repo, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
 		return "", err
 	}

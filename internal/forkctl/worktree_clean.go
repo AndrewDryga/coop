@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 // ForkWorktreeClean proves that the workspace and every populated submodule are
@@ -26,7 +28,7 @@ func forkWorktreeClean(ws string, depth int, remaining *int) error {
 		return errors.New("too many nested submodules; keeping the workspace")
 	}
 	*remaining--
-	top, err := gitRawOutErr(ws, "rev-parse", "--show-toplevel")
+	top, err := forkspace.GitOutput(ws, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return fmt.Errorf("inspect fork Git root: %w", err)
 	}
@@ -44,7 +46,7 @@ func forkWorktreeClean(ws string, depth int, remaining *int) error {
 	if !os.SameFile(actual, expected) {
 		return errors.New("fork Git root does not match its workspace")
 	}
-	entries, err := gitRawOutErr(ws, "ls-files", "--stage", "-v", "-z")
+	entries, err := forkspace.GitOutput(ws, "ls-files", "--stage", "-v", "-z")
 	if err != nil {
 		return fmt.Errorf("inspect fork index: %w", err)
 	}
@@ -113,7 +115,7 @@ func forkWorktreeClean(ws string, depth int, remaining *int) error {
 	}
 	// Each populated child was checked through its own trusted view above. Let Git
 	// compare gitlink HEADs, but never run child status using box-written config.
-	status, err := gitOutErr(ws, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=dirty")
+	status, err := forkspace.GitOutErr(ws, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=dirty")
 	if err != nil {
 		return fmt.Errorf("inspect fork worktree: %w", err)
 	}

@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -80,8 +81,7 @@ func queueProgress(hosts []string) (tasks.TaskCounts, string) {
 
 var tasksVerbs = tasks.TasksVerbs
 
-// readFileString is a trivial, self-contained leaf helper — internal/tasks keeps its own copy (see
-// its git.go for why: the same "local-redeclare" shape as gitOut).
+// readFileString is a trivial, self-contained leaf helper; internal/tasks keeps its own copy.
 func readFileString(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {

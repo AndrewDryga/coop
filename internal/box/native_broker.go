@@ -25,6 +25,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/safefile"
 	"golang.org/x/sys/unix"
@@ -64,7 +65,7 @@ func planNativeAccounts(ctx context.Context, cfg *config.Config, rt runtime.Runt
 	if !spec.Homes || spec.Login || cfg.Egress == "none" {
 		return nil, nil
 	}
-	run := &nativeRun{cfg: cfg.NativeAuthorityConfig(), runID: randomHex(16)}
+	run := &nativeRun{cfg: cfg.NativeAuthorityConfig(), runID: randid.Hex(16)}
 	for _, provider := range credentialScope(cfg, spec) {
 		ag, _ := agents.Get(provider)
 		if err := validateNativeOverrides(cfg, spec, ag); err != nil {
@@ -136,7 +137,7 @@ func planNativeAccounts(ctx context.Context, cfg *config.Config, rt runtime.Runt
 				return nil, fmt.Errorf("%s repository account state in %s (recovery custody: %s): %w", provider, home, filepath.Dir(home), err)
 			}
 		} else {
-			seed.StorageHostname, seed.StorageUsername = "coop-native-"+randomHex(12), "node"
+			seed.StorageHostname, seed.StorageUsername = "coop-native-"+randid.Hex(12), "node"
 		}
 		selected := &nativeRunAccount{agent: ag, account: account, record: record, seed: seed, routes: routes}
 		if !exists {
@@ -249,7 +250,7 @@ func prepareNativeAuth(ctx context.Context, home string, native agents.NativeCre
 		Family             string
 		Hostname, Username string
 	}
-	want := authReceipt{Version: 1, Family: seed.Family, Hostname: "coop-native-" + randomHex(12), Username: "node"}
+	want := authReceipt{Version: 1, Family: seed.Family, Hostname: "coop-native-" + randid.Hex(12), Username: "node"}
 	receipt, err := safefile.ReadRegular(custody.dir(), "seed.json", 4096)
 	if err == nil {
 		want = authReceipt{}
@@ -466,7 +467,7 @@ func publishMissingNativeAuth(custody *accountAuthorityRoot, lock, home *os.File
 	if !accountNameValid(name) {
 		return errors.New("invalid native seed filename")
 	}
-	stage := "public-seed-" + randomHex(12)
+	stage := "public-seed-" + randid.Hex(12)
 	if err := writeAccountPrivate(custody, lock, stage, data); err != nil {
 		return err
 	}

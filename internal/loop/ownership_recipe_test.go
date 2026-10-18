@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
@@ -30,15 +31,15 @@ func TestLoopOwnershipCommitRecipe(t *testing.T) {
 	for name, body := range contents {
 		writeTaskFile(t, filepath.Join(repo, name), body)
 	}
-	foreignIndex := gitOut(repo, "ls-files", "--stage", "--", "staged.txt", "unstaged.txt", "untracked.txt", ".agent/tasks")
+	foreignIndex := forkspace.GitOut(repo, "ls-files", "--stage", "--", "staged.txt", "unstaged.txt", "untracked.txt", ".agent/tasks")
 	writeTaskFile(t, filepath.Join(repo, "owned.txt"), "task change\n")
 	git("add", "--", "owned.txt")
 	git("diff", "--cached")
 	git("commit", "--only", "-m", "Task change\n\nCoop-Task: current", "--", "owned.txt")
-	if got := gitOut(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"); got != "owned.txt" {
+	if got := forkspace.GitOut(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"); got != "owned.txt" {
 		t.Fatalf("commit included unowned paths: %q", got)
 	}
-	if got := gitOut(repo, "ls-files", "--stage", "--", "staged.txt", "unstaged.txt", "untracked.txt", ".agent/tasks"); got != foreignIndex {
+	if got := forkspace.GitOut(repo, "ls-files", "--stage", "--", "staged.txt", "unstaged.txt", "untracked.txt", ".agent/tasks"); got != foreignIndex {
 		t.Fatalf("foreign index changed: before %q, after %q", foreignIndex, got)
 	}
 	for name, want := range contents {
@@ -63,7 +64,7 @@ func TestLoopOwnershipPreflightBeforeRestoration(t *testing.T) {
 			if staged {
 				git("add", "source.txt")
 			}
-			before := gitOut(repo, "ls-files", "--stage")
+			before := forkspace.GitOut(repo, "ls-files", "--stage")
 			// Refuse ambiguous source before installing any cleanup. The marker
 			// models an unsafe restore hook without ever running a destructive one.
 			cmd := exec.Command("sh", "-c", `git diff --quiet -- source.txt && git diff --cached --quiet -- source.txt || exit 17
@@ -77,7 +78,7 @@ exit 0`)
 			if _, err := os.Stat(filepath.Join(repo, "restore-ran")); !os.IsNotExist(err) {
 				t.Fatalf("refusal armed restoration: %v", err)
 			}
-			if got := gitOut(repo, "ls-files", "--stage"); got != before {
+			if got := forkspace.GitOut(repo, "ls-files", "--stage"); got != before {
 				t.Fatalf("refusal changed index: %q -> %q", before, got)
 			}
 			got, err := os.ReadFile(filepath.Join(repo, "source.txt"))

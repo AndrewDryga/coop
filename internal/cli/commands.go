@@ -204,7 +204,7 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	if len(peers) > 0 || (a.preset != nil && agent != "") {
 		lead = agent // a preset makes the agent a lead too: its routing contract mounts via ConsultLead
 	}
-	pre := gitOut(repo, "rev-parse", "HEAD")
+	pre := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	activityRepo, forkIdentity, err := forkspace.ResolveProjectBinding(repo)
 	if err != nil {
 		return 1, err

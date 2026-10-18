@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +21,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/gatewayimage"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -99,12 +98,12 @@ func planOpenBroker(cfg *config.Config, rt runtime.Runtime, spec RunSpec, snapsh
 	if len(plan.mcp) == 0 {
 		return nil, kept, nil
 	}
-	b := &openBroker{plan: plan, runID: randomHex(16), epoch: randomHex(16)}
+	b := &openBroker{plan: plan, runID: randid.Hex(16), epoch: randid.Hex(16)}
 	for _, route := range plan.mcp {
 		if !stay[route.variable] && !slices.Contains(b.scrub, route.variable) {
 			b.scrub = append(b.scrub, route.variable)
 		}
-		b.substitutes = append(b.substitutes, randomHex(32))
+		b.substitutes = append(b.substitutes, randid.Hex(32))
 	}
 	for _, name := range b.scrub {
 		if extraEnvAssigns(cfg.ExtraRunArgs, name) || extraEnvAssigns(spec.ExtraArgs, name) {
@@ -427,10 +426,4 @@ func exitError(code int, err error) error {
 func lastLines(output string, n int) string {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	return strings.Join(lines[max(0, len(lines)-n):], "\n")
-}
-
-func randomHex(size int) string {
-	random := make([]byte, size)
-	_, _ = rand.Read(random) // crypto/rand.Read never fails on a supported platform
-	return hex.EncodeToString(random)
 }

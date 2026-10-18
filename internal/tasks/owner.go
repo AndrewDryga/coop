@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/processidentity"
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const (
@@ -361,13 +361,7 @@ func removeTaskOwnerRecord(root, id string) error {
 	return lock.RemoveHumanOrAbsent()
 }
 
-func newAssignmentID() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw[:]), nil
-}
+func newAssignmentID() string { return randid.Hex(16) }
 
 func sameForkAssignment(a, b ForkTaskOwner) bool {
 	return a.Fork == b.Fork && a.AssignmentID == b.AssignmentID

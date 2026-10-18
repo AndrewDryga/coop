@@ -93,10 +93,7 @@ func runProviderResumeLiveCompatibility(
 	}
 	sessionID := ""
 	if ag.PresetSessionID() {
-		sessionID, err = newSessionID()
-		if err != nil {
-			return fail(false, "identifier_generation")
-		}
+		sessionID = newSessionID()
 	}
 	sessionFile := filepath.Join(layout.State, "provider-session-id")
 

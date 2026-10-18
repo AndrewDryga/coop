@@ -279,10 +279,7 @@ func TestTaskOwnerSurvivesADeviceRenumberButNotACopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := newDurableIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	fresh := newDurableIdentity()
 	replacement, err := json.Marshal(taskIdentityRecord{Version: taskIdentityVersion, ID: fresh, CreatedAt: time.Now().UTC()})
 	if err != nil {
 		t.Fatal(err)

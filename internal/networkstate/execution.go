@@ -2,7 +2,6 @@ package networkstate
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,6 +20,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/processidentity"
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const (
@@ -125,13 +125,7 @@ func (e *Evidence) Close() error                           { return e.files.Clos
 func (e *Evidence) Execution(id string) (Execution, error) { return e.files.execution(id) }
 func (s *Store) Execution(id string) (Execution, error)    { return s.execution(id) }
 
-func randomExecutionID() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw[:]), nil
-}
+func randomExecutionID() string { return randid.Hex(16) }
 func lowerHex(value string, size int) bool {
 	if len(value) != size {
 		return false
@@ -195,14 +189,8 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, smoke *
 	if spec.Runtime != "docker" || spec.DaemonID == "" || len(spec.DaemonID) > 128 || !localEndpoint(spec.Endpoint) || !strings.HasPrefix(spec.GatewayImage, "sha256:") || !lowerHex(strings.TrimPrefix(spec.GatewayImage, "sha256:"), 64) {
 		return Execution{}, errors.New("network execution requires exact Docker daemon and helper image identity")
 	}
-	id, err := randomExecutionID()
-	if err != nil {
-		return Execution{}, err
-	}
-	epoch, err := randomExecutionID()
-	if err != nil {
-		return Execution{}, err
-	}
+	id := randomExecutionID()
+	epoch := randomExecutionID()
 	owner := Supervisor{PID: os.Getpid(), StartToken: processidentity.StartToken(os.Getpid()), Host: spec.Host}
 	if !processidentity.Stable(owner.StartToken) {
 		return Execution{}, errors.New("network supervisor identity unavailable")

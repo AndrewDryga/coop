@@ -530,3 +530,41 @@ func TestGitCommandsStopAtTheStallLimitAndSaySo(t *testing.T) {
 		t.Fatal("git waited on the FIFO past the stall limit")
 	}
 }
+
+// TestGitOutErr: the erroring read tells a FAILED git call apart from one that legitimately printed
+// nothing, and carries git's own stderr so a caller can hand a human the cause. GitOut, which every
+// display-only site still uses, keeps conflating the two.
+func TestGitOutErr(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo, run := gitrepo.New(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
+	if head, err := GitOutErr(repo, "rev-parse", "HEAD"); err != nil || head == "" {
+		t.Fatalf("GitOutErr(rev-parse HEAD) = (%q, %v), want a sha and no error", head, err)
+	}
+	// Empty output from a command that SUCCEEDED (a clean tree) is not a failure.
+	if out, err := GitOutErr(repo, "status", "--porcelain"); err != nil || out != "" {
+		t.Fatalf("GitOutErr(status --porcelain) on a clean tree = (%q, %v), want empty and no error", out, err)
+	}
+	out, err := GitOutErr(repo, "rev-parse", "no-such-ref")
+	if err == nil || out != "" {
+		t.Fatalf("GitOutErr(rev-parse no-such-ref) = (%q, %v), want empty and an error", out, err)
+	}
+	if !strings.Contains(err.Error(), "rev-parse no-such-ref") {
+		t.Errorf("GitOutErr error %q does not name the command that failed", err)
+	}
+	if GitOut(repo, "rev-parse", "no-such-ref") != "" {
+		t.Error("GitOut must keep swallowing a failure as empty — display sites depend on it")
+	}
+	// git's stderr is the whole reason the error is actionable; a stub git proves it survives
+	// without depending on the locale of the real git's messages.
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nprintf 'fatal: bad revision\\n' >&2\nexit 128\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if _, err := GitOutErr(repo, "log", "bogus..HEAD"); err == nil || !strings.Contains(err.Error(), "fatal: bad revision") {
+		t.Errorf("GitOutErr = %v, want git's own stderr carried into the error", err)
+	}
+}

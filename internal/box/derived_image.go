@@ -2,7 +2,6 @@ package box
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -17,6 +16,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -476,11 +476,7 @@ const staleImageProofAge = time.Hour
 func createImageProofContainer(ctx context.Context, docker filteredDocker, image string) (runtime.DockerRef, error) {
 	// Housekeeping on the way in: a daemon that cannot prune leaves the leftovers for the next proof.
 	_ = docker.PruneContainers(ctx, imageProofLabel, staleImageProofAge)
-	nonce := make([]byte, 8)
-	if _, err := rand.Read(nonce); err != nil {
-		return runtime.DockerRef{}, err
-	}
-	ref := runtime.DockerRef{Name: "coop-image-proof-" + hex.EncodeToString(nonce),
+	ref := runtime.DockerRef{Name: "coop-image-proof-" + randid.Hex(8),
 		Labels: map[string]string{imageProofLabel: image}}
 	id, err := docker.CreateContainer(ctx, runtime.DockerCreate{Ref: ref, Image: image, Command: []string{"true"}})
 	ref.ID = id

@@ -1,7 +1,6 @@
 package tasks
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +14,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const (
@@ -400,11 +401,7 @@ func writeLeaseCompletionReceipt(authority *os.File, taskDir string, generation 
 	if err != nil {
 		return err
 	}
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return err
-	}
-	receipt.Nonce = hex.EncodeToString(nonce)
+	receipt.Nonce = randid.Hex(16)
 	if len(generation) > 0 {
 		receipt.AuditReopenGeneration = generation[0]
 	}
@@ -713,13 +710,7 @@ func removeAuditReopenRecordIfMatches(root, id, generation string) error {
 	return removeAuditReopenRecord(root, id)
 }
 
-func newAuditReopenGeneration() (string, error) {
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(nonce), nil
-}
+func newAuditReopenGeneration() string { return randid.Hex(16) }
 
 func readLeaseCompletionReceipt(authority *os.File, taskDir string) (leaseCompletionReceipt, bool) {
 	want, err := completionReceiptFor(taskDir)

@@ -25,7 +25,7 @@ func TestLoopGitNeverExecutesRepositoryDrivers(t *testing.T) {
 			writeTaskFile(t, filepath.Join(repo, name), "before\n")
 			git("add", "--", name)
 			git("commit", "-qm", "base")
-			head := gitOut(repo, "rev-parse", "HEAD")
+			head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			if head == "" {
 				t.Fatal("fixture HEAD is missing")
 			}
@@ -42,7 +42,7 @@ func TestLoopGitNeverExecutesRepositoryDrivers(t *testing.T) {
 
 			switch operation {
 			case "status":
-				out, err := gitOutErr(repo, "status", "--porcelain=v1", "--untracked-files=no")
+				out, err := forkspace.GitOutErr(repo, "status", "--porcelain=v1", "--untracked-files=no")
 				if err != nil || !strings.Contains(out, "tracked file") {
 					t.Fatalf("status did not report the tracked edit: %q, %v", out, err)
 				}

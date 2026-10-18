@@ -3,8 +3,6 @@ package box
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/taskchannel"
 )
@@ -55,13 +54,7 @@ type taskChannel struct {
 }
 
 // taskChannelVolume names the run-private volume; the same nonce names the helper container.
-func taskChannelVolume() (string, error) {
-	nonce := make([]byte, 8)
-	if _, err := rand.Read(nonce); err != nil {
-		return "", err
-	}
-	return "coop-tasks-" + hex.EncodeToString(nonce), nil
-}
+func taskChannelVolume() string { return "coop-tasks-" + randid.Hex(8) }
 
 // taskChannelMount is the box-side bind: the channel volume, read-only, at the socket's directory.
 func taskChannelMount(volume string) string {

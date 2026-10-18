@@ -255,16 +255,16 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 // forkBranch / forkUpdated read a fork's state for `coop fork ls`.
 // They run against an agent-controlled tree (post-work), so they use the hardened
 // helpers — `diff`/`log` would otherwise fire a planted core.fsmonitor or diff.external.
-func forkBranch(ws string) string { return gitOut(ws, "rev-parse", "--abbrev-ref", "HEAD") }
+func forkBranch(ws string) string { return forkspace.GitOut(ws, "rev-parse", "--abbrev-ref", "HEAD") }
 
 func forkUpdated(repo, ws string) string {
 	// Show the fork's OWN latest commit. A fresh fork has none, so `git log -1` would report the base
 	// commit it inherited from the clone — misreading a seconds-old fork as hours/days stale (and a
 	// truly idle fork as fresh). When there are no commits beyond the base, fall back to the clone's
 	// own age instead of the inherited time.
-	if base := gitOut(repo, "rev-parse", "HEAD"); base != "" {
-		if n := gitOut(ws, "rev-list", "--count", base+"..HEAD"); n != "" && n != "0" {
-			if rel := gitOut(ws, "log", "-1", "--format=%cr"); rel != "" {
+	if base := forkspace.GitOut(repo, "rev-parse", "HEAD"); base != "" {
+		if n := forkspace.GitOut(ws, "rev-list", "--count", base+"..HEAD"); n != "" && n != "0" {
+			if rel := forkspace.GitOut(ws, "log", "-1", "--format=%cr"); rel != "" {
 				return rel
 			}
 		}

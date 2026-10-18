@@ -3,7 +3,6 @@ package box
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/safefile"
 	"golang.org/x/sys/unix"
 )
@@ -409,11 +409,7 @@ func (root *accountAuthorityRoot) publish(lock *os.File, spec accountAuthoritySp
 	if err != nil || len(data) >= accountAuthorityLimit {
 		return current, false, errors.New("canonical credential serialization failed")
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return current, false, err
-	}
-	name := ".authority-" + hex.EncodeToString(nonce[:])
+	name := ".authority-" + randid.Hex(16)
 	fd, err := unix.Openat(int(root.dir().Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return current, false, err

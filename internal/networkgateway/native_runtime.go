@@ -382,9 +382,7 @@ func (g *GuardRuntime) prepareNative(config LaunchConfig, clock *BootClock, cont
 	var resolvers []*Resolver
 	for _, host := range config.NativeOrigins {
 		var key [32]byte
-		if _, err := rand.Read(key[:]); err != nil {
-			return nil, err
-		}
+		_, _ = rand.Read(key[:])
 		rule := egress.Rule{To: egress.Destination{Domain: host}, Protocol: "tls", Ports: []int{443}}
 		policy, err := egress.Compile("native-broker", egress.Filtered, []egress.Input{{Rules: []egress.Rule{rule}, Origin: egress.Origin{Kind: "broker", Name: host}}}, nil, false, key[:])
 		if err != nil {

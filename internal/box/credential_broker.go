@@ -1,7 +1,6 @@
 package box
 
 import (
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +15,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 // credentialRoute is one brokered provider account in a run: the adapter's request shape, the real
@@ -396,10 +396,7 @@ func (f *filteredExecution) prepareCredentialBroker(artifacts compositionArtifac
 	routes := f.broker.plan.gatewayRoutes()
 	f.broker.substitutes = make([]string, len(routes))
 	for i, route := range routes {
-		random := make([]byte, 32)
-		if _, err := rand.Read(random); err != nil {
-			return errors.New("create credential broker substitute")
-		}
+		random := randid.Bytes(32)
 		var credential string
 		switch {
 		case route.Kind == networkgateway.CredentialBrokerDownload:

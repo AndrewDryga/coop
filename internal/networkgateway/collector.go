@@ -139,7 +139,8 @@ func NewCollector(g *Guard, e *EnvoyEvents, doh *DoH, extraResolvers ...*Resolve
 		envoy: e, resolver: g.resolver, resolvers: resolvers, doh: doh, controller: g.controller, boundary: g.boundary(),
 		inventory: func() ([]SocketRow, error) { return readSocketInventory(g.boundary()) }, flows: make(map[string]*collectedFlow),
 		wake: make(chan struct{}, 1)}
-	if _, err := rand.Read(c.key[:]); err != nil || !c.started.Valid() {
+	_, _ = rand.Read(c.key[:])
+	if !c.started.Valid() {
 		return nil, Failure("collector_unavailable")
 	}
 	c.snapshot = networkview.Snapshot{Version: networkview.Version, RunID: c.identity.RunID, Epoch: c.identity.Epoch,

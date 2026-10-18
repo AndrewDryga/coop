@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
@@ -107,7 +108,7 @@ func TestSignUnpushedTakesRefAuthority(t *testing.T) {
 	run("config", "user.name", "T")
 	run("config", "commit.gpgsign", "false")
 	run("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	run("commit", "-q", "--allow-empty", "-m", "unpushed")
 
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}

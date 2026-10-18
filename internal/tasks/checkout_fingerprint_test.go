@@ -129,17 +129,17 @@ func TestNoChangeCompletionRejectsSameStatusEdits(t *testing.T) {
 			writeTaskFile(t, filepath.Join(repo, "source"), "original\n")
 			git("add", "source")
 			git("commit", "-m", "base")
-			head := gitOut(repo, "rev-parse", "HEAD")
+			head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 			test.inherit(t, repo, git)
 			baseline, err := CheckoutFingerprint(repo)
 			if err != nil {
 				t.Fatal(err)
 			}
-			before := gitOut(repo, "status", "--porcelain", "--untracked-files=all")
+			before := forkspace.GitOut(repo, "status", "--porcelain", "--untracked-files=all")
 
 			test.edit(t, repo, git)
-			if after := gitOut(repo, "status", "--porcelain", "--untracked-files=all"); after != before {
+			if after := forkspace.GitOut(repo, "status", "--porcelain", "--untracked-files=all"); after != before {
 				t.Fatalf("the fixture changed the status listing, so it does not test what it claims:\n"+
 					"before: %q\nafter:  %q", before, after)
 			}
@@ -324,11 +324,11 @@ func TestCheckoutFingerprintDoesNotRunSubmoduleDrivers(t *testing.T) {
 	writeTaskFile(t, filepath.Join(module, "module.go"), "package example\nconst Version = 1\n")
 	moduleGit("add", ".gitattributes", "module.go")
 	moduleGit("commit", "-qm", "first version")
-	first := gitOut(module, "rev-parse", "HEAD")
+	first := forkspace.GitOut(module, "rev-parse", "HEAD")
 	writeTaskFile(t, filepath.Join(module, "module.go"), "package example\nconst Version = 2\n")
 	moduleGit("add", "module.go")
 	moduleGit("commit", "-qm", "second version")
-	second := gitOut(module, "rev-parse", "HEAD")
+	second := forkspace.GitOut(module, "rev-parse", "HEAD")
 	repo, git := gitrepo.New(t)
 	const path = "deps/example"
 	git("-c", "protocol.file.allow=always", "submodule", "add", "-q", module, path)

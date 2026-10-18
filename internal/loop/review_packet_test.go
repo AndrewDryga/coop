@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
@@ -21,7 +22,7 @@ func TestReviewPacketIncludesBoundedExactCommitDiff(t *testing.T) {
 	}
 	git("add", "source.go")
 	git("commit", "-qm", "change")
-	sha := gitOut(repo, "rev-parse", "--short", "HEAD")
+	sha := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
 	packet := reviewPacket(repo, nil, nil, loopChangeSet{tasks: []taskChanges{{
 		id: "task-a", commits: []commitInfo{{sha: sha, subject: "change"}}, files: []string{"source.go"},
 	}}})

@@ -29,7 +29,7 @@ import (
 func signBase(repo, from string) (string, error) {
 	base := from
 	if base == "" {
-		if u := gitOut(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); u != "" {
+		if u := forkspace.GitOut(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); u != "" {
 			base = u
 		} else {
 			return "", ui.CommandFailed("Could not determine which commits to sign", "This branch has no upstream.",
@@ -37,7 +37,7 @@ func signBase(repo, from string) (string, error) {
 				[2]string{"Help:", "coop help sign"})
 		}
 	}
-	if gitOut(repo, "rev-parse", "--verify", "--quiet", base+"^{commit}") == "" {
+	if forkspace.GitOut(repo, "rev-parse", "--verify", "--quiet", base+"^{commit}") == "" {
 		return "", fmt.Errorf("no such commit: %s", base)
 	}
 	return base, nil
@@ -46,24 +46,24 @@ func signBase(repo, from string) (string, error) {
 // rangeCount is the number of commits in base..head.
 func rangeCount(repo, base, head string) int {
 	n := 0
-	fmt.Sscanf(gitOut(repo, "rev-list", "--count", base+".."+head), "%d", &n)
+	fmt.Sscanf(forkspace.GitOut(repo, "rev-list", "--count", base+".."+head), "%d", &n)
 	return n
 }
 
 // rangeTrees returns each commit tree from oldest to newest. Signing may change commit objects,
 // parent ids, and committer timestamps, but it must never change the committed snapshots.
 func rangeTrees(repo, base, head string) string {
-	return gitOut(repo, "log", "--reverse", "--format=%T", base+".."+head)
+	return forkspace.GitOut(repo, "log", "--reverse", "--format=%T", base+".."+head)
 }
 
 // signRangeBase bounds the rewrite to work descended from base. A loop iteration may amend its
 // starting commit, making the old and new commits siblings; in that case their merge base is the
 // last commit that must remain untouched. Unrelated histories are refused rather than guessed.
 func signRangeBase(repo, base, head string) (string, error) {
-	if gitRun(repo, "merge-base", "--is-ancestor", base, head) == nil {
+	if forkspace.GitRun(repo, "merge-base", "--is-ancestor", base, head) == nil {
 		return base, nil
 	}
-	common := strings.Fields(gitOut(repo, "merge-base", "--all", base, head))
+	common := strings.Fields(forkspace.GitOut(repo, "merge-base", "--all", base, head))
 	if len(common) == 0 {
 		return "", fmt.Errorf("cannot safely re-sign work from %s: it has no common base with %s", base, head)
 	}
@@ -105,15 +105,15 @@ func signingStart(repo, branchRef, base, head string) (string, error) {
 // upstream, or one whose remote-tracking branch is gone, nothing local records what was pushed.
 func refusePushedRewrite(repo, branchRef, commit string) error {
 	branch := strings.TrimPrefix(branchRef, "refs/heads/")
-	upstream := gitOut(repo, "rev-parse", "--verify", "--quiet", branch+"@{upstream}^{commit}")
+	upstream := forkspace.GitOut(repo, "rev-parse", "--verify", "--quiet", branch+"@{upstream}^{commit}")
 	if upstream == "" {
 		return nil
 	}
 	var exitErr *exec.ExitError
-	switch err := gitRun(repo, "merge-base", "--is-ancestor", commit, upstream); {
+	switch err := forkspace.GitRun(repo, "merge-base", "--is-ancestor", commit, upstream); {
 	case err == nil:
-		return pushedCommitRefusal(gitOut(repo, "rev-parse", "--short", commit),
-			gitOut(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", branch+"@{upstream}"))
+		return pushedCommitRefusal(forkspace.GitOut(repo, "rev-parse", "--short", commit),
+			forkspace.GitOut(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", branch+"@{upstream}"))
 	case errors.As(err, &exitErr) && exitErr.ExitCode() == 1:
 		return nil // git's own "not an ancestor": the commit is not pushed
 	default:
@@ -151,13 +151,13 @@ func commitSigned(raw string) bool {
 // checked-out branch advances only through an old-SHA compare-and-swap after the temporary
 // worktree is removed.
 func (a *app) signUnpushed(repo, base string) (int, error) {
-	branchRef := gitOut(repo, "symbolic-ref", "--quiet", "HEAD")
+	branchRef := forkspace.GitOut(repo, "symbolic-ref", "--quiet", "HEAD")
 	if !strings.HasPrefix(branchRef, "refs/heads/") {
 		return 0, ui.CommandFailed("Could not sign these commits", "No branch is checked out.",
 			[2]string{"", "Check out the branch you want to sign."})
 	}
-	oldHead := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
-	resolvedBase := gitOut(repo, "rev-parse", "--verify", base+"^{commit}")
+	oldHead := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	resolvedBase := forkspace.GitOut(repo, "rev-parse", "--verify", base+"^{commit}")
 	if oldHead == "" || resolvedBase == "" {
 		return 0, fmt.Errorf("cannot resolve signing range %s..HEAD", base)
 	}
@@ -170,7 +170,7 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	}
 	// Re-signing rebases what it rewrites, which would linearize a merge. A signed merge below the
 	// first unsigned commit is not rewritten, so only this part has to be linear.
-	if merges := gitOut(repo, "rev-list", "--merges", base+".."+oldHead); merges != "" {
+	if merges := forkspace.GitOut(repo, "rev-list", "--merges", base+".."+oldHead); merges != "" {
 		return 0, ui.CommandFailed("Could not sign these commits", "The selected range contains a merge commit.",
 			[2]string{"", "Choose a linear range with --from."},
 			[2]string{"Help:", "coop help sign"})
@@ -201,22 +201,22 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 		return 0, fmt.Errorf("create clean signing worktree: %w", err)
 	}
 	added = true
-	if _, err := gitOutErr(worktree, "reset", "--hard", "--quiet", oldHead); err != nil {
+	if _, err := forkspace.GitOutErr(worktree, "reset", "--hard", "--quiet", oldHead); err != nil {
 		return 0, fmt.Errorf("populate clean signing worktree: %w", err)
 	}
 	// -f stays: base is the exact parent of the first commit to sign, and without it git reports the
 	// branch up to date and signs nothing.
 	args := append(append([]string{}, forkspace.TrustedSignArgs()...), "rebase", "-f", "--gpg-sign", base)
 	if err := gitSign(worktree, args...); err != nil {
-		_ = gitRun(worktree, "rebase", "--abort") // leave no rebase state behind for the next signing worktree in this slot
+		_ = forkspace.GitRun(worktree, "rebase", "--abort") // leave no rebase state behind for the next signing worktree in this slot
 		return 0, signingFailure{fmt.Errorf("could not re-sign %s..HEAD: %w", base, err)}
 	}
-	newHead := gitOut(worktree, "rev-parse", "--verify", "HEAD^{commit}")
+	newHead := forkspace.GitOut(worktree, "rev-parse", "--verify", "HEAD^{commit}")
 	newTrees := rangeTrees(worktree, base, newHead)
 	if newHead == "" || oldTrees == "" || newTrees == "" || oldTrees != newTrees {
 		return 0, errors.New("re-signing changed one or more committed trees; refusing to update the branch")
 	}
-	oldCommits := strings.Fields(gitOut(repo, "log", "--reverse", "--format=%H", base+".."+oldHead))
+	oldCommits := strings.Fields(forkspace.GitOut(repo, "log", "--reverse", "--format=%H", base+".."+oldHead))
 	if len(oldCommits) != n {
 		return 0, errors.New("could not list the commits to sign; refusing to update the branch")
 	}
@@ -239,7 +239,7 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	if a.beforeSignRefUpdate != nil {
 		a.beforeSignRefUpdate(repo, branchRef, oldHead, newHead)
 	}
-	if currentRef := gitOut(repo, "symbolic-ref", "--quiet", "HEAD"); currentRef != branchRef {
+	if currentRef := forkspace.GitOut(repo, "symbolic-ref", "--quiet", "HEAD"); currentRef != branchRef {
 		return 0, ui.CommandFailed("Could not apply the signed commits", "The branch changed while Coop was signing.",
 			[2]string{"", "Review the current branch before running coop sign again."})
 	}
@@ -280,7 +280,7 @@ func shouldSignOnExit(isFork, wantsSigning bool) bool {
 // exactly what this box produced and needs no upstream; a session that made no commits is a no-op.
 // Best-effort: it never blocks teardown. Forks are skipped because merge-time signing owns them.
 func (a *app) signOnBoxExit(repo, preHead string, isFork bool) {
-	if repo == "" || preHead == "" || preHead == gitOut(repo, "rev-parse", "HEAD") {
+	if repo == "" || preHead == "" || preHead == forkspace.GitOut(repo, "rev-parse", "HEAD") {
 		return // no repo, or the session made no commit → nothing to sign
 	}
 	if !shouldSignOnExit(isFork, forkspace.WantsSigning()) {
@@ -304,7 +304,7 @@ func (a *app) signOnBoxExit(repo, preHead string, isFork bool) {
 // headUnsigned reports whether HEAD carries NO signature header (see commitSigned). One bounded
 // git call.
 func headUnsigned(repo string) bool {
-	obj := gitOut(repo, "cat-file", "commit", "HEAD")
+	obj := forkspace.GitOut(repo, "cat-file", "commit", "HEAD")
 	return obj != "" && !commitSigned(obj)
 }
 

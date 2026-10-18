@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +16,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/safetext"
 )
 
@@ -164,10 +165,6 @@ func NewPendingReviewPlan(repo string, hosts []string, baseHead, configDigest, c
 	if verifyEnabled && len(verify.Targets) == 0 {
 		return PendingReviewPlan{}, errors.New("enabled pending verification has no target")
 	}
-	cohortRaw := make([]byte, 16)
-	if _, err := rand.Read(cohortRaw); err != nil {
-		return PendingReviewPlan{}, err
-	}
 	branch, err := gitBranchErr(repo)
 	if err != nil {
 		return PendingReviewPlan{}, fmt.Errorf("read pending-review checked-out branch: %w", err)
@@ -176,7 +173,7 @@ func NewPendingReviewPlan(repo string, hosts []string, baseHead, configDigest, c
 		return PendingReviewPlan{}, errors.New("pending-review workspace has no checked-out branch")
 	}
 	plan := PendingReviewPlan{
-		Version: pendingReviewPlanVersion, CohortID: hex.EncodeToString(cohortRaw), Workspace: workspace,
+		Version: pendingReviewPlanVersion, CohortID: randid.Hex(16), Workspace: workspace,
 		Branch: branch, BaseHead: baseHead, ConfigDigest: configDigest, Continue: continueCommand,
 		Signoff: clonePendingReviewStage(signoff), SignoffRounds: signoffRounds,
 		VerifyEnabled: verifyEnabled, Verify: clonePendingReviewStage(verify), MCPDisabled: mcpDisabled,
@@ -276,7 +273,7 @@ func describeTaskCommits(repo string, shas []string) []string {
 	}
 	described := make([]string, len(shas), len(shas)+1)
 	for i, sha := range shas {
-		line := gitOut(repo, "show", "-s", "--format=%h by %an <%ae>", sha)
+		line := forkspace.GitOut(repo, "show", "-s", "--format=%h by %an <%ae>", sha)
 		if line == "" {
 			line = sha[:min(12, len(sha))]
 		}
@@ -384,7 +381,7 @@ func pendingReviewNewBase(repo string, subject PendingReviewRecord) (string, err
 	if subject.Base != "" || (err != nil && (!errors.As(err, &missing) || missing.Found != 0)) {
 		return subject.Base, err
 	}
-	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
 	bindings, ok := rawTaskBindings(repo, head)
 	if !ok {
 		return "", errors.New("read reachable task bindings for final review")
@@ -455,7 +452,7 @@ func readPendingReviewHistory(repo, base string) (pendingReviewHistory, error) {
 	for _, commit := range before {
 		earlier[commit.sha] = true
 	}
-	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
 	if !validAuditReopenHead(head) {
 		return history, errors.New("resolve the HEAD final review covers")
 	}
@@ -801,11 +798,7 @@ func (l *TaskLease) MarkCompletedForReview(repo string, task Item, plan PendingR
 	if err != nil {
 		return err
 	}
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return err
-	}
-	receipt.Nonce = hex.EncodeToString(nonce)
+	receipt.Nonce = randid.Hex(16)
 	if l.Reopen != nil {
 		receipt.AuditReopenGeneration = l.Reopen.Generation
 	}
@@ -1189,7 +1182,7 @@ func recoverInterruptedRework(repo, root, id string) (replaced *AuditReopenRecor
 	if err != nil || !ok || !auditReopenRecordActive(record) {
 		return nil, err
 	}
-	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
 	if AuditReopenCurrentValid(repo, head, id, record) {
 		return nil, nil
 	}
@@ -1219,7 +1212,7 @@ func CarryReopenedReviews(repo string, hosts, ids []string, oldHead string, rewo
 	}
 	var rework map[AuditReopenCommit]AuditReopenCommit
 	if reworked != nil {
-		head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+		head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
 		rebased, err := rebasedAuditReopenRecord(repo, oldHead, head, reworked.TaskID, *reworked)
 		if err != nil {
 			return err
@@ -1367,7 +1360,7 @@ func EnrollExistingPendingReviews(repo string, hosts, ids []string, plan Pending
 // commit, found by its Coop-Task trailer. Anchoring the review range before it keeps final
 // verification meaningful even when the import itself creates no new commits.
 func PendingReviewImportBase(repo string, hosts, ids []string) (string, error) {
-	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
 	bindings, ok := rawTaskBindings(repo, head)
 	if !ok {
 		return "", errors.New("read reachable task bindings for the review import")

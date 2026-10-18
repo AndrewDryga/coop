@@ -41,7 +41,7 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 	if agent == "" {
 		agent = "?" // a fork made before agents were remembered
 	}
-	ins, del := parseShortstat(gitOut(ws, "diff", "--shortstat", "origin/HEAD"))
+	ins, del := parseShortstat(forkspace.GitOut(ws, "diff", "--shortstat", "origin/HEAD"))
 	var counts tasks.TaskCounts
 	var doing, reviewing, readyTasks, blockedTasks int
 	var problems []string

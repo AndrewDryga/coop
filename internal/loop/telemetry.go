@@ -16,6 +16,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -185,7 +186,7 @@ func openRunsRoot(repo string, create bool) (*os.Root, error) {
 // never break the run it observes.
 func (c *Control) recordStage(repo, run, stage, outcome string, tgt agents.Target, start time.Time, exit, retries, reopened int, headBefore string, hosts, finished, gateFiles []string, res *iterResult) {
 	cnt, _, _ := tasks.QueueProgress(hosts)
-	rec := buildStageRecord(run, stage, outcome, c.version, tgt, start, time.Now(), exit, retries, reopened, headBefore, gitOut(repo, "rev-parse", "HEAD"), cnt, finished, gateFiles)
+	rec := buildStageRecord(run, stage, outcome, c.version, tgt, start, time.Now(), exit, retries, reopened, headBefore, forkspace.GitOut(repo, "rev-parse", "HEAD"), cnt, finished, gateFiles)
 	rec.NetworkRunID = c.net.runID()
 	if res != nil { // the box run's result-event tally (nil for stages that had no stream-json result)
 		rec.CostUSD, rec.InTok, rec.OutTok = res.CostUSD, res.InTok, res.OutTok

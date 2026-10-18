@@ -2983,9 +2983,9 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 	git("config", "user.email", "t@t")
 	git("config", "user.name", "T")
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	if c := CommitsForTask(repo, "", "task-42"); len(c) != 1 {
 		t.Errorf("commitsForTask(task-42) = %v, want 1", c)
@@ -3001,13 +3001,13 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 		t.Errorf("unbindable = %v, tolerated = %v, want [task-99] and none", m, tol)
 	}
 	git("commit", "-q", "--allow-empty", "-m", "forge another task\n\nCoop-Task: archived-task")
-	forgedHead := gitOut(repo, "rev-parse", "HEAD")
+	forgedHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	touchedArchived := map[string]bool{"archived-task": true}
 	if m, tol := unbindableTasks(repo, base, forgedHead, []string{"task-42"}, touchedArchived); !slices.Equal(m, []string{"task-42"}) || len(tol) != 0 {
 		t.Errorf("foreign task binding in assigned range = %v, tolerated = %v, want [task-42] and none", m, tol)
 	}
 	git("commit", "-q", "--allow-empty", "-m", "hide foreign task\n\nCoop-Task:\nCoop-Task: archived-task")
-	hiddenForeignHead := gitOut(repo, "rev-parse", "HEAD")
+	hiddenForeignHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if m, tol := unbindableTasks(repo, forgedHead, hiddenForeignHead, []string{"task-42"}, touchedArchived); !slices.Equal(m, []string{"task-42"}) || len(tol) != 0 {
 		t.Errorf("empty then foreign task binding = %v, tolerated = %v, want [task-42] and none", m, tol)
 	}
@@ -3030,21 +3030,21 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 
 	// Once HEAD changes, an older valid trailer cannot bless fresh unbound work.
 	git("commit", "-q", "--allow-empty", "-m", "fresh rework without a trailer")
-	unboundHead := gitOut(repo, "rev-parse", "HEAD")
+	unboundHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if m, _ := unbindableTasks(repo, head, unboundHead, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("historical-only binding after fresh work = %v, want [task-42]", m)
 	}
 
 	// A trailer-like line outside Git's final contiguous trailer block is not a trailer.
 	git("commit", "-q", "--allow-empty", "-m", "malformed\n\nCoop-Task: task-42\n\nCo-authored-by: T <t@t>")
-	malformedHead := gitOut(repo, "rev-parse", "HEAD")
+	malformedHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if m, _ := unbindableTasks(repo, unboundHead, malformedHead, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("malformed trailer binding = %v, want [task-42]", m)
 	}
 
 	// Multiple Coop-Task values are ambiguous even when both values happen to match.
 	git("commit", "-q", "--allow-empty", "-m", "duplicate\n\nCoop-Task: task-42\nCoop-Task: task-42")
-	duplicateHead := gitOut(repo, "rev-parse", "HEAD")
+	duplicateHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if c := CommitsForTask(repo, malformedHead+".."+duplicateHead, "task-42"); len(c) != 0 {
 		t.Errorf("duplicate trailers must not bind, got commits %v", c)
 	}
@@ -3053,14 +3053,14 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 	}
 
 	git("commit", "-q", "--allow-empty", "-m", "valid again\n\nCoop-Task: task-42")
-	validHead := gitOut(repo, "rev-parse", "HEAD")
+	validHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if m, _ := unbindableTasks(repo, duplicateHead, validHead, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("a second reachable binding outside the fresh range must fail closed: %v", m)
 	}
 	// Two individually valid commits for one task are still ambiguous: one task must bind to one
 	// commit in the iteration range, not merely find at least one matching trailer somewhere in it.
 	git("commit", "-q", "--allow-empty", "-m", "second valid binding\n\nCoop-Task: task-42")
-	twoBindingsHead := gitOut(repo, "rev-parse", "HEAD")
+	twoBindingsHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if m, _ := unbindableTasks(repo, duplicateHead, twoBindingsHead, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("multiple matching commits must fail closed, got %v", m)
 	}
@@ -3069,7 +3069,7 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 	// range-local and reachable binding, which is the required reopened-task recovery shape.
 	git("reset", "--hard", "-q", head)
 	git("commit", "--amend", "-q", "--allow-empty", "-m", "reworked\n\nCoop-Task: task-42\nCoop-Recovery: fixture")
-	rewrittenHead := gitOut(repo, "rev-parse", "HEAD")
+	rewrittenHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if m, _ := unbindableTasks(repo, base, rewrittenHead, []string{"task-42"}, nil); len(m) != 0 {
 		t.Errorf("rewritten sole binding should be accepted: %v", m)
 	}
@@ -3095,9 +3095,9 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 			repo, git := gitRepo(t)
 			git("commit", "-q", "--allow-empty", "-m", "old binding\n\nCoop-Task: task-a")
 			git("commit", "-q", "--allow-empty", "-m", "base")
-			base := gitOut(repo, "rev-parse", "HEAD")
+			base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			git("commit", "-q", "--allow-empty", "-m", "new binding\n\nCoop-Task: task-a")
-			head := gitOut(repo, "rev-parse", "HEAD")
+			head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			hideParents(t, repo, metadata, base)
 
 			// The trusted git view honors a real shallow file but never a repository's info/grafts
@@ -3114,10 +3114,10 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 		t.Run(metadata+" cannot remove in-range binding", func(t *testing.T) {
 			repo, git := gitRepo(t)
 			git("commit", "-q", "--allow-empty", "-m", "base")
-			base := gitOut(repo, "rev-parse", "HEAD")
+			base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			git("commit", "-q", "--allow-empty", "-m", "binding\n\nCoop-Task: task-a")
 			git("commit", "-q", "--allow-empty", "-m", "tail")
-			head := gitOut(repo, "rev-parse", "HEAD")
+			head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			hideParents(t, repo, metadata, head)
 
 			if got := CommitsForTask(repo, base+".."+head, "task-a"); (len(got) != 0) == (metadata == "shallow") {
@@ -3135,10 +3135,10 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 		t.Run(metadata+" cannot conceal foreign in-range binding", func(t *testing.T) {
 			repo, git := gitRepo(t)
 			git("commit", "-q", "--allow-empty", "-m", "base")
-			base := gitOut(repo, "rev-parse", "HEAD")
+			base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			git("commit", "-q", "--allow-empty", "-m", "foreign\n\nCoop-Task: task-b")
 			git("commit", "-q", "--allow-empty", "-m", "assigned\n\nCoop-Task: task-a")
-			head := gitOut(repo, "rev-parse", "HEAD")
+			head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			hideParents(t, repo, metadata, head)
 
 			// Confirm the fixture actually hid the foreign task-b binding from a PLAIN range-scoped
@@ -3186,10 +3186,10 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 	t.Run("regression: untouched foreign binding is tolerated, not rejected (the 32-minute incident)", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
-		base := gitOut(repo, "rev-parse", "HEAD")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
 		git("commit", "-q", "--allow-empty", "-m", "unrelated host work mid-iteration\n\nCoop-Task: task-99")
-		head := gitOut(repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 		touched := map[string]bool{"task-42": true} // task-99 is untracked: not leased, not archived, not moved
 		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
@@ -3204,11 +3204,11 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 	t.Run("multiple untouched foreign bindings are all tolerated", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
-		base := gitOut(repo, "rev-parse", "HEAD")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
 		git("commit", "-q", "--allow-empty", "-m", "human commit 1\n\nCoop-Task: task-99")
 		git("commit", "-q", "--allow-empty", "-m", "human commit 2\n\nCoop-Task: task-100")
-		head := gitOut(repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, map[string]bool{"task-42": true})
 		if len(missing) != 0 {
@@ -3224,10 +3224,10 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 	t.Run("adversarial: forged duplicate trailer for the box's own task still rejects", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
-		base := gitOut(repo, "rev-parse", "HEAD")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
 		git("commit", "-q", "--allow-empty", "-m", "forged extra\n\nCoop-Task: task-42")
-		head := gitOut(repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, map[string]bool{"task-42": true})
 		if !slices.Equal(missing, []string{"task-42"}) {
@@ -3244,10 +3244,10 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 	t.Run("adversarial: forged trailer for a second queued task this iteration also completed still rejects", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
-		base := gitOut(repo, "rev-parse", "HEAD")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
 		git("commit", "-q", "--allow-empty", "-m", "also claim a second task\n\nCoop-Task: task-99")
-		head := gitOut(repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 		// task-99's folder ALSO moved this iteration (the box widened its own authority), so the
 		// caller's touched set names it too.
@@ -3273,10 +3273,10 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 	t.Run("adversarial: forged trailer for an archived task, never touched, still rejects", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
-		base := gitOut(repo, "rev-parse", "HEAD")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
 		git("commit", "-q", "--allow-empty", "-m", "forge a trailer for an untouched archived task\n\nCoop-Task: archived-task")
-		head := gitOut(repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 		touched := map[string]bool{"task-42": true, "archived-task": true} // baselineDoneIDs' doing, not a folder move
 		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
@@ -3300,20 +3300,20 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 		}
 		git("add", "b.txt")
 		git("commit", "-q", "-m", "task-99's own earlier work\n\nCoop-Task: task-99")
-		oldHead := gitOut(repo, "rev-parse", "HEAD")
+		oldHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		git("add", "a.txt")
 		git("commit", "-q", "-m", "did the work\n\nCoop-Task: task-42")
-		unrewritten := gitOut(repo, "rev-parse", "HEAD")
+		unrewritten := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 		// Rebase task-42's commit onto task-99's parent, then replay task-99's own commit forward:
 		// same content, but a new sha, so task-99's ORIGINAL commit falls out of head's reachable set.
 		git("reset", "--hard", "-q", oldHead+"^")
 		git("cherry-pick", unrewritten)
 		git("cherry-pick", oldHead)
-		head := gitOut(repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 		missing, tolerated := unbindableTasks(repo, oldHead, head, []string{"task-42"}, map[string]bool{"task-42": true})
 		if !slices.Equal(missing, []string{"task-42"}) {
@@ -3329,10 +3329,10 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 	t.Run("adversarial: multi-value Coop-Task commit in range still rejects regardless of touched", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
-		base := gitOut(repo, "rev-parse", "HEAD")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
 		git("commit", "-q", "--allow-empty", "-m", "ambiguous\n\nCoop-Task: task-99\nCoop-Task: task-100")
-		head := gitOut(repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, nil)
 		if !slices.Equal(missing, []string{"task-42"}) {
@@ -3347,10 +3347,10 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 	t.Run("adversarial: invalid binding in range still rejects regardless of touched", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
-		base := gitOut(repo, "rev-parse", "HEAD")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
 		git("commit", "-q", "--allow-empty", "-m", "invalid\n\nCoop-Task:\nCoop-Task: task-99")
-		head := gitOut(repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, nil)
 		if !slices.Equal(missing, []string{"task-42"}) {
@@ -3372,10 +3372,10 @@ func TestReportToleratedForeignBindings(t *testing.T) {
 	t.Run("warns once and journals each named task with its commit", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
-		base := gitOut(repo, "rev-parse", "HEAD")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
 		git("commit", "-q", "--allow-empty", "-m", "unrelated host work\n\nCoop-Task: task-99")
-		head := gitOut(repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		foreignSHA := CommitsForTask(repo, base+".."+head, "task-99")
 		if len(foreignSHA) != 1 {
 			t.Fatalf("fixture setup: commitsForTask(task-99) = %v, want exactly one", foreignSHA)
@@ -3405,9 +3405,9 @@ func TestReportToleratedForeignBindings(t *testing.T) {
 	t.Run("skips journaling an id that resolves to no task folder on any host", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
-		base := gitOut(repo, "rev-parse", "HEAD")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
-		head := gitOut(repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		root := filepath.Join(repo, TasksRoot) // empty queue: "task-99" resolves nowhere
 
 		out := captureStderr(t, func() {
@@ -3507,7 +3507,7 @@ func TestCaptureAuditReopenRecordsCompleteOrderedHistory(t *testing.T) {
 		}
 		git("add", name)
 		git("commit", "-q", "-m", message)
-		return gitOut(repo, "rev-parse", "HEAD")
+		return forkspace.GitOut(repo, "rev-parse", "HEAD")
 	}
 	write("a.txt", "A\n", "A implementation\n\nCoop-Task: task-a")
 	write("manual.txt", "manual\n", "manual release note")
@@ -3540,7 +3540,7 @@ func TestAuditReopenHistoryEnumeratorFailsClosed(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
 		git("commit", "-q", "--allow-empty", "-m", "subject\n\nCoop-Task: task-a")
-		return repo, git, gitOut(repo, "rev-parse", "HEAD")
+		return repo, git, forkspace.GitOut(repo, "rev-parse", "HEAD")
 	}
 
 	t.Run("malformed task trailer", func(t *testing.T) {
@@ -3593,7 +3593,7 @@ func TestAuditReopenHistoryEnumeratorFailsClosed(t *testing.T) {
 			repo, git := gitRepo(t)
 			git("commit", "-q", "--allow-empty", "-m", "old A\n\nCoop-Task: task-a")
 			git("commit", "-q", "--allow-empty", "-m", "unrelated pre-subject work")
-			subjectParent := gitOut(repo, "rev-parse", "HEAD")
+			subjectParent := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			git("commit", "-q", "--allow-empty", "-m", "new A\n\nCoop-Task: task-a")
 			git("commit", "-q", "--allow-empty", "-m", "tail")
 			var path, body string
@@ -3614,7 +3614,7 @@ func TestAuditReopenHistoryEnumeratorFailsClosed(t *testing.T) {
 	}
 	t.Run("merge", func(t *testing.T) {
 		repo, git, _ := newRepo(t)
-		branch := gitOut(repo, "branch", "--show-current")
+		branch := forkspace.GitOut(repo, "branch", "--show-current")
 		git("checkout", "-q", "-b", "side")
 		git("commit", "-q", "--allow-empty", "-m", "side")
 		git("checkout", "-q", branch)
@@ -3644,21 +3644,21 @@ func TestAuditReopenHistoryEnumeratorFailsClosed(t *testing.T) {
 		}
 		git("add", name)
 		git("commit", "-q", "-m", "hex-shaped path")
-		heads = append(heads, gitOut(repo, "rev-parse", "HEAD"))
+		heads = append(heads, forkspace.GitOut(repo, "rev-parse", "HEAD"))
 		if err := os.Chmod(filepath.Join(repo, name), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		git("add", name)
 		git("commit", "-q", "-m", "mode change")
-		heads = append(heads, gitOut(repo, "rev-parse", "HEAD"))
+		heads = append(heads, forkspace.GitOut(repo, "rev-parse", "HEAD"))
 		if err := os.Remove(filepath.Join(repo, name)); err != nil {
 			t.Fatal(err)
 		}
 		git("add", "-u")
 		git("commit", "-q", "-m", "delete hex-shaped path")
-		heads = append(heads, gitOut(repo, "rev-parse", "HEAD"))
+		heads = append(heads, forkspace.GitOut(repo, "rev-parse", "HEAD"))
 		git("commit", "-q", "--allow-empty", "-m", "empty manual marker")
-		heads = append(heads, gitOut(repo, "rev-parse", "HEAD"))
+		heads = append(heads, forkspace.GitOut(repo, "rev-parse", "HEAD"))
 		rawHistory, err := rawAuditHistoryCount(repo, "HEAD", len(heads))
 		if err != nil {
 			t.Fatal(err)
@@ -3723,13 +3723,13 @@ func TestAuditTaskTrailersUseFixedRawGrammar(t *testing.T) {
 func TestOrdinaryAuditBindingIdentityRejectsGraftedDecoy(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "root")
-	main := gitOut(repo, "branch", "--show-current")
+	main := forkspace.GitOut(repo, "branch", "--show-current")
 	git("checkout", "-q", "-b", "decoy")
 	git("commit", "-q", "--allow-empty", "-m", "decoy\n\nCoop-Task=task-a")
-	decoy := gitOut(repo, "rev-parse", "HEAD")
+	decoy := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("checkout", "-q", main)
 	git("commit", "-q", "--allow-empty", "-m", "subject\n\nCoop-Task: task-a")
-	subject := gitOut(repo, "rev-parse", "HEAD")
+	subject := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("config", "trailer.separators", "=")
 	if err := os.WriteFile(
 		filepath.Join(repo, ".git", "info", "grafts"),
@@ -3746,7 +3746,7 @@ func TestOrdinaryAuditBindingIdentityRejectsGraftedDecoy(t *testing.T) {
 	// Neither the repository's trailer.separators nor its info/grafts reach host git under the
 	// trusted view, so the ordinary traversal sees exactly what the raw audit sees: the subject,
 	// and never the "=" decoy. The two must agree.
-	if len(ordinary) != 1 || gitOut(repo, "rev-parse", "--verify", ordinary[0]+"^{commit}") != subject {
+	if len(ordinary) != 1 || forkspace.GitOut(repo, "rev-parse", "--verify", ordinary[0]+"^{commit}") != subject {
 		t.Fatalf("ordinary traversal under the trusted view = %v; want only the raw subject %s", ordinary, subject)
 	}
 	if !ordinaryBindingMatchesRaw(repo, subject, "task-a") {
@@ -3771,14 +3771,14 @@ func TestRawAuditHistoryRejectsMalformedParents(t *testing.T) {
 
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "root")
-	root := gitOut(repo, "rev-parse", "HEAD")
+	root := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	history, err := rawAuditHistoryCount(repo, root, 1)
 	if err != nil || history[0].parent != "" {
 		t.Fatalf("root history = %#v, %v; want empty parent", history, err)
 	}
 
 	git("commit", "-q", "--allow-empty", "-m", "child")
-	child := gitOut(repo, "rev-parse", "HEAD")
+	child := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	history, err = rawAuditHistoryCount(repo, child, 1)
 	if err != nil || history[0].parent != root {
 		t.Fatalf("child history = %#v, %v; want parent %s", history, err, root)
@@ -3802,7 +3802,7 @@ func TestRawAuditHistoryRejectsMalformedParents(t *testing.T) {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	tree := gitOut(repo, "rev-parse", child+"^{tree}")
+	tree := forkspace.GitOut(repo, "rev-parse", child+"^{tree}")
 	identity := "Test User <test@example.com> 1 +0000"
 	misplacedParent := writeRawCommit(
 		"tree " + tree + "\n" +
@@ -3873,13 +3873,13 @@ func TestRawAuditHistoryRejectsMalformedParents(t *testing.T) {
 		t.Fatal("blob parent left cat-file blocked on unread output")
 	}
 
-	branch := gitOut(repo, "branch", "--show-current")
+	branch := forkspace.GitOut(repo, "branch", "--show-current")
 	git("checkout", "-q", "-b", "parent-side", root)
 	git("commit", "-q", "--allow-empty", "-m", "side")
 	git("checkout", "-q", branch)
 	git("commit", "-q", "--allow-empty", "-m", "main")
 	git("merge", "-q", "--no-ff", "parent-side", "-m", "merge")
-	if _, err := rawAuditHistoryCount(repo, gitOut(repo, "rev-parse", "HEAD"), 1); err == nil {
+	if _, err := rawAuditHistoryCount(repo, forkspace.GitOut(repo, "rev-parse", "HEAD"), 1); err == nil {
 		t.Fatal("merge commit parent was accepted")
 	}
 }
@@ -3922,7 +3922,7 @@ func TestAuditTreeSnapshotSurvivesSourceRemoval(t *testing.T) {
 	}
 	git("add", "a.txt")
 	git("commit", "-q", "-m", "tree")
-	tree := gitOut(repo, "rev-parse", "HEAD^{tree}")
+	tree := forkspace.GitOut(repo, "rev-parse", "HEAD^{tree}")
 	empty := auditObjectID("tree", nil, len(tree))
 	snapshot, err := snapshotAuditTreeDAGs(repo, []string{empty, tree})
 	if err != nil {
@@ -3946,12 +3946,12 @@ func TestSemanticHistoryExactIgnoresGrafts(t *testing.T) {
 	}
 	git("add", "a.txt")
 	git("commit", "-q", "-m", "parent")
-	parent := gitOut(repo, "rev-parse", "HEAD")
+	parent := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("two\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	git("commit", "-qam", "child")
-	child := gitOut(repo, "rev-parse", "HEAD")
+	child := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	rawHistory, err := rawAuditHistoryCount(repo, child, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -3965,8 +3965,8 @@ func TestSemanticHistoryExactIgnoresGrafts(t *testing.T) {
 		t.Fatal(err)
 	}
 	git("add", "a.txt")
-	decoyTree := gitOut(repo, "write-tree")
-	decoyParent := gitOut(repo, "commit-tree", decoyTree, "-p", parent, "-m", "decoy parent")
+	decoyTree := forkspace.GitOut(repo, "write-tree")
+	decoyParent := forkspace.GitOut(repo, "commit-tree", decoyTree, "-p", parent, "-m", "decoy parent")
 	if err := os.WriteFile(
 		filepath.Join(repo, ".git", "info", "grafts"),
 		[]byte(child+" "+decoyParent+"\n"),
@@ -4010,7 +4010,7 @@ func TestSemanticHistoryExactSupportsSHA256Root(t *testing.T) {
 	}
 	run("add", "b.txt")
 	run("commit", "-q", "-m", "B implementation\n\nCoop-Task: task-b")
-	oldHead := gitOut(repo, "rev-parse", "HEAD")
+	oldHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if len(oldHead) != 64 {
 		t.Fatalf("SHA-256 HEAD length = %d, want 64", len(oldHead))
 	}
@@ -4031,7 +4031,7 @@ func TestSemanticHistoryExactSupportsSHA256Root(t *testing.T) {
 	run("add", "a.txt")
 	run("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
 	run("cherry-pick", descendant[0])
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if !auditReopenCompletionValid(repo, oldHead, head, "task-a", record) {
 		t.Fatal("SHA-256 root subject with exact semantic descendant replay was rejected")
 	}
@@ -4049,7 +4049,7 @@ func TestAuditReopenCompletionAcceptsRootSubjectReplay(t *testing.T) {
 	}
 	git("add", "b.txt")
 	git("commit", "-q", "-m", "B implementation\n\nCoop-Task: task-b")
-	oldHead := gitOut(repo, "rev-parse", "HEAD")
+	oldHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	descendant := CommitsForTask(repo, oldHead, "task-b")
 	if len(descendant) != 1 {
 		t.Fatalf("descendant bindings = %v, want exactly one", descendant)
@@ -4067,7 +4067,7 @@ func TestAuditReopenCompletionAcceptsRootSubjectReplay(t *testing.T) {
 	git("add", "a.txt")
 	git("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
 	git("cherry-pick", descendant[0])
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if !auditReopenCompletionValid(repo, oldHead, head, "task-a", record) {
 		t.Fatal("root subject with exact semantic descendant replay was rejected")
 	}
@@ -4081,7 +4081,7 @@ func TestAuditReopenCompletionAcceptsOneAppendedRepair(t *testing.T) {
 	git("add", "a.txt")
 	git("commit", "-q", "-m", "A implementation\n\nCoop-Task: task-a")
 	git("commit", "-q", "--allow-empty", "-m", "later reviewed work\n\nCoop-Task: task-b")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	record, err := CaptureAuditReopen(repo, "task-a")
 	if err != nil {
 		t.Fatal(err)
@@ -4092,7 +4092,7 @@ func TestAuditReopenCompletionAcceptsOneAppendedRepair(t *testing.T) {
 	}
 	git("add", "a.txt")
 	git("commit", "-q", "-m", "Repair the audit finding")
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if !auditReopenCompletionValid(repo, base, head, "task-a", record) {
 		t.Fatal("one unbound repair commit preserving reviewed history was rejected")
 	}
@@ -4114,7 +4114,7 @@ func TestAuditReopenCompletionAcceptsOneAppendedRepair(t *testing.T) {
 		}
 		git("add", "a.txt")
 		git("commit", "-q", "-m", "Bad repair\n\nCoop-Task: task-a")
-		if auditReopenCompletionValid(repo, base, gitOut(repo, "rev-parse", "HEAD"), "task-a", record) {
+		if auditReopenCompletionValid(repo, base, forkspace.GitOut(repo, "rev-parse", "HEAD"), "task-a", record) {
 			t.Fatal("repair with a duplicate task binding was accepted")
 		}
 	})
@@ -4122,7 +4122,7 @@ func TestAuditReopenCompletionAcceptsOneAppendedRepair(t *testing.T) {
 	t.Run("rejects empty repair", func(t *testing.T) {
 		git("reset", "--hard", "-q", base)
 		git("commit", "-q", "--allow-empty", "-m", "Receipt only")
-		if auditReopenCompletionValid(repo, base, gitOut(repo, "rev-parse", "HEAD"), "task-a", record) {
+		if auditReopenCompletionValid(repo, base, forkspace.GitOut(repo, "rev-parse", "HEAD"), "task-a", record) {
 			t.Fatal("empty repair was accepted")
 		}
 	})
@@ -4154,7 +4154,7 @@ func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 			}
 			git("add", name)
 			git("commit", "-q", "-m", message)
-			return gitOut(repo, "rev-parse", "HEAD")
+			return forkspace.GitOut(repo, "rev-parse", "HEAD")
 		}
 		subjectParent := commit("before.txt", "before\n", "unrelated pre-subject work")
 		a := commit("a.txt", "A\n", "A implementation\n\nCoop-Task: task-a")
@@ -4174,9 +4174,9 @@ func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 		t.Helper()
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
-		root := gitOut(repo, "rev-parse", "HEAD")
+		root := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "unrelated pre-subject work")
-		subjectParent := gitOut(repo, "rev-parse", "HEAD")
+		subjectParent := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		commit := func(name, body, message string) string {
 			t.Helper()
 			if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o600); err != nil {
@@ -4184,7 +4184,7 @@ func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 			}
 			git("add", name)
 			git("commit", "-q", "-m", message)
-			return gitOut(repo, "rev-parse", "HEAD")
+			return forkspace.GitOut(repo, "rev-parse", "HEAD")
 		}
 		a := commit("a.txt", "A\n", "A implementation\n\nCoop-Task: task-a")
 		manual := commit("manual.txt", "manual\n", "manual release step")
@@ -4210,14 +4210,14 @@ func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 	}
 	assertValid := func(t *testing.T, f fixture) {
 		t.Helper()
-		head := gitOut(f.repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		if !auditReopenCompletionValid(f.repo, f.base, head, "task-a", f.record) {
 			t.Fatal("exact complete-history replay was rejected")
 		}
 	}
 	assertRejected := func(t *testing.T, f fixture) {
 		t.Helper()
-		head := gitOut(f.repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		if auditReopenCompletionValid(f.repo, f.base, head, "task-a", f.record) {
 			t.Fatal("unsafe unbound history replay was accepted")
 		}
@@ -4248,7 +4248,7 @@ func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 		}
 		f.git("add", "a.txt")
 		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
-		rewrittenSubject := gitOut(f.repo, "rev-parse", "HEAD")
+		rewrittenSubject := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		f.git("cherry-pick", f.manual, f.bound, f.tail)
 		f.git("replace", "--graft", rewrittenSubject, f.subjectParent)
 		assertRejected(t, f)
@@ -4257,7 +4257,7 @@ func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 		f := newGraftFixture(t)
 		f.git("reset", "--hard", "-q", f.root)
 		f.git("cherry-pick", f.a, f.manual, f.bound)
-		redirectedParent := gitOut(f.repo, "rev-parse", "HEAD")
+		redirectedParent := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		if err := os.WriteFile(
 			filepath.Join(f.repo, ".git", "info", "grafts"),
 			[]byte(f.tail+" "+redirectedParent+"\n"),
@@ -4274,7 +4274,7 @@ func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
 		f.git("cherry-pick", f.manual, f.bound, f.tail)
 		if auditReopenCompletionValid(
-			f.repo, f.tail, gitOut(f.repo, "rev-parse", "HEAD"), "task-a", f.record,
+			f.repo, f.tail, forkspace.GitOut(f.repo, "rev-parse", "HEAD"), "task-a", f.record,
 		) {
 			t.Fatal("graft-selected reviewed subject was accepted")
 		}
@@ -4287,14 +4287,14 @@ func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 		}
 		f.git("add", "a.txt")
 		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
-		actualSubject := gitOut(f.repo, "rev-parse", "HEAD")
+		actualSubject := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		f.git("cherry-pick", f.manual)
-		firstDescendant := gitOut(f.repo, "rev-parse", "HEAD")
+		firstDescendant := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		f.git("cherry-pick", f.bound, f.tail)
-		head := gitOut(f.repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 
-		tree := gitOut(f.repo, "rev-parse", actualSubject+"^{tree}")
-		decoySubject := gitOut(
+		tree := forkspace.GitOut(f.repo, "rev-parse", actualSubject+"^{tree}")
+		decoySubject := forkspace.GitOut(
 			f.repo, "commit-tree", tree, "-p", f.subjectParent,
 			"-m", "A repaired\n\nCoop-Task: task-a",
 		)
@@ -4363,7 +4363,7 @@ func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 		}
 		f.git("add", "suffix.txt")
 		f.git("commit", "-q", "-m", "later host suffix")
-		f.base = gitOut(f.repo, "rev-parse", "HEAD")
+		f.base = forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		if !AuditReopenCurrentValid(f.repo, f.base, "task-a", f.record) {
 			t.Fatal("later host suffix invalidated the recorded prefix")
 		}
@@ -4553,19 +4553,19 @@ func newBlockedAuditRebaseFixtureAt(t *testing.T, rel string) blockedAuditRebase
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	id := "blocked-rebase"
 	git("commit", "-q", "--allow-empty", "-m", "unrelated pre-subject work")
-	subjectParent := gitOut(repo, "rev-parse", "HEAD")
+	subjectParent := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	git("add", "a.txt")
 	git("commit", "-q", "-m", "A implementation\n\nCoop-Task: "+id)
-	a := gitOut(repo, "rev-parse", "HEAD")
+	a := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("B\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	git("add", "b.txt")
 	git("commit", "-q", "-m", "B implementation\n\nCoop-Task: blocked-rebase-descendant")
-	b := gitOut(repo, "rev-parse", "HEAD")
+	b := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	record, err := CaptureAuditReopen(repo, id)
 	if err != nil {
 		t.Fatal(err)
@@ -4649,7 +4649,7 @@ func TestRebaseBlockedAuditReopenAcceptsRootSubjectReplay(t *testing.T) {
 	}
 	git("add", "b.txt")
 	git("commit", "-q", "-m", "B implementation\n\nCoop-Task: blocked-root-descendant")
-	descendant := gitOut(repo, "rev-parse", "HEAD")
+	descendant := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	record, err := CaptureAuditReopen(repo, id)
 	if err != nil {
 		t.Fatal(err)
@@ -4663,7 +4663,7 @@ func TestRebaseBlockedAuditReopenAcceptsRootSubjectReplay(t *testing.T) {
 	git("add", "a.txt")
 	git("commit", "-q", "-m", "A repaired\n\nCoop-Task: "+id)
 	git("cherry-pick", descendant)
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	replacement, err := rebaseBlockedAuditReopen(repo, head, id, record)
 	if err != nil {
@@ -4677,11 +4677,11 @@ func TestRebaseBlockedAuditReopenAcceptsRootSubjectReplay(t *testing.T) {
 func TestRawAuditRewriteHistoryUsesSubjectBoundary(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "reviewed parent")
-	reviewedParent := gitOut(repo, "rev-parse", "HEAD")
+	reviewedParent := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-m", "rewritten subject")
-	subject := gitOut(repo, "rev-parse", "HEAD")
+	subject := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-m", "replayed descendant")
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	history, err := rawAuditRewriteHistory(repo, head, reviewedParent, 2)
 	if err != nil {
@@ -4696,8 +4696,8 @@ func TestRebaseBlockedAuditReopenAcceptsMergeSubjectParent(t *testing.T) {
 	repo, git := gitRepo(t)
 	id := "blocked-merge-parent-transition"
 	git("commit", "-q", "--allow-empty", "-m", "root")
-	root := gitOut(repo, "rev-parse", "HEAD")
-	branch := gitOut(repo, "branch", "--show-current")
+	root := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	branch := forkspace.GitOut(repo, "branch", "--show-current")
 	git("checkout", "-q", "-b", "parent-side", root)
 	git("commit", "-q", "--allow-empty", "-m", "side")
 	git("checkout", "-q", branch)
@@ -4708,13 +4708,13 @@ func TestRebaseBlockedAuditReopenAcceptsMergeSubjectParent(t *testing.T) {
 	}
 	git("add", "a.txt")
 	git("commit", "-q", "-m", "A implementation\n\nCoop-Task: "+id)
-	subject := gitOut(repo, "rev-parse", "HEAD")
+	subject := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("B\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	git("add", "b.txt")
 	git("commit", "-q", "-m", "descendant")
-	descendant := gitOut(repo, "rev-parse", "HEAD")
+	descendant := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	record, err := CaptureAuditReopen(repo, id)
 	if err != nil {
 		t.Fatal(err)
@@ -4728,7 +4728,7 @@ func TestRebaseBlockedAuditReopenAcceptsMergeSubjectParent(t *testing.T) {
 	git("add", "a.txt")
 	git("commit", "--amend", "-q", "-m", "A repaired\n\nCoop-Task: "+id)
 	git("cherry-pick", descendant)
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	replacement, err := rebaseBlockedAuditReopen(repo, head, id, record)
 	if err != nil {
@@ -4869,12 +4869,12 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		}
 		f.git("add", "a.txt")
 		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: "+f.id)
-		actualSubject := gitOut(f.repo, "rev-parse", "HEAD")
+		actualSubject := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		f.git("cherry-pick", f.descendant)
-		head := gitOut(f.repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 
-		tree := gitOut(f.repo, "rev-parse", actualSubject+"^{tree}")
-		decoySubject := gitOut(
+		tree := forkspace.GitOut(f.repo, "rev-parse", actualSubject+"^{tree}")
+		decoySubject := forkspace.GitOut(
 			f.repo, "commit-tree", tree, "-p", f.subjectParent,
 			"-m", "A repaired\n\nCoop-Task: "+f.id,
 		)
@@ -4904,7 +4904,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		if err != nil || !ok || !sameAuditReopenRecord(got, f.record) {
 			t.Fatalf("raw move changed authority: got=%#v ok=%v err=%v", got, ok, err)
 		}
-		head := gitOut(f.repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		if auditReopenCompletionValid(f.repo, head, head, f.id, got) {
 			t.Fatal("raw move silently rebased stale authority")
 		}
@@ -4923,7 +4923,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		f.git("add", "a.txt")
 		f.git("commit", "--amend", "-q", "--no-edit")
 		f.git("cherry-pick", descendants[0])
-		secondHead := gitOut(f.repo, "rev-parse", "HEAD")
+		secondHead := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		if auditReopenCompletionValid(f.repo, base, secondHead, f.id, got) {
 			t.Fatal("raw-moved stale authority authorized a second rewrite")
 		}
@@ -5066,7 +5066,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		if err != nil || !ok || !got.UnblockPending || got.Generation != f.record.Generation {
 			t.Fatalf("move-before-persist boundary lost pending authority: got=%#v ok=%v err=%v", got, ok, err)
 		}
-		head := gitOut(f.repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		if auditReopenCompletionValid(f.repo, head, head, f.id, got) {
 			t.Fatal("move-before-persist boundary granted verification-only authority")
 		}
@@ -5185,7 +5185,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 			t.Fatalf("explicit retry of pending unblock: %v", err)
 		}
 		recovered, ok, err := ReadAuditReopenRecord(f.root, f.id)
-		head := gitOut(f.repo, "rev-parse", "HEAD")
+		head := forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		if err != nil || !ok || recovered.UnblockPending ||
 			!auditReopenCompletionValid(f.repo, head, head, f.id, recovered) ||
 			!pathExists(filepath.Join(f.root, StateTodo, f.id)) {
@@ -5197,7 +5197,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 	t.Run("recorded baseline is the only recovery candidate", func(t *testing.T) {
 		f := newBlockedAuditRebaseFixture(t)
 		tampered := f.record
-		tampered.BaselineHead = gitOut(f.repo, "rev-parse", "HEAD")
+		tampered.BaselineHead = forkspace.GitOut(f.repo, "rev-parse", "HEAD")
 		if err := WriteAuditReopenRecord(f.root, tampered); err != nil {
 			t.Fatal(err)
 		}
@@ -5461,12 +5461,12 @@ func TestProtectedGateChanges(t *testing.T) {
 	write(".claude/skills/workflow-sweep/queue-guard.sh", "#!/bin/sh\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	// A commit that touches ordinary code → no protected change.
 	write("code.go", "package x // edit")
 	git("add", "-A")
 	git("commit", "-q", "-m", "code edit")
-	codeHead := gitOut(repo, "rev-parse", "HEAD")
+	codeHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if hits := gateChanges(base, codeHead, nil); len(hits) != 0 {
 		t.Errorf("an ordinary code change is not protected: %v", hits)
 	}
@@ -5474,27 +5474,27 @@ func TestProtectedGateChanges(t *testing.T) {
 		t.Errorf("a project-declared gate source should be protected exactly: %v", hits)
 	}
 	// A commit that weakens the Makefile → flagged.
-	mid := gitOut(repo, "rev-parse", "HEAD")
+	mid := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	write("Makefile", "check:\n\ttrue\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "loosen the gate")
-	if hits := gateChanges(mid, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != "Makefile" {
+	if hits := gateChanges(mid, forkspace.GitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != "Makefile" {
 		t.Errorf("a Makefile change should be flagged, got %v", hits)
 	}
 	// Renaming a guard away must report the deleted protected path, not only its new name.
-	renameBase := gitOut(repo, "rev-parse", "HEAD")
+	renameBase := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("mv", ".claude/skills/workflow-sweep/queue-guard.sh", ".claude/skills/workflow-sweep/disabled.sh")
 	git("commit", "-q", "-m", "disable the adopted guard")
-	if hits := gateChanges(renameBase, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != ".claude/skills/workflow-sweep/queue-guard.sh" {
+	if hits := gateChanges(renameBase, forkspace.GitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != ".claude/skills/workflow-sweep/queue-guard.sh" {
 		t.Errorf("renaming an adopted guard should flag its old path, got %v", hits)
 	}
 	// NUL-delimited names prevent Git from quoting paths before basename matching.
 	unicodeGuard := "\u00e9/queue-guard.sh"
-	unicodeBase := gitOut(repo, "rev-parse", "HEAD")
+	unicodeBase := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	write(unicodeGuard, "#!/bin/sh\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "add guard below unicode directory")
-	if hits := gateChanges(unicodeBase, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != unicodeGuard {
+	if hits := gateChanges(unicodeBase, forkspace.GitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != unicodeGuard {
 		t.Errorf("a protected basename below a unicode directory should be flagged, got %v", hits)
 	}
 }
@@ -5509,11 +5509,11 @@ func TestProtectedGateChangesRefusesAnUnreadableRange(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, "code.go"), "package x\n")
 	git("add", "-A")
 	git("commit", "-qm", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	writeTaskFile(t, filepath.Join(repo, "Makefile"), "check:\n\ttrue\n")
 	git("add", "-A")
 	git("commit", "-qm", "loosen the gate")
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	gateChanges := func() ([]string, error) { return ProtectedGateChanges(repo, base, head, nil) }
 	if hits, err := gateChanges(); err != nil || !slices.Equal(hits, []string{"Makefile"}) {
 		t.Fatalf("readable range = %v, %v; want [Makefile]", hits, err)
@@ -5521,7 +5521,7 @@ func TestProtectedGateChangesRefusesAnUnreadableRange(t *testing.T) {
 
 	t.Run("missing object", func(t *testing.T) {
 		// The base commit's tree: `git status` stays clean without it, only the range read fails.
-		tree := gitOut(repo, "rev-parse", base+"^{tree}")
+		tree := forkspace.GitOut(repo, "rev-parse", base+"^{tree}")
 		object := filepath.Join(repo, ".git", "objects", tree[:2], tree[2:])
 		if err := os.Rename(object, object+".hidden"); err != nil {
 			t.Fatal(err)

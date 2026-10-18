@@ -2,7 +2,7 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
+sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
 updated: 2026-10-18
 ---
 
@@ -20,6 +20,8 @@ credential helpers, submodule settings, hook/pager/editor paths); `objects`, `re
 `packed-refs`, `shallow`, `info/exclude` as symlinks into the real (common) git dir; `HEAD` as a
 copy; `GIT_INDEX_FILE` naming the real index; no `hooks`, `info/attributes`, `config.worktree`,
 `modules`. Git reads exactly the bytes coop wrote, so there is no enumerate-then-execute race.
+`GitOut`, `GitOutErr`, `GitOutput` (untrimmed) and `GitRun` are the one shared set of read/run
+helpers over it; cli, forkctl, loop and tasks used to carry their own copies.
 Every refresh reads the repository config again, but parses it (a `git config --file` process)
 only when its bytes differ from the ones the view last projected (`gitView.configSource`): a
 parse of the same bytes gives the same projection, and each parse is a git process of its own
@@ -229,6 +231,9 @@ prompt) is left to run. `GlobalGitConfig` reads `git config --global` from `/` w
 cannot exist, so it never searches a box's repository from coop's working folder.
 
 ## Changelog
+- 2026-10-18 — the git read/run helpers live once in forkspace (GitOut, GitOutErr, GitOutput,
+  GitRun); box's fileUntracked runs through the view (task
+  2026-10-15-replace-copied-git-and-random-id-helpers-with-on).
 - 2026-10-18 — a view parses the repository config only when its bytes changed: a session review
   ran 239 git processes, about 100 of them parses, and now runs 177, 44 of them parses (task
   2026-10-06-internal-sessionsvc-s-race-run-takes-15-to-20-mi).

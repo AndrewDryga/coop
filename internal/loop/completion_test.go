@@ -15,6 +15,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/taskmcp"
@@ -32,7 +33,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 			writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
 			git("add", ".gitignore")
 			git("commit", "-m", "base")
-			base := gitOut(repo, "rev-parse", "HEAD")
+			base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			if scenario == "edit after no-change completion" {
 				writeTaskFile(t, filepath.Join(repo, "inherited.txt"), "inherited work\n")
 			}
@@ -126,9 +127,9 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 						t.Fatalf("explicit no-change completion refused: %v", reply)
 					}
 					if scenario == "edit after no-change completion" {
-						status := gitOut(repo, "status", "--porcelain", "--untracked-files=all")
+						status := forkspace.GitOut(repo, "status", "--porcelain", "--untracked-files=all")
 						writeTaskFile(t, filepath.Join(repo, "inherited.txt"), "changed after completion\n")
-						if got := gitOut(repo, "status", "--porcelain", "--untracked-files=all"); got != status {
+						if got := forkspace.GitOut(repo, "status", "--porcelain", "--untracked-files=all"); got != status {
 							t.Fatal("fixture must leave status labels unchanged")
 						}
 					}
@@ -176,7 +177,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 					t.Fatalf("changed task was not restored: %v, %v, %v", current, ok, err)
 				}
 				body, readErr := os.ReadFile(filepath.Join(repo, "inherited.txt"))
-				if readErr != nil || string(body) != "changed after completion\n" || gitOut(repo, "rev-parse", "HEAD") != base {
+				if readErr != nil || string(body) != "changed after completion\n" || forkspace.GitOut(repo, "rev-parse", "HEAD") != base {
 					t.Fatalf("denial lost the user's work/history: %q, %v", body, readErr)
 				}
 				if strings.Contains(output, "Task completed:") || strings.Contains(output, "All tasks passed") {
@@ -221,7 +222,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 				t.Fatalf("MCP loop = %d, %v, %d attempts; want 0, nil, %d", code, err, attempts, wantAttempts)
 			}
 			if scenario == "explicit no change" || scenario == "no change after refusal" {
-				if head := gitOut(repo, "rev-parse", "HEAD"); head != base {
+				if head := forkspace.GitOut(repo, "rev-parse", "HEAD"); head != base {
 					t.Fatalf("no-change completion advanced HEAD: %s -> %s", base, head)
 				}
 				log, err := os.ReadFile(filepath.Join(repo, tasksRoot, stateDone, id, "log.md"))
@@ -372,7 +373,7 @@ func TestAssignedNoChangeCompletionPreservesUnrelatedIndex(t *testing.T) {
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo, git := gitrepo.New(t)
 	git("commit", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if err := os.WriteFile(filepath.Join(repo, "unrelated.txt"), []byte("another task\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +382,7 @@ func TestAssignedNoChangeCompletionPreservesUnrelatedIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stagedBefore := gitOut(repo, "diff", "--cached")
+	stagedBefore := forkspace.GitOut(repo, "diff", "--cached")
 	if err := checkAssignedCompletion(repo, base, "decision", nil, nil); err == nil {
 		t.Fatal("ordinary implementation completion without a binding was accepted")
 	} else {
@@ -397,10 +398,10 @@ func TestAssignedNoChangeCompletionPreservesUnrelatedIndex(t *testing.T) {
 	if err := checkNoChangeCompletion(repo, base, "decision", baseline); err != nil {
 		t.Fatalf("explicit no-change completion refused: %v", err)
 	}
-	if head := gitOut(repo, "rev-parse", "HEAD"); head != base {
+	if head := forkspace.GitOut(repo, "rev-parse", "HEAD"); head != base {
 		t.Fatalf("no-change completion advanced history: %s", head)
 	}
-	if staged := gitOut(repo, "diff", "--cached"); staged != stagedBefore {
+	if staged := forkspace.GitOut(repo, "diff", "--cached"); staged != stagedBefore {
 		t.Fatalf("no-change completion disturbed unrelated index: %q", staged)
 	}
 }
@@ -412,7 +413,7 @@ func TestAssignedNoChangeCompletionRejectsSameStatusRewrite(t *testing.T) {
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo, git := gitrepo.New(t)
 	git("commit", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if err := os.WriteFile(filepath.Join(repo, "unrelated.txt"), []byte("another task\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -421,14 +422,14 @@ func TestAssignedNoChangeCompletionRejectsSameStatusRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := gitOut(repo, "status", "--porcelain", "--untracked-files=all")
+	before := forkspace.GitOut(repo, "status", "--porcelain", "--untracked-files=all")
 
 	// Same path, same staged state, different bytes.
 	if err := os.WriteFile(filepath.Join(repo, "unrelated.txt"), []byte("smuggled work\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	git("add", "unrelated.txt")
-	if after := gitOut(repo, "status", "--porcelain", "--untracked-files=all"); after != before {
+	if after := forkspace.GitOut(repo, "status", "--porcelain", "--untracked-files=all"); after != before {
 		t.Fatalf("the fixture moved a status label, so it does not test what it claims: %q vs %q", before, after)
 	}
 	if err := checkNoChangeCompletion(repo, base, "decision", baseline); err == nil {
@@ -471,7 +472,7 @@ func TestAssignedCompletionFeedbackRejectsInvalidBindings(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, git := gitrepo.New(t)
 			git("commit", "--allow-empty", "-m", "base")
-			base := gitOut(repo, "rev-parse", "HEAD")
+			base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			for _, message := range tc.messages {
 				git("commit", "--allow-empty", "-m", message)
 			}

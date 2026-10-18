@@ -15,6 +15,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -266,7 +267,7 @@ func ReadUsageQuotaNative(ctx context.Context, cfg *config.Config, rt runtime.Ru
 	if len(image) != 71 || !strings.HasPrefix(image, "sha256:") || strings.Trim(image[7:], "0123456789abcdef") != "" {
 		return nil, errors.New("native quota helper image is unavailable — run coop init to build the current base")
 	}
-	owner := randomHex(20)
+	owner := randid.Hex(20)
 	if strings.ContainsAny(home+cfg.HomeInBox, ",\n\r") {
 		return nil, errors.New("native quota helper credential path is unsafe")
 	}

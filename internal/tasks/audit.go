@@ -236,7 +236,7 @@ func ProtectedGateChanges(repo, base, head string, projectSources []string) ([]s
 	if base == head {
 		return nil, nil
 	}
-	out, err := gitRawOutErr(repo, "diff", "--no-renames", "--name-only", "-z", base+".."+head)
+	out, err := forkspace.GitOutput(repo, "diff", "--no-renames", "--name-only", "-z", base+".."+head)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +301,7 @@ func auditHistory(project string) (repo, head string) {
 	if project == "" {
 		return "", ""
 	}
-	return gitOut(project, "rev-parse", "--show-toplevel"), gitOut(project, "rev-parse", "--verify", "HEAD^{commit}")
+	return forkspace.GitOut(project, "rev-parse", "--show-toplevel"), forkspace.GitOut(project, "rev-parse", "--verify", "HEAD^{commit}")
 }
 
 // completeTrustedTask is the host equivalent of the provider completion boundary. It holds the
@@ -980,7 +980,7 @@ func AlreadyCommittedInProgress(repo string, hosts []string) ([]struct {
 			continue
 		}
 		depth := 0
-		if n := gitOut(repo, "rev-list", "--count", commits[0]+"..HEAD"); n != "" {
+		if n := forkspace.GitOut(repo, "rev-list", "--count", commits[0]+"..HEAD"); n != "" {
 			depth, _ = strconv.Atoi(n)
 		}
 		out = append(out, struct {
@@ -1646,7 +1646,7 @@ func rawReachableAuditCommitsLimit(
 	commitLimit, edgeLimit int,
 	byteLimit int64,
 ) (commits []rawReachableAuditCommit, err error) {
-	current := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+	current := forkspace.GitOut(repo, "rev-parse", "--verify", head+"^{commit}")
 	if !validAuditReopenHead(current) {
 		return nil, fmt.Errorf("resolve raw audit terminal %s", head)
 	}
@@ -1719,7 +1719,7 @@ func rawAuditHistoryCount(repo, head string, count int) (history []rawAuditCommi
 	if count < 1 || count > auditReopenHistoryLimit+1 {
 		return nil, errors.New("audit history length is outside its bound")
 	}
-	current := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+	current := forkspace.GitOut(repo, "rev-parse", "--verify", head+"^{commit}")
 	if !validAuditReopenHead(current) {
 		return nil, fmt.Errorf("resolve raw audit terminal %s", head)
 	}
@@ -1767,7 +1767,7 @@ func rawAuditHistoryUntil(
 	limit int,
 	stop func(rawAuditCommit) bool,
 ) (history []rawAuditCommit, err error) {
-	current := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+	current := forkspace.GitOut(repo, "rev-parse", "--verify", head+"^{commit}")
 	if !validAuditReopenHead(current) {
 		return nil, fmt.Errorf("resolve raw audit terminal %s", head)
 	}
@@ -1869,7 +1869,7 @@ func rawAuditRewriteHistory(repo, head, reviewedParent string, limit int) ([]raw
 }
 
 func CaptureAuditReopen(repo, id string) (AuditReopenRecord, error) {
-	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
 	if !validAuditReopenHead(head) {
 		return AuditReopenRecord{}, errors.New("resolve audit reopen baseline HEAD")
 	}
@@ -1914,10 +1914,7 @@ func CaptureAuditReopen(repo, id string) (AuditReopenRecord, error) {
 		}
 		history = append(history, commit.semantic)
 	}
-	generation, err := newAuditReopenGeneration()
-	if err != nil {
-		return AuditReopenRecord{}, err
-	}
+	generation := newAuditReopenGeneration()
 	return AuditReopenRecord{
 		Version: auditReopenVersion, Generation: generation, TaskID: id, BaselineHead: head,
 		Subject: commits[0].semantic, History: history,
@@ -1931,7 +1928,7 @@ func auditReopenCurrentHistory(repo, head, id string, record AuditReopenRecord) 
 	if !auditReopenRecordActive(record) {
 		return nil, errors.New("audit authority is not active")
 	}
-	resolvedHead := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+	resolvedHead := forkspace.GitOut(repo, "rev-parse", "--verify", head+"^{commit}")
 	if !validAuditReopenHead(resolvedHead) {
 		return nil, fmt.Errorf("resolve current audit HEAD %s", head)
 	}
@@ -1991,7 +1988,7 @@ func AuditReopenCurrentValid(repo, head, id string, record AuditReopenRecord) bo
 // add one real, unbound repair commit. The host's reopen record supplies task authority, so adding
 // another Coop-Task trailer would only create a duplicate binding.
 func auditReopenAppendedRepair(repo, base, head, id string, record AuditReopenRecord) ([]semanticHistoryCommit, bool) {
-	resolvedBase := gitOut(repo, "rev-parse", "--verify", base+"^{commit}")
+	resolvedBase := forkspace.GitOut(repo, "rev-parse", "--verify", base+"^{commit}")
 	if !validAuditReopenHead(resolvedBase) {
 		return nil, false
 	}
@@ -2069,7 +2066,7 @@ func rebasedAuditReopenRecord(repo, base, head, id string, record AuditReopenRec
 			history[i] = current[i].semantic
 		}
 		rebased := record
-		rebased.BaselineHead = gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+		rebased.BaselineHead = forkspace.GitOut(repo, "rev-parse", "--verify", head+"^{commit}")
 		rebased.History = history
 		rebased.UnblockPending = false
 		return rebased, nil
@@ -2089,7 +2086,7 @@ func rebasedAuditReopenRecord(repo, base, head, id string, record AuditReopenRec
 	for i := range history {
 		history[i] = replacement[i+1].semantic
 	}
-	baselineHead := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+	baselineHead := forkspace.GitOut(repo, "rev-parse", "--verify", head+"^{commit}")
 	if !validAuditReopenHead(baselineHead) {
 		return AuditReopenRecord{}, fmt.Errorf("resolve rebased audit HEAD for task %s", id)
 	}
@@ -2451,7 +2448,7 @@ func ordinaryBindingMatchesRaw(repo, head, id string) bool {
 	if !ok || len(ordinary) != 1 || len(raw[id]) != 1 {
 		return false
 	}
-	resolved := gitOut(repo, "rev-parse", "--verify", ordinary[0]+"^{commit}")
+	resolved := forkspace.GitOut(repo, "rev-parse", "--verify", ordinary[0]+"^{commit}")
 	return resolved == raw[id][0]
 }
 
@@ -2863,8 +2860,8 @@ func boundTaskCommitIsHead(repo string, commits []string) bool {
 	if len(commits) != 1 {
 		return false
 	}
-	head := gitOut(repo, "rev-parse", "--verify", "HEAD")
-	return head != "" && head == gitOut(repo, "rev-parse", "--verify", commits[0]+"^{commit}")
+	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD")
+	return head != "" && head == forkspace.GitOut(repo, "rev-parse", "--verify", commits[0]+"^{commit}")
 }
 
 // auditResumeLine is the informed-resume preamble when the assigned lease carries the host's
@@ -2937,7 +2934,7 @@ func uncommittedResumeLine(id string, files []string) string {
 // is gitignored working state, so it never appears here; a clean tree yields nothing and the
 // blind-resume prompt stays byte-identical.
 func interruptedWorkFiles(repo string) []string {
-	out := gitOut(repo, "status", "--porcelain")
+	out := forkspace.GitOut(repo, "status", "--porcelain")
 	if out == "" {
 		return nil
 	}

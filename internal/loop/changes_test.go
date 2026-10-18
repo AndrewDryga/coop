@@ -9,6 +9,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
@@ -256,7 +257,7 @@ func TestLoopChangesFromGit(t *testing.T) {
 	repo, run := gitrepo.New(t)
 	run("commit", "-q", "--allow-empty", "-m", "base")
 	run("config", "core.quotePath", "true") // old newline output must quote UTF-8 paths
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	commit := func(path, body, msg string) {
 		full := filepath.Join(repo, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -275,7 +276,7 @@ func TestLoopChangesFromGit(t *testing.T) {
 	commit(" affected/notes.md", "spaced notes\n", "spaced area\n\nCoop-Task: task-b")
 	commit("README.md", "changed\n", "docs tweak, no trailer")
 
-	cs, err := loopChanges(repo, base, gitOut(repo, "rev-parse", "HEAD"), nil)
+	cs, err := loopChanges(repo, base, forkspace.GitOut(repo, "rev-parse", "HEAD"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +295,7 @@ func TestLoopChangesFromGit(t *testing.T) {
 	if !slices.Equal(cs.subsystems, []string{" affected", "(root)", "internal/box", "internal/cli", "révision"}) {
 		t.Errorf("subsystems = %v", cs.subsystems)
 	}
-	if head := gitOut(repo, "rev-parse", "HEAD"); !mustLoopChanges(t, repo, head, head).empty() {
+	if head := forkspace.GitOut(repo, "rev-parse", "HEAD"); !mustLoopChanges(t, repo, head, head).empty() {
 		t.Error("an empty range must yield an empty change set")
 	}
 }
@@ -319,11 +320,11 @@ func TestWithEarlierReviewCommitsShowsAnAnchoredCommit(t *testing.T) {
 		run("commit", "-qm", msg)
 	}
 	run("commit", "-q", "--allow-empty", "-m", "root")
-	anchor := gitOut(repo, "rev-parse", "HEAD")
+	anchor := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	commit("site/early.md", "early\n", "early host work\n\nCoop-Task: early-host")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	commit("internal/box/run.go", "package box\n", "box: a\n\nCoop-Task: task-a")
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	subject := func(id, own string) tasks.PendingReviewRecord {
 		return tasks.PendingReviewRecord{Task: tasks.TaskInstance{Ref: tasks.TaskRef{ID: id}}, Base: own, Plan: tasks.PendingReviewPlan{BaseHead: base}}
 	}
@@ -363,7 +364,7 @@ func TestFinalVerificationChangesRejectsUnreadableOrAmbiguousContext(t *testing.
 
 	repo, run := gitrepo.New(t)
 	run("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if cs, err := finalVerificationChanges(repo, base, nil); err != nil || !cs.empty() {
 		t.Fatalf("genuine empty range = (%+v, %v)", cs, err)
 	}
@@ -390,15 +391,15 @@ func TestLoopChangesRefusesAnUnreadableRange(t *testing.T) {
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "root")
-	anchor := gitOut(repo, "rev-parse", "HEAD")
+	anchor := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	writeTaskFile(t, filepath.Join(repo, "code.go"), "package x\n")
 	git("add", "-A")
 	git("commit", "-qm", "early host work\n\nCoop-Task: early-host")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	writeTaskFile(t, filepath.Join(repo, "Makefile"), "check:\n\ttrue\n")
 	git("add", "-A")
 	git("commit", "-qm", "loosen the gate\n\nCoop-Task: task-gate")
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	rng := base + ".." + head
 	gateCommit := []commitInfo{{sha: head}}
 	// A task committed before the run, anchored below the run base: the final review adds its files.
@@ -425,7 +426,7 @@ func TestLoopChangesRefusesAnUnreadableRange(t *testing.T) {
 	t.Run("missing object", func(t *testing.T) {
 		// The run base's tree, which the anchored commit made: `git status` stays clean without it,
 		// only the reads that diff against it fail.
-		tree := gitOut(repo, "rev-parse", base+"^{tree}")
+		tree := forkspace.GitOut(repo, "rev-parse", base+"^{tree}")
 		object := filepath.Join(repo, ".git", "objects", tree[:2], tree[2:])
 		if err := os.Rename(object, object+".hidden"); err != nil {
 			t.Fatal(err)
@@ -496,7 +497,7 @@ func TestCommitFilesPreservesUnicodeProtectedPath(t *testing.T) {
 	}
 	run("add", "-A")
 	run("commit", "-qm", "add guard below unicode directory")
-	files, err := commitFiles(repo, []commitInfo{{sha: gitOut(repo, "rev-parse", "HEAD")}})
+	files, err := commitFiles(repo, []commitInfo{{sha: forkspace.GitOut(repo, "rev-parse", "HEAD")}})
 	if err != nil || !slices.Equal(files, []string{guard}) {
 		t.Fatalf("commitFiles = %q, %v; want exact Git path %q", files, err, guard)
 	}

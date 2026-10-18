@@ -17,6 +17,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"golang.org/x/sys/unix"
 )
 
@@ -515,11 +516,7 @@ func MaterializeForkProjection(assignment ForkAssignment) error {
 	tmpName := ""
 	var tmpRoot *os.Root
 	for attempt := 0; attempt < 16; attempt++ {
-		suffix, randomErr := forkspace.NewGeneration()
-		if randomErr != nil {
-			return randomErr
-		}
-		tmpName = ".tasks-" + string(suffix)
+		tmpName = ".tasks-" + randid.Hex(16)
 		if err := parent.Mkdir(tmpName, 0o700); errors.Is(err, os.ErrExist) {
 			continue
 		} else if err != nil {

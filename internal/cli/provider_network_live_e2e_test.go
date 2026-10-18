@@ -126,9 +126,7 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 
 	sessionID := ""
 	if ag.PresetSessionID() {
-		if sessionID, err = newSessionID(); err != nil {
-			return harnessFail("identifier_generation")
-		}
+		sessionID = newSessionID()
 	}
 	// Stage one: an ordinary headless prompt. Its answer proves the provider's whole stack —
 	// auth refresh, model call, streaming — worked with no proxy variables and no open egress.

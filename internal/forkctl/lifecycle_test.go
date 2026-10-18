@@ -782,7 +782,7 @@ func TestForkLifecycle(t *testing.T) {
 		t.Errorf("fork branch = %q, want %q", got, "perf")
 	}
 	// The fork must carry the parent's git identity so an agent can commit in it.
-	if got := gitOut(ws, "config", "user.email"); got != "t@t" {
+	if got := forkspace.GitOut(ws, "config", "user.email"); got != "t@t" {
 		t.Errorf("fork git identity not propagated: user.email = %q, want %q", got, "t@t")
 	}
 
@@ -800,7 +800,7 @@ func TestForkLifecycle(t *testing.T) {
 	if err := gitFetchInto(repo, ws, "perf"); err != nil {
 		t.Fatalf("gitFetchInto: %v", err)
 	}
-	if gitOut(repo, "rev-parse", "--verify", "-q", "review/perf") == "" {
+	if forkspace.GitOut(repo, "rev-parse", "--verify", "-q", "review/perf") == "" {
 		t.Error("review/perf ref not created")
 	}
 
@@ -820,7 +820,7 @@ func TestForkLifecycle(t *testing.T) {
 	if pathExists(ws) {
 		t.Error("workspace not removed")
 	}
-	if gitOut(repo, "rev-parse", "--verify", "-q", "review/perf") != "" {
+	if forkspace.GitOut(repo, "rev-parse", "--verify", "-q", "review/perf") != "" {
 		t.Error("review/perf ref not removed")
 	}
 }
@@ -874,7 +874,7 @@ func TestForkCarriesSigningMaterials(t *testing.T) {
 		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	// The key + format travel so the rebase-on-land can sign. Read them from the fork's own
-	// config file: the trusted git view deliberately carries neither key, so gitOut cannot see them.
+	// config file: the trusted git view deliberately carries neither key, so forkspace.GitOut cannot see them.
 	forkConfig := func(key string) string {
 		out, _ := exec.Command("git", "-C", ws, "config", "--get", key).Output()
 		return strings.TrimSpace(string(out))
@@ -887,7 +887,7 @@ func TestForkCarriesSigningMaterials(t *testing.T) {
 	}
 	// commit.gpgsign must NOT be in the fork's local config, or the keyless box would
 	// try to sign and every agent commit would fail.
-	if got := gitOut(ws, "config", "--local", "--get", "commit.gpgsign"); got != "" {
+	if got := forkspace.GitOut(ws, "config", "--local", "--get", "commit.gpgsign"); got != "" {
 		t.Errorf("commit.gpgsign must not be copied to the fork's local config, got %q", got)
 	}
 }
@@ -1109,7 +1109,7 @@ func TestRecoverOrphanedGenerationReturnsHeldTasksOnlyWithForce(t *testing.T) {
 	}
 	assignment, err := tasks.AssignForkTask([]string{root}, tasks.ForkAssignmentRequest{
 		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws,
-		BaselineHead: gitOut(ws, "rev-parse", "HEAD"),
+		BaselineHead: forkspace.GitOut(ws, "rev-parse", "HEAD"),
 		LeaseOwner:   tasks.TaskLeaseOwner{RunID: "test", PID: os.Getpid(), Provider: "codex", Target: "codex"},
 	})
 	if err != nil {

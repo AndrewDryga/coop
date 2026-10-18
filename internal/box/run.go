@@ -688,10 +688,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 	if spec.TaskTools != nil {
-		volume, err := taskChannelVolume()
-		if err != nil {
-			return -1, fmt.Errorf("task channel: %w", err)
-		}
+		volume := taskChannelVolume()
 		spec.taskVolume = volume
 		if spec.Homes {
 			// Bound before the snapshot artifact is written below, so every provider projection —

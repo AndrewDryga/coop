@@ -1,8 +1,6 @@
 package box
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +9,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/fsidentity"
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const serviceApprovalMarker = ".coop-service-approval"
@@ -46,11 +45,7 @@ func serviceApprovalAnchor(workspace string, create bool) (string, error) {
 		if err := forkspace.ExcludeIfRepository(workspace, "/"+serviceApprovalMarker); err != nil {
 			return "", fmt.Errorf("exclude service approval marker from Git: %w", err)
 		}
-		var random [16]byte
-		if _, err := rand.Read(random[:]); err != nil {
-			return "", err
-		}
-		anchor := hex.EncodeToString(random[:])
+		anchor := randid.Hex(16)
 		root, err := fsidentity.Create(serviceAnchorBinding(workspace, anchor, private))
 		if err != nil {
 			return "", err

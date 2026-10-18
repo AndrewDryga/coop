@@ -3,7 +3,6 @@ package networkstate
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -15,6 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/AndrewDryga/coop/internal/networkview"
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 // Artifact is the one exact-owned private directory of an execution. It holds
@@ -152,13 +152,9 @@ func (s *Store) PrepareArtifacts(ctx context.Context, id string, revision networ
 
 // publishArtifactLaunch writes the file, syncs it, then links it exclusively
 // under its final name: a link plus a deferred unlink would leave two durable
-// names after an abrupt crash. The caller syncs the directory afterwards.
+// names after an abrupt crash.
 func (s *Store) publishArtifactLaunch(dir *os.File, data []byte) error {
-	random := make([]byte, 16)
-	if _, err := rand.Read(random); err != nil {
-		return err
-	}
-	tmp := ".publish-" + hex.EncodeToString(random)
+	tmp := ".publish-" + randid.Hex(16)
 	fd, err := unix.Openat(int(dir.Fd()), tmp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err

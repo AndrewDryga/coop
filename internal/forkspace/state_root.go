@@ -1,8 +1,6 @@
 package forkspace
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +10,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
@@ -121,10 +120,7 @@ func openExistingStateDir(repo string) (*os.File, error) {
 // following a link, and returns it with its name in root.
 func CreateTempIn(root *os.Root, prefix string) (*os.File, string, error) {
 	for range 10000 {
-		name, err := tempName(prefix)
-		if err != nil {
-			return nil, "", err
-		}
+		name := tempName(prefix)
 		f, err := root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 		if errors.Is(err, os.ErrExist) {
 			continue
@@ -138,11 +134,8 @@ func CreateTempIn(root *os.Root, prefix string) (*os.File, string, error) {
 // returns its name in root.
 func MkdirTempIn(root *os.Root, prefix string) (string, error) {
 	for range 10000 {
-		name, err := tempName(prefix)
-		if err != nil {
-			return "", err
-		}
-		err = root.Mkdir(name, 0o700)
+		name := tempName(prefix)
+		err := root.Mkdir(name, 0o700)
 		if errors.Is(err, os.ErrExist) {
 			continue
 		}
@@ -162,10 +155,4 @@ func PublishNoReplace(root *os.Root, tmp, name string) error {
 
 // tempName is prefix plus 8 random hex digits, no longer than os.CreateTemp's suffix, so a name
 // that fit with CreateTemp still fits.
-func tempName(prefix string) (string, error) {
-	var raw [4]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return prefix + hex.EncodeToString(raw[:]), nil
-}
+func tempName(prefix string) string { return prefix + randid.Hex(4) }

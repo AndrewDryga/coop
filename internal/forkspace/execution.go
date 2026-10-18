@@ -3,7 +3,6 @@ package forkspace
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const (
@@ -285,13 +286,7 @@ func projectExecutionRegistryUnavailable(err error) bool {
 	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EROFS)
 }
 
-func newExecutionID() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw[:]), nil
-}
+func newExecutionID() string { return randid.Hex(16) }
 
 // LockServiceLaunch coordinates the short daemon-mount boundary with running sandboxes. A service
 // launch takes the exclusive lock while Docker opens live bind sources; every sandbox holds the
@@ -478,10 +473,7 @@ func BeginExecution(repo string, spec ExecutionSpec) (ExecutionRecord, error) {
 		}
 		registry = fallback
 	}
-	id, err := newExecutionID()
-	if err != nil {
-		return ExecutionRecord{}, err
-	}
+	id := newExecutionID()
 	token := ProcStartToken(os.Getpid())
 	record := ExecutionRecord{
 		Version: executionRecordVersion, ID: id, Kind: spec.Kind, Role: spec.Role,

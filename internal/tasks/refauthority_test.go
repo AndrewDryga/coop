@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 // EnterRefAuthorityWindow is the compare-and-swap the work loop, signing, fork-land, and the
@@ -25,7 +26,7 @@ import (
 func TestEnterRefAuthorityWindowMatchesLiveHead(t *testing.T) {
 	repo, run := gitRepo(t)
 	run("commit", "-q", "--allow-empty", "-m", "base")
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	release, live, err := EnterRefAuthorityWindow(cfg, repo, head, nil)
@@ -45,10 +46,10 @@ func TestEnterRefAuthorityWindowMatchesLiveHead(t *testing.T) {
 func TestEnterRefAuthorityWindowFailsClosedOnHeadMismatch(t *testing.T) {
 	repo, run := gitRepo(t)
 	run("commit", "-q", "--allow-empty", "-m", "base")
-	validated := gitOut(repo, "rev-parse", "HEAD")
+	validated := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	// HEAD moves before the window is entered — exactly the old validation-to-consumption seam.
 	run("commit", "-q", "--allow-empty", "-m", "moved")
-	live := gitOut(repo, "rev-parse", "HEAD")
+	live := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	release, got, err := EnterRefAuthorityWindow(cfg, repo, validated, nil)
@@ -74,7 +75,7 @@ func TestEnterRefAuthorityWindowFailsClosedOnHeadMismatch(t *testing.T) {
 func TestEnterRefAuthorityWindowFailsClosedWhenContended(t *testing.T) {
 	repo, run := gitRepo(t)
 	run("commit", "-q", "--allow-empty", "-m", "base")
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 
 	holderRelease, err := LockRefAuthority(cfg, repo)
@@ -98,12 +99,12 @@ func TestEnterRefAuthorityWindowKeepsSeparateWorktreesParallel(t *testing.T) {
 	runB("commit", "-q", "--allow-empty", "-m", "b")
 
 	cfg := &config.Config{ConfigDir: t.TempDir()}
-	releaseA, _, err := EnterRefAuthorityWindow(cfg, repoA, gitOut(repoA, "rev-parse", "HEAD"), nil)
+	releaseA, _, err := EnterRefAuthorityWindow(cfg, repoA, forkspace.GitOut(repoA, "rev-parse", "HEAD"), nil)
 	if err != nil {
 		t.Fatalf("window A = %v, want it granted", err)
 	}
 	defer releaseA()
-	releaseB, _, err := EnterRefAuthorityWindow(cfg, repoB, gitOut(repoB, "rev-parse", "HEAD"), nil)
+	releaseB, _, err := EnterRefAuthorityWindow(cfg, repoB, forkspace.GitOut(repoB, "rev-parse", "HEAD"), nil)
 	if err != nil {
 		t.Fatalf("window B = %v, want a concurrent fork's worktree to stay parallel", err)
 	}
@@ -135,7 +136,7 @@ func TestRefAuthorityWindowRejectsConcurrentHeadMove(t *testing.T) {
 	if err := MoveTaskDir(root, item, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	headAfter := gitOut(repo, "rev-parse", "HEAD")
+	headAfter := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	var raced string
@@ -144,7 +145,7 @@ func TestRefAuthorityWindowRejectsConcurrentHeadMove(t *testing.T) {
 		// even attempted, so there is nothing racy about when the second process's commit lands
 		// relative to the compare that follows.
 		run("commit", "-q", "--allow-empty", "-m", "a concurrent host-side commit")
-		raced = gitOut(repo, "rev-parse", "HEAD")
+		raced = forkspace.GitOut(repo, "rev-parse", "HEAD")
 	}
 
 	release, live, err := EnterRefAuthorityWindow(cfg, repo, headAfter, beforeWindow)

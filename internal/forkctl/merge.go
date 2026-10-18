@@ -28,7 +28,7 @@ import (
 // editor and agent settings, compose, the Makefile — for the review brief. The automatic ones
 // also appear in PolicyScan, where they block a merge unless forced.
 func HostSurfaces(repo, ref string) []hostsurface.Finding {
-	return hostsurface.Findings(gitOut(repo, "diff", "--name-status", "HEAD..."+ref))
+	return hostsurface.Findings(forkspace.GitOut(repo, "diff", "--name-status", "HEAD..."+ref))
 }
 
 // PolicyScan returns human-readable concerns about a fork's added/changed files:
@@ -38,7 +38,7 @@ func HostSurfaces(repo, ref string) []hostsurface.Finding {
 // read it, for example by giving the fork a history unrelated to the project's: the error comes
 // back, never an empty scan that would read as nothing flagged.
 func PolicyScan(repo, ref string) ([]string, error) {
-	out, err := gitOutErr(repo, "diff", "--name-status", "HEAD..."+ref)
+	out, err := forkspace.GitOutErr(repo, "diff", "--name-status", "HEAD..."+ref)
 	if err != nil {
 		return nil, fmt.Errorf("read the fork's changes: %w", err)
 	}
@@ -92,7 +92,7 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		if reason, automatic := hostsurface.Classify(f[0], path); automatic {
 			warns = append(warns, path+" — "+reason) // runs by itself: blocks the merge unless forced
 		}
-		entry, err := gitOutErr(repo, "ls-tree", ref, "--", path)
+		entry, err := forkspace.GitOutErr(repo, "ls-tree", ref, "--", path)
 		if err != nil {
 			return nil, fmt.Errorf("read %s from the fork: %w", path, err)
 		}
@@ -107,7 +107,7 @@ func PolicyScan(repo, ref string) ([]string, error) {
 			warns = append(warns, fmt.Sprintf("large file (%dMB): %s", size>>20, path))
 			continue // don't read a huge blob's content
 		}
-		content, err := gitOutErr(repo, "show", ref+":"+path)
+		content, err := forkspace.GitOutErr(repo, "show", ref+":"+path)
 		if err != nil {
 			return nil, fmt.Errorf("read %s from the fork: %w", path, err)
 		}
@@ -136,12 +136,12 @@ func notRegularCoopignore(repo, ref, path string) bool {
 	if filepath.Base(slash) != ".coopignore" {
 		return false
 	}
-	mode, _, _ := strings.Cut(gitOut(repo, "ls-tree", ref, "--", path), " ")
+	mode, _, _ := strings.Cut(forkspace.GitOut(repo, "ls-tree", ref, "--", path), " ")
 	return mode != "" && mode != "100644" && mode != "100755"
 }
 
 func gitBlobSize(repo, ref, path string) (int64, error) {
-	out, err := gitOutErr(repo, "cat-file", "-s", ref+":"+path)
+	out, err := forkspace.GitOutErr(repo, "cat-file", "-s", ref+":"+path)
 	if err != nil {
 		return 0, fmt.Errorf("read the size of %s in the fork: %w", path, err)
 	}
@@ -153,7 +153,7 @@ func gitBlobSize(repo, ref, path string) (int64, error) {
 // automatically on `npm install`, so a fork can plant one to execute host code post-merge — or ""
 // when the change touches no such script (an ordinary dependency bump isn't flagged).
 func addedLifecycleScript(repo, ref, path, newContent string) string {
-	return changedLifecycleScript(gitOut(repo, "show", "HEAD:"+path), newContent)
+	return changedLifecycleScript(forkspace.GitOut(repo, "show", "HEAD:"+path), newContent)
 }
 
 func changedLifecycleScript(oldContent, newContent string) string {
@@ -278,7 +278,7 @@ func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.Re
 			return run, err
 		}
 	}
-	base := strings.TrimSpace(gitOut(request.Candidate, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
+	base := strings.TrimSpace(forkspace.GitOut(request.Candidate, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
 	if base == "" {
 		return run, errors.New("resolve trusted review base commit")
 	}
@@ -347,10 +347,10 @@ func (c *Control) runGateBoundary(gateRepo, treeDir, img string, review bool, is
 		ui.Note("Running project checks")
 	}
 	ui.Note("  Running: %s", strings.Join(gate, " "))
-	reviewBase := strings.TrimSpace(gitOut(treeDir, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
+	reviewBase := strings.TrimSpace(forkspace.GitOut(treeDir, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
 	if reviewBase == "" {
 		if isolatedParent == "" {
-			reviewBase = strings.TrimSpace(gitOut(gateRepo, "rev-parse", "--verify", "HEAD^{commit}"))
+			reviewBase = strings.TrimSpace(forkspace.GitOut(gateRepo, "rev-parse", "--verify", "HEAD^{commit}"))
 		} else {
 			base, readErr := forkspace.ObserveGit(context.Background(), gateRepo, "rev-parse", "--verify", "HEAD^{commit}")
 			if readErr != nil {
@@ -518,7 +518,7 @@ func (f *landedFork) validateLand(repo, name string) error {
 	if f.publishedHead != "" {
 		head, err = observed(ws, "rev-parse", "--verify", "HEAD^{commit}")
 	} else {
-		head, err = gitOutErr(ws, "rev-parse", "--verify", "HEAD^{commit}")
+		head, err = forkspace.GitOutErr(ws, "rev-parse", "--verify", "HEAD^{commit}")
 	}
 	if err != nil {
 		return fmt.Errorf("inspect landed fork HEAD: %w", err)
@@ -534,7 +534,7 @@ func (f *landedFork) validateLand(repo, name string) error {
 		}
 		return nil
 	}
-	if _, err := gitOutErr(repo, "merge-base", "--is-ancestor", publication, "HEAD"); err != nil {
+	if _, err := forkspace.GitOutErr(repo, "merge-base", "--is-ancestor", publication, "HEAD"); err != nil {
 		return fmt.Errorf("cannot confirm the parent contains the landed commit: %w", err)
 	}
 	return nil
@@ -672,7 +672,7 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 		}
 	}
 	ref := "review/" + name
-	if skipEmpty && gitOut(repo, "rev-list", "--count", "HEAD.."+ref) == "0" {
+	if skipEmpty && forkspace.GitOut(repo, "rev-list", "--count", "HEAD.."+ref) == "0" {
 		if !hasGeneration {
 			return mergeOutcome{skipped: true}, nil
 		}
@@ -693,7 +693,7 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 	}
 	// Say which branch we're landing onto — merge rebases onto your *current* branch,
 	// so this is your chance to notice you're on the wrong one.
-	target := gitOut(repo, "rev-parse", "--abbrev-ref", "HEAD")
+	target := forkspace.GitOut(repo, "rev-parse", "--abbrev-ref", "HEAD")
 	if target == "" || target == "HEAD" {
 		target = "the current commit (detached HEAD)"
 	}
@@ -714,13 +714,13 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 			if err := forkspace.ValidateGenerationWorkspace(repo, identity); err != nil {
 				return mergeOutcome{}, err
 			}
-			head, tree := gitOut(ws, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD^{tree}")
+			head, tree := forkspace.GitOut(ws, "rev-parse", "HEAD"), forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
 			if err := tasks.ValidateForkCandidateLocked(repo, candidate, head, tree); err != nil {
 				return mergeOutcome{}, fmt.Errorf("%s reviewed candidate is stale: %w", name, err)
 			}
 			intent := landIntent{
 				Version: landIntentVersion, Candidate: candidate,
-				ParentBefore: gitOut(repo, "rev-parse", "HEAD"), Phase: landPreparing, CreatedAt: time.Now().UTC(),
+				ParentBefore: forkspace.GitOut(repo, "rev-parse", "HEAD"), Phase: landPreparing, CreatedAt: time.Now().UTC(),
 			}
 			if err := writeLandIntent(repo, intent); err != nil {
 				return mergeOutcome{}, err
@@ -742,7 +742,7 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 	// Advance the parent by a fast-forward-ONLY merge — an atomic compare-and-swap: it refuses if a
 	// concurrent commit moved the parent since the rebase, so a divergence lands nothing (re-run to
 	// rebase onto the new HEAD) instead of being erased by a rollback.
-	landedHead, err := gitOutErr(ws, "rev-parse", "--verify", "HEAD^{commit}")
+	landedHead, err := forkspace.GitOutErr(ws, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
 		return mergeOutcome{}, fmt.Errorf("inspect candidate before land: %w", err)
 	}
@@ -770,7 +770,7 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 	if err := recoverInterruptedRebase(repo, ws, name); err != nil {
 		return err
 	}
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if head == "" {
 		// A parent with no commits yet → `git rebase ""` fails with a cryptic "invalid upstream";
 		// give a clear cause instead.
@@ -779,7 +779,7 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 	// Every git command here runs on an agent-controlled tree (the fork ws AND the parent repo,
 	// whose .git the agent could have poisoned), so all go through the hardened helpers — a planted
 	// .git/hooks/* or malicious .git/config must not execute on the host (forkspace.GitHardening).
-	if err := gitRun(ws, "fetch", "--quiet", repo); err != nil {
+	if err := forkspace.GitRun(ws, "fetch", "--quiet", repo); err != nil {
 		return fmt.Errorf("%s: fetching parent into the fork: %w", name, err)
 	}
 	// Rebase the fork's branch by NAME, not whatever the agent left checked out, so the branch we
@@ -788,7 +788,7 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 	// The switch itself happens on the real git dir (HEAD is rewritten there; the trusted view
 	// would keep it to itself) and only on a clean tree; the rebase then runs under the view, where
 	// the repository's config can name no filter, merge, or diff driver for it to run.
-	if current := gitOut(ws, "symbolic-ref", "--quiet", "--short", "HEAD"); current != name {
+	if current := forkspace.GitOut(ws, "symbolic-ref", "--quiet", "--short", "HEAD"); current != name {
 		if gitDirty(ws) {
 			return fmt.Errorf("%s: the fork has %q checked out with uncommitted changes — commit or discard them, then re-run", name, current)
 		}
@@ -800,10 +800,10 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 	if forkspace.WantsSigning() {
 		rebaseErr = gitSign(ws, append(forkspace.TrustedSignArgs(), "rebase", "-f", "--gpg-sign", head, name)...)
 	} else {
-		rebaseErr = gitRun(ws, "rebase", head, name)
+		rebaseErr = forkspace.GitRun(ws, "rebase", head, name)
 	}
 	if rebaseErr != nil {
-		_ = gitRun(ws, "rebase", "--abort")
+		_ = forkspace.GitRun(ws, "rebase", "--abort")
 		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (cd %q && git rebase %s %s), then re-run", name, gitBranch(repo), ws, head, name)
 	}
 	return nil
@@ -814,7 +814,7 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 // and --git-path resolves either, in a plain clone as in a linked worktree.
 func leftoverRebaseState(ws string) string {
 	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
-		path := gitOut(ws, "rev-parse", "--git-path", dir)
+		path := forkspace.GitOut(ws, "rev-parse", "--git-path", dir)
 		if path == "" {
 			continue
 		}
@@ -866,8 +866,8 @@ func recoverInterruptedRebase(repo, ws, name string) error {
 		return fmt.Errorf("%s: the fork worktree has an unfinished rebase (%s) from an interrupted land, but its lifecycle state is still held by %s — stop it first: coop fork stop %s", name, filepath.Base(dir), owner, name)
 	}
 	ui.Warn("fork %s has an unfinished rebase (%s) from an interrupted land — aborting it to recover the worktree", name, filepath.Base(dir))
-	// gitOutErr, not gitRun: git's own stderr is the only explanation a human gets for a failed abort.
-	if _, err := gitOutErr(ws, "rebase", "--abort"); err != nil {
+	// forkspace.GitOutErr, not forkspace.GitRun: git's own stderr is the only explanation a human gets for a failed abort.
+	if _, err := forkspace.GitOutErr(ws, "rebase", "--abort"); err != nil {
 		return fmt.Errorf("%s: could not abort the unfinished rebase in %s: %w — finish it by hand (cd %q && git status; git rebase --abort), then re-run the merge", name, filepath.Base(dir), err, ws)
 	}
 	ui.Detail("aborted the unfinished rebase; %s is back on its branch", name)
@@ -891,7 +891,7 @@ func (c *Control) FastForwardParent(repo, ws, name string) error {
 		return fmt.Errorf("%s: acquire ref authority for %s: %w", name, repo, lockErr)
 	}
 	defer release()
-	if err := gitRun(repo, "merge", "--ff-only", "review/"+name); err != nil {
+	if err := forkspace.GitRun(repo, "merge", "--ff-only", "review/"+name); err != nil {
 		return fmt.Errorf("%s: the parent advanced during the merge — nothing landed; re-run to rebase onto the new HEAD", name)
 	}
 	return nil
@@ -999,8 +999,8 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		return -1, err
 	}
 	ref := "review/" + name
-	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)
-	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
+	ahead := forkspace.GitOut(repo, "rev-list", "--count", "HEAD.."+ref)
+	ins, del := parseShortstat(forkspace.GitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
 	aheadN, _ := strconv.Atoi(ahead)
 	ui.Note("Merge fork %s into %s", name, gitBranch(repo))
 	ui.Note("  %s · +%d −%d", ui.Count(aheadN, "commit"), ins, del)

@@ -2,7 +2,6 @@ package loop
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -23,6 +22,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/taskmcp"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -415,9 +415,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// A per-run id keys this run's telemetry file (.agent/runs/<runid>.jsonl) — one JSON-Lines
 	// record per stage, so the harness's own behavior (which target ran, reopen/retry counts) is
 	// measurable. Best-effort throughout; a telemetry hiccup never touches the work.
-	ridb := make([]byte, 8)
-	_, _ = rand.Read(ridb)
-	runid := hex.EncodeToString(ridb)
+	runid := randid.Hex(8)
 	c.runID = runid // boxes get it as COOP_RUN_ID so a consult peer can log its usage for the cost digest
 	if len(peers) > 0 || c.preset != nil {
 		peerPath, peerErr := preparePeerRecordFile(repo, runid)
@@ -578,7 +576,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			// provider, so building the command first would mount one provider's credential while
 			// carrying another's command line.
 			agent = c.applyTarget(rot)
-			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+			pfStart, pfHead := time.Now(), forkspace.GitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming, agentCommand := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
 			pfCode, _, _, pfClassification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, agentCommand, hosts, completionWindowReview, nil, nil, false, sink, peers, "preflight", "", nil)
 			if stopsTheRun(runErr) {
@@ -635,7 +633,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// A commit between iterations is progress too (see below), and every completion is validated
 	// against a commit range — so an unreadable HEAD isn't a head value the loop can carry, it's a
 	// repo the loop cannot bookkeep against. Stop before the first box starts.
-	prevHead, headErr := gitOutErr(repo, "rev-parse", "HEAD")
+	prevHead, headErr := forkspace.GitOutErr(repo, "rev-parse", "HEAD")
 	if headErr != nil {
 		ui.Failure("Could not start the loop",
 			"This repository has no readable Git commit yet.\nCommit the initial project files, then start the loop again.")
@@ -792,7 +790,7 @@ reviewAgain:
 			// preamble (verify the finding; zero-commit re-close or a real tree change — never a
 			// Coop-Recovery receipt); otherwise a landed Coop-Task commit (a crash after commit before
 			// the folder-move) gets the crash/reopen disambiguation line. Empty prefix → prompt unchanged.
-			iterHead := gitOut(repo, "rev-parse", "HEAD")
+			iterHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			// Keep the first leased attempt's CONTENT fingerprint through every automatic retry.
 			// An explicit controller restart is a new operator inspection boundary.
 			baselineKey := filepath.Join(assigned.Root, assigned.Item.ID)
@@ -961,7 +959,7 @@ reviewAgain:
 				}
 			}
 			if terminalCorrectionErr != nil {
-				headAfter := gitOut(repo, "rev-parse", "HEAD")
+				headAfter := forkspace.GitOut(repo, "rev-parse", "HEAD")
 				refRelease, liveHead, refErr := tasks.EnterRefAuthorityWindow(c.cfg, repo, headAfter, nil)
 				if refErr != nil {
 					reason := refErr.Error()
@@ -1032,7 +1030,7 @@ reviewAgain:
 						return 1, errors.Join(restoreErr, lease.Release(), windows.Abandon())
 					}
 				}
-				if authorityErr := lease.RebaseTimedOutAuditReopen(repo, iterHead, gitOut(repo, "rev-parse", "HEAD")); authorityErr != nil {
+				if authorityErr := lease.RebaseTimedOutAuditReopen(repo, iterHead, forkspace.GitOut(repo, "rev-parse", "HEAD")); authorityErr != nil {
 					baseline := lease.Reopen.BaselineHead
 					parkErr := tasks.ParkStaleAuditReopen(assigned, baseline)
 					releaseErr := errors.Join(lease.Release(), windows.Abandon())
@@ -1082,7 +1080,7 @@ reviewAgain:
 				continue
 			}
 			handoffs, timeouts = 0, 0
-			headAfter := gitOut(repo, "rev-parse", "HEAD")
+			headAfter := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			if cleanCredentialRetryCanReuseServices(repo, iterHead, headAfter, classification.outcome) {
 				reuseWorkServices[assigned.Item.ID] = true
 			}
@@ -1365,7 +1363,7 @@ reviewAgain:
 				} else if signed > 0 {
 					ui.Note("Signed %s with your host key.", ui.Count(signed, "commit"))
 				}
-				headAfter = gitOut(repo, "rev-parse", "HEAD")
+				headAfter = forkspace.GitOut(repo, "rev-parse", "HEAD")
 			}
 			c.recordStage(repo, runid, "work", classification.outcome, rot.Active(), iterStart, code, retries, 0, iterHead, hosts, finished, gateHits, res)
 			// Review a just-completed task now when a successful iteration has ordinary between
@@ -1941,7 +1939,7 @@ reviewAgain:
 			}
 			settledBaseline = c0.Done + c0.Blocked
 			completedThisRun = map[string]bool{}
-			prevHead, headErr = gitOutErr(repo, "rev-parse", "HEAD")
+			prevHead, headErr = forkspace.GitOutErr(repo, "rev-parse", "HEAD")
 			if headErr != nil {
 				return 1, fmt.Errorf("read HEAD after resumed final review: %w", headErr)
 			}
@@ -2026,7 +2024,7 @@ func cleanCredentialRetryCanReuseServices(repo, beforeHead, afterHead, outcome s
 	if (outcome != "authentication" && outcome != "rate_limit") || beforeHead == "" || beforeHead != afterHead {
 		return false
 	}
-	status, err := gitOutErr(repo, "status", "--porcelain=v1", "--untracked-files=all")
+	status, err := forkspace.GitOutErr(repo, "status", "--porcelain=v1", "--untracked-files=all")
 	return err == nil && status == ""
 }
 
@@ -2110,7 +2108,7 @@ func (c *Control) advanceStall(repo string, hosts []string, prevHead string, set
 		return prevHead, settledBaseline, stalls, &progressReadError{what: "the task queue", err: err}
 	}
 	settled := after.Done + after.Blocked
-	head, err := gitOutErr(repo, "rev-parse", "HEAD")
+	head, err := forkspace.GitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil {
 		return prevHead, settledBaseline, stalls, &progressReadError{what: "HEAD of " + repo, err: err}
 	}

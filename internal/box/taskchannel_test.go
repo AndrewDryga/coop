@@ -42,14 +42,8 @@ func (echoServer) Serve(ctx context.Context, rw io.ReadWriter) error {
 }
 
 func TestTaskChannelVolumeIsDistinctPerRun(t *testing.T) {
-	a, err := taskChannelVolume()
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := taskChannelVolume()
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := taskChannelVolume()
+	b := taskChannelVolume()
 	if a == b || !strings.HasPrefix(a, "coop-tasks-") || len(a) != len("coop-tasks-")+16 {
 		t.Fatalf("volumes = %q %q", a, b)
 	}
@@ -145,7 +139,7 @@ func TestTaskChannelServesTheBoxAndTearsDownAfterTheRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	volume, _ := taskChannelVolume()
+	volume := taskChannelVolume()
 	channel, err := startTaskChannel(context.Background(), rt, "coop-box", volume, "run-1", echoServer{}, script)
 	if err != nil {
 		t.Fatalf("startTaskChannel: %v", err)

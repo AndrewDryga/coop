@@ -223,10 +223,7 @@ func (a *app) fetchACPModelCatalog(agent string, catalog agents.ModelCatalogSpec
 	if err != nil {
 		return nil, err
 	}
-	superID, err := newSupervisorID()
-	if err != nil {
-		return nil, err
-	}
+	superID := newSupervisorID()
 	launchCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	stderr := &tailBuffer{max: 16 << 10}

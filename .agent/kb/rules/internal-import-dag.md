@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,10 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-18 — new leaf `randid` (stdlib only): one random-ID helper for box, cli, forkspace, loop,
+  networkgateway, networkstate, session and tasks, which each carried their own crypto/rand
+  wrapper with an error branch that cannot run since Go 1.24 (task
+  2026-10-15-replace-copied-git-and-random-id-helpers-with-on).
 - 2026-10-17 — added the `safetext` leaf (`Hidden`: the characters that cannot be shown as they
   are), imported by ui, tasks and egress so `ui.SafeInline` (escapes them), the task views (drop
   them) and network provenance (refuses them) share one definition (task

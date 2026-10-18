@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -29,6 +28,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -452,10 +452,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	inner := append([]string{"acp"}, rest...)
 	// A per-supervisor id, stamped on this supervisor's boxes (coop.sup=<id>) so it can
 	// kill exactly its own box(es) on teardown — not other agents' supervised boxes.
-	superID, err := newSupervisorID()
-	if err != nil {
-		return 1, err
-	}
+	superID := newSupervisorID()
 
 	// A SIGHUP re-exec left us its state: restore the controller's selection and hand the proxy
 	// snapshot to Run so the editor's live threads are re-established on the first (fresh) box. A
@@ -820,10 +817,7 @@ func acpChildCapture(capture *box.CapturedEgress, superID string) (string, error
 	if capture == nil {
 		return "", nil
 	}
-	attempt, err := newSupervisorID()
-	if err != nil {
-		return "", err
-	}
+	attempt := newSupervisorID()
 	return box.SessionNetworkCapture{
 		Project: capture.Project, Fingerprint: capture.Fingerprint,
 		Qualification: capture.QualificationID,
@@ -853,13 +847,7 @@ func acpPolicy(capture *box.CapturedEgress) string {
 	return capture.Fingerprint
 }
 
-func newSupervisorID() (string, error) {
-	idbuf := make([]byte, 8)
-	if _, err := rand.Read(idbuf); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(idbuf), nil
-}
+func newSupervisorID() string { return randid.Hex(8) }
 
 const acpCleanupTimeout = 5 * time.Second
 
@@ -1191,13 +1179,10 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	}
 	mcpDir, mcpPath, mcpRunID := "", "", ""
 	if activityRole != forkspace.ExecutionRoleProbe {
-		id, err := newSupervisorID()
+		id := newSupervisorID()
+		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 		if err == nil {
-			var repo string
-			repo, err = box.ResolveRepo(a.cfg.RepoOverride)
-			if err == nil {
-				mcpDir, err = box.NewSessionMCPHandoffDir(a.cfg, repo)
-			}
+			mcpDir, err = box.NewSessionMCPHandoffDir(a.cfg, repo)
 		}
 		if err != nil {
 			inR.Close()

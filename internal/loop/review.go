@@ -11,6 +11,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -162,7 +163,7 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 			return last, fmt.Errorf("%s cannot start an exact review session", agents.DisplayTarget(target.String()))
 		}
 		c.net.setStage(fmt.Sprintf("Review attempt %d", totalRetries+1))
-		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+		start, headBefore := time.Now(), forkspace.GitOut(repo, "rev-parse", "HEAD")
 		repoReadOnly := reviewRepoReadOnly(writes)
 		recovery := iterationRecovery{reuseServices: totalRetries > 0 && repoReadOnly}
 		code, out, usage, classification, windows, runErr := c.runIterationWithMode(ctx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowReview, subjects, pendingReview, repoReadOnly, sink, peers, activity, "", nil, recovery)
@@ -280,9 +281,7 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 
 func newReviewSessionID() string {
 	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return ""
-	}
+	_, _ = rand.Read(raw[:])
 	raw[6] = raw[6]&0x0f | 0x40
 	raw[8] = raw[8]&0x3f | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", raw[:4], raw[4:6], raw[6:8], raw[8:10], raw[10:])
@@ -320,11 +319,11 @@ type reviewSourceSnapshot struct {
 }
 
 func snapshotReviewSource(repo string) (reviewSourceSnapshot, error) {
-	head, err := gitOutErr(repo, "rev-parse", "HEAD")
+	head, err := forkspace.GitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil || head == "" {
 		return reviewSourceSnapshot{}, errors.New("could not resolve review source HEAD")
 	}
-	state, err := gitOutErr(repo, "status", "--porcelain=v1", "--untracked-files=no")
+	state, err := forkspace.GitOutErr(repo, "status", "--porcelain=v1", "--untracked-files=no")
 	if err != nil {
 		return reviewSourceSnapshot{}, fmt.Errorf("could not inspect review source: %w", err)
 	}
@@ -474,7 +473,7 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 	if err != nil {
 		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: snapshot review source: %v", tasks.ErrCompletionWindowSetup, err)
 	}
-	start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+	start, headBefore := time.Now(), forkspace.GitOut(repo, "rev-parse", "HEAD")
 	run, runErr := c.runReview(ctx, repo, img, rev, forkName, prompt, activity, reviewCmd, hosts, subjects, pendingReview, writes, sink, peers, wake, observe)
 	run.output = normalizeReviewVerdictOutput(run.output)
 	if runErr == nil {
@@ -533,7 +532,7 @@ func (c *Control) runCandidateReviewVerdict(ctx context.Context, repo, img strin
 	if err != nil {
 		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: snapshot candidate review source: %v", tasks.ErrCompletionWindowSetup, err)
 	}
-	start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+	start, headBefore := time.Now(), forkspace.GitOut(repo, "rev-parse", "HEAD")
 	run, runErr := c.runReview(ctx, repo, img, rev, forkName, prompt, activity, reviewCmd, hosts, subjects, nil, loopcfg.ReviewWritesTasks, sink, peers, wake, observe)
 	run.output = normalizeReviewVerdictOutput(run.output)
 	apply := func() error {

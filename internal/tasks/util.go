@@ -1,28 +1,19 @@
 package tasks
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/safetext"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // newSupervisorID mints a fresh random id to embed in a completion window's lock name, so nothing
-// else can collide with it. internal/cli/acp_cmd.go keeps its own copy (its ACP supervisor's box
-// label needs the identical shape) rather than exporting one across the package boundary — the
-// same "local-redeclare a trivial, stateless leaf" shape gitOut uses; see git.go.
-func newSupervisorID() (string, error) {
-	idbuf := make([]byte, 8)
-	if _, err := rand.Read(idbuf); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(idbuf), nil
-}
+// else can collide with it.
+func newSupervisorID() string { return randid.Hex(8) }
 
 func fileExists(path string) bool {
 	fi, err := os.Stat(path)

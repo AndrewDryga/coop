@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
@@ -27,7 +28,7 @@ func TestUncommittedCompletionCanRetry(t *testing.T) {
 			if scenario == "graft" || scenario == "shallow" {
 				git("commit", "--allow-empty", "-m", "descendant")
 			}
-			base := gitOut(repo, "rev-parse", "HEAD")
+			base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			switch scenario {
 			case "inherited untracked", "inherited staged":
 				writeTaskFile(t, filepath.Join(repo, "unrelated"), "preserve me\n")
@@ -56,7 +57,7 @@ func TestUncommittedCompletionCanRetry(t *testing.T) {
 			case "hidden edit":
 				git("update-index", "--assume-unchanged", "source")
 				writeTaskFile(t, filepath.Join(repo, "source"), "hidden\n")
-				if status := gitOut(repo, "status", "--porcelain", "--untracked-files=all"); status != "" {
+				if status := forkspace.GitOut(repo, "status", "--porcelain", "--untracked-files=all"); status != "" {
 					t.Fatalf("fixture edit must be hidden: %s", status)
 				}
 			case "missing baseline":
@@ -70,7 +71,7 @@ func TestUncommittedCompletionCanRetry(t *testing.T) {
 			case "unreadable":
 				base = "not-a-commit"
 			}
-			head := gitOut(repo, "rev-parse", "HEAD")
+			head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			if scenario == "unreadable" {
 				head = base
 			}
@@ -145,7 +146,7 @@ func TestNoChangeCompletionAllowed(t *testing.T) {
 				message += "\n\nCoop-Task: task"
 			}
 			git("commit", "--allow-empty", "-m", message)
-			base := gitOut(repo, "rev-parse", "HEAD")
+			base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			if scenario == "unrelated staged" {
 				writeTaskFile(t, filepath.Join(repo, "unrelated"), "preserve me\n")
 				git("add", "unrelated")
@@ -160,7 +161,7 @@ func TestNoChangeCompletionAllowed(t *testing.T) {
 			case "advanced history":
 				git("commit", "--allow-empty", "-m", "new history")
 			}
-			err = NoChangeCompletionAllowed(repo, base, gitOut(repo, "rev-parse", "HEAD"), "task", baseline)
+			err = NoChangeCompletionAllowed(repo, base, forkspace.GitOut(repo, "rev-parse", "HEAD"), "task", baseline)
 			wantAllowed := scenario == "unchanged" || scenario == "unrelated staged"
 			if (err == nil) != wantAllowed {
 				t.Fatalf("no-change completion %s: %v", scenario, err)

@@ -177,15 +177,11 @@ type ForkCandidateReview struct {
 	Required      bool
 }
 
-func newForkCandidate(identity forkspace.Identity, head, tree string, assignments []ForkCandidateAssignment) (ForkCandidate, error) {
-	id, err := newAssignmentID()
-	if err != nil {
-		return ForkCandidate{}, err
-	}
+func newForkCandidate(identity forkspace.Identity, head, tree string, assignments []ForkCandidateAssignment) ForkCandidate {
 	return ForkCandidate{
-		Version: forkCandidateVersion, ID: id, Fork: identity, Head: head, Tree: tree,
+		Version: forkCandidateVersion, ID: newAssignmentID(), Fork: identity, Head: head, Tree: tree,
 		Assignments: assignments, CreatedAt: time.Now().UTC(),
-	}, nil
+	}
 }
 
 func requireNoForkLifecycleIntent(repo string, identity forkspace.Identity) error {
@@ -300,14 +296,11 @@ func BeginForkCandidateReview(repo string, identity forkspace.Identity, head, tr
 			return ForkCandidateReview{}, false, err
 		}
 		workspace := forkspace.Workspace(repo, identity.Name)
-		if _, err := gitOutErr(workspace, "merge-base", "--is-ancestor", current.Head, head); err != nil {
+		if _, err := forkspace.GitOutErr(workspace, "merge-base", "--is-ancestor", current.Head, head); err != nil {
 			return ForkCandidateReview{}, false, errors.New("fork HEAD no longer descends from its reviewed candidate; merge or discard it before more work")
 		}
 	}
-	candidate, err := newForkCandidate(identity, head, tree, assignments)
-	if err != nil {
-		return ForkCandidateReview{}, false, err
-	}
+	candidate := newForkCandidate(identity, head, tree, assignments)
 	manifest := forkCandidateManifest{
 		Version: forkCandidateManifestVersion, Fork: identity, Phase: forkCandidateReviewing,
 		Pending: &candidate, UpdatedAt: time.Now().UTC(),
@@ -352,11 +345,11 @@ func AuthorizeForkCandidateReview(repo string, identity forkspace.Identity, cand
 		return errors.New("fork candidate review is no longer current")
 	}
 	workspace := forkspace.Workspace(repo, identity.Name)
-	head, err := gitOutErr(workspace, "rev-parse", "HEAD")
+	head, err := forkspace.GitOutErr(workspace, "rev-parse", "HEAD")
 	if err != nil {
 		return err
 	}
-	tree, err := gitOutErr(workspace, "rev-parse", "HEAD^{tree}")
+	tree, err := forkspace.GitOutErr(workspace, "rev-parse", "HEAD^{tree}")
 	if err != nil {
 		return err
 	}
@@ -579,7 +572,7 @@ func SupersedeStaleForkCandidate(repo string, identity forkspace.Identity, head 
 		return ForkCandidateSupersession{}, nil
 	}
 	workspace := forkspace.Workspace(repo, identity.Name)
-	if _, err := gitOutErr(workspace, "merge-base", "--is-ancestor", candidate.Head, head); err != nil {
+	if _, err := forkspace.GitOutErr(workspace, "merge-base", "--is-ancestor", candidate.Head, head); err != nil {
 		return ForkCandidateSupersession{}, errors.New("fork HEAD no longer descends from its reviewed candidate; merge or discard it before more work")
 	}
 	transition := ForkCandidateSupersession{PreviousRound: manifest.Current.Round, NextRound: manifest.Current.Round + 1}

@@ -14,6 +14,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/preset"
@@ -83,7 +84,7 @@ func TestWorkCredentialFallbackReusesServicesOnlyFromCleanUnchangedTree(t *testi
 	}
 	git("add", "source.go")
 	git("commit", "-qm", "base")
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	if !cleanCredentialRetryCanReuseServices(repo, head, head, "rate_limit") ||
 		!cleanCredentialRetryCanReuseServices(repo, head, head, "authentication") {

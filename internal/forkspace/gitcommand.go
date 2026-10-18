@@ -32,6 +32,54 @@ func GitStalled(cmd *exec.Cmd, err error) error {
 	return fmt.Errorf("git did not finish in %s within %s, so Coop stopped it: a file in its .git may be a FIFO or on a disk that does not answer: %w", dir, gitStallLimit, err)
 }
 
+// GitOut runs `git -C dir <args>` under the trusted view of dir's repository and returns its
+// trimmed stdout, or "" on error. Every repository Coop runs git against is box-writable, so the
+// view is the default; a value Coop will execute or read a host file from comes from the trusted
+// global scope (GlobalGitConfig), never the repository. It CONFLATES a failed read with an empty
+// one — fine for display, wrong for a decision: read those with GitOutErr.
+func GitOut(dir string, args ...string) string {
+	out, _ := GitOutErr(dir, args...)
+	return out
+}
+
+// GitOutErr is GitOut for a read Coop acts on: a failure comes back as an error, so "git broke"
+// cannot pass for "git said nothing".
+func GitOutErr(dir string, args ...string) (string, error) {
+	out, err := GitOutput(dir, args...)
+	return strings.TrimSpace(out), err
+}
+
+// GitOutput is GitOutErr without the trim, for NUL-delimited paths and other exact-byte output.
+// The error names the command and carries git's own stderr (os/exec caps that capture at 32 KB),
+// because a caller surfacing it to a person has nothing else to explain the failure with.
+func GitOutput(dir string, args ...string) (string, error) {
+	cmd, err := GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		err = GitStalled(cmd, err)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if detail := strings.TrimSpace(string(exitErr.Stderr)); detail != "" {
+				return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, detail)
+			}
+		}
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	return string(out), nil
+}
+
+// GitRun runs `git -C dir <args>` under the trusted view, for effect.
+func GitRun(dir string, args ...string) error {
+	cmd, err := GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return err
+	}
+	return GitStalled(cmd, cmd.Run())
+}
+
 // TrustedGitCommand runs Git with metadata the caller already owns (a view or a
 // private snapshot). It preserves that metadata's environment and index. Ordinary
 // workspaces must use GitCommand instead: argv hardening alone cannot disable

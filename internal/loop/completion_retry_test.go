@@ -17,6 +17,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -143,7 +144,7 @@ func TestNoChangeCompletionKeepsFirstAttemptEvidence(t *testing.T) {
 					}
 					git("update-index", "--assume-unchanged", "source")
 					writeTaskFile(t, filepath.Join(repo, "source"), "attempt work\n")
-					if status := gitOut(repo, "status", "--porcelain", "--untracked-files=all"); status != "" {
+					if status := forkspace.GitOut(repo, "status", "--porcelain", "--untracked-files=all"); status != "" {
 						t.Fatalf("hidden edit is visible: %s", status)
 					}
 				}

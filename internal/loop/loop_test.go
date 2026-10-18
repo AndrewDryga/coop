@@ -13,6 +13,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -65,7 +66,7 @@ func TestAdvanceStallHeadRead(t *testing.T) {
 	run("commit", "-q", "--allow-empty", "-m", "base")
 	c := &Control{cfg: &config.Config{}}
 	hosts := []string{filepath.Join(t.TempDir(), "queue")} // empty queue: nothing settles on its own
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	// No new commit and nothing settled → one stall, prevHead held.
 	head, baseline, stalls, err := c.advanceStall(repo, hosts, base, 0, 0, "task-x")
@@ -74,7 +75,7 @@ func TestAdvanceStallHeadRead(t *testing.T) {
 	}
 	// A new commit is progress: it rebaselines and clears the stall count.
 	run("commit", "-q", "--allow-empty", "-m", "work")
-	committed := gitOut(repo, "rev-parse", "HEAD")
+	committed := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	head, baseline, stalls, err = c.advanceStall(repo, hosts, base, 0, 2, "task-x")
 	if err != nil || head != committed || baseline != 0 || stalls != 0 {
 		t.Fatalf("committing iteration = (%s, %d, %d, %v), want (%s, 0, 0, nil)", head, baseline, stalls, err, committed)

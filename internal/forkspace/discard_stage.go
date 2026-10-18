@@ -1,8 +1,6 @@
 package forkspace
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
@@ -48,13 +47,7 @@ func openStagedDiscardDir(repo string) (home, staging *os.File, err error) {
 	return home, staging, nil
 }
 
-func stagedDiscardName(name string) (string, error) {
-	var raw [8]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return name + "." + hex.EncodeToString(raw[:]), nil
-}
+func stagedDiscardName(name string) string { return name + "." + randid.Hex(8) }
 
 // stagedDiscardFork recovers the fork name from a staged entry, and reports false for anything
 // that does not carry the exact staging shape — an operator's own copy parked in the control
@@ -92,10 +85,7 @@ func StageWorkspaceDiscardLocked(repo, name string, pinned os.FileInfo) (string,
 	}
 	defer home.Close()
 	defer staging.Close()
-	staged, err := stagedDiscardName(name)
-	if err != nil {
-		return "", err
-	}
+	staged := stagedDiscardName(name)
 	target := filepath.Join(StagedDiscardDir(repo), staged)
 	if err := renameAtNoReplace(int(home.Fd()), name, int(staging.Fd()), staged); err != nil {
 		return "", fmt.Errorf("stage fork workspace %q for discard: %w", workspace, &os.LinkError{Op: "rename", Old: workspace, New: target, Err: err})

@@ -31,13 +31,13 @@ func TestForkSecretAdvice(t *testing.T) {
 			writeTaskFile(t, filepath.Join(ws, "conf.yaml"), "aws_key: "+token+"\n")
 			git(t, ws, "add", "conf.yaml")
 			git(t, ws, "commit", "-qm", "synthetic scan fixture")
-			before := gitOut(repo, "rev-parse", "HEAD")
+			before := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			c := &Control{cfg: &config.Config{}}
 			landed, err := mergeOneForTest(t, c, repo, "", "candidate", false)
 			if landed || err == nil || !strings.Contains(err.Error(), "possible secret in conf.yaml:1") {
 				t.Fatalf("content finding did not refuse merge: landed=%v err=%v", landed, err)
 			}
-			if got := gitOut(repo, "rev-parse", "HEAD"); got != before {
+			if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != before {
 				t.Fatal("refusal advanced parent HEAD")
 			}
 			if _, err := os.Lstat(filepath.Join(repo, "conf.yaml")); !os.IsNotExist(err) {

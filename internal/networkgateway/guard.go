@@ -3,9 +3,7 @@ package networkgateway
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"io"
 	"net"
@@ -17,6 +15,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const (
@@ -325,12 +324,7 @@ func (g *Guard) forwardTLS(flow, admission context.Context, client net.Conn, dat
 		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Service: service, Reason: safeReason(err)})
 		return
 	}
-	var random [16]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		g.events.emit(GuardEvent{Kind: "admission_failed", Service: service, Reason: "gateway_unavailable"})
-		return
-	}
-	flowID := hex.EncodeToString(random[:])
+	flowID := randid.Hex(16)
 	header, err := ProxyHeader(netip.AddrPortFrom(peer, uint16(port)), flowID)
 	if err != nil {
 		g.events.emit(GuardEvent{Kind: "admission_failed", Service: service, Reason: safeReason(err)})

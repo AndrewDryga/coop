@@ -17,6 +17,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/safefile"
 	"golang.org/x/sys/unix"
@@ -455,7 +456,7 @@ func prepareNativeCutover(ctx context.Context, cfg *config.Config, ag agents.Age
 		if err != nil {
 			return fail(err)
 		}
-		journal := nativeCutover{ID: randomHex(16), Provider: ag.Name(), Account: account, Next: next, Sources: sources}
+		journal := nativeCutover{ID: randid.Hex(16), Provider: ag.Name(), Account: account, Next: next, Sources: sources}
 		journal.Next.Epoch = 1
 		journal.Next.Migration = journal.ID
 		if err := validateNativeCutover(cfg, ag, account, journal); err != nil {
@@ -561,7 +562,7 @@ func writeAccountPrivate(root *accountAuthorityRoot, lock *os.File, name string,
 	if !accountNameValid(name) || len(data) > accountAuthorityLimit {
 		return errors.New("invalid private account publication")
 	}
-	temporary := ".private-" + randomHex(16)
+	temporary := ".private-" + randid.Hex(16)
 	fd, err := unix.Openat(int(root.dir().Fd()), temporary, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if err != nil {
 		return err

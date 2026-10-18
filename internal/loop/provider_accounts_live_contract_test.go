@@ -22,6 +22,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -34,7 +35,7 @@ func accountLiveTaskBody(marker string) string {
 }
 
 // This writer runs only before handing a fresh InitRepository fixture to a client (or in an
-// unpaid synthetic control). Post-client decisions use the production hardened gitOutErr instead.
+// unpaid synthetic control). Post-client decisions use the production hardened forkspace.GitOutErr instead.
 func accountLiveFixtureGit(layout procharness.Layout, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -78,7 +79,7 @@ func prepareAccountLiveRepository(layout procharness.Layout, marker string) (str
 			return "", err
 		}
 	}
-	return gitOutErr(layout.Repo, "rev-parse", "HEAD")
+	return forkspace.GitOutErr(layout.Repo, "rev-parse", "HEAD")
 }
 
 func accountLiveRead(layout procharness.Layout, path string) ([]byte, error) {
@@ -132,7 +133,7 @@ func verifyAccountLiveRepository(layout procharness.Layout, baseline, marker str
 		{[]string{"show", "HEAD:" + accountLiveFile}, marker},
 		{[]string{"log", "-1", "--format=%s"}, "test: account recovery"},
 	} {
-		got, err := gitOutErr(layout.Repo, check.args...)
+		got, err := forkspace.GitOutErr(layout.Repo, check.args...)
 		if err != nil || got != check.want {
 			return errors.New("account recovery committed change mismatch")
 		}

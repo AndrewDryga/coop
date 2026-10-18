@@ -3,8 +3,6 @@ package forkspace
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +16,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/fsidentity"
+	"github.com/AndrewDryga/coop/internal/randid"
 )
 
 const (
@@ -74,13 +73,7 @@ func LandIntentPath(repo string, identity Identity) string {
 	return filepath.Join(StateDir(repo), identity.Name+"."+string(identity.Generation)+".land.json")
 }
 
-func NewGeneration() (Generation, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return Generation(hex.EncodeToString(raw[:])), nil
-}
+func NewGeneration() Generation { return Generation(randid.Hex(16)) }
 
 func ValidGeneration(g Generation) bool { return forkGenerationRE.MatchString(string(g)) }
 
@@ -493,10 +486,7 @@ func ensureGenerationLocked(repo, name string, isolated bool) (Identity, error) 
 		}
 		return recovered, nil
 	}
-	generation, err := NewGeneration()
-	if err != nil {
-		return Identity{}, err
-	}
+	generation := NewGeneration()
 	record = generationRecord{
 		Version: forkGenerationVersion, Name: name, Generation: generation, CreatedAt: time.Now().UTC(),
 		WorkspaceAnchor: forkGenerationAnchorName(name, generation),

@@ -3,9 +3,7 @@ package box
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/safefile"
 	"golang.org/x/sys/unix"
 )
@@ -77,11 +76,7 @@ func renewAccountAuthority(ctx context.Context, cfg *config.Config, spec account
 			return current, false, err
 		}
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return current, false, err
-	}
-	pending := accountRenewal{Version: 1, ID: hex.EncodeToString(nonce[:]), Provider: current.Provider,
+	pending := accountRenewal{Version: 1, ID: randid.Hex(16), Provider: current.Provider,
 		Account: current.Account, Epoch: current.Epoch, Revision: current.Revision}
 	if err := root.writeRenewal(lock, nil, pending); err != nil {
 		return current, false, err
@@ -261,11 +256,7 @@ func (root *accountAuthorityRoot) writeRenewal(lock *os.File, before *accountRen
 	}
 	name := accountRenewalName
 	if before != nil {
-		var nonce [16]byte
-		if _, err := rand.Read(nonce[:]); err != nil {
-			return err
-		}
-		name = ".renewal-" + hex.EncodeToString(nonce[:])
+		name = ".renewal-" + randid.Hex(16)
 	}
 	fd, err := unix.Openat(int(root.dir().Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {

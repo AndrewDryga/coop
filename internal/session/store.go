@@ -3,7 +3,6 @@ package session
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -23,6 +22,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/randid"
 	_ "modernc.org/sqlite"
 )
 
@@ -270,26 +270,8 @@ func closeStateLock(lock *os.File, err error) error {
 	return errors.Join(err, syscall.Flock(int(lock.Fd()), syscall.LOCK_UN), lock.Close())
 }
 
-// randomID mints a durable ID for the long-running daemon. The panic below looks alarming for
-// a daemon, but converting it to a returned error would be actively misleading: as of Go 1.24
-// (go.dev/issue/66821), crypto/rand.Read is documented to "never return an error" and to
-// "crash[] the program irrecoverably" via an unrecoverable runtime fatal error — not a
-// catchable panic — if its underlying OS entropy source ever fails. On every platform coop
-// ships for (getrandom(2) on Linux, arc4random_buf(3) on Darwin) that source is itself
-// documented to never fail. So this err != nil branch is unreachable dead code: by the time
-// rand.Read could return a non-nil error, the Go runtime has already terminated the process a
-// few frames down, and no error handling in any caller of randomID could run, let alone help.
-// Threading an error through every caller here would imply a recoverable failure mode that
-// cannot occur and cannot be exercised in a test without crashing the test binary itself (verified
-// empirically: swapping rand.Reader to a failing io.Reader aborts the process via runtime.fatal,
-// not recover()). The panic stays as documentation of that unreachability, not a real code path.
-func randomID(prefix string) string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return prefix + "_" + hex.EncodeToString(b)
-}
+// randomID mints a durable ID: prefix, an underscore and 16 random bytes in hex.
+func randomID(prefix string) string { return prefix + "_" + randid.Hex(16) }
 
 func (s *Store) now() time.Time { return s.clock().UTC() }
 

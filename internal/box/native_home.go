@@ -14,6 +14,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/safefile"
 	"golang.org/x/sys/unix"
@@ -193,7 +194,7 @@ func setAsideUnpublishedHome(root *accountAuthorityRoot, lock *os.File) error {
 	if err := root.checkLock(lock); err != nil {
 		return err
 	}
-	if err := unix.Renameat(int(root.dir().Fd()), "home", int(root.dir().Fd()), ".home-abandoned-"+randomHex(8)); err != nil {
+	if err := unix.Renameat(int(root.dir().Fd()), "home", int(root.dir().Fd()), ".home-abandoned-"+randid.Hex(8)); err != nil {
 		return err
 	}
 	return root.dir().Sync()

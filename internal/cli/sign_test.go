@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
@@ -25,7 +26,7 @@ func TestSignBase(t *testing.T) {
 	}
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-m", "c1")
 
 	// No upstream and no --from → a clear error (not a guess).
@@ -86,9 +87,9 @@ func TestSignRangeBase(t *testing.T) {
 	}
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-m", "iteration start")
-	iterHead := gitOut(repo, "rev-parse", "HEAD")
+	iterHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
 	if got, err := signRangeBase(repo, iterHead, "HEAD"); err != nil || got != iterHead {
 		t.Fatalf("descendant base = %q, %v; want %q", got, err, iterHead)
@@ -100,11 +101,11 @@ func TestSignRangeBase(t *testing.T) {
 
 	// Two merges with reversed parents form a criss-cross: neither shared parent is better
 	// than the other, so choosing either one would make the signing range ambiguous.
-	tree := gitOut(repo, "write-tree")
-	left := gitOut(repo, "commit-tree", tree, "-p", base, "-m", "left")
-	right := gitOut(repo, "commit-tree", tree, "-p", base, "-m", "right")
-	leftMerge := gitOut(repo, "commit-tree", tree, "-p", left, "-p", right, "-m", "left merge")
-	rightMerge := gitOut(repo, "commit-tree", tree, "-p", right, "-p", left, "-m", "right merge")
+	tree := forkspace.GitOut(repo, "write-tree")
+	left := forkspace.GitOut(repo, "commit-tree", tree, "-p", base, "-m", "left")
+	right := forkspace.GitOut(repo, "commit-tree", tree, "-p", base, "-m", "right")
+	leftMerge := forkspace.GitOut(repo, "commit-tree", tree, "-p", left, "-p", right, "-m", "left merge")
+	rightMerge := forkspace.GitOut(repo, "commit-tree", tree, "-p", right, "-p", left, "-m", "right merge")
 	git("reset", "-q", "--hard", rightMerge)
 	if _, err := signRangeBase(repo, leftMerge, "HEAD"); err == nil || !strings.Contains(err.Error(), "multiple common bases") {
 		t.Fatalf("ambiguous history error = %v; want clear multiple-common-bases failure", err)
@@ -164,7 +165,7 @@ func TestSignUnpushed(t *testing.T) {
 	}
 	runIn("add", ".")
 	runIn("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	filterMarker := filepath.Join(t.TempDir(), "smudge-ran")
 	runIn("config", "filter.coop-sign-test.smudge", "touch "+filterMarker+"; cat")
 	runIn("config", "filter.coop-sign-test.clean", "cat")
@@ -176,15 +177,15 @@ func TestSignUnpushed(t *testing.T) {
 		runIn("add", name)
 		runIn("commit", "-q", "-m", "c"+fmt.Sprint(i+1))
 	}
-	firstUnsigned := strings.Fields(gitOut(repo, "rev-list", "--reverse", base+"..HEAD"))[0]
+	firstUnsigned := strings.Fields(forkspace.GitOut(repo, "rev-list", "--reverse", base+"..HEAD"))[0]
 	runIn("branch", "side-ref", firstUnsigned)
 	runIn("config", "rebase.updateRefs", "true")
-	sideRefBefore := gitOut(repo, "rev-parse", "refs/heads/side-ref")
+	sideRefBefore := forkspace.GitOut(repo, "rev-parse", "refs/heads/side-ref")
 
 	signed := func() int {
 		n := 0
-		for _, sha := range strings.Fields(gitOut(repo, "rev-list", base+"..HEAD")) {
-			if strings.Contains(gitOut(repo, "cat-file", "commit", sha), "gpgsig") {
+		for _, sha := range strings.Fields(forkspace.GitOut(repo, "rev-list", base+"..HEAD")) {
+			if strings.Contains(forkspace.GitOut(repo, "cat-file", "commit", sha), "gpgsig") {
 				n++
 			}
 		}
@@ -209,10 +210,10 @@ func TestSignUnpushed(t *testing.T) {
 	}
 	checkoutSnapshot := func() string {
 		parts := []string{
-			gitOut(repo, "status", "--porcelain=v2", "--untracked-files=all"),
-			gitOut(repo, "diff", "--binary"),
-			gitOut(repo, "diff", "--cached", "--binary"),
-			gitOut(repo, "show", ":staged.txt"),
+			forkspace.GitOut(repo, "status", "--porcelain=v2", "--untracked-files=all"),
+			forkspace.GitOut(repo, "diff", "--binary"),
+			forkspace.GitOut(repo, "diff", "--cached", "--binary"),
+			forkspace.GitOut(repo, "show", ":staged.txt"),
 		}
 		for _, name := range []string{"staged.txt", "unstaged.txt", "fixture.key", "untracked.txt"} {
 			data, err := os.ReadFile(filepath.Join(repo, name))
@@ -224,8 +225,8 @@ func TestSignUnpushed(t *testing.T) {
 		return strings.Join(parts, "\x00")
 	}
 	dirtyBefore := checkoutSnapshot()
-	unsignedHead := gitOut(repo, "rev-parse", "HEAD")
-	unsignedTree := gitOut(repo, "rev-parse", "HEAD^{tree}")
+	unsignedHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	unsignedTree := forkspace.GitOut(repo, "rev-parse", "HEAD^{tree}")
 
 	a := &app{cfg: &config.Config{}}
 	n, err := a.signUnpushed(repo, base)
@@ -238,13 +239,13 @@ func TestSignUnpushed(t *testing.T) {
 	if signed() != 2 {
 		t.Errorf("both unpushed commits should carry a signature, got %d", signed())
 	}
-	if signedHead := gitOut(repo, "rev-parse", "HEAD"); signedHead == unsignedHead {
+	if signedHead := forkspace.GitOut(repo, "rev-parse", "HEAD"); signedHead == unsignedHead {
 		t.Error("signing did not rewrite HEAD")
 	}
-	if signedTree := gitOut(repo, "rev-parse", "HEAD^{tree}"); signedTree != unsignedTree {
+	if signedTree := forkspace.GitOut(repo, "rev-parse", "HEAD^{tree}"); signedTree != unsignedTree {
 		t.Errorf("signing changed HEAD tree %s to %s", unsignedTree, signedTree)
 	}
-	if sideRefAfter := gitOut(repo, "rev-parse", "refs/heads/side-ref"); sideRefAfter != sideRefBefore {
+	if sideRefAfter := forkspace.GitOut(repo, "rev-parse", "refs/heads/side-ref"); sideRefAfter != sideRefBefore {
 		t.Errorf("signing changed side ref from %s to %s", sideRefBefore, sideRefAfter)
 	}
 	if _, err := os.Stat(filterMarker); !errors.Is(err, os.ErrNotExist) {
@@ -254,11 +255,11 @@ func TestSignUnpushed(t *testing.T) {
 		t.Errorf("signing changed the dirty checkout\nbefore:\n%q\nafter:\n%q", dirtyBefore, dirtyAfter)
 	}
 	// Already signed: a second run rewrites nothing, so every commit keeps the ID it was signed with.
-	signedHead := gitOut(repo, "rev-parse", "HEAD")
+	signedHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if n, err := a.signUnpushed(repo, base); err != nil || n != 0 {
 		t.Fatalf("second signUnpushed = %d, %v; want a no-op", n, err)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD"); got != signedHead {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != signedHead {
 		t.Errorf("signing an already-signed range rewrote HEAD %s to %s", signedHead, got)
 	}
 	if signed() != 2 {
@@ -267,11 +268,11 @@ func TestSignUnpushed(t *testing.T) {
 	if dirtyAfter := checkoutSnapshot(); dirtyAfter != dirtyBefore {
 		t.Errorf("second signing changed the dirty checkout\nbefore:\n%q\nafter:\n%q", dirtyBefore, dirtyAfter)
 	}
-	if worktrees := strings.Count(gitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
+	if worktrees := strings.Count(forkspace.GitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
 		t.Errorf("signing left %d registered worktrees, want 1", worktrees)
 	}
 	// The base itself (pushed history) is untouched — never rewritten.
-	if gitOut(repo, "rev-parse", base+"^{commit}") == "" {
+	if forkspace.GitOut(repo, "rev-parse", base+"^{commit}") == "" {
 		t.Error("the base commit should still exist (not rewritten)")
 	}
 
@@ -283,15 +284,15 @@ func TestSignUnpushed(t *testing.T) {
 	}
 	runIn("add", "reviewed.txt")
 	runIn("commit", "-q", "-m", "before review")
-	iterHead := gitOut(repo, "rev-parse", "HEAD")
+	iterHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	runIn("commit", "--amend", "-q", "-m", "review rationale preserved")
 	if _, err := a.signUnpushed(repo, iterHead); err != nil {
 		t.Fatalf("sign amended sibling: %v", err)
 	}
-	if got := gitOut(repo, "show", "-s", "--format=%s", "HEAD"); got != "review rationale preserved" {
+	if got := forkspace.GitOut(repo, "show", "-s", "--format=%s", "HEAD"); got != "review rationale preserved" {
 		t.Errorf("signed message = %q; want review amendment", got)
 	}
-	if got := gitOut(repo, "show", "HEAD:reviewed.txt"); got != "amended" {
+	if got := forkspace.GitOut(repo, "show", "HEAD:reviewed.txt"); got != "amended" {
 		t.Errorf("signed tree content = %q; want amended", got)
 	}
 	if headUnsigned(repo) {
@@ -309,23 +310,23 @@ func TestSignUnpushed(t *testing.T) {
 	if err := os.WriteFile(globalCfg, []byte(badConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	failedHead := gitOut(repo, "rev-parse", "HEAD")
+	failedHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	failedSnapshot := checkoutSnapshot()
 	runIn("update-ref", "refs/heads/side-ref", failedHead)
-	failedSideRef := gitOut(repo, "rev-parse", "refs/heads/side-ref")
+	failedSideRef := forkspace.GitOut(repo, "rev-parse", "refs/heads/side-ref")
 	if _, err := a.signUnpushed(repo, base); err == nil {
 		t.Fatal("signing with a missing key succeeded")
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD"); got != failedHead {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != failedHead {
 		t.Errorf("failed signing moved HEAD from %s to %s", failedHead, got)
 	}
 	if got := checkoutSnapshot(); got != failedSnapshot {
 		t.Errorf("failed signing changed checkout\nbefore:\n%q\nafter:\n%q", failedSnapshot, got)
 	}
-	if got := gitOut(repo, "rev-parse", "refs/heads/side-ref"); got != failedSideRef {
+	if got := forkspace.GitOut(repo, "rev-parse", "refs/heads/side-ref"); got != failedSideRef {
 		t.Errorf("failed signing changed side ref from %s to %s", failedSideRef, got)
 	}
-	if worktrees := strings.Count(gitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
+	if worktrees := strings.Count(forkspace.GitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
 		t.Errorf("failed signing left %d registered worktrees, want 1", worktrees)
 	}
 	if err := os.WriteFile(globalCfg, goodConfig, 0o644); err != nil {
@@ -336,16 +337,16 @@ func TestSignUnpushed(t *testing.T) {
 	var hookErr error
 	var competing, candidate string
 	runIn("update-ref", "refs/heads/side-ref", failedHead)
-	casSideRef := gitOut(repo, "rev-parse", "refs/heads/side-ref")
+	casSideRef := forkspace.GitOut(repo, "rev-parse", "refs/heads/side-ref")
 	a.beforeSignRefUpdate = func(repo, ref, oldHead, newHead string) {
 		candidate = newHead
-		tree := gitOut(repo, "rev-parse", oldHead+"^{tree}")
-		competing = gitOut(repo, "commit-tree", tree, "-p", oldHead, "-m", "concurrent commit")
+		tree := forkspace.GitOut(repo, "rev-parse", oldHead+"^{tree}")
+		competing = forkspace.GitOut(repo, "commit-tree", tree, "-p", oldHead, "-m", "concurrent commit")
 		if competing == "" {
 			hookErr = errors.New("create concurrent commit")
 			return
 		}
-		hookErr = gitRun(repo, "update-ref", ref, competing, oldHead)
+		hookErr = forkspace.GitRun(repo, "update-ref", ref, competing, oldHead)
 	}
 	if _, err := a.signUnpushed(repo, base); err == nil || !strings.Contains(err.Error(), "The branch changed while Coop was signing") {
 		t.Fatalf("concurrent ref move error = %v", err)
@@ -353,13 +354,13 @@ func TestSignUnpushed(t *testing.T) {
 	if hookErr != nil {
 		t.Fatalf("concurrent ref hook: %v", hookErr)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD"); got != competing || got == candidate {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != competing || got == candidate {
 		t.Errorf("CAS result HEAD = %s, competing = %s, signed candidate = %s", got, competing, candidate)
 	}
-	if got := gitOut(repo, "rev-parse", "refs/heads/side-ref"); got != casSideRef {
+	if got := forkspace.GitOut(repo, "rev-parse", "refs/heads/side-ref"); got != casSideRef {
 		t.Errorf("CAS refusal changed side ref from %s to %s", casSideRef, got)
 	}
-	if worktrees := strings.Count(gitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
+	if worktrees := strings.Count(forkspace.GitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
 		t.Errorf("CAS refusal left %d registered worktrees, want 1", worktrees)
 	}
 }
@@ -406,7 +407,7 @@ func signingRepo(t *testing.T) (string, func(...string)) {
 
 // hasSignature reads the raw commit object, independently of the code under test.
 func hasSignature(repo, rev string) bool {
-	return strings.Contains(gitOut(repo, "cat-file", "commit", rev), "\ngpgsig ")
+	return strings.Contains(forkspace.GitOut(repo, "cat-file", "commit", rev), "\ngpgsig ")
 }
 
 // Signing starts at the first unsigned commit. The signed commits below it — another agent's in
@@ -415,19 +416,19 @@ func hasSignature(repo, rev string) bool {
 func TestSignUnpushedStartsAtTheFirstUnsignedCommit(t *testing.T) {
 	repo, git := signingRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-S", "-m", "signed by an outside agent")
 	git("commit", "-q", "--allow-empty", "-S", "-m", "signed by an earlier cycle")
 	git("commit", "-q", "--allow-empty", "-m", "box commit")
 	git("commit", "-q", "--allow-empty", "-m", "another box commit")
-	before := strings.Fields(gitOut(repo, "rev-list", "--reverse", base+"..HEAD"))
-	trees := gitOut(repo, "log", "--format=%T", base+"..HEAD")
+	before := strings.Fields(forkspace.GitOut(repo, "rev-list", "--reverse", base+"..HEAD"))
+	trees := forkspace.GitOut(repo, "log", "--format=%T", base+"..HEAD")
 
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	if n, err := a.signUnpushed(repo, base); err != nil || n != 2 {
 		t.Fatalf("signUnpushed = %d, %v; want only the 2 unsigned commits signed", n, err)
 	}
-	after := strings.Fields(gitOut(repo, "rev-list", "--reverse", base+"..HEAD"))
+	after := strings.Fields(forkspace.GitOut(repo, "rev-list", "--reverse", base+"..HEAD"))
 	if len(after) != 4 || after[0] != before[0] || after[1] != before[1] {
 		t.Fatalf("signing rewrote the signed commits below the first unsigned one:\nbefore %v\nafter  %v", before, after)
 	}
@@ -436,16 +437,16 @@ func TestSignUnpushedStartsAtTheFirstUnsignedCommit(t *testing.T) {
 			t.Errorf("commit %s is not signed", sha)
 		}
 	}
-	if got := gitOut(repo, "log", "--format=%T", base+"..HEAD"); got != trees {
+	if got := forkspace.GitOut(repo, "log", "--format=%T", base+"..HEAD"); got != trees {
 		t.Errorf("signing changed committed trees:\nbefore %s\nafter  %s", trees, got)
 	}
 
 	// The whole range is signed now, so a second pass from the same base rewrites nothing.
-	signedHead := gitOut(repo, "rev-parse", "HEAD")
+	signedHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if n, err := a.signUnpushed(repo, base); err != nil || n != 0 {
 		t.Fatalf("signing an already-signed range = %d, %v; want a no-op", n, err)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD"); got != signedHead {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != signedHead {
 		t.Errorf("signing an already-signed range moved HEAD from %s to %s", signedHead, got)
 	}
 
@@ -456,7 +457,7 @@ func TestSignUnpushedStartsAtTheFirstUnsignedCommit(t *testing.T) {
 	if n, err := a.signUnpushed(repo, base); err != nil || n != 2 {
 		t.Fatalf("signUnpushed = %d, %v; want the unsigned commit and the one above it", n, err)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD~2"); got != signedHead {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD~2"); got != signedHead {
 		t.Errorf("signing rewrote %s, which was already signed, into %s", signedHead, got)
 	}
 	if !hasSignature(repo, "HEAD~1") || !hasSignature(repo, "HEAD") {
@@ -470,13 +471,13 @@ func TestSignUnpushedStartsAtTheFirstUnsignedCommit(t *testing.T) {
 func TestSignUnpushedSignsAroundASignedMerge(t *testing.T) {
 	repo, git := signingRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("checkout", "-q", "-b", "side")
 	git("commit", "-q", "--allow-empty", "-S", "-m", "signed side work")
 	git("checkout", "-q", "main")
 	git("commit", "-q", "--allow-empty", "-S", "-m", "signed main work")
 	git("merge", "--no-ff", "--no-edit", "-q", "-S", "side")
-	merge := gitOut(repo, "rev-parse", "HEAD")
+	merge := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 
 	// Everything signed, the merge included: nothing to do, and no refusal.
@@ -489,7 +490,7 @@ func TestSignUnpushedSignsAroundASignedMerge(t *testing.T) {
 	if n, err := a.signUnpushed(repo, base); err != nil || n != 2 {
 		t.Fatalf("signUnpushed above a signed merge = %d, %v; want the 2 unsigned commits signed", n, err)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD~2"); got != merge {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD~2"); got != merge {
 		t.Fatalf("signing rewrote the signed merge %s into %s", merge, got)
 	}
 	if !hasSignature(repo, "HEAD") || !hasSignature(repo, "HEAD~1") {
@@ -502,11 +503,11 @@ func TestSignUnpushedSignsAroundASignedMerge(t *testing.T) {
 	git("checkout", "-q", "main")
 	git("commit", "-q", "--allow-empty", "-m", "unsigned below the next merge")
 	git("merge", "--no-ff", "--no-edit", "-q", "-S", "later-side")
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if _, err := a.signUnpushed(repo, base); err == nil || !strings.Contains(err.Error(), "merge commit") {
 		t.Fatalf("an unsigned commit below a merge = %v; want the merge refusal", err)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD"); got != head {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != head {
 		t.Fatalf("a refused pass moved HEAD from %s to %s", head, got)
 	}
 }
@@ -517,7 +518,7 @@ func TestSignUnpushedSignsAroundASignedMerge(t *testing.T) {
 func TestSignUnpushedCarriesAReopenedTaskAuthority(t *testing.T) {
 	repo, git := signingRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	root := filepath.Join(repo, ".agent", "tasks")
 	id := "reopened-task"
 	dir := filepath.Join(root, tasks.StateTodo, id)
@@ -577,7 +578,7 @@ func TestSignUnpushedCarriesAReopenedTaskAuthority(t *testing.T) {
 	if n, err := a.signUnpushed(repo, base); err != nil || n != 1 {
 		t.Fatalf("signUnpushed = %d, %v; want the task commit signed", n, err)
 	}
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if head == reopen.BaselineHead || !hasSignature(repo, head) {
 		t.Fatalf("signing did not replace the task commit %s", reopen.BaselineHead)
 	}
@@ -597,10 +598,10 @@ func TestSignUnpushedCarriesAReopenedTaskAuthority(t *testing.T) {
 func TestSignUnpushedNeverRewritesPushedCommits(t *testing.T) {
 	repo, git := signingRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-S", "-m", "signed, pushed mid-run")
 	git("push", "-q", "-u", "origin", "main")
-	pushed := gitOut(repo, "rev-parse", "HEAD")
+	pushed := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-m", "box commit")
 
 	// A loop-style pass from a base below the upstream signs only the unpushed commit.
@@ -608,7 +609,7 @@ func TestSignUnpushedNeverRewritesPushedCommits(t *testing.T) {
 	if n, err := a.signUnpushed(repo, base); err != nil || n != 1 {
 		t.Fatalf("signUnpushed = %d, %v; want only the unpushed commit signed", n, err)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD~1"); got != pushed {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD~1"); got != pushed {
 		t.Fatalf("signing rewrote pushed commit %s into %s", pushed, got)
 	}
 	if !hasSignature(repo, "HEAD") {
@@ -617,26 +618,26 @@ func TestSignUnpushedNeverRewritesPushedCommits(t *testing.T) {
 
 	// An unsigned commit sits below a pushed one: nothing is rewritten, and the refusal says why.
 	git("commit", "-q", "--allow-empty", "-m", "unsigned, then pushed")
-	unsignedPushed := gitOut(repo, "rev-parse", "HEAD")
+	unsignedPushed := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-S", "-m", "signed and pushed")
 	git("push", "-q", "origin", "main")
-	upstream := gitOut(repo, "rev-parse", "origin/main")
+	upstream := forkspace.GitOut(repo, "rev-parse", "origin/main")
 	git("commit", "-q", "--allow-empty", "-m", "unpushed box commit")
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	_, err := a.signUnpushed(repo, base)
 	if err == nil || !strings.Contains(err.Error(), "already pushed to origin/main") {
 		t.Fatalf("signing across an unsigned pushed commit = %v; want a refusal naming the upstream", err)
 	}
-	if !strings.Contains(err.Error(), gitOut(repo, "rev-parse", "--short", unsignedPushed)) {
+	if !strings.Contains(err.Error(), forkspace.GitOut(repo, "rev-parse", "--short", unsignedPushed)) {
 		t.Errorf("the refusal should name the unsigned pushed commit %s: %v", unsignedPushed, err)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD"); got != head {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != head {
 		t.Errorf("a refused pass moved HEAD from %s to %s", head, got)
 	}
-	if got := gitOut(repo, "rev-parse", "origin/main"); got != upstream {
+	if got := forkspace.GitOut(repo, "rev-parse", "origin/main"); got != upstream {
 		t.Errorf("a refused pass moved the upstream from %s to %s", upstream, got)
 	}
-	if worktrees := strings.Count(gitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
+	if worktrees := strings.Count(forkspace.GitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
 		t.Errorf("a refused pass left %d registered worktrees, want 1", worktrees)
 	}
 
@@ -649,10 +650,10 @@ func TestSignUnpushedNeverRewritesPushedCommits(t *testing.T) {
 	if n, err := a.signUnpushed(repo, from); err != nil || n != 1 {
 		t.Fatalf("coop sign's default range = %d, %v; want the one unpushed commit", n, err)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD~1"); got != upstream {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD~1"); got != upstream {
 		t.Errorf("coop sign rewrote pushed commit %s into %s", upstream, got)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD~2"); got != unsignedPushed {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD~2"); got != unsignedPushed {
 		t.Errorf("coop sign rewrote pushed commit %s into %s", unsignedPushed, got)
 	}
 	if !hasSignature(repo, "HEAD") {
@@ -662,20 +663,20 @@ func TestSignUnpushedNeverRewritesPushedCommits(t *testing.T) {
 	// A push made while the rebase ran is caught too: the upstream is read again under the
 	// ref-authority lock, just before the branch would move, so the pass refuses and moves nothing.
 	git("commit", "-q", "--allow-empty", "-m", "box commit pushed while signing")
-	head = gitOut(repo, "rev-parse", "HEAD")
+	head = forkspace.GitOut(repo, "rev-parse", "HEAD")
 	racing := &app{cfg: a.cfg, beforeSignRefUpdate: func(string, string, string, string) {
 		git("push", "-q", "origin", "main")
 	}}
 	if _, err := racing.signUnpushed(repo, from); err == nil || !strings.Contains(err.Error(), "already pushed to origin/main") {
 		t.Fatalf("signing across a push made mid-pass = %v; want the pushed-history refusal", err)
 	}
-	if got := gitOut(repo, "rev-parse", "origin/main"); got != head {
+	if got := forkspace.GitOut(repo, "rev-parse", "origin/main"); got != head {
 		t.Fatalf("the hook's push did not land: origin/main = %s, want %s", got, head)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD"); got != head || hasSignature(repo, "HEAD") {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != head || hasSignature(repo, "HEAD") {
 		t.Errorf("a pass refused under the lock rewrote the pushed commit %s into %s", head, got)
 	}
-	if worktrees := strings.Count(gitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
+	if worktrees := strings.Count(forkspace.GitOut(repo, "worktree", "list", "--porcelain"), "worktree "); worktrees != 1 {
 		t.Errorf("a pass refused under the lock left %d registered worktrees, want 1", worktrees)
 	}
 }
@@ -686,7 +687,7 @@ func TestSignOnBoxExitWarningFitsTheCause(t *testing.T) {
 	repo, git := signingRepo(t)
 	git("config", "--global", "commit.gpgsign", "true") // you sign by default; the repo's own commits stay unsigned
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	preHead := gitOut(repo, "rev-parse", "HEAD")
+	preHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-m", "box commit, pushed before the session ended")
 	git("push", "-q", "-u", "origin", "main")
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
@@ -694,13 +695,13 @@ func TestSignOnBoxExitWarningFitsTheCause(t *testing.T) {
 		strings.Contains(warning, "signing setup") {
 		t.Errorf("pushed-history warning = %q; want the refusal with only its own next step", warning)
 	}
-	unrelated := gitOut(repo, "commit-tree", gitOut(repo, "rev-parse", "HEAD^{tree}"), "-m", "unrelated history")
+	unrelated := forkspace.GitOut(repo, "commit-tree", forkspace.GitOut(repo, "rev-parse", "HEAD^{tree}"), "-m", "unrelated history")
 	if warning := captureStderr(t, func() { a.signOnBoxExit(repo, unrelated, false) }); !strings.Contains(warning, "it has no common base with") ||
 		strings.Contains(warning, "signing setup") {
 		t.Errorf("unrelated-history warning = %q; want the refusal's own message and no setup advice", warning)
 	}
 
-	preHead = gitOut(repo, "rev-parse", "HEAD")
+	preHead = forkspace.GitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-m", "unpushed box commit")
 	git("config", "--global", "user.signingkey", filepath.Join(t.TempDir(), "missing-key"))
 	if warning := captureStderr(t, func() { a.signOnBoxExit(repo, preHead, false) }); !strings.Contains(warning, "Run coop sign after fixing your Git signing setup.") {
@@ -713,7 +714,7 @@ func TestCmdSignTellsAnEmptyRangeFromASignedOne(t *testing.T) {
 	repo, git := signingRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	git("push", "-q", "-u", "origin", "main")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: repo}}
 	sign := func(args ...string) string {
 		return captureStderr(t, func() {
@@ -761,7 +762,7 @@ func TestSignUnpushedIgnoresLocalSSHDefaultKeyCommand(t *testing.T) {
 	run("config", "user.name", "T")
 	run("config", "commit.gpgsign", "false")
 	run("commit", "-q", "--allow-empty", "-m", "base")
-	base := gitOut(repo, "rev-parse", "HEAD")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	run("commit", "-q", "--allow-empty", "-m", "unsigned")
 	marker := filepath.Join(t.TempDir(), "local-key-command-ran")
 	run("config", "gpg.ssh.defaultKeyCommand", "touch "+marker)

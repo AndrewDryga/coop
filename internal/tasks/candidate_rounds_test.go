@@ -42,7 +42,7 @@ func newCandidateRoundFixture(t *testing.T, ids ...string) candidateRoundFixture
 	for range ids {
 		assignment, err := AssignForkTask([]string{root}, ForkAssignmentRequest{
 			AuthorityRepo: repo, Fork: identity, WorkspaceRoot: workspace,
-			BaselineHead: gitOut(workspace, "rev-parse", "HEAD"), LeaseOwner: testLeaseOwner(),
+			BaselineHead: forkspace.GitOut(workspace, "rev-parse", "HEAD"), LeaseOwner: testLeaseOwner(),
 		})
 		if err != nil || assignment.Outcome != ForkAssignmentSelected {
 			t.Fatalf("assign candidate task: %+v, %v", assignment, err)
@@ -66,7 +66,7 @@ func newCandidateRoundFixture(t *testing.T, ids ...string) candidateRoundFixture
 }
 
 func (f candidateRoundFixture) headTree() (string, string) {
-	return gitOut(f.workspace, "rev-parse", "HEAD"), gitOut(f.workspace, "rev-parse", "HEAD^{tree}")
+	return forkspace.GitOut(f.workspace, "rev-parse", "HEAD"), forkspace.GitOut(f.workspace, "rev-parse", "HEAD^{tree}")
 }
 
 func authorizeCandidateReviewForTest(t *testing.T, repo string, identity forkspace.Identity, candidateID string) {

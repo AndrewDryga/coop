@@ -836,10 +836,7 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool, rememberedAgen
 	}
 	if ag.PresetSessionID() {
 		if id == "" {
-			sid, err := newSessionID()
-			if err != nil {
-				return nil, fmt.Errorf("allocate %s session ID: %w", fa.agent, err)
-			}
+			sid := newSessionID()
 			if err := forkctl.SaveForkSession(ws, fa.agent, account, sid); err != nil {
 				return nil, fmt.Errorf("save %s session ID before launch: %w", fa.agent, err)
 			}
@@ -917,14 +914,12 @@ func uniquelyNewSessionID(before, after []string) string {
 
 // newSessionID returns a random RFC-4122 v4 UUID — the form claude, gemini, and grok require
 // for --session-id.
-func newSessionID() (string, error) {
+func newSessionID() string {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
+	_, _ = rand.Read(b[:])
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // forkACP fronts an existing fork as an ACP agent over stdio, pinned to the fork's
@@ -1248,8 +1243,8 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 	}
 	continueCmd := forkLoopContinueCommand(name, presetName, continueTarget)
 	for {
-		head := gitOut(ws, "rev-parse", "HEAD")
-		tree := gitOut(ws, "rev-parse", "HEAD^{tree}")
+		head := forkspace.GitOut(ws, "rev-parse", "HEAD")
+		tree := forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
 		if head == "" || tree == "" {
 			return 1, fmt.Errorf("fork %s has no exact HEAD/tree for task assignment", name)
 		}
@@ -1310,8 +1305,8 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 				ui.Note("  Continue:  %s", continueCmd)
 				return 0, nil
 			}
-			head = gitOut(ws, "rev-parse", "HEAD")
-			tree = gitOut(ws, "rev-parse", "HEAD^{tree}")
+			head = forkspace.GitOut(ws, "rev-parse", "HEAD")
+			tree = forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
 			review, exists, reviewErr := tasks.BeginForkCandidateReview(repo, identity, head, tree)
 			if reviewErr != nil {
 				return 1, reviewErr

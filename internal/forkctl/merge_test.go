@@ -135,7 +135,7 @@ func TestForkMergeRejectsInvalidProjectBeforeRuntimeOrMutation(t *testing.T) {
 	}
 	git(t, repo, "add", project.File)
 	git(t, repo, "commit", "-qm", "invalid project policy")
-	parentHead, forkHead := gitOut(repo, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD")
+	parentHead, forkHead := forkspace.GitOut(repo, "rev-parse", "HEAD"), forkspace.GitOut(ws, "rev-parse", "HEAD")
 	runtimeCalls := 0
 	c := &Control{
 		cfg: &config.Config{RepoOverride: repo},
@@ -151,10 +151,10 @@ func TestForkMergeRejectsInvalidProjectBeforeRuntimeOrMutation(t *testing.T) {
 	if runtimeCalls != 0 {
 		t.Fatalf("invalid project resolved runtime %d time(s)", runtimeCalls)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD"); got != parentHead {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != parentHead {
 		t.Fatalf("parent HEAD changed: %s -> %s", parentHead, got)
 	}
-	if got := gitOut(ws, "rev-parse", "HEAD"); got != forkHead {
+	if got := forkspace.GitOut(ws, "rev-parse", "HEAD"); got != forkHead {
 		t.Fatalf("fork HEAD changed: %s -> %s", forkHead, got)
 	}
 }
@@ -184,13 +184,13 @@ func TestForkMergeRefusesLegacyCopiedTaskQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTaskFile(t, filepath.Join(ws, tasks.TasksRoot, tasks.StateTodo, "copied", "task.md"), "# Copied task\n")
-	parentBefore := gitOut(repo, "rev-parse", "HEAD")
+	parentBefore := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	c := &Control{cfg: &config.Config{RepoOverride: repo}}
 	landed, err := mergeOneForTest(t, c, repo, "", "legacy-tasks", false)
 	if err == nil || landed || !strings.Contains(err.Error(), "legacy copied task queue") {
 		t.Fatalf("legacy copied queue merge = landed %v err %v", landed, err)
 	}
-	if got := gitOut(repo, "rev-parse", "HEAD"); got != parentBefore {
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != parentBefore {
 		t.Fatalf("legacy copied queue moved parent from %s to %s", parentBefore, got)
 	}
 	if !pathExists(filepath.Join(ws, tasks.TasksRoot, tasks.StateTodo, "copied", "task.md")) {
@@ -258,7 +258,7 @@ func TestForkMergeRechecksUnsupportedStateUnderLifecycleLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	head := gitOut(repo, "rev-parse", "HEAD")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	raw := []byte("owner-v3\nopaque\n")
 	c := &Control{cfg: &config.Config{RepoOverride: repo}}
 	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
@@ -271,7 +271,7 @@ func TestForkMergeRechecksUnsupportedStateUnderLifecycleLock(t *testing.T) {
 	if got.code == 0 || got.err == nil || !strings.Contains(got.err.Error(), "unsupported detached-worker state version") {
 		t.Fatalf("ForkMerge after state replacement = (%d, %v), want locked version refusal", got.code, got.err)
 	}
-	if gitOut(repo, "rev-parse", "HEAD") != head || !pathExists(ws) {
+	if forkspace.GitOut(repo, "rev-parse", "HEAD") != head || !pathExists(ws) {
 		t.Fatal("merge mutated the parent or workspace after unsupported state appeared")
 	}
 	if data, readErr := os.ReadFile(forkspace.PidPath(repo, "race")); readErr != nil || string(data) != string(raw) {
@@ -418,7 +418,7 @@ func prepareForkTaskCandidateMode(t *testing.T, name string, isolated, makeCommi
 	for i := range ids {
 		assignment, err := tasks.AssignForkTask([]string{root}, tasks.ForkAssignmentRequest{
 			AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws,
-			BaselineHead: gitOut(ws, "rev-parse", "HEAD"),
+			BaselineHead: forkspace.GitOut(ws, "rev-parse", "HEAD"),
 			LeaseOwner:   tasks.TaskLeaseOwner{RunID: "test", PID: os.Getpid(), Provider: "codex", Target: "codex"},
 		})
 		if err != nil {
@@ -449,7 +449,7 @@ func prepareForkTaskCandidateMode(t *testing.T, name string, isolated, makeCommi
 			t.Fatal(err)
 		}
 	}
-	head, tree := gitOut(ws, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD^{tree}")
+	head, tree := forkspace.GitOut(ws, "rev-parse", "HEAD"), forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
 	review, exists, err := tasks.BeginForkCandidateReview(repo, identity, head, tree)
 	if err != nil || !exists || !review.Required {
 		t.Fatalf("begin task candidate review: review=%+v exists=%v err=%v", review, exists, err)
@@ -607,11 +607,11 @@ func TestTaskCandidateMergeRecoversWhenParentMovesDuringGate(t *testing.T) {
 	if landed || err == nil || !strings.Contains(err.Error(), "candidate restored") {
 		t.Fatalf("merge across moved parent = (%v, %v)", landed, err)
 	}
-	if gitOut(ws, "rev-parse", "HEAD") == "" {
+	if forkspace.GitOut(ws, "rev-parse", "HEAD") == "" {
 		t.Fatal("candidate workspace was not restored")
 	}
 	intent, ok, err := readLandIntent(repo, identity)
-	if err != nil || !ok || intent.Phase != landPreparing || intent.RebasedHead != "" || intent.ParentBefore != gitOut(repo, "rev-parse", "HEAD") {
+	if err != nil || !ok || intent.Phase != landPreparing || intent.RebasedHead != "" || intent.ParentBefore != forkspace.GitOut(repo, "rev-parse", "HEAD") {
 		t.Fatalf("retryable land intent = %+v, ok=%v err=%v", intent, ok, err)
 	}
 	item, _ := mustCurrentTask(t, root, "canonical-task")
@@ -641,7 +641,7 @@ func TestTaskCandidateMergeReplaysCrashAfterRedGateRestoresWorkspace(t *testing.
 	if landed || err == nil || !strings.Contains(err.Error(), "injected crash") {
 		t.Fatalf("crashed red-gate merge = (%v, %v)", landed, err)
 	}
-	if got := gitOut(ws, "rev-parse", "HEAD"); got != candidate.Head {
+	if got := forkspace.GitOut(ws, "rev-parse", "HEAD"); got != candidate.Head {
 		t.Fatalf("workspace HEAD after restore = %s, want %s", got, candidate.Head)
 	}
 	intent, pending, err := readLandIntent(repo, identity)
@@ -785,7 +785,7 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 			t.Errorf("rebase state %q survived the recovery", left)
 		}
 		// The recovery let the real rebase run: the fork's commit now sits on the parent's HEAD.
-		if base, head := gitOut(ws, "rev-parse", "perf~1"), gitOut(repo, "rev-parse", "HEAD"); base != head {
+		if base, head := forkspace.GitOut(ws, "rev-parse", "perf~1"), forkspace.GitOut(repo, "rev-parse", "HEAD"); base != head {
 			t.Errorf("perf~1 = %q, want the parent HEAD %q", base, head)
 		}
 	})
@@ -941,7 +941,7 @@ func TestMergeOneGateFailLeavesParentUntouched(t *testing.T) {
 	}
 	repo := initRepo(t)
 	c := &Control{cfg: &config.Config{}}
-	pre := gitOut(repo, "rev-parse", "HEAD")
+	pre := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
 		t.Fatalf("forkspace.Setup: %v", err)
@@ -959,7 +959,7 @@ func TestMergeOneGateFailLeavesParentUntouched(t *testing.T) {
 	if pathExists(filepath.Join(repo, "feature.txt")) {
 		t.Error("the fork landed despite a red gate")
 	}
-	if head := gitOut(repo, "rev-parse", "HEAD"); head != pre {
+	if head := forkspace.GitOut(repo, "rev-parse", "HEAD"); head != pre {
 		t.Errorf("parent HEAD moved on a red gate: %s → %s", pre, head)
 	}
 	if gitDirty(repo) {
@@ -1185,7 +1185,7 @@ func TestForkMergeQueue(t *testing.T) {
 		t.Errorf("forks remain after the queue closed them: %v", got)
 	}
 	// Rebasing must keep history linear — no merge commits.
-	if merges := gitOut(repo, "rev-list", "--merges", "HEAD"); merges != "" {
+	if merges := forkspace.GitOut(repo, "rev-list", "--merges", "HEAD"); merges != "" {
 		t.Errorf("rebase queue produced merge commits (history not linear):\n%s", merges)
 	}
 }
@@ -1412,7 +1412,7 @@ func TestHostGitHardeningOnPoisonedParent(t *testing.T) {
 			git(t, repo, "checkout", "-q", "main")
 		}
 		ahead("a1")
-		if err := gitRun(repo, "merge", "--ff-only", "a1"); err != nil { // hardened
+		if err := forkspace.GitRun(repo, "merge", "--ff-only", "a1"); err != nil { // hardened
 			t.Fatalf("merge a1: %v", err)
 		}
 		if pathExists(marker) {
@@ -1435,9 +1435,9 @@ func TestHostGitHardeningOnPoisonedParent(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("changed\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_ = gitOut(repo, "diff") // hardened — diff.external blanked
+		_ = forkspace.GitOut(repo, "diff") // hardened — diff.external blanked
 		if pathExists(marker) {
-			t.Fatal("gitOut diff ran the parent's diff.external on the host")
+			t.Fatal("GitOut diff ran the parent's diff.external on the host")
 		}
 		_ = exec.Command("git", "-C", repo, "diff").Run() // raw control
 		if !pathExists(marker) {
@@ -2140,13 +2140,13 @@ func TestTaskCandidateCanBeFixedAndRemergedAfterARedGate(t *testing.T) {
 	if landed, err := mergeOneForTest(t, c, repo, "gate-img", identity.Name, false); landed || err == nil || !strings.Contains(err.Error(), "candidate restored") {
 		t.Fatalf("red-gate merge = (%v, %v)", landed, err)
 	}
-	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, gitOut(ws, "rev-parse", "HEAD")); retired || err != nil {
+	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, forkspace.GitOut(ws, "rev-parse", "HEAD")); retired || err != nil {
 		t.Fatalf("retire at the candidate's own HEAD = (%v, %v); want nothing to retire", retired, err)
 	}
 
 	// History rewritten under the candidate: not a descendant, so the candidate stays.
 	git(t, ws, "commit", "-q", "--amend", "-m", "rewritten candidate\n\nCoop-Task: canonical-task")
-	rewritten := gitOut(ws, "rev-parse", "HEAD")
+	rewritten := forkspace.GitOut(ws, "rev-parse", "HEAD")
 	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, rewritten); retired || err == nil || !strings.Contains(err.Error(), "no longer descends") {
 		t.Fatalf("retire on rewritten history = (%v, %v); want a fail-closed refusal", retired, err)
 	}
@@ -2161,7 +2161,7 @@ func TestTaskCandidateCanBeFixedAndRemergedAfterARedGate(t *testing.T) {
 	}
 	git(t, ws, "add", "fix.txt")
 	git(t, ws, "commit", "-qm", "fix the gate\n\nCoop-Task: canonical-task")
-	fixedHead, fixedTree := gitOut(ws, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD^{tree}")
+	fixedHead, fixedTree := forkspace.GitOut(ws, "rev-parse", "HEAD"), forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
 	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, fixedHead); !retired || err != nil {
 		t.Fatalf("retire after the fix = (%v, %v); want the stale candidate retired", retired, err)
 	}
@@ -2208,7 +2208,7 @@ func TestForkMergeAllReplaysZeroAheadLandBookkeeping(t *testing.T) {
 	if err == nil || !result.landed {
 		t.Fatalf("injected land interruption = %+v, %v", result, err)
 	}
-	if gitOut(repo, "rev-list", "--count", "HEAD..review/"+identity.Name) != "0" {
+	if forkspace.GitOut(repo, "rev-list", "--count", "HEAD..review/"+identity.Name) != "0" {
 		t.Fatal("fixture is not zero commits ahead after the interrupted fast-forward")
 	}
 	if _, pending, err := readLandIntent(repo, identity); err != nil || !pending {
@@ -2248,10 +2248,10 @@ func TestForkMergeAllFinalizesZeroAheadCandidate(t *testing.T) {
 	if err := gitFetchInto(repo, ws, identity.Name); err != nil {
 		t.Fatal(err)
 	}
-	if err := gitRun(repo, "merge", "--ff-only", "review/"+identity.Name); err != nil {
+	if err := forkspace.GitRun(repo, "merge", "--ff-only", "review/"+identity.Name); err != nil {
 		t.Fatal(err)
 	}
-	if gitOut(repo, "rev-list", "--count", "HEAD..review/"+identity.Name) != "0" {
+	if forkspace.GitOut(repo, "rev-list", "--count", "HEAD..review/"+identity.Name) != "0" {
 		t.Fatal("fixture is not zero commits ahead after the external fast-forward")
 	}
 	if _, pending, err := readLandIntent(repo, identity); err != nil || pending {

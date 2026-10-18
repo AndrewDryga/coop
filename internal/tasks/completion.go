@@ -511,10 +511,7 @@ func beginCompletionWindowsWithPolicy(hosts, allowedDoneDepartures, reviewSubjec
 	if len(hosts) == 0 {
 		return &CompletionWindowSet{}, nil
 	}
-	id, err := newSupervisorID()
-	if err != nil {
-		return nil, err
-	}
+	id := newSupervisorID()
 	set := &CompletionWindowSet{}
 	for _, root := range hosts {
 		// Snapshot and register under one index critical section. Task deletion uses the same

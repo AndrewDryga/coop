@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/contextc"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
@@ -67,7 +68,7 @@ func reviewPatch(repo string, cs loopChangeSet) string {
 	args := []string{"show", "--ignore-submodules=dirty", "--submodule=short", "--no-ext-diff", "--no-textconv", "--format=commit %H %s", "--unified=2"}
 	args = append(args, commits...)
 	args = append(args, "--")
-	return truncate(gitOut(repo, args...), 10000)
+	return truncate(forkspace.GitOut(repo, args...), 10000)
 }
 
 func taskAcceptance(text string) string {
