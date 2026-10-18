@@ -1,0 +1,45 @@
+name: task channel
+
+# The in-box task channel needs the full box image, which takes minutes and many downloads to
+# build, so this runs once a day on main (and by hand) instead of on every push. It catches a
+# break within a day; move it into ci.yml if it ever finds one too late.
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  task-channel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            go.sum
+            tools/staticcheck.mod
+            tools/staticcheck.sum
+      - name: build coop
+        run: make build
+      # From an empty folder, so coop builds the shared box image the test needs, not this
+      # repository's own project image.
+      - name: build the box image
+        run: |
+          workdir="$(mktemp -d)"
+          cd "$workdir"
+          "$GITHUB_WORKSPACE/coop" build --egress open
+        env:
+          COOP_RUNTIME: docker
+      - name: a real box completes its own task and is refused a held one
+        run: make task-channel-e2e
+        env:
+          COOP_RUNTIME: docker

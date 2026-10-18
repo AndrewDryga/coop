@@ -2,7 +2,7 @@
 name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
-sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go]
+sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go]
 updated: 2026-10-18
 ---
 
@@ -157,9 +157,14 @@ Two checks reach the channel from a real box, and both need a built image: `coop
 section, skipped when doctor falls back to its alpine stand-in (CI's doctor job has no `coop build`),
 and `make task-channel-e2e` (`TestTaskChannelLiveInARealBox`: completes its own task, is refused a
 held one, finds no coop binary), which fails, never skips, without a runtime or this checkout's
-`coop-box:<definition>` image ([[box-base-image-tags]]).
+`coop-box:<definition>` image ([[box-base-image-tags]]). CI runs it once a day on main
+(`.github/workflows/task-channel.yml`, also by hand): it builds Coop, builds the shared image from
+an empty folder so the repository's own Dockerfile is not picked, then runs the target. The owner
+chose daily over every push, since the image takes minutes and many downloads to build.
 
 ## Changelog
+- 2026-10-18 — a daily CI job runs `make task-channel-e2e` in a freshly built box image (task
+  2026-10-17-exercise-the-task-channel-in-a-real-box-in-ci).
 - 2026-10-18 — each tool call pins its workspace and queues and every read and write goes through
   the pin; folder walks no longer wait on a swapped-in FIFO (task
   2026-10-17-run-the-in-box-task-tools-through-one-pinned-que).
