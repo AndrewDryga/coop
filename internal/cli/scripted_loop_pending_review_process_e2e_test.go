@@ -228,6 +228,43 @@ func TestProviderScriptedLoopPendingReviewRejectsAForgedSubjectCommit(t *testing
 	}
 }
 
+// The same forger fails the attempt that forges, and its retry would complete cleanly above the
+// forged commit. The failed attempt's own commits are checked, so the loop stops before a retry.
+func TestProviderScriptedLoopPendingReviewRejectsAForgerThatFailsFirst(t *testing.T) {
+	suite := newDirectProcessSuite(t)
+	resetLoopProcessRepo(t, suite)
+	t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+
+	taskID := "pending-review-failing-forger"
+	subjectID := taskID + "-archive" // the fixture's forged trailer names this task
+	seedLoopProcessTaskIn(t, suite.layout.Repo, stateInProgress, subjectID)
+	seedLoopProcessTask(t, suite.layout.Repo, taskID)
+	work := loopRecoveryTarget("claude", "work-model", "work")
+	signoff := loopRecoveryTarget("claude", "signoff-model", "work")
+	writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, nil, 3)
+	attempts := []loopProcessAttempt{
+		{TaskID: subjectID, Target: work, Stage: "work", Result: "decision-complete"},
+		{TaskID: taskID, Target: work, Stage: "work", Result: "forged-archive-binding-ordinary"},
+		{TaskID: taskID, Target: work, Stage: "work", Result: "complete"},
+	}
+	suite.reset(t, loopRecoveryScenario(taskID, attempts))
+	result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
+	if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "Task completion rejected") {
+		t.Fatalf("failed forger = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+	}
+	if starts := processEvents(readProcessTrace(t, suite.layout.Trace), "provider", "start"); len(starts) != 2 {
+		t.Fatalf("worker attempts = %#v, want the subject's and the failed forger's only", starts)
+	}
+	if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, subjectID)) ||
+		!pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) {
+		t.Fatal("the rejection did not keep the subject archived and the forger in progress")
+	}
+	log, err := os.ReadFile(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID, "log.md"))
+	if err != nil || !strings.Contains(string(log), "implementation completion rejected") {
+		t.Fatalf("forger log = %q (%v), want the rejection note", log, err)
+	}
+}
+
 // Another session committed its task before this loop started and runs `coop tasks done` while a
 // review box runs. The completion is host-receipted, so it succeeds and joins the final review at
 // the task's one commit in the branch. A controller that dies during that review leaves a review

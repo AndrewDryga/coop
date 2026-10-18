@@ -958,8 +958,73 @@ reviewAgain:
 					break
 				}
 			}
+			// The touched set is host-side knowledge the box cannot influence — everything this
+			// attempt's authority consumption could affect: the leased task id, the audit-reopen
+			// record's task, every id whose queue state this completion window observed change
+			// (auditDoneCandidates' full candidate list, the finished set among them), and every id
+			// already archived when the window's baseline was captured — before the box ever ran, so
+			// an already-closed task stays protected even when its folder never moves; an archived
+			// task's history is meant to be closed, and a forged extra commit corrupts that closed
+			// record without needing to touch its folder at all (a departed task was archived at that
+			// baseline, so it is already here). A foreign Coop-Task trailer in range for anything outside this set is tolerated rather
+			// than rejecting — see unbindableTasks, tasks.CompletionWindowSet.baselineDoneIDs, and
+			// .agent/kb/loop-range-rejects-outside-commits.md.
+			touched := map[string]bool{assigned.Item.ID: true}
+			if lease.Reopen != nil {
+				touched[lease.Reopen.TaskID] = true
+			}
+			for _, t := range completedTasks {
+				touched[t.Item.ID] = true
+			}
+			for id := range windows.BaselineDoneIDs() {
+				touched[id] = true
+			}
+			// Every ordinary attempt's commits are checked, not only a completing one's: a box that
+			// forged or rewrote a binding in an attempt that then failed would otherwise leave it
+			// below every later attempt's base. Audit rework rewrites history by design; semantic
+			// replay checks it instead.
+			headAfter := forkspace.GitOut(repo, "rev-parse", "HEAD")
+			if lease.Reopen == nil {
+				tolerated, refused := tasks.AttemptBindingsRefused(repo, loopStartHead, iterHead, headAfter, assigned.Item.ID, touched)
+				if refused {
+					current, ok, restoreErr := tasks.CurrentTask(assigned.Root, assigned.Item.ID)
+					if restoreErr == nil && !ok {
+						restoreErr = fmt.Errorf("task %s has no folder left to restore", assigned.Item.ID)
+					}
+					if restoreErr == nil {
+						restoreErr = tasks.RestoreQueuedCompletion(tasks.QueuedTask{Root: assigned.Root, Item: current}, false)
+					}
+					departed, departureErr := windows.Departures()
+					if len(departed) > 0 {
+						departureErr = errors.Join(departureErr, fmt.Errorf("work stage reopened unowned archived task(s) %s", strings.Join(departed, ", ")))
+					}
+					var unownedErr error
+					if len(unowned) > 0 {
+						unownedErr = tasks.UnownedCompletionError(unowned, nil)
+					}
+					var windowErr error
+					if restoreErr != nil {
+						windowErr = windows.Abandon()
+					} else {
+						windowErr = windows.Close()
+					}
+					releaseErr := lease.Release()
+					bindErr := tasks.UnbindableCompletionError([]string{assigned.Item.ID}, restoreErr)
+					if restoreErr == nil && departureErr == nil && unownedErr == nil && windowErr == nil && releaseErr == nil {
+						failRejectedCompletion(active, assigned.Item.ID, continueCmd)
+						return 1, ui.Reported(bindErr)
+					}
+					return 1, errors.Join(bindErr, departureErr, unownedErr, windowErr, releaseErr)
+				}
+				if reportErr := tasks.ReportToleratedForeignBindings(repo, hosts, iterHead, headAfter, assigned.Item.ID, tolerated); reportErr != nil {
+					var restoreErr error
+					if assignedCompletion != nil {
+						restoreErr = tasks.RestoreQueuedCompletion(*assignedCompletion, false)
+					}
+					return 1, errors.Join(reportErr, restoreErr, lease.Release(), windows.Abandon())
+				}
+			}
 			if terminalCorrectionErr != nil {
-				headAfter := forkspace.GitOut(repo, "rev-parse", "HEAD")
 				refRelease, liveHead, refErr := tasks.EnterRefAuthorityWindow(c.cfg, repo, headAfter, nil)
 				if refErr != nil {
 					reason := refErr.Error()
@@ -1080,7 +1145,6 @@ reviewAgain:
 				continue
 			}
 			handoffs, timeouts = 0, 0
-			headAfter := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			if cleanCredentialRetryCanReuseServices(repo, iterHead, headAfter, classification.outcome) {
 				reuseWorkServices[assigned.Item.ID] = true
 			}
@@ -1131,36 +1195,7 @@ reviewAgain:
 				departureErr = fmt.Errorf("work stage reopened unowned archived task(s) %s", strings.Join(departed, ", "))
 				return 1, errors.Join(departureErr, restoreErr, releaseErr)
 			}
-			// The touched set is host-side knowledge the box cannot influence — everything this
-			// iteration's authority consumption could affect: the finished set, the leased task id,
-			// the audit-reopen record's task, every id whose queue state this completion window
-			// observed change (auditDoneCandidates' full candidate list, plus any departure), and
-			// every id already archived when the window's baseline was captured — before the box ever
-			// ran, so an already-closed task stays protected even when its folder never moves; an
-			// archived task's history is meant to be closed, and a forged extra commit corrupts that
-			// closed record without needing to touch its folder at all. A foreign Coop-Task trailer in
-			// range for anything outside this set is tolerated rather than rejecting this completion —
-			// see unbindableTasks, tasks.CompletionWindowSet.baselineDoneIDs, and
-			// .agent/kb/loop-range-rejects-outside-commits.md. All of it is built and used inside the
-			// ref authority window already entered above, so nothing can move HEAD or a queue folder
-			// out from under the comparison.
-			touched := map[string]bool{assigned.Item.ID: true}
-			for _, id := range finished {
-				touched[id] = true
-			}
-			if lease.Reopen != nil {
-				touched[lease.Reopen.TaskID] = true
-			}
-			for _, t := range completedTasks {
-				touched[t.Item.ID] = true
-			}
-			for _, id := range departed {
-				touched[id] = true
-			}
-			for id := range windows.BaselineDoneIDs() {
-				touched[id] = true
-			}
-			var missing, tolerated []string
+			var missing []string
 			completionCandidate := assignedCompletion
 			// A tool refusal leaves the task in progress. If the worker exits successfully instead
 			// of repairing it in-session, give the same bounded recovery as a rejected folder move.
@@ -1202,19 +1237,11 @@ reviewAgain:
 			}
 			noChangeAccepted := false
 			if assignedCompletion != nil {
-				missing, tolerated = tasks.CompletionUnbindableTasks(repo, iterHead, headAfter, finished, lease.Reopen, touched)
+				missing, _ = tasks.CompletionUnbindableTasks(repo, iterHead, headAfter, finished, lease.Reopen, touched)
 				if claim := completionClaim.Load(); claim != nil && claim.NoChange() && checkNoChangeCompletion(repo, noChangeBase.head, assigned.Item.ID, noChangeBase.checkout) == nil {
 					missing = slices.DeleteFunc(missing, func(id string) bool { return id == assigned.Item.ID })
 					noChangeAccepted = true
 				}
-			}
-			if reportErr := tasks.ReportToleratedForeignBindings(repo, hosts, iterHead, headAfter, assigned.Item.ID, tolerated); reportErr != nil {
-				if assignedCompletion != nil {
-					restoreErr = errors.Join(restoreErr, tasks.RestoreQueuedCompletion(*assignedCompletion, lease.Reopen != nil))
-				}
-				releaseErr := errors.Join(lease.Release(), windows.Abandon())
-				refRelease()
-				return 1, errors.Join(reportErr, restoreErr, releaseErr)
 			}
 			if len(missing) > 0 {
 				restoreErr = errors.Join(restoreErr, tasks.RestoreQueuedCompletion(*completionCandidate, lease.Reopen != nil))
@@ -1263,10 +1290,7 @@ reviewAgain:
 					bindErr = tasks.AuditCompletionError(missing[0], restoreErr)
 				}
 				if lease.Reopen == nil && restoreErr == nil && unownedErr == nil && releaseErr == nil {
-					ui.Failure("Task completion rejected",
-						fmt.Sprintf("The new commit range does not verify one unique task binding.\n%s is still in progress; its work and recovery notes are preserved.\nCoop cannot safely advance to another task.", active),
-						[2]string{"Inspect:", "coop tasks path " + assigned.Item.ID},
-						[2]string{"Then continue:", continueCmd})
+					failRejectedCompletion(active, assigned.Item.ID, continueCmd)
 					return 1, ui.Reported(bindErr)
 				}
 				return 1, errors.Join(bindErr, unownedErr, releaseErr)

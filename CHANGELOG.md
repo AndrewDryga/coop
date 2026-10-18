@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A loop attempt that fails is checked for forged task commits too.** `coop loop` refuses a
+  completion whose commits carry another task's `Coop-Task` trailer or rewrite another task's
+  commit, but it checked only the attempt that completed its task. A box could make such a commit
+  in an attempt that then failed, and the retry started above it and completed cleanly. Every
+  attempt's commits are now checked when it ends; such a commit stops the run with "Task completion
+  rejected" and puts the task back in progress.
+
 - **An agent's "Internal error" now says what failed.** When an agent's adapter hit an exception it
   did not expect, it answered with the bare words "Internal error" and put the exception's own
   message beside them. Coop kept the two words and dropped the message, so a turn that failed that

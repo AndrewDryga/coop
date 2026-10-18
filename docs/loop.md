@@ -80,7 +80,7 @@ report it as done. The cap scales with the batch: half the tasks worked this run
 clamped to `[3, signoff.rounds]` (default `5`). Small batches still get several
 attempts, while larger batches have a limit on repeatedly reopening one task.
 
-Each completed task must have exactly one `Coop-Task: <id>` binding in the current iteration's commit range, and exactly one reachable from `HEAD`. So rework after a review amends or rewrites the existing task commit. A second bound commit is rejected, and the task goes back to in-progress. A worker can't bind another task in its iteration either: verify subjects come only from tasks the host accepted as completed during this run.
+Each completed task must have exactly one `Coop-Task: <id>` binding in the current iteration's commit range, and exactly one reachable from `HEAD`. So rework after a review amends or rewrites the existing task commit. A second bound commit is rejected, and the task goes back to in-progress. A worker can't bind another task in its iteration either: verify subjects come only from tasks the host accepted as completed during this run. Every attempt gets this check, even one that fails, so a retry never builds on a commit that binds another task or rewrites its commit.
 
 Every review closes with one structured evidence line per subject, and a PASS/FAIL receipt naming the exact sorted task IDs it proposes to reopen. In the default `writes: tasks` mode, the review only reports: the whole repository, task queues included, is read-only. co:op validates the complete proposal, acquires every subject's host-side task authority, and applies all the exact-subject reopens as one transaction.
 

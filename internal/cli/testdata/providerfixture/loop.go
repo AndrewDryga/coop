@@ -99,7 +99,7 @@ func validateLoopResult(index int, stage, result string) error {
 			result == "background-drained-complete" || result == "background-timeout-after-restored-completion" ||
 			result == "tool-wait" || result == "tool-gated-complete" || result == "forged-flood-wait" ||
 			result == "progress-gated-complete" || result == "uncommitted-complete" || result == "uncommitted-dirty-complete" || result == "decision-complete" ||
-			result == "complete-unlisted-range" {
+			result == "complete-unlisted-range" || result == "forged-archive-binding-ordinary" {
 			return nil
 		}
 	case "between", "signoff", "verify":
@@ -434,6 +434,12 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 	case "authentication":
 		fmt.Fprintln(os.Stderr, loopAuthenticationFailure(provider))
 	case "ordinary":
+		fmt.Fprintln(os.Stdout, "fixture ordinary provider failure")
+	case "forged-archive-binding-ordinary":
+		// The forged commit lands in an attempt that fails, so only that attempt's own check sees it.
+		if err := addLoopTaskBinding(root, plan.TaskID+"-archive"); err != nil {
+			return 1, "", err
+		}
 		fmt.Fprintln(os.Stdout, "fixture ordinary provider failure")
 	case "ambiguous-limit-prose":
 		// Limit-shaped prose inside streamed NARRATION stays response context, never a

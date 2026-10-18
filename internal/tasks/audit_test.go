@@ -3362,6 +3362,74 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 	})
 }
 
+// The next attempt's range starts above a failed attempt's commits, so the failed attempt's own
+// check is the only one that sees a binding it forged or rewrote.
+func TestAttemptBindingsRefused(t *testing.T) {
+	touched := map[string]bool{"task-42": true, "archived-task": true}
+	t.Run("a forged trailer for an archived task refuses an attempt that completed nothing", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "forge\n\nCoop-Task: archived-task")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
+		if tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); !refused || len(tolerated) != 0 {
+			t.Fatalf("forged archived binding = refused %v, tolerated %v", refused, tolerated)
+		}
+	})
+
+	t.Run("the attempt's own binding passes and an untouched trailer is tolerated", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "work before the failure\n\nCoop-Task: task-42")
+		git("commit", "-q", "--allow-empty", "-m", "host work\n\nCoop-Task: task-99")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
+		tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched)
+		if refused || !slices.Equal(tolerated, []string{"task-99"}) {
+			t.Fatalf("own binding = refused %v, tolerated %v; want accepted with task-99 tolerated", refused, tolerated)
+		}
+		if tolerated, refused := AttemptBindingsRefused(repo, base, head, head, "task-42", touched); refused || len(tolerated) != 0 {
+			t.Fatalf("an attempt without commits = refused %v, tolerated %v", refused, tolerated)
+		}
+	})
+
+	t.Run("an invalid trailer or another task's rewritten commit is refused", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		git("commit", "-q", "--allow-empty", "-m", "task-99's work\n\nCoop-Task: task-99")
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--amend", "--allow-empty", "-m", "task-99's work, reworded\n\nCoop-Task: task-99")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
+		if _, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); !refused {
+			t.Fatal("an attempt that rewrote untouched task-99's bound commit was accepted")
+		}
+		git("commit", "-q", "--allow-empty", "-m", "invalid\n\nCoop-Task:")
+		if _, refused := AttemptBindingsRefused(repo, head, head, forkspace.GitOut(repo, "rev-parse", "HEAD"), "task-42", touched); !refused {
+			t.Fatal("an attempt with an invalid trailer was accepted")
+		}
+	})
+
+	t.Run("a binding dropped below the attempt is checked against the run base", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		git("commit", "-q", "--allow-empty", "-m", "task-99's work\n\nCoop-Task: task-99")
+		runBase := forkspace.GitOut(repo, "rev-parse", "HEAD")
+		git("reset", "--hard", "-q", "HEAD^") // outside any checked attempt
+		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "a replacement\n\nCoop-Task: task-99")
+		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
+		if _, refused := AttemptBindingsRefused(repo, runBase, base, head, "task-42", touched); !refused {
+			t.Fatal("a trailer replacing a binding the run base reached was accepted")
+		}
+		if tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); refused || !slices.Equal(tolerated, []string{"task-99"}) {
+			t.Fatalf("without the run base = refused %v, tolerated %v; want the replacement tolerated", refused, tolerated)
+		}
+		if _, refused := AttemptBindingsRefused(repo, strings.Repeat("0", 40), base, head, "task-42", touched); !refused {
+			t.Fatal("an unreadable run base was accepted")
+		}
+	})
+}
+
 // TestReportToleratedForeignBindings covers the report+journal shape for a harmless foreign binding:
 // one ui.Warn line naming every tolerated id, plus a best-effort log.md entry on each named task's
 // own folder (resolved by scanning every host, mirroring how the caller in internal/loop can span

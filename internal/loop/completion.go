@@ -8,6 +8,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/taskmcp"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 var errCompletionBinding = errors.New("implementation completion needs a task-bound commit")
@@ -57,6 +58,14 @@ func checkAssignedCompletion(repo, base, id string, reopen *tasks.AuditReopenRec
 		return fmt.Errorf("host-authorized audit rework needs zero new commits for verification-only completion, or exactly one real repair commit without a Coop-Task trailer preserving the reviewed history")
 	}
 	return fmt.Errorf("%w: exactly one new and reachable Coop-Task: %s binding is required; commit the verified implementation work, or repair its missing trailer without including unrelated staged work; never add a second binding or rewrite an older task commit. If existing implementation already satisfies the task, retry tasks_complete with outcome already_satisfied; an investigation may use could_not_reproduce or wont_fix. Include concrete reason and evidence after required verification. No-change completion requires unchanged Git history and checkout/index state, with no existing task binding. Do not create an empty commit; human decisions use tasks_block", errCompletionBinding, id)
+}
+
+// failRejectedCompletion tells the operator why the run stopped on a task binding Coop cannot verify.
+func failRejectedCompletion(active, id, continueCmd string) {
+	ui.Failure("Task completion rejected",
+		fmt.Sprintf("The new commit range does not verify one unique task binding.\n%s is still in progress; its work and recovery notes are preserved.\nCoop cannot safely advance to another task.", active),
+		[2]string{"Inspect:", "coop tasks path " + id},
+		[2]string{"Then continue:", continueCmd})
 }
 
 func checkNoChangeCompletion(repo, base, id, baseline string) error {

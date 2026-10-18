@@ -3,7 +3,7 @@ name: loop-range-rejects-outside-commits
 description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
 sources: [internal/tasks/audit.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/tasks/pending_review.go, internal/loop/loop.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go]
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the
 proposed HEAD. That range is a *time* window on one branch, not a set of commits the agent authored
@@ -44,6 +44,20 @@ task's binding is a narrower exception that still rejects — proven end to end 
 `TestProviderScriptedLoopReviewProcess/worker_cannot_forge_review_authority_for_an_archived_task`
 (`scripted_loop_review_process_e2e_test.go`), which caught a first cut of this fix that forgot
 `baselineDoneIDs` and tolerated a forged archived-task binding it should have rejected.
+
+**Every attempt is checked, not only a completing one.** The same refusal runs at the end of every
+ordinary work attempt (`tasks.AttemptBindingsRefused`, called in `internal/loop/loop.go` right after
+the completion window audit), whether or not the attempt completed its task; the assigned task's own
+trailers pass there, and their count stays the completion check's job. Without it a box could forge
+or rewrite a binding in an attempt that then fails, and every later attempt's range would start
+above that commit. A refused attempt stops the run with the same "Task completion rejected" text,
+after returning the task to in progress (from done or blocked) with the rejection note. The run's
+recorded base (`loopStartHead`) also counts as a base for rewrites, so a binding dropped or rewritten
+below the attempt's start, outside any checked attempt, still refuses a trailer that replaces it.
+Audit rework (a lease holding host audit-reopen authority) is skipped: it rewrites history by design,
+and semantic replay checks it. `TestProviderScriptedLoopPendingReviewRejectsAForgerThatFailsFirst`
+proves it end to end: the forging attempt fails, and the loop stops there instead of retrying above
+the forged commit.
 
 Pending final review reads trailers under the same rule: it finds a subject's commit only between
 the run base the host recorded and HEAD, and needs exactly one there, so a trailer in older history
@@ -134,6 +148,8 @@ See [[task-authority-model]] for the full four-authority map and the lock-orderi
 authority is acquired before lease authority, never the reverse) this ref-authority window is half of.
 
 ## Changelog
+- 2026-10-18 — the refusal runs at the end of every ordinary attempt, not only a completing one, and
+  checks rewrites against the run's recorded base too; named the fail-first forger e2e.
 - 2026-10-17 — the snapshot is taken in `runIterationWithMode`, which `runIteration` calls.
 - 2026-10-17 — the 2026-08-10 entry names the exported `LockRefAuthority`/`EnterRefAuthorityWindow`
   the move produced (internal/tasks/refauthority.go).
