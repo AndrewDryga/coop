@@ -270,3 +270,8 @@ func ensureForkAssignmentIndexDir(repo string, identity forkspace.Identity) erro
 	}
 	return root.Close()
 }
+
+func fileExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir()
+}

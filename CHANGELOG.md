@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Task commands no longer follow links a box planted in the task queue.** `coop tasks block`
+  wrote its `decision.md` template through a link a box could leave there, which could create a file
+  anywhere you can write. Task moves, cleanups and deletions found state folders by name, so a box
+  that swapped one for a link could send them to another folder. They now refuse such links and work
+  through the queue's own folders.
+
 - **A `.COOPIGNORE` on a Mac is read-only in boxes too.** On a case-insensitive Mac disk, Coop reads
   a folder's `.COOPIGNORE`, or the name in any other mix of cases, as its `.coopignore`, but it
   mounted only the exact lower-case name read-only. A box could edit such a file and change what

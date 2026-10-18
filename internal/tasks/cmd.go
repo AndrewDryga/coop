@@ -1383,77 +1383,102 @@ func moveBlockedAuditUnblock(root string, t Item, transition *blockedAuditUnbloc
 // moveTaskDir renames a task's folder into root/newState, creating the state dir if needed. If the
 // id already exists in newState (a torn move or a stray duplicate across states), it refuses with an
 // actionable message rather than letting os.Rename fail with a raw "file exists" and stranding the
-// task. (readTaskTree dedups such a duplicate on the READ side; this guards the WRITE side.)
+// task. (readTaskTree dedups such a duplicate on the READ side; this guards the WRITE side.) The
+// queue is opened once and both state folders from it, each a real folder, and the rename goes
+// through their handles: a box that swaps a state folder for a link cannot send the task elsewhere.
 func MoveTaskDir(root string, t Item, newState string) error {
+	fromState := filepath.Base(filepath.Dir(t.Dir))
+	if filepath.Clean(t.Dir) != filepath.Join(root, fromState, t.ID) {
+		return fmt.Errorf("can't move %s: its folder %q is not in the task queue %q", t.ID, t.Dir, root)
+	}
+	queue, err := openRealRoot(root)
+	if err != nil {
+		return fmt.Errorf("open task queue: %w", err)
+	}
+	defer queue.Close()
 	dest := filepath.Join(root, newState, t.ID)
-	if t.Dir != dest && pathExists(dest) {
-		return fmt.Errorf("can't move %s to %s/: a task folder with that ID already exists at %q. Review both task folders and resolve the duplicate before retrying", t.ID, StateLabel(newState), dest)
+	if fromState != newState {
+		if _, err := queue.Lstat(filepath.Join(newState, t.ID)); err == nil {
+			return fmt.Errorf("can't move %s to %s/: a task folder with that ID already exists at %q. Review both task folders and resolve the duplicate before retrying", t.ID, StateLabel(newState), dest)
+		}
+		if err := queue.Mkdir(newState, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
 	}
-	if err := os.MkdirAll(filepath.Join(root, newState), 0o755); err != nil {
-		return err
-	}
-	if !pathExists(t.Dir) {
+	if _, err := queue.Lstat(filepath.Join(fromState, t.ID)); errors.Is(err, os.ErrNotExist) {
 		// The source vanished between findTask and now — a concurrent move to a DIFFERENT state
 		// won the race. Report it as the actionable message this guard promises, not a raw ENOENT.
 		return fmt.Errorf("can't move %s: it changed state under us (a concurrent move won) — re-run 'coop tasks'", t.ID)
+	} else if err != nil || fromState == newState {
+		return err
 	}
-	return os.Rename(t.Dir, dest)
+	return moveProjectedTask(queue, fromState, newState, t.ID)
 }
 
-// taskLocalPath resolves a child beneath taskDir and rejects traversal or absolute paths. Today
-// cleanup passes the constant "tmp"; keeping the containment check at the deletion boundary makes
-// that invariant explicit and prevents a future caller from turning task cleanup into an arbitrary
-// path remover.
-func taskLocalPath(taskDir, child string) (string, error) {
-	if child == "" || filepath.IsAbs(child) {
-		return "", fmt.Errorf("task-local path %q must be relative", child)
-	}
-	base, err := filepath.Abs(taskDir)
+// openRealRoot opens path, which must be a real folder and not a link, as an os.Root.
+func openRealRoot(path string) (*os.Root, error) {
+	before, err := os.Lstat(path)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	target, err := filepath.Abs(filepath.Join(base, child))
+	if !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s is a link or not a real directory", path)
+	}
+	root, err := os.OpenRoot(path)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	rel, err := filepath.Rel(base, target)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("task-local path %q escapes task folder %q", child, base)
+	if after, err := root.Stat("."); err != nil || !os.SameFile(before, after) {
+		root.Close()
+		return nil, errors.Join(err, fmt.Errorf("%s changed while it was opened", path))
 	}
-	return target, nil
+	return root, nil
 }
 
-// removeTaskTmp deletes only taskDir/tmp. The task folder itself must be a real directory, not a
-// symlink; a tmp symlink is unlinked without following it, and os.RemoveAll likewise does not follow
-// symlinks nested below a real tmp directory. Missing tmp is the normal case for existing tasks.
-func removeTaskTmp(taskDir string) error {
-	info, err := os.Lstat(taskDir)
+// removeTaskFolder deletes t's folder through its state folder's handle, so a state folder a box
+// swapped for a link cannot point the deletion at another folder.
+func removeTaskFolder(root string, t Item) error {
+	fromState := filepath.Base(filepath.Dir(t.Dir))
+	if filepath.Clean(t.Dir) != filepath.Join(root, fromState, t.ID) {
+		return fmt.Errorf("can't delete %s: its folder %q is not in the task queue %q", t.ID, t.Dir, root)
+	}
+	queue, err := openRealRoot(root)
 	if err != nil {
-		return fmt.Errorf("inspect task folder: %w", err)
+		return fmt.Errorf("open task queue: %w", err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("refusing tmp cleanup through non-directory task folder %q", taskDir)
-	}
-	tmpDir, err := taskLocalPath(taskDir, "tmp")
+	defer queue.Close()
+	state, err := openRealSubroot(queue, fromState)
 	if err != nil {
 		return err
 	}
-	tmpInfo, err := os.Lstat(tmpDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+	defer state.Close()
+	if info, err := state.Lstat(t.ID); err != nil {
+		return err
+	} else if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("task folder %q is a link or not a real directory", t.Dir)
 	}
+	return state.RemoveAll(t.ID)
+}
+
+// removeTaskTmp deletes only taskDir/tmp, through the task folder's handle (OpenTaskMetadataRoot):
+// the task folder and its state folder must be real folders, not links, and a tmp link is unlinked
+// without following it, as are links nested below a real tmp. Missing tmp is the normal case.
+func removeTaskTmp(taskDir string) error {
+	root, err := OpenTaskMetadataRoot(taskDir)
 	if err != nil {
+		return fmt.Errorf("inspect task folder: %w", err)
+	}
+	defer root.Close()
+	tmpDir := filepath.Join(taskDir, "tmp")
+	if _, err := root.Lstat("tmp"); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
 		return fmt.Errorf("inspect %q: %w", tmpDir, err)
 	}
-	if tmpInfo.Mode()&os.ModeSymlink != 0 {
-		err = os.Remove(tmpDir)
-	} else {
-		err = os.RemoveAll(tmpDir)
-	}
-	if err != nil {
+	if err := root.RemoveAll("tmp"); err != nil {
 		return fmt.Errorf("remove %q: %w", tmpDir, err)
 	}
-	if _, err := os.Lstat(tmpDir); !errors.Is(err, os.ErrNotExist) {
+	if _, err := root.Lstat("tmp"); !errors.Is(err, os.ErrNotExist) {
 		if err == nil {
 			return fmt.Errorf("remove %q: path still exists", tmpDir)
 		}
@@ -1546,14 +1571,20 @@ func uniqueLabeledValue(lines []string, label, fallback string) string {
 
 const taskMetadataFileLimit = 1 << 20
 
-// OpenTaskMetadataRoot opens the task folder taskDir as an os.Root for its files. The folder itself
-// must be a real folder, not a link: it is opened from its parent (openRootBelow).
+// OpenTaskMetadataRoot opens the task folder taskDir as an os.Root for its files. It opens the queue
+// above it once and the state folder and the task folder from there, each a real folder and not a
+// link, so a box that swaps either for a link cannot send a host write into another folder.
 func OpenTaskMetadataRoot(taskDir string) (*os.Root, error) {
 	if taskDir == "" {
 		return nil, errors.New("open task folder: no folder given") // never the working directory
 	}
 	taskDir = filepath.Clean(taskDir)
-	root, err := openRootBelow(filepath.Dir(taskDir), taskDir)
+	queue, err := openRealRoot(filepath.Dir(filepath.Dir(taskDir)))
+	if err != nil {
+		return nil, fmt.Errorf("open task folder %s: %w", taskDir, err)
+	}
+	defer queue.Close()
+	root, err := openRealSubroot(queue, filepath.Join(filepath.Base(filepath.Dir(taskDir)), filepath.Base(taskDir)))
 	if err != nil {
 		return nil, fmt.Errorf("open task folder %s: %w", taskDir, err)
 	}
@@ -1879,17 +1910,14 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			}
 			return code, fmt.Errorf("%s is blocked, but its decision request was not saved: %w", t.ID, err)
 		}
-	} else if !fileExists(dec) {
-		stub := renderDecisionScaffold(t.ID, t.Title)
-		if err := os.WriteFile(dec, []byte(stub), 0o644); err != nil {
-			return -1, err
-		}
+	} else if err := writeDecisionScaffold(taskDir, t.ID, t.Title); err != nil {
+		return -1, fmt.Errorf("%s is blocked, but its decision.md was not written: %w", t.ID, err)
 	}
 	// An agent often writes decision.md before it blocks; only the template still needs writing.
 	written := req.filled
 	if !written {
-		body, err := os.ReadFile(dec)
-		written = err == nil && !strings.Contains(string(body), decisionScaffoldMarker)
+		body, exists, err := readOptionalTaskMetadataPath(dec)
+		written = err == nil && exists && !strings.Contains(string(body), decisionScaffoldMarker)
 	}
 	ui.OK("Blocked task: %s", t.Title)
 	ui.Note("\n  %s", displayPath(dec))
@@ -1919,6 +1947,27 @@ const decisionResolutionLine = decisionResolutionPrefix + " <!-- Human: write yo
 // decisionResolutionPrefix opens that line — the one structural line an agent may never write.
 const decisionResolutionPrefix = "**Resolution:**"
 
+// writeDecisionScaffold seeds a blocked task's decision.md for a human to fill in, unless it already
+// has one: an agent often writes it before blocking. The file is created new through the task
+// folder's handle and never through a link, so a link a box planted there is refused.
+func writeDecisionScaffold(taskDir, id, title string) error {
+	root, err := OpenTaskMetadataRoot(taskDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	f, err := root.OpenFile("decision.md", os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
+	if errors.Is(err, os.ErrExist) {
+		_, readErr := ReadTaskMetadataFile(root, "decision.md")
+		return readErr
+	}
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(renderDecisionScaffold(id, title))
+	return errors.Join(err, f.Close())
+}
+
 func renderDecisionScaffold(id, title string) string {
 	return "<!-- Explain the choice and your recommendation. A human supplies the answer.\n" +
 		"     To save the answer and return this task to todo:\n" +
@@ -1945,10 +1994,10 @@ var errDecisionAlreadyWritten = errors.New("the task already carries a decision 
 // replaces it (its answer comes back), and a different question nobody has answered yet is refused
 // with the file to edit.
 func saveRequestedDecision(taskDir, id, title string, d Decision) (earlierAnswer string, err error) {
-	existing, err := os.ReadFile(filepath.Join(taskDir, "decision.md"))
+	existing, exists, err := readOptionalTaskMetadataPath(filepath.Join(taskDir, "decision.md"))
 	rendered := RenderDecision(id, d)
 	switch {
-	case errors.Is(err, os.ErrNotExist):
+	case err == nil && !exists:
 	case err != nil:
 		return "", err
 	case string(existing) == rendered:
@@ -2213,7 +2262,7 @@ func removeTaskFolderAndRecords(root string, task Item) (removed bool, err error
 	); err != nil {
 		return false, err
 	}
-	if err := os.RemoveAll(task.Dir); err != nil {
+	if err := removeTaskFolder(root, task); err != nil {
 		return false, err
 	}
 	if survivor, ok, readErr := CurrentTask(root, task.ID); readErr != nil {

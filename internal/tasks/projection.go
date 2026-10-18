@@ -821,6 +821,10 @@ func moveProjectedTask(root *os.Root, fromState, toState, id string) error {
 	return renameFolderBetween(from, id, to, id)
 }
 
+// beforeTaskFolderRename runs once both folders of a move are open, just before the rename; tests
+// swap a folder there.
+var beforeTaskFolderRename = func() {}
+
 // renameFolderBetween moves the real folder fromName in from to toName in to, through the two
 // folders' own handles, so a link swapped in for either folder's path cannot redirect it.
 func renameFolderBetween(from *os.Root, fromName string, to *os.Root, toName string) error {
@@ -843,6 +847,7 @@ func renameFolderBetween(from *os.Root, fromName string, to *os.Root, toName str
 		return err
 	}
 	defer toDir.Close()
+	beforeTaskFolderRename()
 	if err := unix.Renameat(int(fromDir.Fd()), fromName, int(toDir.Fd()), toName); err != nil {
 		return err
 	}

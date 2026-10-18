@@ -481,19 +481,127 @@ func TestCmdTasksFolderReleaseDispatch(t *testing.T) {
 	}
 }
 
+// A box can plant a link in a task folder or swap a state folder for one while the host works on
+// the queue. Host writes, moves and deletions go through the folders' own handles, so none of them
+// reaches outside the queue.
+func TestHostTaskWritersStayInTheQueue(t *testing.T) {
+	t.Run("a link at decision.md is refused, not written through", func(t *testing.T) {
+		root := t.TempDir()
+		outside := filepath.Join(t.TempDir(), "planted.md")
+		writeTaskFile(t, filepath.Join(root, StateInProgress, "linked", "task.md"), "# Linked\n")
+		if err := os.Symlink(outside, filepath.Join(root, StateInProgress, "linked", "decision.md")); err != nil {
+			t.Fatal(err)
+		}
+		if code, err := tasksFolderBlock(root, []string{"linked"}); code == 0 || err == nil {
+			t.Fatalf("block with a decision.md link = %d, %v", code, err)
+		}
+		if pathExists(outside) {
+			t.Fatal("block wrote the decision template through the link")
+		}
+	})
+
+	t.Run("the decision template is written new, never through a link", func(t *testing.T) {
+		root := t.TempDir()
+		item := taskForLease(t, root, StateBlocked, "seeded")
+		outside := filepath.Join(t.TempDir(), "planted.md")
+		dec := filepath.Join(item.Dir, "decision.md")
+		if err := os.Symlink(outside, dec); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeDecisionScaffold(item.Dir, item.ID, "Seeded"); err == nil || pathExists(outside) {
+			t.Fatalf("template through a link = %v, outside written: %v", err, pathExists(outside))
+		}
+		if err := os.Remove(dec); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeDecisionScaffold(item.Dir, item.ID, "Seeded"); err != nil || !strings.Contains(readFileString(dec), decisionScaffoldMarker) {
+			t.Fatalf("new template = %v, %q", err, readFileString(dec))
+		}
+		writeTaskFile(t, dec, "# Decision: written by the agent\n")
+		if err := writeDecisionScaffold(item.Dir, item.ID, "Seeded"); err != nil || readFileString(dec) != "# Decision: written by the agent\n" {
+			t.Fatalf("an agent's decision.md = %v, %q; want it kept", err, readFileString(dec))
+		}
+	})
+
+	t.Run("links at state.md and log.md are refused, not written through", func(t *testing.T) {
+		root := t.TempDir()
+		item := taskForLease(t, root, StateDone, "linked")
+		outside := t.TempDir()
+		for _, name := range []string{"state.md", "log.md"} {
+			target := filepath.Join(outside, name)
+			writeTaskFile(t, target, "outside\n")
+			_ = os.Remove(filepath.Join(item.Dir, name))
+			if err := os.Symlink(target, filepath.Join(item.Dir, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := RestoreQueuedCompletion(QueuedTask{Root: root, Item: item}, false); err == nil {
+			t.Fatal("restoring a completion wrote through state.md and log.md links")
+		}
+		for _, name := range []string{"state.md", "log.md"} {
+			if got := readFileString(filepath.Join(outside, name)); got != "outside\n" {
+				t.Errorf("%s outside the queue = %q", name, got)
+			}
+		}
+	})
+
+	t.Run("a state folder swapped mid-move keeps the task in the queue", func(t *testing.T) {
+		root := t.TempDir()
+		item := taskForLease(t, root, StateInProgress, "moving")
+		if err := os.Mkdir(filepath.Join(root, StateDone), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		outside := t.TempDir()
+		beforeTaskFolderRename = func() {
+			if err := os.Rename(filepath.Join(root, StateDone), filepath.Join(root, "moved-aside")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(root, StateDone)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Cleanup(func() { beforeTaskFolderRename = func() {} })
+		if err := MoveTaskDir(root, item, StateDone); err != nil {
+			t.Fatal(err)
+		}
+		if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+			t.Fatalf("the move wrote outside the queue: %v, %v", entries, err)
+		}
+		if !pathExists(filepath.Join(root, "moved-aside", "moving", "task.md")) {
+			t.Fatal("the task did not land in the done folder the move opened")
+		}
+	})
+
+	t.Run("a state folder already a link is refused for moves and deletions", func(t *testing.T) {
+		root := t.TempDir()
+		item := taskForLease(t, root, StateInProgress, "linked-state")
+		outside := t.TempDir()
+		writeTaskFile(t, filepath.Join(outside, "linked-state", "keep.txt"), "keep\n")
+		if err := os.Symlink(outside, filepath.Join(root, StateDone)); err != nil {
+			t.Fatal(err)
+		}
+		if err := MoveTaskDir(root, item, StateDone); err == nil {
+			t.Fatal("a move into a linked state folder succeeded")
+		}
+		linked := Item{ID: "linked-state", State: StateDone, Dir: filepath.Join(root, StateDone, "linked-state")}
+		if err := removeTaskFolder(root, linked); err == nil {
+			t.Fatal("deleting through a linked state folder succeeded")
+		}
+		if got := readFileString(filepath.Join(outside, "linked-state", "keep.txt")); got != "keep\n" {
+			t.Fatalf("a folder outside the queue changed: %q", got)
+		}
+		if !pathExists(filepath.Join(item.Dir, "task.md")) {
+			t.Fatal("the refused move lost the task")
+		}
+	})
+}
+
 func TestTaskTmpCleanupIsContained(t *testing.T) {
 	base := t.TempDir()
 	taskDir := filepath.Join(base, "task")
 	outside := filepath.Join(base, "outside")
 	writeTaskFile(t, filepath.Join(taskDir, "task.md"), "# task\n")
 	writeTaskFile(t, filepath.Join(outside, "keep.txt"), "keep\n")
-
-	if _, err := taskLocalPath(taskDir, "../outside"); err == nil {
-		t.Error("taskLocalPath accepted parent traversal")
-	}
-	if _, err := taskLocalPath(taskDir, outside); err == nil {
-		t.Error("taskLocalPath accepted an absolute path")
-	}
 
 	// A tmp symlink is unlinked, never followed into its target.
 	if err := os.Symlink(outside, filepath.Join(taskDir, "tmp")); err != nil {

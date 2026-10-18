@@ -3,7 +3,7 @@ name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
 sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go]
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 A loop work box is told to change task state through the `coop-tasks` MCP server (eight tools:
@@ -93,9 +93,14 @@ parent and refuses one that is a link. Two kinds of use follow:
 - As a check only: `tasks_list` and every tool that names a task read the queue with
   `tasks.ReadTaskTreeBelow`, which runs the walk down to the queue root (a missing folder still
   reads as empty), then `ReadTaskTree` by name, which refuses a linked state or task folder. The
-  mutations then reach the task folder by name, so a box that swaps a folder between the check and
-  the operation is not ruled out; the reader has the same check-then-use at each state and task
-  folder. `openRealSubroot` checks each folder with `Lstat` before `os.Root.OpenRoot`, which does
+  mutations then open the queue root by name, a real folder and not a link (`openRealRoot`), and
+  everything below it through handles: `MoveTaskDir` renames between the two state folders' own
+  handles (`renameFolderBetween`), every metadata writer opens the state and task folders from the
+  queue (`OpenTaskMetadataRoot`), `removeTaskTmp`, `coop tasks rm` and `coop backlog rm` delete
+  through those handles, and `coop tasks block` creates its decision.md template `O_EXCL|O_NOFOLLOW`.
+  A folder swapped above the queue root between the check and the operation is not ruled out
+  (task 2026-10-17-run-the-in-box-task-tools-through-one-pinned-que); the reader has the same
+  check-then-use at each state and task folder. `openRealSubroot` checks each folder with `Lstat` before `os.Root.OpenRoot`, which does
   not pass `O_NONBLOCK`, so a box that swaps in a FIFO between the two makes that call wait.
 
 The loop runs the same `ReadTaskTreeBelow` at startup, so a linked subproject stops it there. The
@@ -150,6 +155,9 @@ held one, finds no coop binary), which fails, never skips, without a runtime or 
 `coop-box:<definition>` image ([[box-base-image-tags]]).
 
 ## Changelog
+- 2026-10-18 — host movers, metadata writers, tmp cleanup and the two task deletions go through
+  handles below the queue root; the block template is created no-follow (task
+  2026-10-17-write-task-metadata-and-moves-through-the-state).
 - 2026-10-17 — the fork proposal import stages and publishes through folder handles
   (`publishProposalTask`, internal/tasks/proposal.go), not by path.
 - 2026-10-17 — corrected the MCP-only claim: a work box mounts `.agent/tasks` writable (only review

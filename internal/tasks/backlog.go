@@ -179,7 +179,7 @@ func backlogFolderRemove(root string, args []string) (int, error) {
 	if err := ui.DestroyGate("Delete this idea", yes); err != nil {
 		return 2, backlogCancelled(err)
 	}
-	if err := os.RemoveAll(t.Dir); err != nil {
+	if err := removeTaskFolder(root, t); err != nil {
 		return -1, err
 	}
 	ui.OK("Deleted idea: %s", t.Title)

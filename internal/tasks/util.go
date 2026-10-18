@@ -15,11 +15,6 @@ import (
 // else can collide with it.
 func newSupervisorID() string { return randid.Hex(8) }
 
-func fileExists(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && !fi.IsDir()
-}
-
 func pathExists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
