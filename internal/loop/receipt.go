@@ -424,36 +424,12 @@ func reopenVerdictLost(receipt reviewReceipt, haveReceipt bool, actual, subjects
 }
 
 // protectedAuditVerdict makes the exceptional between pass fail closed. Ordinary configured
-// audits keep their historical warn-and-continue behavior; a protected audit must both run and
-// leave a receipt consistent with the queue before another task can trust the edited gate.
-func protectedAuditVerdict(protected, interrupted bool, reviewErr error, output string, actual, subjects []string) error {
-	if !protected {
-		return nil
-	}
-	if reviewErr != nil {
+// audits keep their historical warn-and-continue behavior; a protected audit must run before
+// another task can trust the edited gate. Its receipt needs no second look: the host reopened
+// exactly the tasks it names, or refused it (errReviewVerdict) before this.
+func protectedAuditVerdict(protected bool, reviewErr error) error {
+	if protected && reviewErr != nil {
 		return fmt.Errorf("could not run: %w", reviewErr)
 	}
-	if interrupted {
-		return nil
-	}
-	receipt, ok := reviewReopenReceipt(output)
-	if reopenVerdictLost(receipt, ok, actual, subjects) {
-		return fmt.Errorf("verdict inconsistent: review reported %s but task delta was %s", receiptClaim(receipt, ok), receiptIDs(actual))
-	}
 	return nil
-}
-
-// receiptClaim renders a review's verdict and exact ids for a compact diagnostic.
-func receiptClaim(receipt reviewReceipt, ok bool) string {
-	if !ok {
-		return "no receipt"
-	}
-	return fmt.Sprintf("%s reopening %s", receipt.verdict, receiptIDs(receipt.reopened))
-}
-
-func receiptIDs(ids []string) string {
-	if len(ids) == 0 {
-		return "none"
-	}
-	return strings.Join(ids, ",")
 }

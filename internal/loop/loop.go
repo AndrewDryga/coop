@@ -1460,7 +1460,7 @@ reviewAgain:
 								fmt.Sprintf("%v\n%s was left unreviewed.", rerr, assignedCompletion.Item.Title))
 						}
 						interrupted := iterCtx.Err() != nil
-						if verdictErr := protectedAuditVerdict(protectedAudit, interrupted, rerr, btRun.output, reopenedIDs, finishedIDs); verdictErr != nil {
+						if verdictErr := protectedAuditVerdict(protectedAudit, rerr); verdictErr != nil {
 							ui.Failure("Could not verify changes to project checks",
 								fmt.Sprintf("%v\nThe review failed before another task could start.\n%s still needs review.", verdictErr, assignedCompletion.Item.Title),
 								[2]string{"Continue:", continueCmd})
@@ -1684,21 +1684,8 @@ reviewAgain:
 			return 1, ui.Reported(serr)
 		}
 		health.noteReopen(reopenedIDs)
-		// Guard against a lost verdict (the 2026-07-10 incident): a signoff that DECIDES reopens as
-		// prose but never moves the folders — its subagents interrupted, or it batched them past the
-		// end — would leave the queue empty and read as "accepted". The review must end with a
-		// structured receipt; if its ids disagree with the folders that actually moved (or the receipt
-		// is missing entirely), the round is treated as interrupted and
-		// re-run within the cap, or — at the cap — the loop exits loudly rather than claim a false done.
-		receipt, ok := reviewReopenReceipt(soRun.output)
-		if reopenVerdictLost(receipt, ok, reopenedIDs, subjectIDs) {
-			if signoffRound >= maxReviewRounds {
-				return 3, fmt.Errorf("signoff verdict inconsistent after %d rounds: review reported %s but task delta was %s — verdicts may have been lost, a human should look", maxReviewRounds, receiptClaim(receipt, ok), receiptIDs(reopenedIDs))
-			}
-			ui.Alert("The review result could not be read",
-				fmt.Sprintf("It reported %s, but the task queue moved %s.\nRepeating the full review once with the required response format.", receiptClaim(receipt, ok), receiptIDs(reopenedIDs)))
-			continue
-		}
+		// The host moved exactly the tasks the receipt names (a missing or malformed receipt failed
+		// runReviewVerdict above), so a verdict cannot be lost between the review and the queue.
 		acceptedIDs := withoutReviewIDs(subjectIDs, reopenedIDs)
 		acceptedRecords, selectErr := pendingReviewRecordsForIDs(tasks.PendingReviewCohort{Subjects: roundRecords}, acceptedIDs)
 		if selectErr != nil {
@@ -1733,10 +1720,9 @@ reviewAgain:
 			return LoopInterruptedExitCode, nil
 		}
 		audits.drop(reopenedIDs)
-		// This round's verdict is consistent — advance the baseline past its accepted subjects
-		// WITHOUT rescanning done/. A completion landing during or just after the review window stays
-		// outside the baseline and enters the next round's subject diff. The lost-verdict path above
-		// deliberately keeps the old baseline so the whole untrusted subject set is reviewed again.
+		// Advance the baseline past this round's accepted subjects WITHOUT rescanning done/. A
+		// completion landing during or just after the review window stays outside the baseline and
+		// enters the next round's subject diff.
 		reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, subjects, reopenedIDs, soRun.concurrent)
 		requeued := requeueChangedReviews(reviewBaseline, pendingReview)
 		switch signoffRoundOutcome(signoffRound, maxReviewRounds, len(reopenedIDs) > 0) {

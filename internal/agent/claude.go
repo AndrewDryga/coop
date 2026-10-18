@@ -651,9 +651,8 @@ func (a claudeAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, err
 // tool and the id its `tool_result` arrives under — so the watchdog can supervise foreground tools.
 func (claudeAgent) Stream() StreamSpec {
 	return StreamSpec{
-		Format:        StreamClaudeJSON,
-		Flags:         []string{"--output-format", "stream-json", "--verbose"},
-		ToolLifecycle: ToolLifecycleIDs,
+		Format: StreamClaudeJSON,
+		Flags:  []string{"--output-format", "stream-json", "--verbose"},
 	}
 }
 

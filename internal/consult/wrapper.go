@@ -172,13 +172,11 @@ case "$consult_timeout" in '' | *[!0-9]*) die "COOP_CONSULT_TIMEOUT must be whol
 consult_stream_limit=${COOP_CONSULT_STREAM_LIMIT:-0}
 case "$consult_stream_limit" in '' | *[!0-9]*) die "COOP_CONSULT_STREAM_LIMIT must be whole bytes (0 = unlimited)" ;; esac
 
+# Every file below is the wrapper's own, in the box's temporary folder. It runs as its caller, inside
+# the box, so it does not check them for links or modes another box process planted: anything that
+# can plant one can run the peer itself.
 state_dir=${TMPDIR:-/tmp}/coop-consult-state
-[ ! -L "$state_dir" ] || die "state path is a symlink: $state_dir"
-if [ -e "$state_dir" ]; then
-	[ -d "$state_dir" ] || die "state path is not a directory: $state_dir"
-else
-	mkdir "$state_dir" || die "cannot create state directory: $state_dir"
-fi
+mkdir -p "$state_dir" || die "cannot create state directory: $state_dir"
 chmod 700 "$state_dir" || die "cannot secure state directory: $state_dir"
 statefile="$state_dir/${key}.state"
 lockfile="$state_dir/${key}.lock"
@@ -203,26 +201,6 @@ new_id() {
 		od -An -tx1 -N16 /dev/urandom | tr -d ' \n' |
 			sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/'
 	fi
-}
-
-state_file_safe() {
-	f=$1
-	[ ! -e "$f" ] && [ ! -L "$f" ] && return 1
-	[ ! -L "$f" ] && [ -f "$f" ] || die "unsafe continuation state file: $f"
-	links=$(stat -c %h "$f" 2>/dev/null || stat -f %l "$f" 2>/dev/null || :)
-	case "$links" in 1) ;; *) die "continuation state file must have one hardlink: $f" ;; esac
-	permissions=$(stat -c %a "$f" 2>/dev/null || stat -f %Lp "$f" 2>/dev/null || :)
-	case "$permissions" in 600) ;; *) die "continuation state file must be mode 0600: $f" ;; esac
-	return 0
-}
-
-lock_file_safe() {
-	f=$1
-	[ ! -L "$f" ] && [ -f "$f" ] || die "unsafe continuation lock: $f"
-	links=$(stat -c %h "$f" 2>/dev/null || stat -f %l "$f" 2>/dev/null || :)
-	case "$links" in 1) ;; *) die "continuation lock must have one hardlink: $f" ;; esac
-	permissions=$(stat -c %a "$f" 2>/dev/null || stat -f %Lp "$f" 2>/dev/null || :)
-	case "$permissions" in 600) ;; *) die "continuation lock must be mode 0600: $f" ;; esac
 }
 
 terminate_pid() {
@@ -404,16 +382,7 @@ total=$#
 lock_limit=$(((consult_timeout + 35) * total + 5))
 [ "$consult_timeout" -eq 0 ] && lock_limit=0
 if command -v flock >/dev/null 2>&1; then
-	[ ! -L "$lockfile" ] || die "unsafe continuation lock: $lockfile"
-	if [ ! -e "$lockfile" ]; then (set -C; : >"$lockfile") 2>/dev/null || :; fi
-	lock_file_safe "$lockfile"
 	exec 8<>"$lockfile" || die "cannot open continuation lock: $lockfile"
-	lock_file_safe "$lockfile"
-	# The descriptor's identity comes from fstat on it, never a /dev/fd lookup: macOS answers those
-	# with "Bad file descriptor" now and then while many processes resolve them at once.
-	lock_path_identity=$(stat -c 'gnu:%d:%i' "$lockfile" 2>/dev/null || stat -f 'bsd:%i' "$lockfile" 2>/dev/null || :)
-	lock_fd_identity=$(stat -c 'gnu:%d:%i' - <&8 2>/dev/null || stat -f 'bsd:%i' <&8 2>/dev/null || :)
-	[ -n "$lock_path_identity" ] && [ "$lock_path_identity" = "$lock_fd_identity" ] || die "continuation lock changed while opening: $lockfile"
 	if [ "$lock_limit" -eq 0 ]; then
 		flock 8 || die "cannot take the continuation lock for $name"
 	else
@@ -423,7 +392,6 @@ else
 	lockdir=$lockfile.d
 	lock_wait=0
 	while ! mkdir "$lockdir" 2>/dev/null; do
-		[ ! -L "$lockdir" ] && [ -d "$lockdir" ] || die "unsafe continuation lock: $lockdir"
 		lock_wait=$((lock_wait + 1))
 		[ "$lock_limit" -eq 0 ] || [ "$lock_wait" -le "$lock_limit" ] || die "timed out waiting for another $name consult to finish; remove $lockdir after confirming no consult is running"
 		sleep 1
@@ -437,7 +405,7 @@ saved_target=
 if [ "$mode" = --fresh ]; then
 	rm -f "$statefile" || die "cannot clear prior continuation state"
 else
-	if state_file_safe "$statefile"; then
+	if [ -f "$statefile" ]; then
 		state_bytes=$(wc -c <"$statefile" | tr -d '[:space:]')
 		[ "$state_bytes" -le $((consult_context_limit + 2048)) ] || die "saved continuation record is too large; retry with: $fresh_retry"
 		header_lines=$(head -n 5 "$statefile" | wc -l | tr -d '[:space:]')
@@ -669,7 +637,7 @@ run_attempt() {
 build_prompt() {
 	delivery=$1
 	prompt=$question
-	if [ "$delivery" = fresh ] && [ "$mode" = --continue ] && state_file_safe "$contextfile" && [ -s "$contextfile" ]; then
+	if [ "$delivery" = fresh ] && [ "$mode" = --continue ] && [ -s "$contextfile" ]; then
 		context_bytes=$(wc -c <"$contextfile" | tr -d '[:space:]')
 		[ "$context_bytes" -le "$consult_context_limit" ] || die "saved transcript exceeds ${consult_context_limit} bytes; retry with: $fresh_retry"
 		prompt=$(printf '%s\n\n' 'Continue this consult from the saved transcript:'; cat "$contextfile"; printf '\n\nCurrent follow-up:\n%s' "$question")
@@ -686,7 +654,7 @@ build_prompt() {
 
 record_turn() {
 	next_context=$attempt_dir/context-$index
-	if [ "$mode" = --fresh ] || ! state_file_safe "$contextfile"; then
+	if [ "$mode" = --fresh ] || [ ! -f "$contextfile" ]; then
 		: >"$next_context"
 	else
 		cat "$contextfile" >"$next_context" || return 1
@@ -801,7 +769,7 @@ while [ "$index" -le "$total" ]; do
 		published_id=$resume_id
 		missing_session=0
 		if [ "$dispatch" = fresh ]; then
-			if state_file_safe "$candidate_idfile"; then
+			if [ -f "$candidate_idfile" ]; then
 				candidate_bytes=$(wc -c <"$candidate_idfile" | tr -d '[:space:]')
 				[ "$candidate_bytes" -ge 1 ] && [ "$candidate_bytes" -le 512 ] || die "provider returned an invalid session id"
 				published_id=$(cat "$candidate_idfile")

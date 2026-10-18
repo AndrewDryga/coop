@@ -459,12 +459,11 @@ func (grokAgent) Vendor() string      { return "xAI" }
 // `tool_call` under a `toolCallId` and ends at ACP's completed, failed or cancelled — on a
 // `tool_call_update`, or on the `tool_call` itself — as the binary's own format notes say the
 // stream is "derived from the agent's ACP session updates". A shell command that exits non-zero still completes — its exit code is in
-// rawOutput. Re-probe before changing this: the declaration is the authority, and the watchdog
-// refuses tool events from a stream that declares none.
+// rawOutput. Re-probe before changing this: the watchdog suspends its idle deadline on these
+// events.
 func (grokAgent) Stream() StreamSpec {
 	return StreamSpec{
 		Format: StreamGrokJSON, Flags: []string{"--output-format", "streaming-json"}, TrailingArgs: 2,
-		ToolLifecycle: ToolLifecycleIDs,
 	}
 }
 

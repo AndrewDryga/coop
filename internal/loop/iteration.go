@@ -259,7 +259,7 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 		}
 		childCtx, cancelChild := context.WithCancel(parent)
 		defer cancelChild()
-		watchdog = newProviderWatchdog(watchdogPolicyFor(c.cfg, agent), cancelChild)
+		watchdog = newProviderWatchdog(watchdogDeadlinesFor(c.cfg), cancelChild)
 		dec.setActivity(watchdog)
 		armWatchdog = watchdog.armStart
 		boxCtx = childCtx

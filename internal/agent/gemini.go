@@ -755,7 +755,6 @@ func (geminiAgent) Vendor() string      { return "Google" }
 func (geminiAgent) Stream() StreamSpec {
 	return StreamSpec{
 		Format: StreamGeminiJSON, Flags: []string{"-o", "stream-json"}, TrailingArgs: 2,
-		ToolLifecycle: ToolLifecycleIDs,
 	}
 }
 

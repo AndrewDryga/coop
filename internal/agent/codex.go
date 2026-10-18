@@ -718,8 +718,7 @@ func (a codexAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, erro
 // collab calls report their own start and completion — a tool lifecycle the watchdog can pair.
 func (codexAgent) Stream() StreamSpec {
 	return StreamSpec{
-		Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1,
-		ToolLifecycle: ToolLifecycleIDs, ReviewStdoutOnly: true,
+		Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1, ReviewStdoutOnly: true,
 	}
 }
 

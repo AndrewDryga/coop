@@ -156,7 +156,7 @@ func TestConsultWrapperContinuityIsolated(t *testing.T) {
 	if !strings.Contains(w, `>"$candidate_idfile"`) || !strings.Contains(w, `mv "$next_state" "$statefile"`) {
 		t.Error("--fresh must stage its id and atomically publish one complete record after a usable reply")
 	}
-	if !strings.Contains(w, `state_file_safe "$statefile"`) || !strings.Contains(w, `resume_id=${id_line#id=}`) {
+	if !strings.Contains(w, `if [ -f "$statefile" ]; then`) || !strings.Contains(w, `resume_id=${id_line#id=}`) {
 		t.Error("--continue must validate and read the stored id from the continuation record")
 	}
 }
@@ -378,51 +378,6 @@ func TestConsultWrapperLockBudgetCoversEveryAdmittedRung(t *testing.T) {
 	}
 	if strings.TrimSpace(string(got)) != "-w 79 8" {
 		t.Fatalf("two-rung lock args = %q, want %q", got, "-w 79 8")
-	}
-}
-
-func TestConsultWrapperRejectsHardlinkedContinuationLockBeforeDispatch(t *testing.T) {
-	dir := t.TempDir()
-	role, key := "hardlink-lock", "HARDLINK_LOCK"
-	stateDir := filepath.Join(dir, "coop-consult-state")
-	if err := os.Mkdir(stateDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	outside := filepath.Join(dir, "outside")
-	if err := os.WriteFile(outside, []byte("do not touch"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(outside, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Link(outside, filepath.Join(stateDir, key+".lock")); err != nil {
-		t.Fatal(err)
-	}
-	called := filepath.Join(dir, "called")
-	for name, body := range map[string]string{
-		"coop-consult": ConsultWrapper(),
-		"claude":       "#!/bin/sh\nprintf called >\"$CALLED\"\necho SHOULD_NOT_RUN\n",
-		"flock":        "#!/bin/sh\nexit 0\n",
-		"timeout":      "#!/bin/sh\nshift 3\nexec \"$@\"\n",
-	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cmd := exec.Command(filepath.Join(dir, "coop-consult"), role, "--fresh", "question")
-	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
-		"CALLED="+called, "COOP_PEERS=claude", "COOP_CONSULT_"+key+"_TARGETS=claude:test")
-	out, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "continuation lock must have one hardlink") {
-		t.Fatalf("hardlinked lock was not rejected: %v\n%s", err, out)
-	}
-	if _, err := os.Stat(called); !os.IsNotExist(err) {
-		t.Fatalf("provider dispatched through unsafe lock: %v", err)
-	}
-	if info, err := os.Stat(outside); err != nil {
-		t.Fatal(err)
-	} else if info.Mode().Perm() != 0o644 {
-		t.Fatalf("wrapper changed hardlinked file mode to %o", info.Mode().Perm())
 	}
 }
 
@@ -1241,85 +1196,6 @@ echo '{"type":"result","status":"success"}'`, timeoutFires, "")
 			t.Fatalf("a default-env consult routed the peer's run through the timeout command: exit %d:\n%s", code, out)
 		}
 	})
-}
-
-func TestConsultWrapperRejectsUnsafeContinuationRecordBeforeDispatch(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		make func(t *testing.T, statefile string)
-		want string
-	}{
-		{
-			name: "symlink",
-			make: func(t *testing.T, statefile string) {
-				t.Helper()
-				target := filepath.Join(filepath.Dir(statefile), "outside")
-				if err := os.WriteFile(target, []byte("session"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(target, statefile); err != nil {
-					t.Fatal(err)
-				}
-			},
-			want: "unsafe continuation state file",
-		},
-		{
-			name: "hardlink",
-			make: func(t *testing.T, statefile string) {
-				t.Helper()
-				if err := os.WriteFile(statefile, []byte("session"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Link(statefile, statefile+".other"); err != nil {
-					t.Fatal(err)
-				}
-			},
-			want: "must have one hardlink",
-		},
-		{
-			name: "permissive mode",
-			make: func(t *testing.T, statefile string) {
-				t.Helper()
-				if err := os.WriteFile(statefile, []byte("session"), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Chmod(statefile, 0o644); err != nil {
-					t.Fatal(err)
-				}
-			},
-			want: "must be mode 0600",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			wrapper := filepath.Join(dir, "coop-consult")
-			calls := filepath.Join(dir, "calls")
-			for name, body := range map[string]string{
-				"claude":  "#!/bin/sh\nprintf called >\"$CALLS\"\n",
-				"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
-			} {
-				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
-					t.Fatal(err)
-				}
-			}
-			writeConsultWrapper(t, wrapper)
-			stateDir := filepath.Join(dir, "coop-consult-state")
-			if err := os.Mkdir(stateDir, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			tc.make(t, filepath.Join(stateDir, "UNSAFE_STATE.state"))
-			cmd := exec.Command(wrapper, "unsafe-state", "--continue", "question")
-			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
-				"CALLS="+calls, "COOP_PEERS=claude", "COOP_CONSULT_UNSAFE_STATE_TARGETS=claude:test")
-			out, err := cmd.CombinedOutput()
-			if err == nil || !strings.Contains(string(out), tc.want) {
-				t.Fatalf("unsafe %s state was not rejected: %v\n%s", tc.name, err, out)
-			}
-			if _, err := os.Stat(calls); !os.IsNotExist(err) {
-				t.Fatalf("provider dispatched with unsafe %s state: %v", tc.name, err)
-			}
-		})
-	}
 }
 
 func TestConsultWrapperLadderReorderInvalidatesNativeSession(t *testing.T) {

@@ -432,9 +432,8 @@ func TestApplyReviewVerdictIsHostOwnedAndFailClosed(t *testing.T) {
 	})
 }
 
-// TestReopenVerdictLost: the guard fires on the 2026-07-10 incident (claimed reopens, none moved)
-// and on a missing receipt, but NOT on a consistent PASS or a consistent reopen — so a genuine
-// review is never falsely re-run.
+// TestReopenVerdictLost: audit evidence is captured only from a receipt consistent with the reopens
+// the host applied — not from a missing receipt, claimed reopens that never moved, or wrong ids.
 func TestReopenVerdictLost(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -463,25 +462,18 @@ func TestReopenVerdictLost(t *testing.T) {
 func TestProtectedAuditVerdict(t *testing.T) {
 	runErr := errors.New("review unavailable")
 	cases := []struct {
-		name                   string
-		protected, interrupted bool
-		reviewErr              error
-		output                 string
-		actual, subjects       []string
-		wantErr                bool
+		name      string
+		protected bool
+		reviewErr error
+		wantErr   bool
 	}{
 		{name: "ordinary audit keeps existing behavior", reviewErr: runErr},
 		{name: "protected run failure", protected: true, reviewErr: runErr, wantErr: true},
-		{name: "protected missing receipt", protected: true, wantErr: true},
-		{name: "protected mismatch", protected: true, output: "REVIEW COMPLETE — FAIL — reopened: a", subjects: []string{"a"}, wantErr: true},
-		{name: "protected pass", protected: true, output: "REVIEW COMPLETE — PASS — reopened: none", subjects: []string{"a"}},
-		{name: "protected reopen", protected: true, output: "REVIEW COMPLETE — FAIL — reopened: a,b", actual: []string{"a", "b"}, subjects: []string{"a", "b"}},
-		{name: "protected unexpected id", protected: true, output: "REVIEW COMPLETE — FAIL — reopened: other", actual: []string{"other"}, subjects: []string{"a"}, wantErr: true},
-		{name: "user interruption", protected: true, interrupted: true},
+		{name: "protected run", protected: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := protectedAuditVerdict(c.protected, c.interrupted, c.reviewErr, c.output, c.actual, c.subjects)
+			err := protectedAuditVerdict(c.protected, c.reviewErr)
 			if (err != nil) != c.wantErr {
 				t.Errorf("protectedAuditVerdict error = %v, wantErr %v", err, c.wantErr)
 			}

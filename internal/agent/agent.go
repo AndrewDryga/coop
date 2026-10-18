@@ -33,43 +33,19 @@ const (
 	StreamGrokJSON
 )
 
-// StreamToolLifecycle is what a provider's structured stream proves about the FOREGROUND TOOLS it
-// runs — the one capability the attempt watchdog changes policy on. It is a DECLARATION each
-// adapter makes about its own schema, never something coop infers at runtime from process names,
-// CPU, or the bytes seen so far: a stream that has simply not opened a tool yet is indistinguishable
-// from one that never will.
-type StreamToolLifecycle uint8
-
-const (
-	// ToolLifecycleUndeclared is the zero value — nobody probed this stream. It is not a third
-	// behavior: consumers read it as ToolLifecycleAbsent (the conservative side), and
-	// TestEveryStreamDeclaresItsToolLifecycle fails so it cannot ship.
-	ToolLifecycleUndeclared StreamToolLifecycle = iota
-	// ToolLifecycleAbsent: the stream reports no tool start or end at all, so silence during a
-	// long foreground gate is indistinguishable from a wedged attempt.
-	ToolLifecycleAbsent
-	// ToolLifecycleIDs: tool starts and ends arrive under a provider-supplied id the watchdog can
-	// pair, so an open tool can suspend the idle deadline and carry its own absolute cap.
-	ToolLifecycleIDs
-)
-
 // StreamSpec describes how a headless command opts into structured output. TrailingArgs
 // keeps positional prompts (or a flag/value prompt pair) after the inserted stream flags.
-// ToolLifecycle is the adapter's declaration about its own schema (see StreamToolLifecycle).
+//
+// Every structured stream reports each foreground tool's start and end under the provider's own
+// tool id: the loop's watchdog suspends its idle deadline while a tool runs, so a stream without
+// those ids would have a long gate killed as a silent provider. Probe a new schema for them first.
 type StreamSpec struct {
-	Format        StreamFormat
-	Flags         []string
-	TrailingArgs  int
-	ToolLifecycle StreamToolLifecycle
+	Format       StreamFormat
+	Flags        []string
+	TrailingArgs int
 	// ReviewStdoutOnly means stderr carries diagnostics, never review receipt text.
 	ReviewStdoutOnly bool
 }
-
-// TracksTools reports whether the watchdog may supervise this stream's foreground tools — suspend
-// its idle deadline on a tool start and cap the oldest open one. Only an explicit
-// ToolLifecycleIDs declaration qualifies: an undeclared stream reads as absent, so a provider
-// nobody probed gets the conservative policy rather than a deadline its schema cannot feed.
-func (s StreamSpec) TracksTools() bool { return s.ToolLifecycle == ToolLifecycleIDs }
 
 // Host confirmation is conservative: print/protocol and maintenance argv cannot acquire it,
 // including joined short flags. Native-history/session classification has a different purpose.
