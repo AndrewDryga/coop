@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -222,8 +222,8 @@ builds.
 The image is built from an embedded source tar plus a pinned Dockerfile, with no host compiler and
 no repository build context (`Context` in `gatewayimage/image.go`). `gatewayimage.Pack` defines the
 tar and `tools/gennetimage` writes it: the non-test Go files of `sourceDirs` (`cmd/coop-net`,
-`internal/egress`, `internal/networkgateway`, `internal/networkview`, `internal/safefile`,
-`internal/safetext`), `LICENSE`, and the gateway's OWN go.mod and go.sum, which name only
+`internal/egress`, `internal/networkgateway`, `internal/networkview`, `internal/randid`,
+`internal/safefile`, `internal/safetext`), `LICENSE`, and the gateway's OWN go.mod and go.sum, which name only
 `sourceModules` (`go.yaml.in/yaml/v3`, `golang.org/x/net`, `golang.org/x/sys`) at the root's
 versions. A bump that leaves those three alone leaves the tar, `Fingerprint()` and every user's
 network setup alone, but most other bumps
@@ -292,6 +292,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-18 — coop-net now imports `internal/randid` (the shared random-ID helper), so it joined
+  `sourceDirs`; four refactors had left `source.tar` stale until the batch gate caught it.
 - 2026-10-17 — run records name the supervisor's host and recovery skips other hosts' runs (task
   2026-10-17-record-the-host-in-network-run-supervisor-record).
 - 2026-10-17 — replaced every line-number citation with the function, constant or template it meant
