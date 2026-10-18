@@ -12,11 +12,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 
 	"go.yaml.in/yaml/v3"
 
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
 const maxComposeFileBytes = 1 << 20
@@ -39,26 +39,16 @@ func readValidatedCompose(path, repoRoot string, repoReadOnly bool) ([]byte, err
 		return nil, err
 	}
 	defer root.Close()
-	// Nonblocking open lets us reject a FIFO before reading it, even if the source changes
-	// after path inspection. Rooted traversal also refuses out-of-repository symlinks.
-	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
+	// The read never waits on a FIFO, even if the source changes after path inspection, and rooted
+	// traversal refuses out-of-repository symlinks.
+	data, err := safefile.ReadRegularIn(root, rel, maxComposeFileBytes)
+	switch {
+	case errors.Is(err, safefile.ErrNotRegular):
 		return nil, errors.New("compose source must be a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxComposeFileBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxComposeFileBytes {
+	case errors.Is(err, safefile.ErrTooLarge):
 		return nil, errors.New("compose source exceeds 1 MiB")
+	case err != nil:
+		return nil, err
 	}
 	if err := validateComposeData(data, abs, repo, repoReadOnly); err != nil {
 		return nil, err

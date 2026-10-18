@@ -324,32 +324,27 @@ const maxReadBytes = 1 << 20
 // on a FIFO, and anything that is not a regular file, or is larger than 1 MiB, is refused with a
 // message naming display. A missing file matches os.ErrNotExist.
 func readRegular(dir *os.Root, rel, display string) ([]byte, error) {
-	file, err := dir.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-		if info, statErr := dir.Lstat(rel); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-			return nil, linkOut{display} // os.Root refuses a link that leads out of dir
-		} else if statErr == nil && !info.Mode().IsRegular() {
-			return nil, notRegular{display}
-		}
-		return nil, fmt.Errorf("open %s: %w", display, pathCause(err))
+	data, err := safefile.ReadRegularIn(dir, rel, maxReadBytes)
+	var failure *safefile.ReadFailure
+	switch {
+	case err == nil:
+		return data, nil
+	case errors.Is(err, safefile.ErrNotRegular):
+		return nil, notRegular{display}
+	case errors.Is(err, safefile.ErrTooLarge):
+		return nil, tooLarge{display}
+	case errors.As(err, &failure):
+		return nil, fmt.Errorf("%s %s: %w", failure.Stage, display, pathCause(failure.Err))
+	case errors.Is(err, os.ErrNotExist):
+		return nil, err
 	}
-	defer file.Close()
-	if info, err := file.Stat(); err != nil {
-		return nil, fmt.Errorf("inspect %s: %w", display, pathCause(err))
-	} else if !info.Mode().IsRegular() {
+	// The open failed.
+	if info, statErr := dir.Lstat(rel); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, linkOut{display} // os.Root refuses a link that leads out of dir
+	} else if statErr == nil && !info.Mode().IsRegular() {
 		return nil, notRegular{display}
 	}
-	data, err := io.ReadAll(io.LimitReader(file, maxReadBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", display, pathCause(err))
-	}
-	if len(data) > maxReadBytes {
-		return nil, tooLarge{display}
-	}
-	return data, nil
+	return nil, fmt.Errorf("open %s: %w", display, pathCause(err))
 }
 
 // tooLarge refuses a project file over 1 MiB. It answers errors.Is(err, ErrNotRegular), so coop

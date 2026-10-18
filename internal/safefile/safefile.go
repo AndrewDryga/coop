@@ -76,29 +76,81 @@ func OpenRegular(root *os.File, rel string) (*os.File, error) {
 	return f, nil
 }
 
-// ReadRegular reads at most limit bytes from a strict regular-file path.
+// ErrNotRegular and ErrTooLarge are what a bounded read refuses: a path that is not a regular file,
+// and a file larger than its limit. The refusals say so in safefile's words; a caller with its own
+// matches them with errors.Is.
+var (
+	ErrNotRegular = errors.New("not a regular file")
+	ErrTooLarge   = errors.New("larger than its limit")
+)
+
+type refusal struct {
+	message string
+	kind    error
+}
+
+func (r refusal) Error() string        { return r.message }
+func (r refusal) Is(target error) bool { return target == r.kind }
+
+// ReadFailure is an inspect or read failure of a file a bounded read already opened. Its text is
+// the system's own; Stage says which step failed.
+type ReadFailure struct {
+	Stage string // "inspect" or "read"
+	Err   error
+}
+
+func (f *ReadFailure) Error() string { return f.Err.Error() }
+func (f *ReadFailure) Unwrap() error { return f.Err }
+
+// ReadRegular reads at most limit bytes from a strict regular-file path: no component may be a
+// link, and the open never waits on a FIFO.
 func ReadRegular(root *os.File, rel string, limit int64) ([]byte, error) {
 	if limit < 0 {
 		return nil, errors.New("negative file limit")
 	}
-	f, err := OpenRegular(root, rel)
+	f, err := openAt(root, rel, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK)
 	if err != nil {
 		return nil, err
 	}
+	return readBounded(f, rel, limit)
+}
+
+// ReadRegularIn is ReadRegular under os.Root's link rule, for a file a project may keep as a link:
+// a link that stays inside root is followed, and os.Root refuses one that leads out. The two rules
+// need two kinds of root: os.Root cannot refuse a link, and a raw descriptor cannot safely follow
+// one.
+func ReadRegularIn(root *os.Root, rel string, limit int64) ([]byte, error) {
+	if limit < 0 {
+		return nil, errors.New("negative file limit")
+	}
+	f, err := root.OpenFile(rel, os.O_RDONLY|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	return readBounded(f, rel, limit)
+}
+
+// readBounded is the one bounded read both link rules share, of a file opened without waiting: a
+// regular file of at most limit bytes. It closes f.
+func readBounded(f *os.File, rel string, limit int64) ([]byte, error) {
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, &ReadFailure{Stage: "inspect", Err: err}
 	}
+	if !info.Mode().IsRegular() {
+		return nil, refusal{rel + " is not a regular file", ErrNotRegular}
+	}
+	tooLarge := refusal{fmt.Sprintf("%s exceeds %d bytes", rel, limit), ErrTooLarge}
 	if info.Size() < 0 || info.Size() > limit {
-		return nil, fmt.Errorf("%s exceeds %d bytes", rel, limit)
+		return nil, tooLarge
 	}
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
-		return nil, err
+		return nil, &ReadFailure{Stage: "read", Err: err}
 	}
 	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("%s exceeds %d bytes", rel, limit)
+		return nil, tooLarge
 	}
 	return data, nil
 }
