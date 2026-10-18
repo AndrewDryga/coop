@@ -54,10 +54,6 @@ type SizeMetrics struct {
 // TotalCode sums code across languages.
 func (m SizeMetrics) TotalCode() int { return m.sum(func(c LangCount) int { return c.Code }) }
 
-// TotalComment and TotalBlank likewise.
-func (m SizeMetrics) TotalComment() int { return m.sum(func(c LangCount) int { return c.Comment }) }
-func (m SizeMetrics) TotalBlank() int   { return m.sum(func(c LangCount) int { return c.Blank }) }
-
 func (m SizeMetrics) sum(pick func(LangCount) int) int {
 	total := 0
 	for _, c := range m.Languages {

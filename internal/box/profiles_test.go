@@ -307,3 +307,8 @@ func TestProfileTokenMtime(t *testing.T) {
 		t.Errorf("mtime moved to %v after an unrelated write; must track only the marker", got)
 	}
 }
+
+func dirExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}

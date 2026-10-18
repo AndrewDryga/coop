@@ -31,11 +31,6 @@ var (
 	eventKinds       = []string{"operation", "session", "turn", "candidate", "validation", "workspace", "checkpoint", "capacity", SessionEventKind}
 )
 
-type Envelope struct {
-	Poll     Poll     `json:"poll"`
-	Response Response `json:"response"`
-}
-
 type Poll struct {
 	Version                int             `json:"version"`
 	PollRef                string          `json:"poll_ref"`

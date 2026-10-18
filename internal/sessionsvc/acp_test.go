@@ -3302,7 +3302,7 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, readOn
 	job.Source = &workerproto.JobSource{
 		RepositoryRef: "repo:runner", GitHubRepository: "example/runner", GitHubRepositoryID: 1,
 		Binding: session.SourceBinding{Version: 1, Kind: session.SourceDefault,
-			Requested: session.DefaultSourceSelector(), RemoteIdentity: "origin", DefaultRef: ref,
+			Requested: session.SourceSelector{Kind: session.SourceDefault}, RemoteIdentity: "origin", DefaultRef: ref,
 			SelectedRef: &ref, SelectedCommit: request.BaseCommit, DefaultCommit: request.BaseCommit,
 			BaseCommit: request.BaseCommit, AdmittedTree: strings.Repeat("b", 40), ResolvedAt: time.Unix(1, 0).UTC()},
 		Submodules: []workerproto.JobSubmodule{},

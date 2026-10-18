@@ -60,7 +60,6 @@ type gradeRequest struct {
 	Image     string // the TRUSTED image, resolved by the caller — never anything the candidate built
 	Workspace string // host path of the writable grading snapshot
 	Verifier  string // host path of the verifier directory (hidden material)
-	CaseID    string
 	Runtime   *eval.CaseRuntime
 }
 

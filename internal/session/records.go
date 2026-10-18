@@ -77,10 +77,9 @@ const (
 type ActivityState string
 
 const (
-	ActivityParked     ActivityState = "parked"
-	ActivityStarting   ActivityState = "starting"
-	ActivityRunning    ActivityState = "running"
-	ActivityCancelling ActivityState = "cancelling"
+	ActivityParked   ActivityState = "parked"
+	ActivityStarting ActivityState = "starting"
+	ActivityRunning  ActivityState = "running"
 )
 
 type TurnState string
@@ -103,10 +102,6 @@ const (
 	SendStateNone   SendState = "none"
 	SendStateIntent SendState = "intent"
 	SendStateSent   SendState = "sent"
-
-	TurnSendNone   = SendStateNone
-	TurnSendIntent = SendStateIntent
-	TurnSendSent   = SendStateSent
 )
 
 type StopReason string
@@ -126,7 +121,6 @@ const (
 	EventSessionStateChanged    EventType = "session.state_changed"
 	EventTurnQueued             EventType = "turn.queued"
 	EventTurnStarted            EventType = "turn.started"
-	EventActivityChanged        EventType = "activity.changed"
 	EventAssistantMessage       EventType = "assistant.message"
 	EventTurnCompleted          EventType = "turn.completed"
 	EventTurnFailed             EventType = "turn.failed"
@@ -269,7 +263,6 @@ func CodeOf(err error) ErrorCode {
 var (
 	ErrIdempotencyConflict     = &Error{Code: CodeIdempotencyConflict}
 	ErrOperationNotFound       = &Error{Code: CodeOperationNotFound}
-	ErrOperationFenced         = &Error{Code: CodeOperationFenced}
 	ErrOperationUncertain      = &Error{Code: CodeOperationUncertain}
 	ErrOperationIntentConflict = &Error{Code: CodeOperationIntentConflict}
 	ErrSessionNotFound         = &Error{Code: CodeSessionNotFound}
@@ -432,10 +425,6 @@ type SourceSelector struct {
 	SHA                string     `json:"sha,omitempty"`
 	ExpectedHeadCommit string     `json:"expected_head_commit,omitempty"`
 }
-
-// DefaultSourceSelector is the selector a repository-backed create carries when its caller chose
-// no other source: the policy's own configured remote and default branch.
-func DefaultSourceSelector() SourceSelector { return SourceSelector{Kind: SourceDefault} }
 
 // ValidateSourceSelectorShape is the transport-neutral half of selector validation: the union
 // discriminator, per-kind field exclusivity, and bounds. It deliberately runs no subprocess, so

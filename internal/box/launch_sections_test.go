@@ -339,7 +339,6 @@ func TestServiceWarningsNameObservedPartialAvailability(t *testing.T) {
 func TestInteractiveServiceWarningsAreSeparateParagraphs(t *testing.T) {
 	for _, report := range []func(*launchSections){
 		func(s *launchSections) { s.servicesFailed("compose failed") },
-		func(s *launchSections) { s.servicesSkipped("inspection unavailable") },
 	} {
 		got := captureStderr(t, func() {
 			s := newLaunchSections(RunSpec{Agent: "gemini"})
@@ -360,7 +359,7 @@ func TestLoopServiceDetailsWrapBeforeStyling(t *testing.T) {
 	got := captureStderr(t, func() {
 		s := newLaunchSections(RunSpec{Batch: true, LoopPresentation: true})
 		s.serviceSecrets([]string{long}, "/repo/compose.yml")
-		s.servicesSkipped("inspection failed for " + long)
+		s.servicesFailed("inspection failed for " + long)
 	})
 	for _, line := range strings.Split(got, "\n") {
 		if len([]rune(line)) > 79 {

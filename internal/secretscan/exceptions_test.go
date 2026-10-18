@@ -148,3 +148,12 @@ func TestNilExceptionsExcuseNothing(t *testing.T) {
 		t.Error("an empty fingerprint was excused")
 	}
 }
+
+// Len is how many entries the file holds — including entries that match nothing today, which
+// are inert and are never rewritten: an old entry is a record of a decision, not a lie.
+func (e *Exceptions) Len() int {
+	if e == nil {
+		return 0
+	}
+	return len(e.reasons)
+}

@@ -47,7 +47,7 @@ func TestGradeSnapshotVerdictMapping(t *testing.T) {
 			a := gradeApp(t)
 			dir := verifierDir(t, "verify.sh", "exit 0\n", 0o644)
 			got := a.gradeSnapshot(context.Background(), gradeRequest{
-				Image: "coop-box:test", Workspace: t.TempDir(), Verifier: dir, CaseID: "c",
+				Image: "coop-box:test", Workspace: t.TempDir(), Verifier: dir,
 			}, func(box.RunSpec) (int, error) { return tc.code, tc.err })
 			if got.Status != tc.want {
 				t.Errorf("status = %q, want %q (detail %q)", got.Status, tc.want, got.Detail)

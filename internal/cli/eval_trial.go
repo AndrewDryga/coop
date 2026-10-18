@@ -167,7 +167,7 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 
 	// 7. Grade the snapshot in the sandbox.
 	res := r.app.gradeSnapshot(ctx, gradeRequest{
-		Image: r.image, Workspace: snap.Dir, Verifier: filepath.Join(r.suite.Dir, t.Case.Verifier), CaseID: t.Case.ID, Runtime: t.Case.Runtime,
+		Image: r.image, Workspace: snap.Dir, Verifier: filepath.Join(r.suite.Dir, t.Case.Verifier), Runtime: t.Case.Runtime,
 	}, r.runBox)
 
 	if beforeErr == nil && afterErr == nil {

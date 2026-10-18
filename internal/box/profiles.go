@@ -218,8 +218,3 @@ func EnsureProfilesDir(cfg *config.Config, agent string) error {
 	profiles := filepath.Join(cfg.ConfigDir, agent, "profiles")
 	return config.EnsurePrivateDir(profiles)
 }
-
-func dirExists(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.IsDir()
-}

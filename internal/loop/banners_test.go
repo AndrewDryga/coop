@@ -111,7 +111,7 @@ func TestLoopIntentionalAndInterruptedStopsAreDistinct(t *testing.T) {
 		t.Errorf("mid-review interrupt report = %q", got)
 	}
 
-	limit := loopTaskLimit{max: 1, settled: 1, lastID: "task-a", lastTitle: "Fix login retries", lastState: stateDone}
+	limit := loopTaskLimit{max: 1, settled: 1, lastTitle: "Fix login retries", lastState: stateDone}
 	got = captureStderr(t, func() { printTaskLimitReached(limit, "coop loop claude") })
 	for _, want := range []string{"Paused after 1 of 1 requested task", "Completed: Fix login retries", "Final review has not run.", "Continue: coop loop claude"} {
 		if !strings.Contains(got, want) {
@@ -123,14 +123,14 @@ func TestLoopIntentionalAndInterruptedStopsAreDistinct(t *testing.T) {
 	}
 
 	// Fewer tasks than requested: the pause says the queue ran out, not that the limit was met.
-	partial := loopTaskLimit{max: 3, settled: 1, lastID: "task-a", lastTitle: "Fix login retries", lastState: stateDone}
+	partial := loopTaskLimit{max: 3, settled: 1, lastTitle: "Fix login retries", lastState: stateDone}
 	got = captureStderr(t, func() { printTaskLimitReached(partial, "coop loop claude") })
 	if !strings.Contains(got, "Paused after 1 task — no more tasks are ready") || !strings.Contains(got, "Final review has not run.") {
 		t.Errorf("partial task-limit report = %q", got)
 	}
 
 	// A blocked last task sends the reader to the decision, not back into the loop.
-	blocked := loopTaskLimit{max: 2, settled: 2, lastID: "task-b", lastTitle: "Choose how long sessions last", lastState: stateBlocked}
+	blocked := loopTaskLimit{max: 2, settled: 2, lastTitle: "Choose how long sessions last", lastState: stateBlocked}
 	got = captureStderr(t, func() { printTaskLimitReached(blocked, "coop loop claude") })
 	if !strings.Contains(got, "Blocked: Choose how long sessions last") || !strings.Contains(got, "Answer it: coop tasks decisions -i") {
 		t.Errorf("blocked task-limit report = %q", got)
@@ -367,15 +367,15 @@ func TestQueueScope(t *testing.T) {
 func TestProgressLine(t *testing.T) {
 	// The mid-iteration line the live bar shows: done/total, blocked only when there is some,
 	// and the active task.
-	if got := progressLine(tasks.TaskCounts{Done: 8, Blocked: 1, Todo: 11}, "Add a password reset link"); got != "8/20 done · 1 blocked · Add a password reset link" {
-		t.Errorf("progressLine = %q", got)
+	if got := progressLineWidth(tasks.TaskCounts{Done: 8, Blocked: 1, Todo: 11}, "Add a password reset link", 80); got != "8/20 done · 1 blocked · Add a password reset link" {
+		t.Errorf("progressLineWidth = %q", got)
 	}
-	if got := progressLine(tasks.TaskCounts{Done: 20}, ""); got != "20/20 done" {
-		t.Errorf("done-only progressLine = %q", got)
+	if got := progressLineWidth(tasks.TaskCounts{Done: 20}, "", 80); got != "20/20 done" {
+		t.Errorf("done-only progressLineWidth = %q", got)
 	}
 	// A long title is truncated, not printed whole: the counts never give way to it.
 	long := strings.Repeat("x", 80)
-	if got := progressLine(tasks.TaskCounts{Todo: 1}, long); !strings.Contains(got, "…") || strings.Contains(got, long) {
+	if got := progressLineWidth(tasks.TaskCounts{Todo: 1}, long, 60); !strings.Contains(got, "…") || strings.Contains(got, long) || !strings.HasPrefix(got, "0/1 done") {
 		t.Errorf("long title not truncated: %q", got)
 	}
 	if got := progressLineWidth(tasks.TaskCounts{Doing: 1}, "Fix \x1b[31mlogin\x1b[0m\nINJECT", 80); strings.Contains(got, "\x1b") || strings.Contains(got, "\n") || !strings.Contains(got, "Fix loginINJECT") {

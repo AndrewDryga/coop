@@ -41,7 +41,7 @@ func TestControllerJobUsesAnExactPrivateSourceWithoutSharedRepositoryPaths(t *te
 	ref := "refs/heads/main"
 	source := workerproto.JobSource{
 		RepositoryRef: "repo:one", GitHubRepository: "example/repository", GitHubRepositoryID: 17,
-		Binding: session.SourceBinding{Version: 1, Kind: session.SourceDefault, Requested: session.DefaultSourceSelector(), RemoteIdentity: "origin",
+		Binding: session.SourceBinding{Version: 1, Kind: session.SourceDefault, Requested: session.SourceSelector{Kind: session.SourceDefault}, RemoteIdentity: "origin",
 			DefaultRef: ref, SelectedRef: &ref, DefaultCommit: commit, SelectedCommit: commit, BaseCommit: commit, AdmittedTree: tree, ResolvedAt: time.Now().UTC()},
 		Submodules: []workerproto.JobSubmodule{},
 	}
@@ -329,7 +329,7 @@ func TestControllerJobRejectsMissingAndMismatchedAuthorityBeforeJournal(t *testi
 	ref := "refs/heads/main"
 	commit := strings.Repeat("a", 40)
 	unsupported.Source = &workerproto.JobSource{RepositoryRef: "repo:one", GitHubRepository: "example/repository", GitHubRepositoryID: 17,
-		Binding: session.SourceBinding{Version: 1, Kind: session.SourceDefault, Requested: session.DefaultSourceSelector(),
+		Binding: session.SourceBinding{Version: 1, Kind: session.SourceDefault, Requested: session.SourceSelector{Kind: session.SourceDefault},
 			RemoteIdentity: "origin", DefaultRef: ref, SelectedRef: &ref, DefaultCommit: commit, SelectedCommit: commit, BaseCommit: commit,
 			AdmittedTree: strings.Repeat("c", 40), ResolvedAt: time.Now().UTC()}, Submodules: []workerproto.JobSubmodule{}}
 	unsupported.RepositoryReadOnly = true

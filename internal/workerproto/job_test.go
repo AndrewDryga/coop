@@ -15,7 +15,7 @@ func validJobSpec() JobSpec {
 		Source: &JobSource{
 			RepositoryRef: "repo:one", GitHubRepository: "example/repository", GitHubRepositoryID: 17,
 			Binding: session.SourceBinding{
-				Version: 1, Kind: session.SourceDefault, Requested: session.DefaultSourceSelector(),
+				Version: 1, Kind: session.SourceDefault, Requested: session.SourceSelector{Kind: session.SourceDefault},
 				RemoteIdentity: "origin", DefaultRef: "refs/heads/main",
 				DefaultCommit: strings.Repeat("a", 40), SelectedCommit: strings.Repeat("a", 40),
 				SelectedRef: ptrString("refs/heads/main"), BaseCommit: strings.Repeat("a", 40),

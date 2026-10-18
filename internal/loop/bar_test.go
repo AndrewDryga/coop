@@ -165,7 +165,7 @@ func TestReviewActivityNamesStageAndSubjectsCompactly(t *testing.T) {
 	}
 	first := "2026-07-14-a-very-long-task-name-that-must-reach-the-live-width-renderer"
 	got := reviewActivity("signoff", []string{first, "task-b", "task-c"})
-	if want := "signoff: " + first + " +2"; got != want || len([]rune(got)) <= progressActivityWidth {
+	if want := "signoff: " + first + " +2"; got != want {
 		t.Errorf("multi-subject review activity = %q, want untruncated %q", got, want)
 	}
 }

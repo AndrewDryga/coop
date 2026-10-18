@@ -132,7 +132,7 @@ func stageTestJobSource(t *testing.T, stateRoot, upstream string) workerproto.Jo
 	source := workerproto.JobSource{
 		RepositoryRef: "test:repository", GitHubRepository: "example/repository", GitHubRepositoryID: 17,
 		Binding: session.SourceBinding{Version: 1, Kind: session.SourceDefault,
-			Requested: session.DefaultSourceSelector(), RemoteIdentity: "origin",
+			Requested: session.SourceSelector{Kind: session.SourceDefault}, RemoteIdentity: "origin",
 			DefaultRef: ref, SelectedRef: &ref, DefaultCommit: commit, SelectedCommit: commit,
 			BaseCommit: commit, AdmittedTree: tree, ResolvedAt: time.Unix(1, 0).UTC()},
 		Submodules: testJobSubmodules(t, upstream, commit),

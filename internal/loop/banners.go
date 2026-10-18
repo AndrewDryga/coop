@@ -182,8 +182,6 @@ func printBusyQueue(_ tasks.TaskLeaseSummary) {
 	ui.Note("No task is available to this loop. The remaining work is reserved by another agent.")
 }
 
-const progressActivityWidth = 48
-
 func progressState(c tasks.TaskCounts) string {
 	s := fmt.Sprintf("%s/%d done", paintCount(c.Done, ui.Green), c.Total())
 	if c.Blocked > 0 {
@@ -200,20 +198,10 @@ func progressStateWidth(c tasks.TaskCounts) int {
 	return len([]rune(s))
 }
 
-// progressLine is the queue's at-a-glance state for the live bar: done/total (done greened when
-// nonzero), a blocked tally only when there is one, and the task being worked. Structural queue
-// state is never abbreviated; the title is what gives way on a narrow row.
-func progressLine(c tasks.TaskCounts, activity string) string {
-	s := progressState(c)
-	activity = cleanDiagnosticLine(activity)
-	if activity != "" {
-		s += " · " + truncate(activity, progressActivityWidth)
-	}
-	return s
-}
-
-// progressLineWidth fits the optional activity into a complete line budget. On an impossibly
-// narrow row Region remains the final clip guard.
+// progressLineWidth is the queue's at-a-glance state for the live bar: done/total (done greened
+// when nonzero), a blocked tally only when there is one, and the task being worked, fitted into a
+// complete line budget. Structural queue state is never abbreviated; the title is what gives way on
+// a narrow row, and on an impossibly narrow one Region remains the final clip guard.
 func progressLineWidth(c tasks.TaskCounts, activity string, width int) string {
 	s := progressState(c)
 	activity = cleanDiagnosticLine(activity)

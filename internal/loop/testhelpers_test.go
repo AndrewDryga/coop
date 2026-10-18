@@ -87,3 +87,8 @@ func rts(creds ...string) *ladder.Rotation {
 	}
 	return ladder.NewRotation(ts)
 }
+
+func pathExists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}

@@ -2764,9 +2764,6 @@ func TestOwnerRecordGatesLoopAdoption(t *testing.T) {
 		if assignment.Busy.Owned != 1 || assignment.Busy.Busy != 0 || assignment.Busy.Stalled != 0 {
 			t.Fatalf("busy summary = %+v, want exactly 1 owned", assignment.Busy)
 		}
-		if got := assignment.Busy.String(); !strings.Contains(got, "owned") {
-			t.Errorf("busy summary = %q, a fully-owned queue must report \"owned\", not \"drained\"", got)
-		}
 		// The task itself is untouched: still in_progress, still unleased (claim holds no flock).
 		if !pathExists(filepath.Join(root, StateInProgress, "claimed-task")) {
 			t.Fatal("claimed task moved unexpectedly")
@@ -5781,4 +5778,12 @@ func TestResumePrefixOnlyFlagsStrandedWorkForAResumedTask(t *testing.T) {
 	if fresh := ResumePrefixFor(repo, "t", StateTodo, nil); fresh != "" {
 		t.Errorf("a freshly claimed task was pointed at another task's dirty tree:\n%s", fresh)
 	}
+}
+
+// gitArgs builds `git -C dir <hardening> <args>`. The hardening list lives in internal/forkspace,
+// next to the clone that creates a fork, so the whole repo has exactly one hardening set to audit;
+// internal/cli keeps its own copy of this trio atop the same list (see its util.go) rather than
+// exporting one across the package boundary — same shape internal/sessionsvc already uses.
+func gitArgs(dir string, args []string) []string {
+	return append(append([]string{"-C", dir}, forkspace.GitHardening...), args...)
 }

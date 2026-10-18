@@ -551,7 +551,11 @@ func TestSignUnpushedCarriesAReopenedTaskAuthority(t *testing.T) {
 	if err := tasks.EnrollExistingPendingReviews(repo, hosts, []string{id}, plan); err != nil {
 		t.Fatal(err)
 	}
-	if err := tasks.MarkPendingReviewReopened(hosts, []string{id}); err != nil {
+	enrolled, err := tasks.LoadPendingReviews(repo, hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.MarkExpectedPendingReviewsReopened(hosts, enrolled.Subjects); err != nil {
 		t.Fatal(err)
 	}
 	reopen, err := tasks.CaptureAuditReopen(repo, id)

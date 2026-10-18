@@ -24,8 +24,6 @@ type Configuration struct {
 	Label string // resolved name, e.g. "codex:gpt-6.1-sol/xhigh" or "frontier"
 }
 
-func (c Configuration) String() string { return c.Label }
-
 // Options are the run knobs the CLI parsed. Defaults (one repetition, one worker, no cost limit)
 // live in the CLI; this package validates whatever it is handed.
 type Options struct {

@@ -43,15 +43,6 @@ func fenceMarker(line string) bool {
 	return strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")
 }
 
-// readFileString returns a file's contents, or "" if it can't be read.
-func readFileString(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
 // sanitizeCell drops the characters safetext.Hidden names from a one-line display string, so a task
 // title or decision text — which can come from an untrusted agent's task.md — can't inject ANSI
 // escapes into coop's output (corrupting a redirect/pipe, or spoofing the colored UI on a
@@ -221,16 +212,6 @@ func unknownOptionErr(option, command string, valid []string) error {
 		suggestion = command + " " + guess
 	}
 	return ui.UnknownOption(option, command, suggestion)
-}
-
-// unknownErr is the shape for a rejected VALUE — `unknown <noun> "<token>" — use: a, b, c`, with a
-// "did you mean X?" when the token is a near-miss. Rejected commands and options have their own
-// approved blocks above.
-func unknownErr(noun, token string, valid []string) error {
-	if guess, ok := nearestCommand(token, valid); ok {
-		return fmt.Errorf("unknown %s %q — use: %s (did you mean %q?)", noun, token, strings.Join(valid, ", "), guess)
-	}
-	return fmt.Errorf("unknown %s %q — use: %s", noun, token, strings.Join(valid, ", "))
 }
 
 // flagValue parses one `--flag value` or `--flag=value` occurrence at args[i]. ok reports whether

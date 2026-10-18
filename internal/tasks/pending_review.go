@@ -1541,26 +1541,11 @@ func BeginPendingReviewRound(hosts, ids []string, round int) error {
 	})
 }
 
-func MarkPendingReviewReopened(hosts, ids []string) error {
-	return updatePendingReviewRecords(hosts, ids, func(record *PendingReviewRecord) {
-		record.Phase = PendingReviewReopened
-		record.RoundStarted = false
-		record.Reviewed = nil
-	})
-}
-
 func MarkExpectedPendingReviewsReopened(hosts []string, expected []PendingReviewRecord) error {
 	return updateExpectedPendingReviewRecords(hosts, expected, func(record *PendingReviewRecord) {
 		record.Phase = PendingReviewReopened
 		record.RoundStarted = false
 		record.Reviewed = nil
-	})
-}
-
-func MarkPendingReviewVerify(hosts, ids []string) error {
-	return updatePendingReviewRecords(hosts, ids, func(record *PendingReviewRecord) {
-		record.Phase = PendingReviewVerify
-		record.RoundStarted = false
 	})
 }
 

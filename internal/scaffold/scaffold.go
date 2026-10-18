@@ -235,16 +235,7 @@ type scaffolder struct {
 	repo string
 	// notices are the exceptions the caller must print: an artifact coop refused to take over.
 	notices []Notice
-	// kept counts artifacts already in place, changed records whether anything was actually
-	// written. A re-init reports "kept N existing" as one line instead of N lines that all say
-	// nothing happened — the noise that made a routine `coop init` look like it did work.
-	kept    int
-	changed bool
 }
-
-// keep records an artifact that was already correct. Nothing is printed per-file: Init prints the
-// total, so the log carries only what CHANGED.
-func (s *scaffolder) keep() { s.kept++ }
 
 // skillsSource keeps an established shared source instead of creating a competing skill tree.
 func skillsSource(repo string) string {
@@ -279,16 +270,8 @@ func (s *scaffolder) writeContentIfAbsent(dest, content string, perm os.FileMode
 // exists — then it's left untouched. Either way it reports what it did. Shared tail of the
 // two IfAbsent wrappers, which differ only in their byte source.
 func (s *scaffolder) writeNewFile(dest string, data []byte, perm os.FileMode) error {
-	created, err := writeNewRepoFile(s.repo, dest, data, perm, writeAndSync)
-	if err != nil {
-		return err
-	}
-	if !created {
-		s.keep()
-		return nil
-	}
-	s.changed = true
-	return nil
+	_, err := writeNewRepoFile(s.repo, dest, data, perm, writeAndSync)
+	return err
 }
 
 type scaffoldFileWrite func(*os.File, []byte) error
@@ -436,9 +419,7 @@ func (s *scaffolder) linkIfAbsent(target, link string, keepLink func() bool) err
 	}
 	switch {
 	case isLink && (current == target || keepLink != nil && keepLink()):
-		// Already the symlink we'd create, or one the caller keeps — a re-run is a no-op, so say
-		// so rather than report "linked" (an action verb that reads like a rewrite) on every init.
-		s.keep()
+		// Already the symlink we'd create, or one the caller keeps: a re-run leaves it alone.
 	case os.IsNotExist(err), isLink:
 		_ = parent.Remove(name)
 		if err := parent.Symlink(target, name); err != nil {
@@ -450,9 +431,6 @@ func (s *scaffolder) linkIfAbsent(target, link string, keepLink func() bool) err
 			}
 			return &fs.PathError{Op: "create", Path: link, Err: err}
 		}
-		s.changed = true
-	default:
-		s.keep()
 	}
 	return nil
 }
@@ -480,17 +458,15 @@ func (s *scaffolder) copySkills() error {
 		name := e.Name()
 		dest := filepath.Join(s.repo, ".agent", "skills", name)
 		// Stat the SKILL.md, not the directory: an empty leftover folder — a half-removed skill, a
-		// `git clean` that took the ignored files but left the dir — would otherwise report "kept
-		// existing skill" forever while the skill stayed empty and every .../skills symlink pointed
+		// `git clean` that took the ignored files but left the dir — would otherwise pass for an
+		// existing skill forever while the skill stayed empty and every .../skills symlink pointed
 		// at nothing. copyEmbedDir restores only what's missing, so a customized file survives.
 		if _, err := os.Stat(filepath.Join(dest, "SKILL.md")); err == nil {
-			s.keep()
 			continue
 		}
 		if err := s.copyEmbedDir("templates/skills/"+name, dest); err != nil {
 			return err
 		}
-		s.changed = true
 	}
 	return nil
 }
@@ -508,12 +484,12 @@ func (s *scaffolder) installGitHooks(langs, agentDirs []string) error {
 		prepareExists = true
 		prepareIsStock = info.Mode().IsRegular() && isStockPrepareHook(s.repo)
 	}
-	if prepareExists {
-		// An existing prepare hook may deliberately be a project-owned symlink. It is the one
-		// scaffold path whose documented composition contract preserves non-regular entries.
-		s.keep()
-	} else if err := s.writeContentIfAbsent(preparePath, prepareCommitMsgChainHook, 0o755); err != nil {
-		return err
+	// An existing prepare hook may deliberately be a project-owned symlink. It is the one scaffold
+	// path whose documented composition contract preserves non-regular entries.
+	if !prepareExists {
+		if err := s.writeContentIfAbsent(preparePath, prepareCommitMsgChainHook, 0o755); err != nil {
+			return err
+		}
 	}
 	for _, name := range agents.Names() {
 		ag, _ := agents.Get(name)
@@ -543,11 +519,6 @@ func (s *scaffolder) installGitHooks(langs, agentDirs []string) error {
 	case "", ".githooks":
 		if err := gitConfigSet(s.repo, "core.hooksPath", ".githooks"); err != nil {
 			return err
-		}
-		if current == "" {
-			s.changed = true
-		} else {
-			s.keep()
 		}
 		// The two hook exceptions still speak: coop declined to take something over, so only the
 		// user can finish the composition. Everything else it did is routine and stays silent.

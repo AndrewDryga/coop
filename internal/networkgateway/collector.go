@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	CollectorVersion      = "gateway-v1"
 	MaxClosedDetails      = 128
 	MaxDenialDetails      = 128
 	MaxUnknownDetails     = 128

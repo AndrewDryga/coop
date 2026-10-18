@@ -66,7 +66,6 @@ type loopTaskLimit struct {
 	settled      int
 	currentID    string
 	currentTitle string
-	lastID       string
 	lastTitle    string
 	lastState    string
 }
@@ -100,7 +99,7 @@ func (l *loopTaskLimit) observe(snapshot map[string]string) (bool, error) {
 		return false, nil
 	}
 	l.settled++
-	l.lastID, l.lastTitle, l.lastState = l.currentID, l.currentTitle, state
+	l.lastTitle, l.lastState = l.currentTitle, state
 	if l.settled >= l.max {
 		return true, nil
 	}

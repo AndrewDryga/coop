@@ -1871,3 +1871,18 @@ func TestPendingReviewIgnoresAmbientHooks(t *testing.T) {
 		})
 	}
 }
+
+func MarkPendingReviewReopened(hosts, ids []string) error {
+	return updatePendingReviewRecords(hosts, ids, func(record *PendingReviewRecord) {
+		record.Phase = PendingReviewReopened
+		record.RoundStarted = false
+		record.Reviewed = nil
+	})
+}
+
+func MarkPendingReviewVerify(hosts, ids []string) error {
+	return updatePendingReviewRecords(hosts, ids, func(record *PendingReviewRecord) {
+		record.Phase = PendingReviewVerify
+		record.RoundStarted = false
+	})
+}

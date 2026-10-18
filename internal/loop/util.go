@@ -1,17 +1,9 @@
 package loop
 
-import (
-	"os"
-	"strconv"
-)
+import "strconv"
 
-// Keep these stateless helpers local to the loop; exporting generic formatting or path
-// predicates would create a dependency for no shared behavior.
-
-func pathExists(path string) bool {
-	_, err := os.Lstat(path)
-	return err == nil
-}
+// Keep these stateless helpers local to the loop; exporting generic formatting would create a
+// dependency for no shared behavior.
 
 // paintCount renders a count, applying paint only when it's nonzero so a zero stays plain — a
 // "0 blocked" shouldn't read as an alarm.

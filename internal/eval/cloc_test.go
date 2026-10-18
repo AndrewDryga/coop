@@ -28,8 +28,8 @@ func TestParseClocJSONDropsSumAndHeader(t *testing.T) {
 	if m.Languages["Go"].Code != 10 || m.Languages["Go"].Comment != 3 || m.Languages["Go"].Files != 1 {
 		t.Errorf("Go = %+v", m.Languages["Go"])
 	}
-	if m.TotalCode() != 15 || m.TotalComment() != 3 || m.TotalBlank() != 2 {
-		t.Errorf("totals: code=%d comment=%d blank=%d", m.TotalCode(), m.TotalComment(), m.TotalBlank())
+	if m.TotalCode() != 15 {
+		t.Errorf("total code = %d, want 15", m.TotalCode())
 	}
 }
 

@@ -104,8 +104,6 @@ type UsageHistory struct {
 	Available bool
 }
 
-const UsagePricingDate = "2026-10-01"
-
 // Rates are USD per million tokens at standard public list prices, never native reported cost.
 type usageTariff struct {
 	Input, Read, Write, Write1h, Output float64

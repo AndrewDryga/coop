@@ -76,11 +76,15 @@ func TestCopiedProjectionCarriesLogicalIdentityButNotFolderGeneration(t *testing
 	if err := ScaffoldStateDirs(projection); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyProjectionFile(filepath.Join(root, QueueIdentityFile), filepath.Join(projection, QueueIdentityFile)); err != nil {
+	identity, err := os.ReadFile(filepath.Join(root, QueueIdentityFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projection, QueueIdentityFile), identity, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(projection, StateInProgress, item.ID)
-	if err := copyProjectionTree(item.Dir, dst); err != nil {
+	if err := os.CopyFS(dst, os.DirFS(item.Dir)); err != nil {
 		t.Fatal(err)
 	}
 	projectedItem, _ := mustCurrentTask(t, projection, item.ID)

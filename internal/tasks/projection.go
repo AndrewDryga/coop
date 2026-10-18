@@ -130,28 +130,6 @@ func copyProjectionRootFile(srcRoot, dstRoot *os.Root, srcRel, dstRel string, be
 	return errors.Join(copyErr, out.Sync(), out.Close())
 }
 
-func copyProjectionFile(src, dst string) error {
-	srcRoot, _, err := openProjectionRoot(filepath.Dir(src))
-	if err != nil {
-		return err
-	}
-	defer srcRoot.Close()
-	name := filepath.Base(src)
-	before, err := projectionRootRegular(srcRoot, name)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	dstRoot, _, err := openProjectionRoot(filepath.Dir(dst))
-	if err != nil {
-		return err
-	}
-	defer dstRoot.Close()
-	return copyProjectionRootFile(srcRoot, dstRoot, name, filepath.Base(dst), before)
-}
-
 func walkProjectionRoot(root *os.Root, visit func(string, os.FileInfo) error) error {
 	entriesSeen := 0
 	var walk func(string, os.FileInfo) error
@@ -209,55 +187,6 @@ func walkProjectionRoot(root *os.Root, visit func(string, os.FileInfo) error) er
 		return err
 	}
 	return walk(".", rootInfo)
-}
-
-func copyProjectionTree(src, dst string) error {
-	beforeDigest, err := hashProjectionTree(src)
-	if err != nil {
-		return err
-	}
-	srcRoot, _, err := openProjectionRoot(src)
-	if err != nil {
-		return err
-	}
-	defer srcRoot.Close()
-	if err := os.Mkdir(dst, 0o755); err != nil {
-		return err
-	}
-	dstRoot, _, err := openProjectionRoot(dst)
-	if err != nil {
-		return err
-	}
-	defer dstRoot.Close()
-	total := int64(0)
-	if err := walkProjectionRoot(srcRoot, func(rel string, info os.FileInfo) error {
-		if info.IsDir() {
-			return dstRoot.Mkdir(rel, 0o755)
-		}
-		before, err := projectionRootRegular(srcRoot, rel)
-		if err != nil {
-			return err
-		}
-		total += before.Size()
-		if total > projectionMaxTotalBytes {
-			return errors.New("task projection exceeds its bounded byte limit")
-		}
-		return copyProjectionRootFile(srcRoot, dstRoot, rel, rel, before)
-	}); err != nil {
-		return err
-	}
-	afterDigest, err := hashProjectionTree(src)
-	if err != nil {
-		return err
-	}
-	destinationDigest, err := hashProjectionTree(dst)
-	if err != nil {
-		return err
-	}
-	if beforeDigest != afterDigest || beforeDigest != destinationDigest {
-		return errors.New("task projection changed while the host copied it")
-	}
-	return nil
 }
 
 // walkOpenedProjectionRoot keeps an open handle for every directory while descending. Unlike a

@@ -806,11 +806,11 @@ func TestReviewLabelsWhatTheRepoAsksForAndWhatIsNew(t *testing.T) {
 	for _, f := range review.Files {
 		byPath[f.Path] = f
 	}
-	if key := byPath["certs/tls.key"]; !key.Requested || key.New || key.Reason() != ".agent/project.yaml asks for it" {
-		t.Fatalf("requested file = %+v, reason %q", key, key.Reason())
+	if key := byPath["certs/tls.key"]; !key.Requested || key.New {
+		t.Fatalf("requested file = %+v", key)
 	}
-	if env := byPath["certs/.env"]; env.Requested || env.New || env.Reason() != "nothing in the repo asks for it" {
-		t.Fatalf("unrequested file = %+v, reason %q", env, env.Reason())
+	if env := byPath["certs/.env"]; env.Requested || env.New {
+		t.Fatalf("unrequested file = %+v", env)
 	}
 	// The list keeps the files' own order, so a reader can follow it against their Compose file;
 	// what deserves a second look is carried by each path's LABEL, not by its position (the
@@ -844,7 +844,7 @@ func TestReviewLabelsWhatTheRepoAsksForAndWhatIsNew(t *testing.T) {
 		t.Fatalf("review order after the edit = %v, want the files' own order %v", got, want)
 	}
 	extra := byPath["certs/extra.pem"]
-	if !extra.New || extra.Requested || extra.Reason() != "nothing in the repo asks for it; new since you last approved this file" {
-		t.Fatalf("the new file = %+v, reason %q", extra, extra.Reason())
+	if !extra.New || extra.Requested {
+		t.Fatalf("the new file = %+v", extra)
 	}
 }

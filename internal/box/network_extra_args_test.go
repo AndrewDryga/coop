@@ -133,16 +133,10 @@ func TestNetworkRuleDiffIsAPlainSetDifference(t *testing.T) {
 	}
 }
 
-func TestNetworkRuleTextAndYAMLReadLikeTheConfiguration(t *testing.T) {
+func TestNetworkRuleTextReadsLikeTheConfiguration(t *testing.T) {
 	tls := egress.Rule{To: egress.Destination{Domain: "docs.example.com"}, Protocol: "tls", Ports: []int{443}}
 	if got := NetworkRuleText(tls); got != "docs.example.com tls/443" {
 		t.Errorf("NetworkRuleText = %q", got)
-	}
-	yaml := NetworkRuleYAML(tls)
-	for _, want := range []string{"- to:", `domain: "docs.example.com"`, "protocol: tls", "ports: [443]"} {
-		if !strings.Contains(yaml, want) {
-			t.Errorf("NetworkRuleYAML is missing %q:\n%s", want, yaml)
-		}
 	}
 	raw := egress.Rule{To: egress.Destination{CIDR: "10.0.0.0/24"}, Protocol: "udp", Ports: []int{123, 124}}
 	if got := NetworkRuleText(raw); got != "10.0.0.0/24 udp/123,124" {
@@ -156,24 +150,13 @@ func TestNetworkRuleTextAndYAMLReadLikeTheConfiguration(t *testing.T) {
 	if got := NetworkRuleText(wildcard); got != "*.example.com tls/443" {
 		t.Errorf("NetworkRuleText(wildcard) = %q", got)
 	}
-	if yaml := NetworkRuleYAML(wildcard); !strings.Contains(yaml, `domain: "*.example.com"`) {
-		t.Errorf("NetworkRuleYAML(wildcard) = %q", yaml)
-	}
 	ping := egress.Rule{To: egress.Destination{CIDR: "10.0.0.0/8"}, Protocol: "icmp", Types: []string{"8"}, Codes: []int{0}}
 	if got := NetworkRuleText(ping); got != "10.0.0.0/8 icmp types 8 codes 0" {
 		t.Errorf("NetworkRuleText(icmp) = %q", got)
 	}
-	for _, want := range []string{`cidr: "10.0.0.0/8"`, "protocol: icmp", "types: [8]", "codes: [0]"} {
-		if yaml := NetworkRuleYAML(ping); !strings.Contains(yaml, want) {
-			t.Errorf("NetworkRuleYAML(icmp) is missing %q:\n%s", want, yaml)
-		}
-	}
 	service := egress.Rule{To: egress.Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}}
 	if got := NetworkRuleText(service); got != "service db tcp/5432" {
 		t.Errorf("NetworkRuleText(service) = %q", got)
-	}
-	if yaml := NetworkRuleYAML(service); !strings.Contains(yaml, `service: "db"`) {
-		t.Errorf("NetworkRuleYAML(service) = %q", yaml)
 	}
 }
 

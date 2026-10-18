@@ -9,6 +9,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 )
 
 // find returns the mount targeting target, or nil.
@@ -382,7 +383,7 @@ func TestMatchesAny(t *testing.T) {
 		{"app.js", false}, {"README.md", false}, {"env", false}, {"app.env", false}, {"cert.crt", false},
 	}
 	for _, c := range cases {
-		if got := matchesAny(c.name, SecretGlobs); got != c.want {
+		if got := matchesAny(c.name, shadowpath.SecretGlobs); got != c.want {
 			t.Errorf("matchesAny(%q, secrets) = %v, want %v", c.name, got, c.want)
 		}
 	}

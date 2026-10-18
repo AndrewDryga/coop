@@ -78,3 +78,5 @@ func TestBuildPlanTakesTheLoopConfigOverrideForALoopSuite(t *testing.T) {
 		t.Errorf("loop config = %q, want the override", p.LoopConfig)
 	}
 }
+
+func (c Configuration) String() string { return c.Label }

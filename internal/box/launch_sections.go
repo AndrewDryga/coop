@@ -616,23 +616,6 @@ func (s *launchSections) servicesObserved(ports []ServicePort) {
 	ui.Note("  %s Running services available: %s", ui.Green("✓"), names)
 }
 
-// servicesSkipped is a launch that did not even attempt them, with the reason it did not. It never
-// claims services already running are unavailable — only that none were started now.
-func (s *launchSections) servicesSkipped(cause string) {
-	if !s.on {
-		return
-	}
-	if !s.loop {
-		ui.Note("")
-		ui.Warning("Project services were not started", cause, "Stop that box, then run coop up.")
-		return
-	}
-	s.section("Starting services")
-	ui.Note("  %s Services were not started", ui.Yellow("⚠"))
-	loopLaunchDetail(cause, 4)
-	ui.Note("    To retry: coop up")
-}
-
 func loopLaunchDetail(text string, indent int) {
 	width := loopLaunchWidth() - indent
 	for _, line := range ui.WrapLines(cleanLaunchText(text), width) {

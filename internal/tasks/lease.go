@@ -950,23 +950,6 @@ func (s *TaskLeaseSummary) add(o TaskLeaseObservation) {
 	}
 }
 
-func (s TaskLeaseSummary) String() string {
-	parts := make([]string, 0, 3)
-	if s.Owned > 0 {
-		parts = append(parts, fmt.Sprintf("%d owned", s.Owned))
-	}
-	if s.Busy > 0 {
-		parts = append(parts, fmt.Sprintf("%d busy", s.Busy))
-	}
-	if s.Stalled > 0 {
-		parts = append(parts, fmt.Sprintf("%d stalled", s.Stalled))
-	}
-	if len(parts) == 0 {
-		return "no available task"
-	}
-	return strings.Join(parts, " - ")
-}
-
 func CurrentTask(root, id string) (Item, bool, error) {
 	items, err := ReadTaskTree(root)
 	if err != nil {

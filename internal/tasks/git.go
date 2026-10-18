@@ -10,14 +10,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
-// gitArgs builds `git -C dir <hardening> <args>`. The hardening list lives in internal/forkspace,
-// next to the clone that creates a fork, so the whole repo has exactly one hardening set to audit;
-// internal/cli keeps its own copy of this trio atop the same list (see its util.go) rather than
-// exporting one across the package boundary — same shape internal/sessionsvc already uses.
-func gitArgs(dir string, args []string) []string {
-	return append(append([]string{"-C", dir}, forkspace.GitHardening...), args...)
-}
-
 // gitOut runs `git -C dir <args>` hardened and returns trimmed stdout, or "" on error.
 func gitOut(dir string, args ...string) string {
 	out, _ := gitOutErr(dir, args...)

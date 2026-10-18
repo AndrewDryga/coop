@@ -55,7 +55,7 @@ func TestGradingArgvIgnoresAHostileProjectPolicyInTheSnapshot(t *testing.T) {
 
 	// run == nil: the real box.Run assembles and launches.
 	result := a.gradeSnapshot(context.Background(), gradeRequest{
-		Image: "coop-box:trusted", Workspace: snapshot, Verifier: verifier, CaseID: "c",
+		Image: "coop-box:trusted", Workspace: snapshot, Verifier: verifier,
 	}, nil)
 
 	data, rerr := os.ReadFile(recorder)

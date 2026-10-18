@@ -1049,7 +1049,7 @@ func TestCmdTasksFolderDispatch(t *testing.T) {
 // flagship `watch` is suggestable and every canonical verb is recognized — no drift between the two.
 func TestTasksVerbsIncludeWatch(t *testing.T) {
 	// a mistype of watch suggests it — only possible if watch is in the derived candidate list.
-	if err := unknownErr("tasks command", "watxh", TasksVerbs); !strings.Contains(err.Error(), `did you mean "watch"`) {
+	if err := unknownSubcommandErr("tasks", "watxh", TasksVerbs); !strings.Contains(err.Error(), "watch") {
 		t.Errorf("expected a watch suggestion, got: %v", err)
 	}
 	for _, s := range []string{"watch", "ls", "rm", "decisions"} {
@@ -2040,4 +2040,13 @@ func TestDecisionDividerPlain(t *testing.T) {
 	if !strings.Contains(colored, "Question 2 of 7") || !strings.Contains(colored, rule) {
 		t.Errorf("colored divider lost its plain text: %q", colored)
 	}
+}
+
+// readFileString returns a file's contents, or "" if it can't be read.
+func readFileString(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }

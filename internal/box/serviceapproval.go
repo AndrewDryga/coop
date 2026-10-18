@@ -182,18 +182,6 @@ func (r *ServiceSecretReview) Paths() []string {
 	return out
 }
 
-// Reason is the one-line explanation printed beside a hidden file at the prompt.
-func (f ReviewFile) Reason() string {
-	reason := "nothing in the repo asks for it"
-	if f.Requested {
-		reason = project.File + " asks for it"
-	}
-	if f.New {
-		reason += "; new since you last approved this file"
-	}
-	return reason
-}
-
 // ReviewServiceSecrets returns the review a human must see before workspace's compose file (an
 // absolute path inside it) hands services any secret-looking file, or nil when nothing is hidden
 // or every hidden file is already approved for this exact content. A compose file the host would

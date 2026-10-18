@@ -289,12 +289,6 @@ type sessionRunnerTurnReaper interface {
 	ReapInterruptedTurn(context.Context, session.Session, session.Turn) error
 }
 
-type RunnerFunc func(context.Context, session.Session, session.Turn) (session.Turn, error)
-
-func (f RunnerFunc) Run(ctx context.Context, sess session.Session, turn session.Turn) (session.Turn, error) {
-	return f(ctx, sess, turn)
-}
-
 type RunnerFactory func(*session.Store) Runner
 
 // SourceRefresher uses trusted host credentials to fetch only the saved job's default

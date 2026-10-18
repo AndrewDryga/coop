@@ -808,7 +808,6 @@ turn.queued
 turn.started
 turn.awaiting_validation
 output_contract.rejected
-activity.changed
 assistant.message
 turn.completed
 turn.failed

@@ -336,7 +336,7 @@ func testJobSource() workerproto.JobSource {
 	return workerproto.JobSource{
 		RepositoryRef: "repo:one", GitHubRepository: "example/repository", GitHubRepositoryID: 17,
 		Binding: session.SourceBinding{
-			Version: 1, Kind: session.SourceDefault, Requested: session.DefaultSourceSelector(),
+			Version: 1, Kind: session.SourceDefault, Requested: session.SourceSelector{Kind: session.SourceDefault},
 			RemoteIdentity: "origin", DefaultRef: ref, SelectedRef: &ref, DefaultCommit: commit, SelectedCommit: commit, BaseCommit: commit,
 			AdmittedTree: strings.Repeat("c", 40), ResolvedAt: time.Now().UTC(),
 		}, Submodules: []workerproto.JobSubmodule{},

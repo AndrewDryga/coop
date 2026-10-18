@@ -308,3 +308,9 @@ func assertReviewScratchEmpty(t *testing.T, dir string) {
 func gitArgs(dir string, args []string) []string {
 	return append(append([]string{"-C", dir}, forkspace.GitHardening...), args...)
 }
+
+type RunnerFunc func(context.Context, session.Session, session.Turn) (session.Turn, error)
+
+func (f RunnerFunc) Run(ctx context.Context, sess session.Session, turn session.Turn) (session.Turn, error) {
+	return f(ctx, sess, turn)
+}
