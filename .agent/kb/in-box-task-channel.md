@@ -2,7 +2,7 @@
 name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
-sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go]
+sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go]
 updated: 2026-10-18
 ---
 
@@ -90,18 +90,23 @@ parent and refuses one that is a link. Two kinds of use follow:
   README reader (`readTaskTemplate`) and publishes through handles too (`publishProposalTask`): it
   stages the files in a fresh real folder under `.coop-proposal-staging` and moves it into its state
   folder with `renameFolderBetween`, a `renameat` between the two folders' own handles.
-- As a check only: `tasks_list` and every tool that names a task read the queue with
-  `tasks.ReadTaskTreeBelow`, which runs the walk down to the queue root (a missing folder still
-  reads as empty), then `ReadTaskTree` by name, which refuses a linked state or task folder. The
-  mutations then open the queue root by name, a real folder and not a link (`openRealRoot`), and
-  everything below it through handles: `MoveTaskDir` renames between the two state folders' own
-  handles (`renameFolderBetween`), every metadata writer opens the state and task folders from the
-  queue (`OpenTaskMetadataRoot`), `removeTaskTmp`, `coop tasks rm` and `coop backlog rm` delete
-  through those handles, and `coop tasks block` creates its decision.md template `O_EXCL|O_NOFOLLOW`.
-  A folder swapped above the queue root between the check and the operation is not ruled out
-  (task 2026-10-17-run-the-in-box-task-tools-through-one-pinned-que); the reader has the same
-  check-then-use at each state and task folder. `openRealSubroot` checks each folder with `Lstat` before `os.Root.OpenRoot`, which does
-  not pass `O_NONBLOCK`, so a box that swaps in a FIFO between the two makes that call wait.
+- Through the call's pin: every tool call first pins the workspace and each queue root in it
+  (`tasks.PinQueues`, from `Server.call`), opened from the workspace through real folders only; a
+  call that starts while one of them is a link is refused. Until the call ends, every task read and
+  write in the process that names a path inside a pin opens it through that handle (`openPinned`):
+  the tree reader (`readTaskTreeOnce` lists state folders from one queue handle), every metadata
+  writer (`OpenTaskMetadataRoot`), moves (`MoveTaskDir`, a `renameat` between the state folders'
+  own handles), deletions, completion receipts and fingerprints (`lstatTaskPath`, the walk through
+  the task folder's handle), and the lease key and queue identity (`pinnedCanonical`, the
+  workspace's real path plus the link-free rest). A folder the box swaps after the pin therefore
+  redirects nothing; `TestToolsStayInThePinnedQueueWhileFoldersAreSwapped` swaps `.agent`, the
+  queue root and a state folder in a loop during 900 calls. A queue missing at the pin is reached
+  through the workspace pin, so it reads as empty and a task created in it is still found. Host
+  commands use the same helpers without a pin: they open the queue root by name, a real folder and
+  not a link (`openRealRoot`), and everything below it through handles, and `coop tasks block`
+  creates its decision.md template `O_EXCL|O_NOFOLLOW`. Every walk opens a folder
+  `O_DIRECTORY|O_NONBLOCK` first and makes the root from that descriptor (`openSubrootNoWait`), since
+  `os.Root.OpenRoot` waits on a FIFO a box swaps in after the folder was checked.
 
 The loop runs the same `ReadTaskTreeBelow` at startup, so a linked subproject stops it there. The
 completion bulk note measures from the workspace with its own `openat(O_NOFOLLOW|O_NONBLOCK)` walk.
@@ -155,6 +160,9 @@ held one, finds no coop binary), which fails, never skips, without a runtime or 
 `coop-box:<definition>` image ([[box-base-image-tags]]).
 
 ## Changelog
+- 2026-10-18 — each tool call pins its workspace and queues and every read and write goes through
+  the pin; folder walks no longer wait on a swapped-in FIFO (task
+  2026-10-17-run-the-in-box-task-tools-through-one-pinned-que).
 - 2026-10-18 — host movers, metadata writers, tmp cleanup and the two task deletions go through
   handles below the queue root; the block template is created no-follow (task
   2026-10-17-write-task-metadata-and-moves-through-the-state).

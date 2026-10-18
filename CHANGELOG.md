@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A box can no longer point its task tools at another project's tasks mid-call.** The task tools a
+  box calls run on your machine. Each one checked that the queue's folders were real, then found
+  them by name again, so a box that swapped `.agent` or a state folder for a link at the right
+  moment could have a call list or change another project's tasks. Each call now holds the folders
+  it checked and does all its reads and writes through them. A folder a box swaps for a FIFO no
+  longer makes a call hang.
+
 - **Task commands no longer follow links a box planted in the task queue.** `coop tasks block`
   wrote its `decision.md` template through a link a box could leave there, which could create a file
   anywhere you can write. Task moves, cleanups and deletions found state folders by name, so a box

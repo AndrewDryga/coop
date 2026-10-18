@@ -479,6 +479,9 @@ func requireRealFolders(top, folder string) error {
 // workspace it mounts. Below it each folder is opened from its parent and must be a real folder,
 // not a link (openRealSubroot), since the box can swap any of them for a link to another project.
 func openRootBelow(top, folder string) (*os.Root, error) {
+	if root, ok, err := openPinned(folder); ok {
+		return root, err
+	}
 	rel, err := filepath.Rel(top, folder)
 	if err != nil {
 		return nil, err

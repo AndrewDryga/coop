@@ -97,15 +97,18 @@ func validateIdentity(version int, id string, createdAt time.Time) error {
 }
 
 func canonicalTaskRoot(root string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", err
+	resolved, pinned := pinnedCanonical(root)
+	if !pinned {
+		var err error
+		if resolved, err = filepath.EvalSymlinks(root); err != nil {
+			return "", err
+		}
 	}
 	abs, err := filepath.Abs(resolved)
 	if err != nil {
 		return "", err
 	}
-	info, err := os.Lstat(abs)
+	info, err := lstatTaskPath(abs)
 	if err != nil {
 		return "", err
 	}
@@ -233,7 +236,7 @@ func ensureTaskIdentity(taskDir string) (string, error) {
 }
 
 func taskFolderGeneration(taskDir string) (TaskGeneration, error) {
-	info, err := os.Lstat(taskDir)
+	info, err := lstatTaskPath(taskDir)
 	if err != nil {
 		return TaskGeneration{}, err
 	}

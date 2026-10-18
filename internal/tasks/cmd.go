@@ -1391,7 +1391,7 @@ func MoveTaskDir(root string, t Item, newState string) error {
 	if filepath.Clean(t.Dir) != filepath.Join(root, fromState, t.ID) {
 		return fmt.Errorf("can't move %s: its folder %q is not in the task queue %q", t.ID, t.Dir, root)
 	}
-	queue, err := openRealRoot(root)
+	queue, err := openQueueRoot(root)
 	if err != nil {
 		return fmt.Errorf("open task queue: %w", err)
 	}
@@ -1442,7 +1442,7 @@ func removeTaskFolder(root string, t Item) error {
 	if filepath.Clean(t.Dir) != filepath.Join(root, fromState, t.ID) {
 		return fmt.Errorf("can't delete %s: its folder %q is not in the task queue %q", t.ID, t.Dir, root)
 	}
-	queue, err := openRealRoot(root)
+	queue, err := openQueueRoot(root)
 	if err != nil {
 		return fmt.Errorf("open task queue: %w", err)
 	}
@@ -1579,6 +1579,12 @@ func OpenTaskMetadataRoot(taskDir string) (*os.Root, error) {
 		return nil, errors.New("open task folder: no folder given") // never the working directory
 	}
 	taskDir = filepath.Clean(taskDir)
+	if root, ok, err := openPinned(taskDir); ok {
+		if err != nil {
+			return nil, fmt.Errorf("open task folder %s: %w", taskDir, err)
+		}
+		return root, nil
+	}
 	queue, err := openRealRoot(filepath.Dir(filepath.Dir(taskDir)))
 	if err != nil {
 		return nil, fmt.Errorf("open task folder %s: %w", taskDir, err)

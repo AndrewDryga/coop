@@ -916,6 +916,77 @@ func TestToolsRefuseAQueueReachedThroughALink(t *testing.T) {
 	}
 }
 
+// A box can keep swapping folders while its tools run, timing a swap between a tool's check and its
+// read or write. Each call pins the workspace and its queue first, so no call sees the other
+// project's tasks or changes its files, whatever the timing; a call that starts while a link is in
+// place is refused.
+func TestToolsStayInThePinnedQueueWhileFoldersAreSwapped(t *testing.T) {
+	t.Setenv(tasks.TestLeaseAuthorityRootEnv, t.TempDir())
+	workspace := t.TempDir()
+	repoQueue := filepath.Join(".agent", "tasks")
+	root := queueIn(t, workspace, repoQueue, map[string]string{"mine": tasks.StateInProgress})
+	other := filepath.Join(t.TempDir(), "other")
+	queueIn(t, other, repoQueue, map[string]string{"secret": tasks.StateInProgress, "mine": tasks.StateInProgress})
+	if err := os.WriteFile(filepath.Join(other, repoQueue, tasks.StateInProgress, "mine", "task.md"), []byte("# theirs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := taskFiles(t, other)
+	s, err := New(Authority{Workspace: workspace, QueueRoots: []string{root}, Assigned: "mine",
+		Owner: tasks.TaskLeaseOwner{RunID: "test-run", PID: os.Getpid(), Provider: "test", Target: "test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := newSession(t, s)
+
+	stop, swapped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(swapped)
+		for {
+			for _, rel := range []string{".agent", repoQueue, filepath.Join(repoQueue, tasks.StateInProgress)} {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				path := filepath.Join(workspace, rel)
+				if os.Rename(path, path+".kept") != nil {
+					continue
+				}
+				_ = os.Symlink(filepath.Join(other, rel), path)
+				_ = os.Remove(path)
+				_ = os.Rename(path+".kept", path)
+			}
+		}
+	}()
+	answered := 0
+	for range 300 {
+		for _, call := range []struct {
+			tool string
+			args map[string]any
+		}{
+			{"tasks_list", map[string]any{}},
+			{"tasks_append_log", map[string]any{"id": "mine", "entry": "## pinned"}},
+			{"tasks_update_state", map[string]any{"id": "mine", "status": "pinned"}},
+		} {
+			text, refused := sess.call(call.tool, call.args)
+			if strings.Contains(text, "secret") || strings.Contains(text, "theirs") || strings.Contains(text, other) {
+				t.Fatalf("%s answered with the other project's tasks: %s", call.tool, text)
+			}
+			if !refused {
+				answered++
+			}
+		}
+	}
+	close(stop)
+	<-swapped
+	if after := taskFiles(t, other); !maps.Equal(before, after) {
+		t.Fatalf("the calls changed the other project:\nbefore %v\nafter  %v", before, after)
+	}
+	if answered == 0 {
+		t.Fatal("every call was refused; the swaps left no window for the tools to run")
+	}
+}
+
 // A configured queue that does not exist yet, a subproject's before its first task, still lists
 // as empty: only a folder that is there and is a link stops the tools.
 func TestToolsListAQueueThatDoesNotExistYetAsEmpty(t *testing.T) {

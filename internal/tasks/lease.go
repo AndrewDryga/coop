@@ -210,9 +210,12 @@ func (l *TaskLease) Release() error {
 }
 
 func LeaseAuthorityKey(root, id string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", err
+	resolved, pinned := pinnedCanonical(root)
+	if !pinned {
+		var err error
+		if resolved, err = filepath.EvalSymlinks(root); err != nil {
+			return "", err
+		}
 	}
 	abs, err := filepath.Abs(resolved)
 	if err != nil {
@@ -375,7 +378,7 @@ func openLeaseAuthorityRecord(name string, create bool) (*os.File, error) {
 }
 
 func completionReceiptFor(taskDir string) (leaseCompletionReceipt, error) {
-	info, err := os.Lstat(taskDir)
+	info, err := lstatTaskPath(taskDir)
 	if err != nil {
 		return leaseCompletionReceipt{}, err
 	}

@@ -330,9 +330,26 @@ func ReadTaskTreeBelow(top, root string) ([]Item, error) {
 	return ReadTaskTree(root)
 }
 
+// readStateEntries lists the state folder state of queue, opened as a real folder.
+func readStateEntries(queue *os.Root, state string) ([]os.DirEntry, error) {
+	folder, err := openRealSubroot(queue, state)
+	if err != nil {
+		return nil, err
+	}
+	defer folder.Close()
+	dir, err := folder.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, err
+}
+
 func readTaskTreeOnce(root string) ([]Item, bool, error) {
 	var items []Item
-	info, err := os.Lstat(root)
+	info, err := lstatTaskPath(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}
@@ -342,6 +359,15 @@ func readTaskTreeOnce(root string) ([]Item, bool, error) {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, false, fmt.Errorf("task queue %s is not a real directory", root)
 	}
+	// One handle for the whole read: a state folder is found in it, never by name again.
+	queue, err := openQueueRoot(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, true, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("open task queue %s: %w", root, err)
+	}
+	defer queue.Close()
 	// The four ReadDir calls below aren't one atomic snapshot, so a task being moved between state
 	// dirs (an os.Rename) can be read in BOTH — once in the source dir, once in the destination.
 	// Dedup by id, keeping the first (lifecycle-earliest) occurrence, so a torn read can't inflate
@@ -353,7 +379,7 @@ func readTaskTreeOnce(root string) ([]Item, bool, error) {
 	duplicates := map[string][]string{}
 	for _, state := range TaskStates {
 		stateDir := filepath.Join(root, state)
-		info, err := os.Lstat(stateDir)
+		info, err := queue.Lstat(state)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -363,7 +389,7 @@ func readTaskTreeOnce(root string) ([]Item, bool, error) {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return nil, false, fmt.Errorf("lifecycle state %s is not a real directory", stateDir)
 		}
-		entries, err := os.ReadDir(stateDir)
+		entries, err := readStateEntries(queue, state)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, true, nil
 		}
@@ -404,7 +430,7 @@ func readTaskTreeOnce(root string) ([]Item, bool, error) {
 	for id, states := range duplicates {
 		var still []string
 		for _, state := range states {
-			_, err := os.Lstat(filepath.Join(root, state, id, "task.md"))
+			_, err := queue.Lstat(filepath.Join(state, id, "task.md"))
 			if err == nil {
 				still = append(still, state)
 			} else if !errors.Is(err, os.ErrNotExist) {

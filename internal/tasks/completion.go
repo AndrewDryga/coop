@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -143,7 +144,7 @@ func CompletionFingerprintFor(root string, task Item) (CompletionFingerprint, er
 }
 
 func completionFingerprintWithReceipt(task Item, receipt string, receiptBusy bool) (CompletionFingerprint, error) {
-	info, err := os.Lstat(task.Dir)
+	info, err := lstatTaskPath(task.Dir)
 	if err != nil {
 		return CompletionFingerprint{}, err
 	}
@@ -177,24 +178,25 @@ func completionFingerprintLocked(task Item, lock crashCompletionLock) (Completio
 // artifacts.
 func walkCompletionTree(taskDir string) ([]completionTreeEntry, error) {
 	walk := []completionTreeEntry{} // non-nil even when empty: a walk marks a fingerprint as live
-	err := filepath.WalkDir(taskDir, func(path string, entry os.DirEntry, walkErr error) error {
+	root, err := OpenTaskMetadataRoot(taskDir)
+	if err != nil {
+		return walk, err
+	}
+	defer root.Close()
+	err = fs.WalkDir(root.FS(), ".", func(rel string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if path == taskDir {
+		if rel == "." {
 			return nil
 		}
-		info, err := os.Lstat(path)
+		info, err := root.Lstat(rel)
 		if err != nil {
 			return err
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		if !ok {
-			return fmt.Errorf("task completion child %q has unsupported file metadata", path)
-		}
-		rel, err := filepath.Rel(taskDir, path)
-		if err != nil {
-			return err
+			return fmt.Errorf("task completion child %q has unsupported file metadata", filepath.Join(taskDir, rel))
 		}
 		sec, nsec := statChangeTime(stat)
 		walk = append(walk, completionTreeEntry{rel: rel, mode: uint32(info.Mode()), size: info.Size(),

@@ -370,6 +370,15 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (*toolResult,
 		s.rememberTerminalRefusal(call.Name, call.Arguments, r)
 		return r, nil
 	}
+	// The box can swap any folder in its workspace while this call runs. Pinned, every queue read
+	// and write of the call stays in the folders the pin opened (tasks.PinQueues).
+	release, err := tasks.PinQueues(s.authority.Workspace, s.authority.QueueRoots)
+	if err != nil {
+		r := refusal(fmt.Sprintf("open the task queues: %v", err))
+		s.rememberTerminalRefusal(call.Name, call.Arguments, r)
+		return r, nil
+	}
+	defer release()
 	result := t.run(s, ctx, call.Arguments)
 	s.rememberTerminalRefusal(call.Name, call.Arguments, result)
 	return result, nil

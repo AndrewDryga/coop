@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -129,6 +130,23 @@ func decodeForkTaskProposal(data []byte) (ForkTaskProposal, error) {
 	return proposal, nil
 }
 
+// openSubrootNoWait opens the folder name in root as an os.Root. os.Root.OpenRoot waits on a FIFO
+// that a box swaps in after the folder was checked, so the folder is opened O_DIRECTORY|O_NONBLOCK
+// first, which fails at once on anything else, and the root is opened through that descriptor's
+// own name, never the folder's name again.
+func openSubrootNoWait(root *os.Root, name string) (*os.Root, error) {
+	dir, err := root.OpenFile(name, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	descriptor := fmt.Sprintf("/dev/fd/%d", dir.Fd())
+	if runtime.GOOS == "linux" {
+		descriptor = fmt.Sprintf("/proc/self/fd/%d", dir.Fd())
+	}
+	return os.OpenRoot(descriptor)
+}
+
 func openRealSubroot(base *os.Root, rel string) (*os.Root, error) {
 	rel = filepath.Clean(rel)
 	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -154,7 +172,7 @@ func openRealSubroot(base *os.Root, rel string) (*os.Root, error) {
 			}
 			return nil, fmt.Errorf("%q is a link or not a real directory", component)
 		}
-		next, err := root.OpenRoot(component)
+		next, err := openSubrootNoWait(root, component)
 		if err != nil {
 			root.Close()
 			return nil, err
@@ -206,7 +224,7 @@ func ensureRealSubroot(base *os.Root, rel string, mode os.FileMode) (*os.Root, e
 			}
 			return nil, fmt.Errorf("%q is a link or not a real directory", component)
 		}
-		next, err := root.OpenRoot(component)
+		next, err := openSubrootNoWait(root, component)
 		if err != nil {
 			root.Close()
 			return nil, err
