@@ -150,7 +150,8 @@ to a process or a container, or prints, it is supervision.
   folder refuse it; copies each record into folders it makes in a staging folder, so a
   box that held an old folder or file open keeps writing the old copy; moves generation anchors
   (each must stay one file with its workspace marker) and logs; publishes with a no-replace rename;
-  then removes the old folder. One move runs at a time (`forks/.moving.lock`). A project with
+  then removes the old folder, unless anything had to stay in it (an entry past the bounds, a
+  special file), which keeps it whole. One move runs at a time (`forks/.moving.lock`). A project with
   nothing to move gets an empty folder at once, so a `.coop` planted later is never read. On
   another disk an anchor cannot move: it stays, and so does the whole old folder, for an older
   build. Trap: a project nobody has opened since the upgrade still has its old place open to a box.

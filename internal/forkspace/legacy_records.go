@@ -43,7 +43,8 @@ var moveLegacyEntry = renameAtNoReplace
 //     folder or file of the old place open keeps writing the old copy. Generation anchors are moved
 //     instead, since each must stay one file with its fork's workspace marker, and so are logs, which
 //     only hold output. A link or other special file, or a file past legacyRecordLimit, stays behind.
-//   - The new folder takes its name in one no-replace rename, then the old one is removed.
+//   - The new folder takes its name in one no-replace rename, then the old one is removed, unless
+//     anything had to stay in it: then it is kept, for an older build or a person.
 //
 // A project with nothing to move gets its empty folder, so the old place is never read for it.
 // One move runs at a time, under a lock in Coop's private forks folder, in a staging folder named
@@ -119,8 +120,9 @@ func MoveLegacyForkRecords(repo string) error {
 	_ = to.Close()
 	move.close()
 	// The records are in place. Removing the old folder spares an older build stale records, unless
-	// an anchor had to stay there: then the old folder is still whole for an older build.
-	if !move.leftAnchor {
+	// anything had to stay there, an anchor that cannot cross disks or an entry past the bounds:
+	// then the old folder keeps it, for an older build or a person.
+	if !move.leftBehind {
 		_ = home.RemoveAll(".coop")
 	}
 	return nil
@@ -252,7 +254,7 @@ type legacyMove struct {
 	pending    []legacyEntry
 	moved      []legacyEntry
 	folders    []*os.File
-	leftAnchor bool
+	leftBehind bool
 	copied     int64
 	entries    int
 }
@@ -267,6 +269,7 @@ type legacyEntry struct {
 // to move.
 func (m *legacyMove) copy(from, to *os.File, depth int) error {
 	if depth > 8 {
+		m.leftBehind = true
 		return nil // deeper than any folder an older build made
 	}
 	names, err := from.Readdirnames(-1)
@@ -275,6 +278,7 @@ func (m *legacyMove) copy(from, to *os.File, depth int) error {
 	}
 	for _, name := range names {
 		if m.entries++; m.entries > legacyEntryBudget {
+			m.leftBehind = true
 			return nil
 		}
 		var st unix.Stat_t
@@ -286,11 +290,14 @@ func (m *legacyMove) copy(from, to *os.File, depth int) error {
 			err = m.copyFolder(from, to, name, depth)
 		case st.Mode&unix.S_IFMT != unix.S_IFREG:
 			// A link, pipe, socket or device: no older build made one.
+			m.leftBehind = true
 		case strings.HasSuffix(name, ".anchor") || strings.HasSuffix(name, ".log"):
 			m.pending = append(m.pending, legacyEntry{from: from, to: to, name: name, log: strings.HasSuffix(name, ".log")})
 		case st.Size <= legacyRecordLimit && m.copied+st.Size <= legacyCopyBudget:
 			m.copied += st.Size
 			err = copyLegacyRecord(from, to, name, legacyRecordLimit)
+		default:
+			m.leftBehind = true
 		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", filepath.Join(from.Name(), name), err)
@@ -360,6 +367,7 @@ func (m *legacyMove) finish() error {
 			m.moved = append(m.moved, entry)
 		case errors.Is(err, syscall.EXDEV) && entry.log:
 			if m.copied+legacyLogLimit > legacyCopyBudget {
+				m.leftBehind = true
 				continue
 			}
 			m.copied += legacyLogLimit
@@ -367,7 +375,7 @@ func (m *legacyMove) finish() error {
 				return err
 			}
 		case errors.Is(err, syscall.EXDEV):
-			m.leftAnchor = true
+			m.leftBehind = true
 		default:
 			return fmt.Errorf("%s: %w", filepath.Join(entry.from.Name(), entry.name), err)
 		}

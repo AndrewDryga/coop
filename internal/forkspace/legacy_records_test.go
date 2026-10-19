@@ -244,7 +244,8 @@ func TestLegacyForkRecordsResumeAMoveThatCrashed(t *testing.T) {
 }
 
 // A box that fills an older project's folder cannot make the move copy without bound: past either
-// budget the rest stays behind, and the move still finishes.
+// budget the rest stays behind, in the old folder, which is kept so nothing is lost, and the move
+// still finishes.
 func TestLegacyForkRecordsMoveWithinItsBudgets(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -277,6 +278,9 @@ func TestLegacyForkRecordsMoveWithinItsBudgets(t *testing.T) {
 			}
 			if len(moved) == 0 || len(moved) > tc.most {
 				t.Fatalf("moved %d records; want at most %d within the %s budget", len(moved), tc.most, tc.name)
+			}
+			if left, err := os.ReadDir(filepath.Join(Home(repo), ".coop")); err != nil || len(left) != 8 {
+				t.Fatalf("old folder = %d entries, %v; want it kept whole when records stayed behind", len(left), err)
 			}
 		})
 	}
