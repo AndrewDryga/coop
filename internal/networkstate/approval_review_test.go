@@ -183,6 +183,35 @@ func TestApprovalReviewExplainsHowToRecoverAMalformedReservedMarker(t *testing.T
 	}
 }
 
+// A marker naming this project's own pair whose private anchor is gone cannot be completed: the
+// refusal names the same guarded recovery, and following it lets the project be approved.
+func TestApprovalReviewExplainsHowToRecoverAMarkerWithoutItsAnchor(t *testing.T) {
+	s, project := openStore(t), t.TempDir()
+	requests := []egress.Rule{rule("docs.example.com")}
+	review, err := s.ReviewApproval(project, egress.Filtered, requests, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(s.Path(), projectAnchorName(review.After.ProjectID, review.After.ProjectAnchor))); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.ReviewApproval(project, egress.Filtered, requests, nil, nil)
+	if err == nil {
+		t.Fatal("a marker without its private anchor was accepted")
+	}
+	for _, want := range []string{"ls -l -- ./.coop-network-approval", "rm -- ./.coop-network-approval", "coop approve"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("recovery error lacks %q: %v", want, err)
+		}
+	}
+	if err := os.Remove(filepath.Join(project, ProjectApprovalMarker)); err != nil {
+		t.Fatal(err)
+	}
+	if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
+		t.Fatalf("approving after removing the marker as the refusal says: %v", err)
+	}
+}
+
 func TestApprovalDigestBindsTheExactReviewedRequest(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
 	requests := []egress.Rule{rule("reviewed.example.com")}

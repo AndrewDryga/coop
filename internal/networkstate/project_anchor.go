@@ -32,6 +32,9 @@ func (s *Store) projectAnchorBinding(project, projectID, anchor string) fsidenti
 		AnchorName: projectAnchorName(projectID, anchor), Body: projectAnchorBody(projectID, anchor)}
 }
 
+// markerRecovery is the guarded way out of a checkout marker coop cannot use: look before removing.
+const markerRecovery = "inspect it with 'ls -l -- ./.coop-network-approval', remove it with 'rm -- ./.coop-network-approval' only if it is safe to do so, then run 'coop approve' again"
+
 // ensureProjectAnchor creates no network grant. It prepares (or reuses after an interrupted or
 // cancelled review) the unforgeable directory binding whose random name is included in the review
 // digest. Only publishing an Approval turns that binding into authority.
@@ -41,7 +44,7 @@ func (s *Store) ensureProjectAnchor(project, projectID string, allowTransition b
 	case err == nil:
 		boundProject, anchor, parseErr := parseAnyProjectAnchorBody(body)
 		if parseErr != nil {
-			return "", fmt.Errorf("reserved network approval marker is not valid: %w; inspect it with 'ls -l -- ./.coop-network-approval', remove it with 'rm -- ./.coop-network-approval' only if it is safe to do so, then run 'coop approve' again", parseErr)
+			return "", fmt.Errorf("reserved network approval marker is not valid: %w; "+markerRecovery, parseErr)
 		}
 		if boundProject != projectID {
 			if !allowTransition {
@@ -64,7 +67,7 @@ func (s *Store) ensureProjectAnchor(project, projectID string, allowTransition b
 		} else {
 			root, openErr := fsidentity.Open(s.projectAnchorBinding(project, projectID, anchor))
 			if openErr != nil {
-				return "", fmt.Errorf("validate pending project identity: %w", openErr)
+				return "", fmt.Errorf("validate pending project identity: %w; "+markerRecovery, openErr)
 			}
 			if closeErr := root.Close(); closeErr != nil {
 				return "", closeErr
