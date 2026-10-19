@@ -17,6 +17,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -210,6 +211,9 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The coop children keep Coop's private state under their HOME, as a real coop does; this
+	// test's own fork-record calls must find the same records.
+	t.Setenv(forkspace.PrivateStateRootEnv, filepath.Join(layout.Home, ".local", "state", "coop"))
 	moduleRoot, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
