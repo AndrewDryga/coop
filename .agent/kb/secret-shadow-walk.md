@@ -3,7 +3,7 @@ name: secret-shadow-walk
 description: every launch walks the whole checkout from a real-folder root (a linked root and a link to home are refused, though a box that writes the root's parent can still swap it), gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs; the .coopignore files above the repository, short of home, apply too
 subsystem: box
 sources: [internal/box/mounts.go, internal/box/hidden_files.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, internal/forkctl/merge.go, internal/sessionsvc/review_scan.go, tools/lifecyclebench]
-updated: 2026-10-18
+updated: 2026-10-19
 ---
 
 `box.ComputeMounts` runs on every launch (`run.go`). It walks the whole repository, skipping only
@@ -144,9 +144,11 @@ publication refuses; a preset file under it fails naming the .coopignore, not th
 in `coop presets` too.
 
 The prefix keeps the spelling of the repository path it was given. FindRepo uses the disk's own
-spelling, but a `COOP_REPO` typed in another case on a case-insensitive disk (`~/work/App` for
-`~/work/app`) builds the prefix in that case, so a wildcard path rule from a folder above
-(`app/config/*.yml`) misses. Base patterns, and the final name of a literal path rule, still match.
+spelling, and since 2026-10-19 ResolveRepo gives a `COOP_REPO` typed in another case the disk's
+spelling too (`fsidentity.StoredPath`), so a wildcard path rule from a folder above
+(`app/config/*.yml`) matches either way. A caller that builds a repository path itself in another
+case still gets its prefix in that case; base patterns, and the final name of a literal path rule,
+match regardless.
 
 Tests reach this walk from every repository they create under the machine's temp folder, so a
 stray `.coopignore` above it changes their answers: one holding `*` in TMPDIR failed 50 box tests
@@ -161,6 +163,9 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-10-19 — ResolveRepo spells a COOP_REPO override as the disk stores it, so the prefix of a
+  case-mismatched override matches folder rules from above (task
+  2026-10-19-key-the-task-lease-registry-by-the-project-s-sto).
 - 2026-10-18 — a launch remembers what it hid by identity, so a file or folder a box moves stays
   hidden (task 2026-10-16-keep-wildcard-and-nested-coopignore-rules-on-a-f).
 - 2026-10-17 — every test binary's HOME is inside its teststate folder, so the stray-file run passes

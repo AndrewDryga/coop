@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`COOP_REPO` typed in another letter case names the same project.** On a Mac's disk, which
+  ignores letter case, `COOP_REPO=~/projects/APP` and `~/Projects/app` are one folder, but Coop
+  kept the typed spelling, so task claims, fork records and network approvals split between the
+  two spellings and two loops could claim the same task. Coop now uses the folder's own spelling.
+  If you set `COOP_REPO` in a case other than the folder's, task claims and network approvals
+  made under that spelling are not found once: approve the project's network rules again with
+  `coop approve`.
+
 - **One unreadable network run record no longer stops cleanup of the others.** `coop net recover`
   and the pass before each filtered launch cleaned up nothing when one recorded run could not be
   read. They now clean up every run they can read and never remove anything because of a record

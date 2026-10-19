@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/fsidentity"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
 )
 
@@ -19,7 +20,10 @@ import (
 // The override is followed through links to the folder they name. The secret scan walks the
 // repository from its root and never follows a link, so a linked override would be mounted whole
 // with no secret hidden; and the working directory never names a link, so everything keyed by the
-// repository's path would see two projects. An override that cannot be resolved, one that does not
+// repository's path would see two projects. For the same reason the override takes the spelling the
+// disk stores: on a disk that ignores letter case (a Mac's), COOP_REPO=~/projects/APP names the
+// folder the working directory calls ~/Projects/app, and task leases, fork records and network
+// approvals must not split between the two. An override that cannot be resolved, one that does not
 // exist say, is kept as given, for the command that uses it to report.
 //
 // A link may not take the override to the home folder or a folder above it. A box that can write
@@ -36,6 +40,9 @@ func ResolveRepo(override string) (string, error) {
 			return "", err
 		}
 		resolved := canonicalWorkspace(abs)
+		if stored, err := fsidentity.StoredPath(resolved); err == nil {
+			resolved = stored
+		}
 		if resolved != abs {
 			if home, above := shadowpath.HomeOrAbove(resolved); above {
 				if rel, err := filepath.Rel(abs, home); err != nil || !filepath.IsLocal(rel) {

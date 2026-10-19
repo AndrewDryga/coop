@@ -311,6 +311,35 @@ func TestResolveRepoFollowsALinkedOverride(t *testing.T) {
 	}
 }
 
+// On a disk that ignores letter case, an override typed in another case names the folder the
+// working directory names, in the folder's own spelling, so nothing keyed by the project's path
+// (task leases, fork records, network approvals) splits in two. On a disk that keeps case the other
+// spelling is another folder, kept as given.
+func TestResolveRepoTakesTheFolderSpellingOfAnOverride(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo := filepath.Join(t.TempDir(), "Project")
+	mkdirs(t, repo)
+	real := realPath(t, repo)
+	upper := filepath.Join(filepath.Dir(real), "PROJECT")
+	want, err := os.Lstat(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := os.Lstat(upper)
+	folds := err == nil && os.SameFile(want, other)
+	got, err := ResolveRepo(upper)
+	if expected := map[bool]string{true: real, false: upper}[folds]; err != nil || got != expected {
+		t.Fatalf("ResolveRepo(%q) = %q, %v; want %s (folds case: %v)", upper, got, err, expected, folds)
+	}
+	if !folds {
+		return
+	}
+	t.Chdir(repo)
+	if fromWD, err := ResolveRepo(""); err != nil || fromWD != got {
+		t.Fatalf("the working directory names %q, %v; the override named %q", fromWD, err, got)
+	}
+}
+
 // A box that can write the folder above an override can swap it for a link to the home folder or
 // above it, and the next launch would mount all the user's files, so an override a link takes there
 // is refused, whether the link is its last part or an earlier one, and the refusal names the folder
