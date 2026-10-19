@@ -78,8 +78,14 @@ func ProjectNetworkAccess(ctx context.Context, cfg *config.Config, repo string) 
 	if out.Approval, err = store.Approval(canonical); err != nil {
 		return NetworkAccess{}, err
 	}
-	out.Source, out.RequestedMode = postureSource(input, out.Approval), approvalMode(input, out.Approval)
-	out.Add, out.Remove = NetworkRuleDiff(approvedEnvelope(out.Approval), out.Requested)
+	// The change is the one `coop approve` would show, so it starts where a review starts: for one
+	// upgrade, from an approval an older Coop filed, which out.Approval never lists as in effect.
+	prior, err := store.PriorApproval(canonical)
+	if err != nil {
+		return NetworkAccess{}, err
+	}
+	out.Source, out.RequestedMode = postureSource(input, out.Approval), approvalMode(input, prior)
+	out.Add, out.Remove = NetworkRuleDiff(approvedEnvelope(prior), out.Requested)
 	return out, nil
 }
 
