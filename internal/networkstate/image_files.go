@@ -1,7 +1,6 @@
 package networkstate
 
 import (
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -40,10 +39,9 @@ type ImageFileRecord struct {
 	Files map[string]ImageFile `json:"files"`
 }
 
-// imageFilesID keys a record by the image AND the exact set of paths, so a
+// imageFilesID names a record by the image AND the exact set of paths, so a
 // release that pins one more entry point cannot be satisfied by the record
-// written before it. Like every other record name here it is keyed with the
-// owner key: a process that cannot compute the name cannot plant one either.
+// written before it.
 func (s *Store) imageFilesID(image string, paths []string) (string, []string, error) {
 	invalid := errors.New("invalid image file record identity")
 	if !safeRecordToken(image, 256) || len(paths) == 0 || len(paths) > maxImageFilePaths {
@@ -51,15 +49,15 @@ func (s *Store) imageFilesID(image string, paths []string) (string, []string, er
 	}
 	sorted := slices.Clone(paths)
 	slices.Sort(sorted)
-	mac := hmac.New(sha256.New, s.key)
-	_, _ = mac.Write([]byte("image-files-v1\x00" + image + "\x00"))
+	h := sha256.New()
+	_, _ = h.Write([]byte("image-files-v2\x00" + image + "\x00"))
 	for i, path := range sorted {
 		if !safeRecordToken(path, 4096) || !strings.HasPrefix(path, "/") || (i > 0 && sorted[i-1] == path) {
 			return "", nil, invalid
 		}
-		_, _ = mac.Write([]byte(path + "\x00"))
+		_, _ = h.Write([]byte(path + "\x00"))
 	}
-	return hex.EncodeToString(mac.Sum(nil)), sorted, nil
+	return hex.EncodeToString(h.Sum(nil)), sorted, nil
 }
 
 func imageFilesRecord(id string) string { return "imagefiles-" + id + ".json" }

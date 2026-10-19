@@ -3,7 +3,6 @@ package networkstate
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -25,6 +24,10 @@ const QualificationContract = "visible-sni-tls-ports-v3"
 
 const maxQualificationBytes = 256 << 10
 
+// qualificationVersion is the setup record format this coop writes and reads. A record of another
+// version is another coop's: `coop net setup` writes a current one.
+const qualificationVersion = 2
+
 // QualifiedClient is one client build the qualified image actually contains,
 // read off the locked closure: the provider it belongs to, the client kind it
 // launches and the exact package version. It is coverage, not a grant, and the
@@ -35,34 +38,25 @@ type QualifiedClient struct {
 	Version  string        `json:"version"`
 }
 
-// QualificationProof is the ONE smoke run this host record rests on. The
-// release's tagged runtime suite is the published fault and provider matrix;
-// this proves the images work on this daemon. EvidenceDigest covers a retained
-// bounded host observation, never agent output or a requester's passed:true.
-type QualificationProof struct {
-	RunID          string `json:"run_id"`
-	Epoch          string `json:"epoch"`
-	ReceiptDigest  string `json:"receipt_digest"`
-	EvidenceDigest string `json:"evidence_digest"`
-}
-
-// Qualification is the per-host preflight record `coop net setup` publishes. It
-// inlines the exact image pair and runtime binding it proves: an unproven build
-// is not a reference anything can launch from.
+// Qualification is the per-host record `coop net setup` writes once its smoke run passed: the
+// exact image pair and runtime binding it proved, the client builds that image holds, and the run
+// that proved them (SmokeRun). The release's tagged runtime suite is the published fault and
+// provider matrix; this proves the images work on this daemon. Its id is the hash of the rest:
+// what makes it authority is that only coop writes the store, which no box can reach.
 type Qualification struct {
-	Version     int                `json:"version"`
-	ID          string             `json:"id"`
-	Contract    string             `json:"contract"`
-	Candidate   CandidateSpec      `json:"candidate"`
-	Clients     []QualifiedClient  `json:"clients"`
-	Smoke       QualificationProof `json:"smoke"`
-	CompletedAt time.Time          `json:"completed_at"`
+	Version     int               `json:"version"`
+	ID          string            `json:"id"`
+	Contract    string            `json:"contract"`
+	Candidate   CandidateSpec     `json:"candidate"`
+	Clients     []QualifiedClient `json:"clients"`
+	SmokeRun    string            `json:"smoke_run"`
+	CompletedAt time.Time         `json:"completed_at"`
 }
 
-// QualificationSmoke is a host-only capability. Its zero value and serialized
-// form confer no authority, and it cannot be reconstructed from a worker
-// request. A crashed setup is not resumable: cleanup runs through execution
-// custody and the whole preflight is simply rerun.
+// QualificationSmoke is one setup in progress: the image pair and client builds it is proving.
+// Only the setup workflow makes one, and it is nothing until Complete has read the smoke run's own
+// sealed receipt. A crashed setup is not resumable: cleanup runs through execution custody and
+// the whole preflight is simply rerun.
 type QualificationSmoke struct {
 	store     *Store
 	candidate CandidateSpec
@@ -95,22 +89,18 @@ func (s *Store) BeginQualification(candidate CandidateSpec, clients []QualifiedC
 	return &QualificationSmoke{store: s, candidate: candidate, clients: clients}, nil
 }
 
-func (t *QualificationSmoke) intact() error {
+func (t *QualificationSmoke) open() error {
 	if t == nil || t.store == nil {
 		return errors.New("qualification requires a private host preflight")
 	}
-	candidate, err := canonicalCandidate(t.candidate)
-	if err != nil || !equalJSON(candidate, t.candidate) {
-		return errors.New("qualification candidate is invalid or changed")
-	}
-	return t.store.intactAuthority()
+	return nil
 }
 
 // CreateExecution registers the smoke through the ordinary engine, so what the
 // preflight proves is exactly what a workload later gets. One preflight runs one
 // smoke: a second attempt needs a new setup.
 func (t *QualificationSmoke) CreateExecution(ctx context.Context, spec ExecutionSpec) (Execution, error) {
-	if err := t.intact(); err != nil {
+	if err := t.open(); err != nil {
 		return Execution{}, err
 	}
 	if spec.QualificationID != "" || t.runID != "" {
@@ -123,47 +113,12 @@ func (t *QualificationSmoke) CreateExecution(ctx context.Context, spec Execution
 	return record, err
 }
 
-func (t *QualificationSmoke) RecordEvidence(runID string, data []byte) (string, error) {
-	if err := t.intact(); err != nil {
-		return "", err
-	}
-	if len(data) == 0 || len(data) > MaxQualificationEvidenceBytes || !json.Valid(data) {
-		return "", errors.New("qualification observations require bounded JSON")
-	}
-	r, err := t.store.Execution(runID)
-	if err != nil || runID != t.runID || r.Purpose != "qualification" || r.ClientImage != t.candidate.ClientImage ||
-		r.QualificationContract != QualificationContract || r.Receipt == nil {
-		return "", errors.New("qualification observations require a sealed owned smoke run")
-	}
-	if err := validateQualificationEvidence(data, r.Receipt); err != nil {
-		return "", err
-	}
-	name := "qualification-evidence-" + runID + ".json"
-	if err := t.store.publish(name, data, false); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return "", err
-		}
-		prior, err := t.store.read(name)
-		if err != nil || !bytes.Equal(prior, data) {
-			return "", errors.New("qualification observations cannot be replaced")
-		}
-	}
-	if err := t.store.checkRootPath(); err != nil {
-		return "", err
-	}
-	if err := t.intact(); err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(data)
-	return hex.EncodeToString(digest[:]), nil
-}
-
-// Complete publishes the record once the smoke's own sealed receipt shows the
+// Complete writes the record once the smoke's own sealed receipt shows the
 // workload ran to a clean end, nothing is still owned, the proxy accounted for
 // every byte, and the gateway both allowed the smoke domain and denied
 // something. Later reads never depend on receipts that may legitimately expire.
 func (t *QualificationSmoke) Complete(domain string) (Qualification, error) {
-	if err := t.intact(); err != nil {
+	if err := t.open(); err != nil {
 		return Qualification{}, err
 	}
 	r, err := t.store.Execution(t.runID)
@@ -178,22 +133,13 @@ func (t *QualificationSmoke) Complete(domain string) (Qualification, error) {
 	if err := validateSmokeOutcome(r, domain); err != nil {
 		return Qualification{}, err
 	}
-	evidence, err := t.store.read("qualification-evidence-" + r.ID + ".json")
-	if err != nil {
-		return Qualification{}, errors.New("qualification observation artifact is unavailable")
-	}
-	if err := validateQualificationEvidence(evidence, r.Receipt); err != nil {
-		return Qualification{}, err
-	}
-	digest := sha256.Sum256(evidence)
-	q := Qualification{Version: 1, Contract: QualificationContract, Candidate: t.candidate, Clients: t.clients,
-		Smoke:       QualificationProof{RunID: r.ID, Epoch: r.Epoch, ReceiptDigest: r.Receipt.Digest, EvidenceDigest: hex.EncodeToString(digest[:])},
-		CompletedAt: *r.Receipt.EndedAt}
+	q := Qualification{Version: qualificationVersion, Contract: QualificationContract, Candidate: t.candidate,
+		Clients: t.clients, SmokeRun: r.ID, CompletedAt: *r.Receipt.EndedAt}
 	q, err = canonicalQualification(q)
 	if err != nil {
 		return Qualification{}, err
 	}
-	q.ID = t.store.qualificationID(q)
+	q.ID = qualificationID(q)
 	data, err := json.Marshal(q)
 	if err != nil || len(data) > maxQualificationBytes {
 		return Qualification{}, errors.New("network qualification exceeds its byte bound")
@@ -208,13 +154,7 @@ func (t *QualificationSmoke) Complete(domain string) (Qualification, error) {
 			return Qualification{}, errors.New("network qualification identity collision or invalid content")
 		}
 	}
-	if err := t.store.checkRootPath(); err != nil {
-		return Qualification{}, err
-	}
-	if err := t.intact(); err != nil {
-		return Qualification{}, err
-	}
-	return q, nil
+	return q, t.store.checkRootPath()
 }
 
 // validateSmokeOutcome reads the sealed receipt only. A caller cannot assert any
@@ -284,9 +224,8 @@ func canonicalQualifiedClients(clients []QualifiedClient) ([]QualifiedClient, er
 }
 
 func canonicalQualification(q Qualification) (Qualification, error) {
-	if q.Version != 1 || q.Contract != QualificationContract || q.CompletedAt.IsZero() ||
-		!lowerHex(q.Smoke.RunID, 32) || !lowerHex(q.Smoke.Epoch, 32) ||
-		!lowerHex(q.Smoke.ReceiptDigest, 64) || !lowerHex(q.Smoke.EvidenceDigest, 64) {
+	if q.Version != qualificationVersion || q.Contract != QualificationContract || q.CompletedAt.IsZero() ||
+		!lowerHex(q.SmokeRun, 32) {
 		return Qualification{}, errors.New("a setup record on this host is unreadable — run 'coop net setup'")
 	}
 	var err error
@@ -299,13 +238,11 @@ func canonicalQualification(q Qualification) (Qualification, error) {
 	return q, nil
 }
 
-func (s *Store) qualificationID(q Qualification) string {
+func qualificationID(q Qualification) string {
 	q.ID = ""
 	data, _ := json.Marshal(q)
-	mac := hmac.New(sha256.New, s.key)
-	_, _ = mac.Write([]byte("network-qualification-v1\x00"))
-	_, _ = mac.Write(data)
-	return hex.EncodeToString(mac.Sum(nil))
+	sum := sha256.Sum256(append([]byte("network-qualification-v2\x00"), data...))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *Store) Qualification(id string) (Qualification, error) {
@@ -323,17 +260,14 @@ func (s *Store) Qualification(id string) (Qualification, error) {
 	if err := json.Unmarshal(data, &q); err != nil {
 		return Qualification{}, err
 	}
+	if q.Version != qualificationVersion {
+		return Qualification{}, errors.New("this host's network setup was made by an older coop — run 'coop net setup'")
+	}
 	canonical, err := canonicalQualification(q)
-	if err != nil || q.ID != id || !equalJSON(canonical, q) || !hmac.Equal([]byte(s.qualificationID(q)), []byte(id)) {
-		return Qualification{}, errors.New("a setup record on this host is unreadable, or was not written by this coop — run 'coop net setup'")
+	if err != nil || q.ID != id || !equalJSON(canonical, q) || qualificationID(q) != id {
+		return Qualification{}, errors.New("a setup record on this host is unreadable — run 'coop net setup'")
 	}
-	if err := s.checkRootPath(); err != nil {
-		return Qualification{}, err
-	}
-	if err := s.intactAuthority(); err != nil {
-		return Qualification{}, err
-	}
-	return q, nil
+	return q, s.checkRootPath()
 }
 
 // Qualifications returns the host's completed records, newest first. It lists
@@ -367,8 +301,8 @@ func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
 		if !ok || !lowerHex(id, 64) {
 			continue
 		}
-		// A record from an earlier enforcement contract is not this host's setup: its
-		// canonical frame and owner-bound id no longer verify under the current rules.
+		// A record from an earlier enforcement contract or record version is not this host's
+		// setup: its canonical frame and id no longer verify under the current rules.
 		// Skip it instead of failing the whole listing, so one retired record cannot
 		// take every net verb down; the current-contract check in RequireLaunch still
 		// refuses to launch on it, and a launch then sets the host up again.
@@ -412,15 +346,16 @@ func dependencyReference(d egress.Dependency) string {
 	return d.Provider + "@" + d.Version + "/" + string(d.Client) + "/" + d.Backend + "/" + d.AuthMode
 }
 
-// qualificationIsCurrent reports whether the record file names the current contract.
-// It reads only the contract field; verification happens in Qualification.
+// qualificationIsCurrent reports whether the record file is this coop's: the current format and
+// contract. It reads only those fields; verification happens in Qualification.
 func (s *Store) qualificationIsCurrent(name string) bool {
 	data, err := s.read(name)
 	if err != nil {
 		return false
 	}
 	var head struct {
+		Version  int    `json:"version"`
 		Contract string `json:"contract"`
 	}
-	return json.Unmarshal(data, &head) == nil && head.Contract == QualificationContract
+	return json.Unmarshal(data, &head) == nil && head.Version == qualificationVersion && head.Contract == QualificationContract
 }

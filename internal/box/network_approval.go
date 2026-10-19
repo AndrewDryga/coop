@@ -143,7 +143,7 @@ func loadProjectNetworkReviewInputs(cfg *config.Config, repo string) (projectNet
 	}
 	var before *networkstate.Approval
 	if existing, openErr := networkstate.OpenExisting(root, exposed); openErr == nil {
-		before, err = existing.Approval(canonical)
+		before, err = existing.PriorApproval(canonical)
 		err = errors.Join(err, existing.Close())
 		if err != nil {
 			return projectNetworkReviewInputs{}, err
@@ -189,7 +189,7 @@ func ReviewProjectNetworkContext(ctx context.Context, cfg *config.Config, repo s
 	// A missing, replaced, or moved marker is a transition: make that decision from the validator,
 	// not an unlocked path probe, then repeat the whole policy read under the exclusive launch lock.
 	if existing, openErr := networkstate.OpenExisting(inputs.root, inputs.exposed); openErr == nil {
-		before, reviewErr := existing.Approval(inputs.canonical)
+		before, reviewErr := existing.PriorApproval(inputs.canonical)
 		if reviewErr == nil {
 			mode := approvalMode(inputs.admission, before)
 			var review networkstate.ApprovalReview
@@ -240,7 +240,7 @@ func ReviewProjectNetworkContext(ctx context.Context, cfg *config.Config, repo s
 			err = errors.Join(err, store.Close())
 		}
 	}()
-	before, err := store.Approval(inputs.canonical)
+	before, err := store.PriorApproval(inputs.canonical)
 	if err != nil {
 		return nil, err
 	}

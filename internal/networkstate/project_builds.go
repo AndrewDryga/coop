@@ -1,7 +1,6 @@
 package networkstate
 
 import (
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -22,15 +21,14 @@ type projectBuildRecord struct {
 	Image   string `json:"image"`
 }
 
-// projectBuildID keys a record by its tag with the owner key, like every other record name here: a
-// process that cannot compute the name cannot plant one either.
+// projectBuildID names a record by its tag. Like every record name here it is a plain hash: what
+// keeps a planted record out is that only coop writes the store, which no box can reach.
 func (s *Store) projectBuildID(tag string) (string, error) {
 	if !safeRecordToken(tag, 256) {
 		return "", errors.New("invalid project build record identity")
 	}
-	mac := hmac.New(sha256.New, s.key)
-	_, _ = mac.Write([]byte("project-build-v1\x00" + tag))
-	return hex.EncodeToString(mac.Sum(nil)), nil
+	sum := sha256.Sum256([]byte("project-build-v2\x00" + tag))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func projectBuildRecordName(id string) string { return "projectbuild-" + id + ".json" }

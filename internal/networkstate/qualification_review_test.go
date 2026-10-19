@@ -9,19 +9,12 @@ import (
 	"testing"
 )
 
-func TestQualificationCannotRerunItsSmokeOrReplaceObservations(t *testing.T) {
+// One setup runs one smoke: a second attempt needs a new setup, so a preflight cannot keep the
+// run that happened to pass.
+func TestQualificationCannotRerunItsSmoke(t *testing.T) {
 	smoke, spec := qualificationFixture(t)
 	if got, err := smoke.CreateExecution(context.Background(), spec); err == nil || got.ID != "" {
 		t.Fatal("a preflight cherry-picked a repeated smoke attempt")
-	}
-	if _, err := smoke.RecordEvidence(smoke.runID, []byte(`{"changed":true}`)); err == nil {
-		t.Fatal("completed observations replaced")
-	}
-	if err := smoke.store.root.Remove("qualification-evidence-" + smoke.runID + ".json"); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := smoke.Complete(smokeDomain); err == nil || got.ID != "" {
-		t.Fatal("absent observation artifact qualified")
 	}
 }
 

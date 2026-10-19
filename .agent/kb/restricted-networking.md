@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile]
+sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/legacy_records.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile]
 updated: 2026-10-19
 ---
 
@@ -57,12 +57,12 @@ box/network_approval.go), and the same capability gate a launch applies — an u
 refused at review, not remembered. `coop net forget` is the way back and the only caller of
 `Store.Forget` (networkstate/approval_forget.go): it removes exactly one approval file under the
 approval lock, proves the removal, and touches no evidence. It cannot sweep — a record is filed
-under a keyed hash of the canonical path and stores no path, so the store can answer "is this
-project approved?" and never "which projects are?" — and it derives that id LEXICALLY
-(`Store.ApprovalAt`), which is the only way to name the record a deleted checkout left behind. An
-approval made through a symlink is filed under its target, so once the link is gone its path locates
-nothing, and forget says so instead of removing another project's. Observed traffic is evidence,
-never a grant. Admission marks the resolved posture explicit through `cfg.SetEgress` (in
+under a plain SHA-256 of the canonical path (`Store.projectKey`) and stores no path, so the store
+can answer "is this project approved?" and never "which projects are?" — and it derives that id
+LEXICALLY (`Store.ApprovalAt`), which is the only way to name the record a deleted checkout left
+behind. An approval made through a symlink is filed under its target, so once the link is gone its
+path locates nothing, and forget says so instead of removing another project's. Observed traffic is
+evidence, never a grant. Admission marks the resolved posture explicit through `cfg.SetEgress` (in
 `AdmitNetwork`), so the project overlay cannot decide the mode a second time. A run that neither
 asks for filtered nor has a remembered posture writes NO host state — the preview creates no owner
 key (`networkstate.PreviewAdmission`).
@@ -127,10 +127,12 @@ is never in `make check`, CI does not run it yet (backlog
 one run per daemon. Credentialed providers through the gateway are the live
 `make provider-network-live-e2e-all`.
 The per-host half is `SetupNetwork`: it builds the pinned gateway and locked client images for the
-bound daemon, runs ONE smoke through the ordinary launch
-engine (allowed TLS with no proxy variables; a denied name, a raw IP, metadata and the resolver all
-refused — `smokeScript`, `setupChecks`), and records the runtime binding, image digests, contract
-and receipt. It is machinery, not a decision, so an ordinary filtered launch runs it itself when
+bound daemon, runs ONE smoke through the ordinary launch engine (allowed TLS with no proxy
+variables; a denied name, a raw IP, metadata and the resolver all refused — `smokeScript`,
+`setupChecks`), and once that run's own sealed receipt passes, writes a plain version 2 record: the
+image pair and runtime binding it proved, the client builds, the contract and the smoke run's id,
+under the hash of its content (`qualificationID`). It is machinery, not a decision, so an ordinary
+filtered launch runs it itself when
 `currentQualification` finds no record that covers the policy, was made on this daemon by this
 coop's definitions AND still names an image pair that exists (`box/network_admission.go`); the
 launch continues on the record setup left. Setups serialize on `Store.LockSetup` (`setup-lock`
@@ -329,6 +331,14 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-10-19 — record names are plain SHA-256 of their inputs, no longer keyed with `owner.key`,
+  which now only keys snapshot fingerprints and review digests. An approval filed under the old
+  keyed name (versions 1 to 3; new ones are 4) refuses its project, marker or not, until
+  `coop approve` or `coop net forget` retires it; a review starts from it (`Store.PriorApproval`),
+  so it proposes the old posture and shows only what changed since; an old withdrawal moves to the
+  new name on lookup under the approval lock (networkstate/legacy_records.go). The setup record is
+  a plain version 2 with the smoke run's id; the evidence step is gone (task
+  2026-10-15-simplify-network-record-keys-and-setup-records).
 - 2026-10-19 — bundle content is pinned by `TestNetworkBundlesChangeOnlyWithANewVersion`, not by
   per-host copies on first admission (task 2026-10-15-simplify-network-record-keys-and-setup-records).
 - 2026-10-17 — replaced every line-number citation with the function, type or field it

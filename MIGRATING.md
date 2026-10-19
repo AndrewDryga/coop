@@ -1,5 +1,22 @@
 # Migrating
 
+## Unreleased: network records are renamed
+
+Coop now names each project's network records by the project's folder, not with the key in
+`~/.local/state/coop/network/owner.key`.
+
+- Run `coop net setup` once. This release's new images already need it, and Coop no longer reads
+  the old setup record.
+- Run `coop approve` once in each project that uses filtered networking, and review its access
+  again. Until you do, its runs stop with "coop renamed its network records". The review shows
+  what changed since you last approved. To take a project's access back instead, run
+  `coop net forget`.
+- A project whose access you took back with `coop net forget` stays that way: its old record moves
+  to the new name the first time Coop looks at the project.
+- Start again every worker session created before the upgrade. Its saved network rules are filed
+  under the old name, so it can no longer find them.
+- A filtered project with its own `.agent/Dockerfile` needs `coop build --egress filtered` once.
+
 ## Unreleased: fork records move into Coop's private folder
 
 Coop now keeps each project's fork records in `~/.local/state/coop/forks/<key>/` instead of

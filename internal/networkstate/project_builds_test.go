@@ -2,7 +2,6 @@ package networkstate
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -62,19 +61,6 @@ func TestProjectBuildAnswersForOneTagAndExactlyItsInputs(t *testing.T) {
 	}
 	if got := s.ApprovedProjectBuild(tag, newer); got != rebuilt {
 		t.Errorf("the newer build = %q, want %q", got, rebuilt)
-	}
-	other, err := Open(filepath.Join(t.TempDir(), "network"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer other.Close()
-	mine, err := s.projectBuildID(tag)
-	if err != nil {
-		t.Fatal(err)
-	}
-	theirs, err := other.projectBuildID(tag)
-	if err != nil || mine == theirs {
-		t.Fatalf("two stores named one record %q/%q (%v)", mine, theirs, err)
 	}
 }
 

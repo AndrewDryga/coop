@@ -1,7 +1,6 @@
 package networkstate
 
 import (
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -30,9 +29,8 @@ func (s *Store) jobScope(ref JobSnapshotRef) (string, error) {
 	if err := s.authorityAvailable(); err != nil {
 		return "", err
 	}
-	mac := hmac.New(sha256.New, s.key)
-	_, _ = mac.Write([]byte("controller-job-v1\x00" + ref.JobDigest + "\x00" + ref.SessionID))
-	return hex.EncodeToString(mac.Sum(nil)), nil
+	sum := sha256.Sum256([]byte("controller-job-v2\x00" + ref.JobDigest + "\x00" + ref.SessionID))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // CaptureJob publishes only controller-authored filtered rules plus release-owned provider

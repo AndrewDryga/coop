@@ -308,6 +308,18 @@ func (s *Store) loadKey(create bool) error {
 	return accept(data)
 }
 
+// removeRecord removes one of the store's own records and proves it is gone.
+func (s *Store) removeRecord(name string) error {
+	err := s.root.Remove(name)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if _, err := s.root.Lstat(name); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("network record %s could not be proven removed", name)
+	}
+	return s.checkRootPath()
+}
+
 // read returns one of the store's own records. No box mounts the store (Open refuses one a mount
 // could reach) and only coop writes it, so this is a plain read.
 func (s *Store) read(name string) ([]byte, error) {
@@ -373,7 +385,7 @@ func (s *Store) projectID(project string) (string, error) {
 }
 
 // projectIdentity resolves the one project identity an approval binds to: the
-// canonical path, its keyed id, and the directory the kernel has at that path
+// canonical path, its id, and the directory the kernel has at that path
 // right now. The path alone is a NAME — a directory moved aside and replaced by
 // another at the same path would inherit its grants — so callers that authorize
 // a launch compare the recorded inode too.
@@ -391,19 +403,22 @@ func (s *Store) projectIdentity(project string) (string, string, os.FileInfo, er
 
 // projectKey is the one derivation of a project's record id, so the path that
 // files an approval and the path that finds it can never drift apart. It takes
-// an already-canonical path: what makes an id is that path and the owner key.
+// an already-canonical path: what makes an id is that path alone, so a record
+// stays findable whatever happens to owner.key.
 func (s *Store) projectKey(canonical string) string {
-	mac := hmac.New(sha256.New, s.key)
-	_, _ = mac.Write([]byte("project-v1\x00" + canonical))
-	return hex.EncodeToString(mac.Sum(nil))
+	sum := sha256.Sum256([]byte("project-v2\x00" + canonical))
+	return hex.EncodeToString(sum[:])
 }
 
 func approvalRecord(id string) string { return "approval-" + id + ".json" }
 
+// networkApprovalVersion is an approval filed under the project's id. Versions 1 to 3 are what
+// builds up to v11.3.0 filed under the keyed id (legacy_records.go): none of them grants anything.
 const (
-	networkApprovalLegacyVersion = 1
-	networkApprovalBirthVersion  = 2
-	networkApprovalVersion       = 3
+	networkApprovalLegacyVersion   = 1
+	networkApprovalBirthVersion    = 2
+	networkApprovalAnchoredVersion = 3
+	networkApprovalVersion         = 4
 )
 
 type Approval struct {
@@ -435,6 +450,9 @@ type Approval struct {
 // pending reviews, not corruption: the remedy is the same `coop approve`.
 func (s *Store) checkDirectory(a *Approval, canonical string) *PendingApproval {
 	if a == nil {
+		if pending := s.legacyApprovalPending(canonical); pending != nil {
+			return pending
+		}
 		// A moved checkout changes its path-keyed project id. Even an empty policy would otherwise
 		// resolve to the fresh default and silently forget the old sticky posture. A marker with no
 		// approval for this path is an explicit re-enrollment, not a first-use project.
@@ -492,7 +510,7 @@ func (s *Store) approval(id string) (*Approval, error) {
 		if approval.Inode == 0 || approval.BirthSec == 0 || approval.ProjectAnchor != "" {
 			return nil, errors.New("invalid birth-time network approval identity")
 		}
-	case networkApprovalVersion:
+	case networkApprovalAnchoredVersion, networkApprovalVersion:
 		if approval.Device != 0 || approval.Inode != 0 || approval.BirthSec != 0 || approval.BirthNsec != 0 ||
 			!projectAnchorRE.MatchString(approval.ProjectAnchor) {
 			return nil, errors.New("invalid anchored network approval identity")

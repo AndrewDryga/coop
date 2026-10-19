@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Approve each filtered project's network access once after upgrading.** Coop named each
+  project's network records with a secret key kept beside them, so losing that key would have
+  lost every approval for good. The records are now named by the project's folder alone. Coop does
+  not move old approvals: the first filtered run in each approved project stops, says Coop renamed
+  its network records, and asks you to run `coop approve`, which shows what changed since you last
+  approved. `coop net forget` takes an old approval back too. A project whose access you took back
+  before upgrading stays that way until you approve it again. Worker sessions created before the
+  upgrade can no longer find their network rules, so start them again. The record `coop net setup`
+  writes changed too; this release's new images already need a new setup.
+
 - **`COOP_REPO` typed in another letter case names the same project.** On a Mac's disk, which
   ignores letter case, `COOP_REPO=~/projects/APP` and `~/Projects/app` are one folder, but Coop
   kept the typed spelling, so task claims, fork records and network approvals split between the

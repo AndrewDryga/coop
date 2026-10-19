@@ -1,7 +1,6 @@
 package networkstate
 
 import (
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -29,9 +28,8 @@ func (s *Store) imageTreeID(image, root string) (string, error) {
 	if !safeRecordToken(image, 256) || !safeRecordToken(root, 4096) || !strings.HasPrefix(root, "/") || path.Clean(root) != root {
 		return "", errors.New("invalid image tree record identity")
 	}
-	mac := hmac.New(sha256.New, s.key)
-	_, _ = mac.Write([]byte("image-tree-v1\x00" + image + "\x00" + root))
-	return hex.EncodeToString(mac.Sum(nil)), nil
+	sum := sha256.Sum256([]byte("image-tree-v2\x00" + image + "\x00" + root))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func imageTreeRecordName(id string) string { return "imagetree-" + id + ".json" }

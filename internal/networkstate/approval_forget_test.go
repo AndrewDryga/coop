@@ -72,7 +72,7 @@ func TestForgetRemovesOneApprovalAndKeepsEveryOtherRecord(t *testing.T) {
 	if approval, err := s.Approval(kept); err != nil || approval == nil {
 		t.Errorf("another project's approval was removed: %+v %v", approval, err)
 	}
-	if _, err := s.Execution(setup.Smoke.RunID); err != nil {
+	if _, err := s.Execution(setup.SmokeRun); err != nil {
 		t.Errorf("the recorded run did not survive a forget: %v", err)
 	}
 	records, err := s.Qualifications(ctx)

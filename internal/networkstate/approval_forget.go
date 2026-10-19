@@ -16,6 +16,9 @@ type ApprovalRecord struct {
 	// derivation.
 	Path string
 	ID   string
+	// legacyID is the keyed id an older build filed Approval under, when the project was not
+	// approved since (legacy_records.go).
+	legacyID string
 }
 
 // ApprovalAt reads what is remembered for a project path WITHOUT requiring the
@@ -45,12 +48,18 @@ func (s *Store) ApprovalAt(project string) (ApprovalRecord, error) {
 	if err != nil {
 		return ApprovalRecord{}, err
 	}
-	return ApprovalRecord{Approval: approval, Path: canonical, ID: id}, nil
+	record := ApprovalRecord{Approval: approval, Path: canonical, ID: id}
+	if approval == nil {
+		if record.Approval, record.legacyID, err = s.legacyApproval(canonical); err != nil {
+			return ApprovalRecord{}, err
+		}
+	}
+	return record, nil
 }
 
 // Forget removes the ONE approval a record names, reporting whether a record
 // was actually there. It is deliberately not a sweep: an approval is filed under
-// a keyed hash of the project path and stores no path, so this store can answer
+// a hash of the project path and stores no path, so this store can answer
 // "is this project approved?" and never "which projects are approved?" — and no
 // record written before today could answer it either.
 //
@@ -73,6 +82,14 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 		if err != nil {
 			return err
 		}
+		name := approvalRecord(record.ID)
+		if current == nil && record.legacyID != "" {
+			// An older build's approval goes like any other: the barrier under the project's id.
+			if current, err = s.approval(record.legacyID); err != nil {
+				return err
+			}
+			name = approvalRecord(record.legacyID)
+		}
 		// The barrier goes down FIRST. Removing the grant is what
 		// makes this project's mode fall back to coop's open default, so the
 		// order is the guarantee: after this line no ordinary launch of this
@@ -86,7 +103,6 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 		if err := s.retireProjectAnchor(record.Path, current); err != nil {
 			return fmt.Errorf("retire project approval identity: %w", err)
 		}
-		name := approvalRecord(record.ID)
 		err = s.root.Remove(name)
 		if errors.Is(err, os.ErrNotExist) {
 			return s.checkRootPath()

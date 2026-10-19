@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -133,7 +132,6 @@ func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, o
 }
 
 func qualifyNetworkHost(ctx context.Context, cfg *config.Config, rt runtime.Runtime, store *networkstate.Store, project string, out, errOut io.Writer) (networkstate.Qualification, error) {
-	started := time.Now()
 	p := setupPalette(out)
 	candidate, clients, err := setupImages(ctx, cfg, rt, store, p, out, errOut)
 	if err != nil {
@@ -144,26 +142,8 @@ func qualifyNetworkHost(ctx context.Context, cfg *config.Config, rt runtime.Runt
 		return networkstate.Qualification{}, err
 	}
 	fmt.Fprintf(out, "\n%s\n", p.Bold("Checking filtered access:"))
-	proof, code, runErr := runSetupSmoke(ctx, cfg, rt, store, smoke, project, out)
+	code, runErr := runSetupSmoke(ctx, cfg, rt, store, smoke, project, out)
 	if err := writeSetupChecks(out, p, code, runErr); err != nil {
-		return networkstate.Qualification{}, err
-	}
-	facts := map[string]string{
-		"host_family": candidate.Runtime.HostFamily, "docker_endpoint": candidate.Runtime.Endpoint,
-		"docker_daemon": candidate.Runtime.DaemonID, "docker_version": candidate.Runtime.ServerVersion,
-		"docker_platform": candidate.Runtime.OS + "/" + candidate.Runtime.Architecture, "kernel": candidate.Runtime.KernelVersion,
-		"client_image": candidate.ClientImage, "gateway_image": candidate.GatewayImage,
-		"client_definition": candidate.ClientDefinition, "client_closure": candidate.ClientClosure,
-		"gateway_source": candidate.GatewaySource, "node_base": candidate.NodeBase, "go_base": candidate.GoBase,
-		"smoke_domain": SmokeDomain, "gateway_ready_ms": strconv.FormatInt(proof.ready.Milliseconds(), 10),
-		"smoke_ms": strconv.FormatInt(proof.elapsed.Milliseconds(), 10),
-		"setup_ms": strconv.FormatInt(time.Since(started).Milliseconds(), 10),
-	}
-	evidence, err := networkstate.QualificationEvidenceBytes(proof.record.Receipt.Snapshot, facts)
-	if err != nil {
-		return networkstate.Qualification{}, err
-	}
-	if _, err := smoke.RecordEvidence(proof.record.ID, evidence); err != nil {
 		return networkstate.Qualification{}, err
 	}
 	return smoke.Complete(SmokeDomain)
@@ -273,12 +253,6 @@ func networkImagePresent(ctx context.Context, docker *runtime.Docker, ref, label
 	return err == nil && want != "" && labels[label] == want
 }
 
-type setupProof struct {
-	record  networkstate.Execution
-	ready   time.Duration
-	elapsed time.Duration
-}
-
 // admitSetupSmoke captures the one rule the smoke runs under, SmokeDomain over
 // TLS, with the origin snapshot retention knows setup by. Admitting marks the
 // snapshot removable like a launch's, so it goes 90 days after the smoke.
@@ -297,10 +271,10 @@ func admitSetupSmoke(store *networkstate.Store, project string) (egress.Snapshot
 // image override or extra runtime argument must not reach what the record
 // claims to have proven. It returns the workload's exit code — the verdict the
 // script encodes — and separately whether the run reached one at all.
-func runSetupSmoke(ctx context.Context, cfg *config.Config, rt runtime.Runtime, store *networkstate.Store, smoke *networkstate.QualificationSmoke, project string, out io.Writer) (setupProof, int, error) {
+func runSetupSmoke(ctx context.Context, cfg *config.Config, rt runtime.Runtime, store *networkstate.Store, smoke *networkstate.QualificationSmoke, project string, out io.Writer) (int, error) {
 	policy, err := admitSetupSmoke(store, project)
 	if err != nil {
-		return setupProof{}, 0, err
+		return 0, err
 	}
 	home := cfg.HomeInBox
 	if home == "" {
@@ -310,41 +284,16 @@ func runSetupSmoke(ctx context.Context, cfg *config.Config, rt runtime.Runtime, 
 		Memory: cfg.Memory, CPUs: cfg.CPUs, Pids: cfg.Pids, NoNewPrivileges: cfg.NoNewPrivileges}
 	run, cancel := context.WithTimeout(ctx, smokeTimeout)
 	defer cancel()
-	// The permit's callback runs on THIS goroutine, inside launch preparation, so
-	// runID needs no synchronization; the watcher gets its own copy.
-	var runID string
-	registered := make(chan string, 1)
-	ready := make(chan time.Duration, 1)
-	started := time.Now()
-	go watchGatewayReady(run, store, registered, ready, started)
+	// The record Complete writes rests on this run's own sealed receipt, which it reads itself.
 	code, err := runWithNetworkSmoke(smokeCfg, rt, RunSpec{
 		Repo: project, Workdir: "/workspace", Batch: true, Quiet: true, Ctx: run, Stdout: out, Stderr: out,
 		Cmd:            []string{"sh", "-c", smokeScript},
 		CapturedEgress: &CapturedEgress{Store: store, Project: project, Fingerprint: policy.Fingerprint},
-	}, defaultCompositionArtifactOps(), &networkSmokeLaunch{
-		authority:  smoke,
-		registered: func(r networkstate.Execution) { runID = r.ID; registered <- r.ID },
-	})
-	elapsed := time.Since(started)
+	}, defaultCompositionArtifactOps(), &networkSmokeLaunch{authority: smoke})
 	if err != nil {
-		return setupProof{}, 0, errors.Join(errors.New("the setup check did not finish"), err)
+		return 0, errors.Join(errors.New("the setup check did not finish"), err)
 	}
-	if code != 0 {
-		return setupProof{}, code, nil
-	}
-	record, err := store.Execution(runID)
-	if err != nil {
-		return setupProof{}, 0, err
-	}
-	if record.Receipt == nil {
-		return setupProof{}, 0, errors.New("the setup check sealed no receipt")
-	}
-	proof := setupProof{record: record, elapsed: elapsed}
-	select {
-	case proof.ready = <-ready:
-	default:
-	}
-	return proof, 0, nil
+	return code, nil
 }
 
 // writeSetupChecks renders the verdicts the smoke reached and the final one.
@@ -389,36 +338,4 @@ func writeSetupChecks(out io.Writer, p ui.Palette, code int, runErr error) error
 	}
 	fmt.Fprintln(out, "  No setup was saved")
 	return fmt.Errorf("%w: %s", ErrNetworkSetupFailed, reason)
-}
-
-// watchGatewayReady times the boundary the operator actually waits on: policy
-// installed and the gateway answering, before the workload starts. It only
-// reads the owner-private registry; it never touches the runtime.
-func watchGatewayReady(ctx context.Context, store *networkstate.Store, registered <-chan string, ready chan<- time.Duration, started time.Time) {
-	var runID string
-	select {
-	case runID = <-registered:
-	case <-ctx.Done():
-		return
-	}
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		r, err := store.Execution(runID)
-		if err != nil {
-			return
-		}
-		if r.ReadySequence != 0 {
-			ready <- time.Since(started)
-			return
-		}
-		if r.Receipt != nil {
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
 }

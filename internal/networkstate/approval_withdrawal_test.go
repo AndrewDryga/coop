@@ -160,7 +160,7 @@ func TestUnreadableWithdrawalFailsClosed(t *testing.T) {
 	}
 	withdraw(t, s, project)
 	path := filepath.Join(s.Path(), withdrawalRecord(id))
-	for _, content := range []string{"", "{", `{"version":2,"project_id":"` + id + `"}`, `{"version":1,"project_id":"deadbeef"}`} {
+	for _, content := range []string{"", "{", `{"version":1,"project_id":"` + id + `"}`, `{"version":3,"project_id":"` + id + `"}`, `{"version":2,"project_id":"deadbeef"}`} {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -240,7 +240,7 @@ func TestWithdrawalIsPersistedBeforeTheGrantIsCleared(t *testing.T) {
 		observed = true
 		data, err := os.ReadFile(filepath.Join(s.Path(), withdrawalRecord(id)))
 		var marker Withdrawal
-		if err != nil || json.Unmarshal(data, &marker) != nil || marker.Version != 1 || marker.ProjectID != id {
+		if err != nil || json.Unmarshal(data, &marker) != nil || marker.Version != withdrawalVersion || marker.ProjectID != id {
 			t.Fatalf("withdrawal was not published: %s, %v", data, err)
 		}
 		if _, err := s.root.Lstat(approvalRecord(id)); err != nil {

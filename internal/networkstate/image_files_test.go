@@ -2,7 +2,6 @@ package networkstate
 
 import (
 	"maps"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -47,21 +46,6 @@ func TestImageFilesAnswerForOneImageAndExactlyItsPaths(t *testing.T) {
 	}
 	if got := s.ImageFileDigests("sha256:"+strings.Repeat("2", 64), paths); got != nil {
 		t.Errorf("another image reused this record: %v", got)
-	}
-	// The record name is keyed with the owner key, so another host's store never
-	// names — and therefore never reads or plants — this one's record.
-	other, err := Open(filepath.Join(t.TempDir(), "network"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer other.Close()
-	mine, _, err := s.imageFilesID(image, paths)
-	if err != nil {
-		t.Fatal(err)
-	}
-	theirs, _, err := other.imageFilesID(image, paths)
-	if err != nil || mine == theirs {
-		t.Fatalf("two stores named one record %q/%q (%v)", mine, theirs, err)
 	}
 }
 

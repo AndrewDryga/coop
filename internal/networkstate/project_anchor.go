@@ -126,7 +126,7 @@ func (s *Store) ProjectMarkerInfo(project string) (os.FileInfo, error) {
 	}
 	markerID, anchor, err := parseAnyProjectAnchorBody(body)
 	if err != nil || markerID != id {
-		return nil, errors.Join(errors.New("network marker is not bound to this project"), err)
+		return nil, errors.Join(errors.New("network marker is not bound to this project — review it with 'coop approve'"), err)
 	}
 	return fsidentity.MarkerInfo(s.projectAnchorBinding(project, id, anchor))
 }
@@ -143,7 +143,13 @@ func (s *Store) validateProjectAnchor(project string, approval *Approval) error 
 }
 
 func (s *Store) retireProjectAnchor(project string, approval *Approval) error {
-	if approval == nil || approval.Version != networkApprovalVersion || !projectAnchorRE.MatchString(approval.ProjectAnchor) {
+	if approval == nil || (approval.Version != networkApprovalVersion && approval.Version != networkApprovalAnchoredVersion) ||
+		!projectAnchorRE.MatchString(approval.ProjectAnchor) {
+		return nil
+	}
+	// Once the private anchor is gone nothing of this pair is left, whatever marker the checkout
+	// holds now: a review since may have put a fresh pending pair there.
+	if _, err := s.root.Lstat(projectAnchorName(approval.ProjectID, approval.ProjectAnchor)); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	return fsidentity.Retire(s.projectAnchorBinding(project, approval.ProjectID, approval.ProjectAnchor))

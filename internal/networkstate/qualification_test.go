@@ -64,13 +64,6 @@ func qualificationFixture(t *testing.T) (*QualificationSmoke, ExecutionSpec) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := QualificationEvidenceBytes(r.Receipt.Snapshot, map[string]string{"fixture": "synthetic-unit-only", "run_id": r.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := smoke.RecordEvidence(r.ID, data); err != nil {
-		t.Fatal(err)
-	}
 	return smoke, spec
 }
 
@@ -125,7 +118,7 @@ func TestNetworkQualificationRequiresACompletedSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(q.Clients, canonical) || q.Smoke.RunID == "" || q.CompletedAt.IsZero() {
+	if !slices.Equal(q.Clients, canonical) || q.SmokeRun == "" || q.CompletedAt.IsZero() {
 		t.Fatalf("record lost its client or smoke identity: %#v", q)
 	}
 	spec.QualificationID = q.ID
@@ -146,7 +139,7 @@ func TestNetworkQualificationRequiresACompletedSmoke(t *testing.T) {
 		}
 	}
 	// Once sealed, the immutable summary survives execution/receipt expiry.
-	if err := smoke.store.root.Remove("execution-" + q.Smoke.RunID + ".json"); err != nil {
+	if err := smoke.store.root.Remove("execution-" + q.SmokeRun + ".json"); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := smoke.store.Qualification(q.ID); err != nil || !equalJSON(got, q) {
@@ -349,5 +342,23 @@ func TestQualificationsSkipARecordFromARetiredContract(t *testing.T) {
 		if q.Contract != QualificationContract {
 			t.Fatalf("listing returned a retired-contract record %q", q.Contract)
 		}
+	}
+}
+
+// A setup record an older coop wrote (version 1, keyed with owner.key and pointing at an evidence
+// file) is not this coop's: loading it names the fix, and the listing skips it instead of failing.
+func TestAnOlderSetupRecordIsRefusedByName(t *testing.T) {
+	store := openStore(t)
+	id := strings.Repeat("b", 64)
+	older := []byte(`{"version":1,"id":"` + id + `","contract":"` + QualificationContract + `","candidate":{},"clients":[],` +
+		`"smoke":{"run_id":"` + strings.Repeat("c", 32) + `"},"completed_at":"2026-10-01T00:00:00Z"}`)
+	if err := store.publish("qualification-"+id+".json", older, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Qualification(id); err == nil || !strings.Contains(err.Error(), "older coop") || !strings.Contains(err.Error(), "coop net setup") {
+		t.Fatalf("an older setup record = %v; want it refused, naming coop net setup", err)
+	}
+	if records, err := store.Qualifications(context.Background()); err != nil || len(records) != 0 {
+		t.Fatalf("listing with an older setup record = %v, %v; want it skipped", records, err)
 	}
 }
