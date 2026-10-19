@@ -77,6 +77,7 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 | Network execution | `~/.local/state/coop/network/execution-<id>.json` | 2 | 1 | read; a resource the version 1 journal left short of gone reads as planned, and the next write stores 2 | builds after v11.3.0 |
 | Isolated fork generation | `~/.local/state/coop/forks/<key>/<name>.generation.json` | 4 | 4 | none exist | none |
 | Fork records folder | `~/.local/state/coop/forks/<key>/` | private folder | `<repo>-forks/.coop/` | copied in once, by the first open of the project or a box launch in it | builds after v11.3.0 |
+| Execution fallback registry | `~/.local/state/coop/executions/v1/<key>/` | not written | read | read, updated and ended; new records go to the project's own registry | builds after v11.3.0 |
 | Service approval | `~/.local/state/coop/service-approvals/` | 5 | 4 | read; a new approval writes 5 | `coop up` re-approves |
 | Workspace checkpoint bundle | kept by Ryker's controller | 2 | 1 | read | none needed |
 | Box supervisor label | `coop.host` on boxes, their brokers and per-run services | 2 | 1 | judged as before by a Coop on a host, by none inside a container; an older Coop sharing the Docker daemon still writes them | none: labels are never rewritten |
@@ -94,6 +95,8 @@ retire v1 once those all write v2. Retiring it also removes `legacyLabelsAreLoca
 label then reads as unknown: reported, never removed.
 
 ## Changelog
+- 2026-10-19 — the execution fallback registry is no longer written, only read for one upgrade
+  (task 2026-10-19-drop-the-fallback-execution-registry-now-that-fo); its row pins nothing.
 - 2026-10-19 — fork records moved from `<repo>-forks/.coop/` to `~/.local/state/coop/forks/<key>/`
   (task 2026-10-15-fence-other-projects-fork-records-inside-a-box-m): the four fork rows' Where,
   and a row for the folder itself, whose old place is moved in once and never read again.

@@ -128,11 +128,6 @@ func openExecutionRegistry(repo, registry string, create bool) (*os.Root, error)
 	return os.OpenRoot(registry)
 }
 
-// ensureProjectExecutionDir is a test seam for the one compatibility fallback. Fork activity
-// normally uses the sibling lifecycle registry; ordinary boxes must also work when that sibling
-// parent cannot be created (for example, a read-only mounted repository parent).
-var ensureProjectExecutionDir = ensureExecutionDir
-
 func fallbackExecutionDir(repo string) (string, error) {
 	canonical := filepath.Clean(repo)
 	if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
@@ -280,10 +275,6 @@ func ensureFallbackExecutionDir(dir string) error {
 		return errors.New("fallback project execution registry is not a real directory")
 	}
 	return os.Chmod(dir, 0o700)
-}
-
-func projectExecutionRegistryUnavailable(err error) bool {
-	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EROFS)
 }
 
 func newExecutionID() string { return randid.Hex(16) }
@@ -459,19 +450,13 @@ func BeginExecution(repo string, spec ExecutionSpec) (ExecutionRecord, error) {
 			}
 		}
 	}
+	// Every new record goes to the project's own registry, in Coop's private fork records, which it
+	// can always make. The fallback beside it took records when that registry sat next to the
+	// project, where a read-only parent folder could stop it; records older builds left there are
+	// still read, updated and ended (executionRegistryDirs).
 	registry := executionDir(repo)
-	if err := ensureProjectExecutionDir(repo); err != nil {
-		if !projectExecutionRegistryUnavailable(err) {
-			return ExecutionRecord{}, err
-		}
-		fallback, fallbackErr := fallbackExecutionDir(repo)
-		if fallbackErr != nil {
-			return ExecutionRecord{}, errors.Join(err, fallbackErr)
-		}
-		if fallbackErr = ensureFallbackExecutionDir(fallback); fallbackErr != nil {
-			return ExecutionRecord{}, errors.Join(err, fallbackErr)
-		}
-		registry = fallback
+	if err := ensureExecutionDir(repo); err != nil {
+		return ExecutionRecord{}, err
 	}
 	id := newExecutionID()
 	token := ProcStartToken(os.Getpid())
