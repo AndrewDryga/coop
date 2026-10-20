@@ -43,7 +43,9 @@ run)
 	fi
 	: > "@LAUNCHED@.ready"
 	[ -n "$COOP_IMAGE" ] && exit 1
-	exec "$@" ;;
+	trap 'exit 130' INT
+	"$@" <&0 &
+	wait $! ;;
 acp)
 	: > "@LAUNCHED@.ready"
 	IFS= read -r line
@@ -173,14 +175,28 @@ func TestALaunchThatOutlivesItsCaseIsStoppedAndCleaned(t *testing.T) {
 func TestACancelledRunThatLeavesItsGatewayFails(t *testing.T) {
 	// Its box is gone and its gateway volume is named only in what it printed to the terminal: still
 	// its own, so the sample fails and the volume is taken back.
-	b, fake, _ := standInBench(t)
-	fake.appear = [2][]resource{nil, {{"printed-ipc", gatewayFilter}}}
-	s, err := b.caseCancelledStop(context.Background(), nil)
-	if err != nil || s.OK || s.Detail != "a cancelled run left a resource behind" {
-		t.Errorf("sample = %+v, %v", s, err)
-	}
-	if !maps.Equal(fake.removed, items("printed-ipc")) {
-		t.Errorf("removed %v", slices.Sorted(maps.Keys(fake.removed)))
+	for _, ignore := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ignore-interrupt=%v", ignore), func(t *testing.T) {
+			b, fake, _ := standInBench(t)
+			fake.appear = [2][]resource{nil, {{"printed-ipc", gatewayFilter}}}
+			if ignore {
+				// A shell can consume Ctrl-C before exec. The stand-in must handle it
+				// independently of whether the workload observes the interrupt.
+				b.start = func(cmd *exec.Cmd) error {
+					cmd.Args[len(cmd.Args)-1] = "trap '' INT; " + cmd.Args[len(cmd.Args)-1]
+					return cmd.Start()
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+			defer cancel()
+			s, err := b.caseCancelledStop(ctx, nil)
+			if err != nil || s.OK || s.Detail != "a cancelled run left a resource behind" {
+				t.Errorf("sample = %+v, %v", s, err)
+			}
+			if !maps.Equal(fake.removed, items("printed-ipc")) {
+				t.Errorf("removed %v", slices.Sorted(maps.Keys(fake.removed)))
+			}
+		})
 	}
 }
 

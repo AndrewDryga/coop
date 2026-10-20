@@ -3,7 +3,7 @@ name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
 sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/lifecyclebench/cases.go, tools/lifecyclebench/cases_test.go, internal/agent/usage_report_test.go, internal/workerconnector/job_sources.go, internal/workerconnector/job_sources_refresh_test.go]
-updated: 2026-10-17
+updated: 2026-10-20
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -116,6 +116,15 @@ flush. On macOS, whose Ctrl-C discards output the bench has not read, it fails e
 the drain. Linux discards only output still on its way to the bench's side (by reading its tty
 code, not a run), so there the test passes either way.
 
+Readiness also precedes a shell's fork/exec transition: on Linux/dash, a Ctrl-C delivered just
+before `sleep` execs can be consumed by its inherited shell handler, leaving the sleep running.
+The lifecycle stand-in owns cancellation: it arms its INT trap before starting the workload and
+uses `"$@" <&0 & wait $!`, so its interruptible wait ends even if the workload ignores INT. The
+explicit stdin redirection preserves the foreground command's input. The gateway-leak regression
+exercises both ordinary and INT-ignoring workloads through the real controlling terminal, retaining
+the failure verdict and exact cleanup set. Its context uses the fixture guard; the benchmark's
+production 90-second cancellation bound is unchanged.
+
 **Marker existence is not complete content.** Shell redirection creates a PGID marker before
 `printf` writes the bytes. Write a private sibling and rename it only after completion, or have
 the fixture write a ready marker after the content and wait for that marker (the Google token
@@ -126,6 +135,11 @@ on failure and reap its resident group on every assertion path. The editor-stdin
 stable-leader assertions remain unchanged.
 
 ## Changelog
+- 2026-10-20 — held a Linux/dash child immediately before sleep exec, observed pending terminal
+  SIGINT in the correct foreground group, resumed every descendant and found the workload still
+  alive. The lifecycle stand-in now traps INT around an interruptible wait; an INT-ignoring
+  workload deterministically exercises the former timeout without changing production timing or
+  gateway ownership assertions (task 2026-10-20-investigate-intermittent-lifecyclebench-ctrl-c-t).
 - 2026-10-17 — the consult and delegate wrappers and both usage recorders read their descriptors
   by fstat too (task 2026-10-17-read-the-consult-and-delegate-wrappers-descripto).
 - 2026-10-17 — the fetch-versus-lookup test moved to the worker connector with source refresh
