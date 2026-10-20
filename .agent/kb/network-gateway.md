@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
-updated: 2026-10-18
+updated: 2026-10-20
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -160,7 +160,9 @@ Facts the code cannot say twice, all still true:
   pinned nftables 1.0.2 (nested prefixes auto-merge; a refused element leaves the set unchanged);
   the rendering mirrors `initialRules` and stays on the host so the embedded gateway sources (and
   therefore the qualified image) are byte-identical —
-  records the grown envelope on the execution, and stops the run only when the update is refused
+  records the grown envelope on the execution (with a context the run's end does not cancel: the
+  address is already in `f.protected`, so no later tick would record it), and stops the run only
+  when the update is refused
   or the 256-range cap is passed. A gone address keeps its denial; an IPv6 address is recorded but
   never rendered (the gateway drops IPv6 wholesale). The message still names the address.
 
@@ -298,6 +300,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-20 — the watch's record of a grown envelope no longer shares the run's cancellation: a run
+  ended between the kernel update and the record lost the address for good (CI, 2026-10-19;
+  `TestFilteredWatchRecordsGrowthWhenTheRunEndsAtThatMoment`).
 - 2026-10-18 — cleanup and recovery find each resource by its fixed name and run labels; the
   create/start journal and its ambiguous-create reconciliation are gone (task
   2026-10-15-replace-the-network-cleanup-journal-with-a-label).

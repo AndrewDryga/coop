@@ -498,9 +498,14 @@ func (f *filteredExecution) reconcileTopology(ctx context.Context) error {
 	}
 	f.protected = grown
 	// Evidence, not enforcement: the kernel already refuses the addresses. Like
-	// the periodic snapshot, a failed write leaves the live work alone.
-	_ = f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
-		return f.store.RecordProtected(ctx, r.ID, r.Revision, grown)
+	// the periodic snapshot, a failed write leaves the live work alone. The run
+	// ending now does not stop it: f.protected covers the addresses from here, so
+	// no later tick would record them, and the record would miss what the kernel
+	// refuses.
+	record, stop := context.WithTimeout(context.WithoutCancel(ctx), filteredTopologyTimeout)
+	defer stop()
+	_ = f.update(record, func(r networkstate.Execution) (networkstate.Execution, error) {
+		return f.store.RecordProtected(record, r.ID, r.Revision, grown)
 	})
 	return nil
 }

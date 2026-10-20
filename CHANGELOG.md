@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A filtered run's record keeps every address it refuses.** When a new host address appears
+  during a filtered run, Coop starts refusing it and adds it to the run's record, which
+  `coop net check` answers from. A run stopped at that exact moment refused the address but left it
+  out of the record. The record is now written either way.
+
 - **A session turn that runs out of time says which step never finished.** A turn that hit its
   deadline failed with "turn deadline exceeded" whether the agent never answered or never read its
   prompt. The error detail now adds "while waiting for the agent to answer session/prompt" (or

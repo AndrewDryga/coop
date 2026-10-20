@@ -50,6 +50,7 @@ type filteredDaemonFixture struct {
 	networksErr                            error
 	extraNetworks                          []runtime.DockerNetwork // networks that appeared after launch
 	applied                                []string                // ExecApply argv, joined
+	onApply                                func()                  // runs inside ExecApply, after it applied
 	applyErr                               error
 	networkMembers                         map[string]netip.Addr
 	composeServices                        map[string]string
@@ -98,6 +99,9 @@ func (d *filteredDaemonFixture) ExecApply(_ context.Context, _ runtime.DockerRef
 		return d.applyErr
 	}
 	d.applied = append(d.applied, strings.Join(command, " "))
+	if d.onApply != nil {
+		d.onApply()
+	}
 	return nil
 }
 

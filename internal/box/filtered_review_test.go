@@ -275,6 +275,41 @@ func TestFilteredWatchGrowsProtectionWhileWorkRuns(t *testing.T) {
 	}
 }
 
+// A run that ends between the kernel update and its record still records the address: the
+// kernel refuses it and no later tick would record it again (CI lost it once, 2026-10-19).
+func TestFilteredWatchRecordsGrowthWhenTheRunEndsAtThatMoment(t *testing.T) {
+	f, d := filteredFixture(t)
+	d.holdAgent = true
+	added := netip.MustParsePrefix("192.0.2.9/32")
+	var grow atomic.Bool
+	f.hostAddresses = func() ([]netip.Prefix, error) {
+		host := []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}
+		if grow.Load() {
+			host = append(host, added)
+		}
+		return host, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := f.launch(ctx, RunSpec{}, nil, nil, io.Discard, io.Discard); done <- err }()
+	<-d.attached
+	d.mu.Lock()
+	d.onApply = cancel
+	d.mu.Unlock()
+	grow.Store(true)
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal("the run did not end when it was cancelled", err)
+	}
+	record, err := f.store.Execution(f.record.ID)
+	if err != nil || !slices.Contains(record.Protected, added) {
+		t.Fatal("the address the kernel refuses is missing from the record", record.Protected, err)
+	}
+	if gone, err := f.cleanup("cancelled"); err != nil || !gone {
+		t.Fatal("growth lost cleanup", gone, err)
+	}
+}
+
 func TestFilteredRemovedHostAddressKeepsOriginalProtection(t *testing.T) {
 	f, d := filteredFixture(t)
 	seeded := len(f.protected)
