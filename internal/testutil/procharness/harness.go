@@ -74,8 +74,11 @@ func NewLayout(root string) (Layout, error) {
 			return Layout{}, fmt.Errorf("secure process-test state %s: %w", dir, err)
 		}
 	}
-	for _, path := range []string{l.Trace, l.GitConfig, l.Conf} {
-		if err := os.WriteFile(path, nil, 0o600); err != nil {
+	// The children's global git config holds one setting: no automatic maintenance, which git
+	// starts after every commit (in the background since git 2.47) and which keeps writing in a
+	// repository a test is about to read, such as the live loop's walk of .git.
+	for path, body := range map[string]string{l.Trace: "", l.GitConfig: "[maintenance]\n\tauto = false\n", l.Conf: ""} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			return Layout{}, fmt.Errorf("create process-test file %s: %w", path, err)
 		}
 	}

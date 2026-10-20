@@ -62,6 +62,38 @@ func TestEnvironmentStartsEmptyAndOwnsState(t *testing.T) {
 	}
 }
 
+// A child's commit starts no git maintenance: since git 2.47 it runs in the background after the
+// commit returns and keeps writing in the repository a test then reads.
+func TestChildCommitsStartNoMaintenance(t *testing.T) {
+	layout, err := NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := Environment(layout, map[string]string{"PATH": os.Getenv("PATH")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trace := filepath.Join(t.TempDir(), "trace")
+	env = append(env, "GIT_TRACE="+trace)
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.email=t@t", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "base"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = layout.Repo, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	data, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "commit") {
+		t.Fatalf("GIT_TRACE recorded no commit, so this check proves nothing:\n%s", data)
+	}
+	if strings.Contains(string(data), "maintenance") {
+		t.Fatalf("a child's commit started git maintenance:\n%s", data)
+	}
+}
+
 func TestEnvironmentRejectsUnlistedExtensions(t *testing.T) {
 	layout, err := NewLayout(t.TempDir())
 	if err != nil {

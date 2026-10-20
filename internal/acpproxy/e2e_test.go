@@ -127,9 +127,10 @@ func prepareLiveRepo(sourceRoot, destination, gitConfig string) error {
 		return err
 	}
 	init := exec.Command("git", "init", "-q", destination)
-	// Both config doors closed, at the same empty file every other process child in this suite
-	// gets (procharness.Environment): the developer's init.templateDir, hooksPath, or default
-	// branch must not shape the repo the live agent then works in.
+	// Both config doors closed, at the same file every other process child in this suite gets
+	// (procharness.Environment), which holds only maintenance.auto = false: the developer's
+	// init.templateDir, hooksPath, or default branch must not shape the repo the live agent then
+	// works in.
 	init.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+gitConfig, "GIT_CONFIG_NOSYSTEM=1")
 	if err := init.Run(); err != nil {
 		return errors.New("initialize disposable repository")
