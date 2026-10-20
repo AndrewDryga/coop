@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 12.0.0
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+- **A busy session database no longer cuts startup short.** A turn could fail after two seconds
+  before its agent started, even though time remained. Startup now waits within the turn's own
+  time limit, and cancellation still stops it before the agent starts.
 
 - **A filtered run's record keeps every address it refuses.** When a new host address appears
   during a filtered run, Coop starts refusing it and adds it to the run's record, which
@@ -130,7 +132,7 @@
   the same characters as `?`, and a filtered run refuses a remote MCP server whose name holds one,
   as it already refused one holding an escape.
 
-- **Coop no longer writes fork records through a link an agent put in their place.** Coop keeps
+- **Coop no longer writes fork records through a link an agent put in their place.** Coop previously kept
   each fork's records in `<project>-forks/.coop`. An agent that could write the forks folder could
   replace `.coop` with a link while Coop was writing, and the record went where the link pointed.
   Every record there is now written through the real folder, and a link in its place is refused.
@@ -408,7 +410,7 @@
   it sits among the peers, so a fork loop no longer creates the fork first.
 
 - **A box can no longer make Coop change files outside a fork's state folder through its lock, log or
-  loop record.** Coop keeps each
+  loop record.** Coop previously kept each
   fork's lock, log and loop record in `<project>-forks/.coop`. A box started in a folder that
   contains it, such as a parent folder of the project, could put a link at a fork's lock, and Coop
   created the file the link pointed to or made it readable only by you. The box could also swap
@@ -434,7 +436,7 @@
   name server is Coop's guard. With Docker Engine 26 or later, the Compose services were not
   affected: on their network Docker answers only their own names.
 
-- **A box can no longer freeze fork commands through a fork's state files.** Coop keeps each
+- **A box can no longer freeze fork commands through a fork's state files.** Coop previously kept each
   fork's loop record and log in `<project>-forks/.coop`. A box started in a folder that contains
   it, such as a parent folder of the project, could put a named pipe there, which froze
   `coop fork ls`, `coop fork stop`, `coop fork logs`, `coop tasks watch` and `coop prompt`, or a
