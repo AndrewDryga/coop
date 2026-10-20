@@ -623,7 +623,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 
 		if warmIdleTimeout > 0 {
 			warmRunID := sessionWarmRunID(bound.ID)
-			if err := r.bindTurnRuntime(bound, leased, runtimeRunID, warmRunID); err != nil {
+			if err := r.bindTurnRuntime(ctx, bound, leased, runtimeRunID, warmRunID); err != nil {
 				runErr = err
 				return result, runErr
 			}
@@ -668,7 +668,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 				desiredRunID = sessionWarmRunID(bound.ID)
 			}
 			if runtimeRunID != desiredRunID {
-				if err := r.bindTurnRuntime(bound, leased, runtimeRunID, desiredRunID); err != nil {
+				if err := r.bindTurnRuntime(ctx, bound, leased, runtimeRunID, desiredRunID); err != nil {
 					runErr = errors.Join(err, r.recordRuntimeCleanup(bound.ID, projection.remove()))
 					return result, runErr
 				}
@@ -773,6 +773,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 }
 
 func (r *sessionTurnRunner) bindTurnRuntime(
+	ctx context.Context,
 	bound session.Session,
 	leased session.Turn,
 	expectedRunID, runtimeRunID string,
@@ -780,9 +781,12 @@ func (r *sessionTurnRunner) bindTurnRuntime(
 	if r.store == nil {
 		return acpFailure(sessionACPCleanupError, "turn runtime authority is unavailable")
 	}
-	bindCtx, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
-	defer cancel()
-	if err := r.store.BindTurnRuntime(bindCtx, bound.ID, leased.ID, expectedRunID, runtimeRunID); err != nil {
+	// This is startup, not best-effort teardown: database contention consumes the
+	// active turn's budget, and cancellation must stop it before a child launches.
+	if err := r.store.BindTurnRuntime(ctx, bound.ID, leased.ID, expectedRunID, runtimeRunID); err != nil {
+		if ctx.Err() != nil {
+			return turnDeadline(ctx.Err(), "recording turn runtime authority")
+		}
 		return acpFailure(sessionACPCleanupError,
 			sessionACPBoundedDetail("record turn runtime authority", err.Error()))
 	}

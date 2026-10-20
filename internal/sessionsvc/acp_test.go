@@ -512,6 +512,115 @@ type delayedCompleteTurnStore struct {
 	delay time.Duration
 }
 
+// A recorded uptime check failed before its provider started: runtime ownership
+// used the two-second cleanup budget while SQLite permits five seconds of
+// contention. Startup must keep the turn's budget without launching unbound.
+func TestTurnStartupSurvivesShortRuntimeBindingContention(t *testing.T) {
+	for _, warm := range []bool{false, true} {
+		t.Run(fmt.Sprintf("warm=%v", warm), func(t *testing.T) {
+			fixture := newSessionACPFixture(t, "normal")
+			leased := fixture.submit(t, "answer after runtime ownership is durable")
+			ctx := contextWithTurnDeadline(t)
+			if warm {
+				ctx = context.WithValue(ctx, sessionWarmIdleTimeoutContextKey{}, time.Minute)
+				t.Cleanup(func() {
+					if err := fixture.runner.CloseWarmSessions(); err != nil {
+						t.Errorf("close warm runtime: %v", err)
+					}
+				})
+			}
+			release := holdSessionWriter(t, fixture)
+			released := make(chan struct{})
+			go func() {
+				defer close(released)
+				time.Sleep(3 * time.Second)
+				if _, err := os.Stat(fixture.childLog); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("provider launched before runtime binding could commit: %v", err)
+				}
+				release()
+			}()
+			result, err := fixture.runner.Run(ctx, fixture.session, leased)
+			<-released
+			if err != nil {
+				t.Fatalf("startup lost the turn behind short store contention: %v", err)
+			}
+			if result.State != session.TurnCompleted || result.AssistantMessage != "hello world" {
+				t.Fatalf("turn after startup contention = %+v", result)
+			}
+		})
+	}
+}
+
+func TestCancelledRuntimeBindingNeverLaunchesAProvider(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	leased := fixture.submit(t, "cancel before runtime ownership")
+	ctx, cancel := context.WithCancel(contextWithTurnDeadline(t))
+	defer cancel()
+	release := holdSessionWriter(t, fixture)
+	released := make(chan struct{})
+	go func() {
+		defer close(released)
+		time.Sleep(2500 * time.Millisecond)
+		cancel()
+		release()
+	}()
+	result, err := fixture.runner.Run(ctx, fixture.session, leased)
+	<-released
+	var failure *sessionACPFailure
+	if !errors.As(err, &failure) || failure.code != sessionACPCancelledError {
+		t.Fatalf("cancelled startup = %+v, error=%v; want cancellation", result, err)
+	}
+	if _, err := os.Stat(fixture.childLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled runtime binding launched a provider: %v", err)
+	}
+}
+
+func TestConflictingRuntimeBindingNeverLaunchesAProvider(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	leased := fixture.submit(t, "refuse stale runtime ownership")
+	existing := sessionWarmRunID(fixture.session.ID)
+	if err := fixture.store.BindTurnRuntime(context.Background(), fixture.session.ID, leased.ID, "", existing); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased); err == nil {
+		t.Fatal("conflicting runtime ownership unexpectedly ran")
+	}
+	if _, err := os.Stat(fixture.childLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("conflicting runtime binding launched a provider: %v", err)
+	}
+	stored, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, leased.ID)
+	if err != nil || stored.RuntimeRunID != existing {
+		t.Fatalf("conflicting runtime receipt changed: %q, error=%v", stored.RuntimeRunID, err)
+	}
+}
+
+func holdSessionWriter(t *testing.T, fixture *sessionACPFixture) func() {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(fixture.store.Root(), "session.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec("UPDATE turns SET runtime_run_id = runtime_run_id WHERE session_id = ?", fixture.session.ID); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			if err := tx.Rollback(); err != nil {
+				t.Errorf("release held session writer: %v", err)
+			}
+		})
+	}
+	t.Cleanup(release)
+	return release
+}
+
 func (s delayedCompleteTurnStore) CompleteTurn(ctx context.Context, req session.CompleteTurnRequest) (session.Turn, error) {
 	timer := time.NewTimer(s.delay)
 	defer timer.Stop()
