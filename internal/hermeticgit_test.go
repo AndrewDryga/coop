@@ -27,7 +27,8 @@ const (
 // another file, so it is checked in both directions: a function that stops creating a repo, or
 // grows its own pins, has to lose its entry.
 var hermeticGitExceptions = map[string]string{
-	"internal/cli/scripted_process_e2e_test.go:initProcessRepo": "runs git with the env its caller built from procharness.Environment, which pins GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM for every process-e2e child",
+	"internal/cli/scripted_process_e2e_test.go:initProcessRepo":                        "runs git with the env its caller built from procharness.Environment, which pins GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM for every process-e2e child",
+	"internal/testutil/procharness/harness_test.go:TestChildCommitsStartNoMaintenance": "runs git with procharness.Environment, which pins GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM, because what it checks is that environment's global config",
 }
 
 // TestHermeticGitTests is the check for hermeticCard: a test fixture that creates a git repository
