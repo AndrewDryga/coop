@@ -1,6 +1,6 @@
 # Migrating
 
-## Unreleased: network records are renamed
+## v12.0.0: network records are renamed
 
 Coop now names each project's network records by the project's folder, not with the key in
 `~/.local/state/coop/network/owner.key`.
@@ -17,7 +17,7 @@ Coop now names each project's network records by the project's folder, not with 
   under the old name, so it can no longer find them.
 - A filtered project with its own `.agent/Dockerfile` needs `coop build --egress filtered` once.
 
-## Unreleased: fork records move into Coop's private folder
+## v12.0.0: fork records move into Coop's private folder
 
 Coop now keeps each project's fork records in `~/.local/state/coop/forks/<key>/` instead of
 `<project>-forks/.coop`. Fork workspaces stay in `<project>-forks/`.
