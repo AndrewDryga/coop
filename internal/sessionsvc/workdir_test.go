@@ -33,7 +33,12 @@ func TestSessionWorkdirRejectsForgedMarker(t *testing.T) {
 	for name, makeMarker := range map[string]func(string) error{
 		"symlink":  func(path string) error { return os.Symlink("/workspace", path) },
 		"nonempty": func(path string) error { return os.WriteFile(path, []byte("wrong"), 0o600) },
-		"readable": func(path string) error { return os.WriteFile(path, nil, 0o644) },
+		"readable": func(path string) error {
+			if err := os.WriteFile(path, nil, 0o644); err != nil {
+				return err
+			}
+			return os.Chmod(path, 0o644)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()

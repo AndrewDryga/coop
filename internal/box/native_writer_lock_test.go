@@ -39,6 +39,10 @@ func TestLegacyWriterLockTightensSameInode(t *testing.T) {
 				if err := os.WriteFile(path, original, mode); err != nil {
 					t.Fatal(err)
 				}
+				// Creation permissions are filtered by umask; exercise the requested mode.
+				if err := os.Chmod(path, mode); err != nil {
+					t.Fatal(err)
+				}
 				var err error
 				before, err = os.Stat(path)
 				if err != nil {
@@ -69,6 +73,9 @@ func TestLegacyWriterLockRefusesUnsafeAndBusyWithoutChmod(t *testing.T) {
 			if err := os.WriteFile(original, []byte("inert writer PID"), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Chmod(original, 0o644); err != nil {
+				t.Fatal(err)
+			}
 			switch kind {
 			case "hardlink":
 				if err := os.Link(original, path); err != nil {
@@ -80,6 +87,9 @@ func TestLegacyWriterLockRefusesUnsafeAndBusyWithoutChmod(t *testing.T) {
 				}
 			case "fifo":
 				if err := unix.Mkfifo(path, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, 0o644); err != nil {
 					t.Fatal(err)
 				}
 			case "busy":
@@ -135,6 +145,9 @@ func TestLegacyWriterLockReplacementRefusesBeforeChmod(t *testing.T) {
 	if err := os.WriteFile(path, []byte("old PID"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	lock, err := safefile.OpenRegular(fence.root, "auth.json.lock")
 	if err != nil {
 		t.Fatal(err)
@@ -144,6 +157,9 @@ func TestLegacyWriterLockReplacementRefusesBeforeChmod(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("new PID"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := fence.lockWriter(lock); err == nil {

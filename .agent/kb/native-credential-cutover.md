@@ -3,7 +3,7 @@ name: native-credential-cutover
 description: existing native writer locks keep their inode during private normalization; uncertain legacy grants remain in custody
 subsystem: credentials
 sources: [internal/box/native_cutover.go, internal/box/account_authority.go, internal/box/native_writer_lock_test.go, internal/box/authority_mounts.go, internal/box/native_mount_paths_test.go, internal/runtime/mounts.go, internal/runtime/mounts_test.go, internal/agent/grok.go, internal/agent/gemini.go]
-updated: 2026-10-18
+updated: 2026-10-20
 ---
 
 `fenceLegacyAccount` holds the account lease, inventories existing credential mounts and locks
@@ -15,6 +15,10 @@ Coop acquires the nonblocking exclusive flock first, rechecks named root/inode i
 metadata, then tightens that same inode to 0600 (`legacyAccountFence.lockWriter`). A busy,
 replaced, linked, foreign-owned or nonregular lock refuses without chmod. Replacing the lock
 would strand a native writer on another inode. Lock bytes do not change.
+
+Writer-lock fixtures set their intended permissions with `Chmod` after creation: `WriteFile`
+and `Mkfifo` modes are filtered by the inherited umask. Otherwise a restrictive umask makes the
+0644 normalization case start private and makes unchanged unsafe locks look modified.
 
 This exception is for adapter-declared legacy writer locks only, which live in a legacy profile
 folder a box could reach. Canonical credential custody (authority.json, the renewal journal,
@@ -44,6 +48,8 @@ live/paused/restarting/dead binds refuse: they can retain a deleted alias's inod
 paths, permissions and symlink loops are never inferred harmless or dropped from inventory.
 
 ## Changelog
+- 2026-10-20 — made writer-lock fixture modes explicit, including same-inode normalization,
+  refusal without chmod and replacement custody; verified under umask 077 and 022.
 - 2026-10-18 — canonical custody is read plainly under a plain flock (task
   2026-10-15-read-coop-s-host-only-records-with-one-plain-hel); the legacy writer-lock checks stay.
 - 2026-10-09 — traced the real Grok startup refusal to an owned 0644 PID lock; verified
