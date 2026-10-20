@@ -2252,6 +2252,9 @@ func TestSessionTurnRunnerBoundsFramesStderrAndCancellation(t *testing.T) {
 			if got.ErrorCode != wantCode {
 				t.Fatalf("turn error code = %s, want %s", got.ErrorCode, wantCode)
 			}
+			if want := "turn deadline exceeded while waiting for the agent to answer session/prompt"; hangs && got.ErrorDetail != want {
+				t.Fatalf("turn error detail = %q, want %q", got.ErrorDetail, want)
+			}
 			if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); !os.IsNotExist(err) {
 				t.Fatalf("projected credential remains after %s: %v", scenario, err)
 			}
@@ -2264,6 +2267,37 @@ func TestSessionTurnRunnerBoundsFramesStderrAndCancellation(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A turn that runs out of time names the step that never finished: an agent that never read its
+// prompt reads differently from one that never answered it (above).
+func TestTurnDeadlineWhileSendingNamesTheSend(t *testing.T) {
+	fixture := newSessionACPFixture(t, "unread-prompt")
+	// Larger than any pipe buffer, under the prompt limit; submit keys a turn by its prompt.
+	sess, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.store.SubmitTurn(context.Background(), "turn-unread-prompt", session.SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: strings.Repeat("x", 192<<10),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	turn, ok, err := fixture.store.LeaseNextTurn(context.Background(), sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("lease turn = %v, %v", turn, err)
+	}
+	ctx := hangTimeoutAfter(t, fixture.childLog, `"method":"session/new"`, 100*time.Millisecond)
+	if _, err := fixture.runner.Run(ctx, fixture.session, turn); err == nil {
+		t.Fatal("a prompt the agent never read was delivered")
+	}
+	got, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "turn deadline exceeded while sending session/prompt to the agent"; got.ErrorCode != sessionACPTimeoutError || got.ErrorDetail != want {
+		t.Fatalf("turn error = %s %q, want %s %q", got.ErrorCode, got.ErrorDetail, sessionACPTimeoutError, want)
 	}
 }
 
@@ -3448,6 +3482,12 @@ func (f *sessionACPFixture) submitRequest(t *testing.T, req session.SubmitTurnRe
 // Prompt readiness is a fixture guard; only the hang is a timing bound.
 func hangTimeout(t *testing.T, childLog string, hang time.Duration) context.Context {
 	t.Helper()
+	return hangTimeoutAfter(t, childLog, `"method":"session/prompt"`, hang)
+}
+
+// hangTimeoutAfter is hangTimeout from the moment the child logs marker instead of the prompt.
+func hangTimeoutAfter(t *testing.T, childLog, marker string, hang time.Duration) context.Context {
+	t.Helper()
 	base, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	t.Cleanup(func() { cancel(); <-done })
@@ -3459,7 +3499,7 @@ func hangTimeout(t *testing.T, childLog string, hang time.Duration) context.Cont
 		defer poll.Stop()
 		for {
 			data, err := os.ReadFile(childLog)
-			if err == nil && bytes.Contains(data, []byte(`"method":"session/prompt"`)) {
+			if err == nil && bytes.Contains(data, []byte(marker)) {
 				timer := time.NewTimer(hang)
 				defer timer.Stop()
 				select {
@@ -3728,6 +3768,10 @@ func TestSessionACPChildHelper(t *testing.T) {
 			}
 		case "session/new":
 			send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"sessionId": "native-1"}})
+			if scenario == "unread-prompt" {
+				// Stops reading its input, so a prompt larger than the pipe never finishes writing.
+				time.Sleep(time.Hour)
+			}
 		case "session/load":
 			if scenario == "load-fail" {
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "error": map[string]any{"code": -32000, "message": "load failed"}})

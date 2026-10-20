@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A session turn that runs out of time says which step never finished.** A turn that hit its
+  deadline failed with "turn deadline exceeded" whether the agent never answered or never read its
+  prompt. The error detail now adds "while waiting for the agent to answer session/prompt" (or
+  `initialize`, `session/new`, `session/load`), or "while sending session/prompt to the agent".
+
 - **Approve each filtered project's network access once after upgrading.** Coop named each
   project's network records with a secret key kept beside them, so losing that key would have
   lost every approval for good. The records are now named by the project's folder alone. Coop does

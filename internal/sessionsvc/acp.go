@@ -944,6 +944,16 @@ func classifyContextFailure(err error) error {
 	return acpFailure(sessionACPCancelledError, "turn cancelled")
 }
 
+// turnDeadline is classifyContextFailure for a wait that knows what it was doing, so a turn that
+// ran out of time says which step never finished: an agent that never answered reads differently
+// from one that never read its input.
+func turnDeadline(err error, doing string) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return acpFailure(sessionACPTimeoutError, "turn deadline exceeded while "+doing)
+	}
+	return classifyContextFailure(err)
+}
+
 func (r *sessionTurnRunner) completeTurn(bound session.Session, leased session.Turn, assistant string, artifacts []session.OutputArtifact, usage session.Usage) (session.Turn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
 	defer cancel()
@@ -2845,7 +2855,13 @@ func (r *sessionTurnRunner) runACP(
 			return acpFailure(sessionACPProtocolError, "outgoing ACP frame exceeded its bound")
 		}
 		line = append(line, '\n')
-		return writeSessionACP(ctx, process, line)
+		if err := writeSessionACP(ctx, process, line); err != nil {
+			if ctx.Err() != nil {
+				return turnDeadline(ctx.Err(), "sending "+method+" to the agent")
+			}
+			return err
+		}
+		return nil
 	}
 	handle := func(frame []byte, expectedSession string) (json.RawMessage, string, error) {
 		var envelope struct {
@@ -2943,7 +2959,7 @@ func (r *sessionTurnRunner) runACP(
 			process.stopGrace = max(process.stopGrace, sessionACPTermGrace)
 		}
 	}
-	waitResponse := func(id json.RawMessage, expectedSession string, cancelPrompt bool) (json.RawMessage, error) {
+	waitResponse := func(method string, id json.RawMessage, expectedSession string, cancelPrompt bool) (json.RawMessage, error) {
 		// Only the admitted prompt can go quiet after its tools. A frame checks it as it
 		// arrives; the ticker checks a provider that sends none at all.
 		watchQuiet := cancelPrompt && expectedSession != "" && activity != nil
@@ -2959,7 +2975,7 @@ func (r *sessionTurnRunner) runACP(
 				if cancelPrompt && expectedSession != "" {
 					cancelSession(expectedSession)
 				}
-				return nil, classifyContextFailure(ctx.Err())
+				return nil, turnDeadline(ctx.Err(), "waiting for the agent to answer "+method)
 			case <-quietCheck:
 				if quiet := activity.quiet(); quiet != nil {
 					cancelSession(expectedSession)
@@ -3022,7 +3038,7 @@ func (r *sessionTurnRunner) runACP(
 		if err := writeRequest(id, method, params); err != nil {
 			return nil, err
 		}
-		return waitResponse(id, expectedSession, false)
+		return waitResponse(method, id, expectedSession, false)
 	}
 
 	if !process.initialized {
@@ -3136,7 +3152,7 @@ func (r *sessionTurnRunner) runACP(
 		}
 	}
 	collectAssistant = true
-	result, err := waitResponse(id, nativeID, true)
+	result, err := waitResponse("session/prompt", id, nativeID, true)
 	if err != nil {
 		return "", nil, session.Usage{}, err
 	}
