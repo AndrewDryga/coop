@@ -4,7 +4,8 @@
 // Hermetic means the repo answers to nothing outside itself: GIT_CONFIG_GLOBAL and
 // GIT_CONFIG_SYSTEM are pinned at empty files, so the developer's own config — a signing key
 // that pops pinentry, a commit template, an alias, a hooksPath — can never reach the commands
-// the test runs, and the test behaves the same on a laptop and in CI.
+// the test runs, and the test behaves the same on a laptop and in CI. Nor does a fixture commit
+// start git's automatic maintenance, which would keep writing in the repository after it returns.
 package gitrepo
 
 import (
@@ -22,6 +23,7 @@ func New(t *testing.T) (string, func(...string)) {
 	env := append(os.Environ(),
 		"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "noglobal"),
 		"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "nosystem"))
+	env = append(env, noMaintenance...)
 	run := func(args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir, cmd.Env = repo, env
@@ -39,3 +41,8 @@ func New(t *testing.T) (string, func(...string)) {
 	run("config", "user.name", "T")
 	return repo, run
 }
+
+// noMaintenance turns off the maintenance git starts after a commit, which since git 2.47 runs in
+// the background and takes .git/objects/maintenance.lock while a test, or the committed seed, may
+// be reading the repository.
+var noMaintenance = []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=maintenance.auto", "GIT_CONFIG_VALUE_0=false"}

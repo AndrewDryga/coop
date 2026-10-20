@@ -24,6 +24,7 @@ var committedSeed = sync.OnceValues(func() ([]seedFile, error) {
 	}
 	defer os.RemoveAll(root)
 	env := append(os.Environ(), "GIT_CONFIG_GLOBAL="+filepath.Join(root, "noglobal"), "GIT_CONFIG_SYSTEM="+filepath.Join(root, "nosystem"))
+	env = append(env, noMaintenance...)
 	for _, args := range [][]string{
 		{"init", "-q"}, {"symbolic-ref", "HEAD", "refs/heads/main"},
 		{"config", "user.email", "t@t"}, {"config", "user.name", "T"},
@@ -88,6 +89,7 @@ func NewCommitted(t *testing.T) (string, func(...string)) {
 		}
 	}
 	env := append(os.Environ(), "GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "noglobal"), "GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "nosystem"))
+	env = append(env, noMaintenance...)
 	return repo, func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", args...)

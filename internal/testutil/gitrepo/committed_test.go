@@ -77,3 +77,24 @@ func TestCommittedSeedCopiesHaveIndependentObjectsAndAuthority(t *testing.T) {
 		t.Fatalf("config crossed seed copies: %s, %v", body, err)
 	}
 }
+
+// A fixture commit starts no git maintenance: since git 2.47 it runs in the background after the
+// commit returns and takes .git/objects/maintenance.lock while the seed or a test reads the folder.
+func TestFixtureCommitsStartNoMaintenance(t *testing.T) {
+	trace := filepath.Join(t.TempDir(), "trace")
+	t.Setenv("GIT_TRACE", trace)
+	_, fresh := New(t)
+	fresh("commit", "-q", "--allow-empty", "-m", "base")
+	_, committed := NewCommitted(t)
+	committed("commit", "-q", "--allow-empty", "-m", "next")
+	data, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "commit") {
+		t.Fatalf("GIT_TRACE recorded no commit, so this check proves nothing:\n%s", data)
+	}
+	if strings.Contains(string(data), "maintenance") {
+		t.Fatalf("a fixture commit started git maintenance:\n%s", data)
+	}
+}

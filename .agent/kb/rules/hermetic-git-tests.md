@@ -2,9 +2,9 @@
 name: hermetic-git-tests
 description: "a test that runs git pins GIT_CONFIG_GLOBAL *and* GIT_CONFIG_SYSTEM — identity envs alone still let the host's config in"
 scope: architecture
-sources: [internal/testutil/gitrepo/gitrepo.go, internal/testutil/procharness/harness.go, internal/hermeticgit_test.go]
+sources: [internal/testutil/gitrepo/gitrepo.go, internal/testutil/gitrepo/committed.go, internal/testutil/procharness/harness.go, internal/hermeticgit_test.go]
 check: "go test ./internal -run TestHermeticGitTests"
-updated: 2026-10-17
+updated: 2026-10-20
 ---
 
 # A test that runs git answers to nothing outside itself
@@ -40,6 +40,10 @@ hazards.
   `internal/cli/checksecrets_test.go`, and the fork tests all pin process-wide for this reason. Same
   answer, second reason: a test that plants `git config --global` needs the write and the read to
   land in one file (`internal/forkspace/git_test.go` says so at its helper).
+- A fixture that reads or copies its repository right after committing also turns off automatic
+  maintenance (`gitrepo`'s `noMaintenance`): since git 2.47 a commit starts `git maintenance run
+  --auto --detach`, which takes `.git/objects/maintenance.lock` in the background. CI's git 2.55 hit
+  the committed seed's walk with it; Apple's git 2.39 runs it in the foreground, so a Mac never does.
 - Proving an isolation fix works needs `-count=1` on the focused test (and a cleared test cache
   before the full gate). A cached green result is not evidence that isolation holds — the run that
   produced it may predate the fix.
@@ -49,6 +53,14 @@ hazards.
 Related: [[internal-import-dag]] (`internal/testutil/gitrepo` is a leaf every test package may import).
 
 ## Changelog
+- 2026-10-20 — fixtures also turn off automatic maintenance: a detached `git maintenance run` took
+  `maintenance.lock` while `gitrepo`'s committed seed walked `.git` on CI (task
+  2026-10-20-keep-git-maintenance-out-of-the-committed-reposi). `TestFixtureCommitsStartNoMaintenance`
+  checks it through `GIT_TRACE`. Swept the tree for test code that reads `.git` after a commit: one
+  sibling, the live provider loop suite's `providerLoopLiveAdminDigest`, walks a `.git` Coop's own
+  commits wrote under procharness's environment, which leaves maintenance on (queued as task
+  2026-10-20-keep-git-maintenance-out-of-the-process-test-chi); the `.git/hooks` reads and the seed
+  copies' own walk see no commit first.
 - 2026-10-17 — named `procharness.Environment`, `TestInitGitHooks` and the five 2026-08-10 violators
   by function instead of line numbers (re-verified both pins in the first two at HEAD).
 - 2026-08-10 — created, promoting the `kb/inbox/environment-sensitive-test-evidence.md` draft that
