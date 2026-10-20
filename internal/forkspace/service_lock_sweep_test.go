@@ -81,13 +81,22 @@ func TestServiceLaunchLockSweepRemovesOnlyTheLocksOfGoneRepositories(t *testing.
 func TestServiceLaunchLockSweepIsBounded(t *testing.T) {
 	t.Setenv(TestExecutionRegistryRootEnv, t.TempDir())
 	parent := t.TempDir()
-	var dir string
+	// Every repository exists before any lock is taken: a lock is named by its folder's inode, and
+	// ext4 gives a new folder the inode just freed, so a, b and c made one after another's removal
+	// would share one lock.
+	var repos []string
 	for _, name := range []string{"a", "b", "c"} {
 		repo := filepath.Join(parent, name)
 		if err := os.Mkdir(repo, 0o700); err != nil {
 			t.Fatal(err)
 		}
+		repos = append(repos, repo)
+	}
+	var dir string
+	for _, repo := range repos {
 		dir = filepath.Dir(releasedServiceLock(t, repo))
+	}
+	for _, repo := range repos {
 		if err := os.Remove(repo); err != nil {
 			t.Fatal(err)
 		}
