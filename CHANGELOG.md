@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 12.0.0
 
 - **A busy session database no longer cuts startup short.** A turn could fail after two seconds
