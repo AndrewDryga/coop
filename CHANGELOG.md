@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 12.0.1
 
 - **Go certificate verification security fix.** Builds and network helpers now use Go 1.27.3,
   which rejects known compromised intermediate certificates (GO-2026-6809).
