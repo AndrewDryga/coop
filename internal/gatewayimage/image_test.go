@@ -60,8 +60,8 @@ func TestEmbeddedGatewayModuleLoadsOnItsOwn(t *testing.T) {
 	}
 }
 
-// The recipe's pinned Go compiles the packed module, whose go line is the root's: a newer go line
-// would pass every check here and fail only in each user's coop net setup.
+// The recipe must build the packed module and carry the repository's Go security patches.
+// Pack drops the toolchain directive, so checking only its go line misses patch updates.
 func TestGatewayRecipeBuildsThePackedGoVersion(t *testing.T) {
 	recipe, err := os.ReadFile("Dockerfile")
 	if err != nil {
@@ -74,6 +74,17 @@ func TestGatewayRecipeBuildsThePackedGoVersion(t *testing.T) {
 	}
 	if version.Compare("go"+string(image[1]), "go"+string(module[1])) < 0 {
 		t.Fatalf("the recipe builds with Go %s, older than the packed go %s line", image[1], module[1])
+	}
+	rootModule, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolchain := regexp.MustCompile(`(?m)^toolchain (go[0-9.]+)$`).FindSubmatch(rootModule)
+	if toolchain == nil {
+		t.Fatal("cannot read the repository's pinned Go toolchain")
+	}
+	if version.Compare("go"+string(image[1]), string(toolchain[1])) < 0 {
+		t.Fatalf("the recipe builds with Go %s, older than the repository toolchain %s", image[1], toolchain[1])
 	}
 }
 

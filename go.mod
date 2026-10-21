@@ -2,7 +2,7 @@ module github.com/AndrewDryga/coop
 
 go 1.27
 
-toolchain go1.27.2
+toolchain go1.27.3
 
 require (
 	github.com/moby/patternmatcher v0.6.1
