@@ -1,0 +1,522 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/integrations.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Editors, MCP and controllers · co:op</title>
+  <meta name="description" content="Connect an editor or MCP server and check which actions run on your computer or in the container.">
+  <link rel="canonical" href="https://coop.dryga.com/integrations.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/integrations.html">
+  <meta property="og:title" content="Editors, MCP and controllers">
+  <meta property="og:description" content="Connect an editor or MCP server and check which actions run on your computer or in the container.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=bf51eb611f">
+  <script src="assets/js/site.js?v=bf51eb611f" defer></script>
+  <script src="assets/js/analytics.js?v=bf51eb611f" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <h1>Editors, MCP and controllers</h1>
+        <p class="guide-lead">Connect an editor or MCP server and check which actions run on your computer or in the container.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#zed-and-other-acp-editors">Zed and other ACP editors</a></li>
+<li class="reference-subsection"><a href="#set-up-zed">Set up Zed</a></li>
+<li class="reference-subsection"><a href="#pick-the-provider-model-and-account">Pick the provider, model and account</a></li>
+<li class="reference-subsection"><a href="#remote-repositories">Remote repositories</a></li>
+<li class="reference-subsection"><a href="#what-runs-in-the-box">What runs in the box</a></li>
+<li class="reference-subsection"><a href="#the-toolbar">The toolbar</a></li>
+<li class="reference-subsection"><a href="#usage-limits">Usage limits</a></li>
+<li class="reference-subsection"><a href="#restarts">Restarts</a></li>
+<li class="reference-subsection"><a href="#dev-servers">Dev servers</a></li>
+<li class="reference-subsection"><a href="#tracing-a-session">Tracing a session</a></li>
+<li class="reference-subsection"><a href="#filtered-networking">Filtered networking</a></li>
+<li class="reference-subsection"><a href="#forks">Forks</a></li>
+<li class="reference-subsection"><a href="#services-and-custom-images">Services and custom images</a></li>
+<li class="reference-subsection"><a href="#files-and-terminals-on-your-computer">Files and terminals on your computer</a></li>
+<li><a href="#mcp-servers">MCP servers</a></li>
+<li class="reference-subsection"><a href="#where-the-file-lives">Where the file lives</a></li>
+<li class="reference-subsection"><a href="#how-each-agent-gets-them">How each agent gets them</a></li>
+<li class="reference-subsection"><a href="#tokens-and-headers">Tokens and headers</a></li>
+<li class="reference-subsection"><a href="#sse-servers">SSE servers</a></li>
+<li class="reference-subsection"><a href="#network-modes">Network modes</a></li>
+<li class="reference-subsection"><a href="#playwright">Playwright</a></li>
+<li><a href="#controllers-and-workers">Controllers and workers</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<p>Use this reference to connect an editor over ACP, share MCP servers across agents, or run co:op
+workers for a controller. For a shorter introduction, see the guide&#39;s
+<a href="https://coop.dryga.com/docs.html#editors">Editors</a> and
+<a href="https://coop.dryga.com/docs.html#mcp-remote">MCP and remote sessions</a> sections.</p>
+</section><section class="doc-section reference-section" id="zed-and-other-acp-editors"><h2>Zed and other ACP editors</h2>
+<p>You can use Zed or another <a href="https://agentclientprotocol.com" target="_blank" rel="nofollow noopener">ACP</a> editor to work with an agent
+running in a co:op box. You send prompts from the editor&#39;s agent panel; co:op runs the agent in
+the box and handles account rotation. The steps below use Zed.</p>
+<h3 id="set-up-zed">Set up Zed</h3>
+<ol>
+<li>Install co:op. The <a href="https://github.com/AndrewDryga/coop/blob/main/README.md#install" target="_blank" rel="nofollow noopener">install one-liner</a> puts <code>coop</code> on your <code>PATH</code> and
+builds an image with the ACP adapters included. Check that your shell can find it:</li>
+</ol>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Set up Zed code example" tabindex="0"><code class="language-bash">command -v coop      # e.g. /Users/you/.local/bin/coop
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<ol start="2">
+<li>Sign in to the agent you&#39;ll use. See <a href="agents.html#authentication">Authentication</a>.</li>
+</ol>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Set up Zed code example" tabindex="0"><code class="language-bash">coop login claude    # or codex / gemini / grok
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<ol start="3">
+<li>Register co:op in Zed. In the agent panel, use Add Custom Agent, or edit <code>settings.json</code>
+directly:</li>
+</ol>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Set up Zed code example" tabindex="0"><code class="language-jsonc">{
+  &#34;agent_servers&#34;: {
+    &#34;coop&#34;: {
+      &#34;type&#34;: &#34;custom&#34;,
+      &#34;command&#34;: &#34;coop&#34;,                                    // absolute path if Zed&#39;s PATH lacks ~/.local/bin
+      &#34;args&#34;: [&#34;acp&#34;]                                       // automatic startup; choose in the live toolbar
+    },
+    &#34;coop · second opinion&#34;: {
+      &#34;type&#34;: &#34;custom&#34;,
+      &#34;command&#34;: &#34;coop&#34;,
+      &#34;args&#34;: [&#34;acp&#34;, &#34;claude:opus/xhigh&#34;, &#34;--peer&#34;, &#34;codex&#34;] // named peer; the lead&#39;s model/effort ride the target
+    }
+  }
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<ol start="4">
+<li>Open the agent panel, pick <code>coop</code> from the dropdown and start a thread.</li>
+</ol>
+<p>GUI apps don&#39;t always inherit your shell&#39;s <code>PATH</code>. If Zed can&#39;t find <code>coop</code>, use the absolute path
+from step 1 as <code>command</code>.</p>
+<h3 id="pick-the-provider-model-and-account">Pick the provider, model and account</h3>
+<p>If you do not specify a target, co:op checks Claude, Codex, Gemini and Grok in that order and
+starts the first signed-in provider with its default account. You can change the provider or
+choose a preset in the toolbar. If none is signed in, run <code>coop login &lt;agent&gt;</code> and reconnect
+the editor.</p>
+<p>To choose the starting model, reasoning effort and account, add a target to <code>args</code> in the form
+<code>provider[:model][/effort][@account]</code>. Set these in the target rather than the editor&#39;s separate
+defaults. For Claude with a Codex peer, use <code>[&#34;acp&#34;,&#34;claude:opus/xhigh&#34;,&#34;--peer&#34;,&#34;codex&#34;]</code>.
+For Claude alone on a named account, use <code>[&#34;acp&#34;,&#34;claude:opus/xhigh@work&#34;]</code>. The toolbar shows
+your target&#39;s choices, and you can still change them during the thread.</p>
+<h3 id="remote-repositories">Remote repositories</h3>
+<p>For a repository on another machine, use Zed Remote Development. Open the repository through
+Zed&#39;s SSH remote workflow, then register <code>command: &#34;coop&#34;</code>, <code>args: [&#34;acp&#34;, &#34;&lt;target&gt;&#34;]</code> there.
+The editor, terminal and ACP process then use the same remote filesystem and absolute paths.</p>
+<p>If the editor must stay local, its custom-agent command can be SSH itself:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Remote repositories code example" tabindex="0"><code class="language-jsonc">{
+  &#34;agent_servers&#34;: {
+    &#34;coop · remote&#34;: {
+      &#34;type&#34;: &#34;custom&#34;,
+      &#34;command&#34;: &#34;ssh&#34;,
+      &#34;args&#34;: [&#34;-T&#34;, &#34;dev@coop-host&#34;, &#34;cd /srv/projects/my-repo &amp;&amp; exec coop acp claude&#34;]
+    }
+  }
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>SSH verifies the host, authenticates the connection, encrypts traffic and carries the process&#39;s
+input and output. co:op does not open an ACP TCP listener. Use this command-over-SSH setup only
+if Zed can resolve the same absolute repository paths reported by the remote ACP process. If
+the machines use different paths, use native Remote Development.</p>
+<h3 id="what-runs-in-the-box">What runs in the box</h3>
+<p>Zed starts <code>coop acp</code> in the project directory, optionally with a target or preset.
+<code>coop acp [&lt;target|preset&gt;]</code> starts the selected provider&#39;s ACP adapter in the box. The adapter
+communicates over standard input and output, and the provider edits your files through ACP.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="What runs in the box table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Provider</th>
+<th scope="col">Adapter in the box</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude</td>
+<td><code>@agentclientprotocol/claude-agent-acp</code></td>
+</tr>
+<tr>
+<td>Codex</td>
+<td><code>@agentclientprotocol/codex-acp</code></td>
+</tr>
+<tr>
+<td>Gemini</td>
+<td><code>gemini --acp</code></td>
+</tr>
+<tr>
+<td>Grok</td>
+<td><code>grok agent stdio</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>In a normal writable session, co:op mounts the repository at its real host path. This is the
+same path used by <code>coop</code> and <code>coop loop</code>, so Zed&#39;s absolute file paths resolve correctly.</p>
+<p>Tool calls do not ask for permission. co:op runs editor sessions in yolo mode, regardless of the
+provider&#39;s settings, and ignores the editor&#39;s permission <code>mode</code> setting. For requests handled
+inside the box, the box provides isolation. ACP can also ask the editor to access files and
+terminals on your computer; see the file and terminal restrictions below.</p>
+<p>Editor threads store their complete native home in
+<code>~/.config/coop/agents/&lt;agent&gt;/acp-homes/&lt;repository-key&gt;/home/</code>. Accounts for the same provider
+share that repository&#39;s home. You can switch accounts during a thread without losing the
+conversation or exposing another project&#39;s threads.</p>
+<p>Remote sessions use the same account-independent layout in their private state. Sessions from
+<code>coop &lt;agent&gt;</code> and <code>coop loop</code> use separate storage.</p>
+<p>co:op runs a proxy between the editor and the box to manage the session.</p>
+<h3 id="the-toolbar">The toolbar</h3>
+<p>The toolbar changes when you activate a preset. Neither version has a permission-mode menu.</p>
+<p>A plain session shows the Preset, Provider and Account menus:</p>
+<ul>
+<li>Changing accounts or other choices within the same provider keeps the conversation. The
+provider&#39;s session storage is shared across accounts.</li>
+<li>Changing providers creates a new session. co:op carries over the message text and one-line
+descriptions of tool use as a best effort; tool payloads do not transfer.</li>
+<li>If you switch during a turn, co:op sends the current prompt again to the new target.</li>
+<li>The model menu starts with the target&#39;s <code>:model</code> or your configured default. You can change it.</li>
+</ul>
+<p>With a preset active, the toolbar shows only the Preset menu. The preset&#39;s fallback list
+chooses the provider, model, effort, account and roles. co:op accepts saved Provider and Account
+choices from the editor but does not apply them.</p>
+<p>Select None to choose a provider or account yourself. Both menus return: Provider shows the
+provider currently in use, and Account is set to Auto.</p>
+<h3 id="usage-limits">Usage limits</h3>
+<p>If a provider reports a usage limit during a turn, co:op suppresses the error, switches to your
+next signed-in account and sends the prompt again. It updates the account dropdown to match.
+If no account is available, co:op posts
+<code>Waiting for account &#34;&lt;name&gt;&#34; on &lt;Provider&gt; to reset its usage limit at &lt;Mon 15:04 MST&gt; (in MM:SS). Your message will send automatically.</code>
+It sends your prompt when the limit resets.</p>
+<h3 id="restarts">Restarts</h3>
+<p>A box can stop during <code>coop build</code> or <code>coop update</code>, when it runs out of memory, or when Docker
+restarts. co:op keeps the editor connected, starts another box and repeats the ACP handshake.
+This also works for a thread that has not received a message yet. Supervision is always on.</p>
+<h3 id="dev-servers">Dev servers</h3>
+<p>Set <code>serve.ports</code> in <a href="box.html#dev-servers-in-your-browser"><code>.agent/project.yaml</code></a> to publish the
+box&#39;s ports. The thread shows the stable <code>http://localhost:&lt;port&gt;</code> URLs you can open.</p>
+<h3 id="tracing-a-session">Tracing a session</h3>
+<p>To record a session&#39;s ACP traffic, run <code>touch ~/.config/coop/acp-debug</code> or set
+<code>COOP_ACP_TRACE=1</code> in the agent server&#39;s environment. Each <code>coop acp</code> server then appends traffic
+between the editor and box to <code>~/.config/coop/acp-trace-&lt;pid&gt;.log</code>.</p>
+<p>Creating the file also turns tracing on for servers that are already running, so you can use
+it after a problem appears. The trace contains prompts and file contents; treat it as sensitive.
+See <a href="https://coop.dryga.com/docs.html#troubleshooting">Troubleshooting</a>.</p>
+<h3 id="filtered-networking">Filtered networking</h3>
+<p>With <a href="networking.html">filtered networking</a>, the editor offers only compatible providers and
+presets that can run in full under those network rules.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Filtered networking table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Provider</th>
+<th scope="col">Filtered ACP works with</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude</td>
+<td>its supported provider-native credentials, or an API key</td>
+</tr>
+<tr>
+<td>Codex</td>
+<td>its supported provider-native credentials, or an API key</td>
+</tr>
+<tr>
+<td>Gemini</td>
+<td>an AI Studio API key or importable plain OAuth account; not Vertex</td>
+</tr>
+<tr>
+<td>Grok</td>
+<td>its OAuth login</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>co:op&#39;s broker keeps API keys and native OAuth grants outside the box. You can choose either
+an API-key account or a subscription account for a supported provider. Switching accounts starts
+a new broker without changing the repository&#39;s editor home. Vertex <code>GOOGLE_API_KEY</code> is refused
+in every network mode.</p>
+<p>Switching providers never widens the session&#39;s network access. Explicitly asking for an
+unsupported provider or preset still fails before launch.</p>
+<h3 id="forks">Forks</h3>
+<p>To work in a <a href="forks.html">fork</a> from the editor, start the adapter with <code>coop fork &lt;name&gt; acp</code>.
+The editor works the same way, but the agent edits the throwaway clone rather than your working
+tree. You review and land the result locally without pushing the fork. Uncommitted, Git-ignored
+secrets are not copied, but secrets already in Git history can remain.</p>
+<p>The command starts the agent the fork was created with. Name a target to start another, as in
+<code>coop fork &lt;name&gt; acp claude:opus</code>.</p>
+<p>Configure this command with the parent project open in Zed. co:op maps that project directory
+to the fork inside the box. The fork, provider and account stay fixed, so the usual ACP Provider
+and Preset menus are hidden. You can still use any model and effort choices the adapter offers.
+If the editor is open on an unrelated directory, co:op refuses the session.</p>
+<h3 id="services-and-custom-images">Services and custom images</h3>
+<p>Services work with ACP too. With open networking, run <code>coop up</code> for the repo&#39;s
+<code>.agent/compose.yml</code>, and the ACP box joins the same network. With filtered networking, request
+and approve access to each service in the project&#39;s network rules. co:op then starts those
+services on a separate network for the editor session.</p>
+<p>A custom image must include the ACP adapters. Building on co:op&#39;s box with
+<code>FROM ${COOP_BASE_IMAGE}</code>, as <code>coop init</code> sets up, includes them automatically. If you use another
+base image, install them as shown in <a href="box.html#your-own-image-agentdockerfile">box.md</a>.
+Filtered runs must inherit co:op&#39;s client base and keep its client versions. Without the
+required adapter, <code>coop acp</code> fails with an error such as <code>codex-acp: not found</code>.</p>
+<h3 id="files-and-terminals-on-your-computer">Files and terminals on your computer</h3>
+<p>ACP also lets the agent ask the editor to access your computer directly. Requests such as
+<code>fs/read_text_file</code>, <code>fs/write_text_file</code> and <code>terminal/*</code> run through the editor, outside the
+box. co:op forwards these requests to Zed without filtering them. Claude&#39;s adapter normally uses
+this client-side <code>fs</code> access.</p>
+<p>When you use ACP, your editor&#39;s file and terminal restrictions are part of the security
+boundary. A prompt-injected agent could ask the editor to read or write an absolute path outside
+the repo on your computer.</p>
+<p><code>coop claude</code> and <code>coop loop</code> do not have this editor channel. These additional file and
+terminal risks apply when you control an agent from an editor over ACP.</p>
+</section><section class="doc-section reference-section" id="mcp-servers"><h2>MCP servers</h2>
+<p>Define MCP servers in one shared file for all agents. <code>coop init</code> creates an empty
+<code>~/.config/coop/agents/mcp.json</code> using the standard <code>{ &#34;mcpServers&#34;: { ... } }</code> format. It connects
+no servers until you add them:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="MCP servers code example" tabindex="0" data-copy-source=""><code class="language-json">{
+  &#34;mcpServers&#34;: {
+    &#34;playwright&#34;: {
+      &#34;command&#34;: &#34;npx&#34;,
+      &#34;args&#34;: [&#34;-y&#34;, &#34;@playwright/mcp@latest&#34;, &#34;--headless&#34;, &#34;--no-sandbox&#34;]
+    },
+    &#34;github&#34;: {
+      &#34;command&#34;: &#34;npx&#34;,
+      &#34;args&#34;: [&#34;-y&#34;, &#34;@modelcontextprotocol/server-github&#34;],
+      &#34;env&#34;: { &#34;GITHUB_PERSONAL_ACCESS_TOKEN&#34;: &#34;ghp_replace_with_your_token&#34; }
+    },
+    &#34;sentry&#34;: {
+      &#34;type&#34;: &#34;http&#34;,
+      &#34;url&#34;: &#34;https://mcp.sentry.dev/mcp&#34;,
+      &#34;bearer_token_env_var&#34;: &#34;SENTRY_TOKEN&#34;
+    }
+  }
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<h3 id="where-the-file-lives">Where the file lives</h3>
+<p>Set <code>COOP_MCP_FILE</code> to choose the shared file; the default is <code>mcp.json</code>. Keep it outside
+repositories, companion repositories, agent credential homes and ACP session stores. co:op
+mounts those directories in full, so a file there could expose its contents to the box. co:op
+refuses a <code>COOP_MCP_FILE</code> in any of them before launch, even if it is empty or does not exist yet.
+The file must also:</p>
+<ul>
+<li>be a regular file, not a symlink or special file</li>
+<li>be 4 MiB or smaller</li>
+<li>have a canonical path without <code>..</code></li>
+</ul>
+<p>Gemini&#39;s native <code>settings.json</code> must follow the same file rules. co:op reads it and generates
+the box&#39;s version on every Gemini launch. It reads Codex&#39;s native <code>config.toml</code> on every Codex
+launch, and Grok&#39;s native config when the shared file is active. If an input is unsafe or cannot
+be read, co:op stops that launch instead of ignoring the problem.</p>
+<h3 id="how-each-agent-gets-them">How each agent gets them</h3>
+<p>At launch, <code>coop</code> passes the shared server definitions to each agent in its native format:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="How each agent gets them table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Agent</th>
+<th scope="col">Where the servers go</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude</td>
+<td><code>--mcp-config</code></td>
+</tr>
+<tr>
+<td>Gemini</td>
+<td>merged into its <code>settings.json</code></td>
+</tr>
+<tr>
+<td>Codex, Grok</td>
+<td>converted to their provider-specific <code>[mcp_servers.*]</code> tables in <code>config.toml</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>co:op generates these configs in Go, with no extra tools. It mounts them read-only over the
+existing configs inside the box and leaves your source files unchanged.</p>
+<p>When the shared file is active, it is the only source of MCP server definitions. co:op leaves
+out the native Codex and Grok <code>[mcp_servers.*]</code> tables.</p>
+<p>If your native TOML uses dotted, quoted or inline <code>mcp_servers</code> entries, remove them or move
+them into the shared file. co:op refuses those forms before launch because removing them would
+require rewriting the rest of your config.</p>
+<p>Remote sessions use the same <code>mcp.json</code> without extra setup. Their ACP adapters accept no flags,
+so co:op passes server definitions directly to the session rather than using Claude&#39;s
+<code>--mcp-config</code>. ACP accepts headers, not environment-variable names. co:op therefore reads
+<code>bearer_token_env_var</code> and supplies an <code>Authorization</code> header.</p>
+<p>Before changing private session state, co:op resolves and validates the file. The adapter gets
+only the bytes captured during that check. If the active file is unsafe or ambiguous, the turn
+stops before its child process starts.</p>
+<h3 id="tokens-and-headers">Tokens and headers</h3>
+<p>Every agent passes a command server&#39;s <code>env</code> block (<code>github</code> above) to that server unchanged.
+The values are literal strings; <code>$VAR</code> is not expanded.</p>
+<p>To keep a token out of <code>mcp.json</code>, point <code>bearer_token_env_var</code> at a variable (<code>sentry</code> above),
+and put the value in the env file:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Tokens and headers code example" tabindex="0"><code class="language-bash">echo &#39;SENTRY_TOKEN=…&#39; &gt;&gt; ~/.config/coop/agents/env
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Every agent supports an HTTP server&#39;s <code>headers</code>. Claude and Grok turn <code>bearer_token_env_var</code>
+into an Authorization header using the environment variable&#39;s value.</p>
+<p>For Codex, a literal value becomes a static header. A value containing exactly one
+<code>${VARIABLE}</code> becomes an environment-variable reference: Codex reads the secret itself, keeping
+it out of the generated config. Codex cannot represent a mixed value such as <code>Bearer ${TOKEN}</code>.
+Use <code>bearer_token_env_var</code> for that form.</p>
+<h3 id="sse-servers">SSE servers</h3>
+<p>The agents handle a legacy SSE server (<code>&#34;type&#34;: &#34;sse&#34;</code>) differently:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="SSE servers table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Agent</th>
+<th scope="col">What happens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Grok</td>
+<td>Grok speaks legacy SSE, and co:op carries the declaration through.</td>
+</tr>
+<tr>
+<td>Claude, Gemini</td>
+<td>They receive the declaration and decide for themselves.</td>
+</tr>
+<tr>
+<td>Codex</td>
+<td>co:op stops before launch and names the unsupported server. Codex&#39;s client would silently treat the SSE declaration as streamable HTTP, while its ACP adapter rejects the whole session.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The Codex refusal applies wherever Codex takes part, including as a <code>--peer</code> of another lead.</p>
+<h3 id="network-modes">Network modes</h3>
+<h4 id="filtered-runs">Filtered runs</h4>
+<p>With <code>--egress filtered</code>, header values must be literal for every agent. co:op builds the
+approved network policy from those literal values, so it rejects environment references such
+as <code>${…}</code> before launch.</p>
+<p>In a filtered run, co:op&#39;s credential broker keeps the <code>bearer_token_env_var</code> token outside the
+box and sends it to the server. The box gets a modified config that points to a loopback
+listener and uses a replacement variable, <code>COOP_MCP_TOKEN_&lt;n&gt;</code>. That replacement works only for
+this server during this run.</p>
+<p>The original variable in co:op&#39;s env file (<code>SENTRY_TOKEN</code> above) never reaches a filtered box,
+even if that box does not load MCP. The ACP adapter receives only the replacement value, not
+the real token.</p>
+<p>A legacy SSE server with a bearer token needs a broader allowed route: <code>GET</code> on its stream
+path and <code>POST</code> on any clean path at the same host. The token still stays outside the box, and
+co:op reports this compatibility mode at launch. Prefer a streamable HTTP URL when the server
+provides one; that limits the route to an exact path.</p>
+<h4 id="open-runs">Open runs</h4>
+<p>For supported MCP servers, an open run also keeps secrets outside the box. co:op starts a
+small, unprivileged helper container on the box&#39;s network and removes it when the run ends.
+The helper holds each server&#39;s credential and accepts only a replacement value valid for that
+run, as the filtered broker does. The box&#39;s config points to <code>coop-broker</code> and uses
+<code>COOP_MCP_TOKEN_&lt;n&gt;</code>.</p>
+<p>The box talks to the helper over plain HTTP on its container network. If the project has no
+network of its own, it uses the default bridge. The replacement value protects access to the
+credential on that network. At launch, co:op lists the servers covered by the helper.</p>
+<p>If the helper cannot handle a server through one route, the server still works but its secret
+stays inside the box. co:op reports the server&#39;s name and reason at launch. This happens for:</p>
+<ul>
+<li>a server whose secret is in two places</li>
+<li>a URL that is not plain <code>https</code> on port 443</li>
+<li>every server, when the box has no network of its own to reach a helper on (Apple&#39;s <code>container</code>
+runtime, <code>--network none</code>, <code>--network container:…</code>)</li>
+</ul>
+<p>Remote sessions with open networking use the same helper. Their adapters get replacement
+values for supported servers. Servers the helper cannot handle use the same fallbacks above.</p>
+<h4 id="offline-runs">Offline runs</h4>
+<p>An offline run (<code>--egress none</code>) omits all remote MCP servers because it cannot reach them,
+and reports this at launch. Local command servers still work. Tokens for the omitted remote
+servers stay outside the box.</p>
+<h3 id="playwright">Playwright</h3>
+<p>The image includes Chromium&#39;s system libraries. On first use, the example downloads the
+Playwright package and browser, then keeps the browser in the cache volume. In a filtered run,
+you must approve the download destinations and any sites the browser needs to visit. If a
+download is blocked, review the reported destination before granting access.</p>
+<p>The browser runs with <code>--headless --no-sandbox</code>, relying on the box for isolation.</p>
+</section><section class="doc-section reference-section" id="controllers-and-workers"><h2>Controllers and workers</h2>
+<p>A controller is your platform that assigns jobs to co:op workers. Start an outbound worker on
+the controller&#39;s VM or a separate VM:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Controllers and workers code example" tabindex="0"><code class="language-bash">coop sessions connect --controller https://controller.example --token-file /run/secrets/coop-token
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The controller supplies jobs with fixed repositories, context, model targets, network settings
+and execution limits. co:op authenticates the controller, fetches complete Git/LFS working trees
+and authorized submodules, and runs the models in isolation. It saves session state so it
+persists between runs.</p>
+<p>You do not need a local policy catalog or worker configuration file. Any controller can use the
+same protocol; Ryker is one example.</p>
+<p>A private Unix API manages sessions, turns in first-in-first-out order, inspection, checkpoints,
+review, publication, cancellation, budgets and explicit cleanup. It stays on the host: it
+neither listens on TCP nor enters a model sandbox.</p>
+<p>After each turn, co:op removes the box unless the job uses a warm-idle timeout to keep it ready.
+If cleanup fails, co:op retries in the background. A parked session alone does not confirm that
+its containers are gone. Companion repositories are read-only snapshots of exact pinned versions.</p>
+<p>With a fresh grant scoped to the repository, the trusted host can push a fixed, reviewed
+candidate and open a draft PR. The model never receives the GitHub credential.</p>
+<p><code>coop sessions doctor --json</code> checks the service that <code>connect</code> started. Before you upgrade a
+worker, stop it and run <code>coop sessions check</code> with the new build; see
+<a href="session-api.html#upgrading-a-worker">Upgrading a worker</a>.</p>
+<p>If an old database has duplicate prompts in retry receipts, stop the worker and run:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Controllers and workers code example" tabindex="0"><code class="language-bash">coop sessions compact --backup /safe/path/session-before-compact.sqlite
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Choose a new backup file outside the state root and treat it as sensitive. Compaction preserves
+the original turns and prompts. Follow the API&#39;s
+<a href="session-api.html#compacting-old-turn-receipts">backup and recovery instructions</a>.</p>
+<p>The <a href="session-api.html">worker API reference</a> has the full detail. Its <a href="session-api.html#connect">Connect</a>
+section covers the worker command.</p>
+</section>
+        <nav class="reference-related" aria-label="Related guides">
+          <h2>Related guides</h2>
+          <ul class="reference-list" role="list"><li><a href="networking.html">Networking</a><p>Choose which network destinations an agent can reach, and review access before a run.</p></li>
+<li><a href="agents.html">Agents, accounts and presets</a><p>Sign in, choose models and accounts, and configure presets, teammates and instructions.</p></li>
+<li><a href="session-api.html">Worker API</a><p>Connect a worker and manage sessions, turns, evidence and publication through the worker API.</p></li>
+</ul>
+          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
+        </nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/integrations.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

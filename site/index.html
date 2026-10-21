@@ -6,28 +6,28 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0e1014">
   <title>co:op · Sandbox for Claude Code, Codex and AI coding agents</title>
-  <meta name="description" content="Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.">
+  <meta name="description" content="Run Claude Code, Codex, Gemini and Grok in a container with your project mounted inside. Hide secret files and control network access. Free and open source.">
   <link rel="canonical" href="https://coop.dryga.com/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="co:op">
   <meta property="og:url" content="https://coop.dryga.com/">
   <meta property="og:title" content="co:op · You need a sandbox">
-  <meta property="og:description" content="Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.">
+  <meta property="og:description" content="Run Claude Code, Codex, Gemini and Grok in a container with your project mounted inside. Hide secret files and control network access. Free and open source.">
   <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="You need a sandbox: a home folder where only the project sits inside the sandbox, secrets read as empty, and only the AI provider is reachable.">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
   <meta name="twitter:card" content="summary_large_image">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"co:op","description":"Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.","url":"https://coop.dryga.com/","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://github.com/AndrewDryga/coop/blob/main/LICENSE","softwareHelp":"https://coop.dryga.com/docs.html","sameAs":["https://github.com/AndrewDryga/coop"],"publisher":{"@type":"Organization","name":"Protectorate","url":"https://github.com/ProtectorateHQ"}}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"co:op","description":"Run Claude Code, Codex, Gemini and Grok in a container with your project mounted inside. Hide secret files and control network access. Free and open source.","url":"https://coop.dryga.com/","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://github.com/AndrewDryga/coop/blob/main/LICENSE","softwareHelp":"https://coop.dryga.com/docs.html","sameAs":["https://github.com/AndrewDryga/coop"],"publisher":{"@type":"Organization","name":"Protectorate","url":"https://github.com/ProtectorateHQ"}}</script>
   <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
   <link rel="manifest" href="site.webmanifest">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=34e083e426">
+  <link rel="stylesheet" href="assets/css/site.css?v=bf51eb611f">
   <script>{ const root = document.documentElement, mode = !("IntersectionObserver" in window) ? "" : matchMedia("(min-width: 1024px)").matches ? "js-story" : matchMedia("(min-height: 500px)").matches ? "js-deck" : ""; if (mode) { root.classList.add(mode); setTimeout(() => root.classList.contains("story-ready") || root.classList.remove(mode), 3000); } }</script>
-  <script src="assets/js/site.js?v=34e083e426" defer></script>
-  <script src="assets/js/analytics.js?v=34e083e426" defer></script>
+  <script src="assets/js/site.js?v=bf51eb611f" defer></script>
+  <script src="assets/js/analytics.js?v=bf51eb611f" defer></script>
   <noscript><style>.copy, .agents { display: none; }</style></noscript>
 </head>
 <body>
@@ -66,30 +66,30 @@
       <ol class="story-steps" id="sandbox" role="list">
         <li class="step">
           <h2>co:op builds a box around your project</h2>
-          <p>The agent runs in a container that sees one folder: your project, at its real path.</p>
-          <p>Your SSH keys, cloud logins and other repos aren’t in it.</p>
+          <p>The agent runs in a container with your project mounted at its real path.</p>
+          <p>co:op does not mount your SSH keys, cloud logins or other repos.</p>
           <p class="evidence"><strong>3 s</strong> <span>to start the box once its image is built, network filter included, <a href="https://github.com/AndrewDryga/coop/blob/main/tools/lifecyclebench/main.go" target="_blank" rel="nofollow noopener">we measured</a>.</span></p>
         </li>
         <li class="step">
           <h2>Secrets are replaced</h2>
           <p>Files like .env stay where they are, but inside the box they’re replaced with empty files.</p>
-          <p><code>coop check-secrets</code> finds secrets inside your files.</p>
+          <p><code>coop check-secrets</code> scans file contents for possible secrets.</p>
           <p>Hide more paths with <code>.coopignore</code>.</p>
         </li>
         <li class="step">
           <h2>Networking is restricted</h2>
-          <p>The box reaches your AI provider and the domains you approve.</p>
-          <p>Everything else is blocked, so your code can’t go anywhere you haven’t approved.</p>
+          <p>With filtered networking, the box reaches your AI provider and the destinations you approve.</p>
+          <p>Other destinations are blocked. Your provider can still receive the files and prompts you give the agent.</p>
         </li>
         <li class="step">
-          <h2>You push, not the agent</h2>
-          <p>There are no Git credentials inside.</p>
-          <p>The agent commits in your name, and you decide what leaves your machine.</p>
+          <h2>Review before you push</h2>
+          <p>co:op does not pass your host Git credentials to the box.</p>
+          <p>The agent commits in your name. You review the work before pushing it and, optionally, sign it.</p>
         </li>
         <li class="step-group" id="why" style="--items: 4">
           <div class="group-panel">
             <h2>But why?</h2>
-            <p>Agents do what they read in code, docs and issues, even when an attacker wrote it.</p>
+            <p>Agents can follow instructions hidden in code, docs or issues, even when an attacker wrote them.</p>
             <div class="attack-rail">
               <div class="ticks" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
               <ol class="attacks" role="list">
@@ -104,8 +104,8 @@
                   <p class="evidence"><strong>1 in 3</strong> <span>companies faced prompt injection attacks on their AI apps within a year, <a href="https://www.gartner.com/en/newsroom/press-releases/2025-09-22-gartner-survey-reveals-generative-artificial-intelligence-attacks-are-on-the-rise" target="_blank" rel="nofollow noopener">Gartner found</a>.</span></p>
                   <div class="case">
                     <p class="threat">An issue on a public repo tells your agent to publish your private code.</p>
-                    <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>The box has no GitHub credentials, and your other repos aren’t in it.</span></p>
-                    <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Nor can it upload your code anywhere else.</span></p>
+                    <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>co:op does not mount your GitHub credentials or other repos into the box.</span></p>
+                    <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Filtered networking blocks destinations you have not approved.</span></p>
                   </div>
                 </li>
                 <li class="attack" data-attack="key">
@@ -137,21 +137,21 @@
                   <p class="evidence"><strong>56%</strong> <span>of coding-agent runs on vague DevOps tasks went beyond what was asked, <a href="https://arxiv.org/abs/2607.02294" target="_blank" rel="nofollow noopener">a 2026 study found</a>.</span></p>
                   <div class="case">
                     <p class="threat">An agent cleaning up runs <code>rm -rf tests/ plan/ ~/</code></p>
-                    <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>In the box, that <code>~/</code> isn’t your home folder. Your files aren’t there.</span></p>
+                    <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>In the box, <code>~/</code> is a container home. Your own home folder stays outside.</span></p>
                   </div>
                 </li>
                 <li class="attack" data-attack="prod">
                   <p class="evidence"><strong>80%</strong> <span>of companies say their AI agents have taken unintended actions, <a href="https://www.sailpoint.com/press-releases/sailpoint-ai-agent-adoption-report" target="_blank" rel="nofollow noopener">SailPoint found</a>.</span></p>
                   <div class="case">
                     <p class="threat">An agent uses your cloud CLI to SSH into production and drops the database.</p>
-                    <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>The box has no cloud logins or SSH keys, and it can’t reach your servers.</span></p>
+                    <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>co:op does not mount your cloud logins or SSH keys. Filtered networking blocks servers you have not approved.</span></p>
                   </div>
                 </li>
                 <li class="attack" data-attack="push">
                   <p class="evidence"><strong>35%</strong> <span>of the time, even the best of five recent models changed code that needed no change, <a href="https://arxiv.org/abs/2605.07769" target="_blank" rel="nofollow noopener">a 2026 study found</a>.</span></p>
                   <div class="case">
                     <p class="threat">A confused agent force-pushes over your team’s main branch.</p>
-                    <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>The box has no Git credentials, so only you can push.</span></p>
+                    <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>co:op does not pass your host Git credentials to the box.</span></p>
                   </div>
                 </li>
               </ol>
@@ -193,7 +193,7 @@
           <div class="feature-copy">
             <h3>Forks</h3>
             <p>Hand work to agents, each in its own copy of your project, and keep working in yours.</p>
-            <p>Review a fork like a pull request, then merge it. co:op rebases it onto your branch and runs your checks first.</p>
+            <p>Review a fork like a pull request, then merge it. Set a project gate to check the rebased work before merging.</p>
             <p class="evidence"><strong>+63%</strong> <span>tickets per minute when developers’ parallel agents were planned, kept apart and tracked, <a href="https://arxiv.org/abs/2609.33113" target="_blank" rel="nofollow noopener">Microsoft Research found</a>.</span></p>
           </div>
           <figure class="window scene-replay scene-fork" data-scene="fork" aria-label="coop fork: a fork works in the background, shows as ready to merge, is reviewed like a pull request and merged after the project checks"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop fork</p><pre><code><span class="line cmdline" data-beat="0"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork api codex --loop -d</span><span class="line" data-beat="1">Creating fork: api</span><span class="line" data-beat="1"></span><span class="line" data-beat="1">  /Users/you/code/shop-forks/api</span><span class="line" data-beat="2"><span class="ok">✓</span> Started fork api in the background</span><span class="line" data-beat="2"></span><span class="line" data-beat="2">  Agent: codex</span><span class="line" data-beat="2">  Logs:  coop fork logs api --follow</span><span class="line" data-beat="2">  Stop:  coop fork stop api</span><span class="line" data-beat="3"></span><span class="line cmdline" data-beat="3"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork ls</span><span class="line" data-beat="4">Forks</span><span class="line" data-beat="4"></span><span class="line" data-beat="4">  <span class="strong">api</span> · ready to merge · updated 4 minutes ago</span><span class="line" data-beat="4">    Agent: codex</span><span class="line" data-beat="4">    Branch: api</span><span class="line" data-beat="4">    Tasks: 1 ready to merge</span><span class="line" data-beat="4">    Changes: +88 −6</span><span class="line" data-beat="4"></span><span class="line" data-beat="4">Review a fork: coop fork review &lt;name&gt;</span><span class="line" data-beat="5"></span><span class="line cmdline" data-beat="5"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork review api --stat</span><span class="line" data-beat="6">Changes in fork api</span><span class="line" data-beat="6">  Into: main</span><span class="line" data-beat="6">  2 commits · 3 files · +88 −6</span><span class="line" data-beat="6"></span><span class="line" data-beat="6">Commits</span><span class="line" data-beat="6">  9c41e2a webhook: verify Stripe signatures</span><span class="line" data-beat="6">  3a7f0db webhook: dedupe replayed events by id</span><span class="line" data-beat="6"></span><span class="line" data-beat="6">Files</span><span class="line" data-beat="6">  code:</span><span class="line" data-beat="6">    M  src/webhook/handler.ts  +40 -6</span><span class="line" data-beat="6">    A  src/webhook/verify.ts  +24 -0</span><span class="line" data-beat="6">  tests:</span><span class="line" data-beat="6">    A  tests/webhook.test.ts  +24 -0</span><span class="line" data-beat="6"></span><span class="line" data-beat="6">Project checks will run when you merge.</span><span class="line" data-beat="7"></span><span class="line cmdline" data-beat="7"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork merge api</span><span class="line" data-beat="8">Merge fork api into main</span><span class="line" data-beat="8">  2 commits · +88 −6</span><span class="line" data-beat="8"></span><span class="line" data-beat="8">Merge these commits? [Y/n] y</span><span class="line" data-beat="9">Rebasing onto main</span><span class="line" data-beat="9">Running project checks</span><span class="line" data-beat="9">  Running: npm test</span><span class="line" data-beat="10"></span><span class="line" data-beat="10"><span class="ok">✓</span> Merged fork api into main</span></code></pre></figure>
@@ -219,8 +219,8 @@
         <li class="feature-row">
           <div class="feature-copy">
             <h3>Project services</h3>
-            <p>Postgres, Redis and anything else in your Compose file run beside the box, each in its own container.</p>
-            <p>They’re isolated the same way: a private network with no direct internet, and your secrets hidden.</p>
+            <p>Run Postgres, Redis and other supported Compose services beside the box, each in its own container.</p>
+            <p>In filtered mode, approved services use a private network with no direct internet access. Secret files stay hidden unless you approve access.</p>
           </div>
           <figure class="scene-card services" data-scene="services" aria-label="coop up starts a database and Redis beside the sandbox, each in its own container, on a private network with no direct internet"><p class="card-title"><span class="prompt">$ </span>coop up</p><div class="svc-map"><span class="net-tag">Private network</span><div class="svc-box"><svg class="wall" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" rx="10" pathLength="1"/></svg><span class="zone-tag">Sandbox</span><p class="svc-agent"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg>Claude Code</p><p class="svc-project">shop/</p></div><ul class="svc-list" role="list"><li class="svc" data-svc="db"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6.5" rx="7" ry="2.5"/><path d="M5 6.5v11c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-11M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg><span class="svc-name">db</span><span class="svc-dot"></span></li><li class="svc" data-svc="redis"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5l8 4-8 4-8-4z"/><path d="M4 12.5l8 4 8-4M4 16.5l8 4 8-4"/></svg><span class="svc-name">redis</span><span class="svc-dot"></span></li></ul></div></figure>
         </li>
@@ -250,13 +250,13 @@
           </div>
         </div>
         <div class="setup-commands">
-          <div class="command"><span class="command-label">Install</span><code data-copy-source><span class="prompt" aria-hidden="true">$ </span>curl -fsSL https://coop.dryga.com/<wbr><span class="nowrap">install.sh | sh</span></code><button class="copy" type="button" data-copy aria-label="Copy the install command"><svg class="icon copy-idle" viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg><svg class="icon copy-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button><span class="copy-status" role="status" data-copy-status></span></div>
+          <div class="command"><span class="command-label">Install</span><code data-copy-source data-copy-kind="install"><span class="prompt" aria-hidden="true">$ </span>curl -fsSL https://coop.dryga.com/<wbr><span class="nowrap">install.sh | sh</span></code><button class="copy" type="button" data-copy aria-label="Copy the install command"><svg class="icon copy-idle" viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg><svg class="icon copy-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button><span class="copy-status" role="status" data-copy-status></span></div>
           <div class="command"><span class="command-label">Sign in</span><code data-copy-source><span class="prompt" aria-hidden="true">$ </span><span data-cmd="login">coop login claude</span></code><button class="copy" type="button" data-copy aria-label="Copy the sign-in command"><svg class="icon copy-idle" viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg><svg class="icon copy-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button><span class="copy-status" role="status" data-copy-status></span></div>
           <div class="command"><span class="command-label">Set up</span><code data-copy-source><span class="prompt" aria-hidden="true">$ </span>cd <span class="nowrap">your-project</span> &amp;&amp; coop init</code><button class="copy" type="button" data-copy aria-label="Copy the project setup command"><svg class="icon copy-idle" viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg><svg class="icon copy-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button><span class="copy-status" role="status" data-copy-status></span></div>
           <div class="command"><span class="command-label">Start</span><code data-copy-source><span class="prompt" aria-hidden="true">$ </span><span data-cmd="run">coop claude</span></code><button class="copy" type="button" data-copy aria-label="Copy the start command"><svg class="icon copy-idle" viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg><svg class="icon copy-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button><span class="copy-status" role="status" data-copy-status></span></div>
         </div>
       </div>
-      <p class="more"><a href="docs.html">Read the docs<span class="go" aria-hidden="true">→</span></a></p>
+      <p class="more"><a href="sandbox-guide.html">Set up your first sandbox<span class="go" aria-hidden="true">→</span></a></p>
     </section>
   </main>
 
@@ -269,7 +269,7 @@
       <a href="docs.html">Docs</a>
       <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
       <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
-      <a href="https://github.com/AndrewDryga/responder" target="_blank" rel="nofollow noopener">Ryker</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
     </nav>
     <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
   </footer>

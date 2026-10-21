@@ -42,7 +42,11 @@ var (
 // named for what it copies (it shows a tick once it has); without JavaScript the button is hidden
 // and the command is plain selectable text.
 func command(label, text, name string) string {
-	return `<div class="command"><span class="command-label">` + label + `</span><code data-copy-source>` +
+	kind := ""
+	if name == "install" {
+		kind = ` data-copy-kind="install"`
+	}
+	return `<div class="command"><span class="command-label">` + label + `</span><code data-copy-source` + kind + `>` +
 		`<span class="prompt" aria-hidden="true">$ </span>` + text + `</code>` +
 		`<button class="copy" type="button" data-copy aria-label="Copy the ` + name + ` command">` + copyIcons + `</button>` +
 		`<span class="copy-status" role="status" data-copy-status></span></div>`

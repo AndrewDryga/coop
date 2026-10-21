@@ -1,0 +1,507 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/configuration.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Configuration · co:op</title>
+  <meta name="description" content="Find project settings, environment variables, configuration files and exit codes.">
+  <link rel="canonical" href="https://coop.dryga.com/configuration.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/configuration.html">
+  <meta property="og:title" content="Configuration">
+  <meta property="og:description" content="Find project settings, environment variables, configuration files and exit codes.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=bf51eb611f">
+  <script src="assets/js/site.js?v=bf51eb611f" defer></script>
+  <script src="assets/js/analytics.js?v=bf51eb611f" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <h1>Configuration</h1>
+        <p class="guide-lead">Find project settings, environment variables, configuration files and exit codes.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#environment-variables">Environment variables</a></li>
+<li class="reference-subsection"><a href="#box-and-runtime">Box and runtime</a></li>
+<li class="reference-subsection"><a href="#agents-and-config">Agents and config</a></li>
+<li class="reference-subsection"><a href="#forks-and-loop">Forks and loop</a></li>
+<li class="reference-subsection"><a href="#command-valued-settings">Command-valued settings</a></li>
+<li><a href="#coopconf">coop.conf</a></li>
+<li><a href="#project-settings-agentprojectyaml">Project settings: .agent/project.yaml</a></li>
+<li><a href="#path-routed-context">Path-routed context</a></li>
+<li><a href="#exit-codes">Exit codes</a></li>
+<li><a href="#json-output">JSON output</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<p>co:op reads its settings from environment variables, from <code>~/.config/coop/coop.conf</code>, and from the
+committed <code>.agent/project.yaml</code>. The <a href="https://coop.dryga.com/docs.html#config">website guide</a>
+covers the settings you&#39;re most likely to change.</p>
+</section><section class="doc-section reference-section" id="environment-variables"><h2>Environment variables</h2>
+<p>Set these in your shell or in <a href="#coopconf"><code>coop.conf</code></a>. For settings that turn a feature on or
+off, use <code>1</code>/<code>true</code>/<code>yes</code>/<code>on</code> or <code>0</code>/<code>false</code>/<code>no</code>/<code>off</code>. Letter case does not matter. co:op rejects
+any other value.</p>
+<h3 id="box-and-runtime">Box and runtime</h3>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Box and runtime table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Variable</th>
+<th scope="col">Default</th>
+<th scope="col">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>COOP_RUNTIME</code></td>
+<td>auto (Docker preferred)</td>
+<td>Picks the runtime: <code>docker</code> or <code>container</code>.</td>
+</tr>
+<tr>
+<td><code>COOP_IMAGE</code></td>
+<td>auto</td>
+<td>Forces a specific image. It overrides <code>.agent/Dockerfile</code> detection.</td>
+</tr>
+<tr>
+<td><code>COOP_BASE_IMAGE</code></td>
+<td><code>coop-box</code></td>
+<td>The shared base image. <code>coop-box</code> selects co:op&#39;s own image, with a <code>coop-box:&lt;definition&gt;</code> tag for each box definition.</td>
+</tr>
+<tr>
+<td><code>COOP_REPO</code></td>
+<td>the nearest folder with <code>.git</code></td>
+<td>Chooses the repo instead of detecting it from the current directory. co:op follows links but refuses your home folder or any folder above it. On a Mac, it resolves differences in letter case to the folder&#39;s actual name. Outside a repository, it uses the current folder as the project, with the same home-folder restriction.</td>
+</tr>
+<tr>
+<td><code>COOP_WORKDIR</code></td>
+<td>the real path</td>
+<td>Where the repo mounts in the box.</td>
+</tr>
+<tr>
+<td><code>COOP_HOME_IN_BOX</code></td>
+<td><code>/home/node</code></td>
+<td>Where provider homes and instructions mount in the box.</td>
+</tr>
+<tr>
+<td><code>COOP_RUN_ARGS</code></td>
+<td>unset</td>
+<td>Extra container runtime args. Filtered runs accept only bind mounts, <code>-e KEY=VALUE</code> and <code>--label KEY=VALUE</code>.</td>
+</tr>
+<tr>
+<td><code>COOP_BOX</code></td>
+<td><code>1</code> in every box</td>
+<td>Lets a process detect that it is running inside a co:op box. Its value does not depend on serving or networking.</td>
+</tr>
+<tr>
+<td><code>COOP_PIDS</code></td>
+<td><code>4096</code></td>
+<td>Limits the number of processes in the box, including runaway process creation. <code>0</code>, <code>unlimited</code> or empty turns it off.</td>
+</tr>
+<tr>
+<td><code>COOP_MEMORY</code>, <code>COOP_CPUS</code></td>
+<td>unset</td>
+<td>Box memory and CPU caps, like <code>4g</code> and <code>2</code>.</td>
+</tr>
+<tr>
+<td><code>COOP_NO_NEW_PRIVILEGES</code></td>
+<td><code>1</code></td>
+<td>Runs the box with <code>--security-opt no-new-privileges</code>.</td>
+</tr>
+<tr>
+<td><code>COOP_ALLOW_CASE_EXPOSED_SECRETS</code></td>
+<td>off</td>
+<td>On a Mac, allows a box or <code>coop up</code> services to start even when Coop cannot hide every letter-case spelling of a long filename. The box or service could then read a secret through a name such as <code>.ENV.PRODUCTION</code>. See <a href="box.html#hiding-secrets">hiding secrets</a>.</td>
+</tr>
+<tr>
+<td><code>COOP_HOMES</code></td>
+<td><code>1</code></td>
+<td>Mounts each selected agent&#39;s repository home into the box. <code>0</code> keeps those homes out and disables preset and consult runs, which need them to route work to their agents.</td>
+</tr>
+<tr>
+<td><code>COOP_EGRESS</code></td>
+<td><code>open</code></td>
+<td>Chooses how the box can use the network. See the choices below and <a href="networking.html">networking</a>.</td>
+</tr>
+<tr>
+<td><code>COOP_NO_ASDF</code></td>
+<td>off</td>
+<td>Skips runtime <code>.tool-versions</code> provisioning. Stale Node shim repair still runs. The box reads it, so set it in <code>agents/env</code> (forwarded into the box), not your host shell.</td>
+</tr>
+<tr>
+<td><code>COOP_NETWORK</code></td>
+<td><code>1</code></td>
+<td>Joins the services network.</td>
+</tr>
+<tr>
+<td><code>COOP_CACHE</code></td>
+<td><code>1</code></td>
+<td>Mounts the cache volume.</td>
+</tr>
+<tr>
+<td><code>COOP_AUTO_UP</code></td>
+<td><code>1</code></td>
+<td>Runs <code>compose up</code> for working boxes when <code>.agent/compose.yml</code> exists and egress is <code>open</code>. A project created by <code>coop init</code> requests filtered networking, so start its services with <code>coop up</code>. Loop runs reuse their own service stack; reviewers rely on the worker&#39;s reported checks. Set <code>0</code> to manage development services yourself with <code>coop up</code> and <code>coop down</code>.</td>
+</tr>
+<tr>
+<td><code>COOP_SERVICES_NET</code></td>
+<td>auto</td>
+<td>The services network to join, so parallel forks can share one db.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Choose one of these values for <code>COOP_EGRESS</code>:</p>
+<ul>
+<li><code>open</code> allows full outbound traffic. This is the default.</li>
+<li><code>filtered</code> allows the AI provider and domains you have approved.</li>
+<li><code>none</code> disables the box&#39;s network (<code>--network none</code>). The box cannot send the repo, secrets
+or credentials over the network. Installs and model API calls stop working too, so you must
+choose this setting explicitly.</li>
+</ul>
+<p>An <code>--egress</code> flag overrides <code>COOP_EGRESS</code>. A project&#39;s saved <code>coop approve</code> decision also
+overrides it. <code>COOP_EGRESS</code> itself overrides <code>box.egress</code> in <code>.agent/project.yaml</code>.</p>
+<p>The resource and privilege limits (<code>COOP_PIDS</code>, <code>COOP_MEMORY</code>, <code>COOP_CPUS</code> and
+<code>COOP_NO_NEW_PRIVILEGES</code>) apply on Docker. co:op currently skips them with Apple&#39;s <code>container</code>
+CLI because that runtime works differently.</p>
+<p>On Docker, co:op also removes all Linux capabilities (<code>--cap-drop ALL</code>); agent workloads do not
+need them. Even if a repo&#39;s <code>.agent/Dockerfile</code> sets <code>USER root</code>, the container process does not
+get powers such as <code>CAP_DAC_OVERRIDE</code>, <code>CAP_NET_RAW</code> or <code>CAP_MKNOD</code>.</p>
+<h3 id="agents-and-config">Agents and config</h3>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Agents and config table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Variable</th>
+<th scope="col">Default</th>
+<th scope="col">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>COOP_CONFIG_DIR</code></td>
+<td><code>~/.config/coop/agents</code></td>
+<td>The per-agent auth and settings folder.</td>
+</tr>
+<tr>
+<td><code>COOP_CONF</code></td>
+<td><code>~/.config/coop/coop.conf</code></td>
+<td>Environment only. Relocates <code>coop.conf</code>. Unlike the optional default path, an explicit path must name a readable regular file.</td>
+</tr>
+<tr>
+<td><code>NO_COLOR</code></td>
+<td>unset</td>
+<td>Environment only. Present at any value, even empty, it disables ANSI color everywhere (<a href="https://no-color.org" target="_blank" rel="nofollow noopener">no-color.org</a>).</td>
+</tr>
+<tr>
+<td><code>COOP_&lt;AGENT&gt;_CMD</code>, like <code>COOP_CLAUDE_CMD</code></td>
+<td>the autonomous default</td>
+<td>Overrides an agent&#39;s base command.</td>
+</tr>
+<tr>
+<td><code>COOP_&lt;AGENT&gt;_MODEL</code>, like <code>COOP_CLAUDE_MODEL</code></td>
+<td>the CLI&#39;s default</td>
+<td>The agent-wide default model, everywhere that agent runs. See <a href="agents.html#picking-models">picking models</a>.</td>
+</tr>
+<tr>
+<td><code>COOP_CONSULT_TIMEOUT</code></td>
+<td><code>0</code> (unlimited)</td>
+<td>How long <code>coop-consult</code> waits for each peer, in seconds. See below.</td>
+</tr>
+<tr>
+<td><code>COOP_MCP_FILE</code></td>
+<td><code>~/.config/coop/agents/mcp.json</code></td>
+<td>The file that defines MCP servers. It must be a regular file of at most 4 MiB, outside any directory co:op mounts in full.</td>
+</tr>
+<tr>
+<td><code>COOP_SHELL</code></td>
+<td><code>bash</code></td>
+<td>The shell <code>coop shell</code> opens.</td>
+</tr>
+<tr>
+<td><code>COOP_NO_UPDATE_CHECK</code></td>
+<td>off</td>
+<td>Set it to opt out of the once-a-day &#34;a newer coop/box is available&#34; check.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>By default, <code>COOP_CONSULT_TIMEOUT</code> lets each peer take as long as it needs, subject to the calling
+attempt&#39;s limits on tool use and total duration. Set a whole number of seconds (max <code>86400</code>) to
+add a timeout. If a peer does not answer in time, co:op skips it and the lead uses the replies
+that arrived.</p>
+<p>A timeout cannot tell a slow answer from a stalled peer. If it interrupts a peer that was still
+working, that answer is lost and needs a retry.</p>
+<h3 id="forks-and-loop">Forks and loop</h3>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Forks and loop table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Variable</th>
+<th scope="col">Default</th>
+<th scope="col">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>COOP_GATE</code></td>
+<td>unset</td>
+<td>The check command run in the box during a local fork merge, or during review with <code>--gate</code>, such as <code>make check</code>. Controller-job reviews use the check in the submitted job instead.</td>
+</tr>
+<tr>
+<td><code>COOP_EDITOR</code></td>
+<td>detected</td>
+<td>The editor for <code>coop fork review --open</code>.</td>
+</tr>
+<tr>
+<td><code>COOP_REVIEW_CMD</code></td>
+<td>unset</td>
+<td>A full override for <code>coop fork review</code>, run with <code>sh -c</code>.</td>
+</tr>
+<tr>
+<td><code>COOP_TASKS</code></td>
+<td>derived</td>
+<td>Chooses the task queue directories for <code>coop tasks</code> and the loop. Separate multiple paths with spaces. If unset, co:op uses the queues listed in <code>.agent/project.yaml</code> for a <a href="loop.html#monorepos">monorepo</a>, or <code>.agent/tasks</code> otherwise. <code>--tasks</code> replaces this choice for one run; it does not add to it.</td>
+</tr>
+<tr>
+<td><code>COOP_CAFFEINATE</code></td>
+<td><code>1</code></td>
+<td>On a Mac, uses <code>caffeinate</code> to prevent idle sleep while the loop runs. The protection ends with the loop. <code>0</code> or <code>false</code> turns it off.</td>
+</tr>
+<tr>
+<td><code>COOP_ACP_WARM</code></td>
+<td><code>1</code></td>
+<td>Environment only. Keeps a box ready for each other signed-in editor ACP provider. Switching to that provider&#39;s default model then skips box startup. Set <code>0</code> or <code>false</code> to save memory.</td>
+</tr>
+<tr>
+<td><code>COOP_SPINNER</code></td>
+<td><code>1</code></td>
+<td>Environment only. Animates the five-column Box Run beside progress bars and the one-column Corner Run (<code>◰ ◳ ◲ ◱</code>) in task rows. Set <code>0</code> or <code>false</code> to freeze them and stop frequent loop-screen redraws, for example when debugging or recording the terminal.</td>
+</tr>
+<tr>
+<td><code>COOP_STREAM_TRACE</code></td>
+<td>off</td>
+<td>Set it to persist each streaming loop attempt&#39;s raw provider JSONL and rendered output under <code>.agent/runs/&lt;run&gt;.streams/</code>.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>You configure loop behavior in <code>.agent/loop.yaml</code>. See <a href="loop.html">the loop</a> for the whole file.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Forks and loop table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Key</th>
+<th scope="col">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>work.command</code></td>
+<td>Sets the command for each work iteration, replacing the retired loop command variable.</td>
+</tr>
+<tr>
+<td><code>work.agent</code>, <code>between.agent</code>, <code>signoff.agent</code></td>
+<td>Choose the agents for work, per-task review and final review.</td>
+</tr>
+<tr>
+<td><code>signoff.rounds</code></td>
+<td>Limits the number of final review rounds.</td>
+</tr>
+<tr>
+<td><code>preflight.enabled</code></td>
+<td>Runs the queue cleanup pass by default in this repository.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The <code>--preflight</code> flag turns on the same cleanup for one invocation.</p>
+<h3 id="command-valued-settings">Command-valued settings</h3>
+<p>co:op splits <code>COOP_GATE</code>, <code>COOP_RUN_ARGS</code> and the <code>COOP_&lt;AGENT&gt;_CMD</code> overrides into a list of
+command arguments (<code>argv</code>). Single and double quotes group text into one argument, and <code>\</code>
+escapes a character. co:op does not run these settings through a shell, so it does not expand
+wildcard paths or <code>$VAR</code> values.</p>
+<p>For example, <code>COOP_GATE=&#39;bash -lc &#34;make check &amp;&amp; make lint&#34;&#39;</code> produces three arguments, not five.
+A bare <code>&amp;&amp;</code>, <code>|</code> or <code>$VAR</code> is passed literally. Wrap commands that need those shell features in
+<code>bash -lc &#34;…&#34;</code>. <code>COOP_REVIEW_CMD</code> is the exception: co:op runs it through <code>sh -c</code>.</p>
+</section><section class="doc-section reference-section" id="coopconf"><h2>coop.conf</h2>
+<p><code>~/.config/coop/coop.conf</code> takes the same settings as <code>KEY=VALUE</code> lines. The environment wins over
+the file.</p>
+<p>The default file is optional. If you set <code>COOP_CONF</code>, the chosen file must exist. If co:op cannot
+read it, the error names the path. If a setting is malformed, duplicated, retired or unknown,
+the error names the path and line. An environment override does not let a broken file pass.</p>
+<p><code>COOP_CONF</code>, <code>NO_COLOR</code>, <code>COOP_ACP_WARM</code> and <code>COOP_SPINNER</code> are process-environment controls, so
+you can&#39;t set them inside <code>coop.conf</code>.</p>
+<p>Optional <a href="usage-reports.html">provider usage reports</a> use a separate host-only
+<code>~/.config/coop/usage-reports.json</code>. Their API spend is never added to local usage estimates.
+Reporting keys belong in host environment variables, not <code>coop.conf</code>, project files or <code>agents/env</code>.</p>
+</section><section class="doc-section reference-section" id="project-settings-agentprojectyaml"><h2>Project settings: .agent/project.yaml</h2>
+<p><code>.agent/project.yaml</code> is the committed per-project config.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Project settings: .agent/project.yaml table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Key</th>
+<th scope="col">What it holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>subprojects:</code></td>
+<td>A monorepo&#39;s members. See <a href="loop.html#monorepos">monorepos</a>.</td>
+</tr>
+<tr>
+<td><code>serve:</code></td>
+<td>The dev server ports co:op publishes. See <a href="box.html#dev-servers-in-your-browser">the dev server in your browser</a>.</td>
+</tr>
+<tr>
+<td><code>box:</code></td>
+<td>The box policy: egress and <a href="networking.html"><code>egress_rules:</code></a>, resource caps, <code>auto_up</code> and <code>network</code>.</td>
+</tr>
+<tr>
+<td><code>gate:</code></td>
+<td>The merge gate.</td>
+</tr>
+<tr>
+<td><code>gate_sources:</code></td>
+<td>Exact project-specific paths that receive protected loop review.</td>
+</tr>
+<tr>
+<td><code>context:</code></td>
+<td>The routes for <a href="#path-routed-context">path-routed context</a>.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Explicit <code>COOP_*</code> settings in your environment or <code>coop.conf</code> override <code>box:</code> and <code>gate:</code>.
+Because the project settings file is committed and read on the host, it may tighten security
+restrictions but cannot relax them on its own:</p>
+<ul>
+<li><code>egress</code> can pin <code>filtered</code> or <code>offline</code>.</li>
+<li><code>open</code> is a request that a human approves with <code>coop approve</code>.</li>
+<li><code>no_new_privileges</code> isn&#39;t settable here.</li>
+</ul>
+</section><section class="doc-section reference-section" id="path-routed-context"><h2>Path-routed context</h2>
+<p>Use <code>coop context</code> to give an agent the committed docs relevant to the files it is working on.
+This avoids loading every rule and knowledge-base note for a small change. co:op always includes
+the complete <code>AGENTS.md</code>/<code>CLAUDE.md</code>, then adds documents whose configured path patterns match.</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Path-routed context code example" tabindex="0" data-copy-source=""><code class="language-yaml"># .agent/project.yaml
+context:
+  routes:
+    - paths: [portal/**, &#34;**/*.ex&#34;]   # * within a segment, ** across segments
+      include: [.agent/kb/portal.md]  # repo-relative docs to add when a path matches
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Path-routed context code example" tabindex="0"><code class="language-bash">coop context --changed            # scope = the paths git reports changed
+coop context --task &lt;id&gt;          # scope = a task&#39;s declared `paths:` frontmatter
+coop context portal/lib/user.ex   # scope = explicit repo-relative paths
+coop context --changed --json     # same, as data (files + the route that selected each)
+coop context --changed --rendered # the compiled content itself, canonical first
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>co:op chooses paths from your arguments, Git&#39;s changed files, the task&#39;s declared paths or the
+current subproject. It never guesses them from a prompt. It reports an error if a route includes
+a missing document or a path outside the repo. <code>coop context</code> always keeps the main instructions
+complete; it does not summarize or truncate them.</p>
+<p>Routes come from the committed <code>project.yaml</code>. A fork therefore uses its parent&#39;s routes, but
+matches them against paths in the fork&#39;s own tree.</p>
+</section><section class="doc-section reference-section" id="exit-codes"><h2>Exit codes</h2>
+<p>Commands use these exit codes so CI and scripts can check the result without parsing messages.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Exit codes table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Code</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>Success.</td>
+</tr>
+<tr>
+<td><code>1</code></td>
+<td>A failure, or findings, like <code>coop check-secrets</code> on a hit.</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>A usage error: an unknown command or flag, or bad arguments.</td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td><code>coop loop</code> only: it stopped with a task blocked on a human decision.</td>
+</tr>
+<tr>
+<td><code>130</code></td>
+<td><code>coop loop</code> only: Ctrl-C interrupted it before the final verdict.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>If final verification is enabled and fails, <code>coop loop</code> keeps the completed work and exits with
+a nonzero code. It uses <code>1</code> unless the outcome is blocked work only, which takes precedence.
+An intentional <code>--max-tasks N</code> pause exits successfully but leaves final review pending. See
+<a href="loop.html#exit-codes">the loop&#39;s exit codes</a>.</p>
+</section><section class="doc-section reference-section" id="json-output"><h2>JSON output</h2>
+<p>Most commands that change state report success or failure through exit codes rather than
+<code>--json</code>. Read-only commands offer JSON when other tools need the current state. The two main
+views are:</p>
+<ul>
+<li><code>coop tasks watch --json</code> is the canonical project task and activity snapshot.</li>
+<li><code>coop fork ls --json</code> discovers workspace URLs plus fork status.</li>
+</ul>
+<p><code>coop context</code>, the <code>coop net</code> views and <code>coop sessions doctor</code> also accept <code>--json</code>. <code>coop net export</code> always writes JSON. Use exit codes to check commands that change state, and the host&#39;s
+JSON views to read the current combined state.</p>
+</section>
+        <nav class="reference-related" aria-label="Related guides">
+          <h2>Related guides</h2>
+          <ul class="reference-list" role="list"><li><a href="box.html">Sandbox, images and services</a><p>Control visible files, prepare a project image, and run databases and development servers beside your agent.</p></li>
+<li><a href="networking.html">Networking</a><p>Choose which network destinations an agent can reach, and review access before a run.</p></li>
+<li><a href="cli.html">Command reference</a><p>Look up co:op commands and options, with examples of how to use them.</p></li>
+</ul>
+          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
+        </nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/configuration.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

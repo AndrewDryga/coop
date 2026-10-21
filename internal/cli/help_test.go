@@ -455,7 +455,7 @@ func TestCurrentDocsDoNotAdvertiseRetiredContracts(t *testing.T) {
 		!strings.Contains(manual, "Shared instructions and skills for all your AI agents.") {
 		t.Errorf("the init page does not match the current scaffold:\n%s", manual)
 	}
-	if site := surfaces["site docs"]; !strings.Contains(site, "commits no starter subagents") ||
+	if site := surfaces["site docs"]; !strings.Contains(site, "does not create starter subagents") ||
 		strings.Contains(site, "scaffolds two starter subagents") {
 		t.Errorf("site init description does not match the current scaffold")
 	}

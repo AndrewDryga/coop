@@ -1,0 +1,792 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/networking.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Restricted networking: what is supported · co:op</title>
+  <meta name="description" content="Choose which network destinations an agent can reach, and review access before a run.">
+  <link rel="canonical" href="https://coop.dryga.com/networking.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/networking.html">
+  <meta property="og:title" content="Restricted networking: what is supported">
+  <meta property="og:description" content="Choose which network destinations an agent can reach, and review access before a run.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=bf51eb611f">
+  <script src="assets/js/site.js?v=bf51eb611f" defer></script>
+  <script src="assets/js/analytics.js?v=bf51eb611f" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <h1>Restricted networking: what is supported</h1>
+        <p class="guide-lead">Choose which network destinations an agent can reach, and review access before a run.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#network-modes">Network modes</a></li>
+<li><a href="#setting-up-a-host">Setting up a host</a></li>
+<li class="reference-subsection"><a href="#fleet-workers-and-docker-in-docker">Fleet workers and Docker-in-Docker</a></li>
+<li><a href="#supported-today">Supported today</a></li>
+<li><a href="#provider-access">Provider access</a></li>
+<li><a href="#provider-credentials-stay-outside-the-box">Provider credentials stay outside the box</a></li>
+<li><a href="#a-clients-own-downloads">A client&#39;s own downloads</a></li>
+<li><a href="#mcp-servers">MCP servers</a></li>
+<li class="reference-subsection"><a href="#filtered-runs">Filtered runs</a></li>
+<li class="reference-subsection"><a href="#legacy-sse-servers">Legacy SSE servers</a></li>
+<li class="reference-subsection"><a href="#offline-runs">Offline runs</a></li>
+<li class="reference-subsection"><a href="#open-runs">Open runs</a></li>
+<li><a href="#project-services">Project services</a></li>
+<li><a href="#tls-ports-and-localhost">TLS ports and localhost</a></li>
+<li><a href="#your-projects-image">Your project&#39;s image</a></li>
+<li><a href="#refused-with-the-reason-you-will-see">Refused, with the reason you will see</a></li>
+<li class="reference-subsection"><a href="#ranges-no-rule-can-reach">Ranges no rule can reach</a></li>
+<li class="reference-subsection"><a href="#serve-ports-and-mounts">Serve ports and mounts</a></li>
+<li><a href="#observed-versus-counted">Observed versus counted</a></li>
+<li><a href="#runs-checks-and-exports">Runs, checks and exports</a></li>
+<li><a href="#asking-for-access">Asking for access</a></li>
+<li class="reference-subsection"><a href="#reviewing-a-request">Reviewing a request</a></li>
+<li class="reference-subsection"><a href="#pending-requests">Pending requests</a></li>
+<li class="reference-subsection"><a href="#access-for-one-run">Access for one run</a></li>
+<li class="reference-subsection"><a href="#the-approval-follows-the-directory">The approval follows the directory</a></li>
+<li class="reference-subsection"><a href="#forgetting-an-approval">Forgetting an approval</a></li>
+<li><a href="#when-a-run-is-interrupted">When a run is interrupted</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<p><code>coop &lt;agent&gt; --egress filtered</code> runs the box behind a per-run gateway. The box can reach its
+selected providers and the destinations you approved. Other connections are blocked.</p>
+<p>Filtering works on the network itself, not through a proxy setting. The same network rules apply
+to every tool in the box: the provider CLI, <code>curl</code>, an SDK or a subprocess. Changing proxy settings
+cannot bypass these rules. The <a href="#provider-credentials-stay-outside-the-box">credential broker</a>
+handles API-key and subscription accounts behind the packet filter; it does not replace it.</p>
+<p><code>coop net</code> shows what a new run in this project can reach, and why. <code>coop net runs</code> lists
+recorded runs. <code>coop net --help</code> lists the commands.</p>
+</section><section class="doc-section reference-section" id="network-modes"><h2>Network modes</h2>
+<p>New projects use filtered networking. <code>coop init</code> sets <code>box.egress: filtered</code> in
+<code>.agent/project.yaml</code>. You can also choose <code>offline</code> to disable networking (called
+<code>--egress none</code> on the command line), or <code>open</code> to allow all network traffic.
+Switching to <code>open</code> needs your approval on the host. Running <code>coop init</code> again leaves an
+existing project file unchanged.</p>
+</section><section class="doc-section reference-section" id="setting-up-a-host"><h2>Setting up a host</h2>
+<p>Before your first filtered session, co:op runs five checks to make sure Docker can enforce the
+network rules. It shows you the results, then starts your session if all five pass. If Docker
+isn&#39;t running or a check fails, co:op explains the problem and won&#39;t start the session.</p>
+<p>Later runs skip these checks while the saved results are still valid. You still need to
+<a href="#asking-for-access">approve</a> what each project can access on the network.</p>
+<p>The checks use co:op&#39;s pinned gateway and locked client images with the selected Docker daemon.
+co:op builds these images if needed, tests them through the normal launch process, and saves the
+results.</p>
+<p>Run <code>coop net setup</code> to do these checks ahead of time. This is useful before an unattended run,
+after upgrading Docker or co:op, or when troubleshooting network setup:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Setting up a host code example" tabindex="0"><code>Setting up restricted networking using Docker 29.4.0 on linux/arm64.
+The gateway and client images are already available and will be reused.
+
+Checking filtered access:
+  ✓ approved TLS access to example.com works
+  ✓ unapproved domains are blocked
+  ✓ direct IP connections cannot bypass domain rules
+  ✓ the cloud metadata address is blocked
+  ✓ DNS does not resolve unapproved domains
+
+✓ All 5 checks passed — this host is ready for filtered runs
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>If a check fails, co:op shows the error and the checks that passed before it. Later checks are
+not reported as passed. The output ends with <code>✗ this host is not ready for filtered runs</code>
+and <code>No setup was saved</code>. If co:op needs to build images first, it tells you before showing
+Docker&#39;s build output.</p>
+<h3 id="fleet-workers-and-docker-in-docker">Fleet workers and Docker-in-Docker</h3>
+<p>Install a Docker CLI and matching Buildx plugin that work together through <code>docker build</code>.
+Installing Buildx alone is not enough: Debian bookworm&#39;s Docker CLI 20.10 does not pass that
+command to the plugin. Docker CLI 27.5.1 with Buildx 0.20.1 is a supported pairing for a
+Docker 27.5.1 DinD sidecar.</p>
+<p>Filtered runs need a Linux Docker daemon running as root on amd64 or arm64, accessed through a
+local Unix socket. Rootless Docker and daemons with user-namespace remapping are not supported.
+With DinD, mount the worker&#39;s state and temporary directories at the same absolute paths in the
+daemon container. Docker looks for bind-mount sources in its own filesystem. Never mount the
+Docker socket into the agent&#39;s container.</p>
+<p>Run <code>coop net setup</code> as the worker&#39;s OS user, using the same Docker endpoint and network state
+directory as the worker. Session API requests do not build images or run these setup checks.
+If setup fails, the worker cannot accept filtered jobs; do not retry them with open networking.
+Before accepting a job, co:op checks that the saved results still match the daemon, runtime
+requirements and exact images in use.</p>
+</section><section class="doc-section reference-section" id="supported-today"><h2>Supported today</h2>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Supported today table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Rule</th>
+<th scope="col">Meaning</th>
+<th scope="col">Enforced by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>to: {domain: &#34;api.example.com&#34;}</code> · <code>protocol: tls</code> · <code>ports: [443]</code></td>
+<td>that exact name over TLS 443</td>
+<td>the gateway checks the visible TLS server name (SNI) and routes to a validated IPv4 address</td>
+</tr>
+<tr>
+<td><code>to: {domain: &#34;*.example.com&#34;}</code> · <code>protocol: tls</code> · <code>ports: [443]</code></td>
+<td>one label under that name (<code>www.example.com</code>), but never the apex and never <code>a.b.example.com</code></td>
+<td>the same hostname check applies to DNS requests and the TLS server name (SNI)</td>
+</tr>
+<tr>
+<td><code>to: {domain: &#34;dns.google&#34;}</code> · <code>protocol: tls</code> · <code>ports: [853, 8443]</code></td>
+<td>that name over TLS on those ports, and on no other</td>
+<td>the gateway redirects only those ports; the guard checks the original port reported by the kernel</td>
+</tr>
+<tr>
+<td><code>to: {ip: &#34;10.42.8.12&#34;}</code> / <code>to: {cidr: &#34;10.42.9.0/24&#34;}</code> · <code>protocol: tcp|udp</code> · <code>ports: [...]</code></td>
+<td>raw TCP or UDP to those IPv4 addresses on those ports</td>
+<td>an nftables rule allows the traffic and keeps its own packet and byte counts</td>
+</tr>
+<tr>
+<td><code>to: {ip: ...}</code> / <code>to: {cidr: ...}</code> · <code>protocol: icmp</code> · <code>types: [echo-request]</code></td>
+<td>IPv4 ping to those addresses</td>
+<td>an nftables rule allows echo requests; connection tracking (conntrack) allows the replies</td>
+</tr>
+<tr>
+<td><code>to: {provider: claude}</code></td>
+<td>that provider&#39;s maintained core endpoints</td>
+<td>co:op turns the trusted release&#39;s provider definitions into explicit TLS rules</td>
+</tr>
+<tr>
+<td><code>to: {service: &#34;db&#34;}</code> · <code>protocol: tcp</code> · <code>ports: [5432]</code></td>
+<td>one Compose sidecar belonging to this project</td>
+<td>co:op reads the service container&#39;s exact IP address from the runtime at launch</td>
+</tr>
+<tr>
+<td><code>serve: {ports: [3000]}</code> in <code>.agent/project.yaml</code></td>
+<td>the host browser reaches the box&#39;s dev server</td>
+<td>Docker publishes the port on the gateway; the box shares its network namespace</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>In a filtered run, <code>COOP_RUN_ARGS</code> and extra runtime arguments accept bind mounts, <code>-e KEY=VALUE</code>
+and <code>--label KEY=VALUE</code> only. Any other flag is refused by name. co:op&#39;s own tracking labels take
+precedence over your labels with the same key.</p>
+</section><section class="doc-section reference-section" id="provider-access"><h2>Provider access</h2>
+<p>Each agent gets access to the provider endpoints its client needs:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Provider access table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Agent</th>
+<th scope="col">Hosts a filtered run reaches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>coop claude</code></td>
+<td><code>api.anthropic.com</code>, <code>platform.claude.com</code> (the OAuth refresh) and <code>mcp-proxy.anthropic.com</code> (the claude.ai connectors a login has on by default)</td>
+</tr>
+<tr>
+<td><code>coop codex</code></td>
+<td><code>chatgpt.com</code> and <code>auth.openai.com</code></td>
+</tr>
+<tr>
+<td><code>coop gemini</code></td>
+<td>adapter-declared Google model and Code Assist routes for the selected credential family</td>
+</tr>
+<tr>
+<td><code>coop grok</code></td>
+<td><code>cli-chat-proxy.grok.com</code>, <code>code.grok.com</code> and <code>auth.x.ai</code> (the OAuth refresh)</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Portable Gemini OAuth credentials and AI Studio keys use the routes defined by the Gemini adapter.
+Vertex credentials are not supported, and co:op refuses to start a run that uses them.</p>
+<p>Provider rules do not include release feeds, package registries, update checks or telemetry
+(<code>raw.githubusercontent.com</code>, <code>registry.npmjs.org</code>, <code>api.github.com</code> and the Datadog intakes).
+co:op disables this traffic through each client&#39;s settings inside the box. Your host profiles
+stay unchanged. Updates are also disabled in co:op&#39;s images, so clients cannot update themselves
+even when their home folders are not mounted.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Provider access table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Client</th>
+<th scope="col">In the box</th>
+<th scope="col">Update switch in co:op&#39;s image</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude</td>
+<td>runs with <code>CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1</code> and <code>DISABLE_UPDATES=1</code></td>
+<td><code>DISABLE_UPDATES</code></td>
+</tr>
+<tr>
+<td>Codex</td>
+<td>reads a generated <code>config.toml</code> that sets <code>check_for_update_on_startup = false</code>, <code>analytics.enabled = false</code> and the <code>otel</code> exporters to <code>none</code>, on top of your own settings</td>
+<td><code>/etc/codex/managed_config.toml</code>, which also turns off Codex&#39;s background server and its updater</td>
+</tr>
+<tr>
+<td>Gemini</td>
+<td>gets <code>general.enableAutoUpdate</code>, <code>general.enableAutoUpdateNotification</code> and <code>privacy.usageStatisticsEnabled</code> off, plus <code>GEMINI_TELEMETRY_ENABLED=false</code></td>
+<td><code>/etc/gemini-cli/settings.json</code></td>
+</tr>
+<tr>
+<td>Grok</td>
+<td>runs with <code>GROK_TELEMETRY_ENABLED=false</code> and <code>GROK_DISABLE_AUTOUPDATER=1</code></td>
+<td><code>GROK_DISABLE_AUTOUPDATER</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>A session that only answers a prompt should therefore produce no blocked requests from these
+background features. If the agent or your project requests one of these hosts directly, co:op
+records the blocked request as usual. You can inspect it and approve access; it is never hidden
+from the report.</p>
+</section><section class="doc-section reference-section" id="provider-credentials-stay-outside-the-box"><h2>Provider credentials stay outside the box</h2>
+<p>Both API keys and OAuth or subscription accounts use a provider broker for each Docker run,
+whether networking is open or filtered. The broker accepts requests only for the selected
+providers and accounts. Sign-in, credential renewal and account removal all use the same
+host-managed credential store. The provider folders mounted into the project never contain
+reusable credentials.</p>
+<p>The host can refresh credentials during a long run without restarting the client. Removing or
+replacing an account prevents the old run from continuing to use it.</p>
+<p>Clients keep using their original provider URLs. A private loopback listener handles TLS for
+the provider origins listed by the adapter. It checks each request&#39;s path, method and query,
+then adds the selected account&#39;s credentials before forwarding it. Requests to undeclared
+routes on those origins are blocked.</p>
+<p>Only that run receives the broker&#39;s certificate authority; co:op never installs it on the host
+or in a global trust store. Other origins follow the run&#39;s open or filtered network rules.
+The broker still verifies the provider&#39;s TLS certificate.</p>
+<p>A separate container with no Linux capabilities holds the short-lived credential snapshot.
+The workload joins that container&#39;s network namespace after Coop inspects it, but cannot read the
+private snapshot or CA signing key. Stopping the run removes the broker entrance. If the host stops
+renewing or publishing snapshots, they expire and the broker refuses access. Filtered runs keep
+their approved egress policy and traffic attribution; open runs still allow ordinary outbound traffic.</p>
+<p>The lead and its teammates share one account per provider inside a box. Switching accounts
+starts a new broker. You can include both API-key and subscription accounts in a fallback list.
+Run teammates in separate boxes if they should not trust one another.</p>
+<p>Supported API variables are <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code> and <code>GEMINI_API_KEY</code>.
+Alternate token variables, Vertex credentials and <code>XAI_API_KEY</code> are refused rather than exposed.
+Plain native Gemini OAuth credentials are supported; an encrypted-only cache without an importable
+grant is not. Custom provider base URLs are refused.</p>
+<p>Offline runs receive no provider keys and do not start a broker. Online provider runs need
+Docker with an ordinary bridge or a project services network. Host networking, arbitrary joins
+to another container&#39;s network, and Apple&#39;s <code>container</code> runtime do not support this setup.
+Native read-only/bare runs support only Claude. Remote restricted jobs cannot use filtered
+networking.</p>
+</section><section class="doc-section reference-section" id="a-clients-own-downloads"><h2>A client&#39;s own downloads</h2>
+<p>A client may need to download public files as well as call its model API. These downloads also
+go through co:op, without using your account credentials. For example, Codex fetches its curated
+plugin store from chatgpt.com and github.com whenever an API-key run starts.</p>
+<p>The broker uses a <code>download</code> route for these requests. It sends no credentials and rejects any
+that the box supplies. Only the exact requests listed by the adapter are allowed, including
+their query strings. For Codex, these are:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="A client&#39;s own downloads table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Host</th>
+<th scope="col">Request lines</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>chatgpt.com</td>
+<td><code>GET /backend-api/plugins/featured?platform=codex</code></td>
+</tr>
+<tr>
+<td>github.com</td>
+<td><code>GET /openai/plugins.git/info/refs?service=git-upload-pack</code> and <code>POST /openai/plugins.git/git-upload-pack</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The github.com lines fetch one public repository and never push. The same discovery path with
+<code>service=git-receive-pack</code> isn&#39;t in the set.</p>
+<p>The native broker serves those original URLs. It never turns the public Git download route into
+general GitHub access, and never attaches the selected account&#39;s grant to it. Other GitHub requests
+still require ordinary network approval in filtered mode.</p>
+</section><section class="doc-section reference-section" id="mcp-servers"><h2>MCP servers</h2>
+<h3 id="filtered-runs">Filtered runs</h3>
+<p>Bearer tokens for MCP servers stay outside filtered boxes. When a shared server uses
+<code>bearer_token_env_var</code>, co:op adds a route for it to the run&#39;s broker, after the provider routes.
+The MCP configuration inside the box points to that route&#39;s loopback listener and uses
+<code>COOP_MCP_TOKEN_&lt;n&gt;</code> instead of your token. This stand-in works only for that server and run.
+The broker adds the real token when it forwards the request.</p>
+<p>The route allows only the server&#39;s exact URL path and the methods MCP uses: POST, GET and DELETE.
+It waits for long tool calls to finish. The agent cannot bypass the broker by connecting to the
+bearer server&#39;s host directly.</p>
+<p>Your token variable never enters a filtered box, even if that box does not load MCP. A session&#39;s
+ACP adapter receives the stand-in too. If the token is missing or supplied through <code>-e</code>, co:op
+stops the launch and names the server. Tools supplied by a remote session&#39;s controller use the
+same route restricted to the server&#39;s exact path.</p>
+<h3 id="legacy-sse-servers">Legacy SSE servers</h3>
+<p>Legacy SSE servers need broader access because they choose a message endpoint during each
+connection. co:op allows <code>GET</code> on the stream&#39;s path and <code>POST</code> on any path at the same host.
+Other hosts and methods are blocked, and the broker still sends only one secret header.</p>
+<p>The credential still stays outside the box, but a legacy SSE connection lets the box reach
+more paths on that host than streamable HTTP does. co:op names these servers at launch and
+explains what to ask their vendors for. Use a server&#39;s streamable HTTP URL when it offers one.</p>
+<p>Some legacy servers return a full endpoint URL instead of a path. The client then posts directly
+to that URL, bypassing co:op. Filtered networking blocks the request. Open networking sends only
+the stand-in, so authentication fails without exposing the real token. To use this server,
+switch to its streamable HTTP URL.</p>
+<h3 id="offline-runs">Offline runs</h3>
+<p>An offline box cannot reach remote MCP servers, so co:op removes them from its MCP configuration.
+The launch reports: &#34;MCP servers that need internet are left out: …&#34;. Local command servers
+remain available, and remote-server token variables stay outside the box. An offline remote
+session&#39;s editor adapter also receives only the local servers.</p>
+<h3 id="open-runs">Open runs</h3>
+<p>With open networking, the box connects directly to the internet. co:op therefore uses a separate
+helper container to keep supported MCP credentials outside the box.</p>
+<p>If the MCP configuration includes a remote server with a secret, co:op starts a helper from
+the gateway image (<code>coop-net broker</code>). It joins the box&#39;s network, and co:op adds a hosts entry
+so the box can find it. The helper runs without privileges (<code>--cap-drop ALL</code>, uid 65532,
+read-only root, 256 MB). It has the label <code>coop=broker</code> and the box&#39;s supervisor labels.</p>
+<p>The helper exits when the <code>coop</code> process that started it closes its input, including when that
+process crashes. If a helper is left behind, co:op removes it during box cleanup.</p>
+<p>Inside the box, each brokered MCP server points to <code>http://coop-broker:&lt;port&gt;</code>. The port is
+15580 plus the server&#39;s index. The box sends a stand-in token; the helper replaces it with the
+real credential and connects only to that server&#39;s host. Your token variable stays outside
+the box.</p>
+<p>The box talks to the helper over plain HTTP on the container network. If the project has no
+co:op-managed network, the helper uses Docker&#39;s default bridge, which is shared with other
+containers that have no assigned network. On that bridge, the stand-in token protects access
+to the credential. It is a random 256-bit value created for the run and accepted only by its
+own listener for its server&#39;s route. co:op controls the helper&#39;s hosts entry and rejects any
+<code>--add-host</code> argument that would replace it.</p>
+<p>Remote open sessions use the helper for controller-provided tools too: the session&#39;s child
+passes its adapter list to co:op. The helper image is built on first use, just like the
+images for a first filtered run.</p>
+<p>The MCP helper is separate from the provider broker used in open and filtered runs. It allows
+exact paths for streamable HTTP and the same-host routes described above for legacy SSE.
+The following servers still run with their secrets inside the box. co:op names each one
+at launch:</p>
+<ul>
+<li>a server whose secret is in two places or mixes text with two references;</li>
+<li>a URL that isn&#39;t plain <code>https</code> on port 443;</li>
+<li>every server, when the box has no network to reach a helper on (Apple&#39;s <code>container</code> runtime,
+<code>--network none</code> or <code>--network container:…</code> in your runtime arguments).</li>
+</ul>
+</section><section class="doc-section reference-section" id="project-services"><h2>Project services</h2>
+<p>A <code>service:</code> rule requests access to one project service and needs your approval. Before a
+filtered run starts, co:op recreates that service and its dependencies on an internal network
+owned by the project. They can talk to each other, but have no direct internet connection.
+With Docker Engine 26 or later, Docker&#39;s DNS server on this network resolves only service
+names. The filtered box sends its own DNS requests only to co:op&#39;s guard.</p>
+<p>The services use standard HTTPS proxy variables to reach co:op&#39;s guard. It forwards requests
+only for approved TLS names, after checking the name in the actual ClientHello. Removing the
+proxy variables disconnects the services from the internet; it does not bypass the guard.</p>
+<p>Allowed and blocked external requests appear in <code>coop net watch</code>, <code>inspect</code>, <code>blocked</code> and the JSON
+views, with the name of the Compose service they came from. Direct traffic between services stays on
+the internal network and isn&#39;t reported as external traffic.</p>
+<p>In filtered mode, you must name the service you need; <code>box.network: true</code> alone is rejected.
+A filtered run that needs project services waits for every other box in the project to stop
+before starting those services. Each loop run and editor session gets its own Compose project,
+network and volumes. A run started directly uses the project&#39;s development stack.</p>
+<p>Service approval covers both the name and the Compose definition you reviewed. <code>coop approve</code>
+saves a digest of that service&#39;s configuration, and each launch compares it with the current
+file. Changing <code>db:</code> to use a different image or network setup requires another approval.
+Changing an unrelated service does not.</p>
+<p>If the definition changed, the launch stops with
+<code>the Compose service &#34;db&#34; changed since it was approved</code> and tells you how to review it.
+<code>coop net</code> lists the change under <code>⚠ New runs need your approval</code> as
+<code>The Compose service &#34;db&#34; changed after its network access was approved.</code></p>
+</section><section class="doc-section reference-section" id="tls-ports-and-localhost"><h2>TLS ports and localhost</h2>
+<p>A <code>tls</code> rule can allow ports other than 443, such as <code>[443]</code>, <code>[853]</code> or <code>[443, 8443]</code>.
+The gateway redirects only the listed ports. It reads the original destination port from the
+kernel&#39;s <code>SO_ORIGINAL_DST</code> record, so the client cannot choose a different port after the redirect.</p>
+<p>A request to an unlisted port is blocked and recorded with its port number. Connecting directly
+to the guard&#39;s listener is also blocked and counted, because that connection has no original
+destination port. Port 53 is reserved for the gateway, and a <code>serve</code> port cannot use one of
+the captured ports.</p>
+<p>You can run a test server on <code>127.0.0.1:3000</code> and use <code>curl</code> to reach it inside the box.
+This traffic stays inside the box&#39;s network namespace and never reaches your host or the gateway.
+Only traffic leaving the box passes through the gateway. The exception is Docker&#39;s DNS address,
+<code>127.0.0.11</code>, which is blocked so the box uses only co:op&#39;s DNS guard.</p>
+</section><section class="doc-section reference-section" id="your-projects-image"><h2>Your project&#39;s image</h2>
+<p>You can use your own project image in filtered mode if its <code>.agent/Dockerfile</code> starts with
+<code>ARG COOP_BASE_IMAGE</code> / <code>FROM ${COOP_BASE_IMAGE}</code>. Build it on the host with
+<code>coop build --egress filtered</code>. co:op uses its locked client image as the base and tags the
+result <code>coop-&lt;repo&gt;-filtered:&lt;hash&gt;</code>. The hash is the first 16 hex characters of the sha256
+of the client image reference. Plain <code>coop build</code> selects this image too when the project&#39;s
+effective network mode is filtered.</p>
+<p>A filtered launch uses only a project image you built explicitly. If the image is missing,
+the clients changed, or the sanitized build inputs changed, co:op asks you to review and rebuild.
+Build inputs include copied scripts and file modes. An image from the old automatic-build cache
+does not count as approved; build it explicitly once for filtered use.</p>
+<p>Use <code>.agent/Dockerfile.dockerignore</code> to exclude files that this image does not build from, or name
+the ignore file after your configured Dockerfile. Its rules take precedence over root
+<code>.dockerignore</code>. Excluded source changes do not require another build; the running box still sees
+that source through its repository mount. For a toolchain-only image, exclude everything with
+<code>**</code> and add <code>!path/to/input</code> for each file it copies. The Dockerfile and active ignore file always
+remain part of the build fingerprint. Changes to them or to an included input require a rebuild.
+Docker exceptions cannot restore secrets, Git metadata or generated output co:op omits.</p>
+<p>Before starting the box, co:op checks the built image itself. The Dockerfile&#39;s <code>FROM</code> line
+alone cannot establish what the image contains. Two checks must pass:</p>
+<ol>
+<li>The locked image&#39;s layers must be the first layers of the built image, so the box is that exact
+image plus your own.</li>
+<li>Every pinned client entry point must be byte for byte the file in the locked image. That covers
+each launcher, what it execs, and the native binaries it needs. They&#39;re read out of a container
+that is created and never started, so nothing from the image runs to describe itself.</li>
+</ol>
+<p>You can add tools to the image, but cannot replace, wrap or delete a pinned client. co:op names
+the affected client when it rejects the image. It also rejects images that do not use the
+locked image as their base. The host setup checks cover co:op&#39;s own image; your project image
+must pass both checks above on every launch. <code>COOP_IMAGE</code> is rejected because an arbitrary image
+has not passed those checks.</p>
+<p>Reading client entry points from an image takes a few seconds, so co:op caches the results beside
+your approvals, outside every agent mount. Host setup records the locked image&#39;s files; a launch
+records the project image&#39;s files. Each record is tied to the image&#39;s content-addressed ID.
+A rebuilt image gets a new ID, so co:op reads its files again.</p>
+<p>Missing, damaged or mismatched records are ignored. The comparison between the locked and
+project images still runs on every launch.</p>
+<p>The base image uses the non-root box user. To install packages, put <code>USER root</code> before the
+installation commands and <code>USER node</code> after them. Review the Dockerfile and its copied files
+before building: the build executes project instructions with ordinary Docker networking.
+<code>--egress</code> selects the image to build; it does not filter traffic during the build.</p>
+<p>co:op stages the build without shadowed secrets or Git metadata, checks the resulting image,
+and saves approval for those exact inputs outside the agent&#39;s mounts. If saving approval fails,
+the command fails even if Docker finished the build.</p>
+<p>Filtered launches never build the project image automatically. An editor connection with open
+networking may build a missing image. Ordinary runs warn when inputs have changed and require
+<code>coop build --egress open</code> to rebuild. Offline launches do not build project images automatically.
+co:op may still prepare its own embedded base, gateway and client images; those builds do not
+execute instructions from your repository.</p>
+</section><section class="doc-section reference-section" id="refused-with-the-reason-you-will-see"><h2>Refused, with the reason you will see</h2>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Refused, with the reason you will see table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Requested</th>
+<th scope="col">Message</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IPv6 address, CIDR, or <code>icmpv6</code></td>
+<td><code>IPv6 destinations are not supported yet — a filtered box runs on IPv4 only</code></td>
+</tr>
+<tr>
+<td><code>tls</code> on port 53</td>
+<td><code>TLS on port 53 is not allowed here — the gateway takes 53 for DNS; use 443 or another port</code></td>
+</tr>
+<tr>
+<td>raw <code>tcp</code>/<code>udp</code> on port 443 or 53</td>
+<td><code>raw tcp to &lt;dest&gt; on port 443 is not allowed — the gateway takes 443 for TLS and DNS; use another port</code></td>
+</tr>
+<tr>
+<td>raw <code>tcp</code> on a port a <code>tls</code> rule also names</td>
+<td><code>raw tcp to &lt;dest&gt; on port 8443 clashes with a TLS rule on the same port — the gateway takes that port for TLS; use another port</code></td>
+</tr>
+<tr>
+<td>a <code>serve</code> port on a captured TLS/DNS port</td>
+<td><code>port 8443 is one the gateway uses for TLS and DNS — serve on another port in filtered mode</code></td>
+</tr>
+<tr>
+<td>ICMP beyond echo-request</td>
+<td><code>ICMP N to &lt;dest&gt; is not supported yet — only echo-request is</code></td>
+</tr>
+<tr>
+<td><code>cidr: 0.0.0.0/0</code></td>
+<td><code>a /0 rule allows everything, which is not filtering — use --egress open if that is what you want</code></td>
+</tr>
+<tr>
+<td>a host, loopback, link-local or metadata range</td>
+<td><code>&lt;range&gt; is a protected range (your host, loopback, link-local or cloud metadata) — no rule can allow it</code></td>
+</tr>
+<tr>
+<td>a project image not built on the client image</td>
+<td><code>this project&#39;s .agent/Dockerfile did not build on coop&#39;s client image — start it with ARG COOP_BASE_IMAGE and FROM ${COOP_BASE_IMAGE} …</code></td>
+</tr>
+<tr>
+<td>a project image that changes a pinned client</td>
+<td><code>this project&#39;s .agent/Dockerfile changes claude&#39;s cli client at /opt/coop/bin/claude — a filtered box runs the clients this host&#39;s setup qualified …</code></td>
+</tr>
+<tr>
+<td><code>COOP_IMAGE</code></td>
+<td><code>a filtered box runs coop&#39;s own image — unset COOP_IMAGE to start one</code></td>
+</tr>
+<tr>
+<td>a runtime other than Docker</td>
+<td><code>restricted networking needs docker; &lt;runtime&gt; cannot serve the qualified gateway — run this with --egress open or none, or set COOP_RUNTIME=docker</code></td>
+</tr>
+<tr>
+<td><code>box.network: true</code> with no <code>service:</code> grant</td>
+<td><code>a filtered box does not join the shared services network — ask for the one sidecar you need with a to: {service: &lt;name&gt;} rule …</code></td>
+</tr>
+<tr>
+<td><code>-v /var/run:/x</code> (or any mount of <code>/run</code>, <code>/proc</code>, <code>/sys</code>, <code>/dev</code>, <code>/</code>, or the Docker socket&#39;s directory)</td>
+<td><code>a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel</code></td>
+</tr>
+<tr>
+<td>a project file with a rule nobody approved, or a changed rule or mode</td>
+<td><code>&lt;Agent&gt; cannot start because this project asks for network access that has not been approved</code> · <code>Review it: coop approve</code></td>
+</tr>
+<tr>
+<td><code>open</code>, in a project with no approval yet</td>
+<td><code>&lt;Agent&gt; cannot start because this project asks for unrestricted internet access, which has not been approved</code> · <code>Review it: coop approve</code></td>
+</tr>
+<tr>
+<td>an approved Compose service whose definition changed</td>
+<td><code>&lt;Agent&gt; cannot start because the Compose service &#34;db&#34; changed since it was approved</code> · <code>Review it: coop approve</code></td>
+</tr>
+<tr>
+<td>an approved project directory replaced by another at the same path</td>
+<td><code>&lt;Agent&gt; cannot start because the project directory at &lt;path&gt; was replaced since it was approved</code> · <code>Review it: coop approve</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>If co:op cannot enforce a rule, it stops the launch before saving approval or creating a
+container. It never starts a run with a requested restriction silently removed.</p>
+<h3 id="ranges-no-rule-can-reach">Ranges no rule can reach</h3>
+<p>Some destinations can never be granted, inside a <code>cidr:</code> grant or anywhere else:</p>
+<ul>
+<li>the host&#39;s own interface addresses;</li>
+<li>every subnet the container runtime allocates and every gateway it holds in one, so sibling
+containers, other sessions&#39; boxes and the daemon&#39;s own address are out of reach;</li>
+<li>the loopback, link-local and metadata ranges.</li>
+</ul>
+<p>co:op reads this inventory from the daemon at launch and updates it while the box runs. When
+another filtered box creates a network, or a VPN brings an interface up, co:op adds the new subnets,
+gateways and host addresses to the running box&#39;s protected set in one atomic kernel update.
+Those addresses are blocked as soon as the update takes effect. A network change stops the box
+only if the update is refused or the protected set would exceed 256 ranges. An address remains
+blocked after it disappears from the host.</p>
+<p>An approved CIDR cannot override these protected ranges. Packets to protected addresses are
+still dropped and counted. The only exception is an approved <code>service:</code> rule: it allows the
+exact container address you approved, without allowing the rest of that subnet.</p>
+<h3 id="serve-ports-and-mounts">Serve ports and mounts</h3>
+<p>A published <code>serve</code> port accepts connections only from the host. The rule matches the bridge
+gateway address that Docker uses for traffic from the host. Other containers on the same
+bridge cannot connect through it.</p>
+<p>A Docker socket or kernel control directory could let the agent bypass the gateway, so filtered
+runs reject mounts of <code>/var/run</code>, <code>/run</code>, <code>/proc</code>, <code>/sys</code>, <code>/dev</code>, <code>/</code> and the Docker endpoint&#39;s
+socket directory. The error names the blocked mount. For example, one <code>curl</code> request to a Docker
+socket could start another container outside the filtered network.</p>
+</section><section class="doc-section reference-section" id="observed-versus-counted"><h2>Observed versus counted</h2>
+<p><code>coop net inspect [&lt;run&gt;]</code> shows network activity for a run. If you omit the run, it shows this
+project&#39;s newest one. The report starts with totals for allowed traffic, then lists every
+destination the workload reached. Each row shows the hostname, port and transport, followed by
+each resolved IP address with its connection count and bytes sent and received.</p>
+<p>The rest of the report lists problems: blocked attempts, alerts, missing evidence, parts of the
+network setup that did not run normally, and unfinished cleanup. These sections are omitted for
+a clean run. <code>--json</code> includes every field.</p>
+<p>At the end of an interactive filtered run, co:op finalizes the network record and prints the
+same report on stderr. It appears under <code>Networking stats:</code>, with each destination&#39;s
+totals on its own row. The report follows the agent&#39;s output without a tool prefix. First,
+co:op says why the box stopped: <code>The Coop box has stopped — main process exited with status 0</code>,
+or <code>— interrupted by Ctrl-C</code> when a signal reached <code>coop</code>. It does not infer an interruption
+from the exit status alone.</p>
+<p>The sections shown before the agent starts also have no prefix: <code>Protecting secrets</code>,
+<code>Configuring network access</code> with each provider&#39;s endpoints, <code>Applied N approved network rules</code>
+and the configured MCP servers, then <code>✓ Everything else blocked</code> and <code>Starting &lt;agent&gt;</code>.</p>
+<ul>
+<li>For TLS traffic, the gateway records each connection&#39;s requested name, resolved address and
+transferred bytes. It also saves an event when it blocks a name. <code>coop net blocked &lt;host&gt;</code>
+finds this project&#39;s newest run that blocked that host, groups its blocked attempts by cause
+and counts repeats. Use <code>--run &lt;run&gt;</code> to choose a run. With <code>--run</code>, you can supply an exact
+event ID instead of a host.</li>
+<li>For raw traffic, the kernel counts packets and bytes for each approved address rule. These
+appear under <code>Raw traffic</code> in <code>coop net inspect</code> and as <code>address_grants</code> in <code>--json</code>. Individual
+hosts within a CIDR are not recorded or shown.</li>
+<li>For blocked raw packets, the filter counts how many it drops without recording their
+destinations. The report therefore shows a count
+(<code>N raw packets were blocked with no remote address recorded</code>). There is no destination
+record for <code>coop net blocked</code> to open.</li>
+<li>An unmeasured metric appears as UNKNOWN, never zero. A total is also UNKNOWN if any part of
+it was not measured.</li>
+<li>Only traffic co:op can identify as coming from the workload appears as <code>Allowed</code>. co:op&#39;s
+own resolver connection and a closing kernel socket with no owner appear only in <code>--json</code>.
+Other connections that co:op cannot attribute appear under <code>Other observed endpoints</code> with
+the reason. It does not count them as allowed traffic.</li>
+</ul>
+</section><section class="doc-section reference-section" id="runs-checks-and-exports"><h2>Runs, checks and exports</h2>
+<p>Use any unique prefix of a run&#39;s ID to select it. The eight characters shown by <code>coop net runs</code>
+work with every run command. If a prefix matches more than one run, co:op refuses it and shows
+the longer prefixes you can use.</p>
+<p><code>coop net runs</code> shows this project&#39;s 25 newest runs. When there are more, it shows a count and
+the <code>--all</code> option. Use <code>--all-projects</code> to see runs from every project, labeled by name and path.
+Coop keeps a finished run&#39;s record for 90 days after it ends. If cleanup is still pending, it
+keeps the record until cleanup finishes.</p>
+<p>Each run also keeps a copy of the rules it started with; the <code>--run</code> option below reads that
+copy. Coop removes the saved copy of a launch&#39;s rules only when no retained run record refers
+to it and no launch has used it for 90 days. It keeps the copy a worker session was created
+with for the whole session.</p>
+<p>Coop keeps rule copies made before this version because it cannot tell which sessions still
+use them. The exception is a copy made by <code>coop net setup</code>: Coop marks these copies as setup
+checks, so it knows no session uses them. It removes a setup copy after removing that check&#39;s
+run record. An editor session that starts no box for 90 days may need to be started again.</p>
+<p><code>coop net check &lt;url-or-host&gt;</code> tells you whether the rules would allow a normal new run in this
+project to reach a destination. It gives one answer and one reason, based on the approved project
+rules and each agent&#39;s provider access. Use <code>--run &lt;run&gt;</code> to check the rules a recorded run
+started with instead. Neither check sends network traffic.</p>
+<p>To check an IP address, also specify <code>--protocol tcp|udp --port &lt;n&gt;</code> (or <code>--icmp</code>) and a run.
+An address alone does not specify a transport, and the answer must account for that run&#39;s
+protected ranges.</p>
+<p><code>coop net export &lt;run&gt;</code> exports the finalized run record as JSON. It leaves out destination
+names and addresses by default, because even a blocked name can contain a secret. Use
+<code>--include-addresses</code> to include them in the export on your machine. The <code>digest</code> is a checksum
+of the exported content. It is not a signature and does not make a partial record complete.</p>
+</section><section class="doc-section reference-section" id="asking-for-access"><h2>Asking for access</h2>
+<p>Add the rule to <code>.agent/project.yaml</code> under <code>box.egress_rules</code>, then ask a human to run
+<code>coop approve</code> on the host. Editing the repository file requests access; it does not grant it.
+Coop stores approval outside the repository, so editing or deleting the file cannot widen
+access. Nothing inside the box can approve its own request. New runs use the approved rules;
+a box that is already running keeps the rules it started with.</p>
+<p>A running editor session (<code>coop acp</code>) can pick up a new approval without reconnecting. Once
+no prompt is running, co:op starts a box with the new rules, then stops the old box. Any
+processes left in the old box stop too, and the editor shows a line explaining this. A box
+started for another reason, such as a crash or provider switch, also gets the new rules.</p>
+<p>If co:op cannot apply the rules, or the new box stops before the switch, the session keeps its
+previous rules and explains why. After <code>coop net forget</code>, a running session keeps its rules
+until you reconnect the editor.</p>
+<h3 id="reviewing-a-request">Reviewing a request</h3>
+<p>Approval covers the file&#39;s exact network mode, rules and the reviewed definition of every
+<code>service:</code> it names. <code>coop approve</code> has no flags. To change access, edit the file and review
+it again. Before saving approval, <code>coop approve</code> checks that the runtime can enforce the rules,
+just as it does at launch. It refuses unsupported rules, such as an IPv6 destination, during
+review so they cannot be approved and then fail at every launch.</p>
+<p>The review compares the request with the access already approved. Unchanged rules have no
+marker; additions use <code>+</code> and removals use <code>-</code>. The <code>NETWORK RULES</code> heading explains these
+markers. Coop explains any network mode change in plain words. A request for <code>open</code> gets a
+red warning because it would allow unrestricted traffic. To confirm, answer
+<code>Approve this access for new runs and running editor sessions? [y/N]</code>.</p>
+<p>If the file is already exactly what was approved, <code>coop approve</code> prints
+<code>No approval needed: this project&#39;s requested access has not changed.</code> and grants nothing new.
+Provider endpoints are separate from this comparison. co:op allows the endpoints each agent
+needs, so they are not shown as access requested by the project.</p>
+<h3 id="pending-requests">Pending requests</h3>
+<p>If the project&#39;s request differs from your saved approval, co:op treats it as pending:</p>
+<ul>
+<li><code>coop init</code> ends with <code>⚠ New runs need your approval</code>, the reason, and
+<code>Review changes: coop approve</code>.</li>
+<li>Running <code>coop net</code> without a subcommand shows the same comparison under
+<code>⚠ New runs need your approval</code>.</li>
+<li>Every launch stops before starting a box or its main process. It explains why and prints
+<code>Review it: coop approve</code>. This applies to <code>coop run</code>, a named agent, <code>coop acp</code>, <code>coop loop</code>,
+an interactive fork, fork ACP, and a fork review or merge gate.</li>
+</ul>
+<p>These messages do not appear when the project has no pending request.</p>
+<h3 id="access-for-one-run">Access for one run</h3>
+<p>For one run, use <code>--allow-domain &lt;name&gt;</code> to allow an exact name over TLS on port 443, or pass
+<code>--egress-rules &lt;file&gt;</code> with a full rule document. A rules file inside a folder mounted into
+the agent&#39;s box only requests access. Its location prevents the agent from using it to
+approve its own rules.</p>
+<h3 id="the-approval-follows-the-directory">The approval follows the directory</h3>
+<p>Approval belongs to the project directory itself. If you move an approved checkout aside and
+put another checkout at the same path, co:op refuses the next launch until a human reviews it
+again. <code>coop net</code> reports that access is blocked and names the command to review it.</p>
+<p>Coop identifies the directory with a hidden file, called a marker, with <code>0600</code> permissions.
+It is hard-linked to a file in co:op&#39;s private state. The checkout and <code>$XDG_STATE_HOME</code>
+(or <code>~/.local/state</code>) must therefore be on the same filesystem, and that filesystem must
+support hard links. The marker contains identifiers, not credentials.</p>
+<p>Running <code>git clean -x</code> removes ignored files, including this marker. Run <code>coop approve</code> again
+to review and restore access. Copying the marker&#39;s contents does not restore its hard link.</p>
+<p>If you move a checkout with its marker intact, <code>coop approve</code> can recover it. It verifies the
+marker against co:op&#39;s private hard link, retires the old marker and private link, then asks
+you to approve the checkout&#39;s new canonical path. A copied marker cannot inherit the
+original checkout&#39;s access or retire its approval.</p>
+<p>If a marker is malformed, inspect it with <code>ls -l -- ./.coop-network-approval</code>. Only after
+confirming it is stale, remove the name inside that checkout with
+<code>rm -- ./.coop-network-approval</code>, then run <code>coop approve</code> again. co:op prints these same
+recovery commands and precautions when it refuses the launch.</p>
+<p>The box can see the marker, so co:op also checks the paths in runtime mount arguments.
+You may mount the exact project directory. You may not mount a
+path inside it that an existing agent could swap before Docker opens the mount, or a writable
+parent directory that would let the agent replace the project.</p>
+<p>Mounts must never expose co:op&#39;s private state, even read-only. This includes the paths it
+will use for network state, forks, execution records and launch locks on a first run, before
+those paths exist. co:op also inspects existing named volumes. When it uses the marker to
+verify approval, it refuses <code>--volumes-from</code> and custom volume-driver options. To mount a cache,
+keep it outside the checkout and name its path explicitly so co:op can inspect it.</p>
+<h3 id="forgetting-an-approval">Forgetting an approval</h3>
+<p><code>coop net forget</code> removes a project&#39;s approval. It shows the saved access, asks you to confirm
+in the terminal, then removes only that approval record. Run it in the project, or pass
+<code>--project &lt;path&gt;</code> if the checkout is already gone. Run records, their receipts and this host&#39;s
+setup results stay. The next filtered run needs approval again.</p>
+<p>If the approved path was a symlink, the approval belongs to the directory it pointed to.
+Once both the symlink and directory are gone, co:op cannot find the approval from that path.
+<code>coop net forget</code> explains this and leaves other projects&#39; approvals alone.</p>
+</section><section class="doc-section reference-section" id="when-a-run-is-interrupted"><h2>When a run is interrupted</h2>
+<p>The <code>coop</code> process that starts a filtered run manages its gateway containers, volumes and
+network record. If the process dies because of <code>SIGKILL</code>, a crash or a reboot, the run stays
+<code>cleanup pending</code> until co:op recovers it. If the process died after cleanup but before saving
+the final record, the status is <code>final record missing</code>. co:op attempts recovery automatically:</p>
+<ul>
+<li><code>coop net inspect</code> makes one recovery attempt for that run, with a time limit, before
+reporting its cleanup status.</li>
+<li>Starting a loop, fork or build checks for runs waiting for cleanup and attempts recovery.</li>
+<li>Every filtered launch does the same before starting its own box.</li>
+</ul>
+<p>If recovery succeeds, you need to do nothing. If it cannot finish, co:op reports what prevented
+it, such as Docker being stopped, a different daemon at the saved endpoint, or a resource it
+could not remove. <code>coop net inspect</code> shows <code>⚠ Cleanup incomplete — &lt;the blocker&gt;</code> and what to
+do next. co:op retries automatically.</p>
+<p>To recover runs now:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="When a run is interrupted code example" tabindex="0"><code>coop net recover           # settle every pending run now
+coop net recover &lt;run&gt;     # settle one run now
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>When <code>coop net recover</code> cannot finish a run, it prints
+<code>⚠ Cleanup incomplete for network run &lt;run&gt;</code>, followed by the causes and what to do next. An
+unreadable run record does not stop recovery of the others. co:op attempts recovery for every
+run it can read, names any records it could not read, and exits 1.</p>
+<p>Recovery removes only that run&#39;s resources, using their exact names and the run&#39;s labels.
+It never matches a name prefix or runs a general prune. It saves a final receipt marked
+<code>partial</code>, with workload <code>supervisor_lost</code>. If the process supervising the run is still alive,
+co:op leaves recovery to that process.</p>
+</section>
+        <nav class="reference-related" aria-label="Related guides">
+          <h2>Related guides</h2>
+          <ul class="reference-list" role="list"><li><a href="box.html">Sandbox, images and services</a><p>Control visible files, prepare a project image, and run databases and development servers beside your agent.</p></li>
+<li><a href="agents.html">Agents, accounts and presets</a><p>Sign in, choose models and accounts, and configure presets, teammates and instructions.</p></li>
+<li><a href="integrations.html">Editors and MCP</a><p>Connect an editor or MCP server and check which actions run on your computer or in the container.</p></li>
+</ul>
+          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
+        </nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/networking.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

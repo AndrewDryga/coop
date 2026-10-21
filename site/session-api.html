@@ -1,0 +1,1651 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/session-api.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>co:op worker API · co:op</title>
+  <meta name="description" content="Connect a worker and manage sessions, turns, evidence and publication through the worker API.">
+  <link rel="canonical" href="https://coop.dryga.com/session-api.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/session-api.html">
+  <meta property="og:title" content="co:op worker API">
+  <meta property="og:description" content="Connect a worker and manage sessions, turns, evidence and publication through the worker API.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=bf51eb611f">
+  <script src="assets/js/site.js?v=bf51eb611f" defer></script>
+  <script src="assets/js/analytics.js?v=bf51eb611f" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <h1>co:op worker API</h1>
+        <p class="guide-lead">Connect a worker and manage sessions, turns, evidence and publication through the worker API.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#connect">Connect</a></li>
+<li><a href="#session-authority">Session authority</a></li>
+<li class="reference-subsection"><a href="#workspace-storage">Workspace storage</a></li>
+<li class="reference-subsection"><a href="#restart-and-recovery">Restart and recovery</a></li>
+<li class="reference-subsection"><a href="#upgrading-a-worker">Upgrading a worker</a></li>
+<li class="reference-subsection"><a href="#session-inspection-evidence">Session inspection evidence</a></li>
+<li><a href="#request-rules">Request rules</a></li>
+<li class="reference-subsection"><a href="#idempotency-keys">Idempotency keys</a></li>
+<li class="reference-subsection"><a href="#compacting-old-turn-receipts">Compacting old turn receipts</a></li>
+<li class="reference-subsection"><a href="#fencing-an-uncertain-mutation">Fencing an uncertain mutation</a></li>
+<li class="reference-subsection"><a href="#asynchronous-session-create">Asynchronous session create</a></li>
+<li class="reference-subsection"><a href="#revision-checks">Revision checks</a></li>
+<li><a href="#lifecycle">Lifecycle</a></li>
+<li class="reference-subsection"><a href="#structured-output">Structured output</a></li>
+<li><a href="#endpoints">Endpoints</a></li>
+<li class="reference-subsection"><a href="#health">Health</a></li>
+<li class="reference-subsection"><a href="#sessions">Sessions</a></li>
+<li class="reference-subsection"><a href="#workspace-checkpoints">Workspace checkpoints</a></li>
+<li class="reference-subsection"><a href="#turns">Turns</a></li>
+<li class="reference-subsection"><a href="#events">Events</a></li>
+<li class="reference-subsection"><a href="#budget">Budget</a></li>
+<li class="reference-subsection"><a href="#changes">Changes</a></li>
+<li class="reference-subsection"><a href="#network">Network</a></li>
+<li class="reference-subsection"><a href="#session-evidence">Session evidence</a></li>
+<li class="reference-subsection"><a href="#review">Review</a></li>
+<li class="reference-subsection"><a href="#publish-a-reviewed-candidate">Publish a reviewed candidate</a></li>
+<li class="reference-subsection"><a href="#close-and-discard">Close and discard</a></li>
+<li><a href="#errors">Errors</a></li>
+<li><a href="#operational-recovery">Operational recovery</a></li>
+<li><a href="#consumer-responsibilities">Consumer responsibilities</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<p>A trusted controller supplies the code, context and execution settings. co:op runs models in
+isolation and keeps their workspaces. The worker can share a VM with its controller or run on a
+separate VM. The protocol can serve different products. Ryker uses it, but the protocol contains
+no Ryker-specific terms.</p>
+</section><section class="doc-section reference-section" id="connect"><h2>Connect</h2>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Connect code example" tabindex="0"><code class="language-bash">coop sessions connect --controller https://controller.example --token-file /run/secrets/coop-token
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>This is the only command that starts a worker. It starts a private local service, called the
+daemon, and a connector that sends requests to your controller. You do not need to open an
+inbound TCP port. There is no worker JSON file or local policy YAML. Use the optional
+<code>--state &lt;path&gt;</code> to choose where the worker stores its private data. Use the optional
+<code>--ca-file &lt;path&gt;</code> to trust a private TLS CA; public HTTPS uses the system trust store.</p>
+<p>The single-use token identifies the worker to the controller. co:op saves the identity it can
+renew in the state directory, then removes the token file. To reconnect, use the same controller
+and state directory without <code>--token-file</code>. That saved identity works only with the original
+controller.</p>
+<p>The default state directory is <code>~/.local/state/coop/sessions</code>, and the daemon listens on the
+internal Unix socket at <code>&lt;state&gt;/control.sock</code>. Each connector starts its own daemon and refuses
+to reuse one that is already running. Stop the existing connection before reconnecting. To run
+several workers at once, give each a separate <code>--state</code> directory. Use a process supervisor to
+keep the worker running. Ctrl-C stops both the connector and the daemon it started.</p>
+<p>A worker needs Git, Git LFS and a supported container runtime. The bundled worker image includes
+Git LFS. On a native worker, install <code>git-lfs</code> with your package manager.</p>
+<p>A worker never builds or runs a repository&#39;s <code>.agent/Dockerfile</code> for a job. You configure the
+worker&#39;s image separately from repository code. Jobs use the worker&#39;s base image
+(<code>COOP_BASE_IMAGE</code>), except that filtered jobs use co:op&#39;s locked client image. Install the tools
+your jobs need in the base image. A normal-mode job also installs the tools listed in the
+repository&#39;s <code>.tool-versions</code> when its box starts.</p>
+<p>Before the worker accepts filtered jobs, run <a href="networking.html#fleet-workers-and-docker-in-docker"><code>coop net setup</code></a>
+as the worker&#39;s OS user, using the same Docker endpoint and network state directory. This prepares
+and checks the networking setup. The session API requires those checks to remain valid; it does
+not build the networking images itself. Installing Docker or accepting JobSpec version 2 is not
+enough to show that the worker can enforce filtered networking.</p>
+<p>To check the local session service:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Connect code example" tabindex="0"><code class="language-bash">coop sessions doctor
+coop sessions doctor --socket /var/lib/coop-sessions/control.sock --json
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The local socket and state are private to the worker&#39;s OS account. Never mount the socket into a
+model sandbox or expose it through an unauthenticated proxy. Connecting out to a controller does
+not, by itself, establish that the controller is trusted. co:op verifies the TLS connection before
+sending an enrollment token or accepting work.</p>
+</section><section class="doc-section reference-section" id="session-authority"><h2>Session authority</h2>
+<p>Your controller supplies one job that fixes the source, model targets, repository access, network
+access and resource limits for the session. co:op checks and saves it before creating a workspace.
+Retries must use that same configuration, and restarts use the saved copy. Repository instructions
+and model output cannot grant more access. You can still read old session history, but co:op will
+not resume model work for an old session whose authorization it cannot verify.</p>
+<p>co:op saves a stable ID for each session store in <code>session.sqlite</code>. When it reserves a fork, it
+records which store and session own that specific instance of the fork. Moving the database with
+<code>--state</code> preserves the store ID and ownership. Only the session service that owns the fork can
+discard it, after checking its journal, the session&#39;s link to the fork and the workspace safety
+conditions. <code>coop fork rm --force</code> cannot bypass these checks.</p>
+<p>Old fork reservations without a store ID remain visible, but ordinary fork removal cannot delete
+them. A matching session ID in another store is not enough to prove who owns them. You can read
+these sessions, but recovering them requires an explicit procedure with the service stopped.
+co:op does not assign them to a new owner automatically or delete them because they are old.</p>
+<p>The worker fetches repository data directly from GitHub using short-lived credentials that your
+controller grants for that repository. The model receives the complete working tree, including
+verified LFS files and every explicitly authorized submodule, including nested submodules. Tokens
+never enter the model&#39;s mounts, repository configuration or exported results. Repository files
+cannot redirect these authenticated downloads. If objects are missing, a submodule is unauthorized
+or an LFS pointer format is unsupported, creation fails instead of leaving an incomplete tree.</p>
+<h3 id="workspace-storage">Workspace storage</h3>
+<p>The worker can include a <code>storage</code> object in each hello message to report disk space on the
+volume that holds its fork workspaces. The connector reads this object from the daemon&#39;s
+<a href="#health"><code>GET /v1/storage</code></a> endpoint and forwards it unchanged.</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Workspace storage code example" tabindex="0" data-copy-source=""><code class="language-json">{
+  &#34;version&#34;: 1,
+  &#34;measured_at&#34;: &#34;2026-09-11T04:05:06Z&#34;,
+  &#34;capacity_bytes&#34;: 536870912000, &#34;free_bytes&#34;: 107374182400, &#34;reserve_bytes&#34;: 26843545600,
+  &#34;high_watermark_bytes&#34;: 510027366400, &#34;low_watermark_bytes&#34;: 483183820800,
+  &#34;disposable_bytes&#34;: 8589934592,
+  &#34;protected_bytes&#34;: 21474836480,
+  &#34;unattributed_bytes&#34;: null,
+  &#34;allocation&#34;: &#34;open&#34;,
+  &#34;refusal_reason&#34;: null
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<ul>
+<li><code>disposable_bytes</code> is the disk space a discard could still free.</li>
+<li><code>protected_bytes</code> is the disk space the worker must keep, including the repository data shared
+by forks through hard links.</li>
+<li>A <code>null</code> <code>unattributed_bytes</code> means the worker could not identify what uses some of the space,
+or could not finish measuring. Treat it as unknown, never as zero.</li>
+<li><code>allocation</code> is <code>refused</code> when the worker will not accept a new workspace. <code>refusal_reason</code>
+explains whether the cause is <code>reserve_exhausted</code> or <code>protected_storage_exceeds_budget</code>.
+The worker can still handle existing workspaces and clean them up.</li>
+</ul>
+<p>The high and low watermarks set limits on used disk space. The reserve is the amount of space
+that must stay free. By default, co:op calculates all three from the volume&#39;s measured capacity:</p>
+<ul>
+<li>It reserves 5% of the volume.</li>
+<li>It stops accepting new workspaces when free space falls below that reserve.</li>
+<li>It accepts new workspaces again only when twice that reserve is free.</li>
+</ul>
+<p>Using different thresholds to stop and resume avoids repeatedly accepting and refusing work as
+cleanup frees space. If the worker cannot measure its volume, or its daemon is too old to provide
+this endpoint, it leaves out the storage object and keeps polling.</p>
+<p>A workspace may look unused because it has no recorded session binding or no uncommitted changes.
+That does not mean it is abandoned: another session store or an unfinished create operation may
+own it. co:op marks it as protected in <code>/v1/storage</code> and leaves it for manual inspection.</p>
+<p>Automatic cleanup only finishes removals that an authorized discard has already started. Before
+deleting a workspace, co:op moves it into a private staging directory belonging to its owner. If
+removal is interrupted, cleanup can resume it. Discard reports success only after the data has
+been removed.</p>
+<h3 id="restart-and-recovery">Restart and recovery</h3>
+<p>Stop the connector with <code>SIGINT</code> or <code>SIGTERM</code>. Across restarts, keep the identity file and the
+entire journal directory, together with the same worker and workspace configuration. A restart
+loads the existing identity and doesn&#39;t enroll again. Certificate renewal is automatic over
+mutual TLS.</p>
+<p>At startup, co:op locks the state directory and removes source staging data that has not been
+published, temporary transfer files and host-only Git credential files. It keeps published sources
+and response bodies saved in the journal.</p>
+<p>Configure the service manager to stop the worker&#39;s whole process group or cgroup. Killing only
+the parent can leave a Git or LFS child running. That child may keep deleted files open, so their
+disk space is not freed until it exits.</p>
+<p>co:op records each command in the journal before running it. After a restart, it resends finished
+results that the controller has not acknowledged. If the controller sends a completed command
+again, co:op returns the saved result without running it again. It refuses to reuse a command ID
+with a different payload.</p>
+<p>An asynchronous create request can be acknowledged while the session is still being created.
+The journal keeps the original operation ID until co:op can associate the resulting session&#39;s
+activity with it. Event cursors advance only when the controller acknowledges the exact events:
+unacknowledged events are sent again, and acknowledged events are not. When moving or backing up a
+worker, keep the entire journal, including more than just the <code>commands</code> directory.</p>
+<p>A review may continue after its request loses the connection. The saved delivery result remains
+uncertain, even if the review later finishes. Look up the operation with
+<code>GET /v1/operations?key=&lt;original-key&gt;</code>. Once it succeeds, fetch the saved review report.
+Neither request runs the gate again.</p>
+<p>If the daemon or controller is unavailable, the connector reports the problem and retries. It
+does not run work locally or delete saved results to get past the failure. If the saved identity
+is malformed or expired, the worker stops connecting. It does not enroll again automatically,
+even when an enrollment token is available. Check file ownership, trusted certificates, the clock
+and the controller&#39;s renewal status, then follow the controller operator&#39;s identity-recovery
+procedure. Do not delete the identity or journal as a routine reconnect fix.</p>
+<h3 id="upgrading-a-worker">Upgrading a worker</h3>
+<p>A new co:op build may need to convert the worker&#39;s session data when it first opens it. After
+conversion, the previous build cannot read that data. Each build can perform only one upgrade
+step. If the data is too old, the build stops and tells you which session schema to upgrade
+through first. Before replacing the worker, check its data with the new build, whether you are
+upgrading by hand or with a script:</p>
+<ol>
+<li>
+<p>Wait for the commands the worker is carrying out, then stop the worker.</p>
+</li>
+<li>
+<p>Run the check with the new build or image, against the worker&#39;s state directory:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Upgrading a worker code example" tabindex="0"><code class="language-bash">coop sessions check --state /var/lib/coop/sessions
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>In a container, run it from the new image with the worker&#39;s volumes mounted, as the worker&#39;s
+own user.</p>
+</li>
+<li>
+<p>Act on its exit status:</p>
+</li>
+</ol>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Upgrading a worker table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Exit</th>
+<th scope="col">Meaning</th>
+<th scope="col">Next step</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>The new build can use the data unchanged, or the service has initialized its storage without saving any sessions yet</td>
+<td>Start the new build</td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td>The new build will convert the data, and older builds can&#39;t open it afterwards</td>
+<td>To keep a way back, copy the stopped state directory aside, then start the new build</td>
+</tr>
+<tr>
+<td><code>4</code></td>
+<td>The data is too old for this build to convert, or was written by a newer build</td>
+<td>Restart the old build. If the data is too old, first upgrade through a build that uses the session schema named in the message.</td>
+</tr>
+<tr>
+<td><code>1</code></td>
+<td>The check could not finish: the service is still running, the path has no session data, or some data cannot be read</td>
+<td>Fix the reported problem and check again. A directory that no service has used cannot pass, even if it is empty. Check for a mistyped <code>--state</code> or a new volume. A worker that has never run has no data to check.</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>The arguments are invalid</td>
+<td>Fix the command</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The command checks both the session database and the connector&#39;s command journal. It does not
+write to the state directory or create SQLite&#39;s <code>-wal</code> and <code>-shm</code> files. While checking, it holds
+a shared state lock to prevent a service from starting and converting the data. If a service is
+already running against that directory, the check refuses to read it. Stop the service first so
+the data cannot change during the check.</p>
+<p>This extra cleanup is needed only if the worker ran a development build from co:op&#39;s <code>main</code>
+branch between 2026-09-15 and 2026-09-23. No released version created these files. Those builds
+left a <code>.service-launch.lock</code> file in each execution-registry folder. Current builds refuse to
+launch in the affected repositories and report the file as an unsupported registry entry.
+Stop the worker, then run these commands as its OS user to delete the files and any folders left
+empty:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Upgrading a worker code example" tabindex="0"><code class="language-bash">find ~/.local/state/coop/executions/v1 -mindepth 2 -maxdepth 2 -type f -name .service-launch.lock -delete
+find ~/.local/state/coop/executions/v1 -mindepth 1 -maxdepth 1 -type d -empty -delete
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<h3 id="session-inspection-evidence">Session inspection evidence</h3>
+<p>Your controller can request a report about a session hosted by the worker. The report has a
+versioned format and size limits. Send an <code>api_request</code> command with the payload
+<code>{&#34;method&#34;:&#34;GET&#34;,&#34;path&#34;:&#34;/v1/sessions/&lt;id&gt;/evidence&#34;}</code> (see the
+<a href="#session-evidence"><code>session evidence</code></a> endpoint below). The connector forwards the daemon&#39;s
+answer unchanged. It does not choose fields, calculate extra values or reveal additional data.</p>
+<p>The report includes the network settings saved for the session, the activity observed during its
+runs and the approved task assigned to its workspace. The task data comes from its folder when
+the report is captured. Credentials, host paths and packet bodies are excluded. Destination names
+appear only if the session job set <code>egress.export_destinations: true</code>. The agent-written
+<code>state.md</code> has a size limit and is withheld in full if the scan flags a likely secret.</p>
+<p>Each section says whether its data was available. Your controller can distinguish a failed read
+from a session with no observed activity:</p>
+<ul>
+<li>An unavailable section names its cause.</li>
+<li>A filtered session that has not run reports <code>no_run</code>.</li>
+<li>A session that never ran filtered reports <code>not_filtered</code>.</li>
+</ul>
+<p>Before sending the report, the daemon checks that it follows the evidence format and disclosure
+rules. If the report fails that check, the endpoint returns <code>500 internal_error</code> instead.</p>
+<p>The worker reports support for <code>session-evidence</code> version <code>1</code> only when its running daemon lists
+<code>session_evidence_versions</code> in <code>GET /v1/capabilities</code>. It checks this independently of the other
+capabilities; configuration cannot override the result. An older daemon without the endpoint does
+not report support. Your controller can then show that evidence export is unavailable, rather
+than displaying an empty network report.</p>
+<p>The controller also receives blocked requests and alerts from filtered runs through the existing
+<code>network</code> session event. The daemon uses the same grouping, limits and destination-disclosure
+rules as <code>coop net</code>.</p>
+</section><section class="doc-section reference-section" id="request-rules"><h2>Request rules</h2>
+<p>The examples below use curl&#39;s Unix-socket support:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Request rules code example" tabindex="0"><code class="language-bash">SOCKET=&#34;$HOME/.local/state/coop/sessions/control.sock&#34;
+curl --unix-socket &#34;$SOCKET&#34; http://localhost/healthz
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Every mutation is a <code>POST</code> with these headers:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Request rules code example" tabindex="0"><code class="language-text">Content-Type: application/json
+Idempotency-Key: &lt;globally unique caller-owned key&gt;
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<ul>
+<li><code>Idempotency-Key</code> and <code>Content-Type</code> must each occur exactly once.</li>
+<li>Mutation URLs accept no query parameters.</li>
+<li>Ordinary mutation bodies are limited to 128 KiB.</li>
+<li>Turn-submission bodies are limited to 12 MiB, so they can carry bounded input artifacts.</li>
+<li>A turn takes at most 5 input <code>artifacts</code>, 8 MiB in total. More artifacts, or more bytes, return
+<code>invalid_request</code> (&#34;turn has too many artifacts&#34; or &#34;turn artifact content exceeds its bound&#34;).</li>
+<li>Every body is decoded as exactly one JSON value, and unknown fields are rejected.</li>
+<li>Prompts are limited to 256 KiB of valid UTF-8 without NUL.</li>
+</ul>
+<h3 id="idempotency-keys">Idempotency keys</h3>
+<p>Choose one key for each action and keep using that key when you retry it. If the method, key and
+normalized request body match, co:op returns the saved result without running the action again.
+Reusing a key with a different method or body returns <code>idempotency_conflict</code>.</p>
+<p>After a lost response, retry the same request with the same key. If an earlier response supplied
+an operation ID, <code>GET /v1/operations/{operation_id}</code> reports its state, error code and resource
+ID.</p>
+<p>If the worker may have accepted a request but you did not receive its response, look it up with
+<code>GET /v1/operations?key=&lt;idempotency-key&gt;</code>. Supply the exact idempotency key within its size
+limit; the query accepts only one <code>key</code>. The response contains the public operation information.
+It excludes the key, request hash, saved execution instructions, result body, stored request,
+private result, prompts, native provider IDs and host paths.</p>
+<h3 id="compacting-old-turn-receipts">Compacting old turn receipts</h3>
+<p>When a turn request succeeds, co:op saves a small public result that it can return if you retry.
+It does not duplicate the prompt or private execution settings in that result. Newer daemons can
+still read older results that stored the full turn. You can compact those older records during a
+planned maintenance window:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Compacting old turn receipts code example" tabindex="0"><code class="language-bash">coop sessions compact --state &lt;state-root&gt; --backup &lt;new-backup.sqlite&gt;
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The command locks the state directory so the daemon cannot use it during maintenance. The backup
+path must not exist or be inside the state root. After verifying the backup, the command rewrites
+the old results in one transaction, checks database integrity and vacuums the database to reclaim
+space. It does not change the turn records themselves and never runs automatically at startup.</p>
+<p>The backup still contains the old prompt copies, so only its owner can access it. Keep it until
+you have verified both the compacted database and its normal backups.</p>
+<p>To restore:</p>
+<ol>
+<li>Stop the daemon.</li>
+<li>Move <code>session.sqlite</code> and both possible <code>-wal</code> and <code>-shm</code> sidecars aside together.</li>
+<li>Install the backup as an owner-only <code>session.sqlite</code>.</li>
+<li>Restart.</li>
+<li>Verify with <code>coop sessions doctor</code> before deleting the files you moved aside.</li>
+</ol>
+<h3 id="fencing-an-uncertain-mutation">Fencing an uncertain mutation</h3>
+<p>Your controller may withdraw permission for a session create or turn submission after saving the
+request, without knowing whether the worker received it. Do not resend the request just to find
+out what to stop: that could start work you no longer want. Fence the request instead, which
+blocks it unless the worker has already accepted it.</p>
+<p>Call <code>POST /v1/operations/fence</code> with the original request&#39;s idempotency key and an envelope
+containing its exact method and request:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Fencing an uncertain mutation code example" tabindex="0" data-copy-source=""><code class="language-json">{
+  &#34;method&#34;: &#34;SubmitTurn&#34;,
+  &#34;request&#34;: {
+    &#34;session_id&#34;: &#34;remote_...&#34;,
+    &#34;expected_revision&#34;: 3,
+    &#34;prompt&#34;: &#34;the exact frozen prompt&#34;
+  }
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Only <code>CreateRemoteSession</code> and <code>SubmitTurn</code> can be fenced.</p>
+<ul>
+<li>If the worker has not accepted the operation, including when it has only reserved it, co:op
+records a failure with <code>operation_fenced</code>. Sending that same request later cannot run it.</li>
+<li>If the worker already accepted the operation, the fence returns it and its resource. Inspect
+that result and use the normal close or cancel request to stop the work.</li>
+</ul>
+<p>The enclosed request can be as large as a turn submission, with a separate size limit for the
+envelope. A lookup that finds nothing, or a client timeout, does not prove that the request never
+reached the worker.</p>
+<h3 id="asynchronous-session-create">Asynchronous session create</h3>
+<p>To create a session without keeping the HTTP request open, send <code>Prefer: respond-async</code> on
+<code>POST /v1/sessions</code>. co:op saves the request and returns <code>202 Accepted</code> with an <code>operation</code>
+that is still <code>running</code> or has already finished. Poll <code>GET /v1/operations/{operation_id}</code>
+until it succeeds, then fetch the session it identifies.</p>
+<p>Creation continues in the daemon if the client disconnects. Retrying the identical request with
+the same key returns the same operation. Without the preference header, the request waits for
+creation to finish.</p>
+<h3 id="revision-checks">Revision checks</h3>
+<p>Session lifecycle, budget and cancellation requests include <code>expected_revision</code>. Read the session
+before acting. If you get <code>revision_conflict</code>, read it again and decide whether your action is
+still appropriate. Do not simply guess a new revision or action. Validation decisions check
+<code>candidate_sha256</code> instead: they approve or reject one exact unpublished answer, regardless of
+other changes to the session.</p>
+</section><section class="doc-section reference-section" id="lifecycle"><h2>Lifecycle</h2>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Lifecycle code example" tabindex="0"><code class="language-text">create -&gt; open/parked
+          -&gt; queued -&gt; starting -&gt; running -&gt; awaiting_validation -&gt; completed
+                                      |                 -&gt; queued (rejected candidate)
+                                      -&gt; failed|cancelled|interrupted
+          -&gt; parked
+          -&gt; exhausted when the turn budget is consumed
+          -&gt; closed
+          -&gt; discard plan -&gt; discarded
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Each session belongs to one worker. The worker saves turns in a queue with a size limit and runs
+them one at a time, in the order received. The queue survives restarts.</p>
+<p>Without <code>limits.warm_idle_timeout_ms</code>, co:op starts a new <code>coop fork &lt;name&gt; acp &lt;target&gt;</code> process
+for each turn. That process resumes the provider session saved for this co:op session. co:op
+publishes only the final assistant message, then stops the process and removes its box before
+marking the session as parked.</p>
+<p>A job with <code>repository_read_only: true</code> uses the same kind of process. The fork is mounted
+read-only, and files generated by a turn go into a writable output directory in the worker&#39;s
+private state.</p>
+<p>With <code>limits.warm_idle_timeout_ms</code>, co:op can authenticate the ACP connection before the first
+turn and keep the same process and provider session for later turns. Turns still run one at a
+time. The daemon keeps at most four sessions warm, and each occupies one of the four runtime
+slots while idle.</p>
+<p>When the idle timeout expires, a turn is cancelled or fails, the session closes or is discarded,
+or the daemon shuts down, co:op stops the process and removes its box, services and temporary
+credential files. The provider&#39;s saved conversation history remains, so a new process can resume
+the same session.</p>
+<p>When co:op stops a turn&#39;s runtime, it also removes the workspace&#39;s Compose service containers,
+identified by their project and working-directory labels. A successful warm turn keeps its
+runtime and services until warm-session cleanup. The service volumes remain after cleanup, so
+later turns can restart services with the same development data.</p>
+<p>After a crash or upgrade, daemon startup repeats cleanup for historical sessions. A background
+check retries idle-runtime cleanup every minute, with a limit on each pass and without interfering
+with an active turn. It also removes the runtime and temporary credential files for a turn
+awaiting validation, while leaving the candidate unchanged. Only an explicit session discard
+removes the workspace&#39;s volumes and network.</p>
+<p>A turn that has completed successfully stays successful if cleanup fails. The background cleaner
+retries and logs the cleanup error, with a limit on its length. If the turn itself failed, its
+error includes the cleanup failure too.</p>
+<p>On restart:</p>
+<ul>
+<li>Queued turns that were never sent to the provider remain in the queue.</li>
+<li>A turn waiting for your validation keeps its unpublished candidate. You can still accept or
+reject it by digest. Startup and the periodic cleaner remove its provider process, box,
+temporary credential files and services without deciding or changing the candidate.</li>
+<li>If co:op had recorded its intent to send a turn before the interruption, that turn is marked
+interrupted. It is not sent again automatically.</li>
+<li>The provider&#39;s saved conversation history remains.</li>
+</ul>
+<p>Closing a session keeps its fork, conversation state, events and reviews. To delete the
+workspace, use the separate two-step discard process: make a plan, then apply it only if the
+session still matches that plan. Only a closed, idle session can be discarded.</p>
+<p>The API can publish an explicitly authorized, reviewed candidate as a draft pull request. It
+can&#39;t merge, sign, change the local parent ref, run an arbitrary host command or return a host
+workspace path.</p>
+<h3 id="structured-output">Structured output</h3>
+<p>Use the optional <code>output_contract</code> to require an answer that follows a JSON schema. It contains
+the exact schema bytes and their digest:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Structured output code example" tabindex="0" data-copy-source=""><code class="language-json">{
+  &#34;json_schema&#34;: {&#34;type&#34;:&#34;object&#34;,&#34;required&#34;:[&#34;answer&#34;]},
+  &#34;sha256&#34;: &#34;&lt;lowercase SHA-256 hex of the exact json_schema bytes&gt;&#34;,
+  &#34;require_semantic_validation&#34;: true
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>When <code>output_contract</code> is present:</p>
+<ul>
+<li><code>json_schema</code> and <code>sha256</code> are required.</li>
+<li>The schema is capped at 256 KiB.</li>
+<li>co:op checks that the schema matches the digest before compiling it to validate responses.</li>
+</ul>
+<p>co:op saves the contract, gives it to the model and checks the final answer against it. If the
+answer is not valid JSON or does not match the schema, co:op asks the model to fix it in the same
+provider session. Without semantic validation, three invalid responses fail the turn with
+<code>output_contract_failed</code>. No assistant message is published.</p>
+<p>Set <code>require_semantic_validation: true</code> when your controller must also check the answer against
+external data fixed for this request. After the answer passes schema validation, co:op returns
+its exact unpublished bytes and SHA-256 digest as <code>turn.candidate</code>, and sets the turn to
+<code>awaiting_validation</code>. The saved <code>validation_candidate_sha256</code> remains visible after your
+decision, so you can check what happened if the HTTP response is lost. Send one decision with an
+idempotency key to:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Structured output code example" tabindex="0"><code class="language-text">POST /v1/sessions/&lt;session&gt;/turns/&lt;turn&gt;/validation
+{&#34;candidate_sha256&#34;:&#34;&lt;digest&gt;&#34;,&#34;verdict&#34;:&#34;accept&#34;}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>To reject the candidate instead, send <code>verdict: &#34;reject&#34;</code> with 1 to 20 <code>violations</code>. Each
+violation is capped at 4 KiB, and so is the combined list.</p>
+<p>An acceptance must not include violations. co:op copies the stored candidate into
+<code>assistant_message</code> and returns a saved <code>validation_receipt</code>. A rejection asks the model to try
+again in the same provider session, as part of the same turn.</p>
+<p>Your controller can review up to three candidates that pass the schema check. For each candidate,
+the model has up to three responses to produce valid output. Responses that fail the schema check
+do not use up one of your controller&#39;s three review attempts.</p>
+</section><section class="doc-section reference-section" id="endpoints"><h2>Endpoints</h2>
+<h3 id="health">Health</h3>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Health table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Method</th>
+<th scope="col">Path</th>
+<th scope="col">Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET</code></td>
+<td><code>/healthz</code></td>
+<td><code>{&#34;healthy&#34;:true}</code></td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/readyz</code></td>
+<td><code>{&#34;ready&#34;:true}</code> after daemon startup</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/capabilities</code></td>
+<td><code>{&#34;job_spec_versions&#34;:[2],&#34;controller_tools_versions&#34;:[1],&#34;repository_freshness_receipt_versions&#34;:[2],&#34;session_evidence_versions&#34;:[1],&#34;review_commit_message_versions&#34;:[1]}</code>. Check these versions before choosing which protocol features to use.</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/capacity</code></td>
+<td>Current shared active and warm runtime slots. The connector forwards this measurement in the hello it sends with every poll.</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/storage</code></td>
+<td>Disk use measured by this daemon: <code>storage</code> (the summary for a fleet controller), <code>budget</code>, <code>totals</code>, <code>roots</code>, <code>forks</code> and <code>problems</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The worker has four slots for model processes, shared by active turns and idle warm sessions.
+The session, turn and workspace counts all describe those same slots; do not add them together.
+Time spent waiting in the queue does not count toward a turn&#39;s model timeout. If cleanup fails,
+the process keeps its slot until cleanup succeeds. At startup, the worker reports busy with zero
+free slots until it has checked which runtimes it owns.</p>
+<p>For a quarantined or retired session, cleanup frees a slot only after co:op confirms that no
+runtime remains with that session&#39;s exact labels. This does not make the workspace safe to run
+again. If co:op cannot read capacity, it reports busy. The worker still polls for requests that
+read data or clean up existing work.</p>
+<p><code>/v1/storage</code> measures the disk blocks allocated to files, rather than the file sizes reported
+by applications. It reads file metadata without opening file contents, so it can count private
+session data that contains credentials without reading those credentials.</p>
+<p>Forks can share Git objects with their source checkout through hard links. Storage totals count
+the space that deleting the content would actually free. Shared repository data is counted once
+in <code>totals.baseline_shared_bytes</code>, rather than once for every fork.</p>
+<p>An incomplete measurement reports <code>totals.unknown</code> and sets <code>storage.unattributed_bytes</code>
+to <code>null</code>. This means unknown, never zero. To avoid scanning the full tree for every request,
+co:op measures it at most once per <code>budget.measure_seconds</code>.
+<code>storage.measured_at</code> lets callers check how old the measurement is.</p>
+<p><code>forks[]</code> lists each directory under a fork root, its category and the evidence used to classify
+it. Only <code>disposable</code> and <code>staged_discard</code> can be removed through the authorized cleanup process.
+For <code>active</code>, <code>grace</code>, <code>protected</code>, <code>control</code> and <code>unattributed</code>, the response explains why
+removal is refused.</p>
+<p>A directory is <code>protected</code> when it belongs to a running worker or registered sandbox activity,
+a merge was interrupted, the task system still needs it, a session is quarantined,
+or work is uncommitted. Without a co:op record identifying that fork instance, the directory is
+<code>unattributed</code>. co:op reports it for inspection instead of guessing that it can be deleted.</p>
+<p>When disk space is too low, the daemon refuses new workspaces with <code>storage_unavailable</code> and
+explains the cause. Reads, cleanup and discard still work. co:op does not delete protected data
+to make room.</p>
+<p>Checkpoint capture and restore need space for extra copies, including during recovery. They have
+a separate storage check that waits for enough space above the reserve. While a restore is
+interrupted, the session remains blocked from running work.</p>
+<p>The worker stops creating workspaces when disk use reaches <code>storage.high_watermark_bytes</code>.
+It starts accepting them again only when use drops below <code>storage.low_watermark_bytes</code>. The gap
+prevents repeated stops and starts as cleanup frees space. New work must leave
+<code>storage.reserve_bytes</code> free. These checks do not limit how much data an already-running task
+writes in its workspace.</p>
+<p>Before reporting support for <code>job-setup:2</code>, <code>repository-freshness:2</code>, <code>session-evidence:1</code>,
+<code>controller-tools:1</code> or <code>review-commit-message:1</code>, the connector checks the running daemon&#39;s
+<code>GET /v1/capabilities</code> response for the matching version. If it cannot verify a capability,
+it leaves it out of the next hello. The controller can distinguish an unsupported evidence
+export from a supported report with no observed activity.</p>
+<p>Worker protocol v2 reports supported features, runtime capacity and optional disk measurements.
+It does not distribute lists of policies or repositories. Each controller job specifies its own
+exact code and execution settings, which cannot change after submission.</p>
+<h3 id="sessions">Sessions</h3>
+<p>Your controller creates <code>create-session.json</code> with these fields:</p>
+<ul>
+<li><code>task</code>: your external task reference; co:op does not interpret its value.</li>
+<li><code>job</code>: a version-2 JobSpec.</li>
+<li><code>expected_job_digest</code>: the SHA-256 digest of the job&#39;s canonical representation.</li>
+<li><code>controller_tools</code> (optional): connects the session to your controller&#39;s authenticated tool endpoint.</li>
+</ul>
+<p>For exact fields and validation, see the shared
+<a href="https://github.com/AndrewDryga/coop/blob/main/testdata/protocol/coop-worker-v2.json" target="_blank" rel="nofollow noopener">protocol fixture</a> and the
+<a href="https://github.com/AndrewDryga/coop/blob/main/internal/workerproto/job.go" target="_blank" rel="nofollow noopener">JobSpec definition</a>.</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Sessions code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
+  -H &#39;Content-Type: application/json&#39; \
+  -H &#39;Idempotency-Key: controller:create:01J...&#39; \
+  -H &#39;Prefer: respond-async&#39; \
+  --data-binary @create-session.json \
+  http://localhost/v1/sessions
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The job selects model targets, network rules, queue and turn limits, and the complete work and
+review setup. Its <code>mode</code> is always <code>&#34;normal&#34;</code>; set <code>repository_read_only: true</code> for a job that must
+not change its repository. A job that asks for the removed <code>readonly</code> or <code>bare</code> mode is refused with
+<code>invalid_request</code>. Besides the existing required fields, version 2 requires:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Sessions code example" tabindex="0" data-copy-source=""><code class="language-json">{
+  &#34;environment&#34;: {&#34;CI&#34;: &#34;1&#34;},
+  &#34;check&#34;: {&#34;argv&#34;: [&#34;make&#34;, &#34;test&#34;], &#34;environment&#34;: {&#34;DATABASE_URL&#34;: &#34;postgres://test-db/app&#34;}},
+  &#34;resources&#34;: {&#34;cpu_millis&#34;: 2000, &#34;memory_bytes&#34;: 4294967296, &#34;pids&#34;: 512}
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>These fields must be present even when the environment maps and check argv are empty.</p>
+<p>The job&#39;s environment variables are passed only to sandbox processes. Review uses those variables
+plus <code>check.environment</code>; the check&#39;s values override duplicate names. Names must be valid shell
+identifiers. <code>COOP_*</code>, provider credential variables, model variables and adapter-owned
+variables are reserved.</p>
+<p>Values must be UTF-8, with no line breaks or leading or trailing whitespace. This prevents
+processing an environment file from changing a value that co:op accepted. Use these variables for
+job settings, not for model or GitHub credentials.</p>
+<p>The check is a list of command arguments, passed directly to the process. It is not interpreted as
+a shell command; invoke a shell explicitly if you need shell syntax. Leaving both <code>check.argv</code>
+and the check environment empty means no check will run, so the review cannot be published.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Sessions table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Meaning</th>
+<th scope="col">Accepted range</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cpu_millis</code></td>
+<td>CPU, in thousandths of one core</td>
+<td>10 to 128000</td>
+</tr>
+<tr>
+<td><code>memory_bytes</code></td>
+<td>Memory, in bytes</td>
+<td>6 MiB to 1 TiB</td>
+</tr>
+<tr>
+<td><code>pids</code></td>
+<td>The per-container process cap</td>
+<td>1 to 65536</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Every job must set positive, finite CPU, memory and process limits. If a requested limit exceeds
+the worker&#39;s configured maximum, or the runtime cannot enforce it, co:op refuses the job. It does
+not silently lower the requested value.</p>
+<p>co:op saves the normalized job before creating a workspace and refuses retries that change it.
+Task text and repository settings cannot change what the worker is allowed to run. Your controller
+may use repository defaults, but it must choose and include every setting before submission.
+Work and review containers use that same saved configuration, with review-only environment
+variables added for the check. There is no local policy name, policy catalog, separate source
+selector or worker JSON file.</p>
+<p>Send version-2 jobs only to workers that report <code>job-setup:2</code>. A new connector can still be
+connected to an old daemon, so the connector checks the running daemon before reporting support.
+Test your JobSpec encoder against the shared digest examples in <code>internal/workerproto/job_test.go</code>.
+Remote reviews use the submitted job&#39;s check, not the worker&#39;s <code>COOP_GATE</code> or the repository&#39;s
+<code>gate:</code>.</p>
+<p>co:op does not fill in missing execution settings for v1 jobs. Historical sessions and
+evidence stay readable, but their turns, reviews and interrupted creates can&#39;t run until
+they are resubmitted as v2 jobs.</p>
+<h4 id="frozen-repository-source">Frozen repository source</h4>
+<p>Before creating the job, your controller resolves the requested default branch, named branch, PR
+or commit to exact commits. <code>job.source</code> identifies the GitHub repository by its stable ID and
+slug. It records the default, selected and base commits, the approved tree and the information
+that binds the job to that source. It also lists every authorized submodule, including nested
+ones, with the exact repository, commit and tree. Do not include a host checkout path, remote URL
+or GitHub token in this document.</p>
+<p>The worker gets short-lived credentials for the authorized repository through its authenticated
+connection to the controller. It downloads Git and LFS data directly from GitHub and verifies the
+complete working tree. Repository files such as <code>.gitmodules</code> and <code>.lfsconfig</code> cannot redirect
+those authenticated requests. The job fails if history or LFS files are missing, submodule commit
+references do not match, or disk space is insufficient. A job with <code>source: null</code> uses an
+isolated empty workspace.</p>
+<h4 id="session-endpoints">Session endpoints</h4>
+<p>The public session response identifies the fixed repository source, <code>job_ref</code>, <code>job_digest</code>,
+model target, execution mode, project exposure settings, saved network settings and repository
+freshness. It also includes companion aliases, base commits, the generated fork name, revision,
+state, activity, queue and budget counts, the event cursor and timestamps. It excludes host paths,
+provider state, prompts and credentials. You can inspect historical sessions whose jobs can no
+longer be verified, but you cannot resume model work in them.</p>
+<p>With <code>Prefer: respond-async</code>, creation returns HTTP 202 and an operation to poll. Once it
+succeeds with <code>resource_type: session</code>, fetch the session it identifies. Without the preference
+header, creation waits and returns the operation and session together.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Session endpoints table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Method</th>
+<th scope="col">Path</th>
+<th scope="col">Body/query</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/sessions</code></td>
+<td><code>task</code>, <code>job</code>, <code>expected_job_digest</code>; optional <code>controller_tools</code></td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/sessions?limit=100</code></td>
+<td><code>limit</code> is <code>1..1000</code></td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/sessions/{session_id}</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/sessions/{session_id}/prepare</code></td>
+<td><code>expected_revision</code>; the job must turn on warm execution</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/sessions/{session_id}/workspace</code></td>
+<td><code>expected_revision</code>, <code>task</code>; the session must be open, writable and unused</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>You can still read a session created in the removed <code>readonly</code> or <code>bare</code> mode, but its job no
+longer passes validation. A new turn returns <code>invalid_session_state</code>. Close and discard the old
+session instead of trying to run it again.</p>
+<h4 id="task-binding">Task binding</h4>
+<p><code>POST /v1/sessions/{session_id}/workspace</code> writes one approved task into the session&#39;s workspace
+and binds the session to it. Send it before the first turn. The body holds <code>expected_revision</code>
+and a <code>task</code> object:</p>
+<ul>
+<li><code>offer_ref</code>: your stable reference for the approved task. It is 1 to 256 bytes of letters,
+digits, <code>_</code>, <code>.</code>, <code>:</code> and <code>-</code>.</li>
+<li><code>title</code>: one line, up to 120 bytes.</li>
+<li><code>prompt</code>: up to 12,000 bytes.</li>
+<li><code>success_checks</code>: 1 to 20 distinct items, each up to 1,000 bytes.</li>
+<li><code>authority_limits</code>: up to 20 distinct items, each up to 500 bytes.</li>
+<li><code>instruction_ref</code> (optional): one reference, with the same rules as <code>offer_ref</code>.</li>
+<li><code>source_refs</code>: up to 20 distinct references, with the same rules as <code>offer_ref</code>.</li>
+</ul>
+<p>Every string must be valid UTF-8, not blank and free of NUL. The encoded task is capped at
+64 KiB. co:op adds the task to the workspace&#39;s task queue as a to-do task, with one subtask per
+success check.</p>
+<p>The response includes the <code>operation</code> and <code>session</code>. The session&#39;s <code>workspace_task</code> contains
+<code>queue_id</code>, <code>task_id</code>, <code>id</code>, <code>offer_ref</code> and <code>draft_sha256</code>. co:op generates and saves random
+values for <code>queue_id</code> and <code>task_id</code>; <code>id</code> is the task&#39;s folder name. <code>draft_sha256</code> is the
+SHA-256 digest of the task as co:op encoded it. Binding the task increases the session revision by
+one and records a <code>workspace.task_bound</code> event.</p>
+<p>The session must be open, writable and parked, with no active, queued or previously used turns.
+Otherwise, the request fails with <code>invalid_session_state</code>. Changing a task that the workspace
+already holds under the same <code>offer_ref</code> also returns that error.</p>
+<p>A stale <code>expected_revision</code> returns <code>revision_conflict</code>. An invalid task returns
+<code>invalid_request</code>, as does submitting a different task to a session that is already bound.
+Repeating the exact binding leaves the session unchanged.</p>
+<h3 id="workspace-checkpoints">Workspace checkpoints</h3>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Workspace checkpoints table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Method</th>
+<th scope="col">Path</th>
+<th scope="col">Input/output</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/sessions/{id}/checkpoint</code></td>
+<td>JSON: <code>session_ref</code>, <code>expected_revision</code>, <code>placement_generation</code>, <code>repository_ref</code>; returns operation and descriptor</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/operations/{id}/checkpoint-bundle</code></td>
+<td>Streamed tar, exact <code>Content-Length</code>, SHA-256 <code>ETag</code></td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/sessions/{id}/workspace/restore</code></td>
+<td>Binary body plus <code>X-Coop-Expected-Revision</code> and base64-JSON <code>X-Coop-Workspace-Checkpoint</code> headers</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>To capture a checkpoint, the session must be idle, writable and bound to a task. To restore one,
+create an unused replacement session with the same authorized base and task offer. Both requests
+require an idempotency key. Restore uses the content type
+<code>application/vnd.coop.workspace-checkpoint.v2+tar</code>, and its Content-Length must match the
+descriptor.</p>
+<p>A v2 checkpoint streams Git objects with their types and verified LFS files. It includes new
+commits, the final tracked tree, untracked files and task state. Restoring it recreates the exact
+HEAD and working tree, but not the original split between staged and unstaged changes.</p>
+<p>Changed submodule commits need a separate authorized process to retain and verify their data.
+Checkpoints therefore refuse them, including intermediate submodule changes that were later
+reverted.</p>
+<p>Checkpoint processing limits memory use and metadata size, but does not impose a 64-MiB limit
+on the data. co:op checks disk space and cancellation throughout the transfer and Git operations.
+These checks can stop the operation when space is low; they cannot prevent other host processes
+from filling the filesystem.</p>
+<p>co:op checks every archive entry and the task&#39;s identity in a separate area before changing live
+files. It saves the complete request body before marking the restore as running. If restore is
+interrupted, the session cannot run work, even after a restart. Restore resumes from the saved
+body. Retry the same operation; do not send a new key for a session that is already bound.</p>
+<p>Capturing a checkpoint also reserves the runtime so a model turn cannot change files during
+capture. Restoring a checkpoint does not restore permission to publish. Review the candidate
+again before publishing it.</p>
+<p>Discard removes checkpoint artifacts only after verifying that the local session owns them. It
+also resolves any interrupted restores for that session. You can still read historical v1
+artifacts, but cannot restore them: their patch-only format does not preserve enough information
+to verify the complete Git and LFS data.</p>
+<h3 id="turns">Turns</h3>
+<p>Submit a turn:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Turns code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
+  -H &#39;Content-Type: application/json&#39; \
+  -H &#39;Idempotency-Key: controller:turn:01J...&#39; \
+  -d &#39;{&#34;expected_revision&#34;:1,&#34;prompt&#34;:&#34;Investigate the failing readiness check.&#34;}&#39; \
+  http://localhost/v1/sessions/remote_.../turns
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Turns table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Method</th>
+<th scope="col">Path</th>
+<th scope="col">Body/query</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/sessions/{session_id}/turns</code></td>
+<td><code>expected_revision</code>, <code>prompt</code>; optional <code>artifacts</code>, <code>min_target_index</code>, <code>rewind_target</code>, <code>output_contract</code></td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/sessions/{session_id}/turns?after=0&amp;limit=100</code></td>
+<td>Continue after the numbered turn given by the cursor</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/sessions/{session_id}/turns/{turn_id}</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/sessions/{session_id}/turns/{turn_id}/artifacts/{artifact_id}</code></td>
+<td>raw generated image</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/sessions/{session_id}/turns/{turn_id}/cancel</code></td>
+<td><code>expected_revision</code></td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/sessions/{session_id}/turns/{turn_id}/validation</code></td>
+<td><code>candidate_sha256</code>, <code>verdict</code>; <code>accept</code> forbids <code>violations</code>, <code>reject</code> requires 1 to 20</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Validation decisions do not include <code>expected_revision</code>. Instead, co:op checks
+<code>candidate_sha256</code> to ensure you are accepting or rejecting the exact unpublished answer you
+reviewed.</p>
+<p>Before accepting, rejecting or cancelling a turn awaiting validation, co:op stops and removes
+the provider runtime and temporary credential files that produced its candidate. If it cannot
+confirm cleanup, the API returns <code>503 session_cleanup_error</code>. The candidate remains
+<code>awaiting_validation</code>, and your decision has not taken effect.</p>
+<p>That failed operation is finished: retrying its idempotency key returns the same failure. After
+the background cleaner or an operator fixes cleanup, fetch the current candidate and submit your
+decision with a new idempotency key.</p>
+<p>The public turn response excludes the prompt, idempotency data, <code>min_target_index</code> and
+<code>rewind_target</code>. You can see the effect of those last two settings in the session&#39;s <code>target</code>
+and <code>session.target_rotated</code> event. For a completed turn, <code>assistant_message</code> is the response
+to show the user. co:op does not publish hidden reasoning, raw tool calls, raw ACP frames or box
+logs in that response.</p>
+<p>A completed turn includes <code>usage</code> when the adapter reports it. The fields are <code>input_tokens</code>,
+<code>cached_input_tokens</code>, <code>output_tokens</code>, <code>reasoning_tokens</code> and, when available, the provider&#39;s
+<code>cost_usd</code>. Check <code>cost_recorded</code> to distinguish a reported zero cost from a missing cost.</p>
+<p>ACP reports the cumulative cost of the provider session. co:op calculates this turn&#39;s share
+before returning it, including after daemon restarts or adapter-process resets. Fresh and cached
+input tokens are reported separately because providers charge different rates for them; combining
+them before calculating cost would overestimate the bill. If the adapter reports no usage, co:op
+leaves the object out. Missing measurements are never represented as zero usage or free work.</p>
+<p>A completed turn may include <code>output_artifacts</code> for images the agent generated or saved in the
+turn&#39;s <code>.coop-output/&lt;turn_id&gt;</code> directory. Each record has an opaque ID, a safe filename, the
+media type, a SHA-256 digest and the exact byte count. The record does not embed the image.
+Download it through the raw endpoint, which returns the saved file with matching <code>Content-Type</code>,
+<code>Content-Length</code> and <code>ETag</code> headers. The saved file cannot change.</p>
+<p>co:op captures image blocks and embedded image resources from ACP tool updates in output order,
+naming them <code>generated-1.&lt;ext&gt;</code>, <code>generated-2.&lt;ext&gt;</code> and so on. Image bytes do not count toward
+the text transcript limit.</p>
+<p>co:op inspects text tool updates one frame at a time, then discards them. A long turn therefore
+does not fail just because its tool updates add up to a large transcript. Separate limits still
+apply to assistant text, each incoming frame, the turn&#39;s duration and saved output artifacts.</p>
+<p>Only PNG, JPEG, WebP and GIF are accepted. A turn returns at most five images. Images from tool
+updates and files in the turn&#39;s directory share that limit, and a repeated image is kept once. A
+file in that directory without a <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>, <code>.webp</code> or <code>.gif</code> extension is ignored.
+co:op rejects symlinks, special files, mismatched content, a sixth image, a file over 8 MiB, or
+more than 8 MiB in total.</p>
+<p>co:op removes the temporary output directory before completing the turn, so generated charts do
+not become repository changes. In a read-only repository session, the container still sees the
+path <code>.coop-output/...</code>, but its files are stored in co:op&#39;s private session state on the host.
+The repository itself stays mounted read-only.</p>
+<p>Cancellation first asks ACP to cancel the turn. co:op then stops the turn&#39;s process group and
+removes its box, using the run&#39;s labels to identify it. This does not undo actions already taken
+in external systems.</p>
+<h3 id="events">Events</h3>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Events code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
+  &#39;http://localhost/v1/sessions/remote_.../events?after=41&amp;limit=100&#39;
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The events endpoint returns a JSON array ordered by <code>sequence</code>, which increases within each
+session. Save the last sequence you processed. After a disconnect, request <code>after=&lt;sequence&gt;</code>
+to continue from that point.</p>
+<p>Events stored privately for the worker&#39;s owner include the identity, sequence, turn ID, type,
+version, timestamp and payload. Tool evidence has size limits but may include filesystem paths,
+arguments, results and diffs. Events describing tool starts and finishes, thoughts, progress,
+plans and permission decisions also carry <code>checkout_root</code>. The connector uses that checkout
+path to remove it before forwarding the event.</p>
+<p>The connector forwards a filtered version of activity events to the controller. It includes tool
+titles, inputs and results, plus the model&#39;s thoughts, progress and plan, with the session&#39;s host
+checkout path removed. Each field has a size limit:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Events table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Limit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Titles</td>
+<td>1 KiB</td>
+</tr>
+<tr>
+<td>Text</td>
+<td>8 KiB</td>
+</tr>
+<tr>
+<td>Tool fields</td>
+<td>16 KiB. Larger fields are sent as a <code>preview</code> marked <code>truncated</code>.</td>
+</tr>
+<tr>
+<td>One event</td>
+<td>64 KiB</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>If a field appears to contain a secret, the connector withholds the entire field. The event&#39;s
+<code>withheld</code> object identifies the field and reason, such as <code>likely GitHub token</code>. When tool
+input is withheld, the event still identifies the MCP server and tool. The structured
+<code>path_context</code> includes only project-relative paths and scope warnings, never the host checkout
+root.</p>
+<p>Each event payload is limited to 256 KiB. A page also has a total byte limit, in addition to its
+<code>limit</code> on event count. If events are large, the endpoint returns fewer of them on the page
+rather than cutting an event short.</p>
+<h4 id="lifecycle-events">Lifecycle events</h4>
+<p>These event types record what co:op itself decided:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Lifecycle events code example" tabindex="0"><code class="language-text">session.created
+workspace.task_bound
+session.state_changed
+turn.queued
+turn.started
+turn.awaiting_validation
+output_contract.rejected
+assistant.message
+turn.completed
+turn.failed
+turn.cancelled
+turn.interrupted
+budget.exhausted
+session.target_rotated
+session.parked
+session.closed
+workspace.discarded
+network                 # one sealed filtered run&#39;s outcome: run_id, grouped denials, alerts
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>co:op records a <code>network</code> event for blocked requests when a filtered run&#39;s network record is
+finalized. It can also report alerts, such as a mismatch in network permissions or incomplete
+evidence. A run with neither refusals nor alerts produces no event; this is not a heartbeat for
+every turn. The payload has these limits:</p>
+<ul>
+<li>Destinations are grouped and capped, with an <code>omitted_destinations</code> count.</li>
+<li>Alerts are capped.</li>
+<li><code>evidence_id</code> names the retained event that <code>coop net blocked</code> can open.</li>
+</ul>
+<p>It follows the same disclosure scope as the network routes. A destination appears only when the
+session job set <code>egress.export_destinations: true</code>.</p>
+<p><code>workspace.task_bound</code> records a <a href="#task-binding">task binding</a>. Its payload holds <code>offer_ref</code>,
+<code>draft_sha256</code>, <code>queue_id</code>, <code>task_id</code> and <code>id</code>, the values in the session&#39;s <code>workspace_task</code>. A
+checkpoint restore appends it too, with <code>base_commit</code> and <code>restored: true</code> added.</p>
+<p><code>output_contract.rejected</code> records a rejected candidate within a turn. When a provider response
+fails the schema check, co:op records <code>attempt</code>, the contract&#39;s <code>sha256</code> and an <code>error</code> with
+a size limit. When your controller sends a <code>reject</code> verdict, the event instead includes
+<code>attempt</code>, <code>candidate_sha256</code>, <code>semantic: true</code> and your <code>violations</code>.</p>
+<p>The connector forwards lifecycle events without their payloads, except for <code>network</code> events.</p>
+<h4 id="activity-events">Activity events</h4>
+<p>Activity events describe what the model does during a turn. co:op records them before the event
+that ends the turn, so a client that stops polling at <code>turn.completed</code> has already received
+that turn&#39;s activity events:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Activity events code example" tabindex="0"><code class="language-text">tool.started            # tool_call_id, title, kind, input, path_context
+tool.completed          # tool_call_id, title, kind, status, input, output, content, locations, terminal_exit, path_context
+model.plan              # entries
+model.thought           # text
+model.progress          # outward commentary text, not private reasoning
+permission.decided      # tool_call_id, title, outcome, option_id, option_kind
+activity.elided         # dropped, reason
+provider.backoff        # attempt, target, next_target, retry_after_seconds, reset_at, all_limited_until
+provider.alive          # frames, bytes, last_kind
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>When the provider reports it, <code>terminal_exit</code> contains the command&#39;s numeric <code>exit_code</code>, its
+termination <code>signal</code> or both. These fields are separate from the output, so truncating an output
+preview does not remove the exit result.</p>
+<p>When a tool provides structured file information, <code>path_context</code> includes <code>basis: &#34;lexical&#34;</code>
+and up to 16 <code>paths</code> entries. Each entry uses a JSON-pointer <code>source</code> to identify where the
+information came from. Its <code>scope</code> is <code>project</code>, <code>outside</code> or <code>unknown</code>. Only project-relative
+files receive a <code>path</code>.</p>
+<p>The host checkout root is never exported. <code>partial: true</code> means some path information was left
+out. Paths are classified by their spelling; this does not check where symlinks lead or decide
+whether access is allowed. co:op does not guess missing paths from tool titles or shell commands.
+A later tool update can add paths to the completion event without changing the start event.</p>
+<p>co:op extracts paths before shortening large diffs into previews. URI-shaped paths are marked
+unknown, rather than treated as checkout files. Before forwarding an event, the connector checks
+the path fields again, drops entries it cannot verify and marks the context <code>partial</code>. It also
+applies the size limits and secret scan described under <a href="#events">Events</a> to titles and inputs.</p>
+<p><code>provider.backoff</code> reports a confirmed provider rate limit. co:op emits at most one such event
+for each configured model target in a turn.</p>
+<ul>
+<li><code>attempt</code> numbers the events from 1 within the turn.</li>
+<li><code>target</code> identifies the model target that reached its rate limit.</li>
+<li><code>retry_after_seconds</code> says how long that target must wait. co:op uses the provider&#39;s reset time
+when available, or its own limited backoff otherwise.</li>
+<li>If co:op switches to another target, the event includes <code>next_target</code>.</li>
+<li>If every target is limited, the last backoff includes <code>all_limited_until</code> instead.</li>
+</ul>
+<p>Use these events to distinguish a turn waiting for a rate limit from one that has stopped
+responding. Waiting can still be expected progress; silence alone is not a reason to cancel it.</p>
+<p><code>provider.alive</code> helps when the provider CLI retries internally. In that case, co:op&#39;s own
+model-selection logic never sees the rate limit, so it cannot emit a backoff event. The CLI may
+keep sending ACP frames without making tool calls or producing other activity events.</p>
+<p>This event confirms that the worker is still receiving data. <code>frames</code> and <code>bytes</code> count all
+ACP frames received for the current turn&#39;s prompt. Compare these cumulative counts, not the
+timestamp, to distinguish new activity from a repeated event.</p>
+<p><code>last_kind</code> identifies the latest frame as its JSON-RPC method, a session-update type after a
+colon, or <code>response</code>. It contains no frame content. Repeated events with the same kind tell you
+what the provider is still sending.</p>
+<p>co:op sends this event at most once per minute, and only when it has not already reported other
+activity in that interval. Normal activity and long tool calls do not get duplicate reports.
+If the provider sends no frames, there is no event. Your client still needs a timeout for turns
+that go completely silent.</p>
+<p>A turn fails with <code>acp_quiet</code> if the model sends nothing for 15 minutes after its tools have
+answered. Only the model&#39;s text, thoughts, plans and tool calls count as output; liveness events
+do not. This timeout does not apply before the first tool finishes or while a tool is running.
+The error reports the silent duration and the provider&#39;s last frame kind. You may retry the turn;
+this error reports a silent model, not a failed project task.</p>
+<p>If the ACP process exits before returning an answer, the turn fails with <code>acp_process_error</code>.
+The detail includes its exit status or signal and a summary of stderr: line and byte counts, a
+digest for grouping similar failures, and fixed categories such as rate limit, authentication,
+network or crash. Digits and hexadecimal runs are masked before calculating the digest. The
+stderr text itself never leaves co:op.</p>
+<h3 id="budget">Budget</h3>
+<p>Extend a session&#39;s turn budget:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Budget code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
+  -H &#39;Content-Type: application/json&#39; \
+  -H &#39;Idempotency-Key: controller:extend:01J...&#39; \
+  -d &#39;{&#34;expected_revision&#34;:9,&#34;additional_turns&#34;:20}&#39; \
+  http://localhost/v1/sessions/remote_.../budget
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>You can extend the turn budget only up to co:op&#39;s global <code>max_turns</code> limit. Your controller must
+decide who may authorize an extension and how much to spend. co:op enforces the numeric limit and
+prevents the same request from being applied twice.</p>
+<h3 id="changes">Changes</h3>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Changes code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
+  http://localhost/v1/sessions/remote_.../changes
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><code>GET /v1/sessions/{session_id}/changes</code> returns:</p>
+<ul>
+<li>the immutable <code>base_commit</code>, the current <code>fork_head</code> and <code>fork_tree</code>, and the current
+<code>parent_head</code>;</li>
+<li>for a repository-backed session with a source binding, the fixed <code>admitted_source_tree</code>.
+Compare it with the current tree to distinguish changed content from empty commits or changes
+that were committed and later reverted;</li>
+<li>paths classified as committed, staged, unstaged, untracked or conflicted;</li>
+<li>ahead and behind counts, and base-to-head divergence counts;</li>
+<li>a page of the binary patch, subject to a size limit;</li>
+<li><code>patch_digest</code>, the exact <code>patch_bytes</code>, <code>patch_offset</code>, <code>patch_next_offset</code> and
+<code>patch_has_more</code>.</li>
+</ul>
+<p>To fetch the next patch page, call
+<code>GET /v1/sessions/{session_id}/changes?patch_offset=&lt;next&gt;&amp;patch_limit=&lt;bytes&gt;</code>. <code>patch_limit</code>
+cannot exceed the job&#39;s <code>max_patch_bytes</code>, and offsets cannot exceed 1 GiB. Check <code>patch_digest</code>
+as you page through the result. If it changes, start again at offset zero so you do not combine
+pages from different patches. The legacy <code>truncated</code> field is true whenever the response
+contains less than the complete patch.</p>
+<p>The JSON response encodes <code>patch</code>, <code>path_bytes</code> and <code>old_path_bytes</code> as base64. <code>patch_bytes</code>
+is an integer giving the complete patch&#39;s size. A valid UTF-8 filename also appears in <code>path</code>;
+filenames containing arbitrary bytes are preserved in <code>path_bytes</code>. If Git fails, the endpoint
+returns an error, never an empty change list.</p>
+<p>The changes endpoint can inspect uncommitted work. Review requires a clean, committed workspace.</p>
+<h3 id="network">Network</h3>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Network code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; http://localhost/v1/sessions/remote_.../network
+curl --unix-socket &#34;$SOCKET&#34; http://localhost/v1/sessions/remote_.../network/connections
+curl --unix-socket &#34;$SOCKET&#34; http://localhost/v1/sessions/remote_.../network/explanations/&lt;event_id&gt;
+curl --unix-socket &#34;$SOCKET&#34; http://localhost/v1/sessions/remote_.../network/receipt
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>These four endpoints only read data. They do not probe a gateway or approve, grant or expand
+network access. The session API cannot grant network permissions.</p>
+<p><code>GET /v1/sessions/{session_id}/network</code> returns:</p>
+<ul>
+<li>the session&#39;s frozen <code>mode</code> and <code>fingerprint</code>;</li>
+<li>the <code>requested</code> and <code>effective</code> rule texts;</li>
+<li><code>current</code>: the newest run&#39;s retained observation summary, or <code>{&#34;status&#34;:&#34;no run yet&#34;}</code>;</li>
+<li>an <code>alerts</code> list with a size limit.</li>
+</ul>
+<p><code>GET /v1/sessions/{session_id}/network/receipt</code> combines the records for all of the session&#39;s
+runs into one versioned report. It tracks <code>finality</code> separately from <code>completeness</code>. The report
+becomes <code>final</code> only after the session is closed and every run&#39;s record is final. A <code>final</code>
+report can still be <code>partial</code> if some evidence is missing.</p>
+<p>The worker saves these records in the owner&#39;s registry, so both endpoints keep working after
+container cleanup. A session that never used filtered networking returns
+<code>{&#34;available&#34;:false,&#34;reason&#34;:&#34;...&#34;}</code> rather than an empty record.</p>
+<p><code>GET /v1/sessions/{session_id}/network/connections</code> returns the collector&#39;s live connection
+records for the newest run, subject to a row limit. The response includes <code>status</code> to describe
+freshness, using the same values as the summary, plus <code>as_of</code> and <code>detail_truncated</code>. Clients
+request samples when needed; the worker does not need to save a sample every second. Before the
+first run, the endpoint returns <code>{&#34;status&#34;:&#34;no run yet&#34;,&#34;connections&#34;:[]}</code>.</p>
+<p><code>GET /v1/sessions/{session_id}/network/explanations/{event_id}</code> returns one saved refusal from
+this session&#39;s runs. It includes the event, the reason, where the evidence came from and whether
+co:op drafted a proposed rule. Each run retains a limited number of events. If the requested
+event has aged out, the endpoint returns <code>{&#34;available&#34;:false,&#34;reason&#34;: &#34;event_not_retained&#34;}</code>.
+That response does not mean the event never existed.</p>
+<p><code>projection</code> states what the response discloses. It is <code>destinations-withheld</code> unless the
+session job set <code>egress.export_destinations: true</code>. With that setting, it is
+<code>destinations-included</code>, and the response includes rule texts and observed names.
+The daemon controls this disclosure. The connector makes ordinary GET requests to the endpoints
+above and forwards each answer unchanged. It cannot choose different destinations, rules or
+disclosure settings.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Network table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Method</th>
+<th scope="col">Path</th>
+<th scope="col">Body/query</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/sessions/{session_id}/network</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/sessions/{session_id}/network/connections</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/sessions/{session_id}/network/explanations/{event_id}</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/sessions/{session_id}/network/receipt</code></td>
+<td>none</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<h3 id="session-evidence">Session evidence</h3>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Session evidence code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; http://localhost/v1/sessions/remote_.../evidence
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>This endpoint returns a versioned report for a controller&#39;s session-inspection page, with limits
+on how much data it includes. It covers:</p>
+<ul>
+<li>the network settings approved for the session;</li>
+<li>activity observed during its newest run;</li>
+<li>the combined network record for all its runs;</li>
+<li>the approved task assigned to its workspace, read from the current task folder.</li>
+</ul>
+<p>The endpoint reads saved evidence without probing a gateway or starting a runtime. It cannot
+grant additional access and accepts no query parameters, so callers cannot change what it
+discloses. The daemon checks the report against its format and disclosure rules before sending
+it. If the report fails that check, the endpoint returns <code>500 internal_error</code> instead. The
+connector forwards it unchanged through an <code>api_request</code> command.</p>
+<p>Each section reports whether its data was available. This lets you distinguish a failed read
+from a successful read that found no activity:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Session evidence table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Section</th>
+<th scope="col">Status words</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>network.access</code></td>
+<td><code>captured</code>, <code>not_filtered</code>, <code>unavailable</code></td>
+</tr>
+<tr>
+<td><code>network.observation</code></td>
+<td><code>observed</code>, <code>no_run</code>, <code>not_filtered</code>, <code>unavailable</code></td>
+</tr>
+<tr>
+<td><code>network.receipt</code></td>
+<td><code>available</code>, <code>not_filtered</code>, <code>unavailable</code></td>
+</tr>
+<tr>
+<td><code>task</code></td>
+<td><code>bound</code>, <code>unbound</code>, <code>unavailable</code></td>
+</tr>
+<tr>
+<td><code>task.snapshot.state_note</code></td>
+<td><code>captured</code>, <code>absent</code>, <code>withheld</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>An <code>unavailable</code> section includes a <code>reason</code>. The network settings (<code>mode</code>, <code>fingerprint</code>)
+come from the saved session record and cannot change. If the host cannot read the network
+registry, those settings remain available while the affected sections report that they could not
+be read. Before its first run, a filtered session reports <code>no_run</code> and a <code>provisional</code> receipt
+with <code>run_count</code> <code>0</code>, rather than an empty activity counter.</p>
+<p>Counters are unsigned decimal strings so JavaScript clients can preserve values above 2^53
+without rounding them. A <code>null</code> counter means the metric was not measured, never that it was
+<code>0</code>.</p>
+<p>Each response list has a size limit. The report counts omitted entries in <code>omitted_denials</code>,
+<code>omitted_connections</code>, <code>omitted_alerts</code> and <code>omitted_run_references</code>. If a run blocked a
+thousand names, the response stays within its limit and tells you how many entries it left out.</p>
+<p>The report follows the network endpoints&#39; <code>projection</code> setting. Destination names appear only
+with <code>destinations-included</code>. When a name is withheld, the refusal includes
+<code>destination_withheld</code>, so callers can distinguish a hidden name from a missing one.</p>
+<p><code>task</code> includes the fixed task identity saved for the session and a snapshot of its folder at
+the time the report is captured:</p>
+<ul>
+<li>its state;</li>
+<li>the same <code>state_sha256</code> used for the task data in a workspace checkpoint;</li>
+<li>the checklist labels corresponding to the checkpoint&#39;s completion flags;</li>
+<li>a list of files and their digests;</li>
+<li>the agent-written <code>state.md</code>.</li>
+</ul>
+<p>The note has a size limit and is withheld in full if the scan flags a likely secret. The worker
+keeps the current snapshot, not a history of task transitions. If your controller needs that
+history, save successive snapshots. If a bound task&#39;s folder is missing, the report returns
+<code>unavailable</code> while preserving the task&#39;s identity. It does not return an empty task.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Session evidence table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Method</th>
+<th scope="col">Path</th>
+<th scope="col">Body/query</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/sessions/{session_id}/evidence</code></td>
+<td>none</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<h3 id="review">Review</h3>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Review code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
+  -H &#39;Content-Type: application/json&#39; \
+  -H &#39;Idempotency-Key: controller:review:01J...&#39; \
+  -d &#39;{&#34;expected_revision&#34;:12,&#34;commit_message&#34;:&#34;Add per-worker memory metrics&#34;}&#39; \
+  http://localhost/v1/sessions/remote_.../review
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Use the optional <code>commit_message</code> to set the reviewed commit&#39;s message, up to 4,096 bytes. If
+you omit it, co:op uses <code>Reviewed changes</code>. It also adds the <code>Coop-Review: &lt;operation id&gt;</code>
+trailer. The message is saved in the reviewed commit and stays the same when that commit is
+published.</p>
+<p>To review a session, it must be parked and either open or exhausted, with no queued turns and a
+clean, committed fork. co:op records the exact source and parent commits and trees, then prepares
+a temporary candidate based on the current parent <code>HEAD</code>. It runs the saved job&#39;s check against
+that candidate and returns:</p>
+<ul>
+<li>the creation base, source, parent and candidate commit and tree identities;</li>
+<li>the saved PR number, ref and head, when the session came from an existing PR;</li>
+<li>the rebase and check results, including the startup error text in <code>gate_error</code> if startup failed;</li>
+<li><code>gate_output</code>: the check command, its <code>exit_code</code> if it returned one, the number of saved
+output bytes and whether all output was kept. <code>complete</code> confirms it was; <code>incomplete</code>
+explains what is missing; <code>lost</code> means no output was kept;</li>
+<li>policy findings, subject to a size limit;</li>
+<li>a size-limited inline preview of the patch from the parent tree to the candidate tree;</li>
+<li><code>patch_truncated</code>, <code>candidate_retained</code>, <code>publishable</code> and stable not-publishable reason codes.</li>
+</ul>
+<p>The saved job&#39;s <code>check.argv</code> is the only remote review command. The worker&#39;s <code>COOP_GATE</code>, the
+parent&#39;s <code>gate:</code> and candidate changes can&#39;t replace it. The first two still apply to ordinary
+local fork merges.</p>
+<p>The check runs in an isolated container using the session&#39;s saved network mode and, for filtered
+runs, the exact saved network permissions. It ignores the repository&#39;s <code>box:</code> settings and the
+worker&#39;s runtime arguments, environment file and MCP configuration. It uses the saved work
+environment plus check-only overrides, with the same CPU, memory and process limits as model
+turns. It also uses the same worker-configured image, or locked filtered client image, as the
+turns. It never builds or uses an image from the job repository&#39;s Dockerfile.</p>
+<p>The check can create ignored build files in its temporary checkout. If it changes the reviewed
+source, the result cannot be published. Publication is also blocked when no check is configured,
+the check fails or cannot start.</p>
+<p>The JSON response encodes the patch preview as base64. A shortened preview does not prevent
+publication. co:op saves the exact candidate commit and verified LFS objects in private host
+storage, separate from the model&#39;s workspace, so publication does not depend on transferring the
+full patch or fitting it under a patch-size limit.</p>
+<p>For the same saved inputs, co:op creates the same single candidate commit on the reviewed parent,
+before running the check. <code>source_head</code> records the model&#39;s original commit before that candidate
+was prepared.</p>
+<p>co:op scans the changes between the parent and candidate for secrets, including large files,
+binary Git objects and LFS files. If LFS attributes changed, it also scans the resulting LFS
+files. If any content cannot be read, review fails; unreadable content is not assumed safe.</p>
+<p><code>publishable</code> tells you whether this exact candidate passed the requirements for publication.
+It does not grant permission to push or merge. It is false when there is:</p>
+<ul>
+<li>a conflict;</li>
+<li>no configured check, or a check that failed;</li>
+<li>a startup failure;</li>
+<li>findings from policy checks;</li>
+<li>a changed parent or source;</li>
+<li>a remaining fork-worker record, even if its process has exited;</li>
+<li>no changes to publish.</li>
+</ul>
+<p><code>candidate_retained</code> tells you whether co:op saved the exact candidate, independently of whether
+the check passed. A candidate can be saved even if the check is missing or fails. Saving it does
+not authorize publication.</p>
+<p>To publish, use the saved <code>candidate_head</code> unchanged, obtain a separate controller grant and
+update the destination ref only if it still matches the expected value. Never reconstruct the
+result from a patch or the model&#39;s later workspace. Discarding a session deletes its saved
+candidates, so keep sessions whose reviewed changes still need to be published.</p>
+<p>A review can continue after the requesting connection ends. Look up its original operation key.
+Once it succeeds, fetch <code>GET /v1/sessions/{session_id}/reviews/{operation_id}</code> to get the saved
+<code>operation</code> and <code>review</code> response. This does not start or resume the check. The endpoint refuses
+requests for another session, an operation that is not a review, or an unfinished review.
+<code>policy_findings</code> and <code>not_publishable_reasons</code> are always arrays, even when empty.</p>
+<h4 id="gate-output">Gate output</h4>
+<p>The review keeps the gate&#39;s stdout, stderr and co:op startup messages as printed,
+whether the gate passes or fails. Your controller can read failures directly without
+asking someone to relay the output. Read it page by page with
+<code>GET /v1/sessions/{session_id}/reviews/{operation_id}/gate-output?cursor={cursor}</code>,
+starting without a cursor:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Gate output code example" tabindex="0" data-copy-source=""><code class="language-json">{&#34;output&#34;:&#34;1 test, 1 failure\n…&#34;,&#34;next_cursor&#34;:&#34;1048576&#34;,&#34;bytes&#34;:1843200,&#34;complete&#34;:true}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Each page contains at most 1 MiB of output and ends at a character boundary. Invalid UTF-8 bytes
+appear as U+FFFD replacement characters. <code>next_cursor</code> is <code>null</code> on the last page. <code>bytes</code>
+reports the total amount of saved output. When <code>complete: false</code>, <code>incomplete</code> explains what
+is missing. co:op keeps at most the first 64 MiB, so a check that prints continuously cannot fill
+the disk with its output.</p>
+<p>If no output was saved, the response is <code>{&#34;lost&#34;:&#34;&lt;why&gt;&#34;}</code>. This can happen because no check
+ran, writing the output failed, or the session was discarded. Output can be read only through the
+session that owns the review. Discarding that session removes the output.</p>
+<h3 id="publish-a-reviewed-candidate">Publish a reviewed candidate</h3>
+<p><code>POST /v1/sessions/{session_id}/reviews/{review_operation_id}/publish</code> uses a new
+<code>Idempotency-Key</code> and this JSON body:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Publish a reviewed candidate code example" tabindex="0" data-copy-source=""><code class="language-json">{
+  &#34;authorization_ref&#34;: &#34;approval:42&#34;,
+  &#34;candidate_head&#34;: &#34;&lt;exact reviewed commit&gt;&#34;,
+  &#34;candidate_tree&#34;: &#34;&lt;exact reviewed tree&gt;&#34;,
+  &#34;branch&#34;: &#34;automation/fix&#34;,
+  &#34;base_branch&#34;: &#34;main&#34;,
+  &#34;expected_head&#34;: &#34;&#34;,
+  &#34;pull_request_number&#34;: 0,
+  &#34;title&#34;: &#34;Fix retry handling&#34;,
+  &#34;body&#34;: &#34;Reviewed changes and verification details.&#34;
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Leave <code>expected_head</code> empty to require a new branch. To update a previously authorized PR,
+provide its number and the exact commit you expect it to point to. The operation returns <code>202</code>
+while running. Use the operation key to check its state, then fetch
+<code>GET /v1/sessions/{session_id}/publications/{operation_id}</code> for the completed <code>operation</code> and
+<code>publication</code> response. Retry with the same key and identical request.</p>
+<p>The result is one of:</p>
+<ul>
+<li><code>published</code>, with the exact commit, tree and PR result;</li>
+<li><code>conflict</code>, with the verified existing PR and its observed remote head;</li>
+<li><code>refused</code>, with a stable error code.</li>
+</ul>
+<p>The worker requests fresh credentials from your authenticated controller at
+<code>POST /v1/coop-workers/jobs/{job_ref}/publication-grants</code>. The request identifies the session,
+job digest, review operation, original command key, repository and exact publication request.
+Your controller returns that same repository identity, a <code>token</code>, its <code>expires_at</code> time and
+the GitHub App&#39;s <code>actor_id</code>.</p>
+<p>Your controller decides whether publication is approved; co:op does not require a product-specific
+approval format. A <code>403</code> permanently refuses this operation. Temporary failures can be retried.</p>
+<p>The worker sends Git and LFS data directly from the saved candidate to GitHub. It creates a
+draft PR or updates the exact existing PR owned by the App. If a person has already marked that
+PR ready for review, co:op preserves that choice.</p>
+<p>If a push or PR response is lost, co:op checks the remote result before retrying. A candidate
+cannot be discarded while publication is active. Later edits in the model workspace cannot change
+what gets published.</p>
+<h3 id="close-and-discard">Close and discard</h3>
+<p>Close a session:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Close and discard code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
+  -H &#39;Content-Type: application/json&#39; \
+  -H &#39;Idempotency-Key: controller:close:01J...&#39; \
+  -d &#39;{&#34;expected_revision&#34;:15}&#39; \
+  http://localhost/v1/sessions/remote_.../close
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Close requires no active or queued turns, and it preserves the fork.</p>
+<p>Plan a discard only after close:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Close and discard code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
+  -H &#39;Content-Type: application/json&#39; \
+  -H &#39;Idempotency-Key: controller:discard-plan:01J...&#39; \
+  -d &#39;{&#34;expected_revision&#34;:16}&#39; \
+  http://localhost/v1/sessions/remote_.../discard-plan
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The discard plan records the session revision, the specific fork instance and its reservation,
+and the workspace&#39;s inode, branch, head, status digest and running, dirty and unmerged states.
+The inode helps detect a replaced directory, but does not prove ownership on its own. Before
+deleting anything, co:op holds a reference to the live directory and checks that all recorded
+state still matches.</p>
+<p>By default, co:op refuses to discard uncommitted or unmerged work. If your controller has separate
+permission to destroy that work, set <code>accept_dirty</code>, <code>accept_unmerged</code> or both when creating
+the plan.</p>
+<p>Execute that exact plan:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Close and discard code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
+  -H &#39;Content-Type: application/json&#39; \
+  -H &#39;Idempotency-Key: controller:discard:01J...&#39; \
+  -d &#39;{&#34;plan_operation_id&#34;:&#34;op_...&#34;}&#39; \
+  http://localhost/v1/sessions/remote_.../discard
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Discard first checks that the plan belongs to the session named in the request path. It then
+compares the current workspace with every recorded detail in the plan. If the plan is stale, the
+workspace was replaced or work is running, nothing is deleted. Otherwise, co:op deletes the fork
+workspace and private ACP state, and saves a record that the session was discarded.</p>
+<p>At startup, the daemon blocks sessions whose workspace ownership it cannot verify. This includes
+old session records without a store-owner binding, v1 reservations, and sessions whose fork record
+or workspace is missing. These sessions are quarantined: you cannot create or apply a discard
+plan for them because co:op cannot prove it owns the workspace. You can retire the session record
+instead:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Close and discard code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
+  -H &#39;Content-Type: application/json&#39; \
+  -H &#39;Idempotency-Key: controller:retire:01J...&#39; \
+  -d &#39;{&#34;retire_quarantined&#34;:true,&#34;expected_revision&#34;:16}&#39; \
+  http://localhost/v1/sessions/remote_.../discard
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>This marks the session record as retired without deleting its workspace:</p>
+<ul>
+<li>Queued turns are marked exhausted.</li>
+<li>A turn that was active when the daemon lost ownership remains in history without changes.</li>
+<li>The workspace, fork reservation, sidecar services and provider&#39;s ACP history are retained.</li>
+</ul>
+<p>A session that is not quarantined is refused with <code>invalid_session_state</code>.</p>
+<p>Retiring a record does not show that its runtime has stopped. Separately, the daemon looks for
+boxes with the exact <code>coop.run</code> labels derived from the store&#39;s session and turn IDs. It removes
+matching boxes and temporary credential files in its private ACP state. If a check fails or
+finishes only partly, the daemon retries and reports busy until cleanup is fully verified. These
+checks continue after a restart.</p>
+<p>Once runtime cleanup is verified, the worker can report free capacity again. It does not take
+ownership of or delete the unowned workspace. Quarantined sessions still cannot run and need
+explicit retirement or recovery. If capacity remains busy, inspect the worker&#39;s runtime-cleanup
+warning; a retired session record is not proof that its runtime stopped.</p>
+</section><section class="doc-section reference-section" id="errors"><h2>Errors</h2>
+<p>Every error has one shape:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Errors code example" tabindex="0" data-copy-source=""><code class="language-json">{
+  &#34;error&#34;: {
+    &#34;code&#34;: &#34;revision_conflict&#34;,
+    &#34;detail&#34;: &#34;expected revision 4, current revision 5&#34;,
+    &#34;operation_id&#34;: &#34;op_...&#34;
+  }
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The error includes <code>operation_id</code> when co:op accepted an operation before it failed. The public
+API leaves out private internal details.</p>
+<p>The daemon also writes a JSON diagnostic to stderr, with a size limit. It includes the operation
+ID, method, resource identity, error code and a detail with sensitive information removed.
+Repository and state-directory paths are replaced, and lines containing secrets are removed.
+Use the operation ID to connect the client error, saved operation and supervisor log without
+opening SQLite directly.</p>
+<p>Common status mapping:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Errors table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">HTTP</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>400</code></td>
+<td>Invalid request, or a field exceeds its allowed limit</td>
+</tr>
+<tr>
+<td><code>404</code></td>
+<td>session, turn, or operation not found</td>
+</tr>
+<tr>
+<td><code>409</code></td>
+<td>idempotency, operation fence, revision, state, queue, budget, resume, uncertainty, or discard conflict</td>
+</tr>
+<tr>
+<td><code>413</code></td>
+<td>ordinary request body exceeds 128 KiB, or turn submission exceeds 12 MiB</td>
+</tr>
+<tr>
+<td><code>500</code></td>
+<td>internal failure; host paths and raw internal errors are suppressed</td>
+</tr>
+<tr>
+<td><code>503</code></td>
+<td>The worker is not ready, or it temporarily cannot verify or use the required repository, runtime, network or storage access</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><code>storage_unavailable</code> is a retryable <code>503</code>. The worker has reached its configured disk-space
+limits and will not create another workspace until space is freed. If <code>storage.refusal_reason</code>
+is <code>protected_storage_exceeds_budget</code>, the protected data itself must be reduced before new
+workspaces can be accepted. Read <code>/v1/storage</code> to see what is using space and why it is retained.
+Place the session on another worker or free storage through the appropriate cleanup process.
+Do not retry in a tight loop or delete protected workspaces just to meet the limit.</p>
+<p><code>network_unavailable</code> is a <code>503</code>. The worker cannot enforce, or verify that it can enforce,
+the session&#39;s saved network permissions. Check its container runtime and network setup. The
+worker stops execution instead of falling back to open networking. Do not change a saved job to
+bypass the refusal.</p>
+<p>For <code>operation_uncertain</code> or <code>turn.interrupted</code>, inspect the saved operation and resulting
+session state to find out what happened. An unknown result is not a reason to submit the same
+action with a new key: that could run it twice.</p>
+<p><code>RunReview</code> is a limited exception because it only reviews a fixed candidate. Once co:op has
+saved the exact source, parent and job, repeating the request with the same key resumes that
+review under its original operation ID. It does not reread a moving branch to choose a new
+candidate. If the saved instructions cannot be read or verified, the operation remains
+<code>operation_uncertain</code>.</p>
+</section><section class="doc-section reference-section" id="operational-recovery"><h2>Operational recovery</h2>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Operational recovery table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Situation</th>
+<th scope="col">Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Client response lost</td>
+<td>Replay the exact mutation with the same idempotency key</td>
+</tr>
+<tr>
+<td>Permission is withdrawn while a prepared create or submit may be arriving</td>
+<td>Fence the exact operation; if it was already accepted, close or cancel the resulting work</td>
+</tr>
+<tr>
+<td>Socket reconnect</td>
+<td>Resume event polling after the last sequence your controller saved as processed</td>
+</tr>
+<tr>
+<td>Daemon already owns state</td>
+<td>Stop or inspect that daemon; don&#39;t remove the lock</td>
+</tr>
+<tr>
+<td>Stale socket after crash</td>
+<td>Start the daemon with the same state directory; it acquires the state lock before removing the stale socket</td>
+</tr>
+<tr>
+<td>Queued turn at restart</td>
+<td>co:op resumes queued turns in the order received</td>
+</tr>
+<tr>
+<td>Running session create at restart</td>
+<td>co:op resumes creation automatically from the saved request</td>
+</tr>
+<tr>
+<td>Reserved operation at restart</td>
+<td>co:op records that the operation was interrupted before acceptance; it had not attempted any external action</td>
+</tr>
+<tr>
+<td>Running checkpoint restore at restart</td>
+<td>Resume from the saved request body while model work remains blocked; never submit a new key</td>
+</tr>
+<tr>
+<td>Other running operation at restart</td>
+<td>co:op marks it <code>operation_uncertain</code>; inspect what happened before deciding what to do. Do not resubmit it under a new key.</td>
+</tr>
+<tr>
+<td>Operation remains running after startup</td>
+<td>The background watchdog resumes creates that are safe to retry and marks stale operations uncertain when their outcome cannot be established</td>
+</tr>
+<tr>
+<td>Turn interrupted after co:op recorded its intent to send it</td>
+<td>Report that the turn was interrupted; do not submit the same user input automatically</td>
+</tr>
+<tr>
+<td>Active turn must stop</td>
+<td>Cancel it with an idempotency key, then read the turn to confirm how it ended</td>
+</tr>
+<tr>
+<td>Session should stop using runtime resources</td>
+<td>Wait until it is parked, then close it if it is warm. co:op removes containers after each non-warm turn, or when a warm session times out or closes. If cleanup fails, it retries in the background. A parked state alone does not prove cleanup finished.</td>
+</tr>
+<tr>
+<td>Incident is over</td>
+<td>Close the session and keep its fork for review, or discard it explicitly later</td>
+</tr>
+<tr>
+<td>New co:op build for the worker</td>
+<td>Stop the worker and run <code>coop sessions check</code> with the new build before you swap it in; see <a href="#upgrading-a-worker">Upgrading a worker</a></td>
+</tr>
+<tr>
+<td>Review patch preview is truncated</td>
+<td>This response has no further patch pages. Do not treat a shortened preview as a complete diff. Publication uses the saved reviewed candidate, never a patch rebuilt from the preview.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Stop the daemon before backing up the entire state directory. If you restore a database without
+its matching forks, an operator must resolve the mismatch. co:op will not assign ownership based
+only on directory names.</p>
+</section><section class="doc-section reference-section" id="consumer-responsibilities"><h2>Consumer responsibilities</h2>
+<p>When building a production controller, you are responsible for:</p>
+<ul>
+<li>deciding who can connect and which actions they may authorize;</li>
+<li>reliably saving and delivering incoming and outgoing messages without processing duplicates;</li>
+<li>assigning stable, globally unique idempotency keys;</li>
+<li>saving event cursors and checking operations whose outcomes are uncertain;</li>
+<li>preparing prompts and removing sensitive output before sending it through your chosen transport;</li>
+<li>setting retention, audit, capacity and spending policies;</li>
+<li>approving GitHub publication and supplying short-lived credentials for the authorized repository;</li>
+<li>scanning for secrets before data leaves the host;</li>
+<li>supervising the worker and providing a way to stop it.</li>
+</ul>
+<p>Never put chat-service tokens, GitHub credentials, Emisar administrative credentials or other
+credentials that authorize publication into a co:op prompt or box.</p>
+</section>
+        <nav class="reference-related" aria-label="Related guides">
+          <h2>Related guides</h2>
+          <ul class="reference-list" role="list"><li><a href="integrations.html">Editors and MCP</a><p>Connect an editor or MCP server and check which actions run on your computer or in the container.</p></li>
+<li><a href="networking.html">Networking</a><p>Choose which network destinations an agent can reach, and review access before a run.</p></li>
+<li><a href="forks.html">Forks and review</a><p>Work in a separate copy of your project. Review the changes and checks before merging them.</p></li>
+</ul>
+          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
+        </nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/session-api.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

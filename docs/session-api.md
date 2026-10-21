@@ -1,9 +1,9 @@
 # co:op worker API
 
-A trusted controller supplies the code, the context and the execution settings. co:op owns
-isolated model execution and durable workspaces. The worker can share a VM with its controller,
-or run on a separate VM. The protocol is product-neutral. Ryker is a consumer of it and is not
-part of its vocabulary.
+A trusted controller supplies the code, context and execution settings. co:op runs models in
+isolation and keeps their workspaces. The worker can share a VM with its controller or run on a
+separate VM. The protocol can serve different products. Ryker uses it, but the protocol contains
+no Ryker-specific terms.
 
 ## Connect
 
@@ -11,35 +11,37 @@ part of its vocabulary.
 coop sessions connect --controller https://controller.example --token-file /run/secrets/coop-token
 ```
 
-This is the only command that starts a worker. It starts the private local service and connects
-out to the controller. No inbound TCP port is required. There is no worker JSON file and no local
-policy YAML. Use the optional `--state <path>` to choose private storage, and the optional
-`--ca-file <path>` to trust a private TLS CA. Public HTTPS uses the system trust store.
+This is the only command that starts a worker. It starts a private local service, called the
+daemon, and a connector that sends requests to your controller. You do not need to open an
+inbound TCP port. There is no worker JSON file or local policy YAML. Use the optional
+`--state <path>` to choose where the worker stores its private data. Use the optional
+`--ca-file <path>` to trust a private TLS CA; public HTTPS uses the system trust store.
 
-The single-use token decides the worker's identity. co:op saves the renewable identity under the
-state directory, and removes the token file only after saving it. To reconnect, use the same
-controller and state directory without `--token-file`. A saved identity can't be reused with a
-different controller.
+The single-use token identifies the worker to the controller. co:op saves the identity it can
+renew in the state directory, then removes the token file. To reconnect, use the same controller
+and state directory without `--token-file`. That saved identity works only with the original
+controller.
 
-The default state directory is `~/.local/state/coop/sessions`. The internal Unix socket is
-`<state>/control.sock`. Each connection starts and owns its private local service; it refuses to
-reuse a live connection. Stop that connection before reconnecting, or choose a distinct `--state`
-directory for each concurrent worker. Run the command under a process supervisor. Ctrl-C stops
-the connection and the local service it started.
+The default state directory is `~/.local/state/coop/sessions`, and the daemon listens on the
+internal Unix socket at `<state>/control.sock`. Each connector starts its own daemon and refuses
+to reuse one that is already running. Stop the existing connection before reconnecting. To run
+several workers at once, give each a separate `--state` directory. Use a process supervisor to
+keep the worker running. Ctrl-C stops both the connector and the daemon it started.
 
 A worker needs Git, Git LFS and a supported container runtime. The bundled worker image includes
 Git LFS. On a native worker, install `git-lfs` with your package manager.
 
-A worker never builds or runs a repository's own `.agent/Dockerfile` for a job. That file is
-repository code, and it is not worker configuration. Jobs run in the worker's base image
-(`COOP_BASE_IMAGE`). A job with filtered networking runs co:op's locked client image instead. Put
-what jobs need in the base image. A normal-mode job still provisions the repository's
-`.tool-versions` when its box starts.
+A worker never builds or runs a repository's `.agent/Dockerfile` for a job. You configure the
+worker's image separately from repository code. Jobs use the worker's base image
+(`COOP_BASE_IMAGE`), except that filtered jobs use co:op's locked client image. Install the tools
+your jobs need in the base image. A normal-mode job also installs the tools listed in the
+repository's `.tool-versions` when its box starts.
 
-Before accepting filtered jobs, run [`coop net setup`](networking.md#fleet-workers-and-docker-in-docker)
-under the worker's OS user with the same Docker endpoint and network state directory. The session
-API requires current qualification; it never builds the networking images itself. Docker being
-present or the worker accepting JobSpec version 2 does not prove filtered readiness.
+Before the worker accepts filtered jobs, run [`coop net setup`](networking.md#fleet-workers-and-docker-in-docker)
+as the worker's OS user, using the same Docker endpoint and network state directory. This prepares
+and checks the networking setup. The session API requires those checks to remain valid; it does
+not build the networking images itself. Installing Docker or accepting JobSpec version 2 is not
+enough to show that the worker can enforce filtered networking.
 
 To check the local session service:
 
@@ -48,42 +50,42 @@ coop sessions doctor
 coop sessions doctor --socket /var/lib/coop-sessions/control.sock --json
 ```
 
-The local socket and state are private to the worker's OS account. Never mount that socket into a
-model sandbox. Never expose it through an unauthenticated proxy. Outbound connectivity alone
-doesn't authenticate the remote controller. TLS verifies the destination before co:op sends an
-enrollment token or accepts work.
+The local socket and state are private to the worker's OS account. Never mount the socket into a
+model sandbox or expose it through an unauthenticated proxy. Connecting out to a controller does
+not, by itself, establish that the controller is trusted. co:op verifies the TLS connection before
+sending an enrollment token or accepting work.
 
 ## Session authority
 
-Your controller supplies one immutable job. It holds the source, model targets, repository access,
-network access and resource limits. co:op validates and saves the job before it creates a
-workspace. Retries must carry the same configuration. A restart uses the saved configuration.
-Repository instructions and model output can't widen it. Old session history stays readable. An
-old row without verifiable execution authority must not resume model work.
+Your controller supplies one job that fixes the source, model targets, repository access, network
+access and resource limits for the session. co:op checks and saves it before creating a workspace.
+Retries must use that same configuration, and restarts use the saved copy. Repository instructions
+and model output cannot grant more access. You can still read old session history, but co:op will
+not resume model work for an old session whose authorization it cannot verify.
 
-co:op gives each session store one stable ID inside `session.sqlite`. A new fork reservation
-binds that store ID, the session ID and the fork's exact generation. The store ID moves with the
-database, so relocating `--state` doesn't change ownership. Only the owning session service may
-discard the fork, after checking its journal, session binding and workspace safety conditions.
-`coop fork rm --force` is not an override.
+co:op saves a stable ID for each session store in `session.sqlite`. When it reserves a fork, it
+records which store and session own that specific instance of the fork. Moving the database with
+`--state` preserves the store ID and ownership. Only the session service that owns the fork can
+discard it, after checking its journal, the session's link to the fork and the workspace safety
+conditions. `coop fork rm --force` cannot bypass these checks.
 
-Old reservations without a store ID stay visible and protected from generic fork removal. co:op
-can't infer their owner from a matching session ID in some current store. Such sessions stay
-readable. They need explicit offline recovery. co:op doesn't relabel them automatically or delete
-them by age.
+Old fork reservations without a store ID remain visible, but ordinary fork removal cannot delete
+them. A matching session ID in another store is not enough to prove who owns them. You can read
+these sessions, but recovering them requires an explicit procedure with the service stopped.
+co:op does not assign them to a new owner automatically or delete them because they are old.
 
-The trusted worker fetches repository data directly from GitHub. It uses a short-lived,
-repository-scoped grant that the controller supplies. The model receives the full working tree,
-including verified LFS payloads and every explicitly authorized recursive submodule. Tokens never
-enter model mounts, repository configuration or exported results. Repository files can't redirect
-the worker's authenticated fetches. Missing objects, unauthorized submodules and unsupported LFS
-pointer formats make creation fail, so no incomplete tree is left behind.
+The worker fetches repository data directly from GitHub using short-lived credentials that your
+controller grants for that repository. The model receives the complete working tree, including
+verified LFS files and every explicitly authorized submodule, including nested submodules. Tokens
+never enter the model's mounts, repository configuration or exported results. Repository files
+cannot redirect these authenticated downloads. If objects are missing, a submodule is unauthorized
+or an LFS pointer format is unsupported, creation fails instead of leaving an incomplete tree.
 
 ### Workspace storage
 
-Every hello carries an optional `storage` object. It is the worker's own account of the volume its
-fork workspaces land on. It is taken from the daemon's [`GET /v1/storage`](#health) and forwarded
-verbatim.
+The worker can include a `storage` object in each hello message to report disk space on the
+volume that holds its fork workspaces. The connector reads this object from the daemon's
+[`GET /v1/storage`](#health) endpoint and forwards it unchanged.
 
 ```json
 {
@@ -99,31 +101,34 @@ verbatim.
 }
 ```
 
-- `disposable_bytes` is what a discard could still return.
-- `protected_bytes` is what this worker holds on purpose, including the hardlinked repository
-  baseline the forks share.
-- A `null` `unattributed_bytes` means the worker found storage it couldn't attribute, or couldn't
-  finish measuring. Treat it as unknown, never as zero.
-- `allocation` is `refused` while this worker won't accept a new workspace. `refusal_reason` is
-  then `reserve_exhausted` or `protected_storage_exceeds_budget`. Placement and cleanup of work
-  the worker already has continue either way.
+- `disposable_bytes` is the disk space a discard could still free.
+- `protected_bytes` is the disk space the worker must keep, including the repository data shared
+  by forks through hard links.
+- A `null` `unattributed_bytes` means the worker could not identify what uses some of the space,
+  or could not finish measuring. Treat it as unknown, never as zero.
+- `allocation` is `refused` when the worker will not accept a new workspace. `refusal_reason`
+  explains whether the cause is `reserve_exhausted` or `protected_storage_exceeds_budget`.
+  The worker can still handle existing workspaces and clean them up.
 
-The watermarks are levels of used bytes. The reserve is a floor of free bytes. By default, all
-three are derived from the measured capacity:
+The high and low watermarks set limits on used disk space. The reserve is the amount of space
+that must stay free. By default, co:op calculates all three from the volume's measured capacity:
 
-- The reserve is 5%.
-- Allocation closes when free space falls under one reserve.
-- Allocation reopens only once two reserves are free.
+- It reserves 5% of the volume.
+- It stops accepting new workspaces when free space falls below that reserve.
+- It accepts new workspaces again only when twice that reserve is free.
 
-The gap between the closing and reopening thresholds stops allocation from repeatedly
-changing state as workspaces are reclaimed. A worker that can't measure its volume, or
-whose daemon predates this endpoint, leaves the object out and keeps polling.
+Using different thresholds to stop and resume avoids repeatedly accepting and refusing work as
+cleanup frees space. If the worker cannot measure its volume, or its daemon is too old to provide
+this endpoint, it leaves out the storage object and keeps polling.
 
-An unbound generation or a clean workspace is not proof of abandonment. Another session store or
-an unfinished create may own it. co:op reports it as protected in `/v1/storage` and leaves it for
-manual inspection. Automatic maintenance only finishes removals that an authorized discard
-already staged. An interrupted removal can resume. Before any deletion, the workspace is renamed
-into an owner-private staging directory. No discard reports success until those bytes are gone.
+A workspace may look unused because it has no recorded session binding or no uncommitted changes.
+That does not mean it is abandoned: another session store or an unfinished create operation may
+own it. co:op marks it as protected in `/v1/storage` and leaves it for manual inspection.
+
+Automatic cleanup only finishes removals that an authorized discard has already started. Before
+deleting a workspace, co:op moves it into a private staging directory belonging to its owner. If
+removal is interrupted, cleanup can resume it. Discard reports success only after the data has
+been removed.
 
 ### Restart and recovery
 
@@ -132,37 +137,44 @@ entire journal directory, together with the same worker and workspace configurat
 loads the existing identity and doesn't enroll again. Certificate renewal is automatic over
 mutual TLS.
 
-At startup, under the exclusive state lock, co:op reclaims only unpublished source stages,
-transfer temps and host-only Git credential files. It keeps published sources and journaled
-response bodies. Run managed workers under a service manager that stops the whole process group
-or cgroup. If a forced kill takes down the parent, a host Git or LFS child that survives can keep
-deleted blocks open until it exits.
+At startup, co:op locks the state directory and removes source staging data that has not been
+published, temporary transfer files and host-only Git credential files. It keeps published sources
+and response bodies saved in the journal.
 
-Commands are journaled before they run. Terminal results that weren't acknowledged are sent again
-after a restart. If a command that already has a recorded result is delivered again, its receipt
-is reused and the command doesn't run again. Reusing that command ID with a different payload is
-refused. An asynchronous session create can have its result acknowledged while the create is
-still running. The journal keeps its original operation identity until session activity can be
-bound. Event cursors advance only after exact acknowledgements. Unacknowledged events replay, and
-acknowledged events don't. When you move or back up a worker, don't prune journal files, and
-don't keep only the `commands` directory.
+Configure the service manager to stop the worker's whole process group or cgroup. Killing only
+the parent can leave a Git or LFS child running. That child may keep deleted files open, so their
+disk space is not freed until it exits.
 
-If a review outlives its request, its uncertain transport receipt stays unchanged. Read the saved
-operation through `GET /v1/operations?key=<original-key>`. Once it has succeeded, fetch its
-retained review dossier. These are ordinary API requests, and neither lookup reruns the gate.
+co:op records each command in the journal before running it. After a restart, it resends finished
+results that the controller has not acknowledged. If the controller sends a completed command
+again, co:op returns the saved result without running it again. It refuses to reuse a command ID
+with a different payload.
 
-An unavailable daemon or controller is reported and retried. That doesn't authorize local
-execution or receipt deletion. A malformed or expired saved identity fails closed. It doesn't
-silently re-enroll, even if an enrollment token is present. Check file ownership, configured
-trust, the clock and the controller's renewal status. Then follow the controller operator's
-identity-recovery procedure. Don't delete the identity or the journal as a routine reconnect fix.
+An asynchronous create request can be acknowledged while the session is still being created.
+The journal keeps the original operation ID until co:op can associate the resulting session's
+activity with it. Event cursors advance only when the controller acknowledges the exact events:
+unacknowledged events are sent again, and acknowledged events are not. When moving or backing up a
+worker, keep the entire journal, including more than just the `commands` directory.
+
+A review may continue after its request loses the connection. The saved delivery result remains
+uncertain, even if the review later finishes. Look up the operation with
+`GET /v1/operations?key=<original-key>`. Once it succeeds, fetch the saved review report.
+Neither request runs the gate again.
+
+If the daemon or controller is unavailable, the connector reports the problem and retries. It
+does not run work locally or delete saved results to get past the failure. If the saved identity
+is malformed or expired, the worker stops connecting. It does not enroll again automatically,
+even when an enrollment token is available. Check file ownership, trusted certificates, the clock
+and the controller's renewal status, then follow the controller operator's identity-recovery
+procedure. Do not delete the identity or journal as a routine reconnect fix.
 
 ### Upgrading a worker
 
-A new co:op build can convert the worker's session data when its service first opens it, and the
-build before it can't open converted data. Older data is converted for one upgrade step only: a
-later build refuses data it no longer converts and names the session schema whose builds convert
-it. So an upgrade, scripted or by hand, checks the data with the new build before it swaps:
+A new co:op build may need to convert the worker's session data when it first opens it. After
+conversion, the previous build cannot read that data. Each build can perform only one upgrade
+step. If the data is too old, the build stops and tells you which session schema to upgrade
+through first. Before replacing the worker, check its data with the new build, whether you are
+upgrading by hand or with a script:
 
 1. Wait for the commands the worker is carrying out, then stop the worker.
 2. Run the check with the new build or image, against the worker's state directory:
@@ -177,23 +189,24 @@ it. So an upgrade, scripted or by hand, checks the data with the new build befor
 
 | Exit | Meaning | Next step |
 | --- | --- | --- |
-| `0` | The new build uses the data as it is, or the service has started but holds none yet | Start the new build |
+| `0` | The new build can use the data unchanged, or the service has initialized its storage without saving any sessions yet | Start the new build |
 | `3` | The new build will convert the data, and older builds can't open it afterwards | To keep a way back, copy the stopped state directory aside, then start the new build |
-| `4` | The new build can't use the data: it is older than the build converts, or a newer build wrote it | Start the old build again. For old data, first run a build that uses the schema the message names |
-| `1` | The check couldn't finish: the service is still running, there is no session data at the path, or some data can't be read | Fix what the message names, then check again. A directory no service has used (a mistyped `--state`, a new empty volume) is never treated as empty, so it can't pass; a worker that has never run has nothing to check |
+| `4` | The data is too old for this build to convert, or was written by a newer build | Restart the old build. If the data is too old, first upgrade through a build that uses the session schema named in the message. |
+| `1` | The check could not finish: the service is still running, the path has no session data, or some data cannot be read | Fix the reported problem and check again. A directory that no service has used cannot pass, even if it is empty. Check for a mistyped `--state` or a new volume. A worker that has never run has no data to check. |
 | `2` | The arguments are invalid | Fix the command |
 
-The check covers the session database and the connection's command journal. It writes nothing to
-the state directory: it opens the database without creating SQLite's `-wal` and `-shm` files, and
-holds the state lock shared, so a service can't start and convert the data while it reads. It
-refuses to read while a service owns the state directory, because only a stopped service's data
-holds still.
+The command checks both the session database and the connector's command journal. It does not
+write to the state directory or create SQLite's `-wal` and `-shm` files. While checking, it holds
+a shared state lock to prevent a service from starting and converting the data. If a service is
+already running against that directory, the check refuses to read it. Stop the service first so
+the data cannot change during the check.
 
-Only a worker that ran a development build of coop's `main` branch from 2026-09-15 to 2026-09-23
-needs one more step; no release wrote these files. Those builds left a `.service-launch.lock` in
-each folder of the execution registry, and current builds refuse to launch in the repositories
-those folders belong to, naming the file as an unsupported registry entry. With the worker
-stopped, delete the files and the folders they leave empty, as the worker's own user:
+This extra cleanup is needed only if the worker ran a development build from co:op's `main`
+branch between 2026-09-15 and 2026-09-23. No released version created these files. Those builds
+left a `.service-launch.lock` file in each execution-registry folder. Current builds refuse to
+launch in the affected repositories and report the file as an unsupported registry entry.
+Stop the worker, then run these commands as its OS user to delete the files and any folders left
+empty:
 
 ```bash
 find ~/.local/state/coop/executions/v1 -mindepth 2 -maxdepth 2 -type f -name .service-launch.lock -delete
@@ -202,37 +215,37 @@ find ~/.local/state/coop/executions/v1 -mindepth 1 -maxdepth 1 -type d -empty -d
 
 ### Session inspection evidence
 
-Your controller may ask a worker for one bounded, versioned account of a session the worker hosts.
-It sends an ordinary `api_request` command with the payload
+Your controller can request a report about a session hosted by the worker. The report has a
+versioned format and size limits. Send an `api_request` command with the payload
 `{"method":"GET","path":"/v1/sessions/<id>/evidence"}` (see the
-[`session evidence`](#session-evidence) endpoint below). The connector forwards the daemon's answer
-verbatim. It selects nothing, derives nothing and adds no disclosure of its own.
+[`session evidence`](#session-evidence) endpoint below). The connector forwards the daemon's
+answer unchanged. It does not choose fields, calculate extra values or reveal additional data.
 
-The object carries the session's frozen network posture and what its runs were observed doing. It
-also carries the host-approved task bound into its workspace, as the task folder stands at
-capture. It never carries a credential, a host path or a packet body. It carries a destination
-name only if the session job set `egress.export_destinations: true`. The agent-written `state.md`
-is bounded, and it is withheld whole when it scans as carrying a secret.
+The report includes the network settings saved for the session, the activity observed during its
+runs and the approved task assigned to its workspace. The task data comes from its folder when
+the report is captured. Credentials, host paths and packet bodies are excluded. Destination names
+appear only if the session job set `egress.export_destinations: true`. The agent-written
+`state.md` has a size limit and is withheld in full if the scan flags a likely secret.
 
-Every section states its own availability, so a control plane can tell an unreadable registry from
-a session that observed nothing:
+Each section says whether its data was available. Your controller can distinguish a failed read
+from a session with no observed activity:
 
 - An unavailable section names its cause.
 - A filtered session that has not run reports `no_run`.
 - A session that never ran filtered reports `not_filtered`.
 
-The daemon checks each answer against the evidence contract before it serves it. An answer that
-fails the check is never sent. The route returns `500 internal_error` instead.
+Before sending the report, the daemon checks that it follows the evidence format and disclosure
+rules. If the report fails that check, the endpoint returns `500 internal_error` instead.
 
-The worker advertises `session-evidence` version `1` only after the running local daemon publishes
-`session_evidence_versions` in `GET /v1/capabilities`. This is independent of the other three
-capabilities. A configured claim can't override that check. A worker whose daemon predates the
-endpoint doesn't advertise it. That is what lets a controller say "this build does not export
-evidence" instead of showing an empty network.
+The worker reports support for `session-evidence` version `1` only when its running daemon lists
+`session_evidence_versions` in `GET /v1/capabilities`. It checks this independently of the other
+capabilities; configuration cannot override the result. An older daemon without the endpoint does
+not report support. Your controller can then show that evidence export is unavailable, rather
+than displaying an empty network report.
 
-The refusals of one sealed filtered run also reach the controller as the existing `network`
-session event. The daemon groups and caps them exactly as `coop net` prints them, with the same
-destination projection.
+The controller also receives blocked requests and alerts from filtered runs through the existing
+`network` session event. The daemon uses the same grouping, limits and destination-disclosure
+rules as `coop net`.
 
 ## Request rules
 
@@ -261,38 +274,38 @@ Idempotency-Key: <globally unique caller-owned key>
 
 ### Idempotency keys
 
-Use one stable key for one logical action. Repeating the exact method, key and canonical body
-returns the recorded result, and the action doesn't run again. Reusing a key with a different
-method or body returns `idempotency_conflict`.
+Choose one key for each action and keep using that key when you retry it. If the method, key and
+normalized request body match, co:op returns the saved result without running the action again.
+Reusing a key with a different method or body returns `idempotency_conflict`.
 
 After a lost response, retry the same request with the same key. If an earlier response supplied
 an operation ID, `GET /v1/operations/{operation_id}` reports its state, error code and resource
 ID.
 
-If a mutation response may have been lost after admission, `GET /v1/operations?key=<idempotency-key>`
-recovers the same public projection by your exact, bounded idempotency key. The query accepts one
-`key` only. It never returns the key, the request hash, the private intent or the result body.
-Operation lookup deliberately leaves out the stored request, the private result, prompts, native
-provider IDs and host paths.
+If the worker may have accepted a request but you did not receive its response, look it up with
+`GET /v1/operations?key=<idempotency-key>`. Supply the exact idempotency key within its size
+limit; the query accepts only one `key`. The response contains the public operation information.
+It excludes the key, request hash, saved execution instructions, result body, stored request,
+private result, prompts, native provider IDs and host paths.
 
 ### Compacting old turn receipts
 
-A successful turn mutation stores a compact public replay receipt. It doesn't store a second copy
-of the turn prompt and private execution controls. Upgraded daemons can still read older
-full-turn receipts. An operator can rewrite those old receipts only during an explicit
-maintenance window:
+When a turn request succeeds, co:op saves a small public result that it can return if you retry.
+It does not duplicate the prompt or private execution settings in that result. Newer daemons can
+still read older results that stored the full turn. You can compact those older records during a
+planned maintenance window:
 
 ```bash
 coop sessions compact --state <state-root> --backup <new-backup.sqlite>
 ```
 
-The command takes the daemon's exclusive state lock. It refuses a backup path that already
-exists, or one inside the state root. It verifies the backup before one transactional rewrite,
-checks database integrity, and only then vacuums the database. It never changes canonical turn
-rows, and it never runs automatically during startup.
+The command locks the state directory so the daemon cannot use it during maintenance. The backup
+path must not exist or be inside the state root. After verifying the backup, the command rewrites
+the old results in one transaction, checks database integrity and vacuums the database to reclaim
+space. It does not change the turn records themselves and never runs automatically at startup.
 
-The owner-only backup keeps the legacy prompt copies and is sensitive. Delete it only after the
-compacted database and its ordinary backup cycle are verified.
+The backup still contains the old prompt copies, so only its owner can access it. Keep it until
+you have verified both the compacted database and its normal backups.
 
 To restore:
 
@@ -300,15 +313,17 @@ To restore:
 2. Move `session.sqlite` and both possible `-wal` and `-shm` sidecars aside together.
 3. Install the backup as an owner-only `session.sqlite`.
 4. Restart.
-5. Verify with `coop sessions doctor` before you remove the rollback set.
+5. Verify with `coop sessions doctor` before deleting the files you moved aside.
 
 ### Fencing an uncertain mutation
 
-An owner can revoke authority after it durably prepared a session create or turn submit, and then
-be unable to know whether the request crossed the socket. In that case it must not replay the
-mutation just to discover a resource to stop. It fences the target instead.
-`POST /v1/operations/fence` uses the target mutation's idempotency key and a strict envelope that
-contains the exact typed request:
+Your controller may withdraw permission for a session create or turn submission after saving the
+request, without knowing whether the worker received it. Do not resend the request just to find
+out what to stop: that could start work you no longer want. Fence the request instead, which
+blocks it unless the worker has already accepted it.
+
+Call `POST /v1/operations/fence` with the original request's idempotency key and an envelope
+containing its exact method and request:
 
 ```json
 {
@@ -323,30 +338,33 @@ contains the exact typed request:
 
 Only `CreateRemoteSession` and `SubmitTurn` can be fenced.
 
-- If the target operation is absent or only reserved, co:op records it as failed with
-  `operation_fenced`. An exact later mutation therefore can't run.
-- If admission already won, the fence returns that existing operation and its resource, for
-  ordinary close or cancel reconciliation.
+- If the worker has not accepted the operation, including when it has only reserved it, co:op
+  records a failure with `operation_fenced`. Sending that same request later cannot run it.
+- If the worker already accepted the operation, the fence returns it and its resource. Inspect
+  that result and use the normal close or cancel request to stop the work.
 
-The target request may be as large as a turn submission, plus the bounded envelope. A lookup miss
-or an elapsed client timeout is never proof of absence.
+The enclosed request can be as large as a turn submission, with a separate size limit for the
+envelope. A lookup that finds nothing, or a client timeout, does not prove that the request never
+reached the worker.
 
 ### Asynchronous session create
 
-A session create can be admitted without holding the HTTP request open. Send
-`Prefer: respond-async` on `POST /v1/sessions`. co:op durably records the create intent and
-returns `202 Accepted` with an `operation` in `running` or a terminal state. Poll
-`GET /v1/operations/{operation_id}` until it succeeds, then fetch the returned session resource.
-If the client disconnects, the create continues under the daemon's lifetime. An exact replay with
-the same key coalesces onto the same operation. Callers that leave out the preference keep the
-synchronous response, for compatibility.
+To create a session without keeping the HTTP request open, send `Prefer: respond-async` on
+`POST /v1/sessions`. co:op saves the request and returns `202 Accepted` with an `operation`
+that is still `running` or has already finished. Poll `GET /v1/operations/{operation_id}`
+until it succeeds, then fetch the session it identifies.
+
+Creation continues in the daemon if the client disconnects. Retrying the identical request with
+the same key returns the same operation. Without the preference header, the request waits for
+creation to finish.
 
 ### Revision checks
 
-Session lifecycle, budget and cancellation requests carry `expected_revision`. Read the current
-session before acting. Treat `revision_conflict` as a request to reconcile. It is not permission
-to guess a new action. A validation decision compares `candidate_sha256` instead, because its
-authority is the exact unpublished candidate rather than the broader session revision.
+Session lifecycle, budget and cancellation requests include `expected_revision`. Read the session
+before acting. If you get `revision_conflict`, read it again and decide whether your action is
+still appropriate. Do not simply guess a new revision or action. Validation decisions check
+`candidate_sha256` instead: they approve or reject one exact unpublished answer, regardless of
+other changes to the session.
 
 ## Lifecycle
 
@@ -361,47 +379,56 @@ create -> open/parked
           -> discard plan -> discarded
 ```
 
-One worker owns a session. Turns are a bounded, durable FIFO, and only one runs at a time.
+Each session belongs to one worker. The worker saves turns in a queue with a size limit and runs
+them one at a time, in the order received. The queue survives restarts.
 
-Without `limits.warm_idle_timeout_ms`, co:op starts one short-lived `coop fork <name> acp <target>` child
-for a turn. It resumes the exact recorded native session, and records only its terminal assistant
-message for public consumption. It tears down the child and the run-labeled box before parking.
+Without `limits.warm_idle_timeout_ms`, co:op starts a new `coop fork <name> acp <target>` process
+for each turn. That process resumes the provider session saved for this co:op session. co:op
+publishes only the final assistant message, then stops the process and removes its box before
+marking the session as parked.
 
-A job with `repository_read_only: true` uses the same child. Its fork is mounted read-only, and the
-files a turn generates go to a writable output directory kept in the worker's private state.
+A job with `repository_read_only: true` uses the same kind of process. The fork is mounted
+read-only, and files generated by a turn go into a writable output directory in the worker's
+private state.
 
-With `limits.warm_idle_timeout_ms`, co:op can prepare the authenticated ACP connection before the first
-turn. It reuses that exact process and native session across serialized turns. The daemon keeps
-at most four warm sessions. Each one keeps one of the four shared runtime slots between turns.
-Any of these stops the process, removes its run-labeled box and services, and deletes projected
-credentials: expiry, cancellation, failure, close, discard or daemon shutdown. Provider-native
-history stays durable, so the next cold child can load the exact session again.
+With `limits.warm_idle_timeout_ms`, co:op can authenticate the ACP connection before the first
+turn and keep the same process and provider session for later turns. Turns still run one at a
+time. The daemon keeps at most four sessions warm, and each occupies one of the four runtime
+slots while idle.
 
-After every terminal turn, co:op removes the exact workspace-owned Compose service containers,
-using their project and working-directory labels. Volumes remain, so the next turn can restart
-services with durable development data. Daemon startup repeats this cleanup for historical
-sessions after a crash or upgrade. A bounded idle-runtime sweep retries cleanup every minute,
-without racing an active turn. The same sweep reaps an awaiting-validation turn's exact runtime
-and projected credentials, without changing its candidate. Deleting the workspace volumes and
-network is still the job of an explicit session discard.
+When the idle timeout expires, a turn is cancelled or fails, the session closes or is discarded,
+or the daemon shuts down, co:op stops the process and removes its box, services and temporary
+credential files. The provider's saved conversation history remains, so a new process can resume
+the same session.
 
-A completed turn stays completed even when teardown fails. The janitor retries failed
-cleanup; a slow container runtime must not turn a finished answer into an error. A
-cleanup failure is logged with its bounded cause. A turn that itself failed carries the
-cleanup cause joined with its own error.
+When co:op stops a turn's runtime, it also removes the workspace's Compose service containers,
+identified by their project and working-directory labels. A successful warm turn keeps its
+runtime and services until warm-session cleanup. The service volumes remain after cleanup, so
+later turns can restart services with the same development data.
+
+After a crash or upgrade, daemon startup repeats cleanup for historical sessions. A background
+check retries idle-runtime cleanup every minute, with a limit on each pass and without interfering
+with an active turn. It also removes the runtime and temporary credential files for a turn
+awaiting validation, while leaving the candidate unchanged. Only an explicit session discard
+removes the workspace's volumes and network.
+
+A turn that has completed successfully stays successful if cleanup fails. The background cleaner
+retries and logs the cleanup error, with a limit on its length. If the turn itself failed, its
+error includes the cleanup failure too.
 
 On restart:
 
-- Queued turns that were never sent stay eligible.
-- A turn waiting for semantic validation keeps its unpublished candidate, and it can still be
-  accepted or rejected by digest. Its provider process, run-labeled box, projected credentials
-  and services are disposable. Startup and the bounded periodic cleaner reap them without
-  accepting, rejecting or changing the candidate.
-- A turn interrupted after send intent ends as interrupted, and it is not silently replayed.
-- Provider-native history is kept.
+- Queued turns that were never sent to the provider remain in the queue.
+- A turn waiting for your validation keeps its unpublished candidate. You can still accept or
+  reject it by digest. Startup and the periodic cleaner remove its provider process, box,
+  temporary credential files and services without deciding or changing the candidate.
+- If co:op had recorded its intent to send a turn before the interruption, that turn is marked
+  interrupted. It is not sent again automatically.
+- The provider's saved conversation history remains.
 
-Close is non-destructive. It keeps the fork, conversation state, events and reviews. Discard is a
-separate, two-step compare-and-swap action. It is available only for a closed, idle session.
+Closing a session keeps its fork, conversation state, events and reviews. To delete the
+workspace, use the separate two-step discard process: make a plan, then apply it only if the
+session still matches that plan. Only a closed, idle session can be discarded.
 
 The API can publish an explicitly authorized, reviewed candidate as a draft pull request. It
 can't merge, sign, change the local parent ref, run an arbitrary host command or return a host
@@ -409,7 +436,8 @@ workspace path.
 
 ### Structured output
 
-An optional `output_contract` carries the exact schema bytes and their digest:
+Use the optional `output_contract` to require an answer that follows a JSON schema. It contains
+the exact schema bytes and their digest:
 
 ```json
 {
@@ -423,18 +451,19 @@ When `output_contract` is present:
 
 - `json_schema` and `sha256` are required.
 - The schema is capped at 256 KiB.
-- Admission compiles the schema only after the digest matches.
+- co:op checks that the schema matches the digest before compiling it to validate responses.
 
-co:op saves that exact contract, gives it to the model, and validates the final assistant bytes
-before completion. Invalid JSON or a schema mismatch is repaired in the same native session.
-Without semantic validation, three invalid provider responses fail the turn with
-`output_contract_failed`, and no assistant message is published.
+co:op saves the contract, gives it to the model and checks the final answer against it. If the
+answer is not valid JSON or does not match the schema, co:op asks the model to fix it in the same
+provider session. Without semantic validation, three invalid responses fail the turn with
+`output_contract_failed`. No assistant message is published.
 
-Set `require_semantic_validation: true` when you also own checks that depend on external frozen
-state. After schema validation, co:op exposes the exact unpublished bytes and their SHA-256 digest
-as `turn.candidate`, with state `awaiting_validation`. The durable `validation_candidate_sha256`
-stays visible after the decision, so you can reconcile a lost HTTP response. Send one idempotent
-decision to:
+Set `require_semantic_validation: true` when your controller must also check the answer against
+external data fixed for this request. After the answer passes schema validation, co:op returns
+its exact unpublished bytes and SHA-256 digest as `turn.candidate`, and sets the turn to
+`awaiting_validation`. The saved `validation_candidate_sha256` remains visible after your
+decision, so you can check what happened if the HTTP response is lost. Send one decision with an
+idempotency key to:
 
 ```text
 POST /v1/sessions/<session>/turns/<turn>/validation
@@ -444,13 +473,13 @@ POST /v1/sessions/<session>/turns/<turn>/validation
 To reject the candidate instead, send `verdict: "reject"` with 1 to 20 `violations`. Each
 violation is capped at 4 KiB, and so is the combined list.
 
-An accept forbids violations. It copies only the stored candidate into `assistant_message` and
-returns a durable `validation_receipt`. A reject re-prompts the same native session under the same
-logical turn.
+An acceptance must not include violations. co:op copies the stored candidate into
+`assistant_message` and returns a saved `validation_receipt`. A rejection asks the model to try
+again in the same provider session, as part of the same turn.
 
-Semantic review allows up to three schema-valid candidates. Each semantic round separately allows
-up to three provider responses to repair malformed or schema-invalid output. So a schema repair
-doesn't spend a caller-review attempt.
+Your controller can review up to three candidates that pass the schema check. For each candidate,
+the model has up to three responses to produce valid output. Responses that fail the schema check
+do not use up one of your controller's three review attempts.
 
 ## Endpoints
 
@@ -460,66 +489,76 @@ doesn't spend a caller-review attempt.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after daemon startup |
-| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1]}`, for caller-side protocol negotiation |
+| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1]}`. Check these versions before choosing which protocol features to use. |
 | `GET` | `/v1/capacity` | Current shared active and warm runtime slots. The connector forwards this measurement in the hello it sends with every poll. |
-| `GET` | `/v1/storage` | This daemon's own workspace-storage accounting: `storage` (the object a fleet controller reads), `budget`, `totals`, `roots`, `forks` and `problems` |
+| `GET` | `/v1/storage` | Disk use measured by this daemon: `storage` (the summary for a fleet controller), `budget`, `totals`, `roots`, `forks` and `problems` |
 
-Runtime capacity is four shared slots for active and warm model processes. The session, turn and
-workspace counts describe that same pool. They are not independent allocations. A queued turn
-waits before its model timeout starts. A failed teardown keeps its slot until cleanup succeeds.
-Unresolved startup runtime custody reports busy, with zero free slots.
+The worker has four slots for model processes, shared by active turns and idle warm sessions.
+The session, turn and workspace counts all describe those same slots; do not add them together.
+Time spent waiting in the queue does not count toward a turn's model timeout. If cleanup fails,
+the process keeps its slot until cleanup succeeds. At startup, the worker reports busy with zero
+free slots until it has checked which runtimes it owns.
 
-For a quarantined or retired historical session, cleanup may release capacity only after proving
-that its exact session-owned runtime labels are gone. That doesn't make the workspace runnable. A
-failed capacity read also reports busy. It doesn't stop the worker from polling for reads and
-cleanup.
+For a quarantined or retired session, cleanup frees a slot only after co:op confirms that no
+runtime remains with that session's exact labels. This does not make the workspace safe to run
+again. If co:op cannot read capacity, it reports busy. The worker still polls for requests that
+read data or clean up existing work.
 
-`/v1/storage` measures allocated blocks, never apparent size. It never opens a file, so it can
-account for credential-bearing private session state without reading any of it.
+`/v1/storage` measures the disk blocks allocated to files, rather than the file sizes reported
+by applications. It reads file metadata without opening file contents, so it can count private
+session data that contains credentials without reading those credentials.
 
-A fork's git objects are hardlinked from the checkout it was cloned from. So every total is the
-storage that removing that content would actually return. The multiply-linked baseline is
-reported once, in `totals.baseline_shared_bytes`, instead of being charged to each fork.
+Forks can share Git objects with their source checkout through hard links. Storage totals count
+the space that deleting the content would actually free. Shared repository data is counted once
+in `totals.baseline_shared_bytes`, rather than once for every fork.
 
-A measurement that couldn't see everything reports `totals.unknown` and publishes
-`storage.unattributed_bytes` as `null`, which means unknown and never zero. A full tree walk is
-too expensive for every caller. So the answer is re-measured at most once per
-`budget.measure_seconds`, and `storage.measured_at` carries its age.
+An incomplete measurement reports `totals.unknown` and sets `storage.unattributed_bytes`
+to `null`. This means unknown, never zero. To avoid scanning the full tree for every request,
+co:op measures it at most once per `budget.measure_seconds`.
+`storage.measured_at` lets callers check how old the measurement is.
 
-`forks[]` names each directory under a fork root, its category and the evidence for it. Only
-`disposable` and `staged_discard` have an authorized reclamation path. `active`, `grace`,
-`protected`, `control` and `unattributed` are all refusals with a reason. `protected` covers a
-running worker, registered sandbox activity, an interrupted land, canonical task authority, a
-quarantined session or uncommitted work. A directory with no co:op generation record is
-`unattributed`. It is reported, and it is never deleted on a guess.
+`forks[]` lists each directory under a fork root, its category and the evidence used to classify
+it. Only `disposable` and `staged_discard` can be removed through the authorized cleanup process.
+For `active`, `grace`, `protected`, `control` and `unattributed`, the response explains why
+removal is refused.
 
-Under storage pressure, the daemon refuses a new workspace with `storage_unavailable` and names
-its cause. Cleanup, discard and reads keep working. Nothing protected is deleted to make room.
-Checkpoint capture and restore allocate additional copies, including during recovery. So their
-separate pressure guard waits above the reserve, while keeping interrupted restores fenced.
+A directory is `protected` when it belongs to a running worker or registered sandbox activity,
+a merge was interrupted, the task system still needs it, a session is quarantined,
+or work is uncommitted. Without a co:op record identifying that fork instance, the directory is
+`unattributed`. co:op reports it for inspection instead of guessing that it can be deleted.
 
-Allocation closes at `storage.high_watermark_bytes` of used space, and reopens only under
-`storage.low_watermark_bytes`. So reclaiming one workspace can't flap it open and shut.
-`storage.reserve_bytes` is the free-space floor underneath both, and new work never spends it.
-None of this bounds what an already-running task writes inside its own workspace.
+When disk space is too low, the daemon refuses new workspaces with `storage_unavailable` and
+explains the cause. Reads, cleanup and discard still work. co:op does not delete protected data
+to make room.
 
-The outbound connector reports `job-setup:2`, `repository-freshness:2`, `session-evidence:1`,
-`controller-tools:1` and `review-commit-message:1` only after its local daemon proves the matching versions through
-`GET /v1/capabilities`. Missing proof removes that capability from the next hello. The
-controller can tell an unsupported evidence export from a session that observed nothing.
+Checkpoint capture and restore need space for extra copies, including during recovery. They have
+a separate storage check that waits for enough space above the reserve. While a restore is
+interrupted, the session remains blocked from running work.
 
-Worker protocol v2 carries capabilities, capacity and optional storage measurements. It carries
-no policy or repository catalogs. Exact code and execution settings belong to each immutable
-controller job.
+The worker stops creating workspaces when disk use reaches `storage.high_watermark_bytes`.
+It starts accepting them again only when use drops below `storage.low_watermark_bytes`. The gap
+prevents repeated stops and starts as cleanup frees space. New work must leave
+`storage.reserve_bytes` free. These checks do not limit how much data an already-running task
+writes in its workspace.
+
+Before reporting support for `job-setup:2`, `repository-freshness:2`, `session-evidence:1`,
+`controller-tools:1` or `review-commit-message:1`, the connector checks the running daemon's
+`GET /v1/capabilities` response for the matching version. If it cannot verify a capability,
+it leaves it out of the next hello. The controller can distinguish an unsupported evidence
+export from a supported report with no observed activity.
+
+Worker protocol v2 reports supported features, runtime capacity and optional disk measurements.
+It does not distribute lists of policies or repositories. Each controller job specifies its own
+exact code and execution settings, which cannot change after submission.
 
 ### Sessions
 
 Your controller creates `create-session.json` with these fields:
 
-- `task`: an opaque external reference.
+- `task`: your external task reference; co:op does not interpret its value.
 - `job`: a version-2 JobSpec.
-- `expected_job_digest`: the job's canonical SHA-256.
-- `controller_tools` (optional): binds the controller's authenticated tool endpoint.
+- `expected_job_digest`: the SHA-256 digest of the job's canonical representation.
+- `controller_tools` (optional): connects the session to your controller's authenticated tool endpoint.
 
 For exact fields and validation, see the shared
 [protocol fixture](../testdata/protocol/coop-worker-v2.json) and the
@@ -549,15 +588,18 @@ not change its repository. A job that asks for the removed `readonly` or `bare` 
 
 These fields must be present even when the environment maps and check argv are empty.
 
-The work environment reaches only sandbox processes. Review receives it plus `check.environment`,
-whose values win for duplicate keys. Env names are ordinary shell identifiers. `COOP_*`, provider
-credential, model and adapter-owned variables are reserved. Values must be UTF-8 without line
-breaks or leading or trailing whitespace, so env-file processing can't change an accepted value.
-Values are plain job settings. They are not a way to transfer model or GitHub credentials.
+The job's environment variables are passed only to sandbox processes. Review uses those variables
+plus `check.environment`; the check's values override duplicate names. Names must be valid shell
+identifiers. `COOP_*`, provider credential variables, model variables and adapter-owned
+variables are reserved.
 
-The check is a literal argv. It is not a shell string, so use an explicit shell command if you need
-shell syntax. An empty `check.argv` and an empty check environment explicitly mean no check, and
-that review is not publishable.
+Values must be UTF-8, with no line breaks or leading or trailing whitespace. This prevents
+processing an environment file from changing a value that co:op accepted. Use these variables for
+job settings, not for model or GitHub credentials.
+
+The check is a list of command arguments, passed directly to the process. It is not interpreted as
+a shell command; invoke a shell explicitly if you need shell syntax. Leaving both `check.argv`
+and the check environment empty means no check will run, so the review cannot be published.
 
 | Field | Meaning | Accepted range |
 | --- | --- | --- |
@@ -565,21 +607,22 @@ that review is not publishable.
 | `memory_bytes` | Memory, in bytes | 6 MiB to 1 TiB |
 | `pids` | The per-container process cap | 1 to 65536 |
 
-Every job needs finite positive caps. co:op refuses a job that exceeds the worker's configured
-CPU, memory or PID ceiling. It also refuses a job whose runtime can't enforce these limits. It
-never silently clamps a requested value.
+Every job must set positive, finite CPU, memory and process limits. If a requested limit exceeds
+the worker's configured maximum, or the runtime cannot enforce it, co:op refuses the job. It does
+not silently lower the requested value.
 
-co:op freezes the canonical document before creating a workspace. A changed retry is refused. Task
-text and repository settings are not execution authority. Your controller may read repository
-defaults, but it must resolve and include every chosen value before submission. The worker's
-normal and review containers use the same frozen setup, and the review container adds the
-review-only environment. There is no local policy name, policy catalog, separate source selector
-or worker JSON file.
+co:op saves the normalized job before creating a workspace and refuses retries that change it.
+Task text and repository settings cannot change what the worker is allowed to run. Your controller
+may use repository defaults, but it must choose and include every setting before submission.
+Work and review containers use that same saved configuration, with review-only environment
+variables added for the check. There is no local policy name, policy catalog, separate source
+selector or worker JSON file.
 
-Send version-2 jobs only to workers that advertise `job-setup:2`. An old daemon may remain behind
-a new connector, so the advertisement requires live daemon proof. Check your JobSpec encoder
-against the shared digest vectors in `internal/workerproto/job_test.go`. Don't rely on the
-worker's `COOP_GATE` or the repository's `gate:` for remote reviews.
+Send version-2 jobs only to workers that report `job-setup:2`. A new connector can still be
+connected to an old daemon, so the connector checks the running daemon before reporting support.
+Test your JobSpec encoder against the shared digest examples in `internal/workerproto/job_test.go`.
+Remote reviews use the submitted job's check, not the worker's `COOP_GATE` or the repository's
+`gate:`.
 
 co:op does not fill in missing execution settings for v1 jobs. Historical sessions and
 evidence stay readable, but their turns, reviews and interrupted creates can't run until
@@ -587,30 +630,32 @@ they are resubmitted as v2 jobs.
 
 #### Frozen repository source
 
-Your controller resolves the requested default branch, branch, PR or commit before creating the
-job. `job.source` identifies the GitHub repository by immutable ID and slug. It contains the exact
-default, selected and base commits, the admitted tree and the source binding. It also lists every
-authorized recursive submodule, with its exact repository, commit and tree. No host checkout path,
-remote URL or GitHub token belongs in this document.
+Before creating the job, your controller resolves the requested default branch, named branch, PR
+or commit to exact commits. `job.source` identifies the GitHub repository by its stable ID and
+slug. It records the default, selected and base commits, the approved tree and the information
+that binds the job to that source. It also lists every authorized submodule, including nested
+ones, with the exact repository, commit and tree. Do not include a host checkout path, remote URL
+or GitHub token in this document.
 
-The trusted worker obtains short-lived, repository-scoped grants through its authenticated
-controller connection. It fetches Git and LFS data directly from GitHub, and verifies the complete
-working tree. Untrusted `.gitmodules` and `.lfsconfig` can't redirect authenticated requests.
-Missing history, missing LFS payloads, mismatched gitlinks or insufficient disk fail closed. A job
-with `source: null` uses an isolated empty workspace.
+The worker gets short-lived credentials for the authorized repository through its authenticated
+connection to the controller. It downloads Git and LFS data directly from GitHub and verifies the
+complete working tree. Repository files such as `.gitmodules` and `.lfsconfig` cannot redirect
+those authenticated requests. The job fails if history or LFS files are missing, submodule commit
+references do not match, or disk space is insufficient. A job with `source: null` uses an
+isolated empty workspace.
 
 #### Session endpoints
 
-The public session carries the immutable source binding, `job_ref`, `job_digest`, target,
-execution mode, project exposure flags, frozen network posture and repository freshness. It also
-includes companion aliases, base commits, the generated fork name, revision, state, activity,
-queue and budget counters, the event cursor and timestamps. Host paths, provider state, prompts
-and credentials are private. Historical sessions without verifiable jobs stay inspectable, but
-they can't resume model work.
+The public session response identifies the fixed repository source, `job_ref`, `job_digest`,
+model target, execution mode, project exposure settings, saved network settings and repository
+freshness. It also includes companion aliases, base commits, the generated fork name, revision,
+state, activity, queue and budget counts, the event cursor and timestamps. It excludes host paths,
+provider state, prompts and credentials. You can inspect historical sessions whose jobs can no
+longer be verified, but you cannot resume model work in them.
 
-With `Prefer: respond-async`, creation returns status 202 and the operation. Poll that operation. A
-successful `resource_type: session` identifies the session to fetch. Without the preference,
-creation waits and returns the operation and the session together.
+With `Prefer: respond-async`, creation returns HTTP 202 and an operation to poll. Once it
+succeeds with `resource_type: session`, fetch the session it identifies. Without the preference
+header, creation waits and returns the operation and session together.
 
 | Method | Path | Body/query |
 | --- | --- | --- |
@@ -620,9 +665,9 @@ creation waits and returns the operation and the session together.
 | `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; the job must turn on warm execution |
 | `POST` | `/v1/sessions/{session_id}/workspace` | `expected_revision`, `task`; the session must be open, writable and unused |
 
-A session created in the removed `readonly` or `bare` mode stays readable, but its job no longer
-validates, so it can't run again: a new turn fails with `invalid_session_state`. Close and discard
-it.
+You can still read a session created in the removed `readonly` or `bare` mode, but its job no
+longer passes validation. A new turn returns `invalid_session_state`. Close and discard the old
+session instead of trying to run it again.
 
 #### Task binding
 
@@ -643,17 +688,19 @@ Every string must be valid UTF-8, not blank and free of NUL. The encoded task is
 64 KiB. co:op adds the task to the workspace's task queue as a to-do task, with one subtask per
 success check.
 
-The response holds the `operation` and the `session`. The session's `workspace_task` then carries
-`queue_id`, `task_id`, `id`, `offer_ref` and `draft_sha256`. `queue_id` and `task_id` are durable
-random identities, and `id` is the task's folder name. `draft_sha256` is the SHA-256 of the task
-as co:op encoded it. The revision goes up by one, and co:op appends a `workspace.task_bound`
-event.
+The response includes the `operation` and `session`. The session's `workspace_task` contains
+`queue_id`, `task_id`, `id`, `offer_ref` and `draft_sha256`. co:op generates and saves random
+values for `queue_id` and `task_id`; `id` is the task's folder name. `draft_sha256` is the
+SHA-256 digest of the task as co:op encoded it. Binding the task increases the session revision by
+one and records a `workspace.task_bound` event.
 
-The session must be open, writable and unused: parked, with no active, queued or used turns.
-Anything else fails with `invalid_session_state`. A changed task under an `offer_ref` the workspace
-already holds fails the same way. A stale `expected_revision` returns `revision_conflict`. An
-invalid task returns `invalid_request`, and so does a different task for a session that is already
-bound. Repeating the exact binding returns the session unchanged.
+The session must be open, writable and parked, with no active, queued or previously used turns.
+Otherwise, the request fails with `invalid_session_state`. Changing a task that the workspace
+already holds under the same `offer_ref` also returns that error.
+
+A stale `expected_revision` returns `revision_conflict`. An invalid task returns
+`invalid_request`, as does submitting a different task to a session that is already bound.
+Repeating the exact binding leaves the session unchanged.
 
 ### Workspace checkpoints
 
@@ -663,30 +710,38 @@ bound. Repeating the exact binding returns the session unchanged.
 | `GET` | `/v1/operations/{id}/checkpoint-bundle` | Streamed tar, exact `Content-Length`, SHA-256 `ETag` |
 | `POST` | `/v1/sessions/{id}/workspace/restore` | Binary body plus `X-Coop-Expected-Revision` and base64-JSON `X-Coop-Workspace-Checkpoint` headers |
 
-Capture requires an idle, writable session with a bound task. Restore requires an unused
-replacement session with the same authorized base and task offer. All mutations need an
-idempotency key. Restore's content type is `application/vnd.coop.workspace-checkpoint.v2+tar`.
-Its Content-Length must equal the descriptor.
+To capture a checkpoint, the session must be idle, writable and bound to a task. To restore one,
+create an unused replacement session with the same authorized base and task offer. Both requests
+require an idempotency key. Restore uses the content type
+`application/vnd.coop.workspace-checkpoint.v2+tar`, and its Content-Length must match the
+descriptor.
 
-A v2 checkpoint streams raw typed Git objects and verified LFS payloads. That includes new
-committed history, the final tracked tree, untracked files and task state. Restore brings back the
-exact HEAD and working tree. It doesn't bring back the original split between staged and
-unstaged changes. Changed submodule commits require separate authorized custody. They are
-refused, including intermediate changes that were later reverted.
+A v2 checkpoint streams Git objects with their types and verified LFS files. It includes new
+commits, the final tracked tree, untracked files and task state. Restoring it recreates the exact
+HEAD and working tree, but not the original split between staged and unstaged changes.
 
-Memory and metadata are bounded. There is no 64-MiB data cap. Disk-pressure checks and
-cancellation apply throughout the transfer and the Git work. These checks are pressure protection.
-They are not a filesystem quota against other host writers.
+Changed submodule commits need a separate authorized process to retain and verify their data.
+Checkpoints therefore refuse them, including intermediate submodule changes that were later
+reverted.
 
-Every member and task binding is verified in quarantine before live files change. co:op retains
-the exact body before it marks the restore Running. An incomplete restore refuses execution across
-a restart, and resumes from that body. Retry the same operation. Never send a new key against an
-already bound session. Capture holds the runtime too, so it can't race a model turn. A restored
-checkpoint doesn't inherit a publication approval. Review the candidate again before publishing.
+Checkpoint processing limits memory use and metadata size, but does not impose a 64-MiB limit
+on the data. co:op checks disk space and cancellation throughout the transfer and Git operations.
+These checks can stop the operation when space is low; they cannot prevent other host processes
+from filling the filesystem.
 
-Discard removes only checkpoint artifacts whose local session ownership is proven. It also settles
-interrupted restores of that discarded session. Historical v1 artifacts stay readable. Their
-patch-only format can't prove full Git and LFS custody, so a v1 restore is explicitly refused.
+co:op checks every archive entry and the task's identity in a separate area before changing live
+files. It saves the complete request body before marking the restore as running. If restore is
+interrupted, the session cannot run work, even after a restart. Restore resumes from the saved
+body. Retry the same operation; do not send a new key for a session that is already bound.
+
+Capturing a checkpoint also reserves the runtime so a model turn cannot change files during
+capture. Restoring a checkpoint does not restore permission to publish. Review the candidate
+again before publishing it.
+
+Discard removes checkpoint artifacts only after verifying that the local session owns them. It
+also resolves any interrupted restores for that session. You can still read historical v1
+artifacts, but cannot restore them: their patch-only format does not preserve enough information
+to verify the complete Git and LFS data.
 
 ### Turns
 
@@ -703,49 +758,54 @@ curl --unix-socket "$SOCKET" \
 | Method | Path | Body/query |
 | --- | --- | --- |
 | `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt`; optional `artifacts`, `min_target_index`, `rewind_target`, `output_contract` |
-| `GET` | `/v1/sessions/{session_id}/turns?after=0&limit=100` | ordinal cursor |
+| `GET` | `/v1/sessions/{session_id}/turns?after=0&limit=100` | Continue after the numbered turn given by the cursor |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}` | none |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}/artifacts/{artifact_id}` | raw generated image |
 | `POST` | `/v1/sessions/{session_id}/turns/{turn_id}/cancel` | `expected_revision` |
 | `POST` | `/v1/sessions/{session_id}/turns/{turn_id}/validation` | `candidate_sha256`, `verdict`; `accept` forbids `violations`, `reject` requires 1 to 20 |
 
-Validation decisions don't carry `expected_revision`. `candidate_sha256` provides the optimistic
-concurrency check against the exact unpublished candidate being accepted or rejected.
+Validation decisions do not include `expected_revision`. Instead, co:op checks
+`candidate_sha256` to ensure you are accepting or rejecting the exact unpublished answer you
+reviewed.
 
-Before an accept, a reject or an awaiting-turn cancellation changes durable state, co:op reaps the
-provider runtime and projected credentials that produced the candidate. If that proof fails, the
-API returns `503 session_cleanup_error`. The exact candidate stays `awaiting_validation`, and the
-verdict has not been applied. The failed idempotent operation is terminal. After the janitor or an
-operator restores runtime cleanup, fetch the still-current candidate and submit the same decision
-with a fresh idempotency key. Replaying the failed key returns the same failure.
+Before accepting, rejecting or cancelling a turn awaiting validation, co:op stops and removes
+the provider runtime and temporary credential files that produced its candidate. If it cannot
+confirm cleanup, the API returns `503 session_cleanup_error`. The candidate remains
+`awaiting_validation`, and your decision has not taken effect.
 
-A public turn excludes its prompt, its idempotency data, `min_target_index` and `rewind_target`.
-The last two are request data whose effect is published as the session's `target` and its
-`session.target_rotated` event. A completed turn's `assistant_message` is the user-facing
-response. co:op doesn't publish hidden reasoning, raw tool calls, raw ACP frames or box logs.
+That failed operation is finished: retrying its idempotency key returns the same failure. After
+the background cleaner or an operator fixes cleanup, fetch the current candidate and submit your
+decision with a new idempotency key.
 
-A completed turn carries `usage` when the adapter reported what it cost. It holds `input_tokens`,
-`cached_input_tokens`, `output_tokens`, `reasoning_tokens`, and provider-reported `cost_usd` when
-available. `cost_recorded` tells an exact zero apart from an adapter that reported no money.
+The public turn response excludes the prompt, idempotency data, `min_target_index` and
+`rewind_target`. You can see the effect of those last two settings in the session's `target`
+and `session.target_rotated` event. For a completed turn, `assistant_message` is the response
+to show the user. co:op does not publish hidden reasoning, raw tool calls, raw ACP frames or box
+logs in that response.
 
-ACP reports money as a cumulative session counter. co:op normalizes it into this turn's delta
-before publishing it, including across daemon restarts and adapter-process resets. Cached input is
-reported apart from fresh input, because providers price the two differently. A caller costing a
-merged figure would overcharge itself. When nothing was reported, the object is left out entirely.
-An unmeasured turn then doesn't read as zeros, and stays distinguishable from a genuinely free
-one.
+A completed turn includes `usage` when the adapter reports it. The fields are `input_tokens`,
+`cached_input_tokens`, `output_tokens`, `reasoning_tokens` and, when available, the provider's
+`cost_usd`. Check `cost_recorded` to distinguish a reported zero cost from a missing cost.
 
-A completed turn may include `output_artifacts` metadata for images that the agent generated, or
-that were saved under the turn-specific `.coop-output/<turn_id>` directory. Each record contains an
-opaque ID, a safe filename, the media type, the SHA-256 digest and the exact byte count. It never
-contains inline bytes. The raw endpoint returns that one immutable file, with matching
-`Content-Type`, `Content-Length` and `ETag` headers.
+ACP reports the cumulative cost of the provider session. co:op calculates this turn's share
+before returning it, including after daemon restarts or adapter-process resets. Fresh and cached
+input tokens are reported separately because providers charge different rates for them; combining
+them before calculating cost would overestimate the bill. If the adapter reports no usage, co:op
+leaves the object out. Missing measurements are never represented as zero usage or free work.
 
-Typed image and embedded image-resource blocks nested in ACP tool updates are captured in output
-order, as `generated-1.<ext>`, `generated-2.<ext>` and so on. Their encoded bytes don't consume the
-text transcript budget. Text tool updates are inspected one bounded frame at a time and then
-discarded, so their cumulative bytes don't end a legitimate long turn. Assistant text, each wire
-frame, the turn deadline and durable output artifacts remain independently bounded.
+A completed turn may include `output_artifacts` for images the agent generated or saved in the
+turn's `.coop-output/<turn_id>` directory. Each record has an opaque ID, a safe filename, the
+media type, a SHA-256 digest and the exact byte count. The record does not embed the image.
+Download it through the raw endpoint, which returns the saved file with matching `Content-Type`,
+`Content-Length` and `ETag` headers. The saved file cannot change.
+
+co:op captures image blocks and embedded image resources from ACP tool updates in output order,
+naming them `generated-1.<ext>`, `generated-2.<ext>` and so on. Image bytes do not count toward
+the text transcript limit.
+
+co:op inspects text tool updates one frame at a time, then discards them. A long turn therefore
+does not fail just because its tool updates add up to a large transcript. Separate limits still
+apply to assistant text, each incoming frame, the turn's duration and saved output artifacts.
 
 Only PNG, JPEG, WebP and GIF are accepted. A turn returns at most five images. Images from tool
 updates and files in the turn's directory share that limit, and a repeated image is kept once. A
@@ -753,13 +813,14 @@ file in that directory without a `.png`, `.jpg`, `.jpeg`, `.webp` or `.gif` exte
 co:op rejects symlinks, special files, mismatched content, a sixth image, a file over 8 MiB, or
 more than 8 MiB in total.
 
-The scratch directory is removed before the turn completes, so generated charts don't appear as
-repository changes. For a read-only repository session, the path in the box is still
-`.coop-output/...`. Its host source lives in co:op's session state instead of beneath the
-checkout. The repository mount stays wholly read-only.
+co:op removes the temporary output directory before completing the turn, so generated charts do
+not become repository changes. In a read-only repository session, the container still sees the
+path `.coop-output/...`, but its files are stored in co:op's private session state on the host.
+The repository itself stays mounted read-only.
 
-Cancellation asks ACP to cancel. It then stops and reaps the exact process group and run-labeled
-box. It doesn't claim that external side effects were reversed.
+Cancellation first asks ACP to cancel the turn. co:op then stops the turn's process group and
+removes its box, using the run's labels to identify it. This does not undo actions already taken
+in external systems.
 
 ### Events
 
@@ -768,33 +829,36 @@ curl --unix-socket "$SOCKET" \
   'http://localhost/v1/sessions/remote_.../events?after=41&limit=100'
 ```
 
-Events are returned as a JSON array, ordered by a monotonically increasing per-session `sequence`.
-Persist the last sequence you processed, and request `after=<sequence>` after a disconnect.
+The events endpoint returns a JSON array ordered by `sequence`, which increases within each
+session. Save the last sequence you processed. After a disconnect, request `after=<sequence>`
+to continue from that point.
 
-Owner-private events contain identity, sequence, turn ID, type, version, timestamp and the event's
-own payload. Bounded raw tool evidence can include filesystem paths, arguments, results and
-diffs. Every narrated event (a tool's start and completion, a thought, progress, a plan, a
-permission answer) also carries `checkout_root`, the session's checkout path, so the worker can
-take it out of what it sends.
+Events stored privately for the worker's owner include the identity, sequence, turn ID, type,
+version, timestamp and payload. Tool evidence has size limits but may include filesystem paths,
+arguments, results and diffs. Events describing tool starts and finishes, thoughts, progress,
+plans and permission decisions also carry `checkout_root`. The connector uses that checkout
+path to remove it before forwarding the event.
 
-The separate outbound worker projection carries what the model did to its controller: a tool's
-title, input and result, and the model's thoughts, progress and plan. The session's checkout root
-is removed. Each field is bounded:
+The connector forwards a filtered version of activity events to the controller. It includes tool
+titles, inputs and results, plus the model's thoughts, progress and plan, with the session's host
+checkout path removed. Each field has a size limit:
 
 | Field | Limit |
 | --- | --- |
 | Titles | 1 KiB |
 | Text | 8 KiB |
-| Tool fields | 16 KiB. Past that, a field crosses as a `preview` marked `truncated`. |
+| Tool fields | 16 KiB. Larger fields are sent as a `preview` marked `truncated`. |
 | One event | 64 KiB |
 
-A field that scans as carrying a likely secret is withheld whole. The event's `withheld` object
-names the field and why (`likely GitHub token`). A withheld tool input still names its MCP server
-and tool. The event's structured `path_context` contains only project-relative paths and scope
-warnings, never the host checkout root.
+If a field appears to contain a secret, the connector withholds the entire field. The event's
+`withheld` object identifies the field and reason, such as `likely GitHub token`. When tool
+input is withheld, the event still identifies the MCP server and tool. The structured
+`path_context` includes only project-relative paths and scope warnings, never the host checkout
+root.
 
-Each payload is capped at 256 KiB. A page is bounded by total bytes as well as by `limit`, so a
-caller reading a chatty turn gets a short page instead of a truncated one.
+Each event payload is limited to 256 KiB. A page also has a total byte limit, in addition to its
+`limit` on event count. If events are large, the endpoint returns fewer of them on the page
+rather than cutting an event short.
 
 #### Lifecycle events
 
@@ -821,9 +885,10 @@ workspace.discarded
 network                 # one sealed filtered run's outcome: run_id, grouped denials, alerts
 ```
 
-`network` is appended after a filtered run seals, and only when that run hit the boundary. A
-quiet run costs no event, so this stream carries refusals rather than a per-turn heartbeat. Its
-payload is bounded by construction:
+co:op records a `network` event for blocked requests when a filtered run's network record is
+finalized. It can also report alerts, such as a mismatch in network permissions or incomplete
+evidence. A run with neither refusals nor alerts produces no event; this is not a heartbeat for
+every turn. The payload has these limits:
 
 - Destinations are grouped and capped, with an `omitted_destinations` count.
 - Alerts are capped.
@@ -836,18 +901,18 @@ session job set `egress.export_destinations: true`.
 `draft_sha256`, `queue_id`, `task_id` and `id`, the values in the session's `workspace_task`. A
 checkpoint restore appends it too, with `base_commit` and `restored: true` added.
 
-`output_contract.rejected` records one rejected candidate inside a turn. co:op appends one for
-each provider response that fails the schema, with `attempt`, the contract's `sha256` and a
-bounded `error`. Your `reject` verdict appends one with `attempt`, `candidate_sha256`,
-`semantic: true` and your `violations`.
+`output_contract.rejected` records a rejected candidate within a turn. When a provider response
+fails the schema check, co:op records `attempt`, the contract's `sha256` and an `error` with
+a size limit. When your controller sends a `reject` verdict, the event instead includes
+`attempt`, `candidate_sha256`, `semantic: true` and your `violations`.
 
-Through the outbound worker, lifecycle events other than `network` arrive without their payload.
+The connector forwards lifecycle events without their payloads, except for `network` events.
 
 #### Activity events
 
-Activity events narrate the interior of a turn: what the model did, as opposed to what co:op
-decided. They are always sequenced before the turn's own terminal event. So a caller that stops
-polling at `turn.completed` has already seen them:
+Activity events describe what the model does during a turn. co:op records them before the event
+that ends the turn, so a client that stops polling at `turn.completed` has already received
+that turn's activity events:
 
 ```text
 tool.started            # tool_call_id, title, kind, input, path_context
@@ -861,63 +926,66 @@ provider.backoff        # attempt, target, next_target, retry_after_seconds, res
 provider.alive          # frames, bytes, last_kind
 ```
 
-When available, `terminal_exit` carries a numeric `exit_code`, a `signal` or both, separately
-from command output. So a truncated output preview doesn't erase the exit result.
+When the provider reports it, `terminal_exit` contains the command's numeric `exit_code`, its
+termination `signal` or both. These fields are separate from the output, so truncating an output
+preview does not remove the exit result.
 
-When structured filesystem evidence is available, `path_context` contains `basis: "lexical"` and
-up to 16 `paths` entries. Each entry identifies its evidence with a JSON-pointer `source`, a
-`scope` (`project`, `outside` or `unknown`) and, only for project-relative files, a `path`.
+When a tool provides structured file information, `path_context` includes `basis: "lexical"`
+and up to 16 `paths` entries. Each entry uses a JSON-pointer `source` to identify where the
+information came from. Its `scope` is `project`, `outside` or `unknown`. Only project-relative
+files receive a `path`.
 
-The bound checkout root is not exported. `partial: true` means some path evidence was omitted.
-These are lexical display facts. They are not symlink-safe containment or permission decisions.
-Missing provider paths stay missing. Titles and shell commands are not parsed to invent them. A
-later tool update can add paths to its completion event without changing the original start
-event. Path facts are extracted before large diff bodies become partial previews. URI-shaped
-paths are reported as unknown. They are not interpreted as files inside the checkout. The
-outbound worker projection validates these fields again. It drops any path entry it can't verify
-and marks the context `partial`. The title and input it forwards follow the bounds and secret scan
-described under [Events](#events).
+The host checkout root is never exported. `partial: true` means some path information was left
+out. Paths are classified by their spelling; this does not check where symlinks lead or decide
+whether access is allowed. co:op does not guess missing paths from tool titles or shell commands.
+A later tool update can add paths to the completion event without changing the start event.
 
-`provider.backoff` reports when a turn is rate limited. There is one event per confirmed
-limit, capped at one per ladder rung.
+co:op extracts paths before shortening large diffs into previews. URI-shaped paths are marked
+unknown, rather than treated as checkout files. Before forwarding an event, the connector checks
+the path fields again, drops entries it cannot verify and marks the context `partial`. It also
+applies the size limits and secret scan described under [Events](#events) to titles and inputs.
+
+`provider.backoff` reports a confirmed provider rate limit. co:op emits at most one such event
+for each configured model target in a turn.
 
 - `attempt` numbers the events from 1 within the turn.
-- `target` is the rung the provider limited.
-- `retry_after_seconds` is how long that rung is out: the provider's own reset when it named one,
-  and the ladder's bounded backoff when it did not.
-- A rotation also carries `next_target`.
-- The last backoff on an exhausted ladder carries `all_limited_until` instead.
+- `target` identifies the model target that reached its rate limit.
+- `retry_after_seconds` says how long that target must wait. co:op uses the provider's reset time
+  when available, or its own limited backoff otherwise.
+- If co:op switches to another target, the event includes `next_target`.
+- If every target is limited, the last backoff includes `all_limited_until` instead.
 
-Without this event, a turn crawling through 429s was indistinguishable from a dead one. A client
-watching for silence would cancel work that was making progress.
+Use these events to distinguish a turn waiting for a rate limit from one that has stopped
+responding. Waiting can still be expected progress; silence alone is not a reason to cancel it.
 
-`provider.alive` covers the throttle co:op can't see. A backoff is narrated when co:op's own
-ladder acts on a limit. A provider CLI that retries 429s inside itself never reaches the ladder.
-That turn streams frames while it makes no tool calls and produces no other events at all.
+`provider.alive` helps when the provider CLI retries internally. In that case, co:op's own
+model-selection logic never sees the rate limit, so it cannot emit a backoff event. The CLI may
+keep sending ACP frames without making tool calls or producing other activity events.
 
-The pulse says the transport is still moving. `frames` and `bytes` count every ACP frame read for
-that turn's prompt, cumulatively. A client re-reading its cursor tells new progress from a
-redelivered event by these numbers, not by the timestamp.
-`last_kind` names the latest frame: its JSON-RPC method, a session update's type after a colon,
-or `response`. It never carries frame content. A turn that pulses on one kind of frame, minute
-after minute, shows what the provider is still sending.
+This event confirms that the worker is still receiving data. `frames` and `bytes` count all
+ACP frames received for the current turn's prompt. Compare these cumulative counts, not the
+timestamp, to distinguish new activity from a repeated event.
 
-The pulse is emitted at most once a minute. It is never emitted in a window where the turn already
-narrated something. An ordinary turn produces none, and a long tool call is not described twice.
-A turn that produces no frames at all still produces no events. That is what a client's
-silent-turn deadline is for.
+`last_kind` identifies the latest frame as its JSON-RPC method, a session-update type after a
+colon, or `response`. It contains no frame content. Repeated events with the same kind tell you
+what the provider is still sending.
 
-A turn whose model sends nothing for 15 minutes after its tools answered fails with `acp_quiet`.
-Nothing counts as output but the model's own text, thoughts, plans and tool calls; pulses do not.
-A turn that has not finished a tool yet, or is waiting on a running one, is never quiet. The
-error detail says how long it was quiet and its provider's last frame kind. A caller may retry
-such a turn; it is not the work failing.
+co:op sends this event at most once per minute, and only when it has not already reported other
+activity in that interval. Normal activity and long tool calls do not get duplicate reports.
+If the provider sends no frames, there is no event. Your client still needs a timeout for turns
+that go completely silent.
 
-A turn whose ACP child closes before its response fails with `acp_process_error`. Its detail says
-how the child ended (exit status or signal) and what its stderr looked like: line and byte counts,
-a shape digest that groups identical exits (digits and hex runs are masked first), and the fixed
-classes of words it mentions, such as rate limit, authentication, network or crash. The stderr
-text itself never leaves Coop.
+A turn fails with `acp_quiet` if the model sends nothing for 15 minutes after its tools have
+answered. Only the model's text, thoughts, plans and tool calls count as output; liveness events
+do not. This timeout does not apply before the first tool finishes or while a tool is running.
+The error reports the silent duration and the provider's last frame kind. You may retry the turn;
+this error reports a silent model, not a failed project task.
+
+If the ACP process exits before returning an answer, the turn fails with `acp_process_error`.
+The detail includes its exit status or signal and a summary of stderr: line and byte counts, a
+digest for grouping similar failures, and fixed categories such as rate limit, authentication,
+network or crash. Digits and hexadecimal runs are masked before calculating the digest. The
+stderr text itself never leaves co:op.
 
 ### Budget
 
@@ -931,8 +999,9 @@ curl --unix-socket "$SOCKET" \
   http://localhost/v1/sessions/remote_.../budget
 ```
 
-An extension is bounded by co:op's global `max_turns` limit. You own authorization and spend
-policy, as the caller. co:op only enforces the numeric bound and idempotency.
+You can extend the turn budget only up to co:op's global `max_turns` limit. Your controller must
+decide who may authorize an extension and how much to spend. co:op enforces the numeric limit and
+prevents the same request from being applied twice.
 
 ### Changes
 
@@ -945,27 +1014,28 @@ curl --unix-socket "$SOCKET" \
 
 - the immutable `base_commit`, the current `fork_head` and `fork_tree`, and the current
   `parent_head`;
-- for a repository-backed session with a source binding, the immutable `admitted_source_tree`.
-  It lets you tell new content from empty commits or commit-and-revert history above the
-  admitted source, whichever kind it was;
-- committed, staged, unstaged, untracked and conflicted typed path records;
+- for a repository-backed session with a source binding, the fixed `admitted_source_tree`.
+  Compare it with the current tree to distinguish changed content from empty commits or changes
+  that were committed and later reverted;
+- paths classified as committed, staged, unstaged, untracked or conflicted;
 - ahead and behind counts, and base-to-head divergence counts;
-- a bounded binary patch page;
+- a page of the binary patch, subject to a size limit;
 - `patch_digest`, the exact `patch_bytes`, `patch_offset`, `patch_next_offset` and
   `patch_has_more`.
 
-To read another bounded page, call
+To fetch the next patch page, call
 `GET /v1/sessions/{session_id}/changes?patch_offset=<next>&patch_limit=<bytes>`. `patch_limit`
-can't exceed the session job's `max_patch_bytes`. Offsets are bounded to 1 GiB. You must bind
-navigation to `patch_digest`, and restart at offset zero if the digest changes. The legacy
-`truncated` field is true whenever the response is not the complete patch.
+cannot exceed the job's `max_patch_bytes`, and offsets cannot exceed 1 GiB. Check `patch_digest`
+as you page through the result. If it changes, start again at offset zero so you do not combine
+pages from different patches. The legacy `truncated` field is true whenever the response
+contains less than the complete patch.
 
-JSON encodes `patch`, `path_bytes` and `old_path_bytes` as base64. `patch_bytes` is a plain
-integer: the byte size of the whole patch. A normal UTF-8 path also appears in `path`. An
-arbitrary byte path is preserved in `path_bytes`. Empty change lists are never used to hide Git
-failures. A failure returns an error.
+The JSON response encodes `patch`, `path_bytes` and `old_path_bytes` as base64. `patch_bytes`
+is an integer giving the complete patch's size. A valid UTF-8 filename also appears in `path`;
+filenames containing arbitrary bytes are preserved in `path_bytes`. If Git fails, the endpoint
+returns an error, never an empty change list.
 
-Changes may inspect dirty work. Review may not.
+The changes endpoint can inspect uncommitted work. Review requires a clean, committed workspace.
 
 ### Network
 
@@ -976,42 +1046,43 @@ curl --unix-socket "$SOCKET" http://localhost/v1/sessions/remote_.../network/exp
 curl --unix-socket "$SOCKET" http://localhost/v1/sessions/remote_.../network/receipt
 ```
 
-All four are reads. None of them probes a gateway, and none can grant, approve or widen anything.
-The session API has no path to network authority at all.
+These four endpoints only read data. They do not probe a gateway or approve, grant or expand
+network access. The session API cannot grant network permissions.
 
 `GET /v1/sessions/{session_id}/network` returns:
 
 - the session's frozen `mode` and `fingerprint`;
 - the `requested` and `effective` rule texts;
 - `current`: the newest run's retained observation summary, or `{"status":"no run yet"}`;
-- a bounded `alerts` list.
+- an `alerts` list with a size limit.
 
-`GET /v1/sessions/{session_id}/network/receipt` aggregates every run the session owned
-into one versioned receipt, with independent `finality` and `completeness`. The receipt
-is `final` only once the session is closed and every run receipt is final. A `final`
-receipt may still be `partial`.
+`GET /v1/sessions/{session_id}/network/receipt` combines the records for all of the session's
+runs into one versioned report. It tracks `finality` separately from `completeness`. The report
+becomes `final` only after the session is closed and every run's record is final. A `final`
+report can still be `partial` if some evidence is missing.
 
-The receipts are retained in the owner's own registry, so both of these answers survive container
-garbage collection. A session that never ran filtered answers `{"available":false,"reason":"..."}`
-instead of an empty receipt.
+The worker saves these records in the owner's registry, so both endpoints keep working after
+container cleanup. A session that never used filtered networking returns
+`{"available":false,"reason":"..."}` rather than an empty record.
 
-`GET /v1/sessions/{session_id}/network/connections` returns live connection details for
-the newest run: bounded connection rows as the collector recorded them, with `status`
-(the same freshness word the summary uses), `as_of` and `detail_truncated`. Clients
-request live samples as needed, so per-second samples needn't enter a durable journal. A
-session with no run yet answers `{"status":"no run yet","connections":[]}`.
+`GET /v1/sessions/{session_id}/network/connections` returns the collector's live connection
+records for the newest run, subject to a row limit. The response includes `status` to describe
+freshness, using the same values as the summary, plus `as_of` and `detail_truncated`. Clients
+request samples when needed; the worker does not need to save a sample every second. Before the
+first run, the endpoint returns `{"status":"no run yet","connections":[]}`.
 
-`GET /v1/sessions/{session_id}/network/explanations/{event_id}` opens one retained refusal from
-this session's own runs. It returns the event, the reason, its provenance and whether a candidate
-rule was drafted. An event that aged out of its run's bounded ring answers
-`{"available":false,"reason": "event_not_retained"}`. That answer is not proof that the ID never
-existed.
+`GET /v1/sessions/{session_id}/network/explanations/{event_id}` returns one saved refusal from
+this session's runs. It includes the event, the reason, where the evidence came from and whether
+co:op drafted a proposed rule. Each run retains a limited number of events. If the requested
+event has aged out, the endpoint returns `{"available":false,"reason": "event_not_retained"}`.
+That response does not mean the event never existed.
 
-`projection` states the disclosure scope. It is `destinations-withheld` unless the session job set
-`egress.export_destinations: true`. In that case it is `destinations-included`, and the rule texts
-and observed names are present. The daemon owns that projection. The outbound worker forwards
-exactly what the daemon answered, through ordinary GET API requests. Each one is a plain GET of a
-route above, with no destination, rule or disclosure scope of its own to choose.
+`projection` states what the response discloses. It is `destinations-withheld` unless the
+session job set `egress.export_destinations: true`. With that setting, it is
+`destinations-included`, and the response includes rule texts and observed names.
+The daemon controls this disclosure. The connector makes ordinary GET requests to the endpoints
+above and forwards each answer unchanged. It cannot choose different destinations, rules or
+disclosure settings.
 
 | Method | Path | Body/query |
 | --- | --- | --- |
@@ -1026,23 +1097,22 @@ route above, with no destination, rule or disclosure scope of its own to choose.
 curl --unix-socket "$SOCKET" http://localhost/v1/sessions/remote_.../evidence
 ```
 
-This route returns one bounded, versioned account of a session, for a control plane's inspection
-page. It covers:
+This endpoint returns a versioned report for a controller's session-inspection page, with limits
+on how much data it includes. It covers:
 
-- the network posture the session was admitted under;
-- what its newest run was observed doing;
-- the session-wide receipt;
-- the host-approved task bound into its workspace, as the task folder currently stands.
+- the network settings approved for the session;
+- activity observed during its newest run;
+- the combined network record for all its runs;
+- the approved task assigned to its workspace, read from the current task folder.
 
-The route reads retained evidence without probing a gateway or starting a runtime, and
-cannot grant authority. It takes no query, so the caller can't select anything about the
-disclosure. The daemon checks the object against its own contract before it answers. An
-object that fails the check is never sent, and the route returns `500 internal_error`
-instead. The outbound worker forwards this route through an ordinary `api_request`
-command, verbatim.
+The endpoint reads saved evidence without probing a gateway or starting a runtime. It cannot
+grant additional access and accepts no query parameters, so callers cannot change what it
+discloses. The daemon checks the report against its format and disclosure rules before sending
+it. If the report fails that check, the endpoint returns `500 internal_error` instead. The
+connector forwards it unchanged through an `api_request` command.
 
-Every section states its own availability. A section that couldn't be read and a section with
-nothing in it lead an operator to opposite conclusions:
+Each section reports whether its data was available. This lets you distinguish a failed read
+from a successful read that found no activity:
 
 | Section | Status words |
 | --- | --- |
@@ -1052,35 +1122,37 @@ nothing in it lead an operator to opposite conclusions:
 | `task` | `bound`, `unbound`, `unavailable` |
 | `task.snapshot.state_note` | `captured`, `absent`, `withheld` |
 
-`unavailable` always carries a `reason`. The posture (`mode`, `fingerprint`) comes from the
-immutable session row. So a registry this host can't read leaves the posture known, and every
-section beside it explicitly unreadable. A filtered session that hasn't run yet reports `no_run`
-and a `provisional` receipt with `run_count` `0`. It never reports an empty counter.
+An `unavailable` section includes a `reason`. The network settings (`mode`, `fingerprint`)
+come from the saved session record and cannot change. If the host cannot read the network
+registry, those settings remain available while the affected sections report that they could not
+be read. Before its first run, a filtered session reports `no_run` and a `provisional` receipt
+with `run_count` `0`, rather than an empty activity counter.
 
-Counters are unsigned decimal strings, so a value above 2^53 survives a JavaScript client. A
-`null` counter is a metric nobody measured. It never means `0`.
+Counters are unsigned decimal strings so JavaScript clients can preserve values above 2^53
+without rounding them. A `null` counter means the metric was not measured, never that it was
+`0`.
 
-Response lists are bounded, with omitted entries counted in `omitted_denials`,
-`omitted_connections`, `omitted_alerts` and `omitted_run_references`. Even a run that
-denied a thousand names returns one bounded object that reports how many entries were
-omitted.
+Each response list has a size limit. The report counts omitted entries in `omitted_denials`,
+`omitted_connections`, `omitted_alerts` and `omitted_run_references`. If a run blocked a
+thousand names, the response stays within its limit and tells you how many entries it left out.
 
-The same `projection` rule as the network routes applies. A destination appears only under
-`destinations-included`. A refusal whose name was withheld says so with `destination_withheld`,
-instead of reporting no name at all.
+The report follows the network endpoints' `projection` setting. Destination names appear only
+with `destinations-included`. When a name is withheld, the refusal includes
+`destination_withheld`, so callers can distinguish a hidden name from a missing one.
 
-`task` carries the immutable binding from the session row, plus the task folder at capture:
+`task` includes the fixed task identity saved for the session and a snapshot of its folder at
+the time the report is captured:
 
 - its state;
-- the same `state_sha256` that a workspace checkpoint records for its task projection;
-- the checklist labels that the checkpoint's booleans stand for;
-- the file inventory, with digests;
+- the same `state_sha256` used for the task data in a workspace checkpoint;
+- the checklist labels corresponding to the checkpoint's completion flags;
+- a list of files and their digests;
 - the agent-written `state.md`.
 
-The note is bounded, and it is withheld whole when it scans as carrying a secret. The worker keeps
-no transition ledger, so this is a snapshot. A control plane records successive snapshots instead
-of asking the worker for a history it doesn't have. A bound task whose folder has gone missing
-reports `unavailable` with its identity intact. It never reports an empty task.
+The note has a size limit and is withheld in full if the scan flags a likely secret. The worker
+keeps the current snapshot, not a history of task transitions. If your controller needs that
+history, save successive snapshots. If a bound task's folder is missing, the report returns
+`unavailable` while preserving the task's identity. It does not return an empty task.
 
 | Method | Path | Body/query |
 | --- | --- | --- |
@@ -1096,73 +1168,79 @@ curl --unix-socket "$SOCKET" \
   http://localhost/v1/sessions/remote_.../review
 ```
 
-`commit_message` is optional: the reviewed commit's message, up to 4,096 bytes of text. Without
-it the commit says `Reviewed changes`. Either way co:op adds the `Coop-Review: <operation id>`
-trailer, and the message is part of the reviewed commit, so it is the one that gets published.
+Use the optional `commit_message` to set the reviewed commit's message, up to 4,096 bytes. If
+you omit it, co:op uses `Reviewed changes`. It also adds the `Coop-Review: <operation id>`
+trailer. The message is saved in the reviewed commit and stays the same when that commit is
+published.
 
-Review requires a parked open or exhausted session, with no queued turns and a clean, committed
-fork. It snapshots the exact source and parent commit and tree identities. It prepares a
-disposable candidate against the current parent `HEAD`. It runs the worker-owned gate on that
-candidate, and returns:
+To review a session, it must be parked and either open or exhausted, with no queued turns and a
+clean, committed fork. co:op records the exact source and parent commits and trees, then prepares
+a temporary candidate based on the current parent `HEAD`. It runs the saved job's check against
+that candidate and returns:
 
 - the creation base, source, parent and candidate commit and tree identities;
-- the immutable pull-request number, ref and head binding, when the session came from an
-  existing PR;
-- the rebase status and gate status, with the start failure's own words in `gate_error`;
-- `gate_output`: the gate's command, its `exit_code` when it ran to one, how many bytes of its
-  output co:op kept, and whether that is all of it (`complete`; otherwise `incomplete` says why,
-  or `lost` when nothing could be kept);
-- bounded policy findings;
-- a bounded inline patch preview from the parent tree to the candidate tree;
+- the saved PR number, ref and head, when the session came from an existing PR;
+- the rebase and check results, including the startup error text in `gate_error` if startup failed;
+- `gate_output`: the check command, its `exit_code` if it returned one, the number of saved
+  output bytes and whether all output was kept. `complete` confirms it was; `incomplete`
+  explains what is missing; `lost` means no output was kept;
+- policy findings, subject to a size limit;
+- a size-limited inline preview of the patch from the parent tree to the candidate tree;
 - `patch_truncated`, `candidate_retained`, `publishable` and stable not-publishable reason codes.
 
 The saved job's `check.argv` is the only remote review command. The worker's `COOP_GATE`, the
 parent's `gate:` and candidate changes can't replace it. The first two still apply to ordinary
 local fork merges.
 
-The gate runs in an isolated controller-job box, with the session's saved network mode (and the
-exact saved filtered-network authority). It doesn't use the repository's `box:` settings, or the
-worker's ambient runtime arguments, env file or MCP config. It receives the saved work environment
-plus check-only overrides, and the same per-container CPU, memory and PID limits as model work.
-Like the job's turns, it uses the worker-configured image (or the locked filtered client image).
-It never uses an image built from the job repository's Dockerfile.
+The check runs in an isolated container using the session's saved network mode and, for filtered
+runs, the exact saved network permissions. It ignores the repository's `box:` settings and the
+worker's runtime arguments, environment file and MCP configuration. It uses the saved work
+environment plus check-only overrides, with the same CPU, memory and process limits as model
+turns. It also uses the same worker-configured image, or locked filtered client image, as the
+turns. It never builds or uses an image from the job repository's Dockerfile.
 
-The gate may create ignored build output in its disposable checkout. Changing the reviewed source
-makes the result unpublishable. No gate, a red gate or a startup error also prevents publication.
+The check can create ignored build files in its temporary checkout. If it changes the reviewed
+source, the result cannot be published. Publication is also blocked when no check is configured,
+the check fails or cannot start.
 
-The preview is base64 in JSON. A truncated preview is a transport condition, and it doesn't by
-itself make the review unpublishable. co:op retains the exact candidate commit and its verified
-LFS objects in private host storage, independently of the model workspace. There is no full-patch
-transfer or patch-size publication limit. The candidate is one deterministic commit on the
-reviewed parent, created before the gate. `source_head` preserves the original model provenance.
+The JSON response encodes the patch preview as base64. A shortened preview does not prevent
+publication. co:op saves the exact candidate commit and verified LFS objects in private host
+storage, separate from the model's workspace, so publication does not depend on transferring the
+full patch or fitting it under a patch-size limit.
 
-Secret checks cover the actual parent-to-candidate delta, including large or binary Git blobs and
-LFS payloads. Changing LFS attributes also scans the resulting LFS payloads. A read failure
-refuses the review. Unreadable content is never treated as safe.
+For the same saved inputs, co:op creates the same single candidate commit on the reviewed parent,
+before running the check. `source_head` records the model's original commit before that candidate
+was prepared.
 
-`publishable` is evidence about this exact candidate. It is not permission to push or merge. It is
-false for:
+co:op scans the changes between the parent and candidate for secrets, including large files,
+binary Git objects and LFS files. If LFS attributes changed, it also scans the resulting LFS
+files. If any content cannot be read, review fails; unreadable content is not assumed safe.
+
+`publishable` tells you whether this exact candidate passed the requirements for publication.
+It does not grant permission to push or merge. It is false when there is:
 
 - a conflict;
-- no gate, or a failed gate;
+- no configured check, or a check that failed;
 - a startup failure;
-- policy findings;
-- parent or source movement;
-- active fork ownership;
-- an empty change.
+- findings from policy checks;
+- a changed parent or source;
+- a remaining fork-worker record, even if its process has exited;
+- no changes to publish.
 
-`candidate_retained` distinguishes custody from gate readiness. A missing or failed gate can still
-leave an exact snapshot, but that grants no publication authority. Publication must use the
-retained `candidate_head` unchanged, with a separate controller grant and a compare-and-swap on
-the destination ref. It must never reconstruct the result from a patch or from the model's later
-workspace. An explicit session discard removes its retained candidates. Controllers must keep
-sessions whose reviews still await publication.
+`candidate_retained` tells you whether co:op saved the exact candidate, independently of whether
+the check passed. A candidate can be saved even if the check is missing or fails. Saving it does
+not authorize publication.
 
-A review may outlive the connection that requested it. Look up the original operation key. Then
-retrieve a succeeded review with `GET /v1/sessions/{session_id}/reviews/{operation_id}`. It
-returns the same public `operation` and `review` envelope, without starting or resuming a gate.
-Another session, a non-review operation and an unfinished review are refused. Both
-`policy_findings` and `not_publishable_reasons` are arrays, including when empty.
+To publish, use the saved `candidate_head` unchanged, obtain a separate controller grant and
+update the destination ref only if it still matches the expected value. Never reconstruct the
+result from a patch or the model's later workspace. Discarding a session deletes its saved
+candidates, so keep sessions whose reviewed changes still need to be published.
+
+A review can continue after the requesting connection ends. Look up its original operation key.
+Once it succeeds, fetch `GET /v1/sessions/{session_id}/reviews/{operation_id}` to get the saved
+`operation` and `review` response. This does not start or resume the check. The endpoint refuses
+requests for another session, an operation that is not a review, or an unfinished review.
+`policy_findings` and `not_publishable_reasons` are always arrays, even when empty.
 
 #### Gate output
 
@@ -1176,14 +1254,15 @@ starting without a cursor:
 {"output":"1 test, 1 failure\n…","next_cursor":"1048576","bytes":1843200,"complete":true}
 ```
 
-A page holds at most 1 MiB of output and ends on a character boundary. Bytes that are not UTF-8
-read as U+FFFD. `next_cursor` is `null` on the last page. `bytes` counts everything kept.
-`complete: false` comes with `incomplete`, which says why. co:op keeps the first 64 MiB, so a gate
-that prints without end can't fill the worker's disk.
+Each page contains at most 1 MiB of output and ends at a character boundary. Invalid UTF-8 bytes
+appear as U+FFFD replacement characters. `next_cursor` is `null` on the last page. `bytes`
+reports the total amount of saved output. When `complete: false`, `incomplete` explains what
+is missing. co:op keeps at most the first 64 MiB, so a check that prints continuously cannot fill
+the disk with its output.
 
-When nothing was kept, the answer is `{"lost":"<why>"}`. That happens when no gate ran, the output
-couldn't be written, or the session was discarded. Only the review's own session reads its
-output, and discarding the session removes it.
+If no output was saved, the response is `{"lost":"<why>"}`. This can happen because no check
+ran, writing the output failed, or the session was discarded. Output can be read only through the
+session that owns the review. Discarding that session removes the output.
 
 ### Publish a reviewed candidate
 
@@ -1204,28 +1283,34 @@ output, and discarding the session removes it.
 }
 ```
 
-An empty `expected_head` requires a new branch. Updating a previously authorized PR requires its
-number and its exact expected head. The operation returns `202` while it runs. Reconcile its key,
-and read `GET /v1/sessions/{session_id}/publications/{operation_id}` for the completed
-`operation` and `publication` envelope. A retry uses the same key and an identical request.
+Leave `expected_head` empty to require a new branch. To update a previously authorized PR,
+provide its number and the exact commit you expect it to point to. The operation returns `202`
+while running. Use the operation key to check its state, then fetch
+`GET /v1/sessions/{session_id}/publications/{operation_id}` for the completed `operation` and
+`publication` response. Retry with the same key and identical request.
 
 The result is one of:
 
-- `published`, with the exact commit and tree and the PR receipt;
-- `conflict`, with a verified existing PR and the observed remote head;
+- `published`, with the exact commit, tree and PR result;
+- `conflict`, with the verified existing PR and its observed remote head;
 - `refused`, with a stable error code.
 
-The trusted host requests fresh credentials from the authenticated controller at
-`POST /v1/coop-workers/jobs/{job_ref}/publication-grants`. The request binds the session, job
-digest, review operation, original command key, repository identity and publication body. Your
-controller returns the same repository identity plus `token`, `expires_at` and its GitHub App
-`actor_id`. A `403` permanently refuses this operation. Temporary failures stay retryable. Your
-controller owns the approval rules. co:op requires no product-specific approval format.
+The worker requests fresh credentials from your authenticated controller at
+`POST /v1/coop-workers/jobs/{job_ref}/publication-grants`. The request identifies the session,
+job digest, review operation, original command key, repository and exact publication request.
+Your controller returns that same repository identity, a `token`, its `expires_at` time and
+the GitHub App's `actor_id`.
 
-Git and LFS bytes go directly from the private retained candidate to GitHub. co:op creates a
-draft, or updates the exact App-owned PR while preserving a person's ready-for-review choice. Lost
-push and PR responses are reconciled before retrying. An active publication prevents discard of
-its candidate. Model workspace changes can't alter the reviewed result.
+Your controller decides whether publication is approved; co:op does not require a product-specific
+approval format. A `403` permanently refuses this operation. Temporary failures can be retried.
+
+The worker sends Git and LFS data directly from the saved candidate to GitHub. It creates a
+draft PR or updates the exact existing PR owned by the App. If a person has already marked that
+PR ready for review, co:op preserves that choice.
+
+If a push or PR response is lost, co:op checks the remote result before retrying. A candidate
+cannot be discarded while publication is active. Later edits in the model workspace cannot change
+what gets published.
 
 ### Close and discard
 
@@ -1251,13 +1336,15 @@ curl --unix-socket "$SOCKET" \
   http://localhost/v1/sessions/remote_.../discard-plan
 ```
 
-The plan captures the exact session revision, the anchored fork generation and reservation, and
-the workspace inode, branch, head, status digest, running state, dirty state and unmerged state.
-The inode is one stale-plan signal. It is not authority by itself. Apply pins the live directory
-and rechecks the complete snapshot before deletion.
+The discard plan records the session revision, the specific fork instance and its reservation,
+and the workspace's inode, branch, head, status digest and running, dirty and unmerged states.
+The inode helps detect a replaced directory, but does not prove ownership on its own. Before
+deleting anything, co:op holds a reference to the live directory and checks that all recorded
+state still matches.
 
-By default, dirty or unmerged work is refused. A caller that has separate authority to destroy it
-must explicitly set `accept_dirty`, `accept_unmerged` or both when creating the plan.
+By default, co:op refuses to discard uncommitted or unmerged work. If your controller has separate
+permission to destroy that work, set `accept_dirty`, `accept_unmerged` or both when creating
+the plan.
 
 Execute that exact plan:
 
@@ -1269,15 +1356,16 @@ curl --unix-socket "$SOCKET" \
   http://localhost/v1/sessions/remote_.../discard
 ```
 
-Discard first proves that the plan belongs to the session in the path. It then compares all
-captured state, and refuses a stale, replaced or running workspace. It deletes the fork workspace
-and private ACP state, and leaves a durable tombstone for the discarded session. A failed
-comparison doesn't delete anything.
+Discard first checks that the plan belongs to the session named in the request path. It then
+compares the current workspace with every recorded detail in the plan. If the plan is stale, the
+workspace was replaced or work is running, nothing is deleted. Otherwise, co:op deletes the fork
+workspace and private ACP state, and saves a record that the session was discarded.
 
-The daemon quarantines some sessions at start: a historical row without an owner-store binding, a
-v1 reservation, or one whose generation record or workspace is gone. A quarantined session can be
-neither planned nor discarded this way, because co:op can't prove it owns the workspace. Retire
-the record instead:
+At startup, the daemon blocks sessions whose workspace ownership it cannot verify. This includes
+old session records without a store-owner binding, v1 reservations, and sessions whose fork record
+or workspace is missing. These sessions are quarantined: you cannot create or apply a discard
+plan for them because co:op cannot prove it owns the workspace. You can retire the session record
+instead:
 
 ```bash
 curl --unix-socket "$SOCKET" \
@@ -1287,23 +1375,24 @@ curl --unix-socket "$SOCKET" \
   http://localhost/v1/sessions/remote_.../discard
 ```
 
-This tombstones the session row only:
+This marks the session record as retired without deleting its workspace:
 
-- Queued turns are exhausted.
-- A turn that was active when the daemon lost authority stays in history as it was.
-- The workspace, reservation, sidecar services and provider-native ACP history stay on disk.
+- Queued turns are marked exhausted.
+- A turn that was active when the daemon lost ownership remains in history without changes.
+- The workspace, fork reservation, sidecar services and provider's ACP history are retained.
 
 A session that is not quarantined is refused with `invalid_session_state`.
 
-Retirement itself never proves that a runtime stopped. Independently, the daemon checks the exact
-`coop.run` labels derived from that store's session and turn IDs. It removes any matching boxes,
-and cleans projected credentials under its private ACP state. It retries after a failed or
-partial check, and advertises busy until the whole proof succeeds, including after a restart.
+Retiring a record does not show that its runtime has stopped. Separately, the daemon looks for
+boxes with the exact `coop.run` labels derived from the store's session and turn IDs. It removes
+matching boxes and temporary credential files in its private ACP state. If a check fails or
+finishes only partly, the daemon retries and reports busy until cleanup is fully verified. These
+checks continue after a restart.
 
-A successful runtime proof restores capacity. It doesn't adopt or delete the unowned workspace.
-Quarantined sessions remain unrunnable, and still require explicit retirement or recovery. If
-capacity stays busy, inspect the worker's runtime-cleanup warning. Don't treat a tombstone as
-proof.
+Once runtime cleanup is verified, the worker can report free capacity again. It does not take
+ownership of or delete the unowned workspace. Quarantined sessions still cannot run and need
+explicit retirement or recovery. If capacity remains busy, inspect the worker's runtime-cleanup
+warning; a retired session record is not proof that its runtime stopped.
 
 ## Errors
 
@@ -1319,82 +1408,87 @@ Every error has one shape:
 }
 ```
 
-`operation_id` is present when co:op admitted an operation before the failure. Internal details
-stay suppressed on the public API.
+The error includes `operation_id` when co:op accepted an operation before it failed. The public
+API leaves out private internal details.
 
-The daemon emits a bounded JSON diagnostic to stderr. It has the same operation ID, the method, the
-resource identity, the error code and a sanitized detail. Repository and state-root paths are
-replaced, and secret-bearing lines are removed. Use the ID to correlate the client error, the
-operation record and the supervisor log, without reading SQLite directly.
+The daemon also writes a JSON diagnostic to stderr, with a size limit. It includes the operation
+ID, method, resource identity, error code and a detail with sensitive information removed.
+Repository and state-directory paths are replaced, and lines containing secrets are removed.
+Use the operation ID to connect the client error, saved operation and supervisor log without
+opening SQLite directly.
 
 Common status mapping:
 
 | HTTP | Meaning |
 | --- | --- |
-| `400` | invalid or over-bounds request |
+| `400` | Invalid request, or a field exceeds its allowed limit |
 | `404` | session, turn, or operation not found |
 | `409` | idempotency, operation fence, revision, state, queue, budget, resume, uncertainty, or discard conflict |
 | `413` | ordinary request body exceeds 128 KiB, or turn submission exceeds 12 MiB |
 | `500` | internal failure; host paths and raw internal errors are suppressed |
-| `503` | readiness is not ready, or repository/runtime/network/storage authority is temporarily unavailable |
+| `503` | The worker is not ready, or it temporarily cannot verify or use the required repository, runtime, network or storage access |
 
-`storage_unavailable` is a retryable `503`. This worker's volume is under its configured pressure
-limits, so it won't create another workspace until space is returned. When
-`storage.refusal_reason` is `protected_storage_exceeds_budget`, it waits until the protected data
-itself goes. Read `/v1/storage` to see which bytes are held and why. Place the session on another
-worker, or clear the storage. Don't retry in a tight loop, and don't delete protected workspaces
-to satisfy the quota.
+`storage_unavailable` is a retryable `503`. The worker has reached its configured disk-space
+limits and will not create another workspace until space is freed. If `storage.refusal_reason`
+is `protected_storage_exceeds_budget`, the protected data itself must be reduced before new
+workspaces can be accepted. Read `/v1/storage` to see what is using space and why it is retained.
+Place the session on another worker or free storage through the appropriate cleanup process.
+Do not retry in a tight loop or delete protected workspaces just to meet the limit.
 
-`network_unavailable` is a `503`. The worker can't enforce or prove the session's frozen network
-authority. Inspect the worker's runtime and network readiness. The worker refuses execution rather
-than falling back to open networking. Don't alter a saved job to get past the refusal.
+`network_unavailable` is a `503`. The worker cannot enforce, or verify that it can enforce,
+the session's saved network permissions. Check its container runtime and network setup. The
+worker stops execution instead of falling back to open networking. Do not change a saved job to
+bypass the refusal.
 
-Treat `operation_uncertain` and `turn.interrupted` as reconciliation states. Never retry a
-mutation under a new key just because its result is unknown.
+For `operation_uncertain` or `turn.interrupted`, inspect the saved operation and resulting
+session state to find out what happened. An unknown result is not a reason to submit the same
+action with a new key: that could run it twice.
 
-`RunReview` is the narrow, read-only exception. After co:op captures the immutable source, parent
-and job identities, replaying the exact request under the same key resumes that frozen review
-under the same operation ID. It never recaptures moving repository state. Unreadable or invalid
-captured intent stays `operation_uncertain`.
+`RunReview` is a limited exception because it only reviews a fixed candidate. Once co:op has
+saved the exact source, parent and job, repeating the request with the same key resumes that
+review under its original operation ID. It does not reread a moving branch to choose a new
+candidate. If the saved instructions cannot be read or verified, the operation remains
+`operation_uncertain`.
 
 ## Operational recovery
 
 | Situation | Action |
 | --- | --- |
 | Client response lost | Replay the exact mutation with the same idempotency key |
-| Stop races a prepared create or submit | Fence the exact operation; close or cancel only if admission already won |
-| Socket reconnect | Resume event polling after the last committed sequence |
+| Permission is withdrawn while a prepared create or submit may be arriving | Fence the exact operation; if it was already accepted, close or cancel the resulting work |
+| Socket reconnect | Resume event polling after the last sequence your controller saved as processed |
 | Daemon already owns state | Stop or inspect that daemon; don't remove the lock |
-| Stale socket after crash | Start the daemon with the same state root; it removes only a socket after acquiring the state lock |
-| Queued turn at restart | co:op resumes it in FIFO order |
-| Running session create at restart | co:op resumes its durable create intent automatically |
-| Reserved operation at restart | co:op records an interrupted-admission failure; nothing external was attempted |
-| Running checkpoint restore at restart | Resume its retained body under the execution fence; never submit a fresh key |
-| Other running operation at restart | co:op marks it `operation_uncertain`; reconcile rather than replaying under a new key |
-| Operation remains running after startup | The periodic watchdog resumes safe creates and marks stale ambiguous mutations uncertain |
-| Turn interrupted after send intent | Surface interrupted; don't submit the same human input automatically |
-| Active turn must stop | Use the idempotent cancel endpoint, then reconcile the terminal turn |
-| Session should stop costing runtime | Wait for park; without warm execution, no agent or Compose service container remains between turns, and a warm session keeps them until its idle timeout expires or you close it |
-| Incident is over | Close; retain the fork for review or an explicit later discard |
+| Stale socket after crash | Start the daemon with the same state directory; it acquires the state lock before removing the stale socket |
+| Queued turn at restart | co:op resumes queued turns in the order received |
+| Running session create at restart | co:op resumes creation automatically from the saved request |
+| Reserved operation at restart | co:op records that the operation was interrupted before acceptance; it had not attempted any external action |
+| Running checkpoint restore at restart | Resume from the saved request body while model work remains blocked; never submit a new key |
+| Other running operation at restart | co:op marks it `operation_uncertain`; inspect what happened before deciding what to do. Do not resubmit it under a new key. |
+| Operation remains running after startup | The background watchdog resumes creates that are safe to retry and marks stale operations uncertain when their outcome cannot be established |
+| Turn interrupted after co:op recorded its intent to send it | Report that the turn was interrupted; do not submit the same user input automatically |
+| Active turn must stop | Cancel it with an idempotency key, then read the turn to confirm how it ended |
+| Session should stop using runtime resources | Wait until it is parked, then close it if it is warm. co:op removes containers after each non-warm turn, or when a warm session times out or closes. If cleanup fails, it retries in the background. A parked state alone does not prove cleanup finished. |
+| Incident is over | Close the session and keep its fork for review, or discard it explicitly later |
 | New co:op build for the worker | Stop the worker and run `coop sessions check` with the new build before you swap it in; see [Upgrading a worker](#upgrading-a-worker) |
-| Review patch preview is truncated | Use paged inspection; publish the retained reviewed candidate, never reconstruct it from the preview |
+| Review patch preview is truncated | This response has no further patch pages. Do not treat a shortened preview as a complete diff. Publication uses the saved reviewed candidate, never a patch rebuilt from the preview. |
 
-Back up the entire state root while the daemon is stopped. Restoring a database without its
-corresponding forks requires operator reconciliation. co:op doesn't infer ownership from names.
+Stop the daemon before backing up the entire state directory. If you restore a database without
+its matching forks, an operator must resolve the mismatch. co:op will not assign ownership based
+only on directory names.
 
 ## Consumer responsibilities
 
-A production consumer still needs:
+When building a production controller, you are responsible for:
 
-- its own identity and authorization policy;
-- durable inbound and outbound delivery, and deduplication;
-- stable, globally unique idempotency keys;
-- event cursors and reconciliation workers;
-- prompt framing and output redaction that suit its transport;
-- retention, audit, capacity and spend policy;
-- approval and short-lived repository credential grants for GitHub publication;
-- secret scanning before data leaves the host;
-- supervision and a kill switch.
+- deciding who can connect and which actions they may authorize;
+- reliably saving and delivering incoming and outgoing messages without processing duplicates;
+- assigning stable, globally unique idempotency keys;
+- saving event cursors and checking operations whose outcomes are uncertain;
+- preparing prompts and removing sensitive output before sending it through your chosen transport;
+- setting retention, audit, capacity and spending policies;
+- approving GitHub publication and supplying short-lived credentials for the authorized repository;
+- scanning for secrets before data leaves the host;
+- supervising the worker and providing a way to stop it.
 
-Don't send a chat transport token, GitHub credential, Emisar administrative credential or other
-landing authority into a co:op prompt or box.
+Never put chat-service tokens, GitHub credentials, Emisar administrative credentials or other
+credentials that authorize publication into a co:op prompt or box.

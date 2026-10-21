@@ -1,0 +1,1847 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/cli.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Coop CLI reference · co:op</title>
+  <meta name="description" content="Look up co:op commands and options, with examples of how to use them.">
+  <link rel="canonical" href="https://coop.dryga.com/cli.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/cli.html">
+  <meta property="og:title" content="Coop CLI reference">
+  <meta property="og:description" content="Look up co:op commands and options, with examples of how to use them.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=bf51eb611f">
+  <script src="assets/js/site.js?v=bf51eb611f" defer></script>
+  <script src="assets/js/analytics.js?v=bf51eb611f" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <h1>Coop CLI reference</h1>
+        <p class="guide-lead">Look up co:op commands and options, with examples of how to use them.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#coop-run-run-a-command-in-the-box">coop run: run a command in the box</a></li>
+<li><a href="#coop-shell-open-a-shell-in-the-box">coop shell: open a shell in the box</a></li>
+<li><a href="#coop-claude-run-claude-in-the-box">coop claude: run Claude in the box</a></li>
+<li><a href="#coop-codex-run-codex-in-the-box">coop codex: run Codex in the box</a></li>
+<li><a href="#coop-gemini-run-gemini-in-the-box">coop gemini: run Gemini in the box</a></li>
+<li><a href="#coop-grok-run-grok-in-the-box">coop grok: run Grok in the box</a></li>
+<li><a href="#coop-login-sign-in-to-an-agent">coop login: sign in to an agent</a></li>
+<li><a href="#coop-credentials-show-and-manage-your-agent-accounts">coop credentials: show and manage your agent accounts</a></li>
+<li><a href="#coop-credentials-agent-account-default-choose-the-default-account">coop credentials &lt;agent&gt; &lt;account&gt; default: choose the default account</a></li>
+<li><a href="#coop-credentials-agent-account-rm-remove-a-saved-account">coop credentials &lt;agent&gt; &lt;account&gt; rm: remove a saved account</a></li>
+<li><a href="#coop-credentials-agent-account-show-an-account">coop credentials &lt;agent&gt; &lt;account&gt;: show an account</a></li>
+<li><a href="#coop-models-list-models-available-to-each-agent">coop models: list models available to each agent</a></li>
+<li><a href="#coop-usage-show-limits-and-a-30-day-api-estimate">coop usage: show limits and a 30-day API estimate</a></li>
+<li><a href="#coop-presets-init-create-a-preset-you-can-edit">coop presets init: create a preset you can edit</a></li>
+<li><a href="#coop-presets-configure-multiple-models-and-providers-to-work-together">coop presets: configure multiple models and providers to work together</a></li>
+<li><a href="#coop-tasks-manage-work-in-agenttasks">coop tasks: manage work in .agent/tasks/</a></li>
+<li><a href="#coop-tasks-ls-list-tasks-and-their-progress">coop tasks ls: list tasks and their progress</a></li>
+<li><a href="#coop-tasks-add-create-a-task-for-you-or-an-agent">coop tasks add: create a task for you or an agent</a></li>
+<li><a href="#coop-tasks-claim-take-responsibility-for-a-task">coop tasks claim: take responsibility for a task</a></li>
+<li><a href="#coop-tasks-release-return-a-task-to-the-queue-for-another-agent">coop tasks release: return a task to the queue for another agent</a></li>
+<li><a href="#coop-tasks-lease-reserve-a-task-while-work-is-running">coop tasks lease: reserve a task while work is running</a></li>
+<li><a href="#coop-tasks-block-pause-a-task-that-needs-a-decision">coop tasks block: pause a task that needs a decision</a></li>
+<li><a href="#coop-tasks-unblock-record-a-decision-and-return-a-task-to-todo">coop tasks unblock: record a decision and return a task to todo</a></li>
+<li><a href="#coop-tasks-park-keep-a-blocked-task-in-the-backlog-for-later">coop tasks park: keep a blocked task in the backlog for later</a></li>
+<li><a href="#coop-tasks-done-move-completed-work-to-the-archive">coop tasks done: move completed work to the archive</a></li>
+<li><a href="#coop-tasks-path-print-a-tasks-folder-path">coop tasks path: print a task&#39;s folder path</a></li>
+<li><a href="#coop-tasks-queues-print-task-queue-paths">coop tasks queues: print task queue paths</a></li>
+<li><a href="#coop-tasks-decisions-show-questions-waiting-for-your-answer">coop tasks decisions: show questions waiting for your answer</a></li>
+<li><a href="#coop-tasks-lint-check-task-files-for-missing-or-inconsistent-information">coop tasks lint: check task files for missing or inconsistent information</a></li>
+<li><a href="#coop-tasks-rm-permanently-delete-task-folders">coop tasks rm: permanently delete task folders</a></li>
+<li><a href="#coop-tasks-watch-watch-task-progress">coop tasks watch: watch task progress</a></li>
+<li><a href="#coop-backlog-save-ideas-that-need-more-planning">coop backlog: save ideas that need more planning</a></li>
+<li><a href="#coop-backlog-ls-list-saved-ideas">coop backlog ls: list saved ideas</a></li>
+<li><a href="#coop-backlog-add-save-an-idea-for-later">coop backlog add: save an idea for later</a></li>
+<li><a href="#coop-backlog-promote-move-an-idea-to-the-task-queue">coop backlog promote: move an idea to the task queue</a></li>
+<li><a href="#coop-backlog-rm-permanently-delete-a-saved-idea">coop backlog rm: permanently delete a saved idea</a></li>
+<li><a href="#coop-context-show-the-instructions-relevant-to-your-work">coop context: show the instructions relevant to your work</a></li>
+<li><a href="#coop-loop-let-agents-work-through-your-task-queue">coop loop: let agents work through your task queue</a></li>
+<li><a href="#coop-eval-check-whether-a-model-preset-or-loop-change-helped">coop eval: check whether a model, preset or loop change helped</a></li>
+<li><a href="#coop-eval-run-preview-or-run-a-repeatable-evaluation">coop eval run: preview or run a repeatable evaluation</a></li>
+<li><a href="#coop-eval-runs-find-recorded-evaluation-results">coop eval runs: find recorded evaluation results</a></li>
+<li><a href="#coop-eval-inspect-understand-a-run-and-its-failures">coop eval inspect: understand a run and its failures</a></li>
+<li><a href="#coop-eval-compare-compare-before-and-after-without-another-paid-run">coop eval compare: compare before and after without another paid run</a></li>
+<li><a href="#coop-eval-ls-choose-a-shipped-starter-suite">coop eval ls: choose a shipped starter suite</a></li>
+<li><a href="#coop-eval-init-create-a-custom-suite-you-can-edit">coop eval init: create a custom suite you can edit</a></li>
+<li><a href="#coop-fork-let-an-agent-work-in-a-separate-copy-of-your-project">coop fork: let an agent work in a separate copy of your project</a></li>
+<li><a href="#coop-fork-name-acp-use-an-existing-fork-from-an-acp-editor">coop fork &lt;name&gt; acp: use an existing fork from an ACP editor</a></li>
+<li><a href="#coop-fork-ls-show-forks-and-their-progress">coop fork ls: show forks and their progress</a></li>
+<li><a href="#coop-fork-review-inspect-a-fork-before-merging">coop fork review: inspect a fork before merging</a></li>
+<li><a href="#coop-fork-merge-bring-a-forks-commits-into-your-current-branch">coop fork merge: bring a fork&#39;s commits into your current branch</a></li>
+<li><a href="#coop-fork-rm-delete-a-fork-and-its-local-work">coop fork rm: delete a fork and its local work</a></li>
+<li><a href="#coop-fork-stop-stop-a-forks-background-loop">coop fork stop: stop a fork&#39;s background loop</a></li>
+<li><a href="#coop-fork-logs-show-a-forks-loop-output">coop fork logs: show a fork&#39;s loop output</a></li>
+<li><a href="#coop-fork-path-print-a-forks-folder-path">coop fork path: print a fork&#39;s folder path</a></li>
+<li><a href="#coop-fork-open-open-a-fork-in-your-editor">coop fork open: open a fork in your editor</a></li>
+<li><a href="#coop-up-start-this-projects-services">coop up: start this project&#39;s services</a></li>
+<li><a href="#coop-down-stop-this-projects-services">coop down: stop this project&#39;s services</a></li>
+<li><a href="#coop-doctor-check-that-the-boxs-isolation-works">coop doctor: check that the box&#39;s isolation works</a></li>
+<li><a href="#coop-approve-review-and-approve-this-projects-requested-access">coop approve: review and approve this project&#39;s requested access</a></li>
+<li><a href="#coop-net-control-network-access-and-see-what-happened">coop net: control network access and see what happened</a></li>
+<li><a href="#coop-net-runs-show-recorded-network-runs">coop net runs: show recorded network runs</a></li>
+<li><a href="#coop-net-inspect-show-a-runs-connections-and-blocked-traffic">coop net inspect: show a run&#39;s connections and blocked traffic</a></li>
+<li><a href="#coop-net-check-check-whether-network-rules-allow-a-connection">coop net check: check whether network rules allow a connection</a></li>
+<li><a href="#coop-net-blocked-find-blocked-connections-and-how-to-allow-them">coop net blocked: find blocked connections and how to allow them</a></li>
+<li><a href="#coop-net-watch-follow-a-runs-network-activity">coop net watch: follow a run&#39;s network activity</a></li>
+<li><a href="#coop-net-export-export-a-runs-network-record">coop net export: export a run&#39;s network record</a></li>
+<li><a href="#coop-net-forget-withdraw-this-projects-network-approval">coop net forget: withdraw this project&#39;s network approval</a></li>
+<li><a href="#coop-net-setup-prepare-this-host-for-filtered-networking">coop net setup: prepare this host for filtered networking</a></li>
+<li><a href="#coop-net-recover-clean-up-interrupted-network-runs">coop net recover: clean up interrupted network runs</a></li>
+<li><a href="#coop-check-secrets-check-project-files-for-exposed-secrets">coop check-secrets: check project files for exposed secrets</a></li>
+<li><a href="#coop-sign-sign-this-branchs-unpushed-commits-with-your-host-key">coop sign: sign this branch&#39;s unpushed commits with your host key</a></li>
+<li><a href="#coop-init-set-up-coop-in-this-project">coop init: set up Coop in this project</a></li>
+<li><a href="#coop-build-build-the-coop-box-image">coop build: build the Coop box image</a></li>
+<li><a href="#coop-update-update-coop-and-rebuild-the-box-image">coop update: update Coop and rebuild the box image</a></li>
+<li><a href="#coop-version-print-the-installed-coop-version">coop version: print the installed Coop version</a></li>
+<li><a href="#coop-acp-connect-your-editor-to-an-agent-running-in-a-coop-box">coop acp: connect your editor to an agent running in a Coop box</a></li>
+<li><a href="#coop-sessions-let-other-applications-start-and-manage-agents">coop sessions: let other applications start and manage agents</a></li>
+<li><a href="#coop-sessions-doctor-check-the-local-session-service">coop sessions doctor: check the local session service</a></li>
+<li><a href="#coop-sessions-check-see-whether-this-build-can-use-the-session-data-as-it-is">coop sessions check: see whether this build can use the session data as it is</a></li>
+<li><a href="#coop-sessions-compact-back-up-session-data-and-reduce-its-disk-usage">coop sessions compact: back up session data and reduce its disk usage</a></li>
+<li><a href="#coop-sessions-connect-run-a-worker-for-a-remote-controller">coop sessions connect: run a worker for a remote controller</a></li>
+<li><a href="#coop-prompt-print-a-short-project-status-for-your-shell-or-tmux">coop prompt: print a short project status for your shell or tmux</a></li>
+<li><a href="#coop-completion-print-shell-integration-for-bash-or-zsh">coop completion: print shell integration for Bash or Zsh</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<!-- raw HTML omitted -->
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Overview code example" tabindex="0"><code>coop: run coding agents in an isolated box for your project.
+
+Usage: coop &lt;command&gt; [&lt;args&gt;...]
+
+THE BOX: an isolated environment for running commands in this project
+  coop run -- &lt;command&gt;             run a command in the box
+  coop shell                        open a shell in the box
+
+RUN AGENTS: work with a coding agent or a team of agents
+  coop &lt;claude|codex|gemini|grok&gt;   start Claude, Codex, Gemini, or Grok
+  coop &lt;preset&gt;                     run agents together using a preset
+  coop &lt;target&gt; --peer &lt;target&gt;...  start with read-only peer agents
+
+  A target names an agent, a preset, or a model: codex:gpt-6-astra/xhigh
+
+ACCOUNTS, MODELS &amp; PRESETS: choose the accounts and models your agents use
+  coop login &lt;agent&gt;                sign in to an agent
+  coop credentials [&lt;agent&gt;]        show your signed-in accounts
+  coop models [&lt;agent&gt;]             show available models
+  coop usage [&lt;provider&gt;]           show limits and a 30-day API estimate
+  coop presets [&lt;name&gt;]             show your presets
+
+TASKS: each task is a folder in .agent/tasks/
+  coop tasks ls                     show tasks grouped by status
+  coop tasks watch                  follow task progress
+  coop tasks add &#34;&lt;title&gt;&#34;          add a task
+  coop tasks decisions              show tasks waiting for your decision
+  coop backlog                      save ideas for later
+  coop context [&lt;path&gt;...]          show which instructions and docs apply to selected files
+
+LOOPS: work through tasks automatically; configure the steps in .agent/loop.yaml
+  coop loop [&lt;agent|preset&gt;]        work through the project&#39;s task queue
+
+EVALUATIONS: check whether a model, preset or loop change helped
+  coop eval                         run repeatable checks and compare results
+
+FORKS: work in separate project copies, then review and merge the changes
+  coop fork &lt;name&gt; &lt;agent|preset&gt;   work in a separate copy of this project
+  coop fork ls                      show this project&#39;s forks
+  coop fork review &lt;name&gt;           review a fork&#39;s changes
+  coop fork merge &lt;name&gt;            merge a fork&#39;s changes into this branch
+  coop fork merge --all             merge all forks into this branch
+  coop fork logs [&lt;name&gt;]           show loop logs for one or all forks
+  coop fork rm &lt;name&gt;               delete a fork
+  coop fork stop &lt;name&gt;             stop a fork&#39;s background loop
+  coop fork open &lt;name&gt;             open a fork in your editor
+  coop fork path &lt;name&gt;             print a fork&#39;s directory path
+
+SERVICES: databases and other services defined in .agent/compose.yml
+  coop init --services              choose services to add
+  coop up                           start services from .agent/compose.yml
+  coop down                         stop services from .agent/compose.yml
+
+SECURITY &amp; ISOLATION: control access, check isolation, and protect secrets
+  coop doctor                       check that the box&#39;s isolation works
+  coop approve                      review and approve requested project access
+  coop net                          show and manage this project&#39;s network access
+  coop check-secrets                check project files for exposed secrets
+  coop sign                         sign unpushed commits with your host key
+
+SETUP &amp; MAINTENANCE: set up projects and manage Coop on this machine
+  coop init                         set up Coop in this project
+  coop build                        rebuild the box
+  coop update                       update Coop and the box
+  coop version                      show the installed Coop version
+
+INTEGRATIONS: use Coop with other tools and your shell
+  coop help acp                     connect Coop to your editor
+  coop help sessions                let other applications start and manage agents
+  coop help prompt                  add Coop status to your shell prompt or tmux
+  coop help completion              enable tab completion in Bash or Zsh
+
+Help and examples: coop help &lt;command&gt;
+Documentation: https://coop.dryga.com</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-run-run-a-command-in-the-box"><h2>coop run: run a command in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop run: run a command in the box code example" tabindex="0"><code>Usage:
+  coop run [options] -- &lt;command&gt; [&lt;args&gt;...]
+
+EXAMPLES
+  coop run -- npm test
+  coop run -- curl https://example.com
+  coop run --egress none -- git status
+
+OPTIONS
+  --egress &lt;mode&gt;        choose filtered, open, or none
+  --allow-domain &lt;host&gt;  allow TLS access to this host on port 443
+                         repeat to allow more hosts
+  --egress-rules &lt;path&gt;  load network rules from a file
+
+  Put Coop options before --. Everything after it belongs to your command.
+
+NETWORK ACCESS
+  filtered  allow traffic permitted by approved network rules
+  open      allow unrestricted internet access
+  none      block internet access
+
+For more details see:
+  coop help net</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-shell-open-a-shell-in-the-box"><h2>coop shell: open a shell in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop shell: open a shell in the box code example" tabindex="0"><code>Usage:
+  coop shell [options]
+
+EXAMPLES
+  coop shell
+  coop shell --egress none
+
+OPTIONS
+  --egress &lt;mode&gt;        choose filtered, open, or none
+  --allow-domain &lt;host&gt;  allow TLS access to this host on port 443
+                         repeat to allow more hosts
+  --egress-rules &lt;path&gt;  load network rules from a file
+
+USING THE SHELL
+  The shell opens in your project inside the box.
+  Type exit or press Ctrl-D to return to your host.
+
+NETWORK ACCESS
+  filtered  allow traffic permitted by approved network rules
+  open      allow unrestricted internet access
+  none      block internet access
+
+For more details see:
+  coop help net</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-claude-run-claude-in-the-box"><h2>coop claude: run Claude in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop claude: run Claude in the box code example" tabindex="0"><code>Usage:
+  coop claude[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [options] [-- &lt;claude-args&gt;...]
+
+EXAMPLES
+  coop claude
+  coop claude:opus
+  coop claude:opus/high@work
+  coop claude -- --help
+
+OPTIONS
+  --peer &lt;target&gt;  start with a read-only peer agent; repeat to add more
+  --               pass all remaining arguments directly to Claude
+
+NETWORK OPTIONS
+  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
+  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+
+MODELS AND ACCOUNTS
+  coop models claude       list Claude models
+  coop credentials claude  list Claude accounts
+  coop login claude        sign in to Claude
+
+For a guide to using multiple models and providers together:
+  coop help presets</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-codex-run-codex-in-the-box"><h2>coop codex: run Codex in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop codex: run Codex in the box code example" tabindex="0"><code>Usage:
+  coop codex[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [options] [-- &lt;codex-args&gt;...]
+
+EXAMPLES
+  coop codex
+  coop codex:gpt-6-astra
+  coop codex:gpt-6-astra/high@work
+  coop codex -- --help
+
+OPTIONS
+  --peer &lt;target&gt;  start with a read-only peer agent; repeat to add more
+  --               pass all remaining arguments directly to Codex
+
+NETWORK OPTIONS
+  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
+  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+
+MODELS AND ACCOUNTS
+  coop models codex       list Codex models
+  coop credentials codex  list Codex accounts
+  coop login codex        sign in to Codex
+
+For a guide to using multiple models and providers together:
+  coop help presets</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-gemini-run-gemini-in-the-box"><h2>coop gemini: run Gemini in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop gemini: run Gemini in the box code example" tabindex="0"><code>Usage:
+  coop gemini[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [options] [-- &lt;gemini-args&gt;...]
+
+EXAMPLES
+  coop gemini
+  coop gemini:gemini-3.8-flash
+  coop gemini:gemini-3.8-flash/high@work
+  coop gemini -- --help
+
+OPTIONS
+  --peer &lt;target&gt;  start with a read-only peer agent; repeat to add more
+  --               pass all remaining arguments directly to Gemini
+
+NETWORK OPTIONS
+  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
+  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+
+MODELS AND ACCOUNTS
+  coop models gemini       list Gemini models
+  coop credentials gemini  list Gemini accounts
+  coop login gemini        sign in to Gemini
+
+For a guide to using multiple models and providers together:
+  coop help presets</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-grok-run-grok-in-the-box"><h2>coop grok: run Grok in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop grok: run Grok in the box code example" tabindex="0"><code>Usage:
+  coop grok[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [options] [-- &lt;grok-args&gt;...]
+
+EXAMPLES
+  coop grok
+  coop grok:grok-4.5
+  coop grok:grok-4.5/high@work
+  coop grok -- --help
+
+OPTIONS
+  --peer &lt;target&gt;  start with a read-only peer agent; repeat to add more
+  --               pass all remaining arguments directly to Grok
+
+NETWORK OPTIONS
+  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
+  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+
+MODELS AND ACCOUNTS
+  coop models grok       list Grok models
+  coop credentials grok  list Grok accounts
+  coop login grok        sign in to Grok
+
+For a guide to using multiple models and providers together:
+  coop help presets</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-login-sign-in-to-an-agent"><h2>coop login: sign in to an agent</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop login: sign in to an agent code example" tabindex="0"><code>Usage: coop login &lt;agent&gt;[@&lt;account&gt;]
+
+AGENTS
+  claude  codex  gemini  grok
+
+EXAMPLES
+  coop login claude
+  coop login codex@work
+
+ACCOUNTS
+  Without @account, signs in to the agent&#39;s default account.
+  Use a name such as @work to keep a separate login.
+
+  Show accounts: coop credentials
+  Start an agent: coop claude</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-credentials-show-and-manage-your-agent-accounts"><h2>coop credentials: show and manage your agent accounts</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop credentials: show and manage your agent accounts code example" tabindex="0"><code>Usage:
+  coop credentials                            show all accounts
+  coop credentials &lt;agent&gt;                    show one agent&#39;s accounts
+  coop credentials &lt;agent&gt; &lt;account&gt;          show an account
+  coop credentials &lt;agent&gt; &lt;account&gt; default  use it by default
+  coop credentials &lt;agent&gt; &lt;account&gt; rm       remove it
+
+USE AN ACCOUNT
+  coop claude@work
+  coop login claude@work
+
+  The default account is marked with *.
+  Account removal options: coop help credentials rm
+  Models and automatic rotation: coop help models</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-credentials-agent-account-default-choose-the-default-account"><h2>coop credentials &lt;agent&gt; &lt;account&gt; default: choose the default account</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop credentials &lt;agent&gt; &lt;account&gt; default: choose the default account code example" tabindex="0"><code>Usage: coop credentials &lt;agent&gt; &lt;account&gt; default
+
+  New runs try this account first. Add @account to use only one account.
+
+EXAMPLE
+  coop credentials codex work default
+
+  Accounts: coop credentials codex</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-credentials-agent-account-rm-remove-a-saved-account"><h2>coop credentials &lt;agent&gt; &lt;account&gt; rm: remove a saved account</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop credentials &lt;agent&gt; &lt;account&gt; rm: remove a saved account code example" tabindex="0"><code>Usage: coop credentials &lt;agent&gt; &lt;account&gt; rm [--yes]
+
+OPTIONS
+  -y, --yes  skip confirmation
+
+  Removes the saved login and its ordinary repository history.
+  Account-independent editor conversations are kept.
+  Choose another default before removing the current default account.
+
+EXAMPLE
+  coop credentials codex old-work rm</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-credentials-agent-account-show-an-account"><h2>coop credentials &lt;agent&gt; &lt;account&gt;: show an account</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop credentials &lt;agent&gt; &lt;account&gt;: show an account code example" tabindex="0"><code>Usage: coop credentials &lt;agent&gt; &lt;account&gt;
+
+EXAMPLE
+  coop credentials codex personal
+
+  Use by default: coop help credentials default
+  Remove account: coop help credentials rm</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-models-list-models-available-to-each-agent"><h2>coop models: list models available to each agent</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop models: list models available to each agent code example" tabindex="0"><code>Usage:
+  coop models [claude|codex|gemini|grok] [--refresh]
+
+LIST MODELS
+  coop models                   all agents
+  coop models claude            Claude only
+  coop models claude --refresh  refresh Claude models list now
+
+USE A MODEL
+  Put :model after the agent name. This works anywhere Coop accepts an agent.
+
+  coop claude:opus
+  coop loop claude:haiku
+  coop fork risky claude:opus --loop
+
+  You can use any model accepted by the agent, even if it is not listed.
+
+SET REASONING EFFORT
+  Add /effort after the model, or directly after the agent to use its default model.
+
+  coop codex:gpt-6-astra/high
+  coop codex/high
+
+  Claude, Codex, and Grok pass the level to their own CLI.
+  Gemini takes low or high as its thinking setting, on models Coop can map.
+  A thinking setting you pin on one model in your Gemini settings still wins.
+
+CHOOSE AN ACCOUNT
+  Add @account after the model.
+
+  coop claude:opus@work
+  coop credentials
+
+FULL SYNTAX
+  coop &lt;provider&gt;:&lt;model&gt;/&lt;effort&gt;@&lt;account&gt;
+  coop codex:gpt-6-astra/high@personal
+
+SET A DEFAULT MODEL
+  export COOP_CLAUDE_MODEL=opus
+
+AUTOMATIC ROTATION
+  Loops and presets can try models in order when one is rate-limited.
+  Leave off @account to let Coop also try another signed-in account.
+  Add @account when you want to use only that account.
+
+  coop loop claude:opus
+  coop loop claude:opus@work
+
+  For more details:
+    coop help presets
+    coop help loop</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-usage-show-limits-and-a-30-day-api-estimate"><h2>coop usage: show limits and a 30-day API estimate</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop usage: show limits and a 30-day API estimate code example" tabindex="0"><code>Usage: coop usage [&lt;provider&gt;[@credential]]
+
+EXAMPLES
+  coop usage
+  coop usage codex
+  coop usage codex@work
+
+  Limits come from the provider and cover the whole account. Dimmed reset times
+  show the time left and the date in UTC. Claude and Codex also show available
+  resets and reported expiry dates when the provider supplies them.
+  Checking usage never redeems a reset. Credits use provider units, not dollars.
+  Σ≈$.../30d is the 30-day API estimate, priced at standard API token rates,
+  including subscription activity. It reads local Coop account/editor history and
+  native CLI history on this computer, not web/mobile activity or other devices.
+  Native history uses the normal Claude, Codex, Gemini and Grok homes plus their
+  supported home overrides. Copied requests count once. A current login does not
+  identify an old request&#39;s account; unmatched records show as Unassigned local usage.
+  Parsed token records are cached in Coop&#39;s host configuration folder, under
+  usage-cache. The first check reads full history; later checks reuse unchanged
+  files. Changed files are read again. The cache contains no conversation text.
+  A finished check of every provider removes the records of deleted files.
+  Select provider@credential to see which history is included and how it is priced.
+  Editor history that cannot be matched to an account is listed separately.
+  Subtotals and Total sum the selected providers&#39; recorded estimates,
+  including shared editor history once. Incomplete coverage is marked partial;
+  missing or unpriced history is not treated as zero. Totals are not bills.
+  Saved Coop turn summaries are unpriced and excluded from native-history totals.
+
+  Coop&#39;s host-managed accounts use host-only credentials for limit checks,
+  without a model prompt.
+  Gemini logins still using their original credential store need Docker for this
+  check; the helper mounts that store. If an account is busy, wait for its run
+  to finish and try again.
+  API-key and Vertex accounts may have priced token history even when they
+  have no subscription limits to report.
+
+PROVIDER REPORTS
+  Optional API spend reports use ~/.config/coop/usage-reports.json (or the XDG
+  config home). Nothing is read from provider billing APIs unless you configure
+  a source. Keep reporting keys in host environment variables, not in this file,
+  project files or agents/env. Reports are never added to local estimates.
+
+  Example usage-reports.json:
+  {
+    &#34;reports&#34;: [
+      {&#34;provider&#34;: &#34;codex&#34;, &#34;name&#34;: &#34;work&#34;, &#34;organization&#34;: &#34;org-example&#34;,
+       &#34;key_env&#34;: &#34;COOP_REPORT_OPENAI_KEY&#34;},
+      {&#34;provider&#34;: &#34;claude&#34;, &#34;name&#34;: &#34;work&#34;, &#34;key_env&#34;: &#34;COOP_REPORT_CLAUDE_KEY&#34;}
+    ]
+  }
+
+  codex needs an OpenAI organization Admin API key; organization selects its scope.
+  claude needs an Anthropic organization Admin API key; Priority Tier is excluded.
+  grok needs a separate xAI Management API key and a team field with its team ID.
+  Each provider supports one source. name labels the source; it is not a saved login.
+  Reports cover 30 completed UTC days and show the dates, scope and check time.
+  Providers may report late or revise amounts. Unsupported currencies, denied access,
+  malformed or truncated reports show unavailable, not zero. Incomplete scope is partial.
+  Provider selection filters reports; provider@credential never requests an org report.
+  Personal subscription activity is not covered by these API billing sources.
+
+  Gemini reports use a Google standard billing export, not a Gemini CLI login.
+  Configure provider gemini, name, project, billing_table (project.dataset.table),
+  sku_ids (only Gemini/Vertex API SKU IDs), location, gcloud_account (email), and
+  maximum_bytes_billed (1 to 1073741824). Host gcloud must be signed in to that
+  account, with query and export-read permissions. The fixed query reads only the
+  selected project/SKUs, includes credits and accepts USD billing only. It can incur
+  BigQuery charges up to your byte limit. Export gaps and unlisted SKUs stay partial;
+  no matching rows means unknown coverage, not zero spend.
+  Setup and examples: https://github.com/AndrewDryga/coop/blob/main/docs/usage-reports.md
+
+EXIT STATUS
+  0  at least one usable history, quota or configured report; failures stay visible
+  1  no usable history, quota or configured report
+  2  invalid selector or arguments
+
+  Credentials: coop credentials</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-presets-init-create-a-preset-you-can-edit"><h2>coop presets init: create a preset you can edit</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop presets init: create a preset you can edit code example" tabindex="0"><code>Usage: coop presets init [&lt;name&gt;]
+
+  Creates the frontier template in .agent/presets/.
+  The default name is frontier. Existing presets are left unchanged.
+
+EXAMPLES
+  coop presets init
+  coop presets init review
+
+  Learn how presets work: coop help presets</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-presets-configure-multiple-models-and-providers-to-work-together"><h2>coop presets: configure multiple models and providers to work together</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop presets: configure multiple models and providers to work together code example" tabindex="0"><code>Usage:
+  coop presets                list presets
+  coop presets &lt;name&gt;         show a preset
+  coop presets init [&lt;name&gt;]  create a preset (default: frontier)
+  coop help &lt;name&gt;            explain a preset
+
+CREATE A PRESET
+  coop presets init
+  coop presets init review
+
+RUN A PRESET
+  coop frontier               start an interactive session with the lead agent
+  coop loop frontier          work through tasks with this preset
+  coop acp frontier           use this preset in your editor
+  coop fork risky frontier --loop
+
+HOW TO DEFINE A PRESET
+
+  A preset is a YAML file that defines:
+  - One lead agent.
+  - Optional roles for focused work.
+  - Optional prompt extensions.
+
+  When you run a preset, Coop starts the lead and tells it which roles are
+  available and when to use them. Each role runs with its configured agent,
+  model, mode, and prompt. The lead combines their work into the final result.
+
+  Syntax:
+
+    agent:   presets use Coop&#39;s standard model, effort, account, and
+             automatic-rotation syntax. For details, see:
+               coop help models
+
+    mode:    controls how a role works
+               native    runs inside the lead agent&#39;s session
+               consult   provides read-only advice from another agent
+               delegate  edits files for the lead; never commits; runs one at a time
+
+    when:    tells the lead when to use a role
+
+    prompt:  adds custom instructions to Coop&#39;s generated instructions for the
+             lead or role
+
+    A native role runs in the lead&#39;s own session, so every lead in the preset
+    must use that role&#39;s provider. Otherwise Coop stops before it starts and
+    names the role to change.
+
+  Where presets live:
+    Project  .agent/presets/&lt;name&gt;/preset.yaml
+    Global   ~/.config/coop/presets/&lt;name&gt;/preset.yaml
+
+  A project preset overrides a global preset with the same name.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-manage-work-in-agenttasks"><h2>coop tasks: manage work in .agent/tasks/</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks: manage work in .agent/tasks/ code example" tabindex="0"><code>Usage: coop tasks [--tasks &lt;path&gt;]... [&lt;command&gt;]
+
+WORK
+  ls             list tasks (also the default)
+  add &#34;&lt;title&gt;&#34;  create a task
+  claim &lt;id&gt;     start working on a task
+  release &lt;id&gt;   return a task to todo with its handoff notes
+  block &lt;id&gt;     ask for a decision before continuing
+  unblock &lt;id&gt; [&#34;&lt;answer&gt;&#34;] record a decision and return the task to todo
+  park &lt;id&gt; [&#34;&lt;reason&gt;&#34;]   keep a blocked task in the backlog for later
+  done &lt;id&gt;                move completed work to the archive
+
+REVIEW
+  watch           watch task progress
+  decisions [-i]  show questions waiting for your answer
+  lint            check task files for missing or inconsistent information
+
+MANAGE
+  lease &lt;id&gt;  reserve a task while an agent works outside a loop
+  path &lt;id&gt;   print a task&#39;s folder path
+  queues      print the configured queue paths
+  rm &lt;id&gt;     delete a task
+
+TASK STATES
+  todo         ready for an agent
+  in progress  being worked on
+  blocked      waiting for a decision
+  done         completed and archived
+
+GET STARTED
+  coop tasks add &#34;Fix login retries&#34;
+  coop loop claude
+
+  A task folder holds its instructions, progress and decisions.
+  Most commands accept a full task ID or a unique part of it.
+
+FOR AI AGENTS
+  Create a task with its instructions and checklist:
+
+  coop tasks add &#34;Fix login retries&#34; \
+    --context &#34;An expired session retries forever.&#34; \
+    --acceptance &#34;An expired session returns to sign-in.&#34; \
+    --approach &#34;Stop retrying after an authentication failure.&#34; \
+    --subtask &#34;Test an expired session.&#34;
+
+  Block a task with a complete decision request:
+
+  coop tasks block choose-storage \
+    --question &#34;Where should uploads be stored?&#34; \
+    --why &#34;Uploads outgrew one disk, and moving them later means a migration.&#34; \
+    --option &#34;A — Local disk: simplest, tied to one machine.&#34; \
+    --option &#34;B — Object storage: shared across machines.&#34; \
+    --recommendation &#34;B — production runs on more than one machine.&#34;
+
+  Get its folder without parsing a listing: coop tasks path &lt;id&gt;
+  Before releasing a task, update its state.md with a complete handoff.
+
+PROJECTS
+  Coop includes queues listed in .agent/project.yaml.
+  Use --tasks &lt;path&gt; to select a queue; repeat it to include several.
+  When adding a task to a project with subprojects, choose --project &lt;name&gt;.
+
+  Command options: coop help tasks &lt;command&gt;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-ls-list-tasks-and-their-progress"><h2>coop tasks ls: list tasks and their progress</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks ls: list tasks and their progress code example" tabindex="0"><code>Usage: coop tasks ls [--tasks &lt;path&gt;]... [&lt;options&gt;]
+
+OPTIONS
+  --todo         show tasks ready to start
+  --in-progress  show tasks being worked on
+  --blocked      show tasks waiting for a decision
+  --done         show completed tasks
+  --all          show the full completed archive
+
+  Combine state options to show more than one state.
+  By default, completed tasks are limited to the five most recent.
+
+EXAMPLES
+  coop tasks ls --in-progress --blocked
+  coop tasks ls --done --all
+  coop tasks ls --tasks web/.agent/tasks</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-add-create-a-task-for-you-or-an-agent"><h2>coop tasks add: create a task for you or an agent</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks add: create a task for you or an agent code example" tabindex="0"><code>Usage: coop tasks add &#34;&lt;title&gt;&#34; [&lt;options&gt;]
+
+OPTIONS
+  --project &lt;name&gt;     choose a subproject, or root
+  --tasks &lt;path&gt;       choose one task queue
+  --context &lt;text&gt;     explain the problem and why it matters
+  --acceptance &lt;text&gt;  describe what must be true when finished
+  --approach &lt;text&gt;    describe how to tackle the work
+  --subtask &lt;text&gt;     add a checklist item; repeat for more items
+
+  New tasks use the task.md Template in the selected queue&#39;s README.md,
+  including its checklist. Each subproject uses its own README.md.
+  --subtask replaces the &lt;…&gt; step placeholder and keeps the default checklist items.
+  Without the text options, Coop creates a template for you to fill in.
+  If you use any text option, include --context, --acceptance and --approach.
+  Repeat a text option to add another paragraph.
+
+EXAMPLES
+  coop tasks add &#34;Fix login retries&#34;
+  coop tasks add --project web &#34;Fix login retries&#34;
+  coop tasks add &#34;Fix login retries&#34; \
+    --context &#34;An expired session retries forever.&#34; \
+    --acceptance &#34;An expired session returns to sign-in.&#34; \
+    --approach &#34;Stop retrying after an authentication failure.&#34; \
+    --subtask &#34;Test an expired session.&#34;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-claim-take-responsibility-for-a-task"><h2>coop tasks claim: take responsibility for a task</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks claim: take responsibility for a task code example" tabindex="0"><code>Usage: coop tasks claim &lt;id&gt; [--tasks &lt;path&gt;]... [&lt;options&gt;]
+
+OPTIONS
+  --as &lt;label&gt;  name the person or agent working on it
+  --pid &lt;n&gt;     bind the claim to an existing process
+  --force       take over a claim held by another live process
+
+  Moves a todo task to in progress. An agent&#39;s claim normally follows its
+  process; a claim made at a terminal stays until you release or finish it.
+
+EXAMPLES
+  coop tasks claim login-retries
+  coop tasks claim login-retries --as codex --pid 812
+
+  Hand it back: coop tasks release &lt;id&gt;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-release-return-a-task-to-the-queue-for-another-agent"><h2>coop tasks release: return a task to the queue for another agent</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks release: return a task to the queue for another agent code example" tabindex="0"><code>Usage: coop tasks release &lt;id&gt; [--tasks &lt;path&gt;]...
+
+Before releasing, update state.md with the work completed, checks run, and
+the next steps. Include anything another agent needs to continue where you left off.
+
+Returns the task to todo and removes your claim. Progress and handoff notes are kept.
+A task being worked on by another process or assigned to a fork cannot be released.
+
+EXAMPLE
+  coop tasks release login-retries</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-lease-reserve-a-task-while-work-is-running"><h2>coop tasks lease: reserve a task while work is running</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks lease: reserve a task while work is running code example" tabindex="0"><code>Usage: coop tasks lease &lt;id&gt; [--tasks &lt;path&gt;]... [&lt;options&gt;] [-- &lt;command&gt;...]
+
+OPTIONS
+  --as &lt;label&gt;  name the working agent
+  --pid &lt;n&gt;     hold the reservation while this process is alive
+  --            run a command and release the reservation when it exits
+
+  Claim the task first. Other loops skip it while this reservation is held.
+  Without a command, Coop follows your agent&#39;s process or the task&#39;s claimant.
+  Without a process to follow, it waits until the task moves or you press Ctrl-C.
+
+EXAMPLES
+  coop tasks lease login-retries -- make check
+  coop tasks lease login-retries --as codex --pid 812</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-block-pause-a-task-that-needs-a-decision"><h2>coop tasks block: pause a task that needs a decision</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks block: pause a task that needs a decision code example" tabindex="0"><code>Usage: coop tasks block &lt;id&gt; [--tasks &lt;path&gt;]... [options]
+
+OPTIONS
+  --question &lt;text&gt;        ask the question that needs an answer, on one line
+  --why &lt;text&gt;             say what happened and why the task cannot go on
+  --option &lt;text&gt;          describe a choice and its tradeoff; repeat for more choices
+  --recommendation &lt;text&gt;  recommend a choice and explain why
+
+Without these options, creates decision.md for you to fill in.
+If you use any of them, include a question, why, at least one option, and a recommendation.
+Existing answers and decision notes are never overwritten.
+
+FOR AI AGENTS
+  coop tasks block choose-storage \
+    --question &#34;Where should uploads be stored?&#34; \
+    --why &#34;Uploads outgrew one disk, and moving them later means a migration.&#34; \
+    --option &#34;A — Local disk: simplest, tied to one machine.&#34; \
+    --option &#34;B — Object storage: shared across machines.&#34; \
+    --recommendation &#34;B — production runs on more than one machine.&#34;
+
+ANSWER A QUESTION
+  coop tasks unblock choose-storage &#34;Use object storage.&#34;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-unblock-record-a-decision-and-return-a-task-to-todo"><h2>coop tasks unblock: record a decision and return a task to todo</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks unblock: record a decision and return a task to todo code example" tabindex="0"><code>Usage: coop tasks unblock &lt;id&gt; [&#34;&lt;answer&gt;&#34;] [--tasks &lt;path&gt;]...
+
+  Provide your answer here, or fill in Resolution in decision.md first.
+  Coop keeps the decision with the task so the next agent can continue.
+
+EXAMPLE
+  coop tasks unblock login-retries &#34;Return to sign-in after the first failure.&#34;
+
+  Questions waiting for you: coop tasks decisions -i</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-park-keep-a-blocked-task-in-the-backlog-for-later"><h2>coop tasks park: keep a blocked task in the backlog for later</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks park: keep a blocked task in the backlog for later code example" tabindex="0"><code>Usage: coop tasks park &lt;id&gt; [&#34;&lt;reason&gt;&#34;] [--tasks &lt;path&gt;]...
+
+  Answers a decision with &#34;not now&#34;. The task moves to the backlog with its
+  folder, log and decision, so nothing returns it to todo on its own.
+  Your reason is saved in the task&#39;s log.
+  coop backlog promote brings it back, blocked while its decision is open.
+
+EXAMPLE
+  coop tasks park choose-storage &#34;Not this quarter.&#34;
+
+  Questions waiting for you: coop tasks decisions -i</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-done-move-completed-work-to-the-archive"><h2>coop tasks done: move completed work to the archive</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks done: move completed work to the archive code example" tabindex="0"><code>Usage: coop tasks done &lt;id&gt; [--tasks &lt;path&gt;]...
+
+  Finish the checks and commit the task&#39;s work first.
+  The task must have at least one checklist item, with every item checked.
+  Leave required checks open if they failed, could not run, or have not run.
+  Coop moves the task to done and removes its temporary files.
+  The task&#39;s instructions, progress and saved evidence stay in the archive.
+
+EXAMPLE
+  coop tasks done login-retries</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-path-print-a-tasks-folder-path"><h2>coop tasks path: print a task&#39;s folder path</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks path: print a task&#39;s folder path code example" tabindex="0"><code>Usage: coop tasks path &lt;id&gt; [--tasks &lt;path&gt;]...
+
+EXAMPLE
+  coop tasks path login-retries</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-queues-print-task-queue-paths"><h2>coop tasks queues: print task queue paths</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks queues: print task queue paths code example" tabindex="0"><code>Usage: coop tasks queues [--tasks &lt;path&gt;]...
+
+  Prints one absolute path per line. By default, includes the project&#39;s queues.
+
+EXAMPLE
+  coop tasks queues</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-decisions-show-questions-waiting-for-your-answer"><h2>coop tasks decisions: show questions waiting for your answer</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks decisions: show questions waiting for your answer code example" tabindex="0"><code>Usage: coop tasks decisions [--tasks &lt;path&gt;]... [-i]
+
+OPTIONS
+  -i, --interactive  read and answer each question interactively
+
+EXAMPLES
+  coop tasks decisions
+  coop tasks decisions -i
+  coop tasks unblock login-retries &#34;Return to sign-in after the first failure.&#34;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-lint-check-task-files-for-missing-or-inconsistent-information"><h2>coop tasks lint: check task files for missing or inconsistent information</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks lint: check task files for missing or inconsistent information code example" tabindex="0"><code>Usage: coop tasks lint [--tasks &lt;path&gt;]...
+
+  Checks the task folders, required sections and decision state.
+  Returns a nonzero exit status when it finds a problem.
+
+EXAMPLE
+  coop tasks lint</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-rm-permanently-delete-task-folders"><h2>coop tasks rm: permanently delete task folders</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks rm: permanently delete task folders code example" tabindex="0"><code>Usage: coop tasks rm &lt;id&gt; [--tasks &lt;path&gt;]... [--yes]
+       coop tasks rm --all-done [--tasks &lt;path&gt;]... [--yes]
+
+OPTIONS
+  --all-done  delete every completed task in the selected queues
+  -y, --yes   skip confirmation
+
+  Deletes task instructions, progress and saved evidence. Git commits remain.
+  To archive finished work, use coop tasks done instead.
+
+EXAMPLES
+  coop tasks rm abandoned-task
+  coop tasks rm --all-done</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-watch-watch-task-progress"><h2>coop tasks watch: watch task progress</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks watch: watch task progress code example" tabindex="0"><code>Usage: coop tasks watch [--tasks &lt;path&gt;]... [--json]
+
+OPTIONS
+  --json  print one snapshot for scripts
+
+  Shows task progress and any problems that need attention.
+  The live view closes when the queue is done and its activity has stopped.
+  Press Ctrl-C to leave the view. In a pipe, Coop prints one static snapshot.
+
+EXAMPLES
+  coop tasks watch
+  coop tasks watch --tasks web/.agent/tasks</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-backlog-save-ideas-that-need-more-planning"><h2>coop backlog: save ideas that need more planning</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop backlog: save ideas that need more planning code example" tabindex="0"><code>Usage: coop backlog [--tasks &lt;path&gt;]... [&lt;command&gt;]
+
+COMMANDS
+  ls             list ideas (also the default)
+  add &#34;&lt;title&gt;&#34;  save an idea
+  promote &lt;id&gt;   move an idea to the task queue
+  rm &lt;id&gt;        delete an idea
+
+  Backlog items live in .agent/tasks/xx_backlog/.
+  Agents leave them alone until you promote them.
+  Put work that is ready to start directly in coop tasks.
+
+EXAMPLES
+  coop backlog add &#34;Redesign account permissions&#34;
+  coop backlog promote account-permissions
+
+  Command options: coop help backlog &lt;command&gt;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-backlog-ls-list-saved-ideas"><h2>coop backlog ls: list saved ideas</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop backlog ls: list saved ideas code example" tabindex="0"><code>Usage: coop backlog ls [--tasks &lt;path&gt;]...
+
+  By default, includes every configured project queue.
+  Repeat --tasks to select several queues.
+
+EXAMPLE
+  coop backlog ls --tasks web/.agent/tasks</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-backlog-add-save-an-idea-for-later"><h2>coop backlog add: save an idea for later</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop backlog add: save an idea for later code example" tabindex="0"><code>Usage: coop backlog add &#34;&lt;title&gt;&#34; [&lt;options&gt;]
+
+OPTIONS
+  --tasks &lt;path&gt;       choose one task queue
+  --context &lt;text&gt;     explain the problem and why it matters
+  --acceptance &lt;text&gt;  describe the intended result
+  --approach &lt;text&gt;    describe a possible approach
+  --subtask &lt;text&gt;     add a checklist item; repeat for more items
+
+  Without the text options, Coop creates a template for you to fill in.
+  If you use any text option, include --context, --acceptance and --approach.
+  Repeat a text option to add another paragraph.
+
+EXAMPLES
+  coop backlog add &#34;Redesign account permissions&#34;
+  coop backlog add &#34;Redesign account permissions&#34; --tasks web/.agent/tasks
+
+Ready to start: coop backlog promote &lt;id&gt;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-backlog-promote-move-an-idea-to-the-task-queue"><h2>coop backlog promote: move an idea to the task queue</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop backlog promote: move an idea to the task queue code example" tabindex="0"><code>Usage: coop backlog promote &lt;id&gt; [--tasks &lt;path&gt;]...
+
+  Fill in its problem, completion criteria and approach before promoting it.
+  The task becomes todo, where an agent or loop can pick it up.
+  A parked task with an open decision comes back blocked, with its question.
+
+EXAMPLE
+  coop backlog promote account-permissions</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-backlog-rm-permanently-delete-a-saved-idea"><h2>coop backlog rm: permanently delete a saved idea</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop backlog rm: permanently delete a saved idea code example" tabindex="0"><code>Usage: coop backlog rm &lt;id&gt; [--tasks &lt;path&gt;]... [--yes]
+
+OPTIONS
+  -y, --yes  skip confirmation
+
+  Deletes the idea&#39;s folder, including its notes and saved files.
+
+EXAMPLE
+  coop backlog rm account-permissions</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-context-show-the-instructions-relevant-to-your-work"><h2>coop context: show the instructions relevant to your work</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop context: show the instructions relevant to your work code example" tabindex="0"><code>Usage: coop context [&lt;path&gt;...] [&lt;options&gt;]
+
+OPTIONS
+  --changed       use files changed in Git
+  --task &lt;id&gt;     use paths listed in a task&#39;s frontmatter
+  --tasks &lt;path&gt;  choose a queue for --task; repeat for more queues
+  --rendered      print the selected files&#39; contents
+  --json          print the selection for scripts
+
+  Coop includes shared agent instructions and any matching context routes.
+  Use paths relative to the repository. Inside a subproject, its path is included.
+  You can combine explicit paths, --changed and --task.
+  Choose either --rendered or --json for the output format.
+
+EXAMPLES
+  coop context internal/cli/help.go
+  coop context --changed
+  coop context --task login-retries --rendered
+
+CONFIGURE ROUTES: .agent/project.yaml
+  context:
+    routes:
+      - paths: [&#34;web/**&#34;]
+        include: [.agent/kb/web.md]
+
+  This includes .agent/kb/web.md when the selected work is under web/.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-loop-let-agents-work-through-your-task-queue"><h2>coop loop: let agents work through your task queue</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop loop: let agents work through your task queue code example" tabindex="0"><code>Usage: coop loop [&lt;target|preset&gt;] [&lt;options&gt;]
+
+HOW IT WORKS
+  A fresh agent works on each task, then a final review checks the completed work.
+  The review can reopen tasks. Coop continues until the work passes review or
+  needs your decision.
+
+EXAMPLES
+  coop loop claude
+  coop loop frontier
+  coop loop codex --max-tasks 1
+
+OPTIONS
+  --tasks &lt;path&gt;         choose a task queue; repeat for more queues
+  --peer &lt;target&gt;        start with read-only peer agents; repeat for more peers
+  --review-task &lt;id&gt;     add a completed task with a valid completion record
+                         to the final review; repeat to add more
+  --max-tasks &lt;n&gt;        pause after N tasks finish or become blocked
+  --preflight            resolve answered decisions and release stale claims first
+  --no-preflight         skip that preparation
+  --no-mcp               run without configured MCP servers
+  --debug-on-fail        open a box shell after a failure, then retry when you exit
+  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeatable
+  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+
+  --max-tasks pauses before the final review. The limit must be positive.
+  --debug-on-fail opens a shell only when running in a terminal.
+
+STOP AND CONTINUE
+  Press Ctrl-C to finish the current task attempt and its required review, then stop.
+  Press it again to stop immediately. Run the same command to continue.
+  For a background fork loop: coop fork stop &lt;name&gt;
+
+CONFIGURE STEPS: .agent/loop.yaml
+  preflight  optional preparation before starting
+  work       the agent that works on each task
+  between    optional review after each task
+  signoff    final review of completed work
+  verify     optional checks after the final review
+
+  Set work.agent to choose the default when no target or preset is given.
+  Review steps can each use their own agent and prompt. Signoff prompts add to
+  Coop&#39;s built-in review. Between and verify prompts define those checks.
+  Changes to this file apply when you restart the loop.
+
+  Step options:
+    preflight  enabled, prompt
+    work       agent, command
+    between    enabled, agent, prompt, writes
+    signoff    agent, prompt, rounds, writes
+    verify     enabled, agent, prompt, writes
+
+  agent: accepts a list of targets or presets. See coop help models.
+  writes: tasks keeps reviews read-only; repo lets the reviewer edit source files.
+  Between and verify require a prompt when enabled.
+  mcp: false disables MCP servers for every step.
+
+NETWORK ACCESS
+  The run&#39;s approved access covers its work and review agents for the entire loop.
+  See coop help net for rules and approvals.
+
+EXIT STATUS
+  0    review and enabled final checks passed, or the task limit was reached
+  1    the run failed or could not start, final checks failed, or work remains,
+       including work another agent holds
+  2    rejected input, such as an unknown option, target or preset
+  3    stopped for a decision
+  130  interrupted before the final verdict</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-eval-check-whether-a-model-preset-or-loop-change-helped"><h2>coop eval: check whether a model, preset or loop change helped</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop eval: check whether a model, preset or loop change helped code example" tabindex="0"><code>Run repeatable tasks, grade the work independently, then compare before and after.
+Real runs use your provider account and may spend credits. A preview spends none.
+
+TRY IT
+  1. Preview three small coding tasks; nothing launches:
+     coop eval run core codex --timeout 35m --dry-run
+  2. Run them with your signed-in account and built Coop box:
+     coop eval run core codex --timeout 35m
+  3. Read the result, including any errors:
+     coop eval inspect
+
+RUN AND COMPARE
+  coop eval run &lt;suite&gt; &lt;target|preset&gt;...  run a suite; --timeout is required
+  coop eval runs                            find runs, configurations and outcomes
+  coop eval inspect [&lt;run-id&gt;]              read results and causes; latest by default
+  coop eval compare &lt;before-id&gt; &lt;after-id&gt;  compare two recorded runs without spending
+
+CHOOSE A SUITE
+  coop eval ls                              list the shipped starter suites
+  coop eval init &lt;dir&gt;                      create an editable custom suite
+
+  core   Three single-agent tasks. Use provider targets, not presets.
+  queue  A real loop over ten tasks. Use targets or presets; allow hours, not minutes.
+
+Change your model, preset, loop recipe or Coop build, run the same suite again,
+then use the two IDs from coop eval runs. Errors are not model-quality failures;
+inspect their causes before rerunning. Incomplete grading has no definitive winner.
+
+For options and prerequisites see:
+  coop help eval run
+Guide: https://coop.dryga.com/docs.html#evals</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-eval-run-preview-or-run-a-repeatable-evaluation"><h2>coop eval run: preview or run a repeatable evaluation</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop eval run: preview or run a repeatable evaluation code example" tabindex="0"><code>Usage: coop eval run &lt;suite&gt; &lt;target|preset&gt;... --timeout &lt;duration&gt; [&lt;options&gt;]
+
+Each target or preset is a separate configuration, not a fallback. Targets use
+provider[:model][/effort][@account]. Presets need a loop suite such as queue;
+core and other single-agent suites accept targets only.
+
+OPTIONS
+  --timeout &lt;duration&gt;  required time limit, including preparation and grading
+  --dry-run             print the plan without launching containers or providers
+  --repeat &lt;n&gt;          trials per case and configuration (default: 1)
+  --jobs &lt;n&gt;            concurrent trials (default: 1)
+  --loop-config &lt;path&gt;  use this loop recipe instead of the loop suite&#39;s recipe
+
+BEFORE A REAL RUN
+  Sign in with coop login &lt;agent&gt;. Have a working container runtime and the
+  current Coop box image. If the image is missing, run coop build --egress open
+  in a directory without a project Dockerfile. Building may download dependencies.
+  A dry run validates the plan, not credentials, runtime or image readiness.
+
+  cloc is optional. Install it for change-size figures; grading and verdicts still
+  work when it is unavailable, and the result labels the missing measurement.
+
+  --timeout is required even for a preview. It limits time, not spending.
+  The timer starts when the command starts and stops preparation, trials and
+  grading. After it expires, Coop still tries to clean up and save the final record.
+  More configurations or repetitions mean more paid work. Each case also has its
+  own timeout in suite.yaml; raising the total budget does not raise that limit.
+
+CUSTOM RUNTIME PROFILES
+  Agent cases may name a clean external profile, /app workdir, agent_timeout and
+  verifier_timeout in suite.yaml. Explicitly build the profile on the host with
+  coop build --egress filtered first. Evaluations do not build profiles
+  automatically, and loop cases cannot use them.
+  Fixed limits: 1 CPU, 2 GiB memory, 128 PIDs. Candidates have filtered access
+  only to provider endpoints; grading runs offline. The declared 10 GiB storage
+  limit is not enforced or measured. This Coop-adapted workload does not match
+  every condition of the official benchmark.
+  Image and platform details shown by a dry run are provisional.
+  See docs/evals.md for profile setup.
+
+EXAMPLES
+  coop eval run core codex --timeout 35m --dry-run
+  coop eval run core codex:gpt-6.1-sol codex:gpt-6.1-sol/xhigh --timeout 70m
+  coop eval run queue frontier --timeout 2h
+  coop eval run queue frontier --loop-config .agent/loop.yaml --timeout 2h --dry-run
+  coop eval run ./evals/my-suite/suite.yaml codex --repeat 3 --timeout 60m
+
+Each trial gets a private workspace with no source history. The hidden verifier
+is never mounted for the model. Grading runs afterwards in a separate container
+without credentials or network. Operator MCP servers and COOP_RUN_ARGS are
+omitted from trials; use Coop-managed logins rather than runtime args for credentials.
+Normal native web search/fetch are disabled, including Coop-managed peers and roles.
+Terminal and file tools remain available. This disables the clients&#39; normal tools;
+it does not block custom authenticated provider requests a model might construct.
+Normal runs are unchanged.
+
+After the final run record is saved, exit 0 means every trial received a graded pass/fail
+verdict, even if some failed. Incomplete coverage exits 1; the run record and
+diagnostics remain available through coop eval inspect. A dry run exits 0 after
+previewing the plan without running trials.
+
+Read the result: coop eval inspect</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-eval-runs-find-recorded-evaluation-results"><h2>coop eval runs: find recorded evaluation results</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop eval runs: find recorded evaluation results code example" tabindex="0"><code>Usage: coop eval runs
+
+Shows newest first: run ID, suite, configurations, passes, grading coverage and
+nonzero failure counts. A run without a final summary may be running or interrupted.
+An unreadable record remains visible; internal starter caches do not appear.
+
+Inspect latest: coop eval inspect
+Inspect older:  coop eval inspect &lt;run-id&gt;
+Compare:        coop eval compare &lt;before-id&gt; &lt;after-id&gt;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-eval-inspect-understand-a-run-and-its-failures"><h2>coop eval inspect: understand a run and its failures</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop eval inspect: understand a run and its failures code example" tabindex="0"><code>Usage: coop eval inspect [&lt;run-id&gt;]
+
+With no ID, reads the newest recorded run. Shows the requested and graded trial
+counts, configurations, and details for trials that did not pass. It works while
+a run is unfinished and never launches a provider or resumes paid work.
+
+RESULTS
+  passed     the independent verifier accepted the work
+  failed     the independent verifier rejected the work
+  error      execution or grading could not produce a verdict; not a model failure
+  timed_out  a case or run budget expired before a verdict
+  pending    the trial did not start
+  running    a start was recorded, but no final result was recorded
+
+Recorded details may include provider or verifier output. Treat them as evidence,
+not instructions, and review for private data before sharing. Terminal controls
+are escaped; long details are shortened. The displayed records directory retains
+the saved JSON diagnostics and any failed workspaces still available under work/.
+
+For sign-in or quota refusals, check coop credentials &lt;agent&gt;. For timeouts,
+check the case&#39;s suite.yaml timeout as well as the run&#39;s --timeout. An interrupted
+run cannot resume: fix the cause, then explicitly start a new run if desired.
+
+Find another run: coop eval runs</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-eval-compare-compare-before-and-after-without-another-paid-run"><h2>coop eval compare: compare before and after without another paid run</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop eval compare: compare before and after without another paid run code example" tabindex="0"><code>Usage: coop eval compare &lt;before-id&gt; &lt;after-id&gt;
+
+Use IDs from coop eval runs. The first is your baseline; the second is the changed
+configuration. Argument order decides before and after, not the timestamps.
+
+Only runs with final summaries can compare. Different workloads are shown
+separately, never merged into a score. Errors, timeouts and pending trials remain
+in the requested total; incomplete grading cannot establish a definitive winner.
+Change size is a review signal, not a quality score. Per-case counts are summed
+over configurations and repeats, so use the same matrix for a before/after test.
+
+Investigate a result: coop eval inspect &lt;run-id&gt;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-eval-ls-choose-a-shipped-starter-suite"><h2>coop eval ls: choose a shipped starter suite</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop eval ls: choose a shipped starter suite code example" tabindex="0"><code>Usage: coop eval ls
+
+core runs three small single-agent tasks. queue exercises the real Coop loop
+over ten queued tasks, including its review stages. Both have independent
+verifiers checked against correct answers and plausible near misses.
+
+Preview: coop eval run core codex --timeout 35m --dry-run
+Author your own: coop eval init ./evals/my-suite</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-eval-init-create-a-custom-suite-you-can-edit"><h2>coop eval init: create a custom suite you can edit</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop eval init: create a custom suite you can edit code example" tabindex="0"><code>Usage: coop eval init &lt;dir&gt;
+
+Creates a working single-agent example, a commented loop example in suite.yaml,
+and verifiers/greeting/README.md plus verifiers/greeting/verify.sh. Use a new
+directory; existing files are never overwritten.
+Edit suite.yaml, the visible files and the separate hidden verifier. Keep the
+verifier outside the candidate&#39;s files, fixture, tasks and Git history.
+
+  coop eval init ./evals/my-suite
+  coop eval run ./evals/my-suite/suite.yaml codex --timeout 12m --dry-run
+
+The verifier README explains grading and exit codes. A preview does not run or
+qualify your verifier; test it against good answers and near misses.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-fork-let-an-agent-work-in-a-separate-copy-of-your-project"><h2>coop fork: let an agent work in a separate copy of your project</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork: let an agent work in a separate copy of your project code example" tabindex="0"><code>Usage: coop fork &lt;name&gt; [&lt;target|preset&gt;] [&lt;options&gt;]
+       coop fork &lt;command&gt; [&lt;args&gt;...]
+
+START WORK
+  coop fork myfork claude        create a fork and start Claude
+  coop fork myfork               continue an existing fork&#39;s session
+  coop fork myfork frontier      use a preset
+  coop fork myfork claude -d     work through tasks in the background
+
+REVIEW AND MERGE
+  ls             show forks and their progress
+  review &lt;name&gt;  review a fork&#39;s changes
+  merge &lt;name&gt;   merge its commits into your current branch
+  merge --all    merge eligible forks one at a time
+
+MANAGE
+  logs [&lt;name&gt;]  show one fork&#39;s logs, or all forks
+  stop &lt;name&gt;    stop a fork&#39;s background loop
+  open &lt;name&gt;    open a fork in your editor
+  path &lt;name&gt;    print its folder path
+  rm &lt;name&gt;      delete a fork
+
+SESSION OPTIONS
+  --isolated      create independent Git storage and require reviewed publication
+  -c, --continue  continue the last session (default when reopening)
+  --new           start a new conversation in the existing fork
+  --fresh         delete the fork and its service data, then recreate it
+  -f, --force     with --fresh, stop active work and discard unmerged changes
+  -y, --yes       with --fresh, skip confirmation
+
+  An isolated fork stays isolated when you reopen it, run a loop or use ACP.
+  Existing ordinary forks are not converted. Shared-checkout runs and ordinary
+  forks remain the default.
+  Review isolated work with coop fork review; --force cannot bypass its policy.
+
+NETWORK OPTIONS
+  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeatable
+  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+
+LOOP OPTIONS
+  --loop              work through the project&#39;s task queue
+  -d, --detach        run the loop in the background (implies --loop)
+  -t, --tasks &lt;path&gt;  select one project task queue
+  --peer &lt;target&gt;     start with read-only peer agents; repeatable
+
+  Task and peer options above apply to fork loops.
+  Each fork receives one project task at a time. Its task is completed in the
+  project queue when you merge the reviewed work. Stopping keeps it resumable.
+
+EDITOR INTEGRATION
+  coop fork &lt;name&gt; acp  use an existing fork from an ACP editor
+  See coop help fork &lt;name&gt; acp for its options.
+
+  Model and account syntax: coop help models
+  Command options: coop help fork &lt;command&gt;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-fork-name-acp-use-an-existing-fork-from-an-acp-editor"><h2>coop fork &lt;name&gt; acp: use an existing fork from an ACP editor</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork &lt;name&gt; acp: use an existing fork from an ACP editor code example" tabindex="0"><code>Usage: coop fork &lt;name&gt; acp [&lt;target&gt;] [&lt;options&gt;]
+
+OPTIONS
+  --peer &lt;target&gt;        start with read-only peer agents; repeatable
+  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --allow-domain &lt;name&gt;  allow exact TLS access on port 443; repeatable
+  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the session
+
+  Without a target, Coop starts the fork&#39;s agent with its default model and
+  account; choose another model or effort in your editor.
+
+  Open the parent project in your editor; Coop maps its working directory to
+  the fork. The fork, provider and account stay fixed; any native model and
+  effort choices remain available.
+
+EXAMPLES
+  coop fork myfork acp
+  coop fork myfork acp claude:opus
+
+  Create the fork first: coop fork myfork claude
+  Editor setup: coop help acp</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-fork-ls-show-forks-and-their-progress"><h2>coop fork ls: show forks and their progress</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork ls: show forks and their progress code example" tabindex="0"><code>Usage: coop fork ls [--json]
+
+OPTIONS
+  --json  print workspace details for scripts
+
+  Shows each fork&#39;s agent, activity, tasks, changes and reported cost.
+
+EXAMPLE
+  coop fork ls</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-fork-review-inspect-a-fork-before-merging"><h2>coop fork review: inspect a fork before merging</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork review: inspect a fork before merging code example" tabindex="0"><code>Usage: coop fork review &lt;name&gt; [&lt;options&gt;]
+
+OPTIONS
+  --stat  show a change summary instead of the full diff
+  --tool  open the diff with your global Git diff tool
+  --open  open the fork in your editor
+  --gate  test the fork after rebasing a temporary copy onto your current branch
+
+  Shows commits, the agent&#39;s task notes and changes that need your attention.
+  Counts and diffs include committed changes only. Uncommitted fork work gets
+  a warning; open the fork, commit intended files, then review again.
+  --gate leaves the fork and your working tree unchanged. It cannot be used
+  with --open.
+
+  Coop reviews an isolated fork&#39;s saved private commits even when your main
+  checkout has uncommitted changes. --open and COOP_REVIEW_CMD use a saved
+  private preview, separate from the agent&#39;s workspace.
+  Preview edits are never merged. Remove the preview when finished.
+
+EXAMPLES
+  coop fork review myfork
+  coop fork review myfork --stat --gate
+
+  Merge after review: coop fork merge myfork</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-fork-merge-bring-a-forks-commits-into-your-current-branch"><h2>coop fork merge: bring a fork&#39;s commits into your current branch</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork merge: bring a fork&#39;s commits into your current branch code example" tabindex="0"><code>Usage: coop fork merge &lt;name&gt; [&lt;options&gt;]
+       coop fork merge --all [&lt;options&gt;]
+
+OPTIONS
+  --all        merge eligible forks one at a time
+  -f, --force  allow changes otherwise blocked by the merge policy
+  -y, --yes    confirm merging and removal without prompting
+
+  Review the diff first. Your working tree must be clean and the fork stopped.
+  Coop rebases the commits, runs configured project checks and merges the result.
+  --force does not bypass those checks.
+
+  For isolated forks, --force cannot bypass risky-file or nested-Git policy.
+  Coop saves the exact changes to merge before updating your checkout. If the
+  merge is interrupted, keep its journal and saved private files, then rerun merge.
+  If the checkout is only partly updated or changed by another process, Coop
+  stops for recovery. Do not reset, stash, delete an index.lock you cannot
+  identify, or recreate or remove the fork.
+
+  After merging, Coop asks before deleting a clean fork. With --all, one prompt
+  covers the batch and removal. Forks with uncommitted work are kept.
+  Removing a fork also removes its service containers and Docker volumes.
+
+EXAMPLES
+  coop fork review myfork
+  coop fork merge myfork
+  coop fork merge --all</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-fork-rm-delete-a-fork-and-its-local-work"><h2>coop fork rm: delete a fork and its local work</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork rm: delete a fork and its local work code example" tabindex="0"><code>Usage: coop fork rm &lt;name&gt; [&lt;options&gt;]
+
+OPTIONS
+  -f, --force  stop active work and discard uncommitted or unmerged changes
+  -y, --yes    skip confirmation
+
+  Deleting a fork removes its files and local session data, plus its service
+  containers and Docker volumes.
+  Assigned tasks return to the project queue. Proposed tasks that have not been
+  imported are discarded; tasks already imported into the project are kept.
+
+EXAMPLES
+  coop fork rm myfork
+  coop fork rm myfork --force</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-fork-stop-stop-a-forks-background-loop"><h2>coop fork stop: stop a fork&#39;s background loop</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork stop: stop a fork&#39;s background loop code example" tabindex="0"><code>Usage: coop fork stop &lt;name&gt;
+
+  Stops the worker and its running boxes. The fork&#39;s work and assigned task stay
+  available so you can continue it later.
+
+EXAMPLES
+  coop fork stop myfork
+  coop fork myfork claude --loop</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-fork-logs-show-a-forks-loop-output"><h2>coop fork logs: show a fork&#39;s loop output</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork logs: show a fork&#39;s loop output code example" tabindex="0"><code>Usage: coop fork logs [&lt;name&gt;] [--follow]
+
+OPTIONS
+  -f, --follow  keep showing new output
+
+  Without a name, includes all forks and labels each line with its fork name.
+  Press Ctrl-C to leave the log view; the loop keeps running.
+
+EXAMPLES
+  coop fork logs myfork
+  coop fork logs myfork --follow
+  coop fork logs --follow</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-fork-path-print-a-forks-folder-path"><h2>coop fork path: print a fork&#39;s folder path</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork path: print a fork&#39;s folder path code example" tabindex="0"><code>Usage: coop fork path &lt;name&gt;
+
+EXAMPLE
+  coop fork path myfork</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-fork-open-open-a-fork-in-your-editor"><h2>coop fork open: open a fork in your editor</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork open: open a fork in your editor code example" tabindex="0"><code>Usage: coop fork open &lt;name&gt;
+
+  Uses COOP_EDITOR, your global Git editor or an available editor.
+
+EXAMPLE
+  coop fork open myfork</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-up-start-this-projects-services"><h2>coop up: start this project&#39;s services</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop up: start this project&#39;s services code example" tabindex="0"><code>Usage:
+  coop up
+
+Starts services from .agent/compose.yml and waits for them to be ready.
+Uses the Compose path configured in .agent/project.yaml when different.
+Agents reach each service by its Compose name. Starting again is safe.
+
+If an agent is changing this checkout, Coop waits for a safe launch window.
+Running development and loop stacks remain isolated after startup.
+Requires Docker with Compose support.
+Repository binds cannot relabel host files or change mount propagation.
+Read-only sessions require each bind source to exist before startup.
+
+If a service asks to read a secret file through a read-only bind, Coop asks
+at a terminal before allowing it. Otherwise it receives an empty file.
+Secret directories and writable binds stay hidden. Approval applies to
+this repository&#39;s exact Compose file and the service&#39;s local Docker image ID.
+If either changes, run coop up at a terminal to review it again; an unchanged
+approval never follows a moved image tag. A missing approved image stops startup.
+
+External or custom-named Docker volumes can contain data outside this project.
+At a terminal, Coop names each actual volume, its read-only/read-write access,
+which service attaches it, and the selected Docker daemon before asking.
+Only plain local volumes are supported; a missing custom volume is created
+after approval. A daemon, volume, or image replacement requires fresh review.
+Declining stops startup. Automatic, filtered, and non-terminal starts refuse
+these volumes even after approval.
+Previously saved service-file approvals need one fresh review after upgrading.
+
+Add services:  coop init --services
+Stop services: coop down</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-down-stop-this-projects-services"><h2>coop down: stop this project&#39;s services</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop down: stop this project&#39;s services code example" tabindex="0"><code>Usage: coop down [--delete-volumes] [--yes]
+
+Stops and removes this project&#39;s Compose containers and networks.
+Stored data is kept unless you use --delete-volumes.
+Uses .agent/compose.yml, or the configured Compose path.
+
+OPTIONS
+  --delete-volumes  also permanently delete service volumes and their data
+  -y, --yes         skip the volume-deletion confirmation
+
+Coop names the volumes before asking; press Enter to cancel.
+Without a terminal, deletion requires --yes.
+External volumes and files mounted from the project are kept.
+
+Start again: coop up</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-doctor-check-that-the-boxs-isolation-works"><h2>coop doctor: check that the box&#39;s isolation works</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop doctor: check that the box&#39;s isolation works code example" tabindex="0"><code>Usage:
+  coop doctor
+
+Runs checks in a temporary project and reports what passed, failed, or
+could not be checked. Your files and credentials are not the test data.
+
+Checks secret hiding, host access, privileges, offline networking,
+task access, credential isolation, settings permissions, and fork handoff.
+
+Uses this project&#39;s ordinary built image, or the shared image if available.
+If neither exists, uses Alpine and names the checks it cannot perform.
+Run coop build --egress open, then coop doctor to test the Coop image.
+Filtered images are separate and are verified when a filtered run starts.
+
+Requires Git and a running container runtime. Honors COOP_RUNTIME.
+Lists abandoned boxes but does not remove them.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-approve-review-and-approve-this-projects-requested-access"><h2>coop approve: review and approve this project&#39;s requested access</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop approve: review and approve this project&#39;s requested access code example" tabindex="0"><code>Usage: coop approve
+
+  Shows what .agent/project.yaml asks for, compared with your last approval.
+  Confirm the changes to allow new runs to use them.
+  If nothing changed, there is nothing to approve.
+
+  Running boxes keep the rules they started with. A running editor session
+  (coop acp) that has network rules moves to a new box with these rules
+  between prompts.
+  Run this command in your terminal.
+
+See current access: coop net</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-control-network-access-and-see-what-happened"><h2>coop net: control network access and see what happened</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net: control network access and see what happened code example" tabindex="0"><code>ACCESS: control what new runs can reach
+  coop net                  show this project&#39;s current access
+  coop approve              review and approve requested access
+  coop net check &lt;url&gt;      check access
+  coop net forget           withdraw this project&#39;s network approval
+
+RUNS: inspect recorded network activity
+  coop net runs             show recent runs
+  coop net inspect [&lt;run&gt;]  show connections and blocked access
+  coop net blocked &lt;host&gt;   find blocked connections and how to allow them
+  coop net watch [&lt;run&gt;]    follow network activity
+  coop net export &lt;run&gt;     export a shareable record
+
+REPAIR: normally automatic
+  coop net setup            prepare or recheck this host now
+  coop net recover [&lt;run&gt;]  retry interrupted cleanup now
+
+HOW TO ADD A NETWORK RULE
+
+1. Edit .agent/project.yaml and add the network rule under box.egress_rules:
+
+   box:
+     egress: filtered
+     egress_rules:
+       - to: {domain: &#34;docs.example.com&#34;}
+         protocol: tls
+         ports: [443]
+
+2. Review and approve the changes:
+
+   coop approve
+
+Command options: coop help net &lt;command&gt;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-runs-show-recorded-network-runs"><h2>coop net runs: show recorded network runs</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net runs: show recorded network runs code example" tabindex="0"><code>Usage: coop net runs [--all | --all-projects] [--json]
+
+OPTIONS
+  --all           show every run for this project
+  --all-projects  show every project&#39;s runs on this host
+  --json          print the records for scripts
+
+  By default, shows this project&#39;s 25 newest runs.
+  Use a run&#39;s ID or a unique prefix with other network commands.
+
+EXAMPLE
+  coop net inspect e644f07a</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-inspect-show-a-runs-connections-and-blocked-traffic"><h2>coop net inspect: show a run&#39;s connections and blocked traffic</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net inspect: show a run&#39;s connections and blocked traffic code example" tabindex="0"><code>Usage: coop net inspect [&lt;run&gt;] [--json]
+
+OPTIONS
+  --json  print the full technical record
+
+  Without a run ID, shows this project&#39;s newest recorded run.
+
+EXAMPLES
+  coop net inspect
+  coop net inspect e644f07a</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-check-check-whether-network-rules-allow-a-connection"><h2>coop net check: check whether network rules allow a connection</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net check: check whether network rules allow a connection code example" tabindex="0"><code>Usage: coop net check &lt;url-or-host&gt; [&lt;options&gt;]
+       coop net check &lt;ip&gt; --run &lt;run&gt; --protocol &lt;tcp|udp&gt; --port &lt;n&gt;
+       coop net check &lt;ip&gt; --run &lt;run&gt; --icmp
+
+OPTIONS
+  --run &lt;run&gt;               use that run&#39;s rules
+  --port &lt;n&gt;                choose a port; defaults to the URL&#39;s port or 443
+  --protocol &lt;tls|tcp|udp&gt;  choose the connection type
+  --icmp                    check an ICMP echo request to an IP address
+  --json                    print the answer for scripts
+
+  Without --run, checks this project&#39;s approved access for a new run.
+  Hostnames use TLS. IP addresses require a recorded run and connection type.
+
+EXAMPLES
+  coop net check https://example.com
+  coop net check example.com --run e644f07a</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-blocked-find-blocked-connections-and-how-to-allow-them"><h2>coop net blocked: find blocked connections and how to allow them</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net blocked: find blocked connections and how to allow them code example" tabindex="0"><code>Usage: coop net blocked &lt;host&gt; [--run &lt;run&gt;] [--json]
+
+OPTIONS
+  --run &lt;run&gt;  look only in this run
+  --json       print the evidence for scripts
+
+  Without --run, finds the newest matching block in this project&#39;s runs.
+  Shows a rule you can copy when the record proves the remote address and port.
+  An exact event ID can replace the host when --run is supplied.
+
+EXAMPLES
+  coop net blocked registry.npmjs.org
+  coop net blocked registry.npmjs.org --run e644f07a</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-watch-follow-a-runs-network-activity"><h2>coop net watch: follow a run&#39;s network activity</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net watch: follow a run&#39;s network activity code example" tabindex="0"><code>Usage: coop net watch [&lt;run&gt;] [--json]
+
+OPTIONS
+  --json  stream one JSON record per update
+
+  Without an ID, selects this project&#39;s only unfinished run.
+  Shows new connections, blocks and problems, then the final report.
+
+  Press Ctrl-C to stop watching. The run continues.
+
+EXAMPLE
+  coop net watch e644f07a</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-export-export-a-runs-network-record"><h2>coop net export: export a run&#39;s network record</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net export: export a run&#39;s network record code example" tabindex="0"><code>Usage: coop net export &lt;run&gt; [--include-addresses]
+
+OPTIONS
+  --include-addresses  include remote hostnames and IP addresses
+
+  Writes JSON to stdout. Remote hostnames and IP addresses are hidden by default.
+  The run must have a final record.
+
+EXAMPLE
+  coop net export e644f07a &gt; network-record.json</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-forget-withdraw-this-projects-network-approval"><h2>coop net forget: withdraw this project&#39;s network approval</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net forget: withdraw this project&#39;s network approval code example" tabindex="0"><code>Usage: coop net forget [--project &lt;path&gt;]
+
+Use this when you no longer trust an approval saved on this machine.
+To change network rules, edit .agent/project.yaml and run coop approve.
+
+OPTIONS
+  --project &lt;path&gt;  choose another project, including a folder that was deleted
+
+New runs wait for approval again. The project file is not changed.
+Existing boxes, recorded runs, and this host&#39;s network setup are kept.
+Run this command in your terminal.
+
+Restore approval:
+  coop approve</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-setup-prepare-this-host-for-filtered-networking"><h2>coop net setup: prepare this host for filtered networking</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net setup: prepare this host for filtered networking code example" tabindex="0"><code>Usage: coop net setup
+
+  Prepares the network images and checks that allowed access works and
+  blocked access stays blocked.
+
+  Coop does this automatically when a filtered run needs it.
+  Run it yourself to check or prepare the host ahead of time.
+
+Requires Docker to be running.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-recover-clean-up-interrupted-network-runs"><h2>coop net recover: clean up interrupted network runs</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net recover: clean up interrupted network runs code example" tabindex="0"><code>Usage: coop net recover [&lt;run&gt;]
+
+  Removes containers and temporary volumes left by an interrupted run.
+  Without an ID, checks every run waiting for cleanup on this host.
+  Running boxes and resources Coop cannot safely identify are left alone.
+
+  Coop normally retries this cleanup automatically.
+
+EXAMPLE
+  coop net recover e644f07a</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-check-secrets-check-project-files-for-exposed-secrets"><h2>coop check-secrets: check project files for exposed secrets</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop check-secrets: check project files for exposed secrets code example" tabindex="0"><code>Usage: coop check-secrets [--include-ignored]
+
+Checks tracked and untracked files, plus Coop&#39;s task files and notes.
+Possible secrets are reported by file and line; their values stay hidden.
+
+OPTIONS
+  --include-ignored  also check other Git-ignored files the box can read
+
+FALSE POSITIVES
+  Add the entries printed by a scan to .coopsecretsignore in your project root.
+  Each entry needs a reason. You can edit many entries together in that file.
+
+  IDs stay the same when line numbers change. A changed value or file path is checked again.
+  Remove an entry to check that finding again.
+
+  .coopsecretsignore skips exact findings in this check.
+  .coopignore hides files from the box. They do different jobs.
+
+Returns a nonzero status if possible secrets remain or the scan cannot finish.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sign-sign-this-branchs-unpushed-commits-with-your-host-key"><h2>coop sign: sign this branch&#39;s unpushed commits with your host key</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sign: sign this branch&#39;s unpushed commits with your host key code example" tabindex="0"><code>Usage:
+  coop sign [--from &lt;ref&gt;]
+
+EXAMPLES
+  coop sign
+  coop sign --from origin/main
+
+OPTIONS
+  --from &lt;ref&gt;   sign commits after this Git reference
+
+HOW IT WORKS
+  By default, Coop signs commits after the branch&#39;s upstream reference.
+  Without an upstream, use --from with the last commit you pushed.
+
+  Signing changes the IDs of the first unsigned commit and the commits
+  after it. It never rewrites a commit the upstream already has, and it
+  preserves the committed files and your working changes. It stops at a
+  merge among the commits it would rewrite; a signed merge below them
+  stays as it is.
+
+  Coop uses your host&#39;s Git signing settings.
+
+AUTOMATIC SIGNING
+  When commit.gpgsign is enabled, Coop signs commits after ordinary agent runs
+  and loop cycles. Fork commits are signed when you merge the fork.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-init-set-up-coop-in-this-project"><h2>coop init: set up Coop in this project</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop init: set up Coop in this project code example" tabindex="0"><code>Usage:
+  coop init
+  coop init [--stack asdf] [--services [&lt;service,...&gt;]] [--agents &lt;agent,...&gt;|all]
+
+COOP SETS UP
+
+- Shared instructions and skills for all your AI agents.
+
+- A file-based task system. Agents can pick up work, save progress, and hand
+  it to another agent or session.
+
+- Commit checks. Coop verifies formatting for the languages it detects or
+  you choose.
+
+- Project settings for sandboxed runs, including filtered internet access.
+
+- An optional starter Docker Compose file for supporting services; you can
+  extend it with anything else your project needs.
+
+Without options, Coop detects what it can and asks before initializing Git,
+adding formatting checks, or adding Postgres or Redis.
+
+OPTIONS
+  --agents &lt;list&gt;       set up Claude, Codex, Gemini, or all
+                        default: agents you are signed in to
+
+  --services [&lt;list&gt;]   add Postgres, Redis, or both
+
+  --stack asdf          install tools from .tool-versions in the Coop box
+
+You can run coop init again at any time.
+Coop keeps your existing project files and adds anything missing.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-build-build-the-coop-box-image"><h2>coop build: build the Coop box image</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop build: build the Coop box image code example" tabindex="0"><code>Usage:
+  coop build [--egress &lt;mode&gt;]
+
+Builds the shared image, or this project&#39;s image when it has a box
+Dockerfile. The default path is .agent/Dockerfile; use box.dockerfile in
+.agent/project.yaml to select another path.
+
+OPTIONS
+  --egress &lt;mode&gt;  prepare the image for filtered, open or none networking
+
+Defaults to this project&#39;s effective network mode. Filtered builds use
+Coop&#39;s locked client base and record the exact reviewed build inputs.
+Filtered launches reuse that image; changed inputs or a missing image
+require another explicit build. An interactive provider launch in a host
+terminal can offer Build and continue, defaulting to No. Review the saved
+snapshot shown by the prompt; only those files are approved for that build.
+Headless commands, editor connections and unattended runs never ask.
+An open editor connection may build a missing
+image automatically; ordinary runs only warn when project inputs change.
+Run coop build --egress open after editing the box Dockerfile or tool versions.
+Offline launches never automatically build project instructions.
+
+Project builds themselves use ordinary networking in every mode.
+Review the Dockerfile and copied build files before running this command.
+The option selects the runtime image; it does not filter build traffic.
+
+Run after changing the box Dockerfile or .tool-versions.
+Builds use the configured versions and available cache.
+Use coop update --box-only to prepare this project&#39;s effective image.
+
+New runs use the rebuilt image. Supervised editor sessions restart and
+reconnect. Other running boxes use the old image until their next start.
+Requires a running container runtime.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-update-update-coop-and-rebuild-the-box-image"><h2>coop update: update Coop and rebuild the box image</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop update: update Coop and rebuild the box image code example" tabindex="0"><code>Usage:
+  coop update [--self-only | --box-only | --check]
+
+Updates the Coop binary when a newer release is available, then prepares
+the image for this project&#39;s effective network mode using the installed
+version&#39;s image definitions. Filtered projects use the pinned client base
+and record their explicit project build. Open and offline images refresh
+base-image components. Agent CLIs and editor adapters remain pinned.
+Downloaded releases are checked before replacing the binary. Project
+builds use ordinary networking; review the Dockerfile and copied files.
+
+OPTIONS
+  --self-only  update only the Coop binary; no container runtime needed
+  --box-only   prepare only this project&#39;s effective box image
+  --check      report available updates and local build records; change nothing
+
+Choose at most one option. --check does not need a container runtime.
+Building the box requires a running container runtime.
+
+Development builds and binaries newer than the latest release are kept.
+A binary that cannot be replaced is an error; update it with the tool
+that installed it. The box rebuild can still finish independently.
+
+New runs use the rebuilt image. Supervised editor sessions restart and
+reconnect. Other running boxes use the old image until their next start.
+
+Coop checks for new releases once a day during terminal use.
+Set COOP_NO_UPDATE_CHECK=1 to turn off those notices.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-version-print-the-installed-coop-version"><h2>coop version: print the installed Coop version</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop version: print the installed Coop version code example" tabindex="0"><code>Usage:
+  coop version
+
+ALIASES
+  coop -v
+  coop --version</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-acp-connect-your-editor-to-an-agent-running-in-a-coop-box"><h2>coop acp: connect your editor to an agent running in a Coop box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop acp: connect your editor to an agent running in a Coop box code example" tabindex="0"><code>Usage:
+  coop acp [&lt;agent|preset&gt;] [options]
+
+EDITOR SETUP
+  Set the editor&#39;s agent command to coop and its arguments to:
+
+  [&#34;acp&#34;]
+  [&#34;acp&#34;, &#34;claude&#34;]
+  [&#34;acp&#34;, &#34;codex:gpt-6-astra/high@personal&#34;]
+  [&#34;acp&#34;, &#34;frontier&#34;]
+
+  Your editor must support ACP, the Agent Client Protocol.
+
+  Without an agent or preset, Coop starts the first signed-in provider in
+  Claude, Codex, Gemini, Grok order, using its default account. This does not
+  pin the choice: use the editor&#39;s selectors after connecting.
+  No providers signed in? Run coop login &lt;agent&gt;, then reconnect your editor.
+
+OPTIONS
+  --peer &lt;agent&gt;         start a peer provider for read-only advice
+                         repeat to add more peers
+
+  --egress &lt;mode&gt;        choose filtered, open, or none
+  --allow-domain &lt;host&gt;  allow TLS access to this host on port 443
+                         repeat to allow more hosts
+  --egress-rules &lt;path&gt;  load network rules from a file
+
+SWITCHING AGENTS
+  Use the editor&#39;s Provider and Account controls to change who runs the session.
+  A preset chooses its agents automatically. Select None in Preset to choose
+  a provider or account yourself.
+
+  Switching providers carries the conversation into a new agent session.
+  Account changes keep the conversation with the same provider.
+
+  With filtered networking, only compatible providers and presets are offered.
+  Claude, Codex and Grok support it; Gemini needs an API key to use it.
+  Switching never changes this session&#39;s network rules.
+
+TROUBLESHOOTING
+  Set COOP_ACP_TRACE=1 in your editor&#39;s agent environment to record a trace.
+  Trace files are saved as ~/.config/coop/acp-trace-&lt;pid&gt;.log and may contain
+  your prompts and file contents.
+
+  COOP_ACP_WARM=0 disables background boxes kept ready for provider switching.
+  COOP_ACP_CARRY_TOKENS sets the conversation size carried between providers.
+
+  After replacing the Coop binary, send SIGHUP to the specific ACP process
+  to reload it. SIGINT and SIGTERM stop it.
+
+RELATED HELP
+  coop help models
+  coop help presets
+For more details see:
+  coop help net</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-let-other-applications-start-and-manage-agents"><h2>coop sessions: let other applications start and manage agents</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions: let other applications start and manage agents code example" tabindex="0"><code>Usage: coop sessions &lt;command&gt;
+
+COMMANDS
+  connect  connect this machine to a controller
+  doctor   check whether the local service is ready
+  check    see whether this build can use the session data as it is
+  compact  back up session data and reduce its disk usage
+
+CONNECT THIS MACHINE
+  coop sessions connect --controller https://controller.example --token-file /path/to/token
+
+  The controller supplies each session&#39;s code, context, and execution settings.
+  Leave this command running; it starts the local service automatically.
+
+COMMAND HELP
+  coop help sessions connect
+  coop help sessions doctor
+  coop help sessions check
+  coop help sessions compact</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-doctor-check-the-local-session-service"><h2>coop sessions doctor: check the local session service</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions doctor: check the local session service code example" tabindex="0"><code>Usage:
+  coop sessions doctor [options]
+
+OPTIONS
+  --socket &lt;path&gt;  check this Unix socket
+  --json           print the result as JSON
+
+EXAMPLES
+  coop sessions doctor
+  coop sessions doctor --socket /path/to/control.sock
+
+  The command succeeds when the service responds and is ready for sessions.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-check-see-whether-this-build-can-use-the-session-data-as-it-is"><h2>coop sessions check: see whether this build can use the session data as it is</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions check: see whether this build can use the session data as it is code example" tabindex="0"><code>Usage:
+  coop sessions check [--state &lt;path&gt;]
+
+EXAMPLES
+  coop sessions check
+  coop sessions check --state /var/lib/coop/sessions
+
+OPTIONS
+  --state &lt;path&gt;  check this session-data directory
+
+BEFORE UPGRADING A WORKER
+  Stop the session service, then run this command with the new coop build.
+  It reads the session data and changes nothing.
+
+EXIT STATUS
+  0  this build uses the data as it is, or the service started but holds none yet
+  1  the check could not finish: the service is still running, there is no
+     session data at the path, or some data can&#39;t be read
+  2  invalid arguments
+  3  this build would convert the data; older builds can&#39;t open it afterwards
+  4  this build can&#39;t use the data: it is too old or too new
+
+DEFAULT SESSION DATA
+  ~/.local/state/coop/sessions</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-compact-back-up-session-data-and-reduce-its-disk-usage"><h2>coop sessions compact: back up session data and reduce its disk usage</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions compact: back up session data and reduce its disk usage code example" tabindex="0"><code>Usage:
+  coop sessions compact --backup &lt;path&gt; [--state &lt;path&gt;]
+
+OPTIONS
+  --backup &lt;path&gt;  save a verified database backup to a new file
+  --state &lt;path&gt;   use this session-data directory
+
+EXAMPLE
+  coop sessions compact --backup /path/to/session-backup.sqlite
+
+BEFORE RUNNING
+  Stop the session service.
+  Choose a new backup file outside the session-data directory.
+  Its parent directory must already exist.
+
+  The backup contains private session data. Keep it protected.
+
+DEFAULT SESSION DATA
+  ~/.local/state/coop/sessions</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-connect-run-a-worker-for-a-remote-controller"><h2>coop sessions connect: run a worker for a remote controller</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions connect: run a worker for a remote controller code example" tabindex="0"><code>Usage: coop sessions connect --controller &lt;https-url&gt; [options]
+
+OPTIONS
+  --controller &lt;https-url&gt;  controller to trust and connect to
+  --token-file &lt;path&gt;       enrollment token (only needed on first connection)
+  --state &lt;path&gt;            private worker data directory
+  --ca-file &lt;path&gt;          CA bundle for a controller using private TLS certificates
+
+DEFAULT STORAGE
+  ~/.local/state/coop/sessions
+
+RUNNING
+  The controller supplies each session&#39;s code, context, and execution settings.
+  No local policy file or worker configuration file is needed.
+  Coop exchanges the enrollment token for worker credentials it can renew,
+  then removes the token.
+
+  Leave this command running. Connection failures are retried automatically.
+  Press Ctrl-C to disconnect and stop the local service it started.
+  On restart, use the same controller and state directory; omit --token-file.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-prompt-print-a-short-project-status-for-your-shell-or-tmux"><h2>coop prompt: print a short project status for your shell or tmux</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop prompt: print a short project status for your shell or tmux code example" tabindex="0"><code>Usage:
+  coop prompt
+
+OUTPUT
+  Shows task counts, forks, running fork loops, and an unsigned-commit marker.
+  Empty counts are omitted. When there is nothing to show, it prints nothing.
+
+EXAMPLE
+  2 todo · 1 in progress · 1 blocked · 3 forks (2 running) · unsigned commit
+
+TMUX
+  Add this to ~/.tmux.conf:
+  set -g status-right &#39;#(cd &#34;#{pane_current_path}&#34; &amp;&amp; coop prompt)&#39;
+
+SHELL PROMPTS
+  Run coop prompt from your prompt&#39;s custom-command configuration.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-completion-print-shell-integration-for-bash-or-zsh"><h2>coop completion: print shell integration for Bash or Zsh</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop completion: print shell integration for Bash or Zsh code example" tabindex="0"><code>Usage:
+  coop completion &lt;bash|zsh&gt;
+
+BASH
+  Save the completion script:
+  mkdir -p ~/.config/coop
+  coop completion bash &gt; ~/.config/coop/completion.bash
+
+  Add this to ~/.bashrc:
+  source ~/.config/coop/completion.bash
+
+ZSH
+  Save the integration script:
+  mkdir -p ~/.config/coop
+  coop completion zsh &gt; ~/.config/coop/completion.zsh
+
+  Add this after compinit in ~/.zshrc:
+  source ~/.config/coop/completion.zsh
+
+  This also stops Zsh from suggesting corrections to Coop arguments such
+  as claude and codex.
+
+WHAT IT COMPLETES
+  Commands, options, agents, models, accounts, presets, forks, and task IDs.
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</section>
+        <nav class="reference-related" aria-label="Related guides">
+          <h2>Related guides</h2>
+          <ul class="reference-list" role="list"><li><a href="configuration.html">Configuration</a><p>Find project settings, environment variables, configuration files and exit codes.</p></li>
+<li><a href="agents.html">Agents, accounts and presets</a><p>Sign in, choose models and accounts, and configure presets, teammates and instructions.</p></li>
+<li><a href="networking.html">Networking</a><p>Choose which network destinations an agent can reach, and review access before a run.</p></li>
+</ul>
+          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
+        </nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/cli.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

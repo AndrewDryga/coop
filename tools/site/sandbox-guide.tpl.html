@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Run Claude Code or Codex in a sandbox · co:op</title>
+  <meta name="description" content="Set up co:op for Claude Code or Codex. Check project files, credentials and network access, then run a small task and review the changes.">
+  <link rel="canonical" href="https://coop.dryga.com/sandbox-guide.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/sandbox-guide.html">
+  <meta property="og:title" content="Run Claude Code or Codex in a sandbox">
+  <meta property="og:description" content="Set up co:op for Claude Code or Codex. Check project files, credentials and network access, then run a small task and review the changes.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=34e083e426">
+  <script src="assets/js/site.js?v=34e083e426" defer></script>
+  <script src="assets/js/analytics.js?v=34e083e426" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html">Documentation</a></p>
+        <h1>Run Claude Code or Codex in a sandbox.</h1>
+        <p class="guide-lead">Set up co:op, run one small task, and review the changes.</p>
+        <div class="guide-prerequisites">
+          <h2>Before you start</h2>
+          <ul>
+            <li>macOS or Linux, with Git installed and Docker running</li>
+            <li>A Claude Code or Codex account</li>
+            <li>A project you can build and test, with at least one Git commit</li>
+          </ul>
+        </div>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>In this walkthrough</summary>
+        <nav aria-label="On this page"><ol role="list"><li><a href="#setup"><span aria-hidden="true">01</span>Install and sign in</a></li>
+<li><a href="#project"><span aria-hidden="true">02</span>Choose the project</a></li>
+<li><a href="#files"><span aria-hidden="true">03</span>Review visible files</a></li>
+<li><a href="#network"><span aria-hidden="true">04</span>Check access</a></li>
+<li><a href="#run"><span aria-hidden="true">05</span>Try one small task</a></li>
+<li><a href="#next"><span aria-hidden="true">06</span>Where to go next</a></li></ol></nav>
+      </details>
+      <article class="docs-main" aria-label="Step-by-step instructions">
+        <section class="doc-section guide-section" id="setup">
+            <h2><span class="guide-step" aria-hidden="true">01</span>Install co:op and sign in</h2>
+<p>co:op runs your coding agent in a disposable container on your computer. You will use Docker and a terminal for this walkthrough. The agent edits the project you start it from, so choose a checkout where you can review its changes.</p>
+<p class="guide-location">Host terminal</p>
+<ul class="cmds" role="list">
+              <li data-copy-kind="install"><code data-copy-source>curl -fsSL https://coop.dryga.com/<wbr>install.sh | sh</code></li>
+            </ul>
+<p>The installer runs a downloaded script. For checksums and release verification, use the <a href="docs.html#install">installation reference</a>.</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop version</code></li>
+              <li><code data-copy-source>coop login claude</code></li>
+            </ul>
+<p>Sign in to Claude Code. co:op uses your provider account, with that account's model access and usage limits.</p>
+<details class="guide-detail"><summary>Using Codex instead?</summary><div><p>Sign in with this command, then use <code>coop codex</code> in step 5. The project, file and network checks are the same.</p><ul class="cmds" role="list">
+              <li><code data-copy-source>coop login codex</code></li>
+            </ul></div></details>
+<div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p><code>coop version</code> prints the installed version, Docker is running, and sign-in has completed for your chosen provider.</p></div>
+          </section><section class="doc-section guide-section" id="project">
+            <h2><span class="guide-step" aria-hidden="true">02</span>Initialize the checkout you will use</h2>
+<p>In your terminal, change into the root of your Git project. Check for existing work, then initialize co:op there.</p>
+<p class="guide-location">Host terminal · project root</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>git status --short</code></li>
+              <li><code data-copy-source>coop init</code></li>
+            </ul>
+<p>Review or commit any changes you already have so you can tell them apart from the agent's work. To work in a separate copy, follow the <a href="overnight-guide.html#isolate">fork workflow</a> before starting the agent.</p>
+<p>A new project uses filtered networking. co:op keeps any existing project settings, so read <code>.agent/project.yaml</code> and the generated instructions to check how your project is configured.</p>
+<div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>You know which checkout will change, and you have reviewed its co:op configuration. A disposable container does not undo edits to the mounted project.</p></div>
+          </section><section class="doc-section guide-section" id="files">
+            <h2><span class="guide-step" aria-hidden="true">03</span>Decide what the agent can read</h2>
+<p>co:op hides common secret files, including environment files and private keys, from the container. Check for other private data in your project, including files ignored by Git.</p>
+<p class="guide-location">Host terminal · project root</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop check-secrets --include-ignored</code></li>
+            </ul>
+<p>Inspect every reported file and line. Remove real credentials from files you intend to commit, fix unreadable files, and rerun the scan. The command returns a nonzero status if it finds a problem or cannot finish the scan.</p>
+<p>The scanner cannot recognize every secret. Check for sensitive business data yourself and decide what the agent needs to read.</p>
+<p>Add any other private paths to your existing <code>.coopignore</code>. This example hides a notes directory and a customer export:</p>
+<div class="code-file"><p class="code-file-name">.coopignore · example additions</p><pre class="code" data-copy-source>
+private-notes/
+customer-export.csv</pre></div>
+<p><code>.coopignore</code> hides files when the agent starts. Git ignore rules do not. Hiding a file does not remove it from Git or dismiss a scanner finding. Restart the agent after changing which files should be hidden.</p>
+<p>If you have checked a finding and confirmed it is a false positive, add the exact entry and reason the scanner requests to <code>.coopsecretsignore</code>.</p>
+<div class="guide-checkpoint"><p class="guide-label">The boundary to remember</p><p>Visible project files and anything you put in a prompt may be sent to the allowed AI provider. Include only the data this task needs.</p></div>
+          </section><section class="doc-section guide-section" id="network">
+            <h2><span class="guide-step" aria-hidden="true">04</span>Check the network and the sandbox</h2>
+<p>Check what a new run can reach before starting the agent.</p>
+<p class="guide-location">Host terminal · project root</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop net</code></li>
+            </ul>
+<p>For this walkthrough, use filtered access. The agent should reach only its provider and the destinations you approved. If <code>coop net</code> shows open access or an unfamiliar rule, check <a href="docs.html#networking">the networking configuration</a> before starting.</p>
+<p>If the report says new runs need your approval, run <code>coop approve</code> on the host and review the requested access. Approve only the destinations you need. A new filtered project with no extra rules needs no approval.</p>
+<p>If your project has an <code>.agent/Dockerfile</code>, review it and the files it copies, then build the image before launching the agent:</p>
+<p class="guide-location">Host terminal · project root · when using a project image</p>
+<ul class="cmds" role="list"><li><code data-copy-source>coop build</code></li></ul>
+<p>The run's filtered network rules do not apply during this build. If you change the Dockerfile or its inputs later, rebuild and restart the agent.</p>
+<p>Now run co:op's isolation checks:</p>
+<p class="guide-location">Host terminal · project root</p>
+<ul class="cmds" role="list"><li><code data-copy-source>coop doctor</code></li></ul>
+<p>Read the full report, including checks it could not run. Fix failed checks and follow any setup instructions before continuing. A successful exit alone does not mean every check ran. These checks also do not verify your project's secrets, dependencies or tests.</p>
+<details class="guide-detail"><summary>A dependency or documentation site is blocked</summary><div><p>On the host, run <code>coop net blocked &lt;host&gt;</code> with the exact hostname that was blocked. Read the proposed rule and add the access you need to <code>.agent/project.yaml</code>. Review it with <code>coop approve</code>, then exit and restart the terminal agent session to use the new access.</p><p>The <a href="docs.html#networking">networking reference</a> explains rule syntax and approval.</p></div></details>
+<div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>You have reviewed the network access and the isolation report, and resolved any failures or setup problems.</p></div>
+          </section><section class="doc-section guide-section" id="run">
+            <h2><span class="guide-step" aria-hidden="true">05</span>Start with a task you can inspect</h2>
+<p>Launch the provider you signed in to. On the first filtered run, co:op prepares its own images and checks that Docker can enforce the network rules. It starts the agent only if those checks pass.</p>
+<p class="guide-location">Host terminal · the same project root</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop_review_base=$(git rev-parse HEAD)</code></li>
+              <li><code data-copy-source>coop claude</code></li>
+            </ul>
+<p>The first command saves the starting commit in your host shell. If it fails, stop and fix the problem before starting the agent. Keep this terminal open for the final review. If you use another terminal, find that original commit before comparing changes. Comparing with the latest commit could miss work the agent has already committed.</p>
+<p>For Codex, run <code>coop codex</code> instead. A useful first prompt asks the agent to understand the project before changing it:</p>
+<blockquote class="guide-example"><p class="guide-label">Example prompt · inside the agent</p><p>Read AGENTS.md and find the command for the project's focused tests. Explain which files and services the check needs. Do not edit files or install dependencies yet. If anything is missing or blocked, report it and wait.</p></blockquote>
+<p>Check its answer against the repository. Then ask for one small change, tell it which check to run, and ask it to stop when it can explain what changed and whether the check passed.</p>
+<p>If a check needs a tool or service missing from the container, follow the <a href="docs.html#toolchain">project image</a> or <a href="box.html#project-services">services documentation</a> to set it up before expanding the task. Filtered runs do not install your project's build tools automatically.</p>
+<p>After setting up the tools and services, have the agent run your project's actual check in the container. Fix any remaining setup problems before attempting an unattended run.</p>
+<p>Exit the agent with its normal quit command. Back in the same host terminal, inspect new files, commits, and the complete tracked diff from the starting commit:</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>git status --short</code></li>
+              <li><code data-copy-source>git log --oneline "$coop_review_base"..HEAD</code></li>
+              <li><code data-copy-source>git diff "$coop_review_base"</code></li>
+            </ul>
+<p>The diff shows all tracked changes since the starting commit, including work the agent staged or committed. Open any untracked files separately; their contents are not in this diff. Run the relevant project checks yourself and try the behavior you asked the agent to change.</p>
+<div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>You have reviewed every changed file and can explain the result. The relevant project checks pass when you run them yourself.</p></div>
+          </section><section class="doc-section guide-section" id="next">
+            <h2><span class="guide-step" aria-hidden="true">06</span>Build on a verified first run</h2>
+<p>Keep the next task small until the project builds and tests reliably inside the container. For a queue that can continue without your supervision, use the overnight walkthrough.</p>
+<details class="guide-detail"><summary>Other runtimes and editor sessions</summary><div><p>Use Docker for the provider sessions in this guide. It supports the helper that keeps your provider credentials outside the container. Apple container can run commands with open networking and no credentials, but cannot replace Docker for this setup.</p><p>An agent connected through ACP can ask your editor to read files or run commands on your computer. The editor controls that access. Read the <a href="docs.html#editors">editor documentation</a> before using it.</p></div></details>
+          </section>
+        <a class="guide-next" href="overnight-guide.html"><span class="guide-label">Next walkthrough</span><span>Run a coding agent overnight<span class="go" aria-hidden="true">→</span></span><small>Prepare a task queue, work in a separate fork, and review before merging.</small></a>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

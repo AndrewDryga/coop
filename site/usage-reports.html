@@ -1,0 +1,236 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/usage-reports.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Usage estimates and provider reports · co:op</title>
+  <meta name="description" content="Connect your provider&#39;s billing reports and compare reported costs with local usage estimates.">
+  <link rel="canonical" href="https://coop.dryga.com/usage-reports.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/usage-reports.html">
+  <meta property="og:title" content="Usage estimates and provider reports">
+  <meta property="og:description" content="Connect your provider&#39;s billing reports and compare reported costs with local usage estimates.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=bf51eb611f">
+  <script src="assets/js/site.js?v=bf51eb611f" defer></script>
+  <script src="assets/js/analytics.js?v=bf51eb611f" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <h1>Usage estimates and provider reports</h1>
+        <p class="guide-lead">Connect your provider&#39;s billing reports and compare reported costs with local usage estimates.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#connect-an-api-billing-source">Connect an API billing source</a></li>
+<li><a href="#google-billing-exports">Google billing exports</a></li>
+<li><a href="#reading-the-reports">Reading the reports</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<p><code>coop usage</code> shows account limits first, then estimates what your recorded activity would cost
+at API prices. It reads Coop histories and supported native CLI histories on this computer.
+Browser and mobile conversations, and histories on other computers, are not included. Deleted
+histories and unknown model prices can leave gaps.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Overview table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Provider</th>
+<th scope="col">Default history home</th>
+<th scope="col">Override</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude</td>
+<td><code>~/.claude</code></td>
+<td><code>CLAUDE_CONFIG_DIR</code></td>
+</tr>
+<tr>
+<td>Codex</td>
+<td><code>~/.codex</code></td>
+<td><code>CODEX_HOME</code></td>
+</tr>
+<tr>
+<td>Gemini</td>
+<td><code>~/.gemini</code></td>
+<td><code>GEMINI_CLI_HOME/.gemini</code></td>
+</tr>
+<tr>
+<td>Grok</td>
+<td><code>~/.grok</code></td>
+<td><code>GROK_HOME</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>If you set an override, Coop scans both it and the default location when they differ. It does
+not change either folder or its sign-ins, and it counts copied requests only once.</p>
+<p>Coop assigns a request to an account only when it finds the request in exactly one Coop account.
+Other native history appears as <code>Unassigned local usage</code>. Signing in today cannot establish
+which account made an old request. Shared editor histories appear as <code>Unassigned editor usage</code>.
+If copies point to conflicting accounts, Coop leaves the request unassigned instead of assigning
+it to your currently selected account.</p>
+<p>Provider subtotals and Total count unassigned history once. <code>≈$.../30d</code> estimates the activity&#39;s
+value at standard API prices, including activity covered by a subscription. It does not show
+what you paid. Use <code>coop usage codex@personal</code> (or another provider/account) to see which history
+and prices the estimate includes.</p>
+</section><section class="doc-section reference-section" id="connect-an-api-billing-source"><h2>Connect an API billing source</h2>
+<p>To enable provider reports, create <code>~/.config/coop/usage-reports.json</code>. If you set the XDG config
+home, use <code>$XDG_CONFIG_HOME/coop/usage-reports.json</code> instead. The file must be a regular file,
+not a symlink, and can define one reporting source per provider. <code>name</code> labels the source;
+it does not select a Coop account.</p>
+<p>Coop reads this file for <code>coop usage</code> and provider summaries. It does not read it when you
+inspect a specific account.</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Connect an API billing source code example" tabindex="0" data-copy-source=""><code class="language-json">{
+  &#34;reports&#34;: [
+    {
+      &#34;provider&#34;: &#34;codex&#34;,
+      &#34;name&#34;: &#34;work&#34;,
+      &#34;organization&#34;: &#34;org-example&#34;,
+      &#34;key_env&#34;: &#34;COOP_REPORT_OPENAI_KEY&#34;
+    },
+    {
+      &#34;provider&#34;: &#34;claude&#34;,
+      &#34;name&#34;: &#34;work&#34;,
+      &#34;key_env&#34;: &#34;COOP_REPORT_CLAUDE_KEY&#34;
+    },
+    {
+      &#34;provider&#34;: &#34;grok&#34;,
+      &#34;name&#34;: &#34;work&#34;,
+      &#34;team&#34;: &#34;your-team-id&#34;,
+      &#34;key_env&#34;: &#34;COOP_REPORT_XAI_KEY&#34;
+    }
+  ]
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Set the named environment variables in the host shell where you run Coop. Do not put the keys
+in this JSON file, your project or <code>agents/env</code>, which is forwarded into boxes. Reporting keys
+can have broader permissions than model API keys, so grant only the access needed for reports.</p>
+<p>Coop keeps these keys out of agent homes and containers. Its error messages include neither the
+key nor the provider&#39;s response body.</p>
+<ul>
+<li>OpenAI: use an organization Admin API key. <code>organization</code> selects the organization sent to the
+<a href="https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs" target="_blank" rel="nofollow noopener">Costs API</a>.</li>
+<li>Anthropic: use an organization Admin API key. The key determines the organization. Its
+<a href="https://platform.claude.com/docs/en/manage-claude/usage-cost-api" target="_blank" rel="nofollow noopener">cost report</a> excludes Priority
+Tier charges, so this source is marked partial.</li>
+<li>xAI: use a separate Management API key authorized to read the configured team&#39;s
+<a href="https://docs.x.ai/developers/rest-api-reference/management/billing" target="_blank" rel="nofollow noopener">billing usage</a>, not an inference
+key or prepaid balance.</li>
+</ul>
+<p>These sources report API usage for an organization or team. That can include other applications
+and devices in the same organization or team. Personal subscriptions and ChatGPT or Claude web
+activity are not included.</p>
+</section><section class="doc-section reference-section" id="google-billing-exports"><h2>Google billing exports</h2>
+<p>For Google reports, set up a <a href="https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery" target="_blank" rel="nofollow noopener">standard Cloud Billing export</a>.
+The host&#39;s <code>gcloud</code> account needs access to that export and permission to create BigQuery query
+jobs in the selected project. If the configured email is not signed in, use <code>gcloud auth login</code>.
+This sign-in is separate from your Gemini CLI sign-in.</p>
+<p>Coop obtains a fresh short-lived access token through
+<code>gcloud auth print-access-token &lt;email&gt; --quiet</code>. It does not copy a Google refresh credential.</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Google billing exports code example" tabindex="0" data-copy-source=""><code class="language-json">{
+  &#34;reports&#34;: [
+    {
+      &#34;provider&#34;: &#34;gemini&#34;,
+      &#34;name&#34;: &#34;work&#34;,
+      &#34;project&#34;: &#34;my-gemini-project&#34;,
+      &#34;billing_table&#34;: &#34;billing-project.billing.gcp_billing_export_v1_example&#34;,
+      &#34;sku_ids&#34;: [&#34;your-gemini-api-sku-id&#34;],
+      &#34;location&#34;: &#34;US&#34;,
+      &#34;gcloud_account&#34;: &#34;billing@example.com&#34;,
+      &#34;maximum_bytes_billed&#34;: 104857600
+    }
+  ]
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>In your billing export, find the exact SKU IDs for the Gemini or Vertex API charges you want
+to report. A SKU identifies a billing item. Replace the example SKU list with those IDs.</p>
+<p>Coop uses a fixed query with your chosen project and SKU IDs as parameters. It includes their
+billing credits and accepts only USD billing. It does not include unrelated Vertex AI or
+cloud services.</p>
+<p>If the query is incomplete, rows are missing or the currency is unsupported, Coop shows the
+report as unavailable. It does not report those missing amounts as zero.</p>
+<p>Queries can cost money. Set <code>maximum_bytes_billed</code> to limit how much data you can be charged
+for. The largest limit Coop allows is 1 GiB. Google rejects a query that exceeds the limit
+without charging for that query. Coop requests cached results, but a query may still cost money.</p>
+<p>You must create the export and arrange its permissions yourself. Coop does not create it,
+change permissions or enable billing. The report remains partial because the export may
+lack some usage or older records, and your SKU list may leave out charges.</p>
+</section><section class="doc-section reference-section" id="reading-the-reports"><h2>Reading the reports</h2>
+<p>Provider reports appear in a separate section without an approximation sign. These amounts come
+from the provider&#39;s usage reports; they are not a final invoice. Each report covers 30 completed
+UTC days and excludes the end date. Local estimates instead use a rolling 30-day window.</p>
+<p><code>Checked</code> shows when Coop fetched the report. The provider may still report requests late or
+revise costs. Reports with excluded usage or missing data are marked <code>partial</code>.</p>
+<p>A failed source stays visible. If one configured source fails, the reported subtotal is marked
+partial too. If none returns a usable report, Coop shows no reported spending subtotal.</p>
+<p>Coop keeps reported API spend separate from local estimates because they can cover the same
+requests and measure different things. A provider command such as <code>coop usage codex</code> filters the
+reports. An account command such as <code>coop usage codex@personal</code> neither requests an organization
+report nor assigns its bill to that login.</p>
+</section>
+        <nav class="reference-related" aria-label="Related guides">
+          <h2>Related guides</h2>
+          <ul class="reference-list" role="list"><li><a href="agents.html">Agents, accounts and presets</a><p>Sign in, choose models and accounts, and configure presets, teammates and instructions.</p></li>
+<li><a href="configuration.html">Configuration</a><p>Find project settings, environment variables, configuration files and exit codes.</p></li>
+<li><a href="cli.html">Command reference</a><p>Look up co:op commands and options, with examples of how to use them.</p></li>
+</ul>
+          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
+        </nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/usage-reports.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

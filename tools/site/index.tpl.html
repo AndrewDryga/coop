@@ -6,19 +6,19 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0e1014">
   <title>co:op · Sandbox for Claude Code, Codex and AI coding agents</title>
-  <meta name="description" content="Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.">
+  <meta name="description" content="Run Claude Code, Codex, Gemini and Grok in a container with your project mounted inside. Hide secret files and control network access. Free and open source.">
   <link rel="canonical" href="https://coop.dryga.com/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="co:op">
   <meta property="og:url" content="https://coop.dryga.com/">
   <meta property="og:title" content="co:op · You need a sandbox">
-  <meta property="og:description" content="Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.">
+  <meta property="og:description" content="Run Claude Code, Codex, Gemini and Grok in a container with your project mounted inside. Hide secret files and control network access. Free and open source.">
   <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="You need a sandbox: a home folder where only the project sits inside the sandbox, secrets read as empty, and only the AI provider is reachable.">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
   <meta name="twitter:card" content="summary_large_image">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"co:op","description":"Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.","url":"https://coop.dryga.com/","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://github.com/AndrewDryga/coop/blob/main/LICENSE","softwareHelp":"https://coop.dryga.com/docs.html","sameAs":["https://github.com/AndrewDryga/coop"],"publisher":{"@type":"Organization","name":"Protectorate","url":"https://github.com/ProtectorateHQ"}}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"co:op","description":"Run Claude Code, Codex, Gemini and Grok in a container with your project mounted inside. Hide secret files and control network access. Free and open source.","url":"https://coop.dryga.com/","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://github.com/AndrewDryga/coop/blob/main/LICENSE","softwareHelp":"https://coop.dryga.com/docs.html","sameAs":["https://github.com/AndrewDryga/coop"],"publisher":{"@type":"Organization","name":"Protectorate","url":"https://github.com/ProtectorateHQ"}}</script>
   <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
@@ -66,30 +66,30 @@
       <ol class="story-steps" id="sandbox" role="list">
         <li class="step">
           <h2>co:op builds a box around your project</h2>
-          <p>The agent runs in a container that sees one folder: your project, at its real path.</p>
-          <p>Your SSH keys, cloud logins and other repos aren't in it.</p>
+          <p>The agent runs in a container with your project mounted at its real path.</p>
+          <p>co:op does not mount your SSH keys, cloud logins or other repos.</p>
           <p class="evidence"><strong>3 s</strong> <span>to start the box once its image is built, network filter included, <a href="https://github.com/AndrewDryga/coop/blob/main/tools/lifecyclebench/main.go">we measured</a>.</span></p>
         </li>
         <li class="step">
           <h2>Secrets are replaced</h2>
           <p>Files like .env stay where they are, but inside the box they're replaced with empty files.</p>
-          <p><code>coop check-secrets</code> finds secrets inside your files.</p>
+          <p><code>coop check-secrets</code> scans file contents for possible secrets.</p>
           <p>Hide more paths with <code>.coopignore</code>.</p>
         </li>
         <li class="step">
           <h2>Networking is restricted</h2>
-          <p>The box reaches your AI provider and the domains you approve.</p>
-          <p>Everything else is blocked, so your code can't go anywhere you haven't approved.</p>
+          <p>With filtered networking, the box reaches your AI provider and the destinations you approve.</p>
+          <p>Other destinations are blocked. Your provider can still receive the files and prompts you give the agent.</p>
         </li>
         <li class="step">
-          <h2>You push, not the agent</h2>
-          <p>There are no Git credentials inside.</p>
-          <p>The agent commits in your name, and you decide what leaves your machine.</p>
+          <h2>Review before you push</h2>
+          <p>co:op does not pass your host Git credentials to the box.</p>
+          <p>The agent commits in your name. You review the work before pushing it and, optionally, sign it.</p>
         </li>
         <li class="step-group" id="why" style="--items: 4">
           <div class="group-panel">
             <h2>But why?</h2>
-            <p>Agents do what they read in code, docs and issues, even when an attacker wrote it.</p>
+            <p>Agents can follow instructions hidden in code, docs or issues, even when an attacker wrote them.</p>
             <div class="attack-rail">
               <div class="ticks" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
               <ol class="attacks" role="list">
@@ -104,8 +104,8 @@
                   <p class="evidence"><strong>1 in 3</strong> <span>companies faced prompt injection attacks on their AI apps within a year, <a href="https://www.gartner.com/en/newsroom/press-releases/2025-09-22-gartner-survey-reveals-generative-artificial-intelligence-attacks-are-on-the-rise">Gartner found</a>.</span></p>
                   <div class="case">
                     <p class="threat">An issue on a public repo tells your agent to publish your private code.</p>
-                    <p class="stopped">{{check}}<span>The box has no GitHub credentials, and your other repos aren't in it.</span></p>
-                    <p class="stopped">{{check}}<span>Nor can it upload your code anywhere else.</span></p>
+                    <p class="stopped">{{check}}<span>co:op does not mount your GitHub credentials or other repos into the box.</span></p>
+                    <p class="stopped">{{check}}<span>Filtered networking blocks destinations you have not approved.</span></p>
                   </div>
                 </li>
                 <li class="attack" data-attack="key">
@@ -137,21 +137,21 @@
                   <p class="evidence"><strong>56%</strong> <span>of coding-agent runs on vague DevOps tasks went beyond what was asked, <a href="https://arxiv.org/abs/2607.02294">a 2026 study found</a>.</span></p>
                   <div class="case">
                     <p class="threat">An agent cleaning up runs <code>rm -rf tests/ plan/ ~/</code></p>
-                    <p class="stopped">{{check}}<span>In the box, that <code>~/</code> isn't your home folder. Your files aren't there.</span></p>
+                    <p class="stopped">{{check}}<span>In the box, <code>~/</code> is a container home. Your own home folder stays outside.</span></p>
                   </div>
                 </li>
                 <li class="attack" data-attack="prod">
                   <p class="evidence"><strong>80%</strong> <span>of companies say their AI agents have taken unintended actions, <a href="https://www.sailpoint.com/press-releases/sailpoint-ai-agent-adoption-report">SailPoint found</a>.</span></p>
                   <div class="case">
                     <p class="threat">An agent uses your cloud CLI to SSH into production and drops the database.</p>
-                    <p class="stopped">{{check}}<span>The box has no cloud logins or SSH keys, and it can't reach your servers.</span></p>
+                    <p class="stopped">{{check}}<span>co:op does not mount your cloud logins or SSH keys. Filtered networking blocks servers you have not approved.</span></p>
                   </div>
                 </li>
                 <li class="attack" data-attack="push">
                   <p class="evidence"><strong>35%</strong> <span>of the time, even the best of five recent models changed code that needed no change, <a href="https://arxiv.org/abs/2605.07769">a 2026 study found</a>.</span></p>
                   <div class="case">
                     <p class="threat">A confused agent force-pushes over your team's main branch.</p>
-                    <p class="stopped">{{check}}<span>The box has no Git credentials, so only you can push.</span></p>
+                    <p class="stopped">{{check}}<span>co:op does not pass your host Git credentials to the box.</span></p>
                   </div>
                 </li>
               </ol>
@@ -193,7 +193,7 @@
           <div class="feature-copy">
             <h3>Forks</h3>
             <p>Hand work to agents, each in its own copy of your project, and keep working in yours.</p>
-            <p>Review a fork like a pull request, then merge it. co:op rebases it onto your branch and runs your checks first.</p>
+            <p>Review a fork like a pull request, then merge it. Set a project gate to check the rebased work before merging.</p>
             <p class="evidence"><strong>+63%</strong> <span>tickets per minute when developers' parallel agents were planned, kept apart and tracked, <a href="https://arxiv.org/abs/2609.33113">Microsoft Research found</a>.</span></p>
           </div>
           {{fork}}
@@ -219,8 +219,8 @@
         <li class="feature-row">
           <div class="feature-copy">
             <h3>Project services</h3>
-            <p>Postgres, Redis and anything else in your Compose file run beside the box, each in its own container.</p>
-            <p>They're isolated the same way: a private network with no direct internet, and your secrets hidden.</p>
+            <p>Run Postgres, Redis and other supported Compose services beside the box, each in its own container.</p>
+            <p>In filtered mode, approved services use a private network with no direct internet access. Secret files stay hidden unless you approve access.</p>
           </div>
           {{services}}
         </li>
@@ -256,7 +256,7 @@
           {{cmd_run}}
         </div>
       </div>
-      <p class="more"><a href="docs.html">Read the docs<span class="go" aria-hidden="true">→</span></a></p>
+      <p class="more"><a href="sandbox-guide.html">Set up your first sandbox<span class="go" aria-hidden="true">→</span></a></p>
     </section>
   </main>
 
@@ -269,7 +269,7 @@
       <a href="docs.html">Docs</a>
       <a href="https://github.com/AndrewDryga/coop">GitHub</a>
       <a href="https://emisar.dev">Emisar</a>
-      <a href="https://github.com/AndrewDryga/responder">Ryker</a>
+      <a href="https://github.com/AndrewDryga/ryker">Ryker</a>
     </nav>
     <p>By <a href="https://github.com/ProtectorateHQ">Protectorate</a></p>
   </footer>

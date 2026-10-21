@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Run a coding agent overnight with a reviewable task queue · co:op</title>
+  <meta name="description" content="Set up a task queue, run an agent in a separate fork, and review its work before merging. Learn how to stop, answer questions and resume.">
+  <link rel="canonical" href="https://coop.dryga.com/overnight-guide.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/overnight-guide.html">
+  <meta property="og:title" content="Run a coding agent overnight with a reviewable task queue">
+  <meta property="og:description" content="Set up a task queue, run an agent in a separate fork, and review its work before merging. Learn how to stop, answer questions and resume.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-orchestrator.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="co:op Orchestrator illustration: a task queue in the morning, with completed work and a decision waiting for review.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=34e083e426">
+  <script src="assets/js/site.js?v=34e083e426" defer></script>
+  <script src="assets/js/analytics.js?v=34e083e426" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html">Documentation</a></p>
+        <h1>Run a coding agent overnight.</h1>
+        <p class="guide-lead">Prepare a task, run it in a separate fork, and review the result in the morning.</p>
+        <div class="guide-prerequisites">
+          <h2>Before you start</h2>
+          <ul>
+            <li>A completed <a href="sandbox-guide.html">sandbox setup</a>, with working project checks</li>
+            <li>One small task with a clear finish line</li>
+            <li>A computer that will stay awake</li>
+          </ul>
+        </div>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>In this walkthrough</summary>
+        <nav aria-label="On this page"><ol role="list"><li><a href="#prepare"><span aria-hidden="true">01</span>Define the finish line</a></li>
+<li><a href="#isolate"><span aria-hidden="true">02</span>Prepare the fork</a></li>
+<li><a href="#launch"><span aria-hidden="true">03</span>Start the run</a></li>
+<li><a href="#watch"><span aria-hidden="true">04</span>Watch, stop or resume</a></li>
+<li><a href="#review"><span aria-hidden="true">05</span>Review and merge</a></li></ol></nav>
+      </details>
+      <article class="docs-main" aria-label="Step-by-step instructions">
+        <section class="doc-section guide-section" id="prepare">
+            <h2><span class="guide-step" aria-hidden="true">01</span>Make the task reviewable</h2>
+<p>Run these commands in the original project on your computer, called the parent project below. The example fixes a flaky login test. Replace its paths, commands and requirements with a real issue you can review in one sitting.</p>
+<p>In <code>AGENTS.md</code>, record the build and test commands, where changes belong, and when the agent must ask a question.</p>
+<p>Choose the command that checks your project before you start. co:op calls this the <code>gate</code>. Add it to your existing <code>.agent/project.yaml</code>, keeping the other settings.</p>
+<div class="code-file"><p class="code-file-name">.agent/project.yaml · example addition</p><pre class="code" data-copy-source>
+# Use your project's real verification command.
+gate: make check</pre></div>
+<p>The example uses <code>make check</code>. Use your project's actual command, confirm that it works in the container, and put it in <code>AGENTS.md</code> so the agent knows to run it. co:op also runs it during fork review and merge. A <code>COOP_GATE</code> setting on the host overrides the project setting.</p>
+<p class="guide-location">Host terminal · parent project root</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop tasks add "Fix the flaky login test" --tasks .agent/tasks</code></li>
+            </ul>
+<p>Open the generated <code>task.md</code> at the path printed by the command. Keep its metadata and fill in the brief before running the loop.</p>
+<div class="guide-example"><p class="guide-label">Example task brief · adapt before running</p><dl class="guide-task"><dt>Observed</dt><dd><code>tests/login.test.ts</code> fails when another test leaves a signed-in user in shared test state.</dd><dt>Expected</dt><dd>Each test starts with its own session state. Login succeeds with valid credentials and fails with invalid ones.</dd><dt>Verify</dt><dd>Reproduce the failure, run the focused login tests repeatedly, then run the project gate. In this example project: <code>make test-login</code> and <code>make check</code>.</dd><dt>Reject</dt><dd>Deleting or skipping the assertion, weakening the behavior check, or adding a sleep to conceal the race.</dd><dt>Leave evidence</dt><dd>Record the cause, changed files, commands and actual results in the task log. Stop and ask if the fix requires changing authentication behavior.</dd></dl></div>
+<div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>The task names a real failure, a verifiable result and an unacceptable shortcut. The check commands exist in your project and work in the box.</p></div>
+          </section><section class="doc-section guide-section" id="isolate">
+            <h2><span class="guide-step" aria-hidden="true">02</span>Choose exactly what may run</h2>
+<p>A fork starts from committed source. Review and commit the code, project configuration and instructions the run needs before creating it. Keep co:op's local task queue uncommitted; the host manages its assignments separately.</p>
+<p class="guide-location">Host terminal · parent project root</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>git status --short</code></li>
+              <li><code data-copy-source>coop tasks ls --tasks .agent/tasks --todo --in-progress</code></li>
+              <li><code data-copy-source>coop fork ls</code></li>
+            </ul>
+<p>The commands in this guide select the root queue, <code>.agent/tasks</code>. Every eligible task in that queue may run, including tasks you added earlier. Check the list before continuing.</p>
+<p>If you need a separate queue for this run, follow the <a href="loop.html">queue configuration and selection options</a> and use that path in every task, launch and resume command below. Choosing a queue does not limit the number of tasks, runtime or spending.</p>
+<p>Choose an unused fork name. This guide uses <code>overnight</code> with <code>--isolated</code>, which gives the fork its own Git metadata and object storage. co:op checks the committed changes before bringing them into your original checkout.</p>
+<details class="guide-detail"><summary>If the fork already exists, or you use shared services</summary><div><p>Choose a new name if <code>overnight</code> is already in use, and substitute it in every command below. An existing ordinary fork cannot be upgraded to isolated mode in place.</p><p>Shared caches, services and host tools still need your trust. Review the committed changes with <code>coop fork review</code> before opening the fork's raw directory in an editor. Files the agent changed, including Git and editor settings, can run code on your computer. The <a href="forks.html#isolated-write-forks">isolated-fork reference</a> explains these limits.</p></div></details>
+<div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>The source the fork needs is committed, you have checked which tasks may run, and your fork name is unused. You are still in the parent project.</p></div>
+          </section><section class="doc-section guide-section" id="launch">
+            <h2><span class="guide-step" aria-hidden="true">03</span>Launch the fork in the background</h2>
+<p>Start Claude Code in the new isolated fork. If you signed in to Codex, substitute <code>codex</code> for <code>claude</code> in this command and the resume command below.</p>
+<p class="guide-location">Host terminal · parent project root</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop fork overnight claude --isolated --loop --tasks .agent/tasks -d</code></li>
+            </ul>
+<p><code>-d</code> runs the loop in the background so you can keep using your terminal. The loop edits and commits in the fork, while the host assigns work from the parent queue. It uses your provider allowance and your computer's resources, so keep the computer awake and Docker running.</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop fork ls</code></li>
+              <li><code data-copy-source>coop fork logs overnight</code></li>
+            </ul>
+<p>Check that the intended fork started and its logs show the expected task. If it stops with a question, answer it and resume the same fork as shown below. Final review can send work back for another pass if it falls short of the task's requirements.</p>
+<div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>The fork name, agent and task in the status and logs match your intended run. Leave it unattended only after this first check.</p></div>
+          </section><section class="doc-section guide-section" id="watch">
+            <h2><span class="guide-step" aria-hidden="true">04</span>Stay in control of the run</h2>
+<p>Run these commands from the parent project. The live views occupy their terminal; open another terminal if you want both at once.</p>
+<p class="guide-location">Host terminal · parent project root</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop tasks watch --tasks .agent/tasks</code></li>
+              <li><code data-copy-source>coop fork logs overnight --follow</code></li>
+            </ul>
+<p>Press Ctrl-C to leave a live view. Leaving the log view does not stop the background loop. To stop that loop and its running boxes while preserving the fork's work:</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop fork stop overnight</code></li>
+            </ul>
+<p>To review pending questions, record your answer in the parent queue. This also unblocks the answered task:</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop tasks decisions -i --tasks .agent/tasks</code></li>
+            </ul>
+<p>After answering a question or stopping the run, use this command to resume the same fork. Repeat the queue path: co:op remembers that the fork is isolated, but it does not remember the previous <code>--tasks</code> filter.</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop fork overnight claude --isolated --loop --tasks .agent/tasks -d</code></li>
+            </ul>
+<details class="guide-detail"><summary>A command exited successfully. Is the work finished?</summary><div><p>Read the fork's status and final-review result. A successful command exit can mean that the fork is waiting for your answer, or that it reached a task limit before final review. Check the result before treating the work as finished.</p><p>The commands in this walkthrough keep working in the named fork. A direct <code>coop loop</code> instead edits and commits in the current checkout; use the <a href="docs.html#loop">loop reference</a> if that is the workflow you intend.</p></div></details>
+<div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>Check that the fork is ready and its final review is complete. The task in the parent queue may still be in progress, even when the fork is ready. It becomes complete when you merge the reviewed changes.</p></div>
+          </section><section class="doc-section guide-section" id="review">
+            <h2><span class="guide-step" aria-hidden="true">05</span>Review the result before landing it</h2>
+<p>When the fork is ready, inspect its committed changes. You will then run the project check on a temporary copy that includes the latest changes from your current branch.</p>
+<p class="guide-location">Host terminal · parent project root</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop fork review overnight</code></li>
+            </ul>
+<p>Read the diff first, especially any changes to build scripts. Then run the configured project check:</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop fork review overnight --gate</code></li>
+            </ul>
+<p>Read the summary to confirm which check ran and what it reported. If no check is configured, <code>--gate</code> can exit successfully without testing the project.</p>
+<p>The review includes only committed changes. If it warns about uncommitted or untracked fork files, resolve the warning and review again.</p>
+<div class="guide-example"><p class="guide-label">For the login-test example, look for</p><ul class="guide-checklist" role="list"><li>An explanation of how tests shared session state, backed by a reproduced failure.</li><li>A focused change that gives each test its own state and keeps the assertions.</li><li>Tests that cover the original failure and the affected failure path.</li><li>Commands and results from repeated login tests and the project gate.</li><li>A completed final review, with all requested fixes addressed.</li></ul></div>
+<p>A passing gate verifies only the checks it ran. Check the changed behavior yourself as well.</p>
+<p>Once the result meets the task's acceptance criteria, and the parent checkout is clean, merge it from the branch where you want the work to land:</p>
+<ul class="cmds" role="list">
+              <li><code data-copy-source>coop fork merge overnight</code></li>
+            </ul>
+<p>Confirm when co:op asks to bring the changes into your branch. It prepares the committed work for that branch, runs the configured check, and merges only if the check passes. It asks separately before removing the fork.</p>
+<p>If review or merge stops with an error, fix the reported problem and review again. Pushing and deploying are separate actions.</p>
+<div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>The reviewed changes are on the branch you intended, you have saved the check result, and the matching tasks in the parent queue are complete. Try a larger run after you have checked this result.</p></div>
+          </section>
+        <a class="guide-next" href="orchestrator.html"><span class="guide-label">Explore the workflow</span><span>How the orchestrator works<span class="go" aria-hidden="true">→</span></span><small>Task queues, decisions, review and longer runs.</small></a>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

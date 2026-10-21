@@ -1,6 +1,9 @@
 # The loop
 
-`coop loop` works through your task queue on its own, with a fresh agent for every task. When the queue is empty, a final review reopens unfinished work, and a task that needs your decision waits for you. The [loop guide](https://coop.dryga.com/docs.html#loop) shows the flow; this page has the details.
+`coop loop` works through your task queue with a fresh agent for each task. When the queue is
+empty, a reviewer checks the completed work and reopens anything unfinished. Tasks that need
+your decision wait for you. Start with the [loop guide](https://coop.dryga.com/docs.html#loop),
+or use this page for the details.
 
 ```bash
 coop init                 # scaffold AGENTS.md, the .agent/ working folder, and the hooks
@@ -11,13 +14,22 @@ coop loop codex           # …or name claude, codex, gemini, grok, or a preset
 
 A task is a folder under `.agent/tasks/`. Its state is the directory it sits in: `00_todo/`, `10_in_progress/`, `50_blocked/` or `99_done/`. The numeric prefix sorts `ls` in lifecycle order, and `coop tasks` shows the clean names.
 
-Before each iteration, the loop selects and claims the next task on the host, or resumes one left in `10_in_progress/`. Then it starts a fresh agent assigned to that exact task, so old context never piles up. The loop won't quit while `00_todo/` or `10_in_progress/` has work it can acquire.
+Before starting an agent, the loop claims the next task on the host or resumes one left in
+`10_in_progress/`. The new agent works only on that task, without carrying over the previous
+agent's conversation. The loop keeps going while it can claim work from `00_todo/` or
+`10_in_progress/`.
 
-Name the agent (`claude`, `codex`, `gemini` or `grok`), or a preset whose lead supplies it. For something custom, `work.command` in `.agent/loop.yaml` still overrides the whole iteration command.
+Choose an agent (`claude`, `codex`, `gemini` or `grok`) or a preset that defines the lead agent.
+To run a custom command for each task, set `work.command` in `.agent/loop.yaml`. It replaces the
+whole iteration command.
 
-If the model hits a rate or usage limit mid-run, the loop doesn't count it as a failure. It reads the reset time from the agent's own output, waits it out with a countdown, and resumes the same item once the limit clears. An overnight run rides through the daily cap and doesn't burn retries against it.
+When the model reaches a rate or usage limit, the loop tries the next configured target. If
+every target is limited, it waits with a countdown until one can run, then retries the same
+task. A rate limit does not count as a failed task attempt.
 
-Add `--preflight` to run one cleanup pass before the loop starts working. It unblocks any `50_blocked/` task whose `decision.md` now has an answer, so a fresh run starts from a tidy queue. A task you parked with `coop tasks park` waits in the backlog, so preflight leaves it alone. It works no task and makes no commits. It mirrors the final review at the other end of the run. Preflight is off by default.
+Add `--preflight` to check the queue before work starts. This pass unblocks tasks in
+`50_blocked/` when their `decision.md` has an answer. It leaves backlog tasks parked with
+`coop tasks park` alone, does no task work and makes no commits. Preflight is off by default.
 
 ## Exit codes
 
@@ -31,34 +43,67 @@ A cron job or CI can branch on the loop's exit code without parsing its output:
 | `3` | The loop stopped with a task blocked on a human decision, including one the review kept reopening past the round cap. Resolve it with `coop tasks decisions`, then run the loop again. |
 | `130` | The run was interrupted before the final verdict. |
 
-`--max-tasks` pauses the loop; it does not certify the queue as done. A successful pause exits `0`
-and leaves final review pending. Run the same command without the limit to resume that review
-before treating the work as verified complete. The resumed review finds each task's commit by its
-`Coop-Task: <id>` trailer among the commits made since the run started, so signing them in between
-is fine. A task is reviewed again if a commit its review saw changed after the review passed,
-including a repair commit that was on top when it was reviewed. If a task has no such commit or
-more than one, the loop stops, names it and lists the commits, instead of starting the review. A task another session committed before the run started and
-completes during it is reviewed at its one commit in the branch, and the reviewer is shown that
-commit.
+`--max-tasks` pauses the loop before final review. A successful pause exits `0`, but the work
+still needs review. Run the same command without the limit to finish that review.
 
-Each controller leases its exact task with a host-only lock under `~/.local/state/coop/task-leases/` while the agent runs. A second loop skips a held task and can take independent todo work. `coop tasks watch` shows a short `busy`, `stalled` or `unleased` state from metadata beside that lock, without exposing run IDs or PIDs. A stale heartbeat is only a diagnostic. The loop adopts a task only once its kernel lock is available, and then right away. It never adopts one by timeout. An unleased in-progress folder is adopted through that same lock.
+The resumed review uses the `Coop-Task: <id>` trailer to find each task's commit among the
+commits made since the run started. You can sign those commits between runs. If any commit seen
+by a previous review has changed, co:op reviews the task again. This includes a repair commit
+that was on top of the branch during that review.
 
-A human's `coop tasks claim <id>` works differently. The command exits at once and holds no lock, so it records durable ownership instead. The loop refuses that task, naming the owner and `coop tasks release <id>`, until an explicit `release`, `block`, `unblock` or `done` clears it. A claim never expires on its own.
+If co:op finds no matching commit or more than one, it stops before review and lists the task
+and commits. There is one exception to the run's commit range: another session may have
+committed a task before this run started, then completed it during the run. The reviewer sees
+that task's single matching commit in the branch.
 
-Stop running co:op controllers before a major-version upgrade. Controllers from different major versions don't share a supported authority contract.
+While an agent works on a task, co:op holds a lock on the host under
+`~/.local/state/coop/task-leases/`. Another loop skips that task and can work on an independent
+todo task. `coop tasks watch` reads the status stored beside the lock and shows `busy`, `stalled`
+or `unleased`, without showing run IDs or PIDs.
 
-A completed task leaves a small host-only receipt on the persistent authority lock inode. Concurrent loops use it to recognize a released owner's finalized folder, without trusting task metadata the provider can write. Before every writable agent or review box starts, the controller also journals the current done-folder fingerprints in that host-only registry. It removes the journal only after it validates the box's queue changes. After a controller crash, the next loop replays the journal and restores any unowned completion instead of silently grandfathering it. Completions made outside a supervised box stay ordinary task history.
+A missing heartbeat can help you spot a stalled worker, but it does not release the task. The
+loop takes over as soon as the operating system's lock becomes available, never because a
+timeout has passed. This also lets it resume an in-progress task that no controller has locked.
 
-The `/sweep` skill carries a scoped `Stop` hook, so only an active sweep is held while actionable tasks remain. Fresh scaffolds already have this layout. `coop init` is non-destructive, so an existing repo has to migrate by hand:
+When you run `coop tasks claim <id>`, the command records you as the owner and exits. It does
+not keep a lock open. The loop leaves your task alone and shows the owner and
+`coop tasks release <id>` command. Your claim stays in place until an explicit `release`,
+`block`, `unblock` or `done` clears it; it never expires.
+
+Stop running co:op controllers before a major-version upgrade. Running controllers from different
+major versions against the same task queue is not supported.
+
+When a task completes, co:op stores a small receipt on the host's persistent task lock file.
+Other loops use that receipt to recognize the completed folder after its owner releases the
+lock. They do not have to trust task metadata that the agent can edit.
+
+Before starting a box that can write, including a review box, co:op also records a fingerprint
+of each done folder in a host-only journal. It removes the journal only after checking the
+box's queue changes. If the controller crashes, the next loop uses the journal to undo any
+completion that had no authorized owner. Tasks completed outside a supervised box remain part
+of the ordinary task history.
+
+The `/sweep` skill has a `Stop` hook that keeps an active sweep running while it has tasks to
+work on. It does not hold other sessions open. New projects already use this setup.
+`coop init` preserves existing files, so update an older repo by hand:
 
 1. Remove only the stock `Stop` group from `.claude/settings.json`. Keep `PreToolUse` and custom hooks.
 2. Delete `.claude/hooks/stop-guard.sh`, but only if it's the old stock guard.
 3. Remove a stale `.agent/active`.
 4. Merge the current `.agent/skills/sweep/` files, keeping your local customizations.
 
-`init` also installs a fast Claude commit-gate hook. That hook is Claude-only, so `init` also installs a tracked git pre-commit gate (`.githooks/pre-commit`) and points `core.hooksPath` at it. The format check then runs for every committer, including Codex, Gemini and a plain `git commit`. The hook files are tracked, so a fresh clone gets them, but `core.hooksPath` is local Git config: run `coop init` in a new clone to point it at them again. The tracked `.githooks/prepare-commit-msg` shim also chains co:op's mounted box-attribution hook when it's present, and does nothing on a normal host.
+`init` installs a fast commit check for Claude. For other committers, `init` installs a Git
+pre-commit check at `.githooks/pre-commit` and sets `core.hooksPath`. The format check then runs
+for everyone, including Codex, Gemini and a plain `git commit`. Git tracks the hook files, but
+the `core.hooksPath` setting is local. Run `coop init` in each new clone to enable them there.
 
-A custom `core.hooksPath` is left untouched. Copy or chain both tracked hooks from the active hook directory. If that directory already has a `prepare-commit-msg`, add the shim's co:op hook call to that file instead of replacing it. Skip the format gate once with `git commit --no-verify`.
+The tracked `.githooks/prepare-commit-msg` hook also calls co:op's box-attribution hook when it
+is mounted. On a normal host, the shim does nothing.
+
+An existing custom `core.hooksPath` stays unchanged. Copy both tracked hooks into your active hook
+directory, or have your existing hooks call them. If you already have a `prepare-commit-msg`,
+add the shim's co:op hook call to it instead of replacing the file. To skip the format check for
+one commit, use `git commit --no-verify`.
 
 ## Final review
 
@@ -71,22 +116,51 @@ completed:
 - the change is polished, with docs and the CHANGELOG updated
 - the bookkeeping is right
 
-co:op atomically finalizes each completed `state.md` before the review. The worker records its final checks in that state as a compact handoff. Reviewers inspect the implementation and the test coverage and trust the reported execution. They never repeat tests themselves. A missing, failed or stale check reopens the task with an exact request for the worker. Reviewers never change an archived task in place. An unexpected lifecycle defect is reopened and reported like any other completion-integrity failure.
+Before review, co:op finalizes each completed task's `state.md` in one atomic update. The worker
+records its final checks there for the reviewer. Reviewers inspect the code and test coverage,
+but rely on the worker's record of which tests ran; they do not run the tests again.
 
-If the review reopened work, the loop drains the queue and reviews again. It repeats
-until a review reopens nothing (verified done) or the loop hits the round cap. At the
-cap, the task the review keeps reopening is blocked for a human, and the loop doesn't
-report it as done. The cap scales with the batch: half the tasks worked this run,
-clamped to `[3, signoff.rounds]` (default `5`). Small batches still get several
-attempts, while larger batches have a limit on repeatedly reopening one task.
+A missing, failed or outdated check causes the reviewer to reopen the task and tell the worker
+what to check. Reviewers never edit an archived task in place. If they find that a task moved
+through the queue incorrectly, they reopen and report it too.
 
-Each completed task must have exactly one `Coop-Task: <id>` binding in the current iteration's commit range, and exactly one reachable from `HEAD`. So rework after a review amends or rewrites the existing task commit. A second bound commit is rejected, and the task goes back to in-progress. A worker can't bind another task in its iteration either: verify subjects come only from tasks the host accepted as completed during this run. Every attempt gets this check, even one that fails, so a retry never builds on a commit that binds another task or rewrites its commit.
+If the reviewer reopens a task, the loop works through the queue and reviews again. It continues
+until a review finds nothing to reopen or reaches the round limit. At the limit, co:op blocks
+the repeatedly reopened task for your decision and does not report it as done.
 
-Every review closes with one structured evidence line per subject, and a PASS/FAIL receipt naming the exact sorted task IDs it proposes to reopen. In the default `writes: tasks` mode, the review only reports: the whole repository, task queues included, is read-only. co:op validates the complete proposal, acquires every subject's host-side task authority, and applies all the exact-subject reopens as one transaction.
+By default, the loop allows half as many review rounds as tasks worked, rounded down, with
+a minimum of three and a maximum of `5`. The range is `[3, signoff.rounds]`; setting a maximum
+below three overrides the minimum.
 
-If a review process succeeds but returns malformed structured output, co:op re-runs the complete review once, right away. The re-run covers the same subjects under the same configured writes policy, with a fixed receipt-format correction. Each attempt gets its own telemetry record. A malformed second verdict, lifecycle churn, an interruption, a process failure or an out-of-scope proposal changes no task.
+Each completed task must match exactly one commit through its `Coop-Task: <id>` trailer. That
+commit must be in the current iteration's commit range, and there must be exactly one matching
+commit reachable from `HEAD`. When review requests rework, the worker must amend or rewrite the
+existing task commit. A second matching commit is rejected, and the task returns to in-progress.
 
-Reviewer findings are stored in a delimited, untrusted log block. The next worker gets a fixed, reproduction-first action instead of instructions the reviewer wrote. `writes: repo` remains the deliberate escape hatch for fixing source. Even then, every task queue is remounted read-only, and the host still applies lifecycle changes.
+The worker also cannot add a trailer for another task or rewrite that task's commit. co:op
+checks every attempt, including failed attempts, before allowing a retry. Review covers only
+tasks that the host accepted as completed during this run.
+
+For each task it reviews, the reviewer returns a structured evidence line. It also returns a
+PASS/FAIL receipt with a sorted list of the exact task IDs to reopen. In the default
+`writes: tasks` mode, the reviewer can only report findings: the repository and task queues are
+read-only.
+
+co:op checks the whole proposal, acquires ownership of every task under review on the host, and
+reopens the proposed tasks in one transaction. The reviewer cannot change the queue directly.
+
+If the review process finishes successfully but returns the wrong output format, co:op runs the
+whole review once more. It uses the same tasks and write permissions, with a fixed instruction
+to correct the receipt format. Each attempt gets its own telemetry record.
+
+co:op leaves every task unchanged if the second verdict is malformed, a task changes state
+during the review, the process is interrupted or fails, or the proposal includes a task outside
+the review.
+
+co:op stores reviewer findings in a delimited log block and treats them as untrusted. The next
+worker gets fixed instructions to reproduce the issue first, instead of following instructions
+from the reviewer. Use `writes: repo` to let the reviewer fix source. Every task queue is still
+remounted read-only, and the host applies lifecycle changes.
 
 Tune the loop in one committed `.agent/loop.yaml`, with a section per step:
 
@@ -98,28 +172,55 @@ Tune the loop in one committed `.agent/loop.yaml`, with a section per step:
 | `signoff` | the final review |
 | `verify` | an optional affected-feature pass after the final review |
 
-`work`, `between`, `signoff` and `verify` each take an `agent:` model ladder, and every step except `work` takes a `prompt:`. A ladder lists targets (`provider[:model][/effort][@account]`) or preset names, so `signoff.agent` can review on a stronger model than the cheaper `work.agent` loop.
+Set `agent:` for `work`, `between`, `signoff` or `verify` to choose its models. Each setting takes
+a fallback list of targets (`provider[:model][/effort][@account]`) or preset names. For example,
+`signoff.agent` can use a stronger model to review work done by a cheaper `work.agent`. Every
+step except `work` also accepts a `prompt:`.
 
-Prompts never replace a co:op built-in. `signoff.prompt` appends extra checks to the built-in final review. `preflight.prompt` adds a separate agent cleanup pass on top of the unblock step co:op runs on the host. The final review still reopens a shipped task that fails one of your checks, for example that the CHANGELOG gained an entry or that the docs were regenerated. `between.prompt` sets an opt-in per-task audit that runs after each completed task and may reopen it. `verify.prompt` sets its opt-in final pass the same way.
+Custom prompts add to co:op's built-in checks; they do not replace them:
 
-Ordinary between review is off unless you switch it on and set its prompt. A completed task that changed a gate-defining file always gets an immediate protected audit before the loop moves on. That audit uses the configured between target and prompt, or falls back to the signoff target and a focused built-in prompt. co:op names the just-finished task in either prompt. If co:op can't read from Git which files a task changed, the loop stops instead, because a failed read doesn't prove the checks are untouched. Continuing with the command it prints reviews that task before any other work, and the final review also stops while it can't read the run's changes.
+- `signoff.prompt` adds checks to final review. A task that fails one is reopened, just as it
+  would be for a built-in check. You might require a CHANGELOG entry or regenerated docs.
+- `preflight.prompt` adds an agent cleanup pass in addition to co:op's host-side unblock step.
+- `between.prompt` defines an optional review after each completed task. It can reopen the task.
+- `verify.prompt` defines the optional pass after final review.
 
-co:op protects Makefiles, CI, hooks and its own config automatically. If the real checker is a wrapper script or an ordinary source file, list each exact repo-relative path under `gate_sources:` in `.agent/project.yaml`. co:op freezes that list when the loop starts, so a task can't remove its own protection. A deliberate change to the list applies after a restart. Existing projects keep the built-in behavior. The list is explicit on purpose, because co:op doesn't claim it can infer the checker's complete source graph.
+Per-task review is off until you enable it and set a prompt. Changes to files that define the
+gate are an exception: co:op always reviews those tasks before starting the next one. It uses
+the configured between-review target and prompt, or the signoff target with a focused built-in
+prompt. Both prompts name the task that just finished.
+
+If Git cannot tell co:op which files changed, the loop stops. It cannot assume the gate was
+untouched. Run the continuation command it prints to review that task before starting other
+work. Final review also stops if co:op cannot read the run's changes.
+
+co:op automatically reviews changes to Makefiles, CI, hooks and its own config. If your gate
+also depends on wrapper scripts or ordinary source files, list their exact repo-relative paths
+under `gate_sources:` in `.agent/project.yaml`. co:op cannot discover all those dependencies for
+you.
+
+The loop keeps the list it read at startup, so a task cannot remove itself from review. Restart
+the loop to apply a deliberate change to the list. Projects without a list still get the
+built-in protection.
 
 Settings live in the same file: `signoff.rounds`, `preflight.enabled`, `verify.enabled` and `work.command`. Every field is optional, and a missing file means the built-in defaults. `coop init` scaffolds a fully commented starter.
 
 ## The .agent/ folder
 
-`init` creates a tool-neutral working folder that the agent reads back on every boot and after each compaction. Everything in it is local working state that git ignores, except the parts that are committed: the knowledge tree (`kb/`, including `kb/rules/`), the workflow assets (`skills/`, `presets/`), the Claude fallback adapter (`claude/`), `project.yaml`, `loop.yaml`, `compose.yml`, `Dockerfile` and `tasks/README.md`.
+`init` creates a folder for instructions and working notes that any supported agent can use.
+The agent reads it when it starts and after its conversation is compacted. Git ignores the
+local working state. It tracks the shared knowledge and rules (`kb/`, including `kb/rules/`),
+workflows (`skills/`, `presets/`), fallback Claude settings (`claude/`), `project.yaml`,
+`loop.yaml`, `compose.yml`, `Dockerfile` and `tasks/README.md`.
 
 | Path | What it's for |
 |---|---|
 | `tasks/` | The work queue: one folder per task under `00_todo/`, `10_in_progress/`, `50_blocked/` and `99_done/`. A task's state is its directory, and `coop tasks` moves it. Each folder carries its own `spec.md`, `log.md`, `state.md` and `decision.md` as needed. The loop reads `00_todo/` and `10_in_progress/`. |
-| the backlog | Unscheduled ideas, as task folders in the `tasks/xx_backlog/` drawer (`coop backlog`). It sits outside the lifecycle, so it's never auto-worked and never nagged by the Stop hook. `coop backlog promote <id>` moves an item into `tasks/00_todo/` when it's ready. |
-| `kb/` | The committed descriptive knowledge base: subsystem maps, cross-cutting traps, and gotchas the code doesn't carry. |
-| `kb/rules/` | The normative part of the knowledge tree. Corrections graduate into "do X, not Y" rules here. |
+| the backlog | Unscheduled ideas stored as task folders in `tasks/xx_backlog/` (`coop backlog`). The loop and Stop hook ignore them. When an idea is ready, `coop backlog promote <id>` moves it into `tasks/00_todo/`. |
+| `kb/` | Committed notes explaining subsystems, how they interact, and problems that are hard to spot from the code alone. |
+| `kb/rules/` | Committed rules that tell agents how to work in the project. Corrections become rules here. |
 | `claude/` | Fallback user-level Claude settings and hooks for repos without matching project `.claude/` artifacts. Committed. |
-| `project.yaml` | The committed per-project config: a monorepo's [`subprojects:`](#monorepos), the [`serve:` ports](box.md#dev-servers-in-your-browser), the box policy (`box:`), the merge `gate:`, and the exact project-specific `gate_sources:` that get protected loop review. The `box:` policy covers egress and [`egress_rules:`](networking.md), resource caps, and `auto_up`/`network`. `box:` and `gate:` rank below an explicit `COOP_*` env or conf setting. Because the file is committed and read on the host, it can only tighten your posture: egress pins `filtered` or `offline`, `open` is a request a human approves with `coop approve`, and `no_new_privileges` can't be set here. |
+| `project.yaml` | Committed project settings: [`subprojects:`](#monorepos), [`serve:` ports](box.md#dev-servers-in-your-browser), box policy (`box:`), the merge `gate:`, and extra `gate_sources:` to review when changed. The `box:` policy sets egress, [`egress_rules:`](networking.md), resource caps and `auto_up`/`network`. Explicit `COOP_*` environment or config settings override `box:` and `gate:`. This project file can tighten security settings, but cannot relax them by itself: egress can require `filtered` or `offline`, while `open` needs human approval through `coop approve`. It cannot set `no_new_privileges`. |
 
 On a fresh scaffold, `init` also installs generic workflow skills into `.agent/skills/` and links the selected agents to it:
 
@@ -152,9 +253,17 @@ co:op then aggregates every member's `.agent/tasks` automatically:
 - `coop prompt` counts across them
 - the id commands (`claim`, `done` and the rest) find a task in whichever queue holds it
 
-You no longer hand-maintain `COOP_TASKS`, though an explicit `COOP_TASKS` or `--tasks` still overrides. Members keep their own queues for their own work. The root keeps one too, for changes that span members.
+You do not need to maintain `COOP_TASKS` by hand. An explicit `COOP_TASKS` or `--tasks` still
+overrides automatic discovery. Each member keeps a queue for its own work, and the root queue
+holds changes that span members.
 
-`coop init` at the root detects the members (folders at any depth that have a `.agent/`, skipping hidden and build folders) and writes the `project.yaml`. It scaffolds each member with just its own task queue. Members share the root's AGENTS.md, `.agent/skills/`, `.agent/kb/` and box, though a large member may commit its own `.agent/kb/rules/` if it wants them. When a script (such as the sweep queue guard) needs the resolved queue paths, `coop tasks queues` prints them.
+Run `coop init` at the root to find member folders and write `project.yaml`. It looks for
+`.agent/` folders at any depth, skipping hidden and build folders, and creates a task queue for
+each member. Members share the root's AGENTS.md, `.agent/skills/`, `.agent/kb/` and box. A member
+can also commit its own `.agent/kb/rules/` when it needs additional rules.
+
+Use `coop tasks queues` when a script, such as the sweep queue guard, needs the resolved queue
+paths.
 
 ## Parallel forks
 
@@ -171,18 +280,41 @@ coop fork logs -f               # tail every fork at once (compose-style, prefix
 coop fork stop perf             # halt one; coop fork logs perf -f to watch just it
 ```
 
-With no `--tasks`, a fork schedules from every queue co:op knows about: the repo's own `.agent/tasks` plus each [monorepo](#monorepos) member's. `--tasks <path>` narrows the scheduler to one canonical queue, including an explicit absolute queue outside the project. It never copies or remaps that queue. At any moment, the fork receives only its assigned task, under `.coop/task-executions/`. A restart in the same generation resumes it, and another fork can't claim it.
+Without `--tasks`, a fork takes work from the repo's `.agent/tasks` and every
+[monorepo](#monorepos) member's queue. Use `--tasks <path>` to choose one queue. You can also give
+an absolute path to a queue outside the project. The fork uses that original queue; it does not
+copy it or change its path.
 
-`-d` (`--detach`) runs the worker in the background and captures its output in a log co:op keeps in its private folder; `coop fork logs <name>` shows it. When a fork drains its available work, review and [land it](forks.md#land-it) like a pull request, then `git push`. Add agents until review is your bottleneck.
+The fork receives only its assigned task under `.coop/task-executions/`. Restarting the same
+fork generation resumes that task, and another fork cannot claim it.
 
-`coop fork merge --all` lands all forks at once. It's a revalidating rebase queue: it
-rebases each fork onto the result of the last one and re-runs the configured gate
-(`gate:` in `.agent/project.yaml`, or `COOP_GATE`). Each fork must pass the gate again
-against the base produced by earlier merges. The queue stops at the first conflict or
-red gate and leaves the rest untouched.
+`-d` (`--detach`) runs the worker in the background. co:op saves its output in a private log;
+read it with `coop fork logs <name>`. When the fork finishes its available work, review and
+[land it](forks.md#land-it) as you would a pull request, then `git push`. Add more agents only
+while you can keep up with reviewing their work.
 
-`coop tasks split` and whole-queue fork seeding are retired. Those copies could each move the same task on their own, and no merged dashboard could make them one authority. Keep semantic grouping as separate canonical queues only when the project truly owns separate queues. `--tasks` is a filter. It doesn't slice a queue.
+`coop fork merge --all` merges forks in sequence. It rebases each fork onto the result of the
+previous merge and re-runs the configured gate (`gate:` in `.agent/project.yaml`, or
+`COOP_GATE`). Each fork must pass against that updated base. The queue stops at the first
+conflict or failed gate and leaves the remaining forks untouched.
 
-Give direct targets that run at the same time different accounts if you want them to avoid subscription contention. A preset can carry a full provider and account rotation.
+`coop tasks split` and copying a whole queue into a fork are no longer supported. Those copies
+let separate workers move the same task independently. A combined dashboard could show the
+results but could not coordinate ownership. Use separate queues only for parts of the project
+that already own separate work. `--tasks` selects an existing queue; it does not divide one.
 
-A stale or crashed worker shows as `cleanup` in `coop fork ls` until `coop fork stop <name>` reaps it. A worker that Coop started on another operating system, such as in a Linux container that shares the folder, shows as started on that system instead. Coop can't check it from here, so stop it there. `stop` reaps only that fork's containers, even if another repository uses the same fork name, and stopping twice is safe. Remove a fork you no longer need with `coop fork rm <name>`. `--yes` confirms without a prompt. `--force` may stop its detached worker, discard dirty or unmerged Git work along with the reviewed candidate and pending proposals, and return its canonical assignments to the queue.
+If you run agents at the same time, give them different accounts to avoid competing for the
+same subscription limits. A preset can define a rotation across providers and accounts.
+
+A stale or crashed worker shows as `cleanup` in `coop fork ls`. Run `coop fork stop <name>` to
+clean it up. If Coop started the worker on another operating system, such as a Linux container
+that shares the folder, the listing says so. Stop that worker on the system where it started;
+Coop cannot check it from here.
+
+`stop` removes only that fork's containers, even if another repository has a fork with the same
+name. Running it twice is safe.
+
+Remove an unused fork with `coop fork rm <name>`. `--yes` skips the confirmation prompt.
+`--force` may stop a detached worker and discard uncommitted or unmerged Git work, the reviewed
+candidate and pending proposals. It also returns the fork's assigned tasks to their original
+queue.

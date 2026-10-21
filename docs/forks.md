@@ -1,14 +1,20 @@
 # Forks
 
-A fork is a throwaway local clone of your repo that an agent works in instead of your working tree. You review its work like a pull request, and you stay the only one who lands anything. The [forks guide](https://coop.dryga.com/docs.html#forks) shows the flow; this page has the details.
+A fork is a temporary local clone of your repo where an agent can work. You review its changes
+and decide whether to merge them. The [forks guide](https://coop.dryga.com/docs.html#forks) has a
+short overview of the workflow.
 
-A fork keeps immediate edits out of your checkout. Ordinary forks are still trusted collaboration:
-their local clones can share Git object inodes, and opening model-written Git/editor metadata on
-the host can execute it. For independent storage and controlled publication, explicitly select
-[`--isolated`](#isolated-write-forks). Several forks can run at once. A fork's `origin` is a local
-path, not a configured upstream push destination. Gitignored secrets were never committed, so they don't come along.
+An ordinary fork keeps the agent's immediate edits out of your checkout, but you still need to
+trust what it writes. Git can share the underlying object files between the clone and your repo.
+Git or editor settings written by the agent can also run code when you open the fork on your
+machine. Choose [`--isolated`](#isolated-write-forks) for independent Git storage and checks before
+changes enter your checkout.
 
-The lifecycle mirrors a contractor's pull request: open, work, review, land.
+Several forks can run at once. A fork's `origin` points to a local path, not your upstream server.
+Uncommitted, Git-ignored secrets do not come along. Secrets already in Git history can still be
+present in the clone.
+
+Open a fork, let the agent work, review its changes, then merge them:
 
 ```bash
 coop fork perf codex     # open: clone into ../<repo>-forks/perf, run codex there
@@ -19,9 +25,12 @@ coop fork merge perf     # land: rebase onto your branch, then close the fork
 coop fork rm perf        # or discard it (confirms first; inspect task/Git impact before --force)
 ```
 
-`coop fork <name>` opens a new fork, or re-enters one that exists. Name the agent as a target, like `coop fork perf codex`, or `codex:gpt-6-astra@work` to pick its model and account. You can name a preset in the same slot instead (`coop fork perf frontier`), and the preset's lead runs the fork.
+`coop fork <name>` creates a fork or reopens an existing one. Add an agent, as in
+`coop fork perf codex`, or a target such as `codex:gpt-6-astra@work` to choose the model and
+account too. You can also use a preset (`coop fork perf frontier`); its lead runs the fork.
 
-A fork inherits your git identity, signing key and global gitignore from the parent. The agent can commit as you, and it ignores the same noise you do.
+A fork inherits your Git identity, signing-key setting and global gitignore from the parent.
+The agent's commits use your identity, and Git ignores the same files as in your repo.
 
 Point a fork at a task queue and it works the queue unattended:
 
@@ -40,101 +49,129 @@ coop fork review research --stat
 coop fork merge research --yes
 ```
 
-An isolated fork has independent Git metadata and objects. The box cannot bind the
-parent checkout or its administrative/common Git stores through another path, service or
-inspected volume. Native commits, branches and rebase still work inside the fork. Direct
-shared-write runs and ordinary forks are unchanged; an existing ordinary fork cannot be
-upgraded in place. The mode persists for re-entry, detached loops and ACP.
+An isolated fork keeps its own Git metadata and object files. Coop prevents the box from mounting
+your parent checkout or its Git storage, including through another path, a service or an inspected
+volume. The agent can still create commits and branches and run rebase inside the fork.
 
-Initialized, unchanged local submodules are independently reconstructed from their exact commits;
-their raw metadata is never copied. Changed gitlinks or `.gitmodules` require a separate workflow
-and are refused here. Git LFS payloads are copied and verified offline from the native common
-directory's default cache. Missing/corrupt payloads or custom `lfs.storage` are refused precisely.
-Isolation does not promise lifetime independence from outside writers to host-selected shared
-homes, caches or service data. Those are trusted extensions; use private storage or read-only
-sources if you do not trust their writers.
+Isolation stays enabled when you reopen the fork, run a detached loop or connect through ACP.
+You must create a new isolated fork; you cannot convert an existing ordinary fork. Ordinary forks
+and runs that write directly to your checkout keep their existing behavior.
 
-Operator/service binds and existing volumes must have inspectable contents. A daemon path that is
-absent or inaccessible on the host is unknown, not an empty volume; use an independent bind whose
-contents Coop can inspect. Exact Coop-created private volumes keep their scoped exception.
-Enabled Coop dependency/toolchain caches are a separate trusted shared extension: their exact
-local driver definition is inspected, but opaque daemon contents are not claimed safe or independent.
-Custom/bind-backed cache definitions are refused; other extra/service volumes receive no exception.
+Coop recreates each initialized, unchanged local submodule from its exact commit, with independent
+storage. It never copies the submodule's raw Git metadata. If the recorded submodule commits
+(gitlinks) or `.gitmodules` have changed, Coop refuses the fork; those changes need a separate
+workflow. It copies Git LFS files from Git's default cache in the common directory and verifies
+them without network access. Missing or corrupt files and custom `lfs.storage` are refused.
 
-Review captures committed source history into private custody, rebases it onto the captured
-parent commit and leaves both workspaces and parent refs unchanged. A dirty parent can be
-reviewed, but publication requires a clean attached branch, exact index and tracked bytes, with
-no hidden index flags or uncertain `index.lock`. Untracked and ignored parent files cannot be
-overwritten by incoming paths. Untracked source files, including new child Git metadata, are
-never published.
+Isolation does not make shared storage private. Other processes can still change homes, caches
+or service data that you choose to share with the fork. Use private storage or read-only sources
+if you do not trust those processes.
 
-If the private rebase fails, its diagnostic names the retained source and published source boundary.
-Rework only unpublished source commits after that boundary, preserving its ancestry; check your
-trusted signing settings when signing failed, then review again. Recovery commands printed by Git
-refer to a discarded private clone, not the retained source workspace.
+Coop must be able to inspect files in mounts you add, service mounts and existing volumes. If a
+path exists only on the Docker daemon's machine, or Coop cannot read it on the host, Coop cannot
+treat it as empty. Use a separate bind mount whose contents it can inspect. Coop's own private
+volumes are exempt only when Coop can identify them exactly.
 
-Every incoming commit is inspected, not just the terminal diff. Unsafe paths/modes, changed
-nested Git sources, automatic host-execution surfaces, new/changed npm install lifecycle
-scripts, possible credentials and oversized blobs are refused. `--force` cannot bypass this
-boundary. Explicitly invoked build files remain reviewable rather than blanket-blocked.
-Configured checks run on a separate disposable clone, with the original parent mount fence.
+Enabled dependency and toolchain caches are also shared storage that you choose to trust. Coop
+checks their exact local volume-driver configuration, but cannot promise that unreadable daemon
+contents are safe or independent. It refuses custom cache drivers and caches backed by bind
+mounts. This cache exception does not apply to other extra volumes or service volumes.
 
-`review --open` and `COOP_REVIEW_CMD` use a retained private committed preview. Its path is printed;
-remove it when the tool is finished. Custom review commands run in a separate retained private
-comparison at the captured parent, preserving `HEAD...$COOP_REVIEW_REF`; `$COOP_FORK_PATH` contains
-the proposed files. Both paths are printed for cleanup. Preview edits never become merge input. Your configured
-editor/difftool/review command is a trusted host extension. `coop fork open` instead opens the
-untrusted execution workspace and warns that its native Git/editor metadata may execute on the
-host; it is not custody review.
+When you review an isolated fork, Coop copies its committed history into private storage and
+rebases the copy onto the parent commit it recorded. This leaves both workspaces and the parent's
+Git refs unchanged. You can review even while your parent checkout has uncommitted changes.
 
-Before publication starts, cancellation or refusal leaves parent source, index and refs
-unchanged. Publication records its steps in a journal so interrupted work can continue.
-The checkout changes are not atomic: after publication first changes state, an interruption
-can leave a partial checkout. Keep the exact candidate and
-journal, then rerun `coop fork merge <name>`: only an exact original clean state or coherently
-published state can replay. Foreign edits, a partial checkout, changed branch or uncertain
-	`index.lock` stop for explicit reconciliation. Never reset, stash, delete an uncertain lock or
-remove/recreate the fork to bypass it.
+Before merging, Coop requires a clean checkout on a branch and checks the exact Git index and
+tracked-file contents. Hidden index flags or an `index.lock` it cannot account for stop the merge.
+Incoming files cannot overwrite untracked or ignored files in your checkout. Coop never merges
+untracked files from the fork, including Git metadata for a new child repository.
 
-If the fork is kept after landing, its next publication starts after the exact original source
-commit already published, not the rebased parent SHA. Zero-change task candidates still finalize
-their exact assignments; `merge --all` skips only forks with no new commits and no active task
-bookkeeping. Task completion remains bound to the original reviewed source, not a commit trailer.
+If the rebase fails, Coop prints the path of the fork it kept and a commit that must remain
+unchanged. Keep that commit and its earlier history intact. Fix only the later commits, then
+review again. If signing failed, check your trusted signing settings first. Do not run Git's
+printed recovery commands in your fork: those commands refer to the temporary clone that Coop
+has already discarded.
+
+Coop inspects every incoming commit, including changes that disappear from the final diff. It
+refuses unsafe paths or file modes, changes to nested Git sources, files that can automatically
+run code on your host, new or changed npm install lifecycle scripts, possible credentials and
+oversized files. `--force` cannot bypass these checks. Build files that run only when explicitly
+invoked can still be reviewed and merged. Configured checks run on a separate disposable clone
+that has the same restrictions on mounting the parent checkout.
+
+`review --open` and `COOP_REVIEW_CMD` show a private copy of the committed files. Coop keeps that
+preview for your review tool and prints its path so you can remove it when you finish. A custom
+review command also gets a separate private copy of the recorded parent commit as its working
+directory. This keeps `HEAD...$COOP_REVIEW_REF` usable for comparisons, while `$COOP_FORK_PATH`
+points to the proposed files. Coop prints both paths for cleanup. Edits to a preview are never
+included in the merge.
+
+Use only an editor, difftool or review command you trust to run on your host. `coop fork open`
+opens the agent's actual workspace instead of a private review copy. Coop warns that Git or
+editor metadata in that workspace may run code on your machine.
+
+Cancelling or refusing a merge before it starts leaves the parent's files, index and refs
+unchanged. Once Coop starts changing the checkout, it records each step in a journal. These
+changes do not happen all at once, so an interruption can leave the checkout partly updated.
+
+Keep the exact reviewed changes and journal, then rerun `coop fork merge <name>`. Coop can resume
+only if the checkout exactly matches its original clean state or the complete published state
+recorded for that merge. Unrelated edits, a partly updated checkout, a changed branch or an
+`index.lock` it cannot account for stop recovery so you can resolve the mismatch. Never reset,
+stash, delete an uncertain lock or remove and recreate the fork to bypass this check.
+
+If you keep the fork after merging, the next merge starts after the original fork commit that
+was already merged. Coop tracks that source commit separately from its rebased parent SHA.
+A reviewed result with no code changes can still complete its assigned tasks. `merge --all`
+skips a fork only when it has no new commits and no active task records to finish. Coop completes
+tasks from the exact source it reviewed; a commit trailer alone cannot authorize completion.
 
 ## Re-entry resumes the session
 
 A fork remembers the agent it was created with. After `coop fork perf codex`, `coop fork perf` re-enters with codex. It never silently falls back to claude. Pass an agent to switch, and `coop fork ls` shows each fork's agent.
 
-The agent's session history persists too, so re-entry continues the last conversation instead of starting fresh. For Claude, Gemini and Grok, co:op gives each fork, provider and account its own session ID. Codex can't be handed a new ID, so co:op records the native ID that Codex mints after the run. These hints stay in the fork's git-excluded `.coop/` folder. Re-entry resumes that exact session for the active account and the fork directory the container sees.
+Reopening a fork also resumes the last conversation. For Claude, Gemini and Grok, co:op assigns a
+separate session ID to each fork, provider and account. Codex creates its own ID, which co:op
+records after the run. Coop saves these IDs in the fork's git-excluded `.coop/` folder and uses
+them to resume the exact session for the active account and the fork's directory inside the box.
 
-If that exact hint is missing, or the session no longer exists in the provider's history, re-entry starts fresh. co:op never guesses from the latest conversation in a directory. Switching providers or accounts starts or resumes that target's own native session. co:op doesn't splice one provider's transcript into another here.
+If the saved ID is missing or the provider no longer has that session, co:op starts a new one.
+It does not choose another conversation just because it is the newest in that directory.
+Switching providers or accounts starts or resumes that provider and account's own session;
+it does not copy a conversation between providers.
 
-co:op allows only one interactive Codex process of its own per account and container workdir at a time. A second one fails with a retryable error rather than risk the wrong native session ID. A Codex process started outside co:op can't join that lock. So while a fresh fork session is being set up, don't run one against the same account and working directory.
+Coop allows only one of its interactive Codex processes at a time for each account and working
+directory inside the box. A second process stops with an error you can retry, so Coop cannot
+record the wrong session ID. Codex processes started outside Coop do not respect this lock.
+While Coop sets up a new fork session, do not start another Codex process for the same account
+and working directory.
 
 | Flag | What it does |
 |---|---|
 | `--new` | Starts a new session for the selected provider and account. The fork's files stay. |
-| `--fresh` | Recreates the whole fork and remembers its selected provider. It confirms before it deletes anything, and needs `--yes` when there's no TTY. |
+| `--fresh` | Recreates the whole fork while keeping its selected provider. It asks before deleting anything. Without an interactive terminal, it requires `--yes`. |
 
 On `coop fork rm` and `--fresh`, `--force` can:
 
 - stop the detached worker
 - discard unmerged or dirty Git work
-- return owned canonical assignments to the queue
-- discard the reviewed generation candidate
-- discard pending fork proposals
+- return the fork's assigned tasks to the project's queue
+- discard the exact set of changes prepared for review
+- discard pending task proposals from the fork
 
-Blocked tasks and canonical proposals that were already imported stay canonical. Check `coop fork ls` and `coop fork review` first. [Land it](#land-it) covers what `--force` does on `coop fork merge`.
+Blocked tasks and proposals already imported into the project's queue stay there. Check
+`coop fork ls` and `coop fork review` before discarding a fork. [Land it](#land-it) explains the
+different effect of `--force` on `coop fork merge`.
 
 ## Review
 
 `coop fork review <name>` shows a review summary before the patch:
 
 - the commits
-- the agent's claim, which is the latest task `log.md`, labeled as the fork's own voice
-- policy findings from the same scan `coop fork merge` enforces, so nothing first shows up as a failed merge
-- the changed files in risk order (config and instructions, then code by churn, then tests, then docs), each with `+N -N`
-- whether a merge gate is configured
+- the agent's latest task `log.md`, clearly labeled as the agent's own account of its work
+- findings from the same policy scan used by `coop fork merge`
+- changed files, starting with config and instructions, then code ordered by amount changed, then tests and docs; each file shows `+N -N`
+- whether a check command is configured to run before merging
 
 Then the diff opens in your pager, with no setup needed.
 
@@ -146,10 +183,14 @@ These flags change how you review:
 |---|---|
 | `--stat` | shows the review summary only and skips the diff |
 | `--tool` | opens each changed file in your GUI difftool |
-| `--open` | opens the fork in your editor |
-| `--gate` | rebases in a disposable scratch clone, then runs the parent's configured gate in the box with that clone mounted; the clone stays writable for ignored build output, and the gate fails if HEAD or the tracked tree changed |
+| `--open` | opens your editor; isolated forks use a private committed preview |
+| `--gate` | rebases a temporary clone, then runs the parent's configured check command in a box with that clone mounted. Ignored build output can be written there, but changes to HEAD or tracked files fail the check. |
 
-`--gate` reports green, red or a rebase conflict before you merge. Green exits 0, and so does a clean rebase with no gate configured. Red or a conflict exits 1. The parent and fork refs, branches and worktrees stay untouched, and the scratch clone is always removed. Combine `--gate` with `--stat` or `--tool`. Leave out `--open`, whose editor process may return before the review window closes.
+`--gate` reports whether the checks passed, failed or could not run because of a rebase conflict.
+Passing checks exit 0. A clean rebase also exits 0 when no check command is configured. Failed
+checks or a conflict exit 1. The parent and fork refs, branches and worktrees stay unchanged,
+and Coop always removes the temporary clone. You can combine `--gate` with `--stat` or `--tool`.
+Do not combine it with `--open`: an editor can return before its review window closes.
 
 To review in your editor's source control panel, open the fork as a folder with `coop fork open <name>`. It opens the fork directory with the first of these that's set:
 
@@ -158,7 +199,8 @@ To review in your editor's source control panel, open the fork as a folder with 
 3. a GUI editor detected on `PATH`: `cursor`, `code`, `zed`, `idea`, `subl`
 4. `$VISUAL` or `$EDITOR`
 
-Detection (step 3) is only a best-effort fallback. With both `code` and `zed` installed, it picks `code`. To choose, set one of the first two:
+Automatic detection uses the order in step 3. If both `code` and `zed` are installed, it chooses
+`code`. Set one of the first two options to choose your editor explicitly:
 
 ```bash
 git config --global core.editor "zed --wait" # your standard git editor (git commit uses it too)
@@ -181,11 +223,14 @@ git config --global difftool.zed.cmd 'zed --wait --diff "$LOCAL" "$REMOTE"'
 
 JetBrains, Meld, Beyond Compare, vimdiff and others work the same way. `git difftool --tool-help` lists the tools git already knows.
 
-For full control, set `COOP_REVIEW_CMD`. co:op runs it with `sh -c` from the parent repo, with `$COOP_FORK_PATH`, `$COOP_FORK_NAME` and `$COOP_REVIEW_REF` in the environment. It can launch any tool, such as a TUI or a script:
+Set `COOP_REVIEW_CMD` to run a TUI or review script. co:op invokes it with `sh -c` and provides
+`$COOP_FORK_PATH`, `$COOP_FORK_NAME` and `$COOP_REVIEW_REF` in the environment. For an ordinary
+fork, the working directory is the parent repo.
 
-For isolated forks, the working directory is a private base comparison and `$COOP_FORK_PATH`
-is a separate committed preview, never the parent or model workspace. Remove both printed paths
-after an asynchronous tool finishes.
+For an isolated fork, the command runs in a private copy of the parent commit. `$COOP_FORK_PATH`
+points to a separate copy of the fork's committed changes. Neither path is your parent checkout
+or the agent's workspace. Coop prints both paths; remove them after the review tool has finished,
+even if it returned control to your terminal earlier.
 
 ```bash
 export COOP_REVIEW_CMD='cd "$COOP_FORK_PATH" && lazygit'
@@ -193,22 +238,51 @@ export COOP_REVIEW_CMD='cd "$COOP_FORK_PATH" && lazygit'
 
 ## Land it
 
-`coop fork merge <name>` rebases the fork onto your current branch and fast-forwards. History stays linear, with no merge commits. The rebase runs on the host, where your key lives. If you sign commits (`commit.gpgsign=true`), the landed commits are signed with your key, even though the box committed them unsigned. Then run `git push`, the one step the agents can't do.
+`coop fork merge <name>` rebases the fork's commits onto your current branch, then advances the
+branch to include them. It creates no merge commit. The rebase runs on your host so it can use
+your signing key. If you sign commits (`commit.gpgsign=true`), Coop signs the merged commits with
+your key even though the box created them unsigned. You then run `git push` yourself.
 
-Set a merge gate with `gate: make check` in [`.agent/project.yaml`](configuration.md#project-settings-agentprojectyaml), which is committed and shared with your team. `COOP_GATE="make check"` sets one per machine, and it wins. Every merge then re-runs that gate in the box on the rebased tree, and rolls back if it goes red. The gate is the machine check behind your human review.
+Set a check command for merges with `gate: make check` in
+[`.agent/project.yaml`](configuration.md#project-settings-agentprojectyaml). Commit that file to
+share the command with your team. `COOP_GATE="make check"` overrides it on your machine.
+Every merge runs the command in the box against the rebased files and rolls back if it fails.
+You still review the changes yourself.
 
-A policy check also flags oversized files and every file the box hides: secret-looking names and the paths a [`.coopignore`](box.md#your-own-paths-coopignore) names, one in a folder above the project included. It flags a fork that adds, edits, removes or renames a `.coopignore`, since that changes what every later box is shown. It scans each changed file's content for real credentials: provider token shapes (AWS, OpenAI, Anthropic, GitHub, Slack and more) and high-entropy values on secret-named keys. A token committed inside an ordinary file is caught even when its filename looks innocent. Merge refuses while your own working tree is dirty.
+Coop checks for oversized files and changes to files the box hides. This includes secret-looking
+filenames and paths matched by a [`.coopignore`](box.md#your-own-paths-coopignore), including one
+above the project. It also flags additions, edits, removals and renames of a `.coopignore`, because
+these change what future boxes can see.
 
-Merging lands the work and then offers to delete the fork, so it asks first. A non-interactive shell (CI, a pipe) has no one to answer, so merge refuses there instead of landing on the default.
+The scan checks each changed file for credential patterns from AWS, OpenAI, Anthropic, GitHub,
+Slack and other providers. It also checks for random-looking values assigned to secret-named
+keys. A credential can be detected inside an ordinary file even if its name does not look secret.
+Coop refuses to merge while your own working tree has uncommitted changes.
+
+Coop asks before merging, then offers to delete the fork after the merge. In a non-interactive
+shell, such as CI or a pipe, you must confirm up front; otherwise the merge refuses to run.
 
 | Flag | What it does |
 |---|---|
 | `--yes`, `-y` | Confirms landing and removal up front, which a non-interactive shell needs. In an interactive shell, it skips the prompts. |
 | `--force` | Ordinary forks only: overrides risky-file policy, not the merge gate. Isolated forks have no policy bypass. |
-| `--all` | Lands all forks at once. See [parallel forks](loop.md#parallel-forks). |
+| `--all` | Merges all forks in sequence. See [parallel forks](loop.md#parallel-forks). |
 
-A fork loop schedules from the project's canonical queue, but it never mounts that whole queue into its sandbox. The host records an immutable fork generation and the exact task assignment, then projects only that task into the fork. The normal in-box lifecycle, artifacts, reviews and signoff work on that projection. In the canonical queue, the task stays `in_progress` while the fork is `reviewing` or `ready`.
+A fork loop takes work from the selected task queues. The host records which task belongs
+to which fork run, with a fixed generation ID, and places only the assigned task in the fork.
+It never mounts the whole queue there. The agent works on that task copy, including its state,
+artifacts, reviews and final signoff. In each task's original queue, the task stays `in_progress`
+while the fork is `reviewing` or `ready`.
 
-After the final signoff and signing, co:op publishes one candidate for the whole generation. It binds the exact HEAD and tree, and every completed assignment. Merge revalidates that candidate, rebases it and runs the gate. Then it advances the parent and completes only those exact canonical tasks, through a land journal it can replay. A `Coop-Task` trailer is still only a label for consistency checks and search. It carries no authority to complete a task.
+After final signoff and signing, co:op records one merge candidate for that fork generation:
+the exact HEAD commit, file tree and completed task assignments. Before merging, it checks that
+candidate again, rebases it and runs the configured checks. It then updates the parent and
+completes only the tasks recorded in that candidate. A journal lets Coop resume these steps after
+an interruption. A `Coop-Task` trailer helps with consistency checks and search; it cannot
+complete a task on its own.
 
-After a stop or a crash, the same generation can resume its assignments. `rm`, `--fresh` and discard refuse while task authority is unresolved, unless the explicit destructive path journals what happens to it. `coop tasks watch` shows this canonical lifecycle, every sandbox, and any stale or unknown control evidence.
+After a stop or crash, the same fork generation can resume its assigned tasks. `rm`, `--fresh`
+and discard refuse to proceed while task ownership is unresolved, unless you use the explicit
+destructive option that records how those assignments are handled. `coop tasks watch` shows the
+project's task states and every sandbox, including cases where the controller's status is stale
+or cannot be determined.

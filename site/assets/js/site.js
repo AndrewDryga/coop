@@ -38,6 +38,12 @@ for (const button of document.querySelectorAll("[data-copy]")) {
     clear();
     try {
       await navigator.clipboard.writeText(command);
+      document.dispatchEvent(new CustomEvent("coop:copy-success", {
+        detail: {
+          kind: source.dataset.copyKind || field.dataset.copyKind ||
+            (field.classList.contains("code-file") ? "configuration" : "command"),
+        },
+      }));
       button.classList.add("is-done");
       status.textContent = "Copied.";
       reset = setTimeout(() => {
@@ -463,6 +469,17 @@ if ("IntersectionObserver" in window && matchMedia("(prefers-reduced-motion: no-
 const target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
 if (target && document.fonts) document.fonts.ready.then(() => target.scrollIntoView({ behavior: "instant" }));
 
+// Make local overflow discoverable without suggesting a scroll when everything fits.
+// Without JS, the hints and keyboard-accessible regions remain available.
+for (const frame of document.querySelectorAll(".reference-table, .reference-code-frame")) {
+  const scroller = frame.querySelector(".table-scroll, pre.code");
+  const hint = frame.querySelector(".reference-scroll-hint");
+  const update = () => { hint.hidden = scroller.scrollWidth <= scroller.clientWidth + 1; };
+  update();
+  if ("ResizeObserver" in window) new ResizeObserver(update).observe(scroller);
+  if (document.fonts) document.fonts.ready.then(update);
+}
+
 // The docs: on wide screens the contents stay open beside the text and mark the section being read;
 // on narrow ones they fold into a box above it, which closes again once you pick a section.
 const side = document.querySelector(".docs-side");
@@ -509,6 +526,6 @@ if (side) {
         else if (wide.matches && item.bottom > pane.bottom) side.scrollTop += item.bottom - pane.bottom;
       }
     }, { rootMargin: "0px 0px -70% 0px" });
-    for (const section of document.querySelectorAll(".doc-section[id]")) reading.observe(section);
+    for (const section of document.querySelectorAll(".doc-section[id], .reference-content h3[id]")) reading.observe(section);
   }
 }

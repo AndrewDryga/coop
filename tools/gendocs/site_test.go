@@ -343,7 +343,7 @@ func TestTerminalDriftNamesThePageBlockAndLine(t *testing.T) {
 }
 
 func TestPagesShareTheMainNavigation(t *testing.T) {
-	for name, install := range map[string]string{"index.html": "#start", "orchestrator.html": "#start", "docs.html": "./#start"} {
+	for name, install := range map[string]string{"index.html": "#start", "orchestrator.html": "#start", "docs.html": "./#start", "sandbox-guide.html": "./#start", "overnight-guide.html": "./#start"} {
 		page := parsePage(t, readSite(t, name))
 		for _, href := range []string{"orchestrator.html", "docs.html", "https://github.com/AndrewDryga/coop", install} {
 			if !slices.Contains(page.mainNav, href) {
@@ -359,6 +359,18 @@ func TestPagesShareTheMainNavigation(t *testing.T) {
 	}
 }
 
+func TestGuideCommandsCopyAsRunnableShell(t *testing.T) {
+	for _, name := range []string{"sandbox-guide.html", "overnight-guide.html"} {
+		page := parsePage(t, readSite(t, name))
+		if len(page.copySources) == 0 {
+			t.Errorf("%s has no copyable walkthrough commands", name)
+		}
+		for _, command := range page.copySources {
+			shellParses(t, strings.TrimSpace(command))
+		}
+	}
+}
+
 // offSite is a link to another host: http(s), and not coop.dryga.com.
 func offSite(href string) bool {
 	rest, ok := strings.CutPrefix(href, "https://")
@@ -369,7 +381,7 @@ func offSite(href string) bool {
 }
 
 func TestLinksOffTheSiteOpenInANewTabWithNofollow(t *testing.T) {
-	for _, name := range []string{"index.html", "orchestrator.html", "docs.html"} {
+	for _, name := range []string{"index.html", "orchestrator.html", "docs.html", "sandbox-guide.html", "overnight-guide.html"} {
 		external := 0
 		for _, e := range parsePage(t, readSite(t, name)).elements {
 			href := e.attrs["href"]

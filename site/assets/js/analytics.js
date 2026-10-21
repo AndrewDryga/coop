@@ -1,6 +1,11 @@
-/* coop site — Mixpanel: autocapture + session replay, plus a named install-copy event. */
+/* coop site — Mixpanel: autocapture + session replay, plus successful content copies. */
 (function () {
   "use strict";
+
+  // Local previews and copied deployments must not pollute production reports.
+  if (location.hostname !== "coop.dryga.com") return;
+  var dnt = navigator.doNotTrack || window.doNotTrack || navigator.msDoNotTrack;
+  if (dnt === "1" || dnt === "yes") return;
 
   // --- Mixpanel loader (official snippet) ----------------------------------
   // Installs the window.mixpanel stub synchronously, then async-loads the SDK,
@@ -17,24 +22,16 @@
     debug: /^(localhost|127\.0\.0\.1)$/.test(location.hostname),
   });
 
-  // --- a setup command copied ---------------------------------------------
-  // The page's clearest intent signal. Autocapture would only see a generic
-  // click on a "Copy" button; a named event carrying the command is worth more.
-  function wireInstallCopy() {
-    document.querySelectorAll("[data-copy]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var source = btn.parentElement.querySelector("[data-copy-source]");
-        mixpanel.track("install_command_copied", {
-          command: source ? source.textContent.replace(/^\$\s*/, "").trim() : null,
-          page: location.pathname,
-        });
-      });
+  // A successful clipboard write measures intent, not a completed installation.
+  // Version 1 counted every copy-button click as an install, even on failure.
+  // Keep copied content out of analytics and use a new event for the new meaning.
+  document.addEventListener("coop:copy-success", function (event) {
+    var kind = event.detail && event.detail.kind;
+    if (["install", "command", "configuration"].indexOf(kind) === -1) return;
+    mixpanel.track("content_copy_succeeded", {
+      kind: kind,
+      page: location.pathname,
+      measurement_version: 2,
     });
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", wireInstallCopy);
-  } else {
-    wireInstallCopy();
-  }
+  });
 })();

@@ -1,16 +1,17 @@
 # Agents, accounts and presets
 
-This page covers the four agents co:op runs, how they sign in, and how you pick their accounts and
-models. It also covers second opinions, presets and the instructions every agent reads. The guide
-has short overviews of [credentials](https://coop.dryga.com/docs.html#credentials),
+co:op runs four coding agents, with a choice of accounts and models. You can add peers for second
+opinions, use presets and provide instructions for each agent. For short introductions, see
+[credentials](https://coop.dryga.com/docs.html#credentials),
 [models](https://coop.dryga.com/docs.html#models),
 [second opinions](https://coop.dryga.com/docs.html#peers) and
 [presets](https://coop.dryga.com/docs.html#presets).
 
 ## Where agent settings live
 
-Each provider has a complete native home for each repository and selected account. It is mounted
-at the provider's usual location, so native history, resume, settings and indexes stay together.
+Coop gives each repository and selected account its own provider folder. The box mounts it where
+the provider normally keeps its files, so conversation history, saved sessions, settings and
+indexes stay together.
 
 | Provider | Home in the box | Settings inside that home |
 | --- | --- | --- |
@@ -23,42 +24,47 @@ Under `~/.config/coop/agents/<agent>/`, co:op keeps these separate stores:
 
 | Path | What it holds |
 | --- | --- |
-| `credentials/<name>/` | canonical host-only account authority |
-| `native-homes/<name>/<repository-key>/home/` | one repository's native state for that account |
-| `acp-homes/<repository-key>/home/` | editor state for one repository, independent of account switches |
-| `profiles/<name>/` | retained older history and host defaults, never mounted as a coding home |
+| `credentials/<name>/` | the account's credentials and sign-in records, kept only on the host |
+| `native-homes/<name>/<repository-key>/home/` | the provider's history, settings and other files for this repository and account |
+| `acp-homes/<repository-key>/home/` | one repository's editor-session files, kept when you switch accounts |
+| `profiles/<name>/` | older history and host defaults kept for reuse; coding boxes never mount this folder |
 
-Reviewed host defaults seed a new home once. Later native settings edits stay in that repository;
-changing the defaults does not overwrite an existing home. Validated co:op forks share their parent
-repository's history domain. Unrelated repositories do not.
+Coop copies reviewed host defaults into a new provider folder once. Changes you make later stay
+with that repository; changing the defaults does not overwrite an existing folder. Coop forks
+that it has validated share their parent's history storage. Unrelated repositories keep separate
+history.
 
 ## What each run can see
 
-The lead, named peers and preset roles receive only their selected providers' repository homes.
-Raw shell/run and maintenance boxes receive no provider homes. Sign-in uses a separate staging
-home for only the selected provider, without mounting a project.
+A box gets provider folders only for its lead, named peers and preset roles. Shell, raw-command
+and maintenance boxes get none. Sign-in runs in a separate sign-in home for the selected
+provider, with no project mounted.
 
-Reusable API keys and OAuth access/refresh grants stay outside coding boxes. A run-local broker
-authenticates the selected provider requests and the host renews expiring credentials while the
-run continues. The box holds public native auth selectors, not the reusable grants. All teammates
-of a provider in one box share its selected account's access; separate boxes are the boundary
-between mutually untrusted agents.
+API keys and OAuth access and refresh tokens stay outside coding boxes. A broker for each run
+adds the credentials to requests to the selected provider, and the host renews expiring
+credentials without stopping the run. The box receives only the public authentication values
+the native client needs to use that broker.
+
+All agents using the same provider in one box share its selected account. Put agents you do not
+trust with each other's access in separate boxes.
 
 ### Blast radius
 
-A compromised agent can read and edit its current repository's native history and
-settings, and can use the selected account through that run's broker. A settings hook
-can persist into later boxes for this repository/account. Repository isolation does not
-protect that local history or configuration from untrusted code, and it does not limit
-the provider bill.
+A compromised agent can read and change the history and settings saved for its current
+repository. It can also use the selected account through the run's broker. A hook it adds to
+those settings can run again in later boxes for the same repository and account. Keeping
+repositories separate does not protect those local files from the agent or limit what it can
+spend with the provider.
 
-It cannot read another repository's native home through the managed provider mounts. Open
-networking still allows arbitrary outbound traffic; use filtered networking for approved
-destinations or `COOP_EGRESS=none` for no network. Offline runs receive no provider grants.
+The provider folders Coop mounts do not give the agent access to another repository's provider
+files. Open networking still lets it send traffic to any destination. Use filtered networking
+to restrict destinations, or `COOP_EGRESS=none` to turn networking off. Offline runs receive no
+provider credentials.
 
-Manage shared accounts with host `coop login` and `coop credentials … rm`, not a native
-in-box login/logout command. If local auth files diverge, the next launch refuses and preserves
-them for recovery instead of overwriting them. See [migration and recovery](../MIGRATING.md).
+Manage shared accounts on the host with `coop login` and `coop credentials … rm`. Do not use a
+provider's own login or logout command inside a coding box. If local authentication files no
+longer match the expected account state, Coop stops the next launch and keeps the files so you
+can recover them. See [migration and recovery](../MIGRATING.md).
 
 ## Authentication
 
@@ -86,7 +92,7 @@ echo 'OPENAI_API_KEY=sk-…'    >> ~/.config/coop/agents/env
 echo 'GEMINI_API_KEY=AIza…'   >> ~/.config/coop/agents/env
 ```
 
-co:op makes the credential root private (`0700`) and secret files private (`0600`).
+co:op lets only your user access the credential folder (`0700`) and its secret files (`0600`).
 
 | Provider | Supported key | Refused alternatives |
 | --- | --- | --- |
@@ -95,51 +101,51 @@ co:op makes the credential root private (`0700`) and secret files private (`0600
 | Gemini | `GEMINI_API_KEY` | Vertex `GOOGLE_API_KEY` |
 | Grok | none | `XAI_API_KEY` |
 
-The same host-only boundary covers native subscription/OAuth accounts. Loops, peers, presets,
-editor sessions and remote sessions use the broker too. API-key and subscription accounts can
-alternate between runs without granting direct access to their credentials. Offline runs strip
-provider keys and do not start a broker.
+Subscription and OAuth accounts also keep their credentials on the host. Loops, peers, presets,
+editor sessions and remote sessions all use the broker. You can switch between API-key and
+subscription accounts across runs without exposing either account's credentials to the box.
+Offline runs remove provider keys and do not start a broker.
 
-The broker requires Docker's private network namespace; host networking, joining an arbitrary
-container's network and Apple's `container` runtime are not supported for online provider runs.
-Custom provider base URLs and unsupported credential families are refused.
-See [provider networking](networking.md#provider-credentials-stay-outside-the-box).
+The broker needs a private Docker network namespace to keep provider credentials outside the
+box. Online provider runs therefore cannot use host networking, join an arbitrary container's
+network or use Apple's `container` runtime. Coop also refuses custom provider base URLs and
+credential types it does not support. See
+[provider networking](networking.md#provider-credentials-stay-outside-the-box).
 
 ### The env file
 
-`KEY=value` stores a value in the file. A bare `KEY` imports its value when it exists in co:op's
-ambient environment. An unset bare import is omitted. A set import or an assignment wins over
-earlier entries.
+`KEY=value` sets a value directly. A bare `KEY` copies the value from the environment of the
+process running co:op. If that variable is unset, co:op leaves it out. When entries repeat, the
+last assignment or successful import wins.
 
-An env-only login appears as the provider's default credential in `coop credentials`, with no
-credential marker file needed. It represents only that one default credential. Additional named
-accounts need their own account-scoped stored login. When a named account runs, co:op removes that
-provider's env-token keys so they can't override the selected account's credential. That holds even
-when the stored account is marked as the default.
+A login supplied only through the env file appears as the provider's default credential in
+`coop credentials`. It needs no credential marker file and represents only that default account.
+To add named accounts, save a separate login for each one. When you run a stored named account,
+co:op leaves that provider's token variables out of the run so they cannot override the selected
+login. This also applies when the stored account is your default.
 
-Any non-credential variable in the file (a `DATABASE_URL`, `COOP_NO_ASDF`, …) is a shared runtime
-var and reaches every box.
+Non-credential variables such as `DATABASE_URL` and `COOP_NO_ASDF` are shared with every box.
 
 ### What the box receives
 
-A supported brokered run sees public provider-native auth selectors and the run's private broker entrance. co:op
-filters the reusable key and every other provider token out of both the user and the project box
-environment before launch. Passing a provider credential through runtime `-e` is refused, because
-it would bypass that boundary. Sign-in boxes likewise receive none of the existing API keys from the
-shared env file or canonical account store.
+The box receives public authentication values for the provider's native client and a private
+connection to the run's broker. Before launch, co:op removes reusable provider keys and tokens
+from both the user and project environment. It refuses provider credentials passed through
+runtime `-e`, which would expose them directly. Sign-in boxes also receive none of the existing
+API keys from the shared env file or the host's account store.
 
 ### First run
 
-On first run, the box pre-answers each agent's setup prompts: Claude's theme, folder-trust and
-bypass warnings, Codex's "trust this directory?", and Gemini's folder trust. A fresh install goes
-straight from login to work. The box is the sandbox, so trusting the one mounted repo is the
-intended posture.
+On the first run, co:op answers the provider's setup prompts inside the box: Claude's theme,
+folder-trust and bypass warnings, Codex's "trust this directory?", and Gemini's folder trust.
+You do not need to repeat this setup after signing in. Coop treats the mounted repository as
+trusted inside the container, where the box provides the sandbox.
 
 ## Several accounts and failover
 
-One agent can hold several accounts as named credentials. Each is a stored login with its own
-rate-limit pool, so a long unattended run can ride through a subscription's cap instead of waiting
-on it.
+You can save several accounts for one provider, each with a name and its own rate-limit allowance.
+When one account reaches its limit, an unattended run can switch to another account and keep
+working.
 
 ```bash
 coop login claude@work        # a second account…
@@ -151,13 +157,13 @@ coop usage codex@work         # include history and pricing details for one acco
 
 ### Failover
 
-When `coop loop` (or a `coop fork --loop`) hits a rate or usage limit, it switches to the next
-target and keeps going. It waits only once every target is limited. A
-[Zed (ACP) session](integrations.md) does the same transparently: it rotates, re-sends your prompt
-and moves the toolbar dropdown. When every account is cooling down, it waits for the nearest reset.
+When `coop loop` (or a `coop fork --loop`) reaches a rate or usage limit, it switches to the next
+target. It waits only when every target has reached its limit. A
+[Zed (ACP) session](integrations.md) also switches targets, sends your prompt again and updates
+the toolbar selection. If every account is limited, it waits until the first limit resets.
 
-You don't configure a persistent pool. The rotation is the model-first `agent:` ladder of the
-loop's lead:
+The lead's `agent:` list sets the order of models and accounts to try. This fallback list is
+called a ladder; you do not need to configure a separate account pool:
 
 - With no preset, the loop rotates the agent's default model across every signed-in account.
 - A bare model in a ladder does the same.
@@ -185,10 +191,10 @@ the progress.
 
 ### Choose the default account
 
-You choose which credential a plain interactive `coop claude` uses by marking it. No name is
-special, so you can name every account meaningfully. Mark one with
-`coop credentials <agent> <credential> default`, and remove one with
-`coop credentials <agent> <credential> rm`:
+Mark an account as the default to choose which login a plain interactive `coop claude` uses.
+Account names have no special meaning, so choose names that help you recognize them. Use
+`coop credentials <agent> <credential> default` to set the default, or
+`coop credentials <agent> <credential> rm` to remove an account:
 
 ```bash
 coop credentials claude personal default  # `coop claude` now runs on the personal account
@@ -196,8 +202,8 @@ coop credentials claude personal default  # `coop claude` now runs on the person
 
 ## Picking models
 
-Every launch names its model in the target, `<agent>:<model>`. You pick the model per run, on any
-path:
+To choose a model for a run, include it in the target as `<agent>:<model>`. This works for
+interactive sessions, loops, forks and editor connections:
 
 ```bash
 coop claude:opus                                    # one big-model interactive session
@@ -207,10 +213,10 @@ coop fork risky claude:opus                         # a careful fork on the big 
 coop acp claude:sonnet                              # pin an editor entry's model
 ```
 
-For a standing model you don't retype, put it in a [preset](#presets). The lead's
-`agent:` ladder is the model, and on a loop it's also the rotation across your accounts.
-Each role names its own. A credential selects the account and subscription. Choose the
-model separately:
+Save the model in a [preset](#presets) if you use it regularly. The lead's `agent:` list chooses
+its model and, in a loop, the accounts and models to try when a limit is reached. Each role
+chooses its own model. Credentials select the account and subscription; they do not select
+the model:
 
 ```bash
 coop models                        # the model menu per agent
@@ -223,9 +229,10 @@ coop frontier                      # a standing lead model + roles, from the pre
 [`COOP_<AGENT>_MODEL`](configuration.md#environment-variables) sets the agent-wide
 default, for example `COOP_CLAUDE_MODEL=fable`.
 
-For the loop, put the per-step model in [`.agent/loop.yaml`](loop.md). `work.agent` sets it for the
-iterations. `signoff.agent` sets a stronger final reviewer over the cheaper work loop. Give each
-fork its own target or preset in the `coop fork <name> <target|preset> --loop` command.
+Use [`.agent/loop.yaml`](loop.md) to choose a model for each loop step. `work.agent` selects the
+model that works on tasks. `signoff.agent` lets you use a stronger model for the final review
+while keeping task work on a cheaper model. Choose each fork's target or preset in
+`coop fork <name> <target|preset> --loop`.
 
 If more than one is set, the most specific wins:
 
@@ -252,33 +259,36 @@ which it refuses before starting:
 | Grok | `--reasoning-effort` |
 | Gemini | its thinking setting (`low` or `high` only) |
 
-Haiku 4.5 has no reasoning-effort control. Use `claude:haiku` without an effort suffix, or choose a
-supporting model such as `claude:opus/low`. The native CLI can silently drop Haiku's effort, while
-its editor adapter rejects the missing option; co:op catches the combination first.
+Haiku 4.5 does not support reasoning-effort settings. Use `claude:haiku` without an effort suffix,
+or a model that supports the setting, such as `claude:opus/low`. The native CLI can ignore an
+effort setting for Haiku, while the editor adapter rejects it. Coop refuses the unsupported
+combination before either one starts.
 
-Gemini has no effort flag, so co:op sets its thinking instead and checks the level up front. It
-takes `low` or `high`, on the models co:op can map. Gemini 3 thinks at only those two levels, and
-any Gemini model can end up handing a turn to one. A thinking setting you pin on one model in your
-own Gemini settings still wins.
+Gemini uses a thinking setting instead of an effort flag. Coop accepts `low` or `high` for
+models it can map to that setting and checks the value before launch. These are the only levels
+Gemini 3 supports, and the client can hand a turn from another Gemini model to Gemini 3.
+A thinking setting you have explicitly saved for a model in your own Gemini settings takes
+precedence.
 
-Effort resolves through the same tiers as the model, and one setting carries both. A target's
-`:model/effort`, `COOP_<AGENT>_MODEL` and a loop.yaml step's `agent:` all take `model[/effort]`.
-For example, `signoff.agent: [claude:opus/xhigh]` signs off at xhigh while the work loop grinds low.
+Effort uses the same priority order as model selection. You can set both together: a target's
+`:model/effort`, `COOP_<AGENT>_MODEL` and a loop.yaml step's `agent:` all accept `model[/effort]`.
+For example, `signoff.agent: [claude:opus/xhigh]` uses xhigh effort for final review while you keep
+the work step at low effort.
 
 ### Which model runs
 
-Consult peers pick their model the same way: each peer resolves its own default.
-`coop loop`'s live view prints the model each iteration actually ran. The model name
-comes from the agent's own startup report and shows what actually ran.
+Each consult peer follows the same model-selection rules and uses its own default when you do
+not name a model. `coop loop` shows the model reported by the agent at the start of each iteration.
 
-co:op never validates a model id. `coop models` lists each agent's models, and ids churn. Whatever the agent
-CLI accepts works, and a bad id fails loudly in the agent's own error.
+`coop models` lists the models for each agent. Model IDs change, so co:op passes the ID to the
+provider's CLI without checking it against a fixed catalog. The CLI accepts a valid ID or reports
+its own error.
 
 ## Second opinions
 
-Name read-only peers when a lead would benefit from a different model's blind spots. The lead may
-consult them on genuinely hard or risky calls, then weighs their answers. It stays the sole writer.
-Peers work with interactive runs, loops, forks, ACP and preset consult roles:
+Add read-only peers when you want the lead to get another model's opinion on difficult or risky
+decisions. The lead considers their answers and makes all changes itself. Peers work with
+interactive runs, loops, forks, ACP and preset consult roles:
 
 ```bash
 coop codex --peer claude --peer gemini
@@ -286,30 +296,31 @@ coop loop claude --peer codex --peer gemini
 coop acp claude --peer codex
 ```
 
-Name each peer with `--peer <target>`, and repeat the flag for more:
-`coop claude --peer codex --peer gemini`. A `codex`, `gemini` or `grok` lead works the same way.
-The lead may ask its peers read-only and in parallel, through the same `coop-consult` wrapper, then
-decide.
+Add each peer with `--peer <target>`, repeating the flag for more:
+`coop claude --peer codex --peer gemini`. This also works with a `codex`, `gemini` or `grok` lead.
+The lead can use `coop-consult` to ask several peers in parallel. They give read-only advice;
+the lead decides what to do.
 
 A peer may use the lead's provider with another model, for example
 `coop claude:opus@work --peer claude:haiku`. Its model selection is independent, and it shares the
 lead's selected account. Other providers use their default account; `--peer` does not accept
 `@account` because one box selects one account per provider.
 
-Asking is optional and off by default. There's no synthesis mandate, and it isn't meant for routine
-work. It defaults to `--fresh`, so each hard call gets an independent second opinion. Only the peers
-you name are consulted. co:op never consults everyone signed in, and only a named peer's
-credentials are mounted, read-only.
+Asking is optional and off by default. The lead decides whether it needs a second opinion and how
+to use the answer; routine work does not require one. Consultations default to `--fresh`, so each
+call gets an independent second opinion. Only the peers you name are available. co:op mounts the
+selected providers' repository homes writable, while reusable credentials stay outside the box.
+The run's broker authenticates their requests.
 
-There's no extra service or protocol. co:op mounts a small wrapper and gives the optional
-consultation instructions only to the lead you launched. Peers it spawns read their normal
-instructions, so they never recurse. Each consultation adds one read-only run, so account for it
-when you choose peers.
+Peer consultations need no extra service or protocol. Coop mounts a small helper and gives
+consultation instructions only to the lead. A peer reads its normal instructions without being
+told to consult more peers. Each consultation starts another read-only model run, so include
+that usage when choosing how many peers to add.
 
 ### Inside the box
 
-Preset consult roles are addressed by role name, so several roles can use one provider with
-distinct models and personas. Inside the box the interface is:
+Call a preset's consult role by its role name. Several roles can use the same provider while
+keeping separate models and instructions. Inside the box, use:
 
 ```bash
 coop-consult claude --fresh    "<prompt>"   # new read-only session; never edits
@@ -323,30 +334,30 @@ that never saw the thread.
 
 ### Continuity and fallback
 
-`coop-consult` adds optional continuity. `--fresh` starts a new session. `--continue`
-resumes the peer's own prior consult, so a follow-up can send just the delta instead of
-re-pasting context. The wrapper distinguishes recovery from a saved transcript, where
-the leader sends only the new information, from a fresh start that requires the full
-context. A fresh session becomes resumable only after a usable reply.
+With `coop-consult`, use `--fresh` to start a new consultation or `--continue` to follow up on the
+peer's previous one. A follow-up needs only the new information. If Coop can recover the earlier
+conversation from a saved transcript, it tells the lead to send just that new information. If it
+must start without prior context, the lead needs to supply the full background. A new session can
+be resumed only after it has returned a usable reply.
 
-A failed resume isn't retried in the same call. co:op returns that failure once, clears the
-uncertain native session id and keeps the last complete transcript. The next `--continue` restarts
-that same successful rung fresh, with the transcript plus the new delta. It never retries a dead id
-or silently double-bills the failed call.
+If resuming fails, co:op reports the failure without retrying in the same call. It clears the
+unreliable session ID and keeps the last complete transcript. The next `--continue` starts a new
+session with the target that last succeeded, using the saved transcript and your new information.
+Coop does not reuse the failed ID or quietly make a second paid call.
 
-A fallback ladder advances on a proven rate limit, a permanent failure, or an ordinary failure that
-repeats on one retry. A permanent failure means the target can't start, is misconfigured, or its
-login is refused. That target is then skipped for the rest of the run. A timeout or output overflow
-is terminal for that call: it stays visible and never spends a second rung. Consult continuity
-follows the successful rung.
+Coop tries the next fallback target after a confirmed rate limit, a permanent failure, or an
+ordinary failure that happens again on one retry. A target has failed permanently if it cannot
+start, has invalid configuration or cannot sign in; Coop skips it for the rest of the run.
+A timeout or too much output ends the call with an error and does not trigger another paid
+attempt on a fallback target. Follow-up consultations use the target that last succeeded.
 
-`coop-consult` hides the per-agent session-id mechanics. Claude and Gemini start under a generated
-id, and Codex's is captured from its JSON stream.
+`coop-consult` manages session IDs for you. It generates IDs for Claude and Gemini, and reads
+Codex's ID from its JSON output.
 
 ### Limits
 
-Provider stdout and diagnostics are captured separately. stderr is shown as a diagnostic, but it is
-never accepted or persisted as the advisor reply.
+Coop captures the provider's standard output and diagnostic output separately. It shows stderr
+as diagnostics and never saves or treats it as the peer's answer.
 
 | What | Cap |
 | --- | --- |
@@ -356,66 +367,70 @@ never accepted or persisted as the advisor reply.
 | Constructed prompts | 512 KiB |
 | Saved transcripts | 512 KiB |
 
-Overflow never triggers fallback or persists a partial reply. If a valid reply would overflow the
-saved transcript, co:op returns the reply and drops continuity, so the next call must use `--fresh`.
-Continuation is one versioned record, replaced atomically after a usable reply.
+If output exceeds a limit, Coop does not try a fallback target or save a partial reply. If a
+complete reply is too large for the saved transcript, Coop returns it but cannot resume that
+conversation; use `--fresh` for the next call. After each usable reply, Coop replaces the saved
+conversation record in one atomic operation and records its format version.
 
-A second consult for the same target waits on a kernel-held lock, which the co:op image releases
-even after an unclean exit. A custom image without `flock` uses a fail-closed `mkdir` fallback.
+Only one consultation can use a target at a time. A second call waits for the first to release
+its lock. In co:op's image, the operating system releases the lock even if the process crashes.
+A custom image without `flock` uses a `mkdir` lock instead and refuses access when it cannot
+safely acquire that lock.
 
 ### Token usage in loops
 
-Inside `coop loop`, every provider's consult records its usage. At most one bounded row per
-successful consult is appended to the active run's private, ignored `.agent/runs/<run>.peers.jsonl`,
-with the token counts and cost the provider reported. An empty file is removed, and a failed consult
-appends nothing.
+Inside `coop loop`, Coop records each provider's consultation usage in the active run's private,
+Git-ignored `.agent/runs/<run>.peers.jsonl`. Each successful consultation adds at most one
+size-limited row with the token counts and cost reported by the provider. Failed consultations
+add nothing, and Coop removes an empty file.
 
 ## The orchestrator pattern
 
-Put your strongest model in charge and let it spend the cheap tokens. The lead plans, decomposes
-and synthesizes. Pinned subagents execute, and cross-vendor peers give independent opinions. It all
-composes from pieces co:op already has, with no plugins:
+Use your strongest model to plan the work, break it into tasks and combine the results. Subagents
+use the models you assign to them, so routine implementation can run on cheaper models. Peers
+from other providers give independent opinions. This uses co:op's built-in tools:
 
 ```bash
 coop claude:claude-fable-5-1 --peer codex --peer gemini # run it; --peer mounts the named peers
 ```
 
-For a standing arrangement (a lead model plus roles you don't retype), put it in a
-[preset](#presets) and run `coop <name>` or `coop loop <name>`.
+Save the lead model and roles in a [preset](#presets) to reuse this setup. Start it with
+`coop <name>` or `coop loop <name>`.
 
-Tier your subagents: pin a reasoning specialist to a big model and a mechanical worker to a cheap
-one in `.claude/agents/`. They're native Claude Code subagents. The lead auto-delegates to them on
-their descriptions, each turn bills at that subagent's own model, and the lead's context stays lean.
-`coop init` scaffolds none. A preset generates its own `coop-<role>` in the box, and your repo's
-roles are yours to write.
+In `.claude/agents/`, assign a larger model to reasoning work and a cheaper model to routine
+implementation. These are native Claude Code subagents. The lead chooses them from their
+descriptions, and each turn is billed at the subagent's model. Their separate conversations keep
+the lead's context smaller. `coop init` does not create these roles. Write your own repository
+roles, or use a preset, which generates its own `coop-<role>` inside the box.
 
 With `--peer <target>...`, the lead can ask the named peers (for example codex and gemini)
 read-only through `coop-consult <peer>`. They bring different training and different blind spots.
-The `--peer` flag matters: a plain `coop claude` deliberately doesn't mount peer credentials, so
-peers answer only in a consult-capable box.
+The `--peer` flag declares which peers the lead can consult. A plain `coop claude` does not
+enable peer consultations.
 
-For high-stakes calls, task a native subagent and a peer on the same problem in parallel. Don't show
-either one the other's answer. Then synthesize.
+For high-stakes decisions, ask a native subagent and a peer to examine the same problem in
+parallel. Keep their answers separate until both finish, then compare them and decide.
 
-The same arrangement runs unattended. `coop loop claude:claude-fable-5-1 --peer codex --peer gemini`
-makes every iteration orchestrate this way. The pinned subagents ride along in the repo, and
-`--peer` mounts the named peers into each iteration's box. Fork loops take it too:
+Use `coop loop claude:claude-fable-5-1 --peer codex --peer gemini` for the same setup in an
+unattended loop. Each iteration gets the subagents defined in the repo and the peers named by
+`--peer`. This also works in a fork loop:
 `coop fork <name> claude --loop --peer codex --peer gemini`.
 
-In the box, prefer `coop-consult` over vendor cross-agent plugins. There's nothing to install, peers
-stay read-only (one writer per tree), and the credential scoping is already handled.
+Inside the box, use `coop-consult` for cross-provider advice. It needs no vendor plugin, keeps
+peers read-only so there is one writer per working tree, and limits provider access to the
+accounts selected for the run.
 
 ## Presets
 
-The orchestrator pattern above is assembled by hand: a `:model` here, a `--peer <target>` there. A
-preset declares the whole arrangement once, as a runtime recipe under `.agent/presets/<name>/`. It
-says who leads and which roles the lead routes work to. Each role uses one of three modes:
+A preset saves the model and peer choices you would otherwise pass with `:model` and
+`--peer <target>`. Store it under `.agent/presets/<name>/`. It names the lead, the roles it can
+call and when to use each role. Each role uses one of three modes:
 
 | Mode | What the role is |
 | --- | --- |
-| `native` | a subagent inside the lead's own session |
-| `consult` | a read-only peer, reached through `coop-consult` |
-| `delegate` | a write-capable delegate, reached through `coop-delegate` |
+| `native` | a subagent running inside the lead's own session |
+| `consult` | a read-only advisor called with `coop-consult` |
+| `delegate` | a worker that can edit files, called with `coop-delegate` |
 
 An example recipe:
 
@@ -460,88 +475,89 @@ coop loop frontier               # unattended: lead credentials rotate, roles ri
 coop acp frontier                # the same preset from an editor
 ```
 
-A terminal preset run uses the first lead target. ACP keeps the complete ladder and can rotate
-across providers and accounts when the active rung is rate limited.
+An interactive terminal run uses the first lead target in the preset. ACP keeps the full
+fallback list and can switch providers or accounts when the current target reaches a rate limit.
 
 ### Where presets live
 
-Presets resolve from two locations, and the repo wins:
+Coop looks for presets in these locations, using the repository copy first:
 
 1. the repo's `.agent/presets/<name>/`
 2. the per-user global directory `~/.config/coop/presets/`, which `COOP_PRESETS_DIR` overrides
 
-A global recipe like `frontier` applies across every repo without symlinking. A repo preset shadows
-a same-named global one, with no merging. `coop presets` tags a global-sourced preset `(global)`.
-`coop presets init` scaffolds into the repo. Author a global preset by hand.
+A global preset such as `frontier` works across repositories without symlinks. If a repository
+has a preset with the same name, Coop uses that copy alone; it does not merge the two. `coop presets`
+marks presets from the global directory as `(global)`. `coop presets init` creates presets in the
+repository. To create a global preset, write it in the global directory yourself.
 
 ### What co:op generates
 
-co:op generates the lead's routing contract from the YAML: each role, when to use it, and its
-role-addressed invocation. That invocation is the `coop-thinker` subagent,
-`coop-consult critic --fresh "…"`, or a `coop-delegate fast <<'EOF' … EOF` heredoc. co:op also
-mounts the wrappers. The required routing files, wrappers and role prompts are assembled as one
-contract. If any of them can't be created, co:op exits before starting the provider instead of
-silently dropping a role.
+Coop reads the YAML and tells the lead which roles are available, when to use them and how to
+call them. Depending on the role, that means the `coop-thinker` subagent,
+`coop-consult critic --fresh "…"`, or a `coop-delegate fast <<'EOF' … EOF` heredoc. It also mounts
+the required helper scripts. If Coop cannot create any required instruction file, helper or role
+prompt, it stops before starting the provider.
 
-A native role runs inside the lead's own session, so every lead the preset lists must use the
-role's provider. Otherwise co:op stops before it starts and names the role to change, rather than
-quietly running it as something else. co:op generates the role's subagent in the box, in the lead
-client's own subagent format, for Claude, Codex, Gemini and Grok alike. The subagent is
-`coop-<role>`, built from the role's model, `when` and prompt. It's never written to your repo, and
-`.gitignore` keeps the overlay out of commits. Set `subagent: <name>` to reference one the lead's
-client already has instead.
+A native role runs inside the lead's session, so every lead listed in the preset must use that
+role's provider. If they do not match, Coop stops before launch and tells you which role to change.
+It generates native subagents for Claude, Codex, Gemini and Grok in each client's own format.
+The generated `coop-<role>` uses the role's model, `when` rules and prompt. It exists only in the
+box, and `.gitignore` keeps these generated files out of commits. Set `subagent: <name>` to use
+a subagent the lead's client already has.
 
-`coop presets init` scaffolds starter `roles/lead.md`, `roles/thinker.md`, `roles/critic.md` and
-`roles/fast.md`. They
-hold usable defaults. Their Markdown feeds the generated text and never replaces the safety and
-routing rules. Edit or delete them freely.
+`coop presets init` creates starter prompts in `roles/lead.md`, `roles/thinker.md`,
+`roles/critic.md` and `roles/fast.md`. They contain usable defaults that you can edit or delete.
+Their text is added to Coop's generated instructions; it cannot replace the safety rules or the
+rules for calling roles.
 
 ### Fallback ladders
 
-Consult and delegate roles accept one target or a fallback list. Providers without mounted
-credentials are skipped. Every available rung's credential home is mounted for the lead's box.
+Consult and delegate roles accept one target or a fallback list. Providers without credentials
+are skipped. Each available provider's repository home is mounted in the lead's box, and the
+run's broker handles authentication. Reusable credentials stay outside the box.
 
-A consult role's wrapper moves down its list under the rules in
-[Continuity and fallback](#continuity-and-fallback). The role's prompt, if any, is the persona the
-peer adopts, so two consult roles on one agent stay distinct. A delegate falls back under the
-stricter rules below.
+A consult role tries its fallback targets under the rules in
+[Continuity and fallback](#continuity-and-fallback). Each role's prompt gives the peer its own
+instructions, so two roles using the same provider can do different jobs. Delegates use the
+stricter fallback rules below.
 
 ### Delegates
 
-`coop-delegate` is the write-capable counterpart of the read-only `coop-consult`. The delegate may
-edit the shared worktree, and delegate runs are serialized. It must never commit. The wrapper checks
-`HEAD`, refs and reflogs before and after each attempt. If history changed, it fails loudly without
-discarding the evidence.
+Use `coop-delegate` for a worker that can edit files, and `coop-consult` for read-only advice.
+Delegates share the working tree and run one at a time. They must never commit. Coop checks
+`HEAD`, Git refs and reflogs before and after each attempt. If a delegate changes Git history,
+Coop reports an error and keeps the evidence.
 
-A delegate falls back to its next rung only after a proven rate limit, or when the target couldn't
-start or its provider refused its login. That target is then skipped for the rest of the run.
-Fallback also needs a clean worktree: the failed rung changed no Git history and no files, whether
-tracked, untracked, staged or ignored. co:op's own run ledger in `.agent/runs` is the one exception.
+Coop tries the next delegate target only after a confirmed rate limit, a failure to start or a
+refused login. It skips that target for the rest of the run. Before trying another, Coop checks
+that the failed attempt changed no Git history or files, including tracked, untracked, staged
+and ignored files. The only exception is Coop's own run record in `.agent/runs`.
 
-Prompt and output are bounded, and each attempt has a timeout. co:op cleans up the provider process
-group before it releases the serialization lock. The standard image supplies `flock`, `setsid` and
-`timeout`, and a custom image missing them fails closed.
+Coop limits the prompt size, output size and duration of each delegate attempt. It stops the
+provider's process group before allowing another delegate to start. The standard image includes
+`flock`, `setsid` and `timeout` for this. A custom image missing these tools refuses to run the
+delegate.
 
-Write-capable delegation is one level deep. The child receives `COOP_DELEGATE_DEPTH=1`, and a nested
-`coop-delegate` fails before input, lock or provider launch. A delegate may still call a configured
-read-only `coop-consult` for advice.
+A delegate cannot start another delegate. Coop gives the child `COOP_DELEGATE_DEPTH=1`, and any
+nested `coop-delegate` call stops before reading input, acquiring a lock or starting a provider.
+The child can still ask a configured `coop-consult` for read-only advice.
 
-The lead then reviews `git diff`, runs the gate, fixes or reverts what falls short, and makes the
-commit itself. On a refusal, run the commands the diagnostic names. Usually those are
-`git status --short`, `git diff` and `git diff --cached`, plus `git log` and `git reflog` for
-history violations.
+The lead reviews `git diff`, runs the configured checks, fixes or reverts unsatisfactory changes
+and makes the commit. If Coop refuses a delegate attempt, follow the diagnostic's inspection
+commands. These are usually `git status --short`, `git diff` and `git diff --cached`, with
+`git log` and `git reflog` when Git history changed.
 
 ## Instructions
 
-`coop init` wires a tool-neutral setup, so every agent reads the same instructions. `CLAUDE.md` and
-`GEMINI.md` symlink to a canonical `AGENTS.md`, and every agent shares one project skills source. A
-real (non-symlink) instruction file you already have is left untouched.
+`coop init` sets up shared instructions for all agents. It links `CLAUDE.md` and `GEMINI.md` to
+one `AGENTS.md` and gives every agent the same project skills source. Existing instruction files
+that are regular files rather than symlinks are left unchanged.
 
 ### Instructions that follow you
 
-A shared `~/.config/coop/agents/INSTRUCTIONS.md` holds machine-level guidance that follows you
-across repos. Project rules stay in the repo's own `AGENTS.md`. co:op wires the shared file into
-each agent's global instruction path in the box:
+Put guidance for all your repositories in `~/.config/coop/agents/INSTRUCTIONS.md`. Keep
+project-specific rules in that repo's `AGENTS.md`. Inside the box, co:op makes the shared file
+available at each agent's global instruction path:
 
 | Agent | Global instruction path |
 | --- | --- |
@@ -550,30 +566,32 @@ each agent's global instruction path in the box:
 | Gemini | `~/.gemini/GEMINI.md` |
 | Grok | `~/.grok/AGENTS.md` |
 
-A provider-native instruction file in the selected repository home wins over the shared file.
-Host defaults from `profiles/<account>/` seed new homes only; editing them does not replace an
-existing repository home's instructions. Edit that repository's native instruction file when the
-change should stay local, or the shared `INSTRUCTIONS.md` for machine-wide fallback guidance.
+If the selected repository's provider folder already has its own instruction file, Coop uses it
+instead of the shared file. Defaults from `profiles/<account>/` are copied only when a provider
+folder is created; editing them does not replace instructions in an existing folder. Edit the
+repository's provider-specific file for a local change, or the shared `INSTRUCTIONS.md` for
+guidance to use across repositories that have no local override.
 
 ### Skills and the .agent/ folder
 
-`coop init` scaffolds the per-agent dirs (`.claude/`, `.codex/`, `.gemini/`) only for
-the agents you're signed in to, or for the ones you name with `--agents claude,codex`
-(or `all`).
+`coop init` creates the agent directories (`.claude/`, `.codex/`, `.gemini/`) only for agents
+you are signed in to. You can choose them explicitly with `--agents claude,codex`, or use `all`.
 
-A repo that never uses an agent can delete its dir. When a box runs an agent whose dir is absent,
-co:op synthesizes the workflow skills from `.agent/skills` at the box's user-level
-`~/.<agent>/skills`. That's a writable copy, and the host source stays untouched. Only running that
-agent's own CLI on the host needs the dir back; boxes don't.
+You can delete an agent's directory from a repo that does not use it. If you later run that
+agent in a box, co:op copies the workflow skills from `.agent/skills` into `~/.<agent>/skills`
+inside the box. The copy is writable, but the host source stays unchanged. You need the
+repository directory again only if you run the agent's own CLI directly on the host.
 
-When a repo has the per-agent dir, that committed copy wins and is used as is, so a box can still
-self-improve it. If the repo already has a real `.claude/skills` and no `.agent/skills`, init keeps
-it as the source instead of creating a competing tree. New agent links and box synthesis use it
-without adding co:op's templates. Existing valid skills links are left alone.
+When the repository has an agent directory, co:op uses that committed copy as it is, and the
+agent can edit it. If the repo already has a real `.claude/skills` directory but no `.agent/skills`,
+init keeps the existing directory as the skills source. Links for new agents and skills copied
+into boxes use that source without adding co:op's templates. Existing valid skills links stay
+unchanged.
 
 ### Claude settings and hooks
 
-Claude's settings and hooks follow the same rule. `coop init` keeps fallback copies in
-`.agent/claude/settings.json` and `.agent/claude/hooks/`. A Claude box copies each missing artifact
-to `~/.claude` for that run. Existing project `.claude/settings.json` and `.claude/hooks/` artifacts
-win independently. The temporary copies never modify the host's `.agent/` source.
+`coop init` keeps fallback Claude settings in `.agent/claude/settings.json` and hooks in
+`.agent/claude/hooks/`. For each run, a Claude box copies whichever of these is missing into
+`~/.claude`. Existing project `.claude/settings.json` and `.claude/hooks/` take precedence
+independently, so having one does not disable the fallback for the other. These temporary copies
+never change the host's `.agent/` source.

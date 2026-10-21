@@ -1,0 +1,331 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/evals.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Evaluations · co:op</title>
+  <meta name="description" content="Run repeatable checks to compare changes to models, presets and loops. Keep the results for review.">
+  <link rel="canonical" href="https://coop.dryga.com/evals.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/evals.html">
+  <meta property="og:title" content="Evaluations">
+  <meta property="og:description" content="Run repeatable checks to compare changes to models, presets and loops. Keep the results for review.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=bf51eb611f">
+  <script src="assets/js/site.js?v=bf51eb611f" defer></script>
+  <script src="assets/js/analytics.js?v=bf51eb611f" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <h1>Evaluations</h1>
+        <p class="guide-lead">Run repeatable checks to compare changes to models, presets and loops. Keep the results for review.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#try-it">Try it</a></li>
+<li><a href="#choose-what-to-evaluate">Choose what to evaluate</a></li>
+<li><a href="#runtime-profiles-for-custom-agent-cases">Runtime profiles for custom agent cases</a></li>
+<li><a href="#understand-a-result">Understand a result</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<p><code>coop eval</code> runs the same tasks repeatedly, then grades the finished work independently. Use it
+to check whether changing a model, preset, loop recipe or co:op build improves the result. Keep
+the suite and planned set of trials the same before and after the change so the runs are
+comparable. The <a href="https://coop.dryga.com/docs.html#evals">website guide</a> walks through a first run.</p>
+</section><section class="doc-section reference-section" id="try-it"><h2>Try it</h2>
+<ol>
+<li>
+<p>Preview the shipped <code>core</code> suite. The preview launches no container or provider and spends
+nothing:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Try it code example" tabindex="0"><code class="language-sh">coop eval run core codex --timeout 35m --dry-run
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>A dry run validates the plan. It doesn&#39;t check that your credentials, runtime or image are
+ready.</p>
+</li>
+<li>
+<p>For a real run, sign in with <code>coop login codex</code>. You also need a working container runtime and
+a current co:op box image. If the image is missing, run <code>coop build --egress open</code> from a
+directory without a project Dockerfile. Building may download dependencies. Then run:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Try it code example" tabindex="0"><code class="language-sh">coop eval run core codex --timeout 35m
+coop eval inspect
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>A real run uses your provider account and may spend credits.</p>
+</li>
+<li>
+<p>Change one thing and run the same suite again. Find the run IDs with <code>coop eval runs</code>, then
+compare them with <code>coop eval compare &lt;before-id&gt; &lt;after-id&gt;</code>. The first argument is the before
+run and the second is the after run; co:op does not use timestamps to choose the order. Inspect
+and compare show a short fingerprint of each configuration and its co:op build. This lets you
+spot a preset or recipe that changed while keeping the same name.</p>
+</li>
+</ol>
+<p>Use these flags to set the overall time limit, the number of repeats and how many trials can
+run at once. <code>coop help eval run</code> lists every option.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Try it table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Flag</th>
+<th scope="col">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--timeout 35m</code></td>
+<td>Limits the whole command from the moment it starts. At the limit, preparation, trials and grading stop. Cleanup and saving the final record may finish afterward. This limits time, not spending.</td>
+</tr>
+<tr>
+<td><code>--repeat 3</code></td>
+<td>Runs each case three times.</td>
+</tr>
+<tr>
+<td><code>--jobs 2</code></td>
+<td>Allows two agent trials at once.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Each case also has its own timeout. More configurations or repeats mean more paid work.</p>
+<p><code>cloc</code> is optional. Install it for change-size figures. Grading and verdicts still work without it,
+and co:op labels the missing measurement instead of reporting a false zero.</p>
+</section><section class="doc-section reference-section" id="choose-what-to-evaluate"><h2>Choose what to evaluate</h2>
+<ul>
+<li><code>core</code> has three small coding tasks for one agent. Independent checks catch deliberate near
+misses: changes that appear to solve the task but miss a requirement. Choose a provider target
+such as <code>codex:gpt-6.1-sol/xhigh</code>; this suite does not use presets.</li>
+<li><code>queue</code> sends ten tasks through the real <code>coop loop</code>, including review and signoff. Use it to
+compare presets or loop recipes. Each trial works through its tasks in order and can take
+hours. For example, <code>coop eval run queue frontier --timeout 2h</code> uses your existing <code>frontier</code>
+preset. Add <code>--loop-config .agent/loop.yaml</code> to test your project&#39;s recipe.</li>
+<li><code>coop eval init ./evals/my-suite</code> creates a custom suite from a working greeting example.
+Edit <code>suite.yaml</code>, <code>files/greeting/</code> and the separate <code>verifiers/greeting/verify.sh</code>. The
+verifier&#39;s README explains grading. The manifest includes a commented example for a loop.</li>
+<li><a href="https://github.com/AndrewDryga/coop/tree/main/examples/evals/maintenance" target="_blank" rel="nofollow noopener"><code>examples/evals/maintenance/</code></a> contains three independent
+maintenance loops for shell, Python and Node. Its offline checks confirm that unfinished
+starting versions fail and completed reference versions pass. It demonstrates a custom
+comparison; it is neither an official benchmark score nor a starter listed by
+<code>coop eval ls</code>.</li>
+</ul>
+<p>Each target or preset after the suite is a separate configuration, not a fallback. This command
+previews both configurations:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Choose what to evaluate code example" tabindex="0"><code class="language-sh">coop eval run core codex:gpt-6.1-sol codex:gpt-6.1-sol/xhigh --timeout 70m --dry-run
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</section><section class="doc-section reference-section" id="runtime-profiles-for-custom-agent-cases"><h2>Runtime profiles for custom agent cases</h2>
+<p>For an agent case that needs its own tools, use a trusted runtime profile: a dedicated image
+you build explicitly instead of the shared image. Add these four fields to the case:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Runtime profiles for custom agent cases code example" tabindex="0" data-copy-source=""><code class="language-yaml">runtime:
+  profile: /absolute/path/to/clean-profile
+  workdir: /app
+  agent_timeout: 15m
+  verifier_timeout: 15m
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Set the case&#39;s <code>timeout</code> long enough to cover preparation, the agent&#39;s work and verification.
+Loop suites do not support runtime profiles.</p>
+<p>Keep the profile outside both the suite and co:op&#39;s evaluation state. It must contain no Git
+metadata, symlinks or special files. Its project Dockerfile defaults to <code>.agent/Dockerfile</code> and
+must inherit co:op&#39;s client image. The profile cannot add project environment variables,
+services, published ports or extra network access.</p>
+<p>Review the files used to build the profile. Then run <code>coop build --egress filtered</code> from the
+profile directory before starting the evaluation. The build itself uses ordinary host
+networking; it does not use the candidate&#39;s filtered network.</p>
+<p>Profile cases run under the fixed <code>coop-adapted-offline-profile-v1</code> protocol:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Runtime profiles for custom agent cases table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Setting</th>
+<th scope="col">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Working directory</td>
+<td><code>/app</code></td>
+</tr>
+<tr>
+<td>CPU</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td>2 GiB</td>
+</tr>
+<tr>
+<td>PIDs</td>
+<td>128</td>
+</tr>
+<tr>
+<td>Storage</td>
+<td>declared as 10 GiB, but the quota is unenforced and usage is unmeasured</td>
+</tr>
+<tr>
+<td>Candidate network</td>
+<td>only its provider&#39;s core filtered networking</td>
+</tr>
+<tr>
+<td>Grader</td>
+<td>the same immutable image, with no network or credentials</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>These settings adapt the workload to co:op&#39;s runtime. They do not establish that it runs under
+the same conditions as an official benchmark. Exclude cases that depend on a disk quota or on
+running out of disk space.</p>
+<p>co:op saves a private copy of the profile. Before work starts, it records the profile&#39;s digest,
+the measured image and platform, and the time allowed for each phase. This saved copy does not
+approve a build: the original profile must remain available and unchanged for both phases. If
+you rebuild a different image after preparation, co:op refuses to start the candidate.</p>
+<p>The saved profile counts toward the suite&#39;s 2 GiB / 200,000-entry staging limit. A dry run does
+not resolve the image, so its workload fingerprint is provisional.</p>
+</section><section class="doc-section reference-section" id="understand-a-result"><h2>Understand a result</h2>
+<p><code>coop eval inspect</code> shows the latest run. Add a run ID to inspect an older one. It shows why
+trials did not pass and where to find the saved JSON records and work. See <code>coop help eval inspect</code>
+for explanations of the results.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Understand a result table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Result</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>failed</code></td>
+<td>The independent verifier rejected the work.</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>Execution or grading didn&#39;t produce a verdict, so grading is incomplete. It doesn&#39;t mean the model failed the task.</td>
+</tr>
+<tr>
+<td>A timeout, or a trial that never started</td>
+<td>Grading is incomplete here too.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>A loop trial starts when its loop launches its first box. If the loop stops before that, for
+example because the image is missing or the account isn&#39;t signed in, the trial is an error, not a
+graded failure.</p>
+<p>For a real run, exit code 0 means every trial has a grade, even if some tasks failed. If grading
+is incomplete, the command exits 1 and saves the results so you can inspect what happened.
+A dry run exits 0 after showing the plan, without running trials. Code-size changes can help
+you review the work, but they are not a quality score.</p>
+<p>To measure what changed between two runs:</p>
+<ul>
+<li>Choose two different runs.</li>
+<li>Run the same tasks, with the same number of repeats for each task.</li>
+<li>Test one configuration, such as a model or preset, in each run.</li>
+</ul>
+<p>co:op also checks the saved workload IDs, which identify the tasks and how they run and are
+graded. Both runs must have an ID, and the IDs must match. If any of these requirements are not met, co:op shows
+each run&#39;s results separately.</p>
+<p><code>coop eval compare</code> checks the saved plan for each run. A missing trial stays pending. If a
+trial is recorded twice or was not part of the plan, co:op refuses to compare the results.</p>
+<p>For each task, co:op reports the change only after every repeat in both runs has a pass or fail
+grade. The overall change and its uncertainty range appear only when all tasks are fully graded
+in both runs.</p>
+<p>The report counts tasks and repeats separately. It shows the pass rate after the change minus
+the pass rate before it, in percentage points. For example, going from 60% to 70% is an increase
+of 10 percentage points.</p>
+<p>The report also gives a 95% uncertainty range for that change. A wider range means a less precise
+estimate. This applies only to the tasks you tested and assumes each trial runs independently.
+The calculation uses a conservative Hoeffding bound: <code>sqrt(log(40)/(cases*repeats))</code>. The range
+cannot extend below −100 or above +100 percentage points.</p>
+<p>Repeating a task helps estimate performance on that task. It does not tell you how the model
+will perform on new tasks. If you plan to make a decision from the comparison, run each task at
+least three times. Before you start, write down how much improvement would matter and how you
+will decide whether the results are good enough. co:op does not save those rules or choose a
+winner for you.</p>
+<p>co:op measures the finished work before running the verifier, so verifier build artifacts do
+not count as model work. If a trial does not pass, co:op keeps the candidate&#39;s original workspace
+for inspection and removes the writable copy used for grading. The grader receives only a
+sanitized snapshot. The trial details list any external links or special files left out of it.</p>
+<p>If a provider refuses a sign-in or reports a quota limit, check <code>coop credentials &lt;agent&gt;</code> before
+starting another paid run. For a timeout, check both the case&#39;s timeout in <code>suite.yaml</code> and the
+run&#39;s <code>--timeout</code>.</p>
+<p>A run with no final summary may still be running or may have been interrupted. You can inspect
+it, but you cannot compare or resume it. To try again, start a new run explicitly. Recorded
+diagnostics may contain private provider output; review them before sharing.</p>
+<p>Each trial gets a private workspace without the source repository&#39;s Git history. The model
+cannot access the hidden verifiers. They run afterward in a separate container with no
+credentials or network access.</p>
+<p>co:op excludes your MCP servers and <code>COOP_RUN_ARGS</code> from trials. Those extra mounts or runtime
+flags could change the task setup without co:op recording the change. Use co:op-managed
+logins for provider credentials.</p>
+<p>The results describe the workload you tested. They do not establish equal performance across
+providers or a public benchmark ranking.</p>
+<p>co:op turns off the native client&#39;s web search and fetch tools for every evaluation candidate,
+including consultations and delegated work that co:op manages. Terminal, file and editing tools
+remain available. co:op records this setting with the run and includes it when checking whether
+workloads match.</p>
+<p>This setting relies on the client following it. It is not a firewall that stops a model from
+making its own authenticated provider requests. Regular co:op runs keep their normal web tools.</p>
+<p>Before trials start, co:op saves private copies of the suite&#39;s named inputs and hidden
+verifiers. The run uses those copies, so later edits to the source cannot change its tasks or
+the workload ID used for comparisons.
+The saved suite must fit within 2 GiB and 200,000 entries. If it does not, co:op refuses the run
+before any provider work begins.</p>
+</section>
+        <nav class="reference-related" aria-label="Related guides">
+          <h2>Related guides</h2>
+          <ul class="reference-list" role="list"><li><a href="agents.html">Agents, accounts and presets</a><p>Sign in, choose models and accounts, and configure presets, teammates and instructions.</p></li>
+<li><a href="loop.html">Task queues and loops</a><p>Set up a task queue for an agent to work through on its own, with decisions and a final review.</p></li>
+<li><a href="cli.html">Command reference</a><p>Look up co:op commands and options, with examples of how to use them.</p></li>
+</ul>
+          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
+        </nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/evals.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

@@ -494,6 +494,136 @@ main:focus { outline: none; }
 .ref tr:last-child td { border-bottom: 0; }
 .ref td > code:only-child { white-space: nowrap; }
 
+/* Walkthroughs: a page-wide introduction anchors the contents and instructions below.
+   The reference docs keep their existing layout; these additions belong to the guides. */
+.guide { padding-top: 48px; }
+.guide-hero { padding-bottom: 40px; border-bottom: 1px solid var(--divider); }
+.guide-intro { max-width: 48rem; }
+.guide-eyebrow { margin-bottom: 24px; font-size: 0.875rem; }
+.guide-eyebrow a { color: var(--body); text-decoration: none; }
+.guide-hero h1 { font-size: clamp(2.5rem, 1.9rem + 2vw, 3.25rem); }
+.guide-lead { margin-top: 20px; font-size: 1.25rem; line-height: 1.6; }
+.guide-prerequisites { margin-top: 32px; font-size: 1rem; line-height: 1.75; }
+.guide-prerequisites h2, .guide-label { color: var(--text); font-size: 0.875rem; font-weight: 600; line-height: 1.5; letter-spacing: 0; }
+.guide-prerequisites ul { margin-top: 8px; padding-left: 1.25em; list-style: disc; }
+.guide-prerequisites li + li { margin-top: 4px; }
+.guide-prerequisites li::marker { color: var(--muted); }
+.guide-body { margin-top: 48px; }
+.guide .docs-side { padding-top: 0; top: 32px; max-height: calc(100vh - 64px); }
+.guide .docs-side ol { margin-top: 16px; }
+.guide .docs-side a { display: grid; grid-template-columns: 2ch minmax(0, 1fr); gap: 12px; min-height: 44px; padding: 10px 12px; font-size: 0.9375rem; }
+.guide .docs-side a > span { color: var(--muted); font: 400 0.8125rem/1.75 var(--mono); }
+.guide .docs-side a[aria-current] { background: var(--surface); }
+.guide .docs-main { padding-top: 0; }
+.guide-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.guide-section h2 { display: flex; align-items: baseline; gap: 16px; }
+.guide-step { flex: none; color: var(--muted); font: 400 1rem/1.5 var(--mono); letter-spacing: 0; }
+.guide .guide-location { margin-top: 32px; color: var(--muted); font: 400 0.875rem/1.5 var(--mono); }
+.guide .guide-location + .cmds { margin-top: 12px; }
+.guide .cmds { grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; }
+.guide .cmds .copy { grid-column: 2; }
+.guide .cmds code { min-width: 0; }
+.guide .copy-failed > .copy-status { position: static; grid-column: 1 / -1; grid-row: auto; width: auto; margin: 4px 0 6px; padding: 10px 12px; box-shadow: none; }
+.guide .code-file.copy-failed > .copy-status { margin-inline: 12px; }
+.guide .code-file-name { overflow-wrap: anywhere; font-size: 0.875rem; }
+.guide-checkpoint { padding-left: 20px; border-left: 2px solid var(--cyan); }
+.guide-checkpoint > p + p { margin-top: 8px; }
+.guide-example { margin-inline: 0; padding: 24px; border: 1px solid var(--edge); border-radius: 12px; background: var(--surface); }
+.guide-example > p + p, .guide-example > .guide-checklist { margin-top: 16px; }
+.guide-task { margin: 20px 0 0; }
+.guide-task dt { margin-top: 20px; color: var(--text); font-size: 1rem; font-weight: 600; }
+.guide-task dd { margin: 4px 0 0; }
+.guide-checklist { display: grid; gap: 16px; }
+.guide-checklist li { position: relative; padding-left: 24px; }
+.guide-checklist li::before { content: ""; position: absolute; left: 0; top: 0.6em; width: 8px; height: 8px; border: 1px solid var(--muted); }
+.guide-detail { border-block: 1px solid var(--line); font-size: 1rem; line-height: 1.75; }
+.guide-detail summary { position: relative; padding: 16px 32px 16px 0; color: var(--text); font-weight: 500; cursor: pointer; list-style: none; }
+.guide-detail summary::-webkit-details-marker { display: none; }
+.guide-detail summary::after { content: "+"; position: absolute; right: 4px; top: 16px; color: var(--cyan); font-family: var(--mono); }
+.guide-detail[open] summary::after { content: "−"; }
+.guide-detail > div { padding-bottom: 24px; }
+.guide-detail > div > * + * { margin-top: 16px; }
+.guide-next { display: grid; justify-items: start; gap: 12px; margin-top: 64px; padding-block: 32px; border-top: 1px solid var(--line); text-decoration: none; }
+.guide-next > span:nth-child(2) { font-size: 1.5rem; font-weight: 600; line-height: 1.35; letter-spacing: -0.015em; }
+.guide-next small { color: var(--body); font-size: 1rem; }
+@media (max-width: 1023px) {
+  .guide { max-width: 42rem; padding-top: 32px; }
+  .guide-hero { padding-bottom: 32px; }
+  .guide-body { margin-top: 32px; }
+  .guide .docs-side { top: auto; max-height: none; margin-top: 0; }
+  .guide .docs-side ol { margin-top: 0; }
+  .guide .docs-main { padding-top: 32px; }
+}
+@media (max-width: 640px) {
+  .guide-eyebrow { margin-bottom: 20px; }
+  .guide-lead { font-size: 1.125rem; }
+  .guide-section { margin-top: 48px; padding-top: 48px; }
+  .guide-section:first-child { margin-top: 0; padding-top: 0; }
+  .guide-section h2 { gap: 12px; }
+  .guide-step { font-size: 0.875rem; }
+  .guide-example { padding: 20px; }
+}
+@media (forced-colors: active) {
+  .guide-checkpoint { border-color: Highlight; }
+  .guide-hero, .guide-example, .guide-detail, .guide-next { border-color: CanvasText; }
+  .guide-checklist li::before { border-color: CanvasText; }
+}
+@media print {
+  .guide .docs-side, .guide .copy { display: none; }
+  .guide-body { display: block; }
+  .guide-intro { max-width: none; }
+  .guide .docs-main { max-width: none; }
+}
+
+/* Generated reference pages keep the source's tables and code readable at every width. */
+.reference .docs-main { max-width: 48rem; }
+.reference .docs-side a { display: block; min-height: 36px; padding: 6px 12px; }
+.reference .docs-side .reference-subsection a { padding-left: 24px; font-size: 0.875rem; }
+.reference .docs-side ul { margin-top: 16px; }
+.reference-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.reference-section > .sr-only + * { margin-top: 0; }
+.reference-content h4 { margin-top: 32px; color: var(--text); font-size: 1.125rem; font-weight: 600; }
+.reference-content :is(h3, h4, h5, h6) { scroll-margin-top: 32px; }
+.reference-content :is(ul, ol) :is(ul, ol) { margin-block: 12px; padding-left: 1.4em; list-style: revert; }
+.reference-content li > p + p { margin-top: 12px; }
+.reference-content blockquote { padding-left: 20px; border-left: 2px solid var(--line); }
+.reference-content .table-scroll { padding-bottom: 8px; }
+.reference-table, .reference-code-frame { min-width: 0; }
+.reference-table, .reference-code-frame:not(.code-file) { display: flex; flex-direction: column; }
+.reference-example > .code-file-name { order: -2; }
+.reference-section > :is(.reference-table, .reference-code-frame),
+.reference-section > :is(.reference-table, .reference-code-frame) + * { margin-top: 32px; }
+.reference-scroll-hint { order: -1; grid-column: 1 / -1; margin: 0 0 8px; color: var(--muted); font-size: 0.8125rem; line-height: 1.5; }
+.reference-scroll-hint[hidden] { display: none; }
+:is(.code-file, .reference-example) > .reference-scroll-hint { margin: 0; padding: 8px 24px 12px; }
+.reference-content .ref-wide { min-width: 42rem; }
+.reference-content .ref :is(th, td) { padding-right: 20px; }
+.reference-content .ref-wide :is(th, td) { min-width: 10rem; }
+.reference-content .ref:not(.ref-wide) :is(th, td):first-child { width: 30%; min-width: 7rem; }
+.reference-content .ref td > code:only-child { white-space: normal; }
+.reference-content .ref code { overflow-wrap: anywhere; }
+.reference-content pre.code { max-width: 100%; overflow-x: auto; white-space: pre; overflow-wrap: normal; }
+.reference-content pre.code code { font: inherit; }
+.reference-content .code-file { min-width: 0; }
+.reference-example { border-radius: 12px; background: var(--surface); }
+.reference-example .code-file-name { padding-block: 12px; border-bottom: 1px solid var(--divider); }
+.reference-example pre.code { background: none; }
+.reference-content .code-file pre.code { min-width: 0; grid-row: 3; }
+.reference-content .code-file > .reference-scroll-hint { grid-row: 2; }
+.docs-library-link { margin-top: 16px; }
+.reference-list { display: grid; gap: 24px; padding-left: 0 !important; list-style: none !important; }
+.reference-list > li + li { margin-top: 0 !important; }
+.reference-list a { font-weight: 600; }
+.reference-list p { margin-top: 4px; font-size: 1rem; line-height: 1.6; }
+.reference-related { margin-top: 64px; padding-top: 32px; border-top: 1px solid var(--divider); }
+.reference-related h2 { font-size: 1.5rem; }
+.reference-related > * + * { margin-top: 24px; }
+.reference-related > a { display: inline-block; }
+.reference-source { margin-top: 32px; font-size: 0.875rem; }
+@media (max-width: 1023px) {
+  .reference .docs-side ul { margin-top: 0; }
+}
+
 /* Motion. With the script running, pinned beside the text on wide screens (.js-story) or as the
    deck on small ones (.js-deck), the picture starts unleashed: no sandbox, every file in reach,
    every wire whole and live. Each step then does one thing: the wall closes around the project and
@@ -626,8 +756,10 @@ main:focus { outline: none; }
   @media (min-width: 641px) and (max-width: 1023px) { .js-deck .story { --frame: 50svh; } }
   @media (max-width: 1023px) and (max-height: 700px) { .js-deck .story { --frame: 36svh; } }
 }
-@media (max-width: 640px) {
+@media (max-width: 767px) {
   .nav-links > a.nav-optional { display: none; }
+}
+@media (max-width: 640px) {
   .nav-links { gap: 24px; }
   .nav { height: 64px; }
   .brand { font-size: 1.4375rem; gap: 8px; }

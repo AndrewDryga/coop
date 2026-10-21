@@ -96,7 +96,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [acp-connects-before-selection](acp-connects-before-selection.md) — coop acp and coop fork <name> acp connect without a target so the editor can expose its live selectors
 
 **CLI output** — what the terminal shows
-- [cli-text-is-plain-english](cli-text-is-plain-english.md) — direct wording that preserves facts, commands and safety details
+- [cli-text-is-plain-english](cli-text-is-plain-english.md) — plain CLI and website copy that preserves facts, commands and safety details
 - [installer-output-is-spaced-and-actionable](installer-output-is-spaced-and-actionable.md) — installer progress and shell instructions use readable blocks, with separate start/help examples
 - [selectors-need-a-real-choice](selectors-need-a-real-choice.md) — hide already-selected singleton dropdowns while retaining native state
 - [acp-waits-and-switches-are-visible](acp-waits-and-switches-are-visible.md) — announce automatic quota fallback and every newly queued account wait
@@ -115,6 +115,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [nonzero-progress-segments-stay-visible](nonzero-progress-segments-stay-visible.md) — a positive live or blocked count always gets at least one bar cell
 
 **Docs**
+- [public-walkthroughs-have-reader-proof](public-walkthroughs-have-reader-proof.md) — public walkthroughs need a coherent worked path, observable checkpoints and adversarial reader review
 - [public-release-notes-are-product-focused](public-release-notes-are-product-focused.md) — record actual published releases, product changes and user actions, not failed attempts or internal decisions
 - [align-trailing-comments](align-trailing-comments.md) — trailing `#` comments in an example line up in one column
 - [docs-bold-sparingly](docs-bold-sparingly.md) — bold marks structure, never mid-sentence emphasis, never inline code

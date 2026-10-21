@@ -3,8 +3,7 @@
 // reference), site/llms.txt (an agent-readable plain-text manual), and docs/man/coop.1 (the man page shipped
 // in the release archive) from cli.RenderManual — the same bytes `coop help --all` prints. `-check`
 // re-renders and fails (non-zero, naming the file) if a committed file differs, so `make check`
-// catches a help.go edit that wasn't regenerated. Without -check it writes the files. stdlib +
-// internal/cli only.
+// catches a help.go edit that wasn't regenerated. Without -check it writes the files.
 //
 // It writes the website's generated pages the same way (site.go): site/index.html and
 // site/orchestrator.html from their templates in tools/site/, and the terminal windows in
@@ -43,7 +42,7 @@ func main() {
 		filepath.Join("site", "llms.txt"):      manual,
 		filepath.Join("docs", "man", "coop.1"): manPage(manual),
 	}
-	pages, err := sitePages(".")
+	pages, err := sitePages(".", targets)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gendocs: %v\n", err)
 		os.Exit(1)

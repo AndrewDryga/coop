@@ -1,0 +1,445 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/loop.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>The loop · co:op</title>
+  <meta name="description" content="Set up a task queue for an agent to work through on its own, with decisions and a final review.">
+  <link rel="canonical" href="https://coop.dryga.com/loop.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/loop.html">
+  <meta property="og:title" content="The loop">
+  <meta property="og:description" content="Set up a task queue for an agent to work through on its own, with decisions and a final review.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=bf51eb611f">
+  <script src="assets/js/site.js?v=bf51eb611f" defer></script>
+  <script src="assets/js/analytics.js?v=bf51eb611f" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <h1>The loop</h1>
+        <p class="guide-lead">Set up a task queue for an agent to work through on its own, with decisions and a final review.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#exit-codes">Exit codes</a></li>
+<li><a href="#final-review">Final review</a></li>
+<li><a href="#the-agent-folder">The .agent/ folder</a></li>
+<li><a href="#monorepos">Monorepos</a></li>
+<li><a href="#parallel-forks">Parallel forks</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<p><code>coop loop</code> works through your task queue with a fresh agent for each task. When the queue is
+empty, a reviewer checks the completed work and reopens anything unfinished. Tasks that need
+your decision wait for you. Start with the <a href="https://coop.dryga.com/docs.html#loop">loop guide</a>,
+or use this page for the details.</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0"><code class="language-bash">coop init                 # scaffold AGENTS.md, the .agent/ working folder, and the hooks
+coop tasks add &#34;...&#34;      # add a task (a folder under .agent/tasks/00_todo/)
+coop loop claude          # disposable agents work the queue until it&#39;s done, then sign off
+coop loop codex           # …or name claude, codex, gemini, grok, or a preset
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>A task is a folder under <code>.agent/tasks/</code>. Its state is the directory it sits in: <code>00_todo/</code>, <code>10_in_progress/</code>, <code>50_blocked/</code> or <code>99_done/</code>. The numeric prefix sorts <code>ls</code> in lifecycle order, and <code>coop tasks</code> shows the clean names.</p>
+<p>Before starting an agent, the loop claims the next task on the host or resumes one left in
+<code>10_in_progress/</code>. The new agent works only on that task, without carrying over the previous
+agent&#39;s conversation. The loop keeps going while it can claim work from <code>00_todo/</code> or
+<code>10_in_progress/</code>.</p>
+<p>Choose an agent (<code>claude</code>, <code>codex</code>, <code>gemini</code> or <code>grok</code>) or a preset that defines the lead agent.
+To run a custom command for each task, set <code>work.command</code> in <code>.agent/loop.yaml</code>. It replaces the
+whole iteration command.</p>
+<p>When the model reaches a rate or usage limit, the loop tries the next configured target. If
+every target is limited, it waits with a countdown until one can run, then retries the same
+task. A rate limit does not count as a failed task attempt.</p>
+<p>Add <code>--preflight</code> to check the queue before work starts. This pass unblocks tasks in
+<code>50_blocked/</code> when their <code>decision.md</code> has an answer. It leaves backlog tasks parked with
+<code>coop tasks park</code> alone, does no task work and makes no commits. Preflight is off by default.</p>
+</section><section class="doc-section reference-section" id="exit-codes"><h2>Exit codes</h2>
+<p>A cron job or CI can branch on the loop&#39;s exit code without parsing its output:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Exit codes table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Exit code</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>Final review and enabled final checks passed, or a successful <code>--max-tasks</code> pause before final review.</td>
+</tr>
+<tr>
+<td><code>1</code></td>
+<td>A failure, an unverified final pass, or actionable work.</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>A usage error.</td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td>The loop stopped with a task blocked on a human decision, including one the review kept reopening past the round cap. Resolve it with <code>coop tasks decisions</code>, then run the loop again.</td>
+</tr>
+<tr>
+<td><code>130</code></td>
+<td>The run was interrupted before the final verdict.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><code>--max-tasks</code> pauses the loop before final review. A successful pause exits <code>0</code>, but the work
+still needs review. Run the same command without the limit to finish that review.</p>
+<p>The resumed review uses the <code>Coop-Task: &lt;id&gt;</code> trailer to find each task&#39;s commit among the
+commits made since the run started. You can sign those commits between runs. If any commit seen
+by a previous review has changed, co:op reviews the task again. This includes a repair commit
+that was on top of the branch during that review.</p>
+<p>If co:op finds no matching commit or more than one, it stops before review and lists the task
+and commits. There is one exception to the run&#39;s commit range: another session may have
+committed a task before this run started, then completed it during the run. The reviewer sees
+that task&#39;s single matching commit in the branch.</p>
+<p>While an agent works on a task, co:op holds a lock on the host under
+<code>~/.local/state/coop/task-leases/</code>. Another loop skips that task and can work on an independent
+todo task. <code>coop tasks watch</code> reads the status stored beside the lock and shows <code>busy</code>, <code>stalled</code>
+or <code>unleased</code>, without showing run IDs or PIDs.</p>
+<p>A missing heartbeat can help you spot a stalled worker, but it does not release the task. The
+loop takes over as soon as the operating system&#39;s lock becomes available, never because a
+timeout has passed. This also lets it resume an in-progress task that no controller has locked.</p>
+<p>When you run <code>coop tasks claim &lt;id&gt;</code>, the command records you as the owner and exits. It does
+not keep a lock open. The loop leaves your task alone and shows the owner and
+<code>coop tasks release &lt;id&gt;</code> command. Your claim stays in place until an explicit <code>release</code>,
+<code>block</code>, <code>unblock</code> or <code>done</code> clears it; it never expires.</p>
+<p>Stop running co:op controllers before a major-version upgrade. Running controllers from different
+major versions against the same task queue is not supported.</p>
+<p>When a task completes, co:op stores a small receipt on the host&#39;s persistent task lock file.
+Other loops use that receipt to recognize the completed folder after its owner releases the
+lock. They do not have to trust task metadata that the agent can edit.</p>
+<p>Before starting a box that can write, including a review box, co:op also records a fingerprint
+of each done folder in a host-only journal. It removes the journal only after checking the
+box&#39;s queue changes. If the controller crashes, the next loop uses the journal to undo any
+completion that had no authorized owner. Tasks completed outside a supervised box remain part
+of the ordinary task history.</p>
+<p>The <code>/sweep</code> skill has a <code>Stop</code> hook that keeps an active sweep running while it has tasks to
+work on. It does not hold other sessions open. New projects already use this setup.
+<code>coop init</code> preserves existing files, so update an older repo by hand:</p>
+<ol>
+<li>Remove only the stock <code>Stop</code> group from <code>.claude/settings.json</code>. Keep <code>PreToolUse</code> and custom hooks.</li>
+<li>Delete <code>.claude/hooks/stop-guard.sh</code>, but only if it&#39;s the old stock guard.</li>
+<li>Remove a stale <code>.agent/active</code>.</li>
+<li>Merge the current <code>.agent/skills/sweep/</code> files, keeping your local customizations.</li>
+</ol>
+<p><code>init</code> installs a fast commit check for Claude. For other committers, <code>init</code> installs a Git
+pre-commit check at <code>.githooks/pre-commit</code> and sets <code>core.hooksPath</code>. The format check then runs
+for everyone, including Codex, Gemini and a plain <code>git commit</code>. Git tracks the hook files, but
+the <code>core.hooksPath</code> setting is local. Run <code>coop init</code> in each new clone to enable them there.</p>
+<p>The tracked <code>.githooks/prepare-commit-msg</code> hook also calls co:op&#39;s box-attribution hook when it
+is mounted. On a normal host, the shim does nothing.</p>
+<p>An existing custom <code>core.hooksPath</code> stays unchanged. Copy both tracked hooks into your active hook
+directory, or have your existing hooks call them. If you already have a <code>prepare-commit-msg</code>,
+add the shim&#39;s co:op hook call to it instead of replacing the file. To skip the format check for
+one commit, use <code>git commit --no-verify</code>.</p>
+</section><section class="doc-section reference-section" id="final-review"><h2>Final review</h2>
+<p>When the queue empties, a fresh final review (the signoff) checks each task the run
+completed:</p>
+<ul>
+<li>every acceptance criterion and subtask is met</li>
+<li>the change follows <code>AGENTS.md</code> and <code>.agent/kb/rules</code>, with no scope creep</li>
+<li>the failure path is tested</li>
+<li>the change is polished, with docs and the CHANGELOG updated</li>
+<li>the bookkeeping is right</li>
+</ul>
+<p>Before review, co:op finalizes each completed task&#39;s <code>state.md</code> in one atomic update. The worker
+records its final checks there for the reviewer. Reviewers inspect the code and test coverage,
+but rely on the worker&#39;s record of which tests ran; they do not run the tests again.</p>
+<p>A missing, failed or outdated check causes the reviewer to reopen the task and tell the worker
+what to check. Reviewers never edit an archived task in place. If they find that a task moved
+through the queue incorrectly, they reopen and report it too.</p>
+<p>If the reviewer reopens a task, the loop works through the queue and reviews again. It continues
+until a review finds nothing to reopen or reaches the round limit. At the limit, co:op blocks
+the repeatedly reopened task for your decision and does not report it as done.</p>
+<p>By default, the loop allows half as many review rounds as tasks worked, rounded down, with
+a minimum of three and a maximum of <code>5</code>. The range is <code>[3, signoff.rounds]</code>; setting a maximum
+below three overrides the minimum.</p>
+<p>Each completed task must match exactly one commit through its <code>Coop-Task: &lt;id&gt;</code> trailer. That
+commit must be in the current iteration&#39;s commit range, and there must be exactly one matching
+commit reachable from <code>HEAD</code>. When review requests rework, the worker must amend or rewrite the
+existing task commit. A second matching commit is rejected, and the task returns to in-progress.</p>
+<p>The worker also cannot add a trailer for another task or rewrite that task&#39;s commit. co:op
+checks every attempt, including failed attempts, before allowing a retry. Review covers only
+tasks that the host accepted as completed during this run.</p>
+<p>For each task it reviews, the reviewer returns a structured evidence line. It also returns a
+PASS/FAIL receipt with a sorted list of the exact task IDs to reopen. In the default
+<code>writes: tasks</code> mode, the reviewer can only report findings: the repository and task queues are
+read-only.</p>
+<p>co:op checks the whole proposal, acquires ownership of every task under review on the host, and
+reopens the proposed tasks in one transaction. The reviewer cannot change the queue directly.</p>
+<p>If the review process finishes successfully but returns the wrong output format, co:op runs the
+whole review once more. It uses the same tasks and write permissions, with a fixed instruction
+to correct the receipt format. Each attempt gets its own telemetry record.</p>
+<p>co:op leaves every task unchanged if the second verdict is malformed, a task changes state
+during the review, the process is interrupted or fails, or the proposal includes a task outside
+the review.</p>
+<p>co:op stores reviewer findings in a delimited log block and treats them as untrusted. The next
+worker gets fixed instructions to reproduce the issue first, instead of following instructions
+from the reviewer. Use <code>writes: repo</code> to let the reviewer fix source. Every task queue is still
+remounted read-only, and the host applies lifecycle changes.</p>
+<p>Tune the loop in one committed <code>.agent/loop.yaml</code>, with a section per step:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Final review table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Section</th>
+<th scope="col">Step</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>preflight</code></td>
+<td>the cleanup pass before the loop starts working</td>
+</tr>
+<tr>
+<td><code>work</code></td>
+<td>the iterations that work the tasks</td>
+</tr>
+<tr>
+<td><code>between</code></td>
+<td>the per-task reviewer</td>
+</tr>
+<tr>
+<td><code>signoff</code></td>
+<td>the final review</td>
+</tr>
+<tr>
+<td><code>verify</code></td>
+<td>an optional affected-feature pass after the final review</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Set <code>agent:</code> for <code>work</code>, <code>between</code>, <code>signoff</code> or <code>verify</code> to choose its models. Each setting takes
+a fallback list of targets (<code>provider[:model][/effort][@account]</code>) or preset names. For example,
+<code>signoff.agent</code> can use a stronger model to review work done by a cheaper <code>work.agent</code>. Every
+step except <code>work</code> also accepts a <code>prompt:</code>.</p>
+<p>Custom prompts add to co:op&#39;s built-in checks; they do not replace them:</p>
+<ul>
+<li><code>signoff.prompt</code> adds checks to final review. A task that fails one is reopened, just as it
+would be for a built-in check. You might require a CHANGELOG entry or regenerated docs.</li>
+<li><code>preflight.prompt</code> adds an agent cleanup pass in addition to co:op&#39;s host-side unblock step.</li>
+<li><code>between.prompt</code> defines an optional review after each completed task. It can reopen the task.</li>
+<li><code>verify.prompt</code> defines the optional pass after final review.</li>
+</ul>
+<p>Per-task review is off until you enable it and set a prompt. Changes to files that define the
+gate are an exception: co:op always reviews those tasks before starting the next one. It uses
+the configured between-review target and prompt, or the signoff target with a focused built-in
+prompt. Both prompts name the task that just finished.</p>
+<p>If Git cannot tell co:op which files changed, the loop stops. It cannot assume the gate was
+untouched. Run the continuation command it prints to review that task before starting other
+work. Final review also stops if co:op cannot read the run&#39;s changes.</p>
+<p>co:op automatically reviews changes to Makefiles, CI, hooks and its own config. If your gate
+also depends on wrapper scripts or ordinary source files, list their exact repo-relative paths
+under <code>gate_sources:</code> in <code>.agent/project.yaml</code>. co:op cannot discover all those dependencies for
+you.</p>
+<p>The loop keeps the list it read at startup, so a task cannot remove itself from review. Restart
+the loop to apply a deliberate change to the list. Projects without a list still get the
+built-in protection.</p>
+<p>Settings live in the same file: <code>signoff.rounds</code>, <code>preflight.enabled</code>, <code>verify.enabled</code> and <code>work.command</code>. Every field is optional, and a missing file means the built-in defaults. <code>coop init</code> scaffolds a fully commented starter.</p>
+</section><section class="doc-section reference-section" id="the-agent-folder"><h2>The .agent/ folder</h2>
+<p><code>init</code> creates a folder for instructions and working notes that any supported agent can use.
+The agent reads it when it starts and after its conversation is compacted. Git ignores the
+local working state. It tracks the shared knowledge and rules (<code>kb/</code>, including <code>kb/rules/</code>),
+workflows (<code>skills/</code>, <code>presets/</code>), fallback Claude settings (<code>claude/</code>), <code>project.yaml</code>,
+<code>loop.yaml</code>, <code>compose.yml</code>, <code>Dockerfile</code> and <code>tasks/README.md</code>.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="The .agent/ folder table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Path</th>
+<th scope="col">What it&#39;s for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tasks/</code></td>
+<td>The work queue: one folder per task under <code>00_todo/</code>, <code>10_in_progress/</code>, <code>50_blocked/</code> and <code>99_done/</code>. A task&#39;s state is its directory, and <code>coop tasks</code> moves it. Each folder carries its own <code>spec.md</code>, <code>log.md</code>, <code>state.md</code> and <code>decision.md</code> as needed. The loop reads <code>00_todo/</code> and <code>10_in_progress/</code>.</td>
+</tr>
+<tr>
+<td>the backlog</td>
+<td>Unscheduled ideas stored as task folders in <code>tasks/xx_backlog/</code> (<code>coop backlog</code>). The loop and Stop hook ignore them. When an idea is ready, <code>coop backlog promote &lt;id&gt;</code> moves it into <code>tasks/00_todo/</code>.</td>
+</tr>
+<tr>
+<td><code>kb/</code></td>
+<td>Committed notes explaining subsystems, how they interact, and problems that are hard to spot from the code alone.</td>
+</tr>
+<tr>
+<td><code>kb/rules/</code></td>
+<td>Committed rules that tell agents how to work in the project. Corrections become rules here.</td>
+</tr>
+<tr>
+<td><code>claude/</code></td>
+<td>Fallback user-level Claude settings and hooks for repos without matching project <code>.claude/</code> artifacts. Committed.</td>
+</tr>
+<tr>
+<td><code>project.yaml</code></td>
+<td>Committed project settings: <a href="#monorepos"><code>subprojects:</code></a>, <a href="box.html#dev-servers-in-your-browser"><code>serve:</code> ports</a>, box policy (<code>box:</code>), the merge <code>gate:</code>, and extra <code>gate_sources:</code> to review when changed. The <code>box:</code> policy sets egress, <a href="networking.html"><code>egress_rules:</code></a>, resource caps and <code>auto_up</code>/<code>network</code>. Explicit <code>COOP_*</code> environment or config settings override <code>box:</code> and <code>gate:</code>. This project file can tighten security settings, but cannot relax them by itself: egress can require <code>filtered</code> or <code>offline</code>, while <code>open</code> needs human approval through <code>coop approve</code>. It cannot set <code>no_new_privileges</code>.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>On a fresh scaffold, <code>init</code> also installs generic workflow skills into <code>.agent/skills/</code> and links the selected agents to it:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="The .agent/ folder table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Skill</th>
+<th scope="col">What it&#39;s for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/spec</code></td>
+<td>writing a spec for a multi-file change</td>
+</tr>
+<tr>
+<td><code>/work</code></td>
+<td>carrying out that change step by step against the gate</td>
+</tr>
+<tr>
+<td><code>/sweep</code></td>
+<td>draining <code>.agent/tasks/</code></td>
+</tr>
+<tr>
+<td><code>/investigate</code></td>
+<td>finding the root cause of a failure</td>
+</tr>
+<tr>
+<td><code>/verify-api</code></td>
+<td>checking anything you&#39;re unsure of before you call it</td>
+</tr>
+<tr>
+<td><code>/review-board</code></td>
+<td>a thorough multi-hat review before landing</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Edit them freely; <code>init</code> won&#39;t overwrite a skill you&#39;ve changed. When <code>init</code> adopts an existing real <code>.claude/skills/</code> instead, it leaves that project-owned set unchanged and links the other selected agents to it.</p>
+<p>A repo that still has a single <code>.agent/TASKS.md</code> needs converting to the folder format. Paste the prompt in <a href="https://github.com/AndrewDryga/coop/blob/main/MIGRATING.md" target="_blank" rel="nofollow noopener">MIGRATING.md</a> into any coding agent in the repo.</p>
+</section><section class="doc-section reference-section" id="monorepos"><h2>Monorepos</h2>
+<p>When one repo holds several components, each with its own work, list them once in the top-level <code>.agent/project.yaml</code>:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Monorepos code example" tabindex="0" data-copy-source=""><code class="language-yaml"># .agent/project.yaml — committed with the repo
+subprojects: [runner, packs, portal, mcp]
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>co:op then aggregates every member&#39;s <code>.agent/tasks</code> automatically:</p>
+<ul>
+<li><code>coop tasks</code> rolls them up under per-queue headers</li>
+<li>one <code>coop loop</code> drains them all</li>
+<li><code>coop prompt</code> counts across them</li>
+<li>the id commands (<code>claim</code>, <code>done</code> and the rest) find a task in whichever queue holds it</li>
+</ul>
+<p>You do not need to maintain <code>COOP_TASKS</code> by hand. An explicit <code>COOP_TASKS</code> or <code>--tasks</code> still
+overrides automatic discovery. Each member keeps a queue for its own work, and the root queue
+holds changes that span members.</p>
+<p>Run <code>coop init</code> at the root to find member folders and write <code>project.yaml</code>. It looks for
+<code>.agent/</code> folders at any depth, skipping hidden and build folders, and creates a task queue for
+each member. Members share the root&#39;s AGENTS.md, <code>.agent/skills/</code>, <code>.agent/kb/</code> and box. A member
+can also commit its own <code>.agent/kb/rules/</code> when it needs additional rules.</p>
+<p>Use <code>coop tasks queues</code> when a script, such as the sweep queue guard, needs the resolved queue
+paths.</p>
+</section><section class="doc-section reference-section" id="parallel-forks"><h2>Parallel forks</h2>
+<p>Run several models at once, each looping unattended in its own <a href="forks.html">fork</a>. Point them at the same canonical project queue. The host assigns the tasks, so every claim happens exactly once:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Parallel forks code example" tabindex="0"><code class="language-bash">coop fork perf codex  --loop -d # each worker claims a different canonical task
+coop fork deps gemini --loop -d
+coop fork docs claude --loop -d
+
+coop tasks watch                # canonical queue + assignments + every active sandbox
+coop fork ls                    # worker state, sandbox activity, candidate/task progress, diff, cost
+coop fork logs -f               # tail every fork at once (compose-style, prefixed)
+coop fork stop perf             # halt one; coop fork logs perf -f to watch just it
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Without <code>--tasks</code>, a fork takes work from the repo&#39;s <code>.agent/tasks</code> and every
+<a href="#monorepos">monorepo</a> member&#39;s queue. Use <code>--tasks &lt;path&gt;</code> to choose one queue. You can also give
+an absolute path to a queue outside the project. The fork uses that original queue; it does not
+copy it or change its path.</p>
+<p>The fork receives only its assigned task under <code>.coop/task-executions/</code>. Restarting the same
+fork generation resumes that task, and another fork cannot claim it.</p>
+<p><code>-d</code> (<code>--detach</code>) runs the worker in the background. co:op saves its output in a private log;
+read it with <code>coop fork logs &lt;name&gt;</code>. When the fork finishes its available work, review and
+<a href="forks.html#land-it">land it</a> as you would a pull request, then <code>git push</code>. Add more agents only
+while you can keep up with reviewing their work.</p>
+<p><code>coop fork merge --all</code> merges forks in sequence. It rebases each fork onto the result of the
+previous merge and re-runs the configured gate (<code>gate:</code> in <code>.agent/project.yaml</code>, or
+<code>COOP_GATE</code>). Each fork must pass against that updated base. The queue stops at the first
+conflict or failed gate and leaves the remaining forks untouched.</p>
+<p><code>coop tasks split</code> and copying a whole queue into a fork are no longer supported. Those copies
+let separate workers move the same task independently. A combined dashboard could show the
+results but could not coordinate ownership. Use separate queues only for parts of the project
+that already own separate work. <code>--tasks</code> selects an existing queue; it does not divide one.</p>
+<p>If you run agents at the same time, give them different accounts to avoid competing for the
+same subscription limits. A preset can define a rotation across providers and accounts.</p>
+<p>A stale or crashed worker shows as <code>cleanup</code> in <code>coop fork ls</code>. Run <code>coop fork stop &lt;name&gt;</code> to
+clean it up. If Coop started the worker on another operating system, such as a Linux container
+that shares the folder, the listing says so. Stop that worker on the system where it started;
+Coop cannot check it from here.</p>
+<p><code>stop</code> removes only that fork&#39;s containers, even if another repository has a fork with the same
+name. Running it twice is safe.</p>
+<p>Remove an unused fork with <code>coop fork rm &lt;name&gt;</code>. <code>--yes</code> skips the confirmation prompt.
+<code>--force</code> may stop a detached worker and discard uncommitted or unmerged Git work, the reviewed
+candidate and pending proposals. It also returns the fork&#39;s assigned tasks to their original
+queue.</p>
+</section>
+        <nav class="reference-related" aria-label="Related guides">
+          <h2>Related guides</h2>
+          <ul class="reference-list" role="list"><li><a href="forks.html">Forks and review</a><p>Work in a separate copy of your project. Review the changes and checks before merging them.</p></li>
+<li><a href="agents.html">Agents, accounts and presets</a><p>Sign in, choose models and accounts, and configure presets, teammates and instructions.</p></li>
+<li><a href="configuration.html">Configuration</a><p>Find project settings, environment variables, configuration files and exit codes.</p></li>
+</ul>
+          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
+        </nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/loop.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

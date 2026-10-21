@@ -30,7 +30,7 @@ const (
 )
 
 // sitePages renders the generated pages from the checkout at root, keyed by their path in it.
-func sitePages(root string) (map[string]string, error) {
+func sitePages(root string, generated map[string]string) (map[string]string, error) {
 	sprite, err := markSprite(root)
 	if err != nil {
 		return nil, err
@@ -70,11 +70,25 @@ func sitePages(root string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]string{
+	pages := map[string]string{
 		filepath.Join("site", "index.html"):        stampAssets(externalLinks(typographic(index)), version),
 		filepath.Join("site", "orchestrator.html"): stampAssets(externalLinks(typographic(orchestrator)), version),
 		filepath.Join("site", "docs.html"):         stampAssets(externalLinks(filled), version),
-	}, nil
+	}
+	for _, name := range []string{"sandbox-guide", "overnight-guide"} {
+		guide, err := fillTemplate(root, name+".tpl.html", nil)
+		if err != nil {
+			return nil, err
+		}
+		pages[filepath.Join("site", name+".html")] = stampAssets(externalLinks(typographic(guide)), version)
+	}
+	references, err := referencePages(root, generated, version)
+	if err != nil {
+		return nil, err
+	}
+	maps.Copy(pages, references)
+	pages[filepath.Join("site", "sitemap.xml")] = siteMap(pages)
+	return pages, nil
 }
 
 var logoPath = regexp.MustCompile(`<path d="([^"]+)"`)
@@ -106,11 +120,21 @@ func fillTemplate(root, name string, blocks []block) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	page := string(template)
+	values := make(map[string]string, len(blocks))
 	for _, b := range blocks {
-		page = strings.ReplaceAll(page, "{{"+b.name+"}}", b.html)
+		values["{{"+b.name+"}}"] = b.html
 	}
-	if left := placeholder.FindAllString(page, -1); left != nil {
+	var left []string
+	// Substitute only tokens in the original template. Rendered code may itself
+	// contain {{names}}, which must remain literal instead of becoming template input.
+	page := placeholder.ReplaceAllStringFunc(string(template), func(token string) string {
+		if value, ok := values[token]; ok {
+			return value
+		}
+		left = append(left, token)
+		return token
+	})
+	if len(left) != 0 {
 		return "", fmt.Errorf("tools/site/%s: nothing fills %s", name, strings.Join(left, ", "))
 	}
 	return page, nil
@@ -120,6 +144,16 @@ var docsRegion = regexp.MustCompile(`(<!-- gen_site: ([\w-]+) -->)(?s:.*?)(<!-- 
 
 // fillDocs puts each marked region's scene into the docs.
 func fillDocs(docs string) (string, error) {
+	const indexStart, indexEnd = "<!-- gen_reference_index -->", "<!-- /gen_reference_index -->"
+	before, rest, ok := strings.Cut(docs, indexStart)
+	if !ok {
+		return "", fmt.Errorf("docs.html is missing the reference index")
+	}
+	_, after, ok := strings.Cut(rest, indexEnd)
+	if !ok {
+		return "", fmt.Errorf("docs.html is missing the reference index end")
+	}
+	docs = before + indexStart + "\n" + referenceIndex() + indexEnd + after
 	var out strings.Builder
 	last := 0
 	regions := docsRegion.FindAllStringSubmatchIndex(docs, -1)

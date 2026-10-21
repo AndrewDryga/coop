@@ -6,13 +6,13 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0e1014">
   <title>co:op · Put your agents to work while you sleep</title>
-  <meta name="description" content="co:op works through your task queue overnight in a sandbox: a fresh agent for every task, your checks and a commit for each, accounts that rotate at usage limits, questions that wait for you, and a review before morning. Free and open source.">
+  <meta name="description" content="Run a coding agent through your task queue overnight in a sandbox. co:op starts fresh sessions, rotates accounts at usage limits, and reviews completed work. Free and open source.">
   <link rel="canonical" href="https://coop.dryga.com/orchestrator.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="co:op">
   <meta property="og:url" content="https://coop.dryga.com/orchestrator.html">
   <meta property="og:title" content="co:op · Put your agents to work while you sleep">
-  <meta property="og:description" content="co:op gives you a way to set up hundreds of tasks and get them done securely, without supervision.">
+  <meta property="og:description" content="Give an agent a task queue to work through in a sandbox, with project checks and a final review.">
   <meta property="og:image" content="https://coop.dryga.com/assets/img/og-orchestrator.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -54,7 +54,7 @@
     <section class="wrap night" aria-labelledby="hero-title">
       <div class="night-lead">
         <h1 id="hero-title">Put your agents to work while you sleep</h1>
-        <p class="hero-lead">co:op gives you a way to set up hundreds of tasks and get them done securely, without supervision.</p>
+        <p class="hero-lead">Give an agent a queue of tasks. It works through all of them in a sandbox, runs your checks, self-reviews, and leaves the results for you to approve.</p>
         <div class="actions">
           <a class="button button-primary" href="#start">Install co:op</a>
           <a class="button" href="https://github.com/AndrewDryga/coop">View on GitHub</a>
@@ -72,7 +72,7 @@
         </li>
         <li class="night-step">
           <h2>A fresh agent for every task</h2>
-          <p>The loop takes the queue one task at a time. Each task starts a fresh agent session, so it doesn't drag the last task's context along.</p>
+          <p>The loop works through the queue one task at a time. Each task starts a fresh agent session, without the previous task’s conversation.</p>
           <p class="evidence"><strong>39%</strong> <span>average drop when top models got a task over several turns instead of in one message, <a href="https://arxiv.org/abs/2505.06120">a 2025 study found</a>.</span></p>
         </li>
         <li class="night-step">
@@ -87,12 +87,12 @@
         </li>
         <li class="night-step">
           <h2>Questions don't stop the work</h2>
-          <p>A task that needs your call is set aside with its options and a recommendation, and the loop moves on to the next.</p>
+          <p>If a task needs your decision, the agent records the question, options and recommendation. The loop continues with the other tasks.</p>
           <p class="evidence"><strong>92.3%</strong> <span>of coding-agent session time went to waiting on the person, <a href="https://arxiv.org/abs/2606.30560">a 2026 study of 4,300 sessions found</a>.</span></p>
         </li>
         <li class="night-step">
           <h2>Reviewed before you wake up</h2>
-          <p>A final review holds every task to what you asked for, and sends back anything that falls short.</p>
+          <p>A final review checks completed work against each task’s requirements and reopens tasks that need more work.</p>
           <p class="evidence"><strong>About half</strong> <span>of agent pull requests that passed the tests still wouldn't have been merged by the project's maintainers, <a href="https://metr.org/notes/2026-03-10-many-swe-bench-passing-prs-would-not-be-merged-into-main/">METR found</a>.</span></p>
         </li>
         <li class="night-step">
@@ -107,15 +107,15 @@
       <div class="night-safe-copy">
         <h2 id="safe-title">Safe to leave running</h2>
         <ul class="night-safe-list" role="list">
-          <li>{{check}}<span>Only your project is in reach.</span></li>
-          <li>{{check}}<span>Secrets read as empty files.</span></li>
-          <li>{{check}}<span>Restricted networking: only your AI provider and approved sites.</span></li>
-          <li>{{check}}<span>Only you can push.</span></li>
+          <li>{{check}}<span>Your project is mounted; your home folder is not.</span></li>
+          <li>{{check}}<span>Known secret files appear empty.</span></li>
+          <li>{{check}}<span>Filtered networking: your AI provider and approved destinations.</span></li>
+          <li>{{check}}<span>Your host Git credentials stay outside the box.</span></li>
         </ul>
         <p class="evidence"><strong>42%</strong> <span>of reported coding-agent file mishaps reached outside the project, into system files, personal files and secrets, <a href="https://arxiv.org/abs/2604.13536">a 2026 study found</a>.</span></p>
         <p class="more"><a href="./">How the sandbox works<span class="go" aria-hidden="true">→</span></a></p>
       </div>
-      <figure class="night-sandbox" aria-label="The sandbox: only the project is inside, its secret reads as empty, and only the AI provider is reachable">
+      <figure class="night-sandbox" aria-label="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations">
         <div class="scene">{{scene}}</div>
       </figure>
     </section>
@@ -126,8 +126,8 @@
         <li class="feature-row">
           <div class="feature-copy">
             <h3>Project services</h3>
-            <p>Postgres, Redis and anything else in your Compose file run beside the box, each in its own container.</p>
-            <p>They're isolated the same way: a private network with no direct internet, and your secrets hidden.</p>
+            <p>Run Postgres, Redis and other supported Compose services beside the box, each in its own container.</p>
+            <p>In filtered mode, approved services use a private network with no direct internet access. Secret files stay hidden unless you approve access.</p>
             <p class="evidence"><strong>6.5 s</strong> <span>to start the box with Postgres and Redis beside it, once their images are pulled, <a href="https://github.com/AndrewDryga/coop/blob/main/tools/servicesbench/main.go">we measured</a>.</span></p>
           </div>
           {{services}}
@@ -145,7 +145,7 @@
           <div class="feature-copy">
             <h3>Forks</h3>
             <p>Hand work to agents, each in its own copy of your project, and keep working in yours.</p>
-            <p>Review a fork like a pull request, then merge it. co:op rebases it onto your branch and runs your checks first.</p>
+            <p>Review a fork like a pull request, then merge it. Set a project gate to check the rebased work before merging.</p>
             <p class="evidence"><strong>16</strong> <span>agents in their own copies, each task claimed by one, built a 100,000-line C compiler that builds Linux, <a href="https://www.anthropic.com/engineering/building-c-compiler">Anthropic reported</a>.</span></p>
           </div>
           {{fork}}
@@ -153,7 +153,7 @@
         <li class="feature-row">
           <div class="feature-copy">
             <h3>Integrations</h3>
-            <p>Zed makes a great cockpit: plan with the sandboxed agent in its agent panel, and have it add the tasks to your queue for the loop.</p>
+            <p>Use Zed’s agent panel to plan work and add tasks to the queue.</p>
             <p>Any editor that speaks ACP works too, with account rotation built in.</p>
           </div>
           {{integrations}}
@@ -181,7 +181,7 @@
           {{cmd_loop}}
         </div>
       </div>
-      <p class="more"><a href="docs.html">Read the docs<span class="go" aria-hidden="true">→</span></a></p>
+      <p class="more"><a href="overnight-guide.html">Prepare your first overnight run<span class="go" aria-hidden="true">→</span></a></p>
     </section>
   </main>
 
@@ -194,7 +194,7 @@
       <a href="docs.html">Docs</a>
       <a href="https://github.com/AndrewDryga/coop">GitHub</a>
       <a href="https://emisar.dev">Emisar</a>
-      <a href="https://github.com/AndrewDryga/responder">Ryker</a>
+      <a href="https://github.com/AndrewDryga/ryker">Ryker</a>
     </nav>
     <p>By <a href="https://github.com/ProtectorateHQ">Protectorate</a></p>
   </footer>

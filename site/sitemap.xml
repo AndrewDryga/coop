@@ -1,21 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>https://coop.dryga.com/</loc>
-    <lastmod>2026-10-04</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
-  </url>
-  <url>
-    <loc>https://coop.dryga.com/orchestrator.html</loc>
-    <lastmod>2026-10-08</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>https://coop.dryga.com/docs.html</loc>
-    <lastmod>2026-10-04</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  <url><loc>https://coop.dryga.com/</loc></url>
+  <url><loc>https://coop.dryga.com/agents.html</loc></url>
+  <url><loc>https://coop.dryga.com/box.html</loc></url>
+  <url><loc>https://coop.dryga.com/cli.html</loc></url>
+  <url><loc>https://coop.dryga.com/configuration.html</loc></url>
+  <url><loc>https://coop.dryga.com/docs.html</loc></url>
+  <url><loc>https://coop.dryga.com/evals.html</loc></url>
+  <url><loc>https://coop.dryga.com/forks.html</loc></url>
+  <url><loc>https://coop.dryga.com/integrations.html</loc></url>
+  <url><loc>https://coop.dryga.com/loop.html</loc></url>
+  <url><loc>https://coop.dryga.com/networking.html</loc></url>
+  <url><loc>https://coop.dryga.com/orchestrator.html</loc></url>
+  <url><loc>https://coop.dryga.com/overnight-guide.html</loc></url>
+  <url><loc>https://coop.dryga.com/sandbox-guide.html</loc></url>
+  <url><loc>https://coop.dryga.com/session-api.html</loc></url>
+  <url><loc>https://coop.dryga.com/usage-reports.html</loc></url>
 </urlset>

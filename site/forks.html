@@ -1,0 +1,370 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/forks.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Forks · co:op</title>
+  <meta name="description" content="Work in a separate copy of your project. Review the changes and checks before merging them.">
+  <link rel="canonical" href="https://coop.dryga.com/forks.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/forks.html">
+  <meta property="og:title" content="Forks">
+  <meta property="og:description" content="Work in a separate copy of your project. Review the changes and checks before merging them.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=bf51eb611f">
+  <script src="assets/js/site.js?v=bf51eb611f" defer></script>
+  <script src="assets/js/analytics.js?v=bf51eb611f" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <h1>Forks</h1>
+        <p class="guide-lead">Work in a separate copy of your project. Review the changes and checks before merging them.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#isolated-write-forks">Isolated-write forks</a></li>
+<li><a href="#re-entry-resumes-the-session">Re-entry resumes the session</a></li>
+<li><a href="#review">Review</a></li>
+<li><a href="#land-it">Land it</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<p>A fork is a temporary local clone of your repo where an agent can work. You review its changes
+and decide whether to merge them. The <a href="https://coop.dryga.com/docs.html#forks">forks guide</a> has a
+short overview of the workflow.</p>
+<p>An ordinary fork keeps the agent&#39;s immediate edits out of your checkout, but you still need to
+trust what it writes. Git can share the underlying object files between the clone and your repo.
+Git or editor settings written by the agent can also run code when you open the fork on your
+machine. Choose <a href="#isolated-write-forks"><code>--isolated</code></a> for independent Git storage and checks before
+changes enter your checkout.</p>
+<p>Several forks can run at once. A fork&#39;s <code>origin</code> points to a local path, not your upstream server.
+Uncommitted, Git-ignored secrets do not come along. Secrets already in Git history can still be
+present in the clone.</p>
+<p>Open a fork, let the agent work, review its changes, then merge them:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0"><code class="language-bash">coop fork perf codex     # open: clone into ../&lt;repo&gt;-forks/perf, run codex there
+coop fork perf           # re-enter: continues codex&#39;s last session by default
+coop fork ls             # list your forks (branch, changes, state, last activity)
+coop fork review perf    # review: the dossier, then the diff
+coop fork merge perf     # land: rebase onto your branch, then close the fork
+coop fork rm perf        # or discard it (confirms first; inspect task/Git impact before --force)
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><code>coop fork &lt;name&gt;</code> creates a fork or reopens an existing one. Add an agent, as in
+<code>coop fork perf codex</code>, or a target such as <code>codex:gpt-6-astra@work</code> to choose the model and
+account too. You can also use a preset (<code>coop fork perf frontier</code>); its lead runs the fork.</p>
+<p>A fork inherits your Git identity, signing-key setting and global gitignore from the parent.
+The agent&#39;s commits use your identity, and Git ignores the same files as in your repo.</p>
+<p>Point a fork at a task queue and it works the queue unattended:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0"><code class="language-bash">coop fork api codex --loop -d   # loops the repo&#39;s task queue(s); -d detaches — tail with coop fork logs api -f
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><a href="loop.html">The loop</a> explains how iterations work. <a href="loop.html#parallel-forks">Parallel forks</a> shows how to run several at once.</p>
+</section><section class="doc-section reference-section" id="isolated-write-forks"><h2>Isolated-write forks</h2>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Isolated-write forks code example" tabindex="0"><code class="language-bash">coop fork research codex --isolated
+coop fork research                 # the host remembers isolation
+coop fork review research --stat
+coop fork merge research --yes
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>An isolated fork keeps its own Git metadata and object files. Coop prevents the box from mounting
+your parent checkout or its Git storage, including through another path, a service or an inspected
+volume. The agent can still create commits and branches and run rebase inside the fork.</p>
+<p>Isolation stays enabled when you reopen the fork, run a detached loop or connect through ACP.
+You must create a new isolated fork; you cannot convert an existing ordinary fork. Ordinary forks
+and runs that write directly to your checkout keep their existing behavior.</p>
+<p>Coop recreates each initialized, unchanged local submodule from its exact commit, with independent
+storage. It never copies the submodule&#39;s raw Git metadata. If the recorded submodule commits
+(gitlinks) or <code>.gitmodules</code> have changed, Coop refuses the fork; those changes need a separate
+workflow. It copies Git LFS files from Git&#39;s default cache in the common directory and verifies
+them without network access. Missing or corrupt files and custom <code>lfs.storage</code> are refused.</p>
+<p>Isolation does not make shared storage private. Other processes can still change homes, caches
+or service data that you choose to share with the fork. Use private storage or read-only sources
+if you do not trust those processes.</p>
+<p>Coop must be able to inspect files in mounts you add, service mounts and existing volumes. If a
+path exists only on the Docker daemon&#39;s machine, or Coop cannot read it on the host, Coop cannot
+treat it as empty. Use a separate bind mount whose contents it can inspect. Coop&#39;s own private
+volumes are exempt only when Coop can identify them exactly.</p>
+<p>Enabled dependency and toolchain caches are also shared storage that you choose to trust. Coop
+checks their exact local volume-driver configuration, but cannot promise that unreadable daemon
+contents are safe or independent. It refuses custom cache drivers and caches backed by bind
+mounts. This cache exception does not apply to other extra volumes or service volumes.</p>
+<p>When you review an isolated fork, Coop copies its committed history into private storage and
+rebases the copy onto the parent commit it recorded. This leaves both workspaces and the parent&#39;s
+Git refs unchanged. You can review even while your parent checkout has uncommitted changes.</p>
+<p>Before merging, Coop requires a clean checkout on a branch and checks the exact Git index and
+tracked-file contents. Hidden index flags or an <code>index.lock</code> it cannot account for stop the merge.
+Incoming files cannot overwrite untracked or ignored files in your checkout. Coop never merges
+untracked files from the fork, including Git metadata for a new child repository.</p>
+<p>If the rebase fails, Coop prints the path of the fork it kept and a commit that must remain
+unchanged. Keep that commit and its earlier history intact. Fix only the later commits, then
+review again. If signing failed, check your trusted signing settings first. Do not run Git&#39;s
+printed recovery commands in your fork: those commands refer to the temporary clone that Coop
+has already discarded.</p>
+<p>Coop inspects every incoming commit, including changes that disappear from the final diff. It
+refuses unsafe paths or file modes, changes to nested Git sources, files that can automatically
+run code on your host, new or changed npm install lifecycle scripts, possible credentials and
+oversized files. <code>--force</code> cannot bypass these checks. Build files that run only when explicitly
+invoked can still be reviewed and merged. Configured checks run on a separate disposable clone
+that has the same restrictions on mounting the parent checkout.</p>
+<p><code>review --open</code> and <code>COOP_REVIEW_CMD</code> show a private copy of the committed files. Coop keeps that
+preview for your review tool and prints its path so you can remove it when you finish. A custom
+review command also gets a separate private copy of the recorded parent commit as its working
+directory. This keeps <code>HEAD...$COOP_REVIEW_REF</code> usable for comparisons, while <code>$COOP_FORK_PATH</code>
+points to the proposed files. Coop prints both paths for cleanup. Edits to a preview are never
+included in the merge.</p>
+<p>Use only an editor, difftool or review command you trust to run on your host. <code>coop fork open</code>
+opens the agent&#39;s actual workspace instead of a private review copy. Coop warns that Git or
+editor metadata in that workspace may run code on your machine.</p>
+<p>Cancelling or refusing a merge before it starts leaves the parent&#39;s files, index and refs
+unchanged. Once Coop starts changing the checkout, it records each step in a journal. These
+changes do not happen all at once, so an interruption can leave the checkout partly updated.</p>
+<p>Keep the exact reviewed changes and journal, then rerun <code>coop fork merge &lt;name&gt;</code>. Coop can resume
+only if the checkout exactly matches its original clean state or the complete published state
+recorded for that merge. Unrelated edits, a partly updated checkout, a changed branch or an
+<code>index.lock</code> it cannot account for stop recovery so you can resolve the mismatch. Never reset,
+stash, delete an uncertain lock or remove and recreate the fork to bypass this check.</p>
+<p>If you keep the fork after merging, the next merge starts after the original fork commit that
+was already merged. Coop tracks that source commit separately from its rebased parent SHA.
+A reviewed result with no code changes can still complete its assigned tasks. <code>merge --all</code>
+skips a fork only when it has no new commits and no active task records to finish. Coop completes
+tasks from the exact source it reviewed; a commit trailer alone cannot authorize completion.</p>
+</section><section class="doc-section reference-section" id="re-entry-resumes-the-session"><h2>Re-entry resumes the session</h2>
+<p>A fork remembers the agent it was created with. After <code>coop fork perf codex</code>, <code>coop fork perf</code> re-enters with codex. It never silently falls back to claude. Pass an agent to switch, and <code>coop fork ls</code> shows each fork&#39;s agent.</p>
+<p>Reopening a fork also resumes the last conversation. For Claude, Gemini and Grok, co:op assigns a
+separate session ID to each fork, provider and account. Codex creates its own ID, which co:op
+records after the run. Coop saves these IDs in the fork&#39;s git-excluded <code>.coop/</code> folder and uses
+them to resume the exact session for the active account and the fork&#39;s directory inside the box.</p>
+<p>If the saved ID is missing or the provider no longer has that session, co:op starts a new one.
+It does not choose another conversation just because it is the newest in that directory.
+Switching providers or accounts starts or resumes that provider and account&#39;s own session;
+it does not copy a conversation between providers.</p>
+<p>Coop allows only one of its interactive Codex processes at a time for each account and working
+directory inside the box. A second process stops with an error you can retry, so Coop cannot
+record the wrong session ID. Codex processes started outside Coop do not respect this lock.
+While Coop sets up a new fork session, do not start another Codex process for the same account
+and working directory.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Re-entry resumes the session table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Flag</th>
+<th scope="col">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--new</code></td>
+<td>Starts a new session for the selected provider and account. The fork&#39;s files stay.</td>
+</tr>
+<tr>
+<td><code>--fresh</code></td>
+<td>Recreates the whole fork while keeping its selected provider. It asks before deleting anything. Without an interactive terminal, it requires <code>--yes</code>.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>On <code>coop fork rm</code> and <code>--fresh</code>, <code>--force</code> can:</p>
+<ul>
+<li>stop the detached worker</li>
+<li>discard unmerged or dirty Git work</li>
+<li>return the fork&#39;s assigned tasks to the project&#39;s queue</li>
+<li>discard the exact set of changes prepared for review</li>
+<li>discard pending task proposals from the fork</li>
+</ul>
+<p>Blocked tasks and proposals already imported into the project&#39;s queue stay there. Check
+<code>coop fork ls</code> and <code>coop fork review</code> before discarding a fork. <a href="#land-it">Land it</a> explains the
+different effect of <code>--force</code> on <code>coop fork merge</code>.</p>
+</section><section class="doc-section reference-section" id="review"><h2>Review</h2>
+<p><code>coop fork review &lt;name&gt;</code> shows a review summary before the patch:</p>
+<ul>
+<li>the commits</li>
+<li>the agent&#39;s latest task <code>log.md</code>, clearly labeled as the agent&#39;s own account of its work</li>
+<li>findings from the same policy scan used by <code>coop fork merge</code></li>
+<li>changed files, starting with config and instructions, then code ordered by amount changed, then tests and docs; each file shows <code>+N -N</code></li>
+<li>whether a check command is configured to run before merging</li>
+</ul>
+<p>Then the diff opens in your pager, with no setup needed.</p>
+<p>The counts and the diff cover committed fork changes only. If the fork has uncommitted or untracked edits, co:op warns you. Open the fork, commit the work you want, then review again. Uncommitted files are not merged.</p>
+<p>These flags change how you review:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Review table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Flag</th>
+<th scope="col">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--stat</code></td>
+<td>shows the review summary only and skips the diff</td>
+</tr>
+<tr>
+<td><code>--tool</code></td>
+<td>opens each changed file in your GUI difftool</td>
+</tr>
+<tr>
+<td><code>--open</code></td>
+<td>opens your editor; isolated forks use a private committed preview</td>
+</tr>
+<tr>
+<td><code>--gate</code></td>
+<td>rebases a temporary clone, then runs the parent&#39;s configured check command in a box with that clone mounted. Ignored build output can be written there, but changes to HEAD or tracked files fail the check.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><code>--gate</code> reports whether the checks passed, failed or could not run because of a rebase conflict.
+Passing checks exit 0. A clean rebase also exits 0 when no check command is configured. Failed
+checks or a conflict exit 1. The parent and fork refs, branches and worktrees stay unchanged,
+and Coop always removes the temporary clone. You can combine <code>--gate</code> with <code>--stat</code> or <code>--tool</code>.
+Do not combine it with <code>--open</code>: an editor can return before its review window closes.</p>
+<p>To review in your editor&#39;s source control panel, open the fork as a folder with <code>coop fork open &lt;name&gt;</code>. It opens the fork directory with the first of these that&#39;s set:</p>
+<ol>
+<li><code>COOP_EDITOR</code>, a co:op-only override</li>
+<li><code>git config --global core.editor</code>, your normal Git editor (co:op reads only the global value)</li>
+<li>a GUI editor detected on <code>PATH</code>: <code>cursor</code>, <code>code</code>, <code>zed</code>, <code>idea</code>, <code>subl</code></li>
+<li><code>$VISUAL</code> or <code>$EDITOR</code></li>
+</ol>
+<p>Automatic detection uses the order in step 3. If both <code>code</code> and <code>zed</code> are installed, it chooses
+<code>code</code>. Set one of the first two options to choose your editor explicitly:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Review code example" tabindex="0"><code class="language-bash">git config --global core.editor &#34;zed --wait&#34; # your standard git editor (git commit uses it too)
+export COOP_EDITOR=&#34;zed&#34;                     # coop-only; overrides core.editor
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>co:op runs the editor command verbatim. With <code>core.editor = &#34;zed --wait&#34;</code>, your terminal waits until you close the window; that&#39;s what <code>--wait</code> is for. If you&#39;d rather the command return at once, set <code>COOP_EDITOR</code> without <code>--wait</code>, like <code>COOP_EDITOR=zed</code>.</p>
+<p><code>--tool</code> runs <code>git difftool</code>, which opens each changed file in whatever your global <code>diff.tool</code> points at. co:op uses only the global <code>diff.tool</code> and its command. Register a tool once:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Review code example" tabindex="0"><code class="language-bash"># VS Code
+git config --global diff.tool vscode
+git config --global difftool.vscode.cmd &#39;code --wait --diff &#34;$LOCAL&#34; &#34;$REMOTE&#34;&#39;
+
+# Zed
+git config --global diff.tool zed
+git config --global difftool.zed.cmd &#39;zed --wait --diff &#34;$LOCAL&#34; &#34;$REMOTE&#34;&#39;
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>JetBrains, Meld, Beyond Compare, vimdiff and others work the same way. <code>git difftool --tool-help</code> lists the tools git already knows.</p>
+<p>Set <code>COOP_REVIEW_CMD</code> to run a TUI or review script. co:op invokes it with <code>sh -c</code> and provides
+<code>$COOP_FORK_PATH</code>, <code>$COOP_FORK_NAME</code> and <code>$COOP_REVIEW_REF</code> in the environment. For an ordinary
+fork, the working directory is the parent repo.</p>
+<p>For an isolated fork, the command runs in a private copy of the parent commit. <code>$COOP_FORK_PATH</code>
+points to a separate copy of the fork&#39;s committed changes. Neither path is your parent checkout
+or the agent&#39;s workspace. Coop prints both paths; remove them after the review tool has finished,
+even if it returned control to your terminal earlier.</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Review code example" tabindex="0"><code class="language-bash">export COOP_REVIEW_CMD=&#39;cd &#34;$COOP_FORK_PATH&#34; &amp;&amp; lazygit&#39;
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</section><section class="doc-section reference-section" id="land-it"><h2>Land it</h2>
+<p><code>coop fork merge &lt;name&gt;</code> rebases the fork&#39;s commits onto your current branch, then advances the
+branch to include them. It creates no merge commit. The rebase runs on your host so it can use
+your signing key. If you sign commits (<code>commit.gpgsign=true</code>), Coop signs the merged commits with
+your key even though the box created them unsigned. You then run <code>git push</code> yourself.</p>
+<p>Set a check command for merges with <code>gate: make check</code> in
+<a href="configuration.html#project-settings-agentprojectyaml"><code>.agent/project.yaml</code></a>. Commit that file to
+share the command with your team. <code>COOP_GATE=&#34;make check&#34;</code> overrides it on your machine.
+Every merge runs the command in the box against the rebased files and rolls back if it fails.
+You still review the changes yourself.</p>
+<p>Coop checks for oversized files and changes to files the box hides. This includes secret-looking
+filenames and paths matched by a <a href="box.html#your-own-paths-coopignore"><code>.coopignore</code></a>, including one
+above the project. It also flags additions, edits, removals and renames of a <code>.coopignore</code>, because
+these change what future boxes can see.</p>
+<p>The scan checks each changed file for credential patterns from AWS, OpenAI, Anthropic, GitHub,
+Slack and other providers. It also checks for random-looking values assigned to secret-named
+keys. A credential can be detected inside an ordinary file even if its name does not look secret.
+Coop refuses to merge while your own working tree has uncommitted changes.</p>
+<p>Coop asks before merging, then offers to delete the fork after the merge. In a non-interactive
+shell, such as CI or a pipe, you must confirm up front; otherwise the merge refuses to run.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Land it table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Flag</th>
+<th scope="col">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--yes</code>, <code>-y</code></td>
+<td>Confirms landing and removal up front, which a non-interactive shell needs. In an interactive shell, it skips the prompts.</td>
+</tr>
+<tr>
+<td><code>--force</code></td>
+<td>Ordinary forks only: overrides risky-file policy, not the merge gate. Isolated forks have no policy bypass.</td>
+</tr>
+<tr>
+<td><code>--all</code></td>
+<td>Merges all forks in sequence. See <a href="loop.html#parallel-forks">parallel forks</a>.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>A fork loop takes work from the selected task queues. The host records which task belongs
+to which fork run, with a fixed generation ID, and places only the assigned task in the fork.
+It never mounts the whole queue there. The agent works on that task copy, including its state,
+artifacts, reviews and final signoff. In each task&#39;s original queue, the task stays <code>in_progress</code>
+while the fork is <code>reviewing</code> or <code>ready</code>.</p>
+<p>After final signoff and signing, co:op records one merge candidate for that fork generation:
+the exact HEAD commit, file tree and completed task assignments. Before merging, it checks that
+candidate again, rebases it and runs the configured checks. It then updates the parent and
+completes only the tasks recorded in that candidate. A journal lets Coop resume these steps after
+an interruption. A <code>Coop-Task</code> trailer helps with consistency checks and search; it cannot
+complete a task on its own.</p>
+<p>After a stop or crash, the same fork generation can resume its assigned tasks. <code>rm</code>, <code>--fresh</code>
+and discard refuse to proceed while task ownership is unresolved, unless you use the explicit
+destructive option that records how those assignments are handled. <code>coop tasks watch</code> shows the
+project&#39;s task states and every sandbox, including cases where the controller&#39;s status is stale
+or cannot be determined.</p>
+</section>
+        <nav class="reference-related" aria-label="Related guides">
+          <h2>Related guides</h2>
+          <ul class="reference-list" role="list"><li><a href="loop.html">Task queues and loops</a><p>Set up a task queue for an agent to work through on its own, with decisions and a final review.</p></li>
+<li><a href="box.html">Sandbox, images and services</a><p>Control visible files, prepare a project image, and run databases and development servers beside your agent.</p></li>
+<li><a href="configuration.html">Configuration</a><p>Find project settings, environment variables, configuration files and exit codes.</p></li>
+</ul>
+          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
+        </nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/forks.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

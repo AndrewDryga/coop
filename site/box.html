@@ -1,0 +1,623 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/box.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>The box · co:op</title>
+  <meta name="description" content="Control visible files, prepare a project image, and run databases and development servers beside your agent.">
+  <link rel="canonical" href="https://coop.dryga.com/box.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/box.html">
+  <meta property="og:title" content="The box">
+  <meta property="og:description" content="Control visible files, prepare a project image, and run databases and development servers beside your agent.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=bf51eb611f">
+  <script src="assets/js/site.js?v=bf51eb611f" defer></script>
+  <script src="assets/js/analytics.js?v=bf51eb611f" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <h1>The box</h1>
+        <p class="guide-lead">Control visible files, prepare a project image, and run databases and development servers beside your agent.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#hiding-secrets">Hiding secrets</a></li>
+<li class="reference-subsection"><a href="#your-own-paths-coopignore">Your own paths: .coopignore</a></li>
+<li class="reference-subsection"><a href="#secrets-inside-files-coop-check-secrets">Secrets inside files: coop check-secrets</a></li>
+<li><a href="#toolchain-tool-versions">Toolchain: .tool-versions</a></li>
+<li><a href="#your-own-image-agentdockerfile">Your own image: .agent/Dockerfile</a></li>
+<li class="reference-subsection"><a href="#builds-and-network-modes">Builds and network modes</a></li>
+<li class="reference-subsection"><a href="#box-only-environment-boxenv">Box-only environment: box.env</a></li>
+<li class="reference-subsection"><a href="#the-box-contract">The box contract</a></li>
+<li class="reference-subsection"><a href="#inherit-coops-base">Inherit co:op&#39;s base</a></li>
+<li class="reference-subsection"><a href="#reusing-a-devcontainer">Reusing a devcontainer</a></li>
+<li><a href="#project-services">Project services</a></li>
+<li class="reference-subsection"><a href="#development-and-loop-stacks">Development and loop stacks</a></li>
+<li class="reference-subsection"><a href="#starting-and-stopping">Starting and stopping</a></li>
+<li class="reference-subsection"><a href="#volumes-from-outside-the-project">Volumes from outside the project</a></li>
+<li class="reference-subsection"><a href="#secret-files-in-services">Secret files in services</a></li>
+<li class="reference-subsection"><a href="#one-url-inside-and-out">One URL inside and out</a></li>
+<li class="reference-subsection"><a href="#what-a-compose-file-may-do">What a Compose file may do</a></li>
+<li><a href="#dev-servers-in-your-browser">Dev servers in your browser</a></li>
+<li><a href="#keeping-the-box-current">Keeping the box current</a></li>
+<li class="reference-subsection"><a href="#a-newer-coop-repairs-its-own-box">A newer co:op repairs its own box</a></li>
+<li class="reference-subsection"><a href="#stable-and-fresh-rebuilds">Stable and fresh rebuilds</a></li>
+<li class="reference-subsection"><a href="#agent-clients">Agent clients</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<p>The box is the container your agent runs in. co:op mounts your project at its real path, but
+leaves your home folder and SSH keys unmounted. For an overview, see
+<a href="https://coop.dryga.com/docs.html#sandbox">the sandbox</a>, <a href="https://coop.dryga.com/docs.html#secrets">hiding
+secrets</a> and <a href="https://coop.dryga.com/docs.html#toolchain">toolchain and
+services</a>.</p>
+</section><section class="doc-section reference-section" id="hiding-secrets"><h2>Hiding secrets</h2>
+<p>co:op hides files and directories whose names look like secrets, including <code>.env</code>, <code>*.tfvars</code>,
+<code>*.pem</code>, <code>secrets/</code> and <code>.ssh</code>:</p>
+<ul>
+<li>A secret file is covered by a read-only empty file.</li>
+<li>A secret directory is covered by a read-only empty directory.</li>
+</ul>
+<p>On a Mac, a case-insensitive disk can let a box or service read the real <code>.env</code> by opening <code>.ENV</code>.
+Coop therefore covers every uppercase and lowercase spelling of a hidden filename with up to
+11 letters, including <code>.env</code>, <code>id_rsa</code> and <code>database.yml</code>. It also covers every spelling of
+<code>.coopignore</code>. These protections apply in the box and in every service that mounts the repo.</p>
+<p>Longer hidden filenames, such as <code>.env.production</code> and <code>credentials.json</code>, cannot be covered
+this way. Coop refuses to start the box, and <code>coop up</code> refuses to start the services. Move the
+file into a hidden folder, which stays hidden under every spelling, or give it a shorter name.
+You can set <code>COOP_ALLOW_CASE_EXPOSED_SECRETS=1</code> to start anyway and accept that exposure.</p>
+<p>Templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code>) stay visible. The defaults are compiled into
+co:op (<code>internal/shadowpath/shadowpath.go</code>).</p>
+<h3 id="your-own-paths-coopignore">Your own paths: .coopignore</h3>
+<p>Add a <code>.coopignore</code> at the repo root to hide your own paths:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Your own paths: .coopignore code example" tabindex="0"><code class="language-gitignore"># a file name, matched at any depth
+prod.yml
+# an exact path; its final name stays hidden if the parent moves
+config/stripe.live.json
+# a directory, hidden whole
+vault/
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Comments go on their own lines, as in <code>.gitignore</code>. <code>prod.yml  # note</code> is one pattern, comment and
+all, and a launch warns about it.</p>
+<p>An exact-path rule also hides its final file or directory name everywhere that <code>.coopignore</code>
+applies. Renaming the parent directory therefore cannot reveal the secret.</p>
+<p>Coop recognizes the same hidden file or folder even if its path changes. If a box moves it
+somewhere no rule matches, the next box and Coop&#39;s own tools still hide it wherever it appears
+in the project. This includes a file hidden by <code>config/*.yml</code> and moved by <code>mv config cfg</code>, or a
+folder moved outside a nested <code>.coopignore</code>&#39;s scope. At its original path, the current rules decide
+whether it is visible, so removing the rule from <code>.coopignore</code> reveals it there.</p>
+<p>A <code>.coopignore</code> applies below its folder, including to repositories nested inside it, such as
+submodules or worktrees. Coop also reads the <code>.coopignore</code> files above the project. It stops
+before your home folder, or just below <code>/</code> when the project is outside your home. Creating
+<code>sub/.git</code> therefore does not let an agent reveal <code>sub/secret.yml</code> to a new box started in <code>sub/</code>.</p>
+<p>To share hiding rules across projects, put a <code>.coopignore</code> in a parent folder such as
+<code>~/Projects/.coopignore</code>. Paths in that file start from its own folder: <code>app/config/*.yml</code> hides
+<code>config/*.yml</code> in the <code>app</code> project. These rules affect both box visibility and fork merges.
+<code>coop fork merge</code> refuses changes to a hidden file unless you pass <code>--force</code>; isolated forks
+have no override.</p>
+<p>Coop does not apply <code>~/.coopignore</code> to projects below your home folder. It also ignores a
+<code>.coopignore</code> in a folder owned by another user, such as <code>/tmp</code>.</p>
+<p>A <code>.coopignore</code> must be a readable regular file no larger than 1 MiB. If it is a link, directory
+or another file type, Coop cannot read its rules. When it could hide a file that the other
+<code>.coopignore</code> rules leave visible, Coop refuses to start the box and names the invalid file.</p>
+<p>Use <code>.coopignore</code> to hide files from the box. A normal <code>coop run</code>, <code>coop loop</code> or <code>coop shell</code>
+mounts your whole working tree, and <code>.gitignore</code> does not control what the agent can read.
+An ignored file such as <code>serviceAccount.json</code> is still visible if no hiding rule covers it.
+Add it to <code>.coopignore</code>.</p>
+<p>A normal writable run shares your checkout with the agent. The agent can change Git and editor
+files that later run code when you use tools on the host, including files in a new child
+repository. Coop adds safeguards to its own host Git commands, but cannot protect arbitrary
+commands you run yourself.</p>
+<p>Coop&#39;s Git commands still follow Git&#39;s links to other repository storage: <code>commondir</code>, a <code>.git</code>
+file pointing to another Git folder, linked <code>objects</code> or <code>refs</code> folders, and
+<code>objects/info/alternates</code>. An agent can use pointers in <code>.git</code> to make these commands read another
+repository your user can access. A reset or review can then bring that repository&#39;s files into
+the box. Use <a href="forks.html#isolated-write-forks"><code>coop fork &lt;name&gt; &lt;target&gt; --isolated</code></a> for independent
+Git storage and checks before committed changes enter your checkout.</p>
+<h3 id="secrets-inside-files-coop-check-secrets">Secrets inside files: coop check-secrets</h3>
+<p>Use <code>coop check-secrets</code> to look for credentials inside files. It reports each finding as
+<code>file:line</code> and exits 1 when it finds one.</p>
+<ul>
+<li>The scan still reports files hidden by built-in rules or <code>.coopignore</code> when Git would commit
+them. Hiding a file from the box does not prevent committing or pushing it.</li>
+<li><code>--include-ignored</code> expands the scan to the whole visible tree.</li>
+<li>If the scan cannot read a file, it fails and names that file. A permission error cannot produce
+a clean result.</li>
+<li>It also lists changed files that can affect what runs on your machine, such as commit hooks,
+editor or agent settings, Compose files and the Makefile. Review them before running anything.
+This separate report never changes the exit code.</li>
+</ul>
+<p>If you have reviewed a finding and want this check to ignore it, add the printed entry to
+<code>.coopsecretsignore</code> at the project root and explain why. The entry identifies that exact
+finding without storing the credential. Adding a line above it does not invalidate the entry;
+changing the value or moving the file does. The exception applies only to this check. Fork
+merges, checkpoint uploads and session redaction still check every finding.</p>
+<p>Check your sandbox setup with <a href="https://coop.dryga.com/docs.html#doctor"><code>coop doctor</code></a>.</p>
+</section><section class="doc-section reference-section" id="toolchain-tool-versions"><h2>Toolchain: .tool-versions</h2>
+<p>A project may need language tools such as Elixir or Go and services such as Postgres or Redis.
+Installing them on every run is slow, can produce different results and is lost when the
+container is removed. Define the tools and services once using Dev Containers and Compose.</p>
+<p>On an open-network run, the base box installs the versions listed in your <code>.tool-versions</code> file
+using asdf and caches them in a shared volume. It looks for the file from the working directory
+upwards, then falls back to <code>~/.tool-versions</code>. A repo with <code>.tool-versions</code> needs no
+<code>.agent/Dockerfile</code> or other setup for this:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Toolchain: .tool-versions code example" tabindex="0"><code class="language-bash">cd ~/code/phoenix-app   # has a .tool-versions
+coop claude             # provisions elixir/erlang/node/… from it, then runs the agent
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The first install of a new toolchain can be slow (Erlang compiles, for example). After that it is
+reused across runs and repos.</p>
+<p>Set <code>COOP_NO_ASDF=1</code> in <code>agents/env</code> to skip installing tools from <code>.tool-versions</code>. co:op still
+repairs an outdated cached Node shim, the command wrapper that selects Node, when needed to keep
+the agent CLIs running.</p>
+<p>Installing tools at startup works only with open networking. A filtered run, the default after
+<code>coop init</code>, uses an image with fixed client versions. The image includes asdf itself but puts
+no asdf command wrappers on <code>PATH</code> and installs nothing when the box starts. Build your toolchain
+into an <code>.agent/Dockerfile</code> instead:</p>
+<ul>
+<li><code>coop init</code> writes one when it finds a <code>.tool-versions</code>.</li>
+<li><code>coop init --stack asdf</code> writes one later.</li>
+<li><code>coop build</code> builds it.</li>
+</ul>
+</section><section class="doc-section reference-section" id="your-own-image-agentdockerfile"><h2>Your own image: .agent/Dockerfile</h2>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Your own image: .agent/Dockerfile code example" tabindex="0"><code class="language-bash">coop init --stack asdf # writes an asdf .agent/Dockerfile (from .tool-versions)
+coop build             # builds the image for this project&#39;s network mode
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>A repository with an <code>.agent/Dockerfile</code> gets a separate image tag, so its image does not replace
+another project&#39;s. Every <code>coop</code>, <code>coop loop</code>, <code>coop fork</code> and <code>coop acp</code> run in that repo uses it.</p>
+<p>The generated Dockerfile uses asdf to install the exact versions in <code>.tool-versions</code>. Keep those
+versions in <code>.tool-versions</code> rather than duplicating them in the Dockerfile. For a different
+setup, write an <code>.agent/Dockerfile</code> that meets <a href="#the-box-contract">the box contract</a>.</p>
+<p>When the agent needs a new system package, add it to the <code>RUN</code> line and run <code>coop build</code>
+again. The package becomes part of the image, so it doesn&#39;t need installing on each run.</p>
+<p>co:op records the image&#39;s inputs at build time. If you change <code>.agent/Dockerfile</code> or
+<code>.tool-versions</code> but forget to rebuild, <code>coop</code> notices on the next run and reminds you to run
+<code>coop build</code>.</p>
+<p>The selected Dockerfile must be a regular in-repo file, not a symlink.</p>
+<p>You can reuse a stage of your app&#39;s existing <code>Dockerfile</code> or use your own <code>docker-compose.yml</code>
+for service containers. Set the paths relative to the repository in <code>.agent/project.yaml</code>:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Your own image: .agent/Dockerfile table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Key</th>
+<th scope="col">Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>box.dockerfile</code></td>
+<td><code>.agent/Dockerfile</code></td>
+</tr>
+<tr>
+<td><code>box.compose</code></td>
+<td><code>.agent/compose.yml</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<h3 id="builds-and-network-modes">Builds and network modes</h3>
+<p>With <code>--egress filtered</code>, review the Dockerfile and the files it copies, then run
+<code>coop build --egress filtered</code> on the host. Plain <code>coop build</code> chooses the same mode when the
+project uses filtered networking. This builds on co:op&#39;s fixed client image and uses a separate
+image tag.</p>
+<p>A filtered launch uses the exact image you explicitly built and approved. Build it again if its
+inputs change, co:op upgrades the client base or the image is missing.</p>
+<p>An editor connection with open networking can build a missing project image automatically.
+Ordinary runs do not rebuild an image after its inputs change; run <code>coop build --egress open</code>
+yourself. Offline launches never run project build instructions automatically.</p>
+<p>Project builds use ordinary Docker networking. The restrictions on the running box do not apply
+during the build. See <a href="networking.html">restricted
+networking</a> for the image checks and the limits of build protection.</p>
+<h3 id="box-only-environment-boxenv">Box-only environment: box.env</h3>
+<p>Put non-secret defaults for the box under <code>box.env</code> and commit them with the project. Values are
+literal strings, so quote values that look like numbers. Your <code>~/.config/coop/agents/env</code> takes
+precedence over these defaults. Names beginning with <code>COOP_*</code> are reserved for co:op.</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Box-only environment: box.env code example" tabindex="0" data-copy-source=""><code class="language-yaml">box:
+  env:
+    PGHOST: db
+    PGPORT: &#34;5432&#34;
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<h3 id="the-box-contract">The box contract</h3>
+<p>You can choose your own base image where the network mode allows it. Filtered runs must inherit
+co:op&#39;s fixed client base, as described above. An agent box needs the following:</p>
+<ol>
+<li>It runs as a non-root user. Claude Code refuses <code>--dangerously-skip-permissions</code> as root.</li>
+<li>That user&#39;s home is <code>/home/node</code>. Coop mounts the selected provider folders from <code>agents/</code>
+at <code>$HOME/.claude</code>, <code>$HOME/.codex</code> and <code>$HOME/.gemini</code>. On a different base, set
+<code>COOP_HOME_IN_BOX=/home/&lt;user&gt;</code>.</li>
+<li><code>claude</code>, <code>codex</code> and <code>gemini</code> are on <code>PATH</code> (so it needs Node), plus the ACP adapters if you
+want <code>coop acp</code>.</li>
+<li>It runs <code>git config --system --add safe.directory &#39;*&#39;</code> so Git can use the repository files
+owned by your host user. They normally appear at the repo&#39;s real path; new remote sessions
+use <code>/workspace</code> inside their private boxes.</li>
+</ol>
+<p>On native Linux, the user inside the image must have the same UID/GID as your host user so it
+can read a private checkout and the selected provider&#39;s files. co:op builds its managed images
+with those IDs automatically. If you supply <code>COOP_BASE_IMAGE</code> or another custom image, configure
+its user to match. Managed images on Docker Desktop for macOS keep UID/GID 1000.</p>
+<p>co:op sets the working directory itself, so no <code>WORKDIR</code> is required. A skeleton:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">Dockerfile</p><pre class="code" role="region" aria-label="The box contract code example" tabindex="0" data-copy-source=""><code class="language-dockerfile">FROM &lt;your-language-base&gt;
+RUN &lt;install your toolchain&gt; \
+ &amp;&amp; npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.62.0 \
+      @agentclientprotocol/claude-agent-acp@0.84.0 @agentclientprotocol/codex-acp@2.0.1 \
+ &amp;&amp; git config --system --add safe.directory &#39;*&#39;
+ARG COOP_BOX_UID=1000
+ARG COOP_BOX_GID=1000
+RUN if id -u node &gt;/dev/null 2&gt;&amp;1; then \
+      if ! getent group &#34;$COOP_BOX_GID&#34; &gt;/dev/null; then groupmod -g &#34;$COOP_BOX_GID&#34; &#34;$(id -gn node)&#34;; fi \
+   &amp;&amp; usermod -u &#34;$COOP_BOX_UID&#34; -g &#34;$COOP_BOX_GID&#34; node \
+   &amp;&amp; chown -R &#34;$COOP_BOX_UID:$COOP_BOX_GID&#34; /home/node; \
+    else \
+      if ! getent group &#34;$COOP_BOX_GID&#34; &gt;/dev/null; then groupadd -g &#34;$COOP_BOX_GID&#34; node; fi \
+   &amp;&amp; useradd -m -u &#34;$COOP_BOX_UID&#34; -g &#34;$COOP_BOX_GID&#34; -s /bin/bash node; \
+    fi
+USER node
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Install Node first if your base does not include it; NodeSource is one option. This example
+also needs the standard <code>useradd</code>, <code>usermod</code> and <code>groupmod</code> tools. <code>coop build</code> passes your host
+UID/GID as build arguments for project Dockerfiles. When building <code>COOP_BASE_IMAGE</code> separately,
+you must supply those arguments yourself.</p>
+<p>This example pins the client versions checked for this co:op release. If you use another base,
+update those versions when you update co:op. You can also <a href="#inherit-coops-base">inherit co:op&#39;s
+base</a>, which supplies the clients for you.</p>
+<p>Images based on co:op already include Gemini&#39;s settings in the root-owned <code>/etc/gemini-cli/</code>
+folder. If you build an independent image, add <code>thinking/low.json</code>, <code>thinking/high.json</code> and
+<code>login.json</code> there too. Coop needs them to set thinking effort for each call and restrict tools
+during sign-in. Gemini ignores system settings inside a user-owned home. Inheriting co:op&#39;s base
+avoids rebuilding this client setup yourself.</p>
+<p>Before starting a command, co:op&#39;s current startup scripts check that Claude&#39;s selected account
+settings and trust configuration are ready. Rebuild images that inherit from co:op to get this
+check. An independent startup script does not provide it.</p>
+<h3 id="inherit-coops-base">Inherit co:op&#39;s base</h3>
+<p>Start from co:op&#39;s image to keep its client setup and add your own toolchain. <code>coop build</code>
+selects the base image, builds it if needed and passes it to your Dockerfile:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">Dockerfile</p><pre class="code" role="region" aria-label="Inherit co:op&#39;s base code example" tabindex="0" data-copy-source=""><code class="language-dockerfile">ARG COOP_BASE_IMAGE=coop-box   # coop build overrides this with the resolved base
+FROM ${COOP_BASE_IMAGE}        # agent CLIs + ACP adapters, asdf, browser libs, non-root node — all inherited
+USER root
+RUN &lt;install your toolchain&gt;
+USER node
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Each box definition gets its own base-image tag, <code>coop-box:&lt;definition&gt;</code>, which <code>coop build</code>
+prints. Two co:op versions on one machine can therefore keep separate base images. After an
+upgrade, the next launch builds the new base if needed.</p>
+<p>A plain <code>docker build</code> of this file needs that tag passed in:
+<code>--build-arg COOP_BASE_IMAGE=coop-box:&lt;definition&gt;</code>. <code>docker image ls coop-box</code> lists them.</p>
+<p>Builds also remove old images that co:op owns. An image is eligible only when no run has used it
+for 14 days and no container references it. Coop prints the images it removes. This covers its
+versioned <code>coop-box</code>, <code>coop-clients</code> and <code>coop-network</code> images, plus <code>&lt;project&gt;-filtered</code> images
+when you explicitly build the project&#39;s box. The latter are tagged by their client base image.</p>
+<p>Older images without co:op&#39;s ownership mark are left alone. Every launch records which image it
+used, so an older co:op version you still run keeps its base. Images you created yourself are
+never removed, regardless of their tags.</p>
+<h3 id="reusing-a-devcontainer">Reusing a devcontainer</h3>
+<p>If a repo already has a <code>.devcontainer/</code>, reuse its image as your base and add the agent layer on
+top:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">Dockerfile</p><pre class="code" role="region" aria-label="Reusing a devcontainer code example" tabindex="0" data-copy-source=""><code class="language-dockerfile">FROM your-devcontainer-image          # the team&#39;s source of truth for the env
+RUN npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.62.0 \
+      @agentclientprotocol/claude-agent-acp@0.84.0 @agentclientprotocol/codex-acp@2.0.1 \
+ &amp;&amp; git config --system --add safe.directory &#39;*&#39;
+USER &lt;the devcontainer&#39;s non-root user&gt;
+# If that user&#39;s home isn&#39;t /home/node, run with COOP_HOME_IN_BOX=/home/&lt;user&gt;.
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The devcontainer defines your tools, features and how to reproduce the environment. co:op adds
+secret hiding, its container restrictions, the task queue and the supervisor that runs it.
+A devcontainer alone mounts the whole workspace, including <code>.env</code>. A malicious project running
+under <code>--dangerously-skip-permissions</code> can send the contents of <code>~/.claude</code> outside your machine.
+Do not rely on the devcontainer alone to protect those files.</p>
+</section><section class="doc-section reference-section" id="project-services"><h2>Project services</h2>
+<p>Services such as databases run in separate containers alongside the box. None are added by
+default. <code>coop init</code> asks which ones you want, or you can pass <code>--services postgres,redis</code>.
+It writes their configuration to <code>.agent/compose.yml</code>.</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Project services code example" tabindex="0"><code class="language-bash">coop up                      # starts the configured Compose services, waits until ready
+coop claude                  # the box reaches each service by its Compose name
+coop down                    # stop services; stored data is kept
+coop down --delete-volumes   # stop them and permanently delete their volumes (asks first)
+coop init --services         # add another service to a project that already has some
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Services run as their own containers on a private network the box joins. Connect with a URL such
+as <code>DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev</code>, and put it in <code>agents/env</code>.</p>
+<h3 id="development-and-loop-stacks">Development and loop stacks</h3>
+<p>Your development services keep the same workspace identity and data between runs. A loop gets
+its own Compose project, network, volumes and published ports for the entire run. It reuses them
+across task and provider retries, then removes them when the run ends. Both stacks can run in
+one checkout without sharing service data or ports. They still share the source files, so edits
+are visible through both stacks&#39; mounts.</p>
+<h3 id="starting-and-stopping">Starting and stopping</h3>
+<p>Before starting services, <code>coop up</code> reads their names from Compose. When they are ready, it
+prints a message such as <code>✓ Services ready: db, redis</code>, using the actual service names in Compose
+order, followed by any URLs it published. If it cannot read the service list, co:op starts
+nothing and does not report that the services are ready.</p>
+<p><code>coop down --delete-volumes</code> first asks the runtime which volumes belong to this project.
+It lists each volume and its contents, then asks before deleting anything. The default answer
+is No; <code>-y</code>/<code>--yes</code> confirms without a prompt. It never assumes consent because there is no
+terminal. An <code>external: true</code> volume or a project file mounted from the host is never deleted.</p>
+<p>The next <code>coop up</code> or box launch applies changes to the Compose file, including stopping
+services you removed. <code>coop down</code> also stops those removed services. Each workspace gets a
+Compose project name derived from its own identity, so repositories with the same folder name
+remain separate.</p>
+<p>Agents can change data in services they can reach, so use disposable development databases.
+<code>coop down</code> stops the services and keeps their volumes. <code>coop down --delete-volumes</code> asks before
+permanently deleting the project&#39;s service volumes.</p>
+<p>The shared <code>coop-cache</code> volume at <code>~/.cache</code> keeps downloads between runs. Claude&#39;s MCP logs
+at <code>~/.cache/claude-cli-nodejs</code> are kept separately: each run starts with an empty log folder,
+so one project&#39;s logs cannot enter another project&#39;s box.</p>
+<h3 id="volumes-from-outside-the-project">Volumes from outside the project</h3>
+<p>An <code>external: true</code> or custom-named volume may contain another project&#39;s data. When you run
+<code>coop up</code> in a terminal, it shows the actual Docker volume name, which services will use it and
+whether they can write to it. It then asks you to approve access for this repository. The review
+also shows the selected Docker daemon and, for an existing plain local volume, where it stores
+the data.</p>
+<ul>
+<li>Coop creates a missing custom-named volume as plain local storage only after you answer Yes.</li>
+<li>An approval does not automatically transfer to a different daemon, a replaced volume, or a
+volume backed by a bind mount or plugin.</li>
+<li>Answering No or closing the input stops the command before Compose runs.</li>
+<li>Automatic box launches, filtered service containers and <code>coop up</code> without a terminal refuse
+these volumes, even if you approved them before.</li>
+</ul>
+<p>Named volumes that belong only to this project need no approval prompt.</p>
+<h3 id="secret-files-in-services">Secret files in services</h3>
+<p>Services get the same secret hiding as the box. A mount of <code>.env</code>, <code>*.key</code> or a path hidden by
+<code>.coopignore</code> gives the service an empty replacement. This prevents an agent-written Compose
+file from passing those secrets to a container the agent controls.</p>
+<p>If a service needs a hidden file, such as a generated development TLS key for Keycloak, mount
+that individual file read-only with <code>:ro</code> or <code>read_only: true</code>. Run <code>coop up</code> in a terminal to
+review the eligible files and approve them. Hidden directories and files also reachable through
+writable mounts stay covered by empty replacements. Use read-only mounts for the individual
+secret files and named volumes for data the service needs to change.</p>
+<p>The approval is tied to:</p>
+<ul>
+<li>The exact Compose file you reviewed. Coop stores approval outside the repo, so an agent cannot
+update it by editing the file. After any edit, box launches use empty replacements until you
+approve again. Coop explains which files are hidden and why.</li>
+<li>This checkout&#39;s private identity. Copying the Compose file or its marker does not transfer
+approval to another checkout. Older approvals based only on file content need to be renewed
+with <code>coop up</code>; automatic starts use empty replacements until then.</li>
+<li>The exact files you reviewed. A new secret added under an approved directory mount stays
+hidden until you approve that file too.</li>
+</ul>
+<p>When you approve secret files or outside volumes for a service, co:op also records the exact
+local Docker image ID shown in the review. It starts that image with pulling disabled.
+Changing what a tag points to cannot give a different image the same access without review.</p>
+<ul>
+<li>Run <code>coop up</code> in a terminal to review an updated local tag. If you decline, the old approval
+stays in place and this startup stops.</li>
+<li>If the approved image was removed, startup stops before creating a container. Pull the tag,
+then run <code>coop up</code> to review it again.</li>
+<li>Before asking for a first approval, Coop may pull an image that is not cached, using Docker&#39;s
+existing registry login. If you decline, the service does not start or receive access. The
+downloaded image stays in Docker&#39;s cache.</li>
+</ul>
+<p>Services without access to approved secret files or outside volumes keep their normal image
+update behavior.</p>
+<p>Coop gives Compose a private Docker client configuration. It keeps the registry login details,
+including a validated <code>DOCKER_AUTH_CONFIG</code>, but leaves out proxy credentials from your host
+configuration so they cannot reach the services.</p>
+<p>List the files your services need in the repo, so teammates can review the access
+request before a service fails to start:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Secret files in services code example" tabindex="0" data-copy-source=""><code class="language-yaml"># .agent/project.yaml — committed with the repo
+services:
+  require_real_files:
+    - dev/keycloak/certs/generated/tls.key  # a generated dev TLS key Keycloak reads
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The list helps reviewers recognize expected files, but does not grant access. An agent can edit
+it, so Coop still asks you to approve the files. In that prompt:</p>
+<ul>
+<li>Files listed by the repo are marked as expected.</li>
+<li>Files the repo did not list appear first so you can review the unexpected access.</li>
+<li>Files added since your last approval are identified.</li>
+</ul>
+<p>You must approve access separately on each machine.</p>
+<h3 id="one-url-inside-and-out">One URL inside and out</h3>
+<p>Some services need the same URL in your host browser and in the app running inside the box.
+An OIDC issuer such as Keycloak is one example. Give the service an <code>expose:</code> port, which is
+normally container-only, in <code>.agent/compose.yml</code>:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="One URL inside and out code example" tabindex="0" data-copy-source=""><code class="language-yaml">services:
+  keycloak:
+    image: quay.io/keycloak/keycloak
+    expose: [&#34;8443&#34;]                     # coop publishes this to a stable, per-workspace localhost port
+    labels:
+      coop.service.scheme: https         # scheme for COOP_SERVICE_*_URL (default http)
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>co:op assigns a stable host port for each development workspace or loop run. It derives the
+port from the owner, service and container port so concurrent stacks have separate ports.
+The host port listens only on loopback. Inside the box, a small TCP forwarder makes
+<code>https://localhost:&lt;port&gt;</code> reach the same Keycloak service. Both sides therefore use the same
+issuer URL without <code>host.docker.internal</code> or broader network access.</p>
+<p>The box receives <code>COOP_SERVICE_KEYCLOAK_URL=https://localhost:&lt;port&gt;</code>, using the scheme from the
+label. Host tools can read all workspace service URLs from <code>coop fork ls --json</code>.</p>
+<h3 id="what-a-compose-file-may-do">What a Compose file may do</h3>
+<p>Coop sends <code>.agent/compose.yml</code> to your host&#39;s Docker daemon to create the service containers.
+It validates the file before <code>coop up</code> and before every networked box launch.</p>
+<p>An agent could replace a checked mount folder with a link to another part of your machine
+before Docker opens it. To prevent that race, co:op takes an exclusive lock while checking the
+mounts and asking Docker to start the services. Boxes that can edit the checkout hold a matching
+shared lock. <code>coop up</code> waits until it can take the exclusive lock, then starts the separate
+development stack.</p>
+<p>Coop accepts these service settings:</p>
+<ul>
+<li>an <code>image</code></li>
+<li>inline <code>environment</code></li>
+<li>named volumes or repo-relative binds</li>
+<li><code>healthcheck</code></li>
+<li><code>depends_on</code></li>
+<li>loopback-only published ports</li>
+</ul>
+<p>Coop refuses settings that give a service access beyond the allowed project container and
+explains which setting failed. These include:</p>
+<ul>
+<li><code>privileged</code></li>
+<li><code>cap_add</code></li>
+<li>a host bind like <code>/:/host</code> or <code>/var/run/docker.sock</code></li>
+<li><code>network_mode: host</code></li>
+<li><code>env_file</code></li>
+<li><code>build</code></li>
+<li>a port published on <code>0.0.0.0</code></li>
+<li>a symlink that points outside the allowed project path</li>
+<li>bind options that relabel host files or change mount propagation</li>
+</ul>
+<p>A read-only session, such as an investigation or review, can still use service containers.
+Every service mount of the repository must also be read-only, using <code>:ro</code> or
+<code>read_only: true</code>. Otherwise the service could change files the agent is not allowed to write.
+The mount source must already exist; Compose cannot create a host directory for a read-only
+session.</p>
+<p>When a service mounts the repo or one of its directories, Coop applies the same hiding rules
+as in the box. It covers <code>.env</code>, keys and paths hidden by <code>.coopignore</code> with empty replacements,
+including when the mount source is itself a hidden file. The file-approval rules above still
+apply. An agent can create <code>.agent/compose.yml</code> for you, but its configuration must pass these
+checks before Coop starts it.</p>
+<p>Stop any Compose service that can write to the checkout before starting another service
+stack. Coop&#39;s error names the writable mount and suggests <code>coop down</code>. Coop also refuses mounts
+nested inside a writable service mount: on restart, Docker could open a path that the service
+had replaced.</p>
+<p>Coop automatically starts only configurations within these restrictions. Run other
+configurations yourself.</p>
+</section><section class="doc-section reference-section" id="dev-servers-in-your-browser"><h2>Dev servers in your browser</h2>
+<p>When the agent builds a website in the box, you can open it on your machine. List the ports the
+dev server listens on in <code>.agent/project.yaml</code>:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Dev servers in your browser code example" tabindex="0" data-copy-source=""><code class="language-yaml">serve:
+  ports: [5173]        # what the server binds INSIDE the box
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Each box for the repo (<code>coop acp</code>, <code>coop run</code>) maps these ports to stable host ports based on
+the repo&#39;s path. The URL stays the same between launches and differs between projects, so one
+Zed agent definition can serve all of them. In an ACP thread, co:op shows the mapping as
+<code>🌐 box :5173 → http://localhost:24187</code>. Terminal runs print it on stderr.</p>
+<ul>
+<li>The dev server must bind <code>0.0.0.0</code> inside the box (<code>vite --host</code>, <code>next dev -H 0.0.0.0</code> and so
+on). A server on the container&#39;s localhost isn&#39;t reachable through the mapping.</li>
+<li>Ports bind to your localhost only, never the LAN.</li>
+<li>Publishing needs networking: <code>COOP_EGRESS=open</code> (the default without another network setting)
+or <code>filtered</code>, which publishes the port on the run&#39;s gateway. See <a href="networking.html">restricted networking</a>.</li>
+<li>A host port already in use is skipped with a note. <code>COOP_SERVE_URL_&lt;port&gt;</code> still carries the
+workspace&#39;s assigned URL for configuration and discovery.</li>
+<li>A box restart (a credential switch, a rebuild) takes the dev server down with the old box. The URL
+stays the same, so run the server again.</li>
+</ul>
+</section><section class="doc-section reference-section" id="keeping-the-box-current"><h2>Keeping the box current</h2>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Keeping the box current code example" tabindex="0"><code class="language-bash">coop update              # self-update coop, then rebuild the image fresh
+coop update --self-only  # just upgrade the coop binary
+coop update --box-only   # just rebuild the image (the old behavior)
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>If GitHub has a newer release, <code>coop update</code> downloads its versioned archive and checksum,
+verifies the archive and replaces the <code>coop</code> binary in one atomic operation. The running process
+can finish safely; the new binary takes effect on your next <code>coop</code> run.</p>
+<p>When the binary is not replaced:</p>
+<ul>
+<li>A dev or source build, or a binary that is already current or newer, skips the self-update with a
+note and still rebuilds the image.</li>
+<li>If <code>coop</code> is installed somewhere it cannot write (a package-manager prefix), the self-update
+fails with an error that tells you to update co:op with the tool that installed it. <code>coop update</code>
+still rebuilds the image, then exits 1. <code>coop update --self-only</code> stops at the error.</li>
+</ul>
+<h3 id="a-newer-coop-repairs-its-own-box">A newer co:op repairs its own box</h3>
+<p>If your installed co:op uses a different box definition from the current shared image, the next
+interactive launch rebuilds that image before starting the agent. This can happen after
+<code>coop update --self-only</code> or <code>go install</code>. The <code>Checking the Coop box</code> section names both versions
+and ends with <code>✓ Box updated</code>. Filtered runs use the client image checked for filtered networking,
+so they do not trigger this repair.</p>
+<ul>
+<li>A current image prints nothing.</li>
+<li>An old image with the same box definition gets a reminder to run <code>coop update</code> under that
+heading. Coop does not rebuild it without being asked.</li>
+<li>An image co:op did not build (<code>COOP_IMAGE</code>) is never replaced.</li>
+<li>If the repair cannot run because Docker is not answering, the launch stops there and says what to
+start before you repeat the same command.</li>
+</ul>
+<h3 id="stable-and-fresh-rebuilds">Stable and fresh rebuilds</h3>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Stable and fresh rebuilds table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">Command</th>
+<th scope="col">Base image</th>
+<th scope="col">Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>coop build</code> (stable)</td>
+<td>fixed to a specific image digest</td>
+<td>rebuilding uses the same OS and runtime</td>
+</tr>
+<tr>
+<td><code>coop update</code> (fresh)</td>
+<td>uses the current <code>node:24-slim</code> image and rebuilds with <code>--pull --no-cache</code></td>
+<td>updates the OS packages and runtime to the newest available versions</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>To change the pinned base for future builds, update <code>pinnedNodeImage</code> in <code>internal/box/image.go</code>.</p>
+<h3 id="agent-clients">Agent clients</h3>
+<p>All standard co:op boxes use the same fixed versions of the agent CLIs and ACP adapters,
+including plain runs, filtered runs, loops, presets and editor sessions. These are the versions
+checked for this co:op release. Coop installs them from its built-in lockfile and verifies Grok&#39;s
+binary against its checksum. Each client&#39;s own updater is disabled, so the versions change only
+with co:op.</p>
+<p>With open or offline networking, you can use other client versions in a custom image selected
+with <code>COOP_IMAGE</code> or built from an <code>.agent/Dockerfile</code> on another base. Those clients are not
+covered by the checks for co:op&#39;s own image. Filtered runs require co:op&#39;s fixed client base
+and reject images that replace its clients.</p>
+</section>
+        <nav class="reference-related" aria-label="Related guides">
+          <h2>Related guides</h2>
+          <ul class="reference-list" role="list"><li><a href="networking.html">Networking</a><p>Choose which network destinations an agent can reach, and review access before a run.</p></li>
+<li><a href="configuration.html">Configuration</a><p>Find project settings, environment variables, configuration files and exit codes.</p></li>
+<li><a href="agents.html">Agents, accounts and presets</a><p>Sign in, choose models and accounts, and configure presets, teammates and instructions.</p></li>
+</ul>
+          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
+        </nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/box.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>
