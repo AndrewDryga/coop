@@ -653,7 +653,9 @@ session that is already bound. Repeating the exact binding returns the session u
 | `GET` | `/v1/operations/{id}/checkpoint-bundle` | Streamed tar, exact `Content-Length`, SHA-256 `ETag` |
 | `POST` | `/v1/sessions/{id}/workspace/restore` | Binary body plus `X-Coop-Expected-Revision` and base64-JSON `X-Coop-Workspace-Checkpoint` headers |
 
-Capture requires an idle, writable session with a bound task. Restore requires an unused
+Capture requires an idle, writable session with a bound task. Open, exhausted and retained closed
+sessions may be captured; capture leaves a closed session closed and cannot restart model execution.
+Discarded sessions cannot be captured. Restore requires an unused
 replacement session with the same authorized base and task offer. All mutations need an
 idempotency key. Restore's content type is `application/vnd.coop.workspace-checkpoint.v2+tar`.
 Its Content-Length must equal the descriptor.

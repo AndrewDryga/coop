@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Retain completed work after a session closes.** An idle closed session can now save its
+  workspace checkpoint, including task notes and uncommitted changes, without reopening the
+  session or allowing another model turn. Discarded sessions remain unavailable.
+
 - **An agent's "Internal error" now says what failed.** When an agent's adapter hit an exception it
   did not expect, it answered with the bare words "Internal error" and put the exception's own
   message beside them. Coop kept the two words and dropped the message, so a turn that failed that

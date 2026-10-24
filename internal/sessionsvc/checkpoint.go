@@ -310,12 +310,12 @@ func (s *Service) validateCheckpointSession(ctx context.Context, sess session.Se
 		return &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	if sess.Revision != expectedRevision || sess.RepositoryReadOnly || sess.WorkspaceTask == nil ||
-		(sess.State != session.SessionOpen && sess.State != session.SessionExhausted) ||
+		(sess.State != session.SessionOpen && sess.State != session.SessionExhausted && sess.State != session.SessionClosed) ||
 		sess.Activity != session.ActivityParked ||
 		sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 {
 		return &session.Error{
 			Code:   session.CodeInvalidSessionState,
-			Detail: "checkpoint requires an idle writable open session with one bound task",
+			Detail: "checkpoint requires an idle retained writable session with one bound task",
 		}
 	}
 	return nil
