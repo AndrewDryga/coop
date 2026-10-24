@@ -287,3 +287,111 @@ func TestCheckpointRepositoryKeepsDeletedHistoryLFSAndDirtyObjects(t *testing.T)
 		t.Fatal("checkpoint lost uncommitted binary content")
 	}
 }
+
+// A completed production turn was stranded because an unchanged checkout exported its
+// entire authorized base tree, including pre-existing credential-shaped test fixtures.
+// The base is fetched independently during restore; only newly introduced objects belong
+// in this transfer and its credential scan.
+func TestUnchangedCheckpointRestoresAuthorizedBaseWithoutExportingItsObjects(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repository, git := gitrepo.New(t)
+	sessionWorkspaceWrite(t, filepath.Join(repository, ".gitignore"), ".agent/tasks/\n")
+	fixture := "ghp_" + strings.Repeat("aB7C", 10) + "\n"
+	sessionWorkspaceWrite(t, filepath.Join(repository, "credential-fixture.txt"), fixture)
+	git("add", ".")
+	git("commit", "-qm", "authorized baseline")
+	base := gitOut(repository, "rev-parse", "HEAD")
+	var objects bytes.Buffer
+	err := withSessionTrackedTree(context.Background(), repository, func(tree string, env []string) error {
+		return writeCheckpointRepository(context.Background(), repository, base, base, tree, env, &objects)
+	})
+	if err != nil {
+		t.Fatalf("unchanged authorized baseline entered credential scan: %v", err)
+	}
+	if _, err := tar.NewReader(&objects).Next(); !errors.Is(err, io.EOF) {
+		t.Fatalf("unchanged checkpoint exported baseline objects: %v", err)
+	}
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repository, nil)
+	defer service.Stop()
+	ctx := context.Background()
+	source, err := service.CreateRemoteSession(ctx, "baseline-source", service.request(t, "offer:baseline"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err = service.EnsureWorkspaceTask(ctx, "baseline-task", EnsureWorkspaceTaskRequest{
+		SessionID: source.ID, ExpectedRevision: source.Revision,
+		Task: tasks.ControllerTaskDraft{OfferRef: "offer:baseline", Title: "Inspect baseline", Prompt: "Inspect without edits.", SuccessChecks: []string{"unchanged tree"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured, err := service.CheckpointWorkspace(ctx, "baseline-capture", CheckpointWorkspaceRequest{
+		SessionID: source.ID, SessionRef: "source", ExpectedRevision: source.Revision, PlacementGeneration: 1, RepositoryRef: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := readCheckpointBundle(t, service.Service, captured.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := service.CreateRemoteSession(ctx, "baseline-target", service.request(t, "offer:baseline"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := service.RestoreWorkspaceCheckpoint(ctx, "baseline-restore", RestoreWorkspaceCheckpointRequest{
+		SessionID: target.ID, ExpectedRevision: target.Revision, Checkpoint: captured.Checkpoint, Stream: bytes.NewReader(bundle),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(restored.Workspace, "credential-fixture.txt")); err != nil || string(got) != fixture {
+		t.Fatal("restore lost the independently fetched authorized baseline")
+	}
+	if gitOut(restored.Workspace, "rev-parse", "HEAD") != base {
+		t.Fatal("restore changed baseline identity")
+	}
+}
+
+func TestCheckpointRejectsNewCredentialsEvenWhenDeletedBeforeHead(t *testing.T) {
+	for _, kind := range []string{"dirty", "staged", "committed", "deleted-history", "deleted-lfs"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+			t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+			repository, git := gitrepo.New(t)
+			sessionWorkspaceWrite(t, filepath.Join(repository, "file"), "base\n")
+			git("add", ".")
+			git("commit", "-qm", "base")
+			base := gitOut(repository, "rev-parse", "HEAD")
+			credential := "ghp_" + strings.Repeat("aB7C", 10) + "\n"
+			if kind == "deleted-lfs" {
+				writeSessionLFSSource(t, repository, []byte(credential))
+				git("add", ".")
+				git("commit", "-qm", "new LFS content")
+				git("rm", "asset.bin")
+				git("commit", "-qm", "remove LFS content")
+			} else {
+				sessionWorkspaceWrite(t, filepath.Join(repository, "file"), credential)
+				if kind != "dirty" {
+					git("add", ".")
+				}
+				if kind == "committed" || kind == "deleted-history" {
+					git("commit", "-qm", "new content")
+				}
+				if kind == "deleted-history" {
+					git("rm", "file")
+					git("commit", "-qm", "remove content")
+				}
+			}
+			head := gitOut(repository, "rev-parse", "HEAD")
+			var output bytes.Buffer
+			err := withSessionTrackedTree(context.Background(), repository, func(tree string, env []string) error {
+				return writeCheckpointRepository(context.Background(), repository, base, head, tree, env, &output)
+			})
+			if err == nil || !strings.Contains(err.Error(), "contains a credential") {
+				t.Fatalf("new %s credential was not refused: %v", kind, err)
+			}
+		})
+	}
+}
