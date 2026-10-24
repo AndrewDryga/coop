@@ -578,7 +578,7 @@ func TestExhaustedOneTurnEngineeringSessionStillCapturesItsWorkspaceCheckpoint(t
 	}
 }
 
-func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(t *testing.T) {
+func TestClosedWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(t *testing.T) {
 	gitConfig := t.TempDir()
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(gitConfig, "global"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(gitConfig, "system"))
@@ -658,6 +658,41 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 		t.Fatal(err)
 	}
 
+	// October 24: the host closed a completed session before checkpointing.
+	// Capture must preserve its exact work without reopening model execution.
+	source, err = service.CloseSession(context.Background(), "restore-source-close", session.CloseSessionRequest{
+		SessionID: source.ID, ExpectedRevision: source.Revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, invalid := range []string{"discarded", "running", "active turn", "queued turn", "read only", "unbound", "stale revision"} {
+		t.Run("closed capture refuses "+invalid, func(t *testing.T) {
+			candidate := source
+			revision := source.Revision
+			switch invalid {
+			case "discarded":
+				candidate.State = session.SessionDiscarded
+			case "running":
+				candidate.Activity = session.ActivityRunning
+			case "active turn":
+				candidate.ActiveTurnID = "turn-active"
+			case "queued turn":
+				candidate.QueuedTurnCount = 1
+			case "read only":
+				candidate.RepositoryReadOnly = true
+			case "unbound":
+				candidate.WorkspaceTask = nil
+			case "stale revision":
+				revision++
+			}
+			if err := service.validateCheckpointSession(context.Background(), candidate, revision); err == nil {
+				t.Fatal("closed capture lost an existing eligibility guard")
+			}
+		})
+	}
+
 	captured, err := service.CheckpointWorkspace(context.Background(), "restore-source-checkpoint", CheckpointWorkspaceRequest{
 		SessionID: source.ID, SessionRef: "work-session-source", ExpectedRevision: source.Revision,
 		PlacementGeneration: 4, RepositoryRef: "responder",
@@ -668,6 +703,16 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 	if captured.Checkpoint.CommittedRevision == captured.Checkpoint.BaseRevision {
 		t.Fatal("checkpoint fixture did not include committed candidate changes")
 	}
+	stillClosed, err := service.Store().GetSession(context.Background(), source.ID)
+	if err != nil || stillClosed.State != session.SessionClosed || stillClosed.Revision != source.Revision {
+		t.Fatalf("capture changed the closed source: %+v, %v", stillClosed, err)
+	}
+	if _, err := service.Store().SubmitTurn(context.Background(), "closed-cannot-run", session.SubmitTurnRequest{
+		SessionID: source.ID, ExpectedRevision: source.Revision, Prompt: "Must not run.",
+	}); err == nil {
+		t.Fatal("capture reopened model execution")
+	}
+
 	bundle, err := readCheckpointBundle(t, service.Service, captured.OperationID)
 	if err != nil {
 		t.Fatal(err)

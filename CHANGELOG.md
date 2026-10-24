@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Retain completed work after a session closes.** An idle closed session can now save its
+  workspace checkpoint, including task notes and uncommitted changes, without reopening the
+  session or allowing another model turn. Discarded sessions remain unavailable.
+
 ## 12.0.1
 
 - **Go certificate verification security fix.** Builds and network helpers now use Go 1.27.3,

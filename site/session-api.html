@@ -793,7 +793,9 @@ Repeating the exact binding leaves the session unchanged.</p>
 </tr>
 </tbody>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>To capture a checkpoint, the session must be idle, writable and bound to a task. To restore one,
+<p>To capture a checkpoint, the session must be idle, writable and bound to a task. Open, exhausted
+and retained closed sessions may be captured. Capture keeps a closed session closed and cannot
+restart model execution. Discarded sessions cannot be captured. To restore one,
 create an unused replacement session with the same authorized base and task offer. Both requests
 require an idempotency key. Restore uses the content type
 <code>application/vnd.coop.workspace-checkpoint.v2+tar</code>, and its Content-Length must match the
