@@ -3,7 +3,7 @@ name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
 sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
-updated: 2026-10-18
+updated: 2026-10-24
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -109,6 +109,9 @@ The traps the code does not make obvious:
   and reports an error while healthy siblings continue; it never enables legacy fallback.
 - **Checkpoints preserve complete custody.** V2 streams raw typed Git objects and LFS payloads,
   including intermediate new history, plus the final tracked tree, untracked files and task state.
+  Git object selection explicitly subtracts both the authorized base commit and its tree closure:
+  a positive final-tree root otherwise reintroduces unchanged baseline blobs. Restore fetches the
+  verified base independently; newly introduced history and dirty objects still pass the credential scan.
   Quarantine proves all bytes and task authority before live replacement. Exact HEAD survives;
   the staged/unstaged split does not. GNU tar supports large members with bounded memory and
   metadata; physical headers, padding and terminators are checked without hidden tar extensions.
@@ -138,6 +141,8 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-10-24 — subtract immutable base trees from checkpoint object transfers; unchanged baseline
+  fixtures restore through the verified base, while new dirty, staged, historical and LFS credentials remain refused.
 - 2026-10-18 — the journal syncs its files before each rename and no folder (task 2026-10-15-drop-directory-fsyncs-and-sync-retry-ladders).
 - 2026-10-17 — marked `sourceSelector` and `fenceExpectedPolicyDigests` in older entries as removed
   with session policies (0e7c5c45); `decodeAPIError` remains in internal/workerconnector/unixapi.go.

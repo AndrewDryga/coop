@@ -48,7 +48,9 @@ func writeCheckpointRepository(ctx context.Context, workspace, base, head, tree 
 		return errors.New("nested work needs separate custody before checkpoint")
 	}
 	writer := tar.NewWriter(output)
-	listing := command("rev-list", "--objects", "--no-object-names", head, tree, "^"+base)
+	// An explicit positive tree bypasses a commit-only exclusion. Restore fetches
+	// the authorized base independently, so subtract its tree closure too.
+	listing := command("rev-list", "--objects", "--no-object-names", head, tree, "^"+base, "^"+base+"^{tree}")
 	objects, err := listing.StdoutPipe()
 	if err != nil {
 		return err
