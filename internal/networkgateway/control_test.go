@@ -270,7 +270,8 @@ func TestControlPeerRefusalNeverReachesLeaseMutation(t *testing.T) {
 			request := controlRequest{Version: PrivateProtocolVersion, Identity: c.identity, Operation: "lease",
 				Lease: &Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: c.now().Add(time.Minute)}}
 			// Peer authentication can close before the valid frame is written.
-			if err := json.NewEncoder(conn).Encode(request); err != nil && !errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) {
+			// macOS also reports ENOTCONN for that refused peer (2026-10-24 gate).
+			if err := json.NewEncoder(conn).Encode(request); err != nil && !errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) && !errors.Is(err, syscall.ENOTCONN) {
 				t.Fatal(err)
 			}
 			var reply [1]byte
