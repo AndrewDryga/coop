@@ -3,7 +3,7 @@ name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
 sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
-updated: 2026-10-24
+updated: 2026-10-26
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -130,8 +130,11 @@ The traps the code does not make obvious:
   evidence with absolute paths. Outbound `publicActivityPayload` narrates a tool's title, input
   and result, thoughts, progress and plan, each bounded, secret-scanned and with the checkout
   root replaced (`activity_narration.go`). Only the daemon knows that root: it writes
-  `checkout_root` on every narrated event (`sessionsvc/activity.go` `narratedActivity`), and the
-  worker reads it and never copies it out. The worker once read the root from
+  `checkout_root` on every narrated event (`sessionsvc/activity.go` `narratedActivity`). It retains
+  the host workspace for privacy independently of the finalized ACP child cwd used to classify
+  paths. New and resumed marker-backed sessions run at `/workspace`; legacy native histories
+  retain their original host cwd. Comparing in-box paths against the host workspace falsely
+  classified reads as outside. The worker reads `checkout_root` and never copies it out. It once read the root from
   `path_context.root`, which the daemon never wrote, so every absolute path reached the
   controller; `sessionsvc/testdata/narrated_activity.json` now pins the daemon's real events and
   both packages' tests use it. Tool `path_context` crosses only after independent validation: up
@@ -141,6 +144,9 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-10-26 — activity classification uses the actual ACP cwd while host-root privacy stays
+  separate; runner regressions cover fresh, resumed and legacy sessions without changing
+  lexical containment semantics or the narrated event shape.
 - 2026-10-24 — subtract immutable base trees from checkpoint object transfers; unchanged baseline
   fixtures restore through the verified base, while new dirty, staged, historical and LFS credentials remain refused.
 - 2026-10-18 — the journal syncs its files before each rename and no folder (task 2026-10-15-drop-directory-fsyncs-and-sync-retry-ladders).

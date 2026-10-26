@@ -109,8 +109,10 @@ type sessionActivity struct {
 	store     *session.Store
 	sessionID string
 	turnID    string
-	workspace string
-	now       func() time.Time
+	workdir   string
+	// Host checkout identity stays private even when the child uses an in-box alias.
+	checkoutRoot string
+	now          func() time.Time
 
 	mu               sync.Mutex
 	pending          []session.AppendEventRequest
@@ -140,11 +142,12 @@ type sessionActivity struct {
 	done chan struct{}
 }
 
-// newSessionActivity builds a turn's recorder. clock is a test seam: the alive
+// newSessionActivity builds a turn's recorder using the ACP child's working
+// directory, not the host checkout path. clock is a test seam: the alive
 // heartbeat's window is measured in minutes against frames arriving from a real
 // child, which a wall clock makes either slow or timing-dependent to test.
 func newSessionActivity(
-	store *session.Store, bound session.Session, turnID string, clock ...func() time.Time,
+	store *session.Store, bound session.Session, turnID, workdir string, clock ...func() time.Time,
 ) *sessionActivity {
 	if store == nil || bound.ID == "" {
 		return nil
@@ -154,7 +157,7 @@ func newSessionActivity(
 		now = clock[0]
 	}
 	a := &sessionActivity{
-		store: store, sessionID: bound.ID, turnID: turnID, workspace: bound.Workspace, now: now,
+		store: store, sessionID: bound.ID, turnID: turnID, workdir: workdir, checkoutRoot: bound.Workspace, now: now,
 		tools:  map[string]*sessionActivityTool{},
 		budget: sessionActivityMaxEvents,
 		wake:   make(chan struct{}, 1),
@@ -346,15 +349,15 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, 
 	// Retain small typed path facts independently of large evidence previews.
 	// A later status-only frame must not lose the original diff's file paths.
 	if len(rawInput) > 0 {
-		tool.inputPaths = activityPathContext(a.workspace, tool.kind, rawInput, nil, nil)
+		tool.inputPaths = activityPathContext(a.workdir, tool.kind, rawInput, nil, nil)
 	} else if kind != "" && len(tool.input) > 0 {
-		tool.inputPaths = activityPathContext(a.workspace, tool.kind, tool.input, nil, nil)
+		tool.inputPaths = activityPathContext(a.workdir, tool.kind, tool.input, nil, nil)
 	}
 	if len(locations) > 0 {
-		tool.locationPaths = activityPathContext(a.workspace, tool.kind, nil, locations, nil)
+		tool.locationPaths = activityPathContext(a.workdir, tool.kind, nil, locations, nil)
 	}
 	if len(content) > 0 {
-		tool.contentPaths = activityPathContext(a.workspace, tool.kind, nil, nil, content)
+		tool.contentPaths = activityPathContext(a.workdir, tool.kind, nil, nil, content)
 	}
 	for _, field := range []struct {
 		source json.RawMessage
@@ -595,8 +598,8 @@ func (a *sessionActivity) enqueueLocked(eventType session.EventType, payload map
 	// Only this daemon knows the checkout root, and the worker takes it out of everything it
 	// narrates to its controller (workerconnector/activity_narration.go), so every narrated event
 	// carries it. The local API keeps the absolute paths.
-	if a.workspace != "" && narratedActivity(eventType) {
-		payload["checkout_root"] = a.workspace
+	if a.checkoutRoot != "" && narratedActivity(eventType) {
+		payload["checkout_root"] = a.checkoutRoot
 	}
 	a.pending = append(a.pending, a.request(eventType, payload))
 	select {

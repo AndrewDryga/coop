@@ -14,7 +14,7 @@ import (
 
 func TestActivityPathCompletionDoesNotRewriteTheStartedEvent(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess, "turn-path")
+	activity := newSessionActivity(store, sess, "turn-path", sess.Workspace)
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"read-1","title":"Read file 'misleading/path'","kind":"read","status":"in_progress"}}`))
 	frame, _ := json.Marshal(map[string]any{"update": map[string]any{
 		"sessionUpdate": "tool_call_update", "toolCallId": "read-1", "status": "completed",
@@ -48,7 +48,7 @@ func TestActivityPathCompletionDoesNotRewriteTheStartedEvent(t *testing.T) {
 // used to erase the short path too, hiding even an explicitly outside edit.
 func TestActivityEditPathsSurviveLargeDiffPreviews(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess, "turn-large-edit")
+	activity := newSessionActivity(store, sess, "turn-large-edit", sess.Workspace)
 	frame, _ := json.Marshal(map[string]any{"update": map[string]any{
 		"sessionUpdate": "tool_call", "toolCallId": "edit-1", "kind": "edit", "status": "in_progress",
 		"content": []map[string]any{
@@ -150,7 +150,7 @@ func TestActivityPathMetadataIsBoundedAndMissingRootsStayUnknown(t *testing.T) {
 func TestNarratedActivityMatchesTheWorkerFixture(t *testing.T) {
 	store, sess := newActivityTestStore(t)
 	sess.Workspace = "/home/dev/shop"
-	activity := newSessionActivity(store, sess, "turn-root")
+	activity := newSessionActivity(store, sess, "turn-root", sess.Workspace)
 	for _, update := range []map[string]any{
 		{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": "The failing test is /home/dev/shop/lib/a_test.go."}},
 		{"sessionUpdate": "plan", "entries": []map[string]any{{"content": "Fix /home/dev/shop/lib/a.go", "status": "pending", "priority": "high"}}},

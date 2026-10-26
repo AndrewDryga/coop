@@ -3838,6 +3838,7 @@ func TestSessionACPChildHelper(t *testing.T) {
 	pendingPermission := false
 	var promptID json.RawMessage
 	promptCount := 0
+	var cwd string
 	for reader.Scan() {
 		line := reader.Bytes()
 		_, _ = log.Write(append(append([]byte(nil), line...), '\n'))
@@ -3846,6 +3847,7 @@ func TestSessionACPChildHelper(t *testing.T) {
 			Method string          `json:"method"`
 			Params struct {
 				SessionID string `json:"sessionId"`
+				CWD       string `json:"cwd"`
 			} `json:"params"`
 		}
 		if json.Unmarshal(line, &frame) != nil {
@@ -3876,12 +3878,14 @@ func TestSessionACPChildHelper(t *testing.T) {
 				})
 			}
 		case "session/new":
+			cwd = frame.Params.CWD
 			send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"sessionId": "native-1"}})
 			if scenario == "unread-prompt" {
 				// Stops reading its input, so a prompt larger than the pipe never finishes writing.
 				time.Sleep(time.Hour)
 			}
 		case "session/load":
+			cwd = frame.Params.CWD
 			if scenario == "load-fail" {
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "error": map[string]any{"code": -32000, "message": "load failed"}})
 			} else {
@@ -3891,6 +3895,9 @@ func TestSessionACPChildHelper(t *testing.T) {
 		case "session/prompt":
 			promptCount++
 			switch scenario {
+			case "activity-paths":
+				sendACPActivityPaths(send, frame.Params.SessionID, cwd)
+				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
 			case "invalid-contract-once-then-failure":
 				// Round one is a real, billed request that produced invalid JSON; round two — the
 				// schema repair — is where the provider fails. What round one reported must survive.
