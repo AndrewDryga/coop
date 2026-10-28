@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "0.84.0",
+    "@agentclientprotocol/claude-agent-acp": "0.98.0",
     "@agentclientprotocol/codex-acp": "2.0.1",
     "@anthropic-ai/claude-code": "2.1.285",
     "@google/gemini-cli": "0.62.0",
