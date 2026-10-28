@@ -570,36 +570,9 @@ func TestTurnStartupCheckpointsSurviveWriterContention(t *testing.T) {
 			writer := &checkpointACPWriter{frames: make(chan sessionACPFrame, 1), respond: stage != "sent_cancel"}
 			process := &sessionACPProcess{stdin: writer, frames: writer.frames, initialized: true,
 				nativeSessionID: "native-1", outputRoot: filepath.Join(bound.Workspace, sessionOutputRoot)}
-			released := make(chan struct{})
+			var released <-chan struct{}
 			hold := func(delay time.Duration) {
-				release := holdSessionWriter(t, fixture)
-				busyDone := make(chan error, 1)
-				go func() {
-					busyDone <- fixture.store.BindTurnRuntime(context.Background(), bound.ID, turn.ID, "", "checkpoint-contention")
-				}()
-				occupied := false
-				for attempt := 0; attempt < 100; attempt++ {
-					probe, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-					_, err := fixture.store.GetSession(probe, bound.ID)
-					cancel()
-					if errors.Is(err, context.DeadlineExceeded) {
-						occupied = true
-						break
-					}
-					time.Sleep(time.Millisecond)
-				}
-				if !occupied {
-					release()
-					t.Fatal("store connection was not held")
-				}
-				go func() {
-					time.Sleep(delay)
-					release()
-					if err := <-busyDone; err != nil {
-						t.Errorf("release store connection: %v", err)
-					}
-					close(released)
-				}()
+				released = holdSessionStoreFor(t, fixture, turn.ID, delay)
 			}
 			promptReady, writerHeld := make(chan struct{}), make(chan struct{})
 			if strings.HasPrefix(stage, "sent") {
@@ -624,9 +597,9 @@ func TestTurnStartupCheckpointsSurviveWriterContention(t *testing.T) {
 			if strings.HasPrefix(stage, "sent") {
 				select {
 				case <-promptReady:
-					hold(5 * time.Second)
+					hold(3 * time.Second)
 					if stage == "sent_cancel" {
-						time.AfterFunc(3*time.Second, cancel)
+						time.AfterFunc(time.Second, cancel)
 					}
 					close(writerHeld)
 				case <-ctx.Done():
@@ -654,6 +627,61 @@ func TestTurnStartupCheckpointsSurviveWriterContention(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A five-second external writer raced SQLite's own busy timeout in CI. Test
+// the sent checkpoint directly so prompt-log recording cannot spend two of
+// the three contention seconds and accidentally hide the old receipt timeout.
+func TestDeliveredPromptCheckpointSurvivesShortStoreContention(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	turn := fixture.submit(t, "delivered prompt custody")
+	if _, err := fixture.store.MarkTurnSendIntent(context.Background(), fixture.session.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	released := holdSessionStoreFor(t, fixture, turn.ID, 3*time.Second)
+	err := fixture.runner.checkpointPromptSent(fixture.session.ID, turn.ID)
+	<-released
+	if err != nil {
+		t.Fatalf("delivered prompt checkpoint lost custody under contention: %v", err)
+	}
+	saved, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	if err != nil || saved.SendState != session.SendStateSent {
+		t.Fatalf("delivered prompt receipt = %+v, error=%v", saved, err)
+	}
+}
+
+func holdSessionStoreFor(t *testing.T, fixture *sessionACPFixture, turnID string, delay time.Duration) <-chan struct{} {
+	t.Helper()
+	release := holdSessionWriter(t, fixture)
+	busyDone := make(chan error, 1)
+	go func() {
+		busyDone <- fixture.store.BindTurnRuntime(context.Background(), fixture.session.ID, turnID, "", "checkpoint-contention")
+	}()
+	occupied := false
+	for attempt := 0; attempt < 100; attempt++ {
+		probe, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		_, err := fixture.store.GetSession(probe, fixture.session.ID)
+		cancel()
+		if errors.Is(err, context.DeadlineExceeded) {
+			occupied = true
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !occupied {
+		release()
+		t.Fatal("store connection was not held")
+	}
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(delay)
+		release()
+		if err := <-busyDone; err != nil {
+			t.Errorf("release store connection: %v", err)
+		}
+		close(released)
+	}()
+	return released
 }
 
 type checkpointACPWriter struct {

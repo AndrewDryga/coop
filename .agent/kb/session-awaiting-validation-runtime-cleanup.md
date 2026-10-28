@@ -79,7 +79,15 @@ prompt write succeeds, its sent receipt uses the detached ten-second completion 
 caller cancellation cannot erase evidence of delivery. If the sent receipt remains uncertain,
 the durable intent survives and restart interrupts the turn rather than queuing it again.
 
+The sent-checkpoint contention regression calls that checkpoint directly. Prompt-log recording
+has its own two-second budget before the checkpoint, so a whole-turn three-second delay alone
+cannot detect a two-second sent-receipt timeout. Keep the external SQLite writer below its
+five-second busy timeout; matching that boundary made the fixture fail on Linux. Whole-turn
+cancellation coverage separately proves that a cancelled caller still retains the sent receipt.
+
 ## Changelog
+- 2026-10-28 — isolated the delivered-receipt checkpoint's regression from prompt-log timing;
+  three-second contention still fails the old two-second budget without racing SQLite's busy timeout.
 - 2026-10-28 — extended startup custody to native binding and send intent, and detached
   post-send receipt persistence. Real single-connection contention failed all three checks
   with the previous two-second cleanup deadline; restart tests retain uncertain intent.

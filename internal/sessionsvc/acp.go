@@ -2815,6 +2815,19 @@ type sessionACPFrame struct {
 	err  error
 }
 
+// Delivery happened. Keep its receipt even if the caller cancels, with the
+// same bounded custody budget as a completed answer.
+func (r *sessionTurnRunner) checkpointPromptSent(sessionID, turnID string) error {
+	checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
+	_, err := r.store.MarkTurnSent(checkpointCtx, sessionID, turnID)
+	checkpointErr := checkpointCtx.Err()
+	checkpointCancel()
+	if err != nil && errors.Is(checkpointErr, context.DeadlineExceeded) {
+		return acpFailure(session.CodeInternal, "timed out recording delivered prompt")
+	}
+	return err
+}
+
 func (r *sessionTurnRunner) runACP(
 	ctx context.Context,
 	process *sessionACPProcess,
@@ -3152,16 +3165,7 @@ func (r *sessionTurnRunner) runACP(
 		return "", nil, session.Usage{}, sendErr
 	}
 	if checkpointSend {
-		// Delivery happened. Keep its receipt even if the caller cancels,
-		// with the same bounded custody budget as a completed answer.
-		checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
-		_, err = r.store.MarkTurnSent(checkpointCtx, bound.ID, leased.ID)
-		checkpointErr := checkpointCtx.Err()
-		checkpointCancel()
-		if err != nil {
-			if errors.Is(checkpointErr, context.DeadlineExceeded) {
-				return "", nil, session.Usage{}, acpFailure(session.CodeInternal, "timed out recording delivered prompt")
-			}
+		if err := r.checkpointPromptSent(bound.ID, leased.ID); err != nil {
 			return "", nil, session.Usage{}, err
 		}
 	}
