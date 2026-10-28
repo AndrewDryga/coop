@@ -173,6 +173,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [eval-spend-gates-follow-account-billing](eval-spend-gates-follow-account-billing.md) — eval spending gates follow selected account billing; included subscription allowance needs no new spending prerequisite
 - [full-product-audits-use-every-feature](full-product-audits-use-every-feature.md) — a full audit manually exercises each advertised supported feature on claimed platforms and labels unrun paths honestly
 - [audit-findings-need-practical-impact](audit-findings-need-practical-impact.md) — audit realistic agent access and practical impact; avoid speculative machinery and unproven product-defect claims
+- [design-for-real-requirements](design-for-real-requirements.md) — justify complexity with real impact and make design changes required by current behavior
 - [batch-delegated-editorial-decisions](batch-delegated-editorial-decisions.md) — finish delegated editorial work in coherent batches; ask only about material choices
 - [blocked-decisions-are-plain-and-long-term](blocked-decisions-are-plain-and-long-term.md) — a decision.md says in plain English why it is blocked and what to decide, and recommends the option best for the product long term
 - [batch-slow-gates-when-requested](batch-slow-gates-when-requested.md) — validation matches the changed surface; unrelated slow suites run only when the requested outcome needs them

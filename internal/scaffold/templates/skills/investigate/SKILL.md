@@ -21,8 +21,12 @@ that's wrong and say *why*. Never edit a test to make a real failure pass.
    are an assumed return shape, arg, or flag that was never real.
 4. **One hypothesis, then confirm it** against the code/data *before* fixing. If the
    evidence doesn't match, the hypothesis is wrong — don't fix anyway.
-5. **Minimal fix at the cause.** Then add a **regression test** that fails before and
-   passes after (plus the failure / denial path where it applies).
+   If repeated fixes fail the same check, write down their shared assumption and test it
+   against the actual data, ownership and execution order before attempting another patch.
+5. **Pin the regression, then fix the cause.** Use or add a test of the observable failure
+   and see it fail for the expected reason before changing the code. If automation is
+   impractical, record the manual reproduction and verification limit. Make the minimal fix,
+   then rerun the same check (plus the failure / denial path where it applies).
 
 ## Common causes — check these before theorizing
 

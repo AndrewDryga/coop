@@ -45,6 +45,19 @@ unchanged slow suites or require a broad upstream-client certification for ordin
 - **Rules** — does it obey `AGENTS.md` (the creed) and **every** `.agent/kb/rules/*.md`? Read them; check the diff against each. (No rules yet → just the creed; don't invent any.)
 - **Security** — lead with the abuse case: untrusted input, secrets, authz, injection, data leak.
 
+For the staff engineer, focus these questions on the changed surface: does a domain-state
+change preserve its invariants and validate external input at the boundary? Do concurrent or
+persistent effects have clear ownership and safe retry/crash recovery? Do tests prove observable
+behavior, including a bug's regression or a refactor's preserved contract?
+
+For additional hardening or cleanup, require a reachable workflow or credible attacker action
+and a meaningful consequence, or a concrete maintenance cost. Identify the invariant that makes a case impossible;
+unknown reachability needs investigation. Weigh the benefit against added complexity and
+regression risk. Leave harmless theoretical cases alone; rarity does not excuse credible security
+or data-loss failures. Also challenge an undersized patch: if a requirement invalidates the old
+model, would a focused redesign remove special cases and satisfy the full contract more clearly?
+Judge the resulting system, including migration costs, rather than rewarding the smallest diff.
+
 **Earned — add when the diff touches the surface (lean toward MORE coverage):**
 
 | The diff touches… | Add |
