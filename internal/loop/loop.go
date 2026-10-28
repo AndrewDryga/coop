@@ -322,32 +322,18 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// pasted onto the work provider). An unset stage falls back: between → signoff → the work loop.
 	// A stage with no account to run fails like the work rotation in cmdLoop: -1 lets the error set
 	// the exit code, 1 here, since neither a missing login nor an unreadable folder is rejected input.
-	signoffRot, err := c.reviewRotation(lc.Signoff.Agent, agent, rot)
+	activeRotations, err := c.resolveReviewRotations(lc, agent, rot)
 	if err != nil {
-		return -1, fmt.Errorf("signoff agent: %w", err)
-	}
-	betweenRot, err := c.reviewRotation(lc.Between.Agent, agent, signoffRot)
-	if err != nil {
-		return -1, fmt.Errorf("between agent: %w", err)
+		return -1, err
 	}
 	verifyEnabled := len(custom) == 0 && lc.Verify.Enabled
-	verifyRot, err := c.reviewRotation(lc.Verify.Agent, agent, signoffRot) // unset → the signoff model
-	if err != nil {
-		return -1, fmt.Errorf("verify agent: %w", err)
-	}
-	currentSignoffRot, currentBetweenRot, currentVerifyRot := signoffRot, betweenRot, verifyRot
+	currentRotations := activeRotations
 	if resumingCohort {
-		currentSignoffRot, err = c.reviewRotation(currentSignoff.Agent, agent, rot)
+		currentConfig := *lc
+		currentConfig.Signoff, currentConfig.Verify = currentSignoff, currentVerify
+		currentRotations, err = c.resolveReviewRotations(&currentConfig, agent, rot)
 		if err != nil {
-			return -1, fmt.Errorf("current signoff agent: %w", err)
-		}
-		currentBetweenRot, err = c.reviewRotation(lc.Between.Agent, agent, currentSignoffRot)
-		if err != nil {
-			return -1, fmt.Errorf("current between agent: %w", err)
-		}
-		currentVerifyRot, err = c.reviewRotation(currentVerify.Agent, agent, currentSignoffRot)
-		if err != nil {
-			return -1, fmt.Errorf("current verify agent: %w", err)
+			return -1, fmt.Errorf("current %w", err)
 		}
 	}
 	currentVerifyEnabled := len(currentCustom) == 0 && currentVerify.Enabled
@@ -363,9 +349,9 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			rot  *ladder.Rotation
 			runs bool
 		}{{"work", rot, true},
-			{"signoff", signoffRot, len(custom) == 0 || spec.CandidateReview != nil}, {"between", betweenRot, len(custom) == 0},
-			{"verify", verifyRot, verifyEnabled}, {"current signoff", currentSignoffRot, len(currentCustom) == 0},
-			{"current between", currentBetweenRot, len(currentCustom) == 0}, {"current verify", currentVerifyRot, currentVerifyEnabled}} {
+			{"signoff", activeRotations.signoff, len(custom) == 0 || spec.CandidateReview != nil}, {"between", activeRotations.between, len(custom) == 0},
+			{"verify", activeRotations.verify, verifyEnabled}, {"current signoff", currentRotations.signoff, len(currentCustom) == 0},
+			{"current between", currentRotations.between, len(currentCustom) == 0}, {"current verify", currentRotations.verify, currentVerifyEnabled}} {
 			if stage.rot == nil || !stage.runs {
 				continue
 			}
@@ -388,8 +374,8 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	c.net = newNetworkLog()
 	defer c.net.summary()
 	capture, err := box.AdmitNetwork(c.cfg, c.rt,
-		networkAdmissionSpec(c.cfg, repo, img, agent, c.preset, peers, rot, signoffRot, betweenRot, verifyRot,
-			currentSignoffRot, currentBetweenRot, currentVerifyRot), spec.Network)
+		networkAdmissionSpec(c.cfg, repo, img, agent, c.preset, peers, rot, activeRotations.signoff, activeRotations.between, activeRotations.verify,
+			currentRotations.signoff, currentRotations.between, currentRotations.verify), spec.Network)
 	if err != nil {
 		return 1, err
 	}
@@ -522,12 +508,12 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		} else {
 			ui.Note("Review round %d covers the complete fork candidate.", review.Round)
 		}
-		ui.Note("Reviewer · %s · %s", cleanDiagnosticLine(agents.DisplayTarget(signoffRot.Active().String())), ui.Count(len(review.TaskIDs), "task"))
+		ui.Note("Reviewer · %s · %s", cleanDiagnosticLine(agents.DisplayTarget(activeRotations.signoff.Active().String())), ui.Count(len(review.TaskIDs), "task"))
 		prompt := forkCandidateReviewPrompt(repo, queues, review, lc.Signoff.Prompt)
 		observe := func(run reviewRunResult, start time.Time, headBefore string) {
 			c.recordStage(repo, runid, "candidate-review", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 		}
-		run, reviewErr := c.runCandidateReviewVerdict(iterCtx, repo, img, signoffRot, forkName, prompt,
+		run, reviewErr := c.runCandidateReviewVerdict(iterCtx, repo, img, activeRotations.signoff, forkName, prompt,
 			reviewActivity("candidate review", review.TaskIDs), reviewCmd, hosts, review.TaskIDs, sink, peers, wake, observe)
 		if errors.Is(reviewErr, errReviewInterrupted) {
 			ui.Failure("Candidate review interrupted", "No approval from the review was recorded.", [2]string{"Continue:", continueCmd})
@@ -651,7 +637,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 				return 1, fmt.Errorf("anchor archived task review context: %w", err)
 			}
 		}
-		reviewPlan, err = pendingReviewPlanForRun(repo, hosts, loopStartHead, cfgSnap.Digest(), continueCmd, lc, signoffRot, verifyRot, currentMCPDisabled)
+		reviewPlan, err = pendingReviewPlanForRun(repo, hosts, loopStartHead, cfgSnap.Digest(), continueCmd, lc, activeRotations.signoff, activeRotations.verify, currentMCPDisabled)
 		if err != nil {
 			return 1, fmt.Errorf("prepare durable final review: %w", err)
 		}
@@ -1430,9 +1416,9 @@ reviewAgain:
 						}
 						pendingReview = betweenCohort
 						if protectedAudit {
-							printProtectedReview(betweenRot.Active().String(), auditGateFiles)
+							printProtectedReview(activeRotations.between.Active().String(), auditGateFiles)
 						} else {
-							reviewHeader("Reviewing task: "+assignedCompletion.Item.Title, betweenRot.Active().String())
+							reviewHeader("Reviewing task: "+assignedCompletion.Item.Title, activeRotations.between.Active().String())
 						}
 						projectPolicy, _ := project.Load(repo)
 						prompt := seedReviewPrompt(
@@ -1452,7 +1438,7 @@ reviewAgain:
 						observe := func(run reviewRunResult, start time.Time, headBefore string) {
 							c.recordStage(repo, runid, "between", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, auditGateFiles, run.usage)
 						}
-						btRun, rerr := c.runReviewVerdict(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), reviewCmd, hosts, finishedIDs, "", &reviewPlan, lc.Between.Writes, sink, peers, hardStop, observe)
+						btRun, rerr := c.runReviewVerdict(iterCtx, repo, img, activeRotations.between, forkName, prompt, reviewActivity(stage, finishedIDs), reviewCmd, hosts, finishedIDs, "", &reviewPlan, lc.Between.Writes, sink, peers, hardStop, observe)
 						reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, btRun.concurrent)
 						reopenedIDs := btRun.reopened
 						if len(reopenedIDs) > 0 {
@@ -1657,7 +1643,7 @@ reviewAgain:
 				[2]string{"Continue:", continueCmd})
 			return 1, ui.Reported(fmt.Errorf("read final-review round %d changes: %w", signoffRound, err))
 		}
-		printFinalReview(signoffRound, maxReviewRounds, signoffRot.Active().String(), len(subjects))
+		printFinalReview(signoffRound, maxReviewRounds, activeRotations.signoff.Active().String(), len(subjects))
 		// The signoff runs on signoff.agent's OWN target — a stronger, usually different-vendor model
 		// reviews the work loop's output — and fails CLOSED: if it can't run after retries, stop loudly
 		// rather than let "nothing reopened" read as an accepting signoff.
@@ -1669,7 +1655,7 @@ reviewAgain:
 		observe := func(run reviewRunResult, start time.Time, headBefore string) {
 			c.recordStage(repo, runid, "signoff", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 		}
-		soRun, serr := c.runReviewVerdict(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), reviewCmd, hosts, subjectIDs, roundHead, &reviewPlan, lc.Signoff.Writes, sink, peers, wake, observe)
+		soRun, serr := c.runReviewVerdict(iterCtx, repo, img, activeRotations.signoff, forkName, signoff, reviewActivity("signoff", subjectIDs), reviewCmd, hosts, subjectIDs, roundHead, &reviewPlan, lc.Signoff.Writes, sink, peers, wake, observe)
 		// Preserve the exact tasks the host reopened before any early return.
 		reopenedIDs := soRun.reopened
 		if len(soRun.concurrent) > 0 {
@@ -1829,7 +1815,7 @@ reviewAgain:
 				substituteLoopVars(lc.Verify.Prompt, cs, health)+"\n\n"+auditEvidencePrompt(verifyIDs)+"\n\n"+reviewContextFooter(repo, queues),
 				cs.reviewBlock(health), reviewPacket(repo, projectPolicy, nil, cs),
 			)
-			printVerification(verifyRot.Active().String(), len(verifyIDs))
+			printVerification(activeRotations.verify.Active().String(), len(verifyIDs))
 			if len(cs.subsystems) > 0 {
 				ui.Note("Affected areas: %s", strings.Join(cs.subsystems, ", "))
 			}
@@ -1840,7 +1826,7 @@ reviewAgain:
 			observe := func(run reviewRunResult, start time.Time, headBefore string) {
 				c.recordStage(repo, runid, "verify", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 			}
-			vRun, verr := c.runReviewVerdict(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, reviewCmd, hosts, verifyIDs, "", &reviewPlan, lc.Verify.Writes, sink, peers, wake, observe)
+			vRun, verr := c.runReviewVerdict(iterCtx, repo, img, activeRotations.verify, forkName, vPrompt, verifyActivity, reviewCmd, hosts, verifyIDs, "", &reviewPlan, lc.Verify.Writes, sink, peers, wake, observe)
 			reopenedIDs := vRun.reopened
 			if len(vRun.concurrent) > 0 {
 				if err := tasks.EnrollExistingPendingReviews(repo, hosts, vRun.concurrent, reviewPlan); err != nil {
@@ -1947,7 +1933,7 @@ reviewAgain:
 			lc.Signoff, lc.Verify = currentSignoff, currentVerify
 			lc.Signoff.Agent = slices.Clone(currentSignoff.Agent)
 			lc.Verify.Agent = slices.Clone(currentVerify.Agent)
-			signoffRot, betweenRot, verifyRot = currentSignoffRot, currentBetweenRot, currentVerifyRot
+			activeRotations = currentRotations
 			betweenEnabled, verifyEnabled = currentBetweenEnabled, currentVerifyEnabled
 			custom = slices.Clone(currentCustom)
 			if currentMCPDisabled {
@@ -1969,7 +1955,7 @@ reviewAgain:
 				return 1, fmt.Errorf("read HEAD after resumed final review: %w", headErr)
 			}
 			loopStartHead = prevHead
-			reviewPlan, err = pendingReviewPlanForRun(repo, hosts, loopStartHead, cfgSnap.Digest(), continueCmd, lc, signoffRot, verifyRot, currentMCPDisabled)
+			reviewPlan, err = pendingReviewPlanForRun(repo, hosts, loopStartHead, cfgSnap.Digest(), continueCmd, lc, activeRotations.signoff, activeRotations.verify, currentMCPDisabled)
 			if err != nil {
 				return 1, fmt.Errorf("prepare final review after recovery: %w", err)
 			}

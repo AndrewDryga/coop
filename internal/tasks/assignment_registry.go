@@ -88,33 +88,9 @@ func decodeForkAssignmentIndex(data []byte) (ForkAssignmentIndex, error) {
 // Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
 // could write, move into Coop's private state once, as they are.
 func readForkAssignmentIndexFile(root *os.Root, name string) (ForkAssignmentIndex, error) {
-	info, err := root.Lstat(name)
+	data, err := readForkRegistryFile(root, name, "fork assignment index", forkAssignmentIndexLimit)
 	if err != nil {
 		return ForkAssignmentIndex{}, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 ||
-		info.Size() < 0 || info.Size() > forkAssignmentIndexLimit {
-		return ForkAssignmentIndex{}, errors.New("fork assignment index is not a bounded single-link regular file")
-	}
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return ForkAssignmentIndex{}, err
-	}
-	defer f.Close()
-	after, err := f.Stat()
-	if err != nil || !os.SameFile(info, after) {
-		if err != nil {
-			return ForkAssignmentIndex{}, err
-		}
-		return ForkAssignmentIndex{}, errors.New("fork assignment index changed while opening")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, forkAssignmentIndexLimit+1))
-	if err != nil || len(data) > forkAssignmentIndexLimit {
-		if err != nil {
-			return ForkAssignmentIndex{}, err
-		}
-		return ForkAssignmentIndex{}, errors.New("fork assignment index exceeds its size limit")
 	}
 	return decodeForkAssignmentIndex(data)
 }

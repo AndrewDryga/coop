@@ -53,6 +53,28 @@ func (c *Control) reviewRotation(rungs []string, workAgent string, def *ladder.R
 	return c.host.buildRotation(workAgent, targets)
 }
 
+// Inherited stages share cooldown and advancement state; keep their rotation
+// pointers together when a resumed cohort hands off to the current settings.
+type reviewRotations struct {
+	signoff, between, verify *ladder.Rotation
+}
+
+func (c *Control) resolveReviewRotations(lc *loopcfg.Config, workAgent string, work *ladder.Rotation) (reviewRotations, error) {
+	signoff, err := c.reviewRotation(lc.Signoff.Agent, workAgent, work)
+	if err != nil {
+		return reviewRotations{}, fmt.Errorf("signoff agent: %w", err)
+	}
+	between, err := c.reviewRotation(lc.Between.Agent, workAgent, signoff)
+	if err != nil {
+		return reviewRotations{}, fmt.Errorf("between agent: %w", err)
+	}
+	verify, err := c.reviewRotation(lc.Verify.Agent, workAgent, signoff)
+	if err != nil {
+		return reviewRotations{}, fmt.Errorf("verify agent: %w", err)
+	}
+	return reviewRotations{signoff: signoff, between: between, verify: verify}, nil
+}
+
 type reviewCmdBuilder func(agent, prompt, sessionID string, resume bool) (cmd []string, streaming, agentCommand bool)
 
 var (

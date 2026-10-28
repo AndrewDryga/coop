@@ -236,33 +236,9 @@ func readForkCandidateRound(repo string, identity forkspace.Identity, ref forkCa
 	}
 	defer root.Close()
 	name := forkCandidateRoundName(ref)
-	info, err := root.Lstat(name)
+	data, err := readForkRegistryFile(root, name, "fork candidate round", forkCandidateLimit)
 	if err != nil {
 		return forkCandidateRoundRecord{}, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 ||
-		info.Size() < 0 || info.Size() > forkCandidateLimit {
-		return forkCandidateRoundRecord{}, errors.New("fork candidate round is not a bounded single-link regular file")
-	}
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return forkCandidateRoundRecord{}, err
-	}
-	defer f.Close()
-	after, err := f.Stat()
-	if err != nil || !os.SameFile(info, after) {
-		if err != nil {
-			return forkCandidateRoundRecord{}, err
-		}
-		return forkCandidateRoundRecord{}, errors.New("fork candidate round changed while opening")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, forkCandidateLimit+1))
-	if err != nil || len(data) > forkCandidateLimit {
-		if err != nil {
-			return forkCandidateRoundRecord{}, err
-		}
-		return forkCandidateRoundRecord{}, errors.New("fork candidate round exceeds its size limit")
 	}
 	var record forkCandidateRoundRecord
 	if err := decodeStrictCandidateJSON(data, &record, "fork candidate round"); err != nil {

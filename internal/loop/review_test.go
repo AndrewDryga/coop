@@ -307,6 +307,63 @@ func TestReviewLadder(t *testing.T) {
 	}
 }
 
+func TestReviewRotationsShareOnlyInheritedCooldowns(t *testing.T) {
+	c := &Control{host: Host{BuildRotation: func(_ string, rungs []agents.Target) (*ladder.Rotation, error) {
+		return ladder.NewRotation(rungs), nil
+	}}}
+	now := time.Unix(1000, 0)
+	for _, explicit := range []bool{false, true} {
+		work := rts("work", "backup")
+		lc := &loopcfg.Config{}
+		if explicit {
+			lc.Signoff.Agent = []string{"claude@review", "claude@spare"}
+		}
+		rotations, err := c.resolveReviewRotations(lc, "claude", work)
+		if err != nil {
+			t.Fatal(err)
+		}
+		active := rotations.between.Active().String()
+		rotations.between.OnLimit(now.Add(time.Hour), 0, now)
+		for name, rotation := range map[string]*ladder.Rotation{"signoff": rotations.signoff, "verify": rotations.verify} {
+			if !rotation.LimitedUntil(active).Equal(now.Add(time.Hour)) || rotation.Active().String() == active {
+				t.Fatalf("%s did not inherit the review cooldown and advancement", name)
+			}
+		}
+		if explicit {
+			if !work.LimitedUntil(active).IsZero() || work.Active().String() != "claude@work" {
+				t.Fatal("explicit reviewer changed work rotation")
+			}
+		} else if !work.LimitedUntil(active).Equal(now.Add(time.Hour)) || work.Active().String() != "claude@backup" {
+			t.Fatal("inherited reviewer lost work rotation state")
+		}
+	}
+}
+
+func TestReviewRotationsPreserveStageErrorOrder(t *testing.T) {
+	for index, stage := range []string{"signoff", "between", "verify"} {
+		t.Run(stage, func(t *testing.T) {
+			refusal := errors.New("fixture credential refusal")
+			calls := 0
+			c := &Control{host: Host{BuildRotation: func(_ string, rungs []agents.Target) (*ladder.Rotation, error) {
+				calls++
+				if calls == index+1 {
+					return nil, refusal
+				}
+				return ladder.NewRotation(rungs), nil
+			}}}
+			lc := &loopcfg.Config{
+				Signoff: loopcfg.Signoff{Agent: []string{"claude@signoff"}},
+				Between: loopcfg.Between{Agent: []string{"claude@between"}},
+				Verify:  loopcfg.Verify{Agent: []string{"claude@verify"}},
+			}
+			_, err := c.resolveReviewRotations(lc, "claude", rts("work"))
+			if !errors.Is(err, refusal) || !strings.HasPrefix(err.Error(), stage+" agent: ") || calls != index+1 {
+				t.Fatalf("calls=%d error=%v, want first %s refusal", calls, err, stage)
+			}
+		})
+	}
+}
+
 // A review stage that cannot run stops the run before any box and fails it as the work rotation
 // does in cmdLoop: Run returns -1 with the error intact, and the error sets the exit code, 1 for each.
 // None is rejected input: not unlistable accounts, not a missing login, and not a stage lead that

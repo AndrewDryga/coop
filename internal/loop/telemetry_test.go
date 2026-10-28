@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -214,56 +215,130 @@ func TestReadStageRecordsMissing(t *testing.T) {
 	}
 }
 
-func TestRunTelemetryReadersRejectUnsafeFiles(t *testing.T) {
-	for _, kind := range []string{"symlink", "hardlink", "fifo", "oversized"} {
-		t.Run(kind, func(t *testing.T) {
-			repo := t.TempDir()
-			runs := filepath.Join(repo, ".agent", "runs")
-			if err := os.MkdirAll(runs, 0o755); err != nil {
-				t.Fatal(err)
+func TestRunTelemetryReaderRecovery(t *testing.T) {
+	readers := []struct {
+		name, suffix string
+		read         func(string, string) []string
+	}{
+		{"stage", ".jsonl", func(repo, run string) []string {
+			records := readStageRecords(repo, run)
+			if records == nil {
+				return nil
 			}
-			target := filepath.Join(runs, "unsafe.jsonl")
-			outside := filepath.Join(t.TempDir(), "outside")
-			if err := os.WriteFile(outside, []byte(`{"run":"unsafe","stage":"work","cost_usd":99}`+"\n"), 0o600); err != nil {
-				t.Fatal(err)
+			ids := make([]string, 0, len(records))
+			for _, record := range records {
+				ids = append(ids, record.Run)
 			}
-			var err error
-			switch kind {
-			case "symlink":
-				err = os.Symlink(outside, target)
-			case "hardlink":
-				err = os.Link(outside, target)
-			case "fifo":
-				err = syscall.Mkfifo(target, 0o600)
-			case "oversized":
-				const recordedLimit = 8 << 20
-				row := []byte(`{"run":"unsafe","stage":"work","cost_usd":99}` + "\n")
-				padding := strings.Repeat(" \n", (recordedLimit-len(row))/2)
-				if len(row)+len(padding) < recordedLimit {
-					padding += " "
+			return ids
+		}},
+		{"peer", ".peers.jsonl", func(repo, run string) []string {
+			records := ReadPeerRecords(repo, run)
+			if records == nil {
+				return nil
+			}
+			ids := make([]string, 0, len(records))
+			for _, record := range records {
+				ids = append(ids, record.Run)
+			}
+			return ids
+		}},
+	}
+	const rowLimit = 4096
+	capped := make([]string, rowLimit)
+	for i := range capped {
+		capped[i] = "kept"
+	}
+	for _, reader := range readers {
+		for _, tc := range []struct {
+			name, body string
+			missing    bool
+			want       []string
+		}{
+			{name: "missing", missing: true},
+			{name: "no records", body: " \nnot-json\n"},
+			{name: "skips malformed and blank rows", body: "{\"run\":\"first\",\"future_field\":1}\n \nnot-json\n{\"run\":\"second\"}\n", want: []string{"first", "second"}},
+			{name: "keeps prefix before oversized line", body: "{\"run\":\"first\"}\n" + strings.Repeat("x", 1<<20) + "\n{\"run\":\"later\"}\n", want: []string{"first"}},
+			{name: "caps accepted records", body: strings.Repeat("bad\n{\"run\":\"kept\"}\n", rowLimit) + "{\"run\":\"later\"}\n", want: capped},
+		} {
+			t.Run(reader.name+"/"+tc.name, func(t *testing.T) {
+				repo := t.TempDir()
+				if !tc.missing {
+					runs := filepath.Join(repo, ".agent", "runs")
+					if err := os.MkdirAll(runs, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(runs, "test"+reader.suffix), []byte(tc.body), 0o600); err != nil {
+						t.Fatal(err)
+					}
 				}
-				body := append(row, padding...)
-				if err := os.WriteFile(target, body, 0o600); err != nil {
+				if got := reader.read(repo, "test"); !slices.Equal(got, tc.want) || (tc.want == nil && got != nil) {
+					t.Fatalf("records = %v, want %v", got, tc.want)
+				}
+			})
+		}
+	}
+}
+
+func TestRunTelemetryReadersRejectUnsafeFiles(t *testing.T) {
+	for _, suffix := range []string{".jsonl", ".peers.jsonl"} {
+		for _, kind := range []string{"symlink", "hardlink", "fifo", "oversized"} {
+			t.Run(suffix+"/"+kind, func(t *testing.T) {
+				repo := t.TempDir()
+				runs := filepath.Join(repo, ".agent", "runs")
+				if err := os.MkdirAll(runs, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if records := readStageRecords(repo, "unsafe"); len(records) != 1 || records[0].CostUSD != 99 {
-					t.Fatalf("valid exact-limit telemetry refused: %#v", records)
+				target := filepath.Join(runs, "unsafe"+suffix)
+				read := func() (int, bool) {
+					if suffix == ".peers.jsonl" {
+						records := ReadPeerRecords(repo, "unsafe")
+						return len(records), records == nil
+					}
+					records := readStageRecords(repo, "unsafe")
+					return len(records), records == nil
 				}
-				if got := costForRepo(repo); got.total.usd != 99 {
-					t.Fatalf("valid exact-limit telemetry cost=%+v", got)
+				outside := filepath.Join(t.TempDir(), "outside")
+				if err := os.WriteFile(outside, []byte(`{"run":"unsafe","stage":"work","cost_usd":99,"cost":99}`+"\n"), 0o600); err != nil {
+					t.Fatal(err)
 				}
-				err = os.WriteFile(target, append(body, '\n'), 0o600)
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := readStageRecords(repo, "unsafe"); got != nil {
-				t.Fatalf("unsafe %s telemetry parsed: %#v", kind, got)
-			}
-			if got := costForRepo(repo); got.total.usd != 0 {
-				t.Fatalf("unsafe %s telemetry affected cost: %+v", kind, got)
-			}
-		})
+				var err error
+				switch kind {
+				case "symlink":
+					err = os.Symlink(outside, target)
+				case "hardlink":
+					err = os.Link(outside, target)
+				case "fifo":
+					err = syscall.Mkfifo(target, 0o600)
+				case "oversized":
+					const recordedLimit = 8 << 20
+					row := []byte(`{"run":"unsafe","stage":"work","cost_usd":99,"cost":99}` + "\n")
+					padding := strings.Repeat(" \n", (recordedLimit-len(row))/2)
+					if len(row)+len(padding) < recordedLimit {
+						padding += " "
+					}
+					body := append(row, padding...)
+					if err := os.WriteFile(target, body, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					if count, _ := read(); count != 1 {
+						t.Fatalf("valid exact-limit telemetry count = %d, want 1", count)
+					}
+					if got := costForRepo(repo); got.total.usd != 99 {
+						t.Fatalf("valid exact-limit telemetry cost=%+v", got)
+					}
+					err = os.WriteFile(target, append(body, '\n'), 0o600)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if count, empty := read(); !empty {
+					t.Fatalf("unsafe %s telemetry parsed: %d records", kind, count)
+				}
+				if got := costForRepo(repo); got.total.usd != 0 {
+					t.Fatalf("unsafe %s telemetry affected cost: %+v", kind, got)
+				}
+			})
+		}
 	}
 }
 

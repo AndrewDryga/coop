@@ -105,33 +105,9 @@ func decodeForkProposalRecord(data []byte) (ForkProposalRecord, error) {
 }
 
 func readForkProposalRecordFile(root *os.Root, name string) (ForkProposalRecord, error) {
-	info, err := root.Lstat(name)
+	data, err := readForkRegistryFile(root, name, "fork proposal record", forkProposalRecordLimit)
 	if err != nil {
 		return ForkProposalRecord{}, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 ||
-		info.Size() < 0 || info.Size() > forkProposalRecordLimit {
-		return ForkProposalRecord{}, errors.New("fork proposal record is not a bounded single-link regular file")
-	}
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return ForkProposalRecord{}, err
-	}
-	defer f.Close()
-	after, err := f.Stat()
-	if err != nil || !os.SameFile(info, after) {
-		if err != nil {
-			return ForkProposalRecord{}, err
-		}
-		return ForkProposalRecord{}, errors.New("fork proposal record changed while opening")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, forkProposalRecordLimit+1))
-	if err != nil || len(data) > forkProposalRecordLimit {
-		if err != nil {
-			return ForkProposalRecord{}, err
-		}
-		return ForkProposalRecord{}, errors.New("fork proposal record exceeds its size limit")
 	}
 	return decodeForkProposalRecord(data)
 }

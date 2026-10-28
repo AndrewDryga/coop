@@ -249,11 +249,15 @@ type modelSpend struct {
 // missing/unreadable file or a malformed line yields what parsed, never an error — the closing
 // summary that reads this must never break the run's end.
 func readStageRecords(repo, run string) []StageRecord {
-	data, err := readRunFile(repo, run+".jsonl")
+	return readRunRecords[StageRecord](repo, run+".jsonl")
+}
+
+func readRunRecords[T any](repo, name string) []T {
+	data, err := readRunFile(repo, name)
 	if err != nil {
 		return nil
 	}
-	var recs []StageRecord
+	var recs []T
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(nil, maxRunTelemetryLineBytes)
 	for len(recs) < maxRunTelemetryRows && scanner.Scan() {
@@ -261,7 +265,7 @@ func readStageRecords(repo, run string) []StageRecord {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		var r StageRecord
+		var r T
 		if json.Unmarshal(line, &r) == nil {
 			recs = append(recs, r)
 		}
@@ -349,24 +353,7 @@ func removeEmptyPeerRecordFile(path string) {
 // ReadPeerRecords reads a run's peer-usage rows from .agent/runs/<run>.peers.jsonl. Best-effort, same
 // contract as readStageRecords: a missing/unreadable file or a bad line yields what parsed.
 func ReadPeerRecords(repo, run string) []PeerRecord {
-	data, err := readRunFile(repo, run+".peers.jsonl")
-	if err != nil {
-		return nil
-	}
-	var recs []PeerRecord
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(nil, maxRunTelemetryLineBytes)
-	for len(recs) < maxRunTelemetryRows && scanner.Scan() {
-		line := scanner.Bytes()
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		var r PeerRecord
-		if json.Unmarshal(line, &r) == nil {
-			recs = append(recs, r)
-		}
-	}
-	return recs
+	return readRunRecords[PeerRecord](repo, run+".peers.jsonl")
 }
 
 // WorkspaceCost reports a workspace's total loop spend and its compact human summary, from the
