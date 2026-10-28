@@ -93,13 +93,13 @@ func (e *Executor) acknowledgeResult(ctx context.Context, entry journalEntry) er
 	if !errors.Is(err, errCreateOriginConflict) {
 		return err
 	}
-	if repair := e.retireFailedCreate(ctx, entry); repair != nil {
+	if repair := e.retireConflictingCreate(ctx, entry); repair != nil {
 		return errors.Join(err, repair)
 	}
 	return nil
 }
 
-func (e *Executor) retireFailedCreate(ctx context.Context, entry journalEntry) error {
+func (e *Executor) retireConflictingCreate(ctx context.Context, entry journalEntry) error {
 	origin, err := createOriginFromReceipt(entry)
 	if err != nil {
 		return err
@@ -129,9 +129,15 @@ func (e *Executor) retireFailedCreate(ctx context.Context, entry journalEntry) e
 	}
 	var operation createOperation
 	if len(resource) > maxPrivateResponseBytes || json.Unmarshal(resource, &operation) != nil ||
-		operation.ID != origin.OperationID || operation.Method != "CreateRemoteSession" || operation.State != "failed" ||
-		operation.ResourceType != "" || operation.ResourceID != "" {
-		return fmt.Errorf("worker create %s has no exact failed operation proof", entry.CommandID)
+		operation.ID != origin.OperationID || operation.Method != "CreateRemoteSession" {
+		return fmt.Errorf("worker create %s has no exact operation proof", entry.CommandID)
+	}
+	if operation.State == "succeeded" {
+		if err := e.proveDiscardedCreate(ctx, entry, before, operation); err != nil {
+			return err
+		}
+	} else if operation.State != "failed" || operation.ResourceType != "" || operation.ResourceID != "" {
+		return fmt.Errorf("worker create %s has no terminal resource proof", entry.CommandID)
 	}
 	return e.journal.withActivityLock(func() error {
 		current, err := e.journal.readCreateOrigin(e.journal.createOriginPath(origin.SessionRef))
@@ -141,7 +147,7 @@ func (e *Executor) retireFailedCreate(ctx context.Context, entry journalEntry) e
 		if current != before {
 			return errors.New("worker create origin changed during acknowledged receipt repair")
 		}
-		// The accepted operation failed without a resource. Keep the original
+		// The accepted operation failed without a resource or its session was discarded. Keep the original
 		// generation watermark and every stream/cursor; only retire this ACKed receipt.
 		return e.journal.removeAcknowledgedResult(entry)
 	})
@@ -187,7 +193,7 @@ func (c *Connector) acceptAcknowledgements(poll workerproto.Poll, entries []jour
 	return failures
 }
 
-// One bounded original-key read per poll, after fresh commands and event ACKs.
+// One bounded repair per poll, after fresh commands and event ACKs.
 func (c *Connector) repairAcknowledgement(ctx context.Context, entries []journalEntry) error {
 	entry := c.acknowledged.nextDue(entries, c.now())
 	if entry == nil {

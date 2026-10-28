@@ -2,8 +2,8 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/acknowledged_results.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
-updated: 2026-10-27
+sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/acknowledged_results.go, internal/workerconnector/discarded_create.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
+updated: 2026-10-28
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -77,7 +77,10 @@ The traps the code does not make obvious:
   Retained ACKs yield to activity, commands and event ACKs. At most one repair runs per poll,
   with a two-second deadline and backoff from five seconds to two minutes. A conflicting create
   can retire only after an original-key lookup proves its exact accepted operation failed with
-  no resource, while its existing same-generation origin remains failed and unchanged. No origin,
+  no resource. A succeeded create also qualifies when its exact frozen job identifies a discarded,
+  parked session with no active or queued turns, and the original create is freshly proven failed
+  without a resource. A missing session never qualifies. The existing same-generation origin
+  stays failed and unchanged. No origin,
   stream or cursor is rewritten. Only exact event ACKs advance cursors; lookup/activity errors
   cannot block response commands.
 - **Slow commands do not serialize fleet reads.** Run owns one FIFO mutation lane and four
@@ -250,3 +253,5 @@ The traps the code does not make obvious:
 - 2026-09-05 — verified checkpoint restore tracking and binding order against the real service;
   regression covers mixed committed/staged/binary/untracked work and rejected bundles.
 - 2026-09-05 — created during the pre-release audit, against the sources listed.
+
+- 2026-10-28 — a successful retry whose session was already discarded can retire its exact ACKed receipt after original-operation, frozen-job and terminal-session proof; origin and activity bytes remain unchanged.
