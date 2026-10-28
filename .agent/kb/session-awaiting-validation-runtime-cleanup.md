@@ -3,7 +3,7 @@ name: session-awaiting-validation-runtime-cleanup
 description: every started turn retains its exact runtime receipt through teardown; awaiting-validation owns durable candidate authority but no live provider runtime
 subsystem: sessions
 sources: [internal/session/store.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/forkspace/generation.go, internal/forkspace/reservation.go]
-updated: 2026-10-20
+updated: 2026-10-28
 ---
 
 # Awaiting validation is durable authority, not runtime authority
@@ -74,7 +74,15 @@ preceding turn. The projection contains public selectors, not a portable grant. 
 renewal continues while parked; short lease expiry and revocation independently stop protected
 traffic. Startup readiness retains its existing bounded admission horizon.
 
+Native-session binding and prompt send intent use that same active-turn budget. Once a
+prompt write succeeds, its sent receipt uses the detached ten-second completion budget:
+caller cancellation cannot erase evidence of delivery. If the sent receipt remains uncertain,
+the durable intent survives and restart interrupts the turn rather than queuing it again.
+
 ## Changelog
+- 2026-10-28 — extended startup custody to native binding and send intent, and detached
+  post-send receipt persistence. Real single-connection contention failed all three checks
+  with the previous two-second cleanup deadline; restart tests retain uncertain intent.
 - 2026-10-20 — runtime binding now follows the live turn budget. External writer contention
   reproduced the two-second startup failure on cold and warm paths; cancellation and conflicting
   ownership retain the no-launch boundary.

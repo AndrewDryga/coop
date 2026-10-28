@@ -3106,19 +3106,23 @@ func (r *sessionTurnRunner) runACP(
 		return "", nil, session.Usage{}, nil
 	}
 	if bound.NativeSessionID == "" {
-		ctxBind, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
-		_, err := r.store.BindNativeSession(ctxBind, bound.ID, nativeID)
-		cancel()
+		_, err := r.store.BindNativeSession(ctx, bound.ID, nativeID)
 		if err != nil {
+			if ctx.Err() != nil {
+				return "", nil, session.Usage{}, turnDeadline(ctx.Err(), "recording native session identity")
+			}
 			return "", nil, session.Usage{}, err
 		}
 	}
 	if checkpointSend {
-		checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
-		_, err := r.store.MarkTurnSendIntent(checkpointCtx, bound.ID, leased.ID)
-		checkpointCancel()
+		// This is startup, not cleanup: a busy store must not spend a live
+		// turn's budget before its prompt has even been sent.
+		_, err := r.store.MarkTurnSendIntent(ctx, bound.ID, leased.ID)
 		if err != nil {
-			return "", nil, session.Usage{}, acpFailure(session.CodeInternal, "turn sent checkpoint failed")
+			if ctx.Err() != nil {
+				return "", nil, session.Usage{}, turnDeadline(ctx.Err(), "recording prompt send intent")
+			}
+			return "", nil, session.Usage{}, acpFailure(session.CodeInternal, "prompt send intent checkpoint failed")
 		}
 	}
 	content, err := sessionACPInputContent(leased, process.imageCapable, process.embeddedContextCapable)
@@ -3148,10 +3152,16 @@ func (r *sessionTurnRunner) runACP(
 		return "", nil, session.Usage{}, sendErr
 	}
 	if checkpointSend {
-		checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
+		// Delivery happened. Keep its receipt even if the caller cancels,
+		// with the same bounded custody budget as a completed answer.
+		checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
 		_, err = r.store.MarkTurnSent(checkpointCtx, bound.ID, leased.ID)
+		checkpointErr := checkpointCtx.Err()
 		checkpointCancel()
 		if err != nil {
+			if errors.Is(checkpointErr, context.DeadlineExceeded) {
+				return "", nil, session.Usage{}, acpFailure(session.CodeInternal, "timed out recording delivered prompt")
+			}
 			return "", nil, session.Usage{}, err
 		}
 	}

@@ -551,6 +551,140 @@ func TestTurnStartupSurvivesShortRuntimeBindingContention(t *testing.T) {
 	}
 }
 
+// A recorded evaluation lost its second turn behind a 4.8-second store pause.
+// Cleanup's two-second deadline is shorter than SQLite's permitted contention;
+// all three startup checkpoints must retain custody without resending a prompt.
+func TestTurnStartupCheckpointsSurviveWriterContention(t *testing.T) {
+	for _, stage := range []string{"binding", "intent", "sent", "sent_cancel"} {
+		t.Run(stage, func(t *testing.T) {
+			fixture := newSessionACPFixture(t, "normal")
+			turn := fixture.submit(t, "checkpoint contention")
+			bound := fixture.session
+			if stage != "binding" {
+				var err error
+				bound, err = fixture.store.BindNativeSession(context.Background(), bound.ID, "native-1")
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			writer := &checkpointACPWriter{frames: make(chan sessionACPFrame, 1), respond: stage != "sent_cancel"}
+			process := &sessionACPProcess{stdin: writer, frames: writer.frames, initialized: true,
+				nativeSessionID: "native-1", outputRoot: filepath.Join(bound.Workspace, sessionOutputRoot)}
+			released := make(chan struct{})
+			hold := func(delay time.Duration) {
+				release := holdSessionWriter(t, fixture)
+				busyDone := make(chan error, 1)
+				go func() {
+					busyDone <- fixture.store.BindTurnRuntime(context.Background(), bound.ID, turn.ID, "", "checkpoint-contention")
+				}()
+				occupied := false
+				for attempt := 0; attempt < 100; attempt++ {
+					probe, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+					_, err := fixture.store.GetSession(probe, bound.ID)
+					cancel()
+					if errors.Is(err, context.DeadlineExceeded) {
+						occupied = true
+						break
+					}
+					time.Sleep(time.Millisecond)
+				}
+				if !occupied {
+					release()
+					t.Fatal("store connection was not held")
+				}
+				go func() {
+					time.Sleep(delay)
+					release()
+					if err := <-busyDone; err != nil {
+						t.Errorf("release store connection: %v", err)
+					}
+					close(released)
+				}()
+			}
+			promptReady, writerHeld := make(chan struct{}), make(chan struct{})
+			if strings.HasPrefix(stage, "sent") {
+				writer.beforePrompt = func() { close(promptReady); <-writerHeld }
+			} else {
+				hold(3 * time.Second)
+			}
+			ctx, cancel := context.WithCancel(contextWithTurnDeadline(t))
+			defer cancel()
+			defer func() {
+				select {
+				case <-writerHeld:
+				default:
+					close(writerHeld)
+				}
+			}()
+			runDone := make(chan error, 1)
+			go func() {
+				_, _, _, err := fixture.runner.runACP(ctx, process, bound, turn, turn.Prompt, true)
+				runDone <- err
+			}()
+			if strings.HasPrefix(stage, "sent") {
+				select {
+				case <-promptReady:
+					hold(5 * time.Second)
+					if stage == "sent_cancel" {
+						time.AfterFunc(3*time.Second, cancel)
+					}
+					close(writerHeld)
+				case <-ctx.Done():
+					close(writerHeld)
+					t.Fatal("provider never reached prompt delivery")
+				}
+			}
+			err := <-runDone
+			select {
+			case <-released:
+			case <-time.After(wait.Deadline):
+				t.Fatal("contended writer was not released")
+			}
+			if stage == "sent_cancel" {
+				var failure *sessionACPFailure
+				if !errors.As(err, &failure) || failure.code != sessionACPCancelledError {
+					t.Fatalf("delivered turn cancellation = %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("%s checkpoint lost turn under contention: %v", stage, err)
+			}
+			saved, err := fixture.store.GetTurn(context.Background(), bound.ID, turn.ID)
+			if err != nil || saved.SendState != session.SendStateSent || writer.prompts != 1 {
+				t.Fatalf("checkpoint=%+v prompts=%d err=%v", saved, writer.prompts, err)
+			}
+		})
+	}
+}
+
+type checkpointACPWriter struct {
+	respond      bool
+	frames       chan sessionACPFrame
+	beforePrompt func()
+	prompts      int
+}
+
+func (w *checkpointACPWriter) Write(p []byte) (int, error) {
+	var f struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+	}
+	if err := json.Unmarshal(p, &f); err != nil {
+		return 0, err
+	}
+	if f.Method == "session/prompt" {
+		w.prompts++
+		if w.beforePrompt != nil {
+			w.beforePrompt()
+		}
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": f.ID, "result": map[string]any{"stopReason": "end_turn"}})
+		if w.respond {
+			w.frames <- sessionACPFrame{line: body}
+		}
+	}
+	return len(p), nil
+}
+func (*checkpointACPWriter) Close() error { return nil }
+
 func TestCancelledRuntimeBindingNeverLaunchesAProvider(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	leased := fixture.submit(t, "cancel before runtime ownership")
@@ -2415,6 +2549,10 @@ func TestSessionACPInterruptedPromptWriteCancelsDeliveredPrompt(t *testing.T) {
 		t.Run(grace.String(), func(t *testing.T) {
 			fixture := newSessionACPFixture(t, "normal")
 			turn := fixture.submit(t, "interrupted prompt")
+			bound, err := fixture.store.BindNativeSession(context.Background(), fixture.session.ID, "native-1")
+			if err != nil {
+				t.Fatal(err)
+			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			writer := &sessionACPCancelDuringPromptWriter{
@@ -2431,7 +2569,7 @@ func TestSessionACPInterruptedPromptWriteCancelsDeliveredPrompt(t *testing.T) {
 				nativeSessionID: "native-1", stopGrace: grace,
 				outputRoot: filepath.Join(fixture.session.Workspace, sessionOutputRoot),
 			}
-			_, _, _, err := fixture.runner.runACP(ctx, process, fixture.session, turn, turn.Prompt, false)
+			_, _, _, err = fixture.runner.runACP(ctx, process, bound, turn, turn.Prompt, true)
 			if err == nil || ctx.Err() == nil {
 				t.Fatalf("interrupted prompt = %v, context = %v", err, ctx.Err())
 			}
@@ -2442,6 +2580,17 @@ func TestSessionACPInterruptedPromptWriteCancelsDeliveredPrompt(t *testing.T) {
 				}
 			default:
 				t.Fatal("delivered prompt was not cancelled after interrupted write")
+			}
+			saved, err := fixture.store.GetTurn(context.Background(), bound.ID, turn.ID)
+			if err != nil || saved.SendState != session.SendStateIntent {
+				t.Fatalf("interrupted delivery lost its send intent: %+v, %v", saved, err)
+			}
+			if _, err := fixture.store.ReconcileInterruptedTurns(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			saved, err = fixture.store.GetTurn(context.Background(), bound.ID, turn.ID)
+			if err != nil || saved.State != session.TurnInterrupted {
+				t.Fatalf("uncertain prompt delivery became replayable: %+v, %v", saved, err)
 			}
 			if process.stopGrace != max(grace, sessionACPTermGrace) {
 				t.Fatalf("cancel drain grace = %s, original = %s", process.stopGrace, grace)
