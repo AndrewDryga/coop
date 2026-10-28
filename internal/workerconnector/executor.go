@@ -64,6 +64,7 @@ type Executor struct {
 	journal         *journal
 	now             func() time.Time
 	workerID        string
+	originRetries   map[string]createOriginRetry
 }
 
 func NewExecutor(config ExecutorConfig) (*Executor, error) {

@@ -221,6 +221,7 @@ func (e *Executor) collectActivity(ctx context.Context, maximumBytes int) ([]wor
 	if targets == nil && issues != nil {
 		return []workerproto.EventBatch{}, issues
 	}
+	e.pruneCreateOriginRetries(targets)
 	batches := make([]workerproto.EventBatch, 0, len(targets))
 	remainingEvents, remainingBytes := maximumPollEvents, min(maximumPollBytes, maximumBytes)
 	lastScanned := ""
@@ -233,7 +234,7 @@ func (e *Executor) collectActivity(ctx context.Context, maximumBytes int) ([]wor
 		}
 		lastScanned = target.sessionRef
 		if target.origin != nil {
-			if err := e.resolveCreateOrigin(collectionCtx, *target.origin); err != nil {
+			if err := e.resolveCreateOriginWhenDue(collectionCtx, *target.origin); err != nil {
 				issues = errors.Join(issues, fmt.Errorf("resolve worker create %s: %w", target.sessionRef, err))
 			}
 			continue

@@ -66,6 +66,83 @@ func originReceipt(t *testing.T, executor *Executor, command workerproto.Command
 	return entry
 }
 
+// One missing retained operation produced 1,333 warnings in two hours. Its
+// absence is not terminal proof: back off lookup, preserving custody and peers.
+func TestMissingCreateOriginWaitsWithoutRewritingCustodyOrStarvingActivity(t *testing.T) {
+	executor, api, command := newOriginFixture(t)
+	now := executor.now()
+	executor.now = func() time.Time { return now }
+	if _, err := executor.Execute(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	path := executor.journal.createOriginPath(command.SessionRef)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.journal.bindEventStream(workerproto.Command{SessionRef: "healthy", PlacementGeneration: 1}, "coop-session-1"); err != nil {
+		t.Fatal(err)
+	}
+	lookups := 0
+	api.lookup = func(context.Context, Request) (json.RawMessage, error) {
+		lookups++
+		return nil, &APIError{Status: 404, Code: "operation_not_found", Detail: "not found"}
+	}
+	if batches, err := executor.collectActivity(context.Background(), maximumPollBytes); err == nil || len(batches) != 1 {
+		t.Fatalf("first diagnosis or healthy activity lost: %v, %v", batches, err)
+	}
+	for range 20 {
+		if batches, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil || len(batches) != 1 {
+			t.Fatalf("waiting origin starved activity or repeated error: %v, %v", batches, err)
+		}
+	}
+	if lookups != 1 {
+		t.Fatalf("waiting origin repeated %d lookups", lookups)
+	}
+	for _, delay := range []time.Duration{5, 10, 20, 40, 80, 120, 120} {
+		now = now.Add(delay * time.Second)
+		previous := lookups
+		if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err == nil || lookups != previous+1 {
+			t.Fatalf("due retry lost: %d, %v", lookups, err)
+		}
+		now = now.Add(time.Millisecond)
+		if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil || lookups != previous+1 {
+			t.Fatalf("retry did not wait: %d, %v", lookups, err)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("lookup rewrote custody: %v", err)
+	}
+	if _, err := os.Stat(executor.journal.eventStreamPath(command.SessionRef)); !os.IsNotExist(err) {
+		t.Fatal("missing operation manufactured a stream")
+	}
+	restarted, err := NewExecutor(ExecutorConfig{API: api, JournalDir: filepath.Dir(executor.journal.origins), Now: executor.now, WorkerID: "worker-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := lookups
+	if _, err := restarted.collectActivity(context.Background(), maximumPollBytes); err == nil || lookups != previous+1 {
+		t.Fatalf("restart did not reconcile immediately: %d, %v", lookups, err)
+	}
+	// A new, exactly recorded generation must not inherit the old lookup wait.
+	next := command
+	next.CommandID, next.IdempotencyKey, next.PlacementGeneration = "create-next", "key-next", 2
+	api.operation = createOperation{ID: "create-2", Method: "CreateRemoteSession", State: "running"}
+	if _, err := executor.Execute(context.Background(), next); err != nil {
+		t.Fatal(err)
+	}
+	api.lookup = nil
+	api.operation.State, api.operation.ResourceType, api.operation.ResourceID = "succeeded", "session", "coop-session-1"
+	if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil {
+		t.Fatal(err)
+	}
+	origin, err := executor.journal.readCreateOrigin(path)
+	if err != nil || origin.PlacementGeneration != 2 || origin.CoopSessionID != "coop-session-1" {
+		t.Fatalf("new generation did not bind: %+v, %v", origin, err)
+	}
+}
+
 func TestCreateOriginDeniesUnprovenOrConflictingOperationIdentity(t *testing.T) {
 	for _, corrupt := range []func(*journalEntry){
 		func(entry *journalEntry) { entry.Result.CommandID = "crossed-command" },
