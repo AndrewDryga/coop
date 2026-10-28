@@ -3,6 +3,7 @@ package sessionsvc
 import (
 	"context"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
@@ -27,7 +28,7 @@ func (s *Service) pinCurrentSessionParent(ctx context.Context, sess session.Sess
 		return "", &session.Error{Code: session.CodeRepositoryUnavailable, Detail: "could not refresh the job's default revision"}
 	}
 	actual, err := sessionWorkspaceCommitContext(ctx, execution.Repository, head)
-	if err != nil || !validSessionWorkspaceCommit(head) || actual != head {
+	if err != nil || !forkspace.ValidObjectID(head) || actual != head {
 		return "", &session.Error{Code: session.CodeRepositoryUnavailable, Detail: "refreshed default revision is unproven"}
 	}
 	return head, nil

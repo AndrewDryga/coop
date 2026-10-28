@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,7 +41,10 @@ func agentPlan(t *testing.T, cases int, repeat, jobs int, timeout time.Duration)
 // before the other starts, and the leading configuration rotates across repetitions.
 func TestBuildScheduleIsBalancedAndRotates(t *testing.T) {
 	plan, frozen := agentPlan(t, 2, 2, 1, time.Hour) // cases a,b; 2 configs; 2 repeats
-	sched := buildSchedule(plan, frozen)
+	sched, err := buildSchedule(t.Context(), plan, frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(sched) != 2*2*2 {
 		t.Fatalf("schedule has %d trials, want 8", len(sched))
 	}
@@ -105,8 +109,7 @@ func TestExecuteRunsEveryTrialBoundedAndSeals(t *testing.T) {
 	}
 }
 
-// A run whose overall context is already cancelled admits no trials: they stay pending and are
-// counted, never a false pass or fail.
+// Cancellation after every pending record is durable seals the full matrix without launching.
 func TestExecuteLeavesUnadmittedTrialsPending(t *testing.T) {
 	plan, frozen := agentPlan(t, 2, 1, 1, time.Hour)
 	root := t.TempDir()
@@ -115,13 +118,21 @@ func TestExecuteLeavesUnadmittedTrialsPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	defer cancel()
+	var once sync.Once
+	now := func() time.Time {
+		trials, err := LoadTrials(root, store.ID())
+		if err == nil && len(trials) == plan.Trials() {
+			once.Do(cancel)
+		}
+		return time.Now()
+	}
 	var ran int32
 	run := func(ctx context.Context, tr Trial) TrialResult {
 		atomic.AddInt32(&ran, 1)
 		return TrialResult{Status: TrialPassed}
 	}
-	sum, err := Execute(ctx, plan, frozen, store, run, nil)
+	sum, err := Execute(ctx, plan, frozen, store, run, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +251,11 @@ func TestExecuteDoesNotLaunchWhenRunningRecordCannotBeWritten(t *testing.T) {
 	var once sync.Once
 	var sabotageErr error
 	now := func() time.Time {
-		// Execute asks for its clock only after every pending record is durable.
+		// Wait for the complete pending publication; fail the next running-record write.
+		trials, err := LoadTrials(root, store.ID())
+		if err != nil || len(trials) != plan.Trials() {
+			return time.Now()
+		}
 		once.Do(func() {
 			dir := filepath.Join(store.Dir(), trialsDir)
 			if sabotageErr = os.Rename(dir, dir+"-saved"); sabotageErr == nil {
@@ -299,5 +314,41 @@ func TestExecuteStopsNewTrialsAfterFinalRecordWriteFails(t *testing.T) {
 	}
 	if _, sealed, err := LoadSummary(root, store.ID()); err != nil || sealed {
 		t.Fatalf("record failure sealed a run: sealed=%v err=%v", sealed, err)
+	}
+}
+
+func TestExecuteInterruptedPreparationRemainsUnsealed(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprint(expired), func(t *testing.T) {
+			plan, frozen := agentPlan(t, 2, 1, 1, time.Hour)
+			root := t.TempDir()
+			store, err := CreateRun(root, RunRecord{ID: "prepare", Suite: "s", Runner: RunnerAgent})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ctx context.Context
+			var cancel context.CancelFunc
+			if expired {
+				ctx, cancel = context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+			} else {
+				ctx, cancel = context.WithCancel(t.Context())
+				cancel()
+			}
+			defer cancel()
+			_, err = Execute(ctx, plan, frozen, store, func(context.Context, Trial) TrialResult {
+				t.Error("canceled preparation launched work")
+				return TrialResult{}
+			}, nil)
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("preparation error: %v", err)
+			}
+			trials, err := LoadTrials(root, store.ID())
+			if err != nil || len(trials) != 0 {
+				t.Fatalf("preparation wrote trials: %d %v", len(trials), err)
+			}
+			if _, sealed, err := LoadSummary(root, store.ID()); err != nil || sealed {
+				t.Fatalf("incomplete preparation sealed: %v %v", sealed, err)
+			}
+		})
 	}
 }

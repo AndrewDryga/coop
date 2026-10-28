@@ -271,15 +271,7 @@ func removeTaskOwnerRecordFile(root, id string) error {
 	if err != nil {
 		return err
 	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return err
-	}
-	defer registry.Close()
-	if err := registry.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
+	return removeLeaseAuthorityRecord(name)
 }
 
 type taskOwnerLock struct {

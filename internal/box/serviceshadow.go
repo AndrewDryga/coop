@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -336,23 +337,40 @@ func durableServicePolicySnapshot(data []byte) (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o400)
-	if errors.Is(err, os.ErrExist) {
-		return durableServicePolicySnapshot(data)
-	}
+	dir, err := os.OpenRoot(root)
 	if err != nil {
 		return "", err
 	}
+	defer dir.Close()
+	f, temporary, err := forkspace.CreateTempIn(dir, ".policy-")
+	if err != nil {
+		return "", err
+	}
+	defer dir.Remove(temporary)
+	defer f.Close()
+	if err := f.Chmod(0o400); err != nil {
+		return "", err
+	}
 	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
 		return "", err
 	}
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
 		return "", err
 	}
 	if err := f.Close(); err != nil {
 		return "", err
+	}
+	if err := forkspace.PublishNoReplace(dir, temporary, filepath.Base(path)); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return "", err
+		}
+		existing, err := dir.ReadFile(filepath.Base(path))
+		if err != nil {
+			return "", err
+		}
+		if !bytes.Equal(existing, data) {
+			return "", errors.New("stored service policy snapshot changed")
+		}
 	}
 	return path, nil
 }

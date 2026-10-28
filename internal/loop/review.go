@@ -472,6 +472,9 @@ func (c *Control) runReviewCorrection(ctx context.Context, repo, img string, rev
 	if ctx != nil && ctx.Err() != nil {
 		return interruptedReviewResult(result, result.retries), errReviewInterrupted
 	}
+	if usage != nil && usage.SessionID != "" && usage.SessionID != previous.sessionID {
+		return result, errors.New("review format correction returned a different reviewer session")
+	}
 	if runErr != nil || code != 0 || classification.outcome != "success" {
 		if runErr == nil {
 			runErr = errors.New("provider did not complete successfully")

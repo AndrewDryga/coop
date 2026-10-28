@@ -856,6 +856,7 @@ func TestSessionHTTPPublishesTheGenericSourceBindingThroughCreateAndReview(t *te
 	checkout := filepath.Join(t.TempDir(), "checkout")
 	runGitTest(t, "", "clone", "-q", "-b", "main", remote, checkout)
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), seed, nil)
+	service.Job.Limits.MaxPatchBytes = 1024
 	service.pullSource(t, seed, 514, pullHead, gitOut(seed, "rev-parse", "main"), gitOut(seed, "merge-base", "main", pullHead))
 	service.reviewGate = ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
@@ -929,6 +930,52 @@ func TestSessionHTTPPublishesTheGenericSourceBindingThroughCreateAndReview(t *te
 	}
 	if _, retired := changesDocument["pull_request_tree"]; retired {
 		t.Fatalf("changes still publish the retired pull_request_tree: %s", changes.Body.String())
+	}
+
+	const pageSize = 32
+	var whole SessionChangesDTO
+	if err := json.Unmarshal(changes.Body.Bytes(), &whole); err != nil {
+		t.Fatal(err)
+	}
+	if whole.Truncated || len(whole.Patch) <= 2*pageSize || whole.PatchBytes != int64(len(whole.Patch)) {
+		t.Fatalf("fixture needs complete multi-page patch: %+v", whole)
+	}
+	digest := sha256.Sum256(whole.Patch)
+	if whole.PatchDigest != hex.EncodeToString(digest[:]) {
+		t.Fatal("patch digest differs from bytes")
+	}
+	page := func(offset int64, limit int) SessionChangesDTO {
+		t.Helper()
+		path := fmt.Sprintf("/v1/sessions/%s/changes?patch_offset=%d&patch_limit=%d", created.Session.ID, offset, limit)
+		response := sessionHTTPTestRequest(t, handler, http.MethodGet, path, "", "", "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("page status=%d body=%s", response.Code, response.Body.String())
+		}
+		var got SessionChangesDTO
+		if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	first := page(0, pageSize)
+	second := page(first.PatchNextOffset, pageSize)
+	if first.PatchOffset != 0 || first.PatchNextOffset != pageSize || !first.PatchHasMore || !first.Truncated || second.PatchOffset != pageSize || second.PatchNextOffset != 2*pageSize || !second.PatchHasMore || !second.Truncated || !bytes.Equal(first.Patch, whole.Patch[:pageSize]) || !bytes.Equal(second.Patch, whole.Patch[pageSize:2*pageSize]) {
+		t.Fatalf("page bytes/offsets: first=%+v second=%+v", first, second)
+	}
+	maximum := page(0, 1024)
+	if maximum.Truncated || maximum.PatchHasMore || !bytes.Equal(maximum.Patch, whole.Patch) {
+		t.Fatalf("max page lost bytes: %+v", maximum)
+	}
+	for _, got := range []SessionChangesDTO{first, second, maximum} {
+		if got.PatchDigest != whole.PatchDigest || got.PatchBytes != whole.PatchBytes || got.AdmittedSourceTree != whole.AdmittedSourceTree || got.BaseCommit != whole.BaseCommit || got.ForkHead != whole.ForkHead {
+			t.Fatalf("paging changed identity: %+v whole=%+v", got, whole)
+		}
+	}
+	for _, query := range []string{"patch_offset=-1&patch_limit=32", "patch_offset=1", "patch_limit=0", "patch_limit=1025"} {
+		response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+created.Session.ID+"/changes?"+query, "", "", "")
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
+			t.Fatalf("invalid page %q = %d %s", query, response.Code, response.Body.String())
+		}
 	}
 
 	review := sessionHTTPTestRequest(

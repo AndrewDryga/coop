@@ -312,3 +312,25 @@ func dirExists(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.IsDir()
 }
+
+func TestProfileTokenMtimeUsesSelectedNativeAuthorityRoot(t *testing.T) {
+	pinHome(t)
+	shared := &config.Config{ConfigDir: t.TempDir()}
+	agent, _ := agents.Get("gemini")
+	if err := SaveHostCredential(shared, agent, "work", []byte("fixture-selected-key")); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	authority := filepath.Join(shared.ConfigDir, "gemini", "credentials", "work", "authority.json")
+	if err := os.Chtimes(authority, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	private, err := (&config.Config{ConfigDir: t.TempDir()}).WithNativeAuthorityRoot(shared.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ProfileTokenMtime(private, "gemini", "work")
+	if !ok || !got.Equal(stamp) {
+		t.Fatalf("selected authority mtime: %v %v, want %v", got, ok, stamp)
+	}
+}

@@ -121,9 +121,16 @@ func decodeNativeDocument(ctx context.Context, value any, read func() ([]byte, e
 
 func readNativeRunConfig(runID string, origins []string) (NativeRunConfig, error) {
 	var config NativeRunConfig
-	if readNativeDocument(context.Background(), "config.json", &config) != nil || config.Version != 1 ||
-		!lowerHex(config.RunID, 32) || runID != "" && config.RunID != runID || len(config.Accounts) == 0 || len(config.Accounts) > 4 {
+	if readNativeDocument(context.Background(), "config.json", &config) != nil {
 		return config, Failure("native_broker_configuration_invalid")
+	}
+	return config, validateNativeRunConfig(config, runID, origins)
+}
+
+func validateNativeRunConfig(config NativeRunConfig, runID string, origins []string) error {
+	if config.Version != 1 ||
+		!lowerHex(config.RunID, 32) || runID != "" && config.RunID != runID || len(config.Accounts) == 0 || len(config.Accounts) > 4 {
+		return Failure("native_broker_configuration_invalid")
 	}
 	var seen []string
 	providers := map[string]bool{}
@@ -131,28 +138,28 @@ func readNativeRunConfig(runID string, origins []string) (NativeRunConfig, error
 		binding := account.Binding
 		if binding.RunID != config.RunID || binding.Epoch == 0 || binding.Account == "" || providers[binding.Provider] ||
 			binding.Provider == "" || strings.Trim(binding.Provider, "abcdefghijklmnopqrstuvwxyz") != "" || len(account.Origins) == 0 {
-			return config, Failure("native_broker_configuration_invalid")
+			return Failure("native_broker_configuration_invalid")
 		}
 		providers[binding.Provider] = true
 		for _, origin := range account.Origins {
 			host, err := egress.NormalizeDomain(origin.Host, false)
 			if err != nil || host != origin.Host || slices.Contains(seen, host) || len(origin.Requests) == 0 || len(origin.Requests) > 128 {
-				return config, Failure("native_broker_configuration_invalid")
+				return Failure("native_broker_configuration_invalid")
 			}
 			seen = append(seen, host)
 		}
 	}
 	if len(config.Downloads) > 4 {
-		return config, Failure("native_broker_configuration_invalid")
+		return Failure("native_broker_configuration_invalid")
 	}
 	lines := map[BrokerRequestLine]bool{}
 	for _, download := range config.Downloads {
 		if download.Kind != CredentialBrokerDownload || !download.valid() {
-			return config, Failure("native_broker_configuration_invalid")
+			return Failure("native_broker_configuration_invalid")
 		}
 		for _, line := range download.Allow {
 			if lines[line] {
-				return config, Failure("native_broker_configuration_invalid")
+				return Failure("native_broker_configuration_invalid")
 			}
 			lines[line] = true
 		}
@@ -165,10 +172,10 @@ func readNativeRunConfig(runID string, origins []string) (NativeRunConfig, error
 		expected := slices.Clone(origins)
 		slices.Sort(expected)
 		if !slices.Equal(seen, expected) {
-			return config, Failure("native_broker_configuration_invalid")
+			return Failure("native_broker_configuration_invalid")
 		}
 	}
-	return config, nil
+	return nil
 }
 
 type nativeRunRuntime struct {

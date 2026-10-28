@@ -79,6 +79,12 @@ capped, alerts capped),
 There is no second worker command vocabulary. None of these reads grants authority: the saved job
 controls whether destination names are exported, and the daemon applies that projection.
 
+Summary and connection reads require a complete execution inventory; an unreadable record returns
+`network_unavailable`, never an invented "no run yet". Explanation lookup distinguishes missing
+or retained-away events from malformed evidence. A directly verified event owned by this session
+can still be returned when another record is unreadable; an unsuccessful search cannot claim
+`event_not_retained` from a partial inventory. Destination projection applies in either case.
+
 `coop net` is the host operator's read surface, grouped by the job a person arrives with (the order
 of `netCommands` in cli/net_cmd.go): ACCESS (what a new run may reach), RUNS (what recorded runs
 did), REPAIR (what coop normally does itself). Its verbs differ in what they read:
@@ -176,6 +182,7 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-10-28 — distinguished unavailable/incomplete evidence from absence in certification and remote reads; checked real malformed retained records, session ownership, and disclosure fixtures.
 - 2026-10-19 — an unreadable run record no longer stops the unscoped recovery pass: it is skipped
   and counted, and snapshot retention still waits for a listing read whole (task
   2026-10-15-simplify-network-record-keys-and-setup-records).

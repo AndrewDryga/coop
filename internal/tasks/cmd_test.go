@@ -1715,6 +1715,30 @@ func TestStripHTMLComments(t *testing.T) {
 // runDecisionBrowser: :n skips the first decision, then a typed answer resolves the second;
 // answering the last one auto-finishes. The answered task moves to todo with its recorded answer;
 // the skipped one stays blocked. I/O is injected so no real terminal is needed.
+func TestRunDecisionBrowserReportsInputFailure(t *testing.T) {
+	root := t.TempDir()
+	if code, err := tasksFolderAdd(root, []string{"decision"}, StateTodo, "tasks add"); code != 0 || err != nil {
+		t.Fatalf("add: %d, %v", code, err)
+	}
+	item := mustReadTaskTree(t, root)[0]
+	if code, err := tasksFolderBlock(root, []string{item.ID}); code != 0 || err != nil {
+		t.Fatalf("block: %d, %v", code, err)
+	}
+	item, err := FindTask(root, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := readFileString(filepath.Join(item.Dir, "decision.md"))
+	var out bytes.Buffer
+	if code, err := runDecisionBrowser("", decisionRefs(root, "", []Item{item}), strings.NewReader(strings.Repeat("x", 128<<10)), &out); code == 0 || err == nil {
+		t.Fatalf("oversized input reported success: %d, %v", code, err)
+	}
+	after, err := FindTask(root, item.ID)
+	if err != nil || after.State != StateBlocked || readFileString(filepath.Join(item.Dir, "decision.md")) != before {
+		t.Fatalf("input failure changed decision: %+v, %v", after, err)
+	}
+}
+
 func TestRunDecisionBrowser(t *testing.T) {
 	root := t.TempDir()
 	for _, title := range []string{"alpha", "beta"} {

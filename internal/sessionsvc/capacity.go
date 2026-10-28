@@ -81,6 +81,14 @@ func (s *Service) runtimeCleanupFailed(id string) {
 	s.runtimeMu.Unlock()
 }
 
+// runtimeCleanupPending is set by the runtime owner even when a completed answer
+// is retained after teardown fails. Only proven cleanup releases this slot.
+func (s *Service) runtimeCleanupPending(id string) bool {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	return s.runtimeSlots[id]
+}
+
 func (s *Service) finishRuntimeSlot(bound session.Session, err error) {
 	if sessionRunnerCleanupFailed(err) {
 		s.runtimeCleanupFailed(bound.ID)

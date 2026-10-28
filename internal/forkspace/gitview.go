@@ -176,7 +176,7 @@ func gitCanUse(gitDir, commonDir string) bool {
 	if ref, symbolic := strings.CutPrefix(string(data), "ref:"); symbolic {
 		return strings.HasPrefix(strings.TrimLeft(ref, " \t\r\n"), "refs/")
 	}
-	return validPinnedCommit(strings.TrimRight(string(data), "\r\n"))
+	return ValidObjectID(strings.TrimRight(string(data), "\r\n"))
 }
 
 // CloseGitViews forgets this process's views, so the next command resolves the root again.

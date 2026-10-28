@@ -17,6 +17,8 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/AndrewDryga/coop/internal/gitdiff"
+
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
@@ -109,26 +111,18 @@ func Classify(status, relPath string) (reason string, automatic bool) {
 	return "", false
 }
 
-// Findings classifies a `git diff --name-status` (or `git show --name-status`) listing. A
-// rename's NEW path is what counts. The result is sorted by path and deduplicated.
-func Findings(nameStatus string) []Finding {
+// Findings classifies exact changed paths. A rename's new path counts; results
+// are sorted by path and deduplicated. Display escaping belongs to the caller.
+func Findings(changes []gitdiff.Change) []Finding {
 	seen := map[string]bool{}
 	var out []Finding
-	for _, line := range strings.Split(nameStatus, "\n") {
-		fields := strings.Split(strings.TrimRight(line, "\r"), "\t")
-		if len(fields) < 2 {
-			fields = strings.Fields(line)
-			if len(fields) < 2 {
-				continue
-			}
-		}
-		status, p := fields[0], fields[len(fields)-1]
-		reason, automatic := Classify(status, p)
-		if reason == "" || seen[p] {
+	for _, change := range changes {
+		reason, automatic := Classify(change.Status, change.Path)
+		if reason == "" || seen[change.Path] {
 			continue
 		}
-		seen[p] = true
-		out = append(out, Finding{Path: p, Reason: reason, Automatic: automatic})
+		seen[change.Path] = true
+		out = append(out, Finding{Path: change.Path, Reason: reason, Automatic: automatic})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out

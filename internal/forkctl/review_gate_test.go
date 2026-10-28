@@ -359,3 +359,44 @@ func assertReviewScratchEmpty(t *testing.T, dir string) {
 		t.Errorf("review scratch leaked entries: %v", entries)
 	}
 }
+
+func TestForkReviewReturnsViewerFailure(t *testing.T) {
+	for _, withGate := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ordinary", true: "gated"}[withGate], func(t *testing.T) {
+			repo, ws := setupReviewGateFork(t, false)
+			marker := filepath.Join(t.TempDir(), "viewer-called")
+			t.Setenv("COOP_TEST_VIEWER_CALLED", marker)
+			git(t, repo, "config", "--global", "diff.tool", "quality-fixture")
+			git(t, repo, "config", "--global", "difftool.quality-fixture.cmd", `printf called > "$COOP_TEST_VIEWER_CALLED"; exit 17`)
+			git(t, repo, "config", "--global", "difftool.prompt", "false")
+			git(t, repo, "config", "--global", "difftool.trustExitCode", "true")
+			// Ordinary review publishes this ref; pre-create it so the snapshot isolates viewer effects.
+			if err := gitFetchInto(repo, ws, "perf"); err != nil {
+				t.Fatal(err)
+			}
+			beforeParent, beforeFork := reviewSourceSnapshot(repo), reviewSourceSnapshot(ws)
+			tmp := t.TempDir()
+			t.Setenv("TMPDIR", tmp)
+			gateCalled := false
+			c := &Control{cfg: &config.Config{RepoOverride: repo, BaseImage: "gate-image", Gate: []string{"make", "check"}}, rt: runtime.Runtime{Name: "true"}, gateOK: func(string, string, string) bool { gateCalled = true; return true }}
+			args := []string{"perf", "--tool"}
+			if withGate {
+				args = append(args, "--gate")
+			}
+			out, code, err := reviewCommandOutput(t, c, args...)
+			if code == 0 || err == nil {
+				t.Fatalf("viewer failure: %d %v\n%s", code, err, out)
+			}
+			if raw, err := os.ReadFile(marker); err != nil || string(raw) != "called" {
+				t.Fatalf("viewer not invoked: %q %v", raw, err)
+			}
+			if gateCalled != withGate {
+				t.Fatalf("gate called: %v", gateCalled)
+			}
+			if reviewSourceSnapshot(repo) != beforeParent || reviewSourceSnapshot(ws) != beforeFork {
+				t.Fatal("viewer failure changed source repositories")
+			}
+			assertReviewScratchEmpty(t, tmp)
+		})
+	}
+}

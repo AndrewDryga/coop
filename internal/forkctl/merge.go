@@ -16,6 +16,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/gitdiff"
 	"github.com/AndrewDryga/coop/internal/hostsurface"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -24,11 +25,16 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// HostSurfaces lists the fork's changed files that alter what runs on your machine — hooks,
-// editor and agent settings, compose, the Makefile — for the review brief. The automatic ones
-// also appear in PolicyScan, where they block a merge unless forced.
-func HostSurfaces(repo, ref string) []hostsurface.Finding {
-	return hostsurface.Findings(forkspace.GitOut(repo, "diff", "--name-status", "HEAD..."+ref))
+func readForkChanges(repo, ref string) ([]gitdiff.Change, error) {
+	out, err := forkspace.GitOutput(repo, "diff", "--name-status", "-z", "HEAD..."+ref)
+	if err != nil {
+		return nil, fmt.Errorf("read the fork's changes: %w", err)
+	}
+	changes, err := gitdiff.NameStatus(out)
+	if err != nil {
+		return nil, fmt.Errorf("read the fork's changes: %w", err)
+	}
+	return changes, nil
 }
 
 // PolicyScan returns human-readable concerns about a fork's added/changed files:
@@ -38,11 +44,11 @@ func HostSurfaces(repo, ref string) []hostsurface.Finding {
 // read it, for example by giving the fork a history unrelated to the project's: the error comes
 // back, never an empty scan that would read as nothing flagged.
 func PolicyScan(repo, ref string) ([]string, error) {
-	out, err := forkspace.GitOutErr(repo, "diff", "--name-status", "HEAD..."+ref)
+	changes, err := readForkChanges(repo, ref)
 	if err != nil {
-		return nil, fmt.Errorf("read the fork's changes: %w", err)
+		return nil, err
 	}
-	if out == "" {
+	if len(changes) == 0 {
 		return nil, nil
 	}
 	// Flag a credential-looking filename with the SAME decider that shadows secrets from the box,
@@ -51,26 +57,23 @@ func PolicyScan(repo, ref string) ([]string, error) {
 	shadowed := box.NewShadowDecider(repo)
 	unreadable := map[string]bool{} // each .coopignore coop cannot read is one warning, not one per file
 	var warns []string
-	for _, line := range strings.Split(out, "\n") {
-		f := strings.Fields(line)
-		if len(f) < 2 {
-			continue
-		}
+	for _, change := range changes {
 		// A .coopignore decides what every later box is shown, so a fork that adds, edits, removes
 		// or renames one waits for --force. One that is not a regular file is named below instead.
 		changed := ""
-		for _, p := range f[1:] {
+		for _, p := range []string{change.OldPath, change.Path} {
 			if box.IsCoopignoreName(filepath.Base(p)) {
 				changed = p
 			}
 		}
-		if changed != "" && (f[0] == "D" || !notRegularCoopignore(repo, ref, f[len(f)-1])) {
-			warns = append(warns, changed+" — the fork changes a .coopignore, which decides what boxes are shown")
+		if changed != "" && (change.Status == "D" || !notRegularCoopignore(repo, ref, change.Path)) {
+			warns = append(warns, ui.SafeInline(changed)+" — the fork changes a .coopignore, which decides what boxes are shown")
 		}
-		if f[0] == "D" { // deleting any other file is never a concern
+		if change.Status == "D" { // deleting any other file is never a concern
 			continue
 		}
-		path := f[len(f)-1]
+		path := change.Path
+		label := ui.SafeInline(path)
 		// A file the readable rules or a secret name hide comes back without an error even under a
 		// .coopignore coop cannot read, so it is named whatever that file says. Its Key counts too:
 		// .ENV in a commit is the .env a Mac checks out.
@@ -85,23 +88,27 @@ func PolicyScan(repo, ref string) ([]string, error) {
 				warns = append(warns, err.Error()+" — remove it if you did not create it, or make it a readable regular file of at most 1 MiB, then merge again")
 			}
 		case hidden:
-			warns = append(warns, "secret-like file: "+path)
+			warns = append(warns, "secret-like file: "+label)
 		}
 		// The fork's own policy file must stay one coop can read, or every later launch refuses.
 		if notRegularCoopignore(repo, ref, path) {
-			warns = append(warns, path+" — the fork makes a .coopignore something other than a regular file, which Coop cannot read")
+			warns = append(warns, label+" — the fork makes a .coopignore something other than a regular file, which Coop cannot read")
 		}
 		// Files that change what runs on the HOST the moment a human touches the merged tree — a
 		// hook on their next commit, a settings file their editor session runs, a compose file
 		// their Docker runs — path-based, so a huge/binary blob can't dodge it below.
-		if reason, automatic := hostsurface.Classify(f[0], path); automatic {
-			warns = append(warns, path+" — "+reason) // runs by itself: blocks the merge unless forced
+		if reason, automatic := hostsurface.Classify(change.Status, path); automatic {
+			warns = append(warns, label+" — "+reason) // runs by itself: blocks the merge unless forced
 		}
-		entry, err := forkspace.GitOutErr(repo, "ls-tree", ref, "--", path)
+		entry, err := forkspace.GitOutput(repo, "ls-tree", "-z", ref, "--", ":(literal)"+path)
 		if err != nil {
 			return nil, fmt.Errorf("read %s from the fork: %w", path, err)
 		}
-		if strings.HasPrefix(entry, "160000 ") {
+		metadata, foundPath, ok := strings.Cut(entry, "\t")
+		if !ok || foundPath != path+"\x00" {
+			return nil, fmt.Errorf("read %s from the fork: Git did not return the exact file", label)
+		}
+		if strings.HasPrefix(metadata, "160000 ") {
 			continue // a submodule's commit: the fork changed which one, and has no content here to read
 		}
 		size, err := gitBlobSize(repo, ref, path)
@@ -109,10 +116,10 @@ func PolicyScan(repo, ref string) ([]string, error) {
 			return nil, err
 		}
 		if size > 5<<20 {
-			warns = append(warns, fmt.Sprintf("large file (%dMB): %s", size>>20, path))
+			warns = append(warns, fmt.Sprintf("large file (%dMB): %s", size>>20, label))
 			continue // don't read a huge blob's content
 		}
-		content, err := forkspace.GitOutErr(repo, "show", ref+":"+path)
+		content, err := forkspace.GitOutput(repo, "show", ref+":"+path)
 		if err != nil {
 			return nil, fmt.Errorf("read %s from the fork: %w", path, err)
 		}
@@ -121,11 +128,11 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		}
 		if filepath.Base(path) == "package.json" {
 			if k := addedLifecycleScript(repo, ref, path, content); k != "" {
-				warns = append(warns, path+" adds a "+k+" script — npm runs it automatically on `npm install`")
+				warns = append(warns, label+" adds a "+k+" script — npm runs it automatically on `npm install`")
 			}
 		}
 		for _, s := range box.ScanSecrets(content) {
-			warns = append(warns, fmt.Sprintf("possible secret in %s:%d (%s) — review the finding and remove any real credential from the fork before merging", path, s.Line, s.Kind))
+			warns = append(warns, fmt.Sprintf("possible secret in %s:%d (%s) — review the finding and remove any real credential from the fork before merging", label, s.Line, s.Kind))
 		}
 	}
 	return warns, nil
@@ -144,7 +151,7 @@ func notRegularCoopignore(repo, ref, path string) bool {
 	if !box.IsCoopignoreName(parts[len(parts)-1]) {
 		return false
 	}
-	mode, _, _ := strings.Cut(forkspace.GitOut(repo, "ls-tree", ref, "--", path), " ")
+	mode, _, _ := strings.Cut(forkspace.GitOut(repo, "ls-tree", "-z", ref, "--", ":(literal)"+path), " ")
 	return mode != "" && mode != "100644" && mode != "100755"
 }
 
@@ -1136,6 +1143,7 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 		ui.Note("")
 	}
 	var landed []string
+	var cleanupErrors []error
 	for _, n := range names {
 		if skip[n] {
 			continue
@@ -1158,6 +1166,7 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 			} else if err == nil {
 				if destroyErr := destroyLandedFork(c.rt, repo, n, result.approval, box.ConfigExposureRoots(c.cfg)...); destroyErr != nil {
 					ui.Alert("Merged fork "+n+", but its cleanup is incomplete", destroyErr.Error())
+					cleanupErrors = append(cleanupErrors, fmt.Errorf("cleanup fork %s: %w", n, destroyErr))
 				} else {
 					ui.OK("Deleted fork %s", n)
 				}
@@ -1172,7 +1181,7 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 				cause += "\nUntouched: " + ui.List(remaining, "and") + "."
 			}
 			ui.Failure("Could not merge fork "+n, cause)
-			return 1, ui.Reported(err)
+			return 1, ui.Reported(errors.Join(append(cleanupErrors, err)...))
 		}
 	}
 	if len(landed) == 0 {
@@ -1180,6 +1189,9 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 	}
 	ui.Note("")
 	ui.OK("Merged %s", ui.Count(len(landed), "fork"))
+	if err := errors.Join(cleanupErrors...); err != nil {
+		return 1, err
+	}
 	return 0, nil
 }
 

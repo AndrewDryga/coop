@@ -1951,7 +1951,7 @@ func companionRepositoryMounts(
 	mounts := make([]Mount, 0, len(repositories))
 	environment := make([]companionRepositoryEnvironment, 0, len(repositories))
 	for _, repository := range repositories {
-		if !validCompanionName(repository.Name) || seen[repository.Name] {
+		if !ValidCompanionName(repository.Name) || seen[repository.Name] {
 			return nil, nil, fmt.Errorf(
 				"invalid or duplicate companion repository name %q",
 				repository.Name,
@@ -1978,7 +1978,7 @@ func companionRepositoryMounts(
 				repository.Name,
 			)
 		}
-		if !validCommitIdentity(repository.BaseCommit) {
+		if !forkspace.ValidObjectID(repository.BaseCommit) {
 			return nil, nil, fmt.Errorf(
 				"companion repository %q has an invalid commit identity",
 				repository.Name,
@@ -1997,7 +1997,8 @@ func companionRepositoryMounts(
 	return mounts, environment, nil
 }
 
-func validCompanionName(name string) bool {
+// ValidCompanionName reports whether a name fits the mounted companion namespace.
+func ValidCompanionName(name string) bool {
 	if name == "" || name == "primary" || len(name) > 48 {
 		return false
 	}
@@ -2007,18 +2008,6 @@ func validCompanionName(name string) bool {
 			continue
 		}
 		return false
-	}
-	return true
-}
-
-func validCommitIdentity(commit string) bool {
-	if len(commit) != 40 && len(commit) != 64 {
-		return false
-	}
-	for _, r := range commit {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
 	}
 	return true
 }

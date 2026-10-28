@@ -403,6 +403,24 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// measurable. Best-effort throughout; a telemetry hiccup never touches the work.
 	runid := randid.Hex(8)
 	c.runID = runid // boxes get it as COOP_RUN_ID so a consult peer can log its usage for the cost digest
+	preparedServices := ""
+	servicesSeen := loopServiceFingerprint(repo, c.activityRepo) != ""
+	servicesCleaned := false
+	cleanupServices := func() {
+		if servicesCleaned {
+			return
+		}
+		servicesCleaned = true
+		if !servicesSeen && preparedServices == "" && loopServiceFingerprint(repo, c.activityRepo) == "" {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if cleanupErr := box.StopServicesForOwner(cleanupCtx, c.rt, repo, c.activityRepo, runid, true); cleanupErr != nil {
+			ui.Warn("could not clean up this loop's private services: %v", cleanupErr)
+		}
+	}
+	defer cleanupServices()
 	if len(peers) > 0 || c.preset != nil {
 		peerPath, peerErr := preparePeerRecordFile(repo, runid)
 		if peerErr != nil {
@@ -702,7 +720,6 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	reviewCapped := false
 	verificationFailed := false
 	reuseWorkServices := make(map[string]bool)
-	preparedServices := ""
 reviewAgain:
 	for ; ; signoffRound++ {
 		for {
@@ -844,6 +861,7 @@ reviewAgain:
 			c.net.setStage(fmt.Sprintf("Task attempt %d", attempt))
 			cmd, streaming, agentCommand := iterCmd(agent, iterWork)
 			serviceFingerprint := loopServiceFingerprint(repo, c.activityRepo)
+			servicesSeen = servicesSeen || serviceFingerprint != ""
 			c.reuseServices = serviceFingerprint != "" && serviceFingerprint == preparedServices
 			recovery := iterationRecovery{reuseServices: reuseWorkServices[assigned.Item.ID]}
 			delete(reuseWorkServices, assigned.Item.ID)
@@ -2014,13 +2032,7 @@ reviewAgain:
 	if err != nil {
 		return 1, err
 	}
-	if preparedServices != "" || loopServiceFingerprint(repo, c.activityRepo) != "" {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if cleanupErr := box.StopServicesForOwner(cleanupCtx, c.rt, repo, c.activityRepo, runid, true); cleanupErr != nil {
-			ui.Warn("could not clean up this loop's private services: %v", cleanupErr)
-		}
-		cancel()
-	}
+	cleanupServices()
 	c.closeWith(func() {
 		if verificationFailed && cf.Todo+cf.Doing+cf.Blocked == 0 {
 			printFailedVerificationVerdict(cf)

@@ -533,6 +533,21 @@ func TestACPControlPassthrough(t *testing.T) {
 	}
 }
 
+func TestACPControlSelectorsRequireSettingMethod(t *testing.T) {
+	for _, method := range []string{"session/set_model", "session/update", "unknown", ""} {
+		t.Run(method, func(t *testing.T) {
+			c := newTestControl(t)
+			c.sel = Selection{Account: "personal"}
+			before := c.selection()
+			line := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":7,"method":%q,"params":{"sessionId":"s","configId":"coop_account","value":"work"}}`, method))
+			handled, response, rewrite, restart := c.fromEditor(line)
+			if handled || len(response) != 0 || len(rewrite) != 0 || restart || c.selection() != before {
+				t.Errorf("unrelated method changed selection: handled=%v response=%s rewrite=%s restart=%v selection=%+v", handled, response, rewrite, restart, c.selection())
+			}
+		})
+	}
+}
+
 // TestACPControlFromEditor: coop's own selector set is intercepted; a REAL change restarts and the ack
 // shows the new currentValue; a NO-OP set (the value it's already on — Zed's default_config_options
 // echo at startup) is acked but does NOT restart; a native option set passes straight through.

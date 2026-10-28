@@ -476,8 +476,13 @@ func doctorCheckTaskChannel(s *doctorSection, a *app, fixture, img string) {
 		ExtraArgs: []string{"-v", probe + ":/probe-tasks.sh:ro"},
 		TaskTools: server,
 	})
+	heldLog, _ := os.ReadFile(filepath.Join(queue, tasks.StateInProgress, "theirs", "log.md"))
+	reportDoctorTaskProbe(s, out.String(), errOut.String(), runErr, heldLog)
+}
+
+func reportDoctorTaskProbe(s *doctorSection, stdout, stderr string, runErr error, heldLog []byte) {
 	replies := map[string]map[string]any{}
-	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
 		if strings.HasPrefix(line, "RESULT FAIL task.socket") {
 			s.probeFailed("The task channel is not mounted", "/coop/tasks/mcp.sock", doctorTaskChecks)
 			return
@@ -496,7 +501,7 @@ func doctorCheckTaskChannel(s *doctorSection, a *app, fixture, img string) {
 	}
 	if len(replies) == 0 {
 		s.probeFailed("Could not run the task-channel checks",
-			probeReason(errOut.String(), runErr, "The task channel did not respond."), doctorTaskChecks)
+			probeReason(stderr, runErr, "The task channel did not respond."), doctorTaskChecks)
 		return
 	}
 	// 1. Exactly the task tools — by the fixed set AND by shape, so a renamed tool cannot slip a
@@ -545,7 +550,7 @@ func doctorCheckTaskChannel(s *doctorSection, a *app, fixture, img string) {
 	} else {
 		s.fail("The task channel did not refuse a change to another process's task", sentence(text), "")
 	}
-	if log, _ := os.ReadFile(filepath.Join(queue, tasks.StateInProgress, "theirs", "log.md")); strings.Contains(string(log), "doctor must not land here") {
+	if strings.Contains(string(heldLog), "doctor must not land here") {
 		s.fail("A refused change still reached the held task's log", "log.md", "")
 	}
 	if text, isError := toolReply(replies["mine"]); !isError && strings.Contains(text, "appended") {
@@ -796,6 +801,12 @@ func buildFixture() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 	}
+	ready := false
+	defer func() {
+		if !ready {
+			_ = os.RemoveAll(dir)
+		}
+	}()
 	// MkdirTemp makes the root 0700; the box mounts it at /workspace and the probe must cd into and
 	// stat it as a uid that may not own it (and, under --cap-drop ALL, can't bypass the check). Make
 	// the root world-traversable; seed permissions explicitly below because umask may be private.
@@ -849,6 +860,7 @@ func buildFixture() (string, error) {
 			return "", fmt.Errorf("could not prepare the temporary project with git %v: %v", c, err)
 		}
 	}
+	ready = true
 	return dir, nil
 }
 

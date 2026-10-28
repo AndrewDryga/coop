@@ -276,7 +276,7 @@ func ReadUsageQuotaNative(ctx context.Context, cfg *config.Config, rt runtime.Ru
 	if runErr != nil || code != 0 || output.exceeded {
 		return nil, errors.New("native quota lookup unavailable")
 	}
-	return output.Bytes(), nil
+	return output.buffer.Bytes(), nil
 }
 
 func usageQuotaNativeArgs(cfg *config.Config, provider, home, image, owner, key string, command, env []string) []string {
@@ -295,16 +295,16 @@ func usageQuotaNativeArgs(cfg *config.Config, provider, home, image, owner, key 
 }
 
 type quotaOutput struct {
-	bytes.Buffer
+	buffer   bytes.Buffer
 	exceeded bool
 }
 
 func (out *quotaOutput) Write(data []byte) (int, error) {
 	n := len(data)
-	if n > (1<<20)-out.Len() {
+	if n > (1<<20)-out.buffer.Len() {
 		out.exceeded = true
-		data = data[:(1<<20)-out.Len()]
+		data = data[:(1<<20)-out.buffer.Len()]
 	}
-	_, _ = out.Buffer.Write(data)
+	_, _ = out.buffer.Write(data)
 	return n, nil
 }

@@ -159,7 +159,7 @@ func validateGenerationRecord(record generationRecord, name string) error {
 	if record.Isolated != (record.Version == forkGenerationIsolatedVersion) {
 		return errors.New("fork isolation does not match its authority version")
 	}
-	if record.Isolated && !validPinnedCommit(record.CreationBase) || !record.Isolated && record.CreationBase != "" {
+	if record.Isolated && !ValidObjectID(record.CreationBase) || !record.Isolated && record.CreationBase != "" {
 		return errors.New("fork creation base does not match its isolation authority")
 	}
 	switch record.Version {
@@ -501,7 +501,7 @@ func ensureGenerationLocked(repo, name string, isolated bool) (Identity, error) 
 	if isolated {
 		record.Version, record.Isolated = forkGenerationIsolatedVersion, true
 		record.CreationBase, err = gitOutputContext(context.Background(), Workspace(repo, name), "rev-parse", "HEAD")
-		if err != nil || !validPinnedCommit(record.CreationBase) {
+		if err != nil || !ValidObjectID(record.CreationBase) {
 			return Identity{}, errors.Join(errors.New("capture isolated fork creation base"), err)
 		}
 	}
@@ -646,7 +646,7 @@ func recoverUnrecordedGeneration(repo, name string, state *os.Root) (Identity, b
 	lines := strings.Split(string(body), "\n")
 	if len(lines) < 4 || lines[1] != name || !ValidGeneration(Generation(lines[2])) ||
 		!(lines[0] == "coop-fork-generation-v3" && len(lines) == 4 && lines[3] == "" ||
-			lines[0] == "coop-fork-generation-v4-isolated" && len(lines) == 5 && validPinnedCommit(lines[3]) && lines[4] == "") {
+			lines[0] == "coop-fork-generation-v4-isolated" && len(lines) == 5 && ValidObjectID(lines[3]) && lines[4] == "") {
 		return Identity{}, false, errors.New("reserved fork identity marker exists without a valid generation record")
 	}
 	generation := Generation(lines[2])

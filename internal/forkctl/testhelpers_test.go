@@ -14,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/hostsurface"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -221,4 +222,13 @@ func runForkCommandAcrossLockedMutation(t *testing.T, repo, name string, command
 		t.Fatal("fork command remained blocked after lifecycle unlock")
 		return forkCommandResult{}
 	}
+}
+
+func mustHostSurfaces(t *testing.T, repo, ref string) []hostsurface.Finding {
+	t.Helper()
+	changes, err := readForkChanges(repo, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hostsurface.Findings(changes)
 }

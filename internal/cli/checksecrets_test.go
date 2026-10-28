@@ -10,6 +10,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // pinGitConfig closes both git config doors in the PROCESS environment, which the fixture repo
@@ -21,6 +22,40 @@ func pinGitConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+}
+
+func TestHostSurfacesChangedPreservesExactPaths(t *testing.T) {
+	pinGitConfig(t)
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "base")
+	paths := []string{".github/workflows/line\njob.yml", ".github/workflows/tab\tjob.yml"}
+	for _, path := range paths {
+		full := filepath.Join(repo, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("name: fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := hostSurfacesChanged(repo)
+	if len(got) != len(paths) {
+		t.Fatalf("surfaces = %+v, want exact paths %q", got, paths)
+	}
+	for i, path := range paths {
+		if got[i].Path != path {
+			t.Errorf("surface = %q, want %q", got[i].Path, path)
+		}
+	}
+	out, code := runCheckSecrets(t, repo, nil)
+	if code != 0 {
+		t.Fatalf("advisory scan exit = %d: %s", code, out)
+	}
+	for _, path := range paths {
+		if strings.Contains(out, path) || !strings.Contains(out, ui.SafeInline(path)) {
+			t.Errorf("advisory did not escape %q: %s", path, out)
+		}
+	}
 }
 
 func TestCheckSecretsIgnoredWarningAgreement(t *testing.T) {

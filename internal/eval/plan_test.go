@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +44,7 @@ func TestBuildPlanRefusesEveryBadRequest(t *testing.T) {
 		opts    Options
 		want    string
 	}{
+		{"overflow", append(append([]Configuration{}, one...), one...), Options{Jobs: 1, Repeat: math.MaxInt, Timeout: time.Hour}, "matrix exceeds"},
 		{"no configs", nil, Options{Jobs: 1, Repeat: 1, Timeout: time.Hour}, "at least one target or preset"},
 		{"zero repeat", one, Options{Jobs: 1, Repeat: 0, Timeout: time.Hour}, "repeat must be positive"},
 		{"zero jobs", one, Options{Jobs: 0, Repeat: 1, Timeout: time.Hour}, "jobs must be positive"},

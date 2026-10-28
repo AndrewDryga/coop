@@ -185,11 +185,11 @@ func writeNetRecovery(w io.Writer, p ui.Palette, result box.NetworkRecovery) {
 		fmt.Fprintf(w, "Network run %s was left alone.\n\n  %s\n", id,
 			"Its supervising process is still running, or Coop could not verify that it stopped.")
 	case result.Skipped != "":
-		writeNetCleanupIncomplete(w, p, id, []string{netSentence(netCleanupBlocker(result.Skipped))}, netCleanupRemedy(result.Skipped))
+		writeNetCleanupIncomplete(w, p, id, []string{upperFirstSentence(netCleanupBlocker(result.Skipped))}, netCleanupRemedy(result.Skipped))
 	case len(result.Failures) != 0:
 		causes := make([]string, 0, len(result.Failures))
 		for _, failure := range result.Failures {
-			causes = append(causes, netSentence(failure.Error()))
+			causes = append(causes, upperFirstSentence(failure.Error()))
 		}
 		writeNetCleanupIncomplete(w, p, id, causes, "Full details: coop net inspect "+id+" --json")
 	case len(result.Pending) != 0:

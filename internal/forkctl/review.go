@@ -12,6 +12,8 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/gitdiff"
+	"github.com/AndrewDryga/coop/internal/hostsurface"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -107,7 +109,8 @@ func prepareForkReviewCandidate(repo, ws, name string) (c forkReviewCandidate, e
 }
 
 func (c *Control) ForkReview(args []string) (int, error) {
-	name, stat, tool, open, gate := "", false, false, false, false
+	stat, tool, open, gate := false, false, false, false
+	var pos []string
 	for _, x := range args {
 		switch x {
 		case "--stat":
@@ -122,8 +125,12 @@ func (c *Control) ForkReview(args []string) (int, error) {
 			if strings.HasPrefix(x, "-") {
 				return 2, fmt.Errorf("coop fork review: unknown flag %q", x)
 			}
-			name = x
+			pos = append(pos, x)
 		}
+	}
+	name, err := oneForkName("review", pos)
+	if err != nil {
+		return 2, err
 	}
 	if name == "" {
 		return 2, ui.MissingArgument("fork name", "coop fork review", "coop fork review <name> [--stat | --tool | --open] [--gate]")
@@ -242,10 +249,14 @@ func (c *Control) ForkReview(args []string) (int, error) {
 			// Pin the tool's command from global too (empty neutralizes any repo override and lets
 			// git use the built-in for a known tool), so the repo can't redirect even a named tool.
 			cargs = append(cargs, "-c", "difftool."+t+".cmd="+gitGlobalOut("difftool."+t+".cmd"))
-			_ = gitInteractive(reviewRepo, append(cargs, "difftool", "HEAD..."+ref)...)
+			if err := gitInteractive(reviewRepo, append(cargs, "difftool", "HEAD..."+ref)...); err != nil {
+				return 1, err
+			}
 		} else {
 			ui.Note("No global Git diff tool is configured. Showing the diff here.")
-			_ = gitInteractive(reviewRepo, "diff", "--no-ext-diff", "HEAD..."+ref) // internal diff (see default case)
+			if err := gitInteractive(reviewRepo, "diff", "--no-ext-diff", "HEAD..."+ref); err != nil {
+				return 1, err
+			} // internal diff (see default case)
 		}
 		return finish(0, nil)
 	case stat:
@@ -256,7 +267,9 @@ func (c *Control) ForkReview(args []string) (int, error) {
 		// --no-ext-diff: a broken diff.external / GIT_EXTERNAL_DIFF in the host environment would
 		// otherwise make the diff "external diff died" (the -c diff.external= hardening blanks the
 		// config but can't override the env var). Force git's internal diff so review always renders.
-		_ = gitInteractive(reviewRepo, "diff", "--no-ext-diff", "HEAD..."+ref)
+		if err := gitInteractive(reviewRepo, "diff", "--no-ext-diff", "HEAD..."+ref); err != nil {
+			return 1, err
+		}
 		return finish(0, nil)
 	}
 }
@@ -336,15 +349,22 @@ func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutco
 	p := ui.For(os.Stdout)
 	say := func(format string, a ...any) { fmt.Printf(format+"\n", a...) }
 	ins, del := parseShortstat(forkspace.GitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
-	files := forkspace.GitOut(repo, "diff", "--name-status", "HEAD..."+ref)
-	nfiles := 0
-	if files != "" {
-		nfiles = len(strings.Split(files, "\n"))
+	changes, err := readForkChanges(repo, ref)
+	if err != nil {
+		return err
+	}
+	rawCounts, err := forkspace.GitOutput(repo, "diff", "--numstat", "-z", "HEAD..."+ref)
+	if err != nil {
+		return err
+	}
+	counts, err := gitdiff.Numstat(rawCounts)
+	if err != nil {
+		return err
 	}
 	ahead, _ := strconv.Atoi(forkspace.GitOut(repo, "rev-list", "--count", "HEAD.."+ref))
 	say("Changes in fork %s", name)
 	say("  Into: %s", into)
-	say("  %s · %s · +%d −%d", ui.Count(ahead, "commit"), ui.Count(nfiles, "file"), ins, del)
+	say("  %s · %s · +%d −%d", ui.Count(ahead, "commit"), ui.Count(len(changes), "file"), ins, del)
 	if log := forkspace.GitOut(repo, "log", "--oneline", "--no-decorate", "HEAD.."+ref); log != "" {
 		say("")
 		say("Commits")
@@ -361,7 +381,7 @@ func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutco
 		say("Agent's notes")
 		say("%s", indent(why))
 	}
-	if files != "" { // the sections below are diff-derived; an empty diff has nothing to map
+	if len(changes) != 0 { // the sections below are diff-derived; an empty diff has nothing to map
 		// The SAME scan `coop fork merge` enforces — surfaced here so findings appear at review,
 		// not as a failed merge. Only a deny-policy hit actually blocks; a host-executed file is
 		// advisory, and calling it blocked would send a reviewer to --force it never needed.
@@ -369,11 +389,11 @@ func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutco
 		if scanErr != nil {
 			warns = append(warns, "Coop could not check these changes: "+scanErr.Error())
 		}
-		surfaces := HostSurfaces(repo, ref)
+		surfaces := hostsurface.Findings(changes)
 		if len(warns) > 0 || len(surfaces) > 0 {
 			cause := append([]string{}, warns...)
 			for _, f := range surfaces {
-				cause = append(cause, f.Path+"\n  "+f.Reason)
+				cause = append(cause, ui.SafeInline(f.Path)+"\n  "+f.Reason)
 			}
 			row := [2]string{"Review the diff before running commands that use these files.", ""}
 			if len(warns) > 0 {
@@ -383,7 +403,7 @@ func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutco
 		}
 		say("")
 		say("Files")
-		for _, sec := range classifyChanged(files, forkspace.GitOut(repo, "diff", "--numstat", "HEAD..."+ref)) {
+		for _, sec := range classifyChanged(changes, counts) {
 			if sec.title != "" {
 				say("%s", indent(sec.title+":"))
 			}

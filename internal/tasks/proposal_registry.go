@@ -86,16 +86,8 @@ func validateForkProposalRecord(record ForkProposalRecord) error {
 }
 
 func decodeForkProposalRecord(data []byte) (ForkProposalRecord, error) {
-	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(data), forkProposalRecordLimit+1))
-	dec.DisallowUnknownFields()
 	var record ForkProposalRecord
-	if err := dec.Decode(&record); err != nil {
-		return ForkProposalRecord{}, err
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return ForkProposalRecord{}, errors.New("fork proposal record contains multiple JSON values")
-		}
+	if err := decodeStrictTaskJSON(io.LimitReader(bytes.NewReader(data), forkProposalRecordLimit+1), &record, "fork proposal record"); err != nil {
 		return ForkProposalRecord{}, err
 	}
 	if err := validateForkProposalRecord(record); err != nil {

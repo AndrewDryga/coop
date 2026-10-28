@@ -85,9 +85,9 @@ func isolatedSourceBoundary(repo string, identity forkspace.Identity, parentHead
 
 func validateIsolatedSource(record isolatedSourceRecord, identity forkspace.Identity) error {
 	if (record.Version != 1 && record.Version != 2) || record.Fork != identity ||
-		!validObjectID(record.Head) || !validObjectID(record.Tree) ||
+		!forkspace.ValidObjectID(record.Head) || !forkspace.ValidObjectID(record.Tree) ||
 		record.Version == 1 && (record.PublicationHead != "" || record.PublicationTree != "") ||
-		record.Version == 2 && (!validObjectID(record.PublicationHead) || !validObjectID(record.PublicationTree)) {
+		record.Version == 2 && (!forkspace.ValidObjectID(record.PublicationHead) || !forkspace.ValidObjectID(record.PublicationTree)) {
 		return errors.New("invalid isolated source publication receipt")
 	}
 	return nil
@@ -179,12 +179,12 @@ func writeIsolatedRecord(repo, path string, value any) error {
 
 func validateIsolatedIntent(repo string, identity forkspace.Identity, intent isolatedLandIntent) error {
 	if intent.Version != 2 || intent.Fork != identity || intent.Parent.Repo != repo || intent.CreatedAt.IsZero() ||
-		!validObjectID(intent.SourceHead) || !validObjectID(intent.SourceTree) || !validObjectID(intent.Upstream) ||
-		!validObjectID(intent.Parent.Head) || !validObjectID(intent.Parent.Tree) || len(intent.Parent.Index) != 64 ||
-		len(intent.Parent.Content) != 64 || !validObjectID(intent.Parent.Content) ||
-		intent.PublicationContent != "" && (len(intent.PublicationContent) != 64 || !validObjectID(intent.PublicationContent)) ||
+		!forkspace.ValidObjectID(intent.SourceHead) || !forkspace.ValidObjectID(intent.SourceTree) || !forkspace.ValidObjectID(intent.Upstream) ||
+		!forkspace.ValidObjectID(intent.Parent.Head) || !forkspace.ValidObjectID(intent.Parent.Tree) || len(intent.Parent.Index) != 64 ||
+		len(intent.Parent.Content) != 64 || !forkspace.ValidObjectID(intent.Parent.Content) ||
+		intent.PublicationContent != "" && (len(intent.PublicationContent) != 64 || !forkspace.ValidObjectID(intent.PublicationContent)) ||
 		intent.Phase == "landed" && intent.PublicationContent == "" ||
-		!validObjectID(intent.PublicationHead) || !validObjectID(intent.PublicationTree) ||
+		!forkspace.ValidObjectID(intent.PublicationHead) || !forkspace.ValidObjectID(intent.PublicationTree) ||
 		!strings.HasPrefix(intent.Parent.Target, "refs/heads/") || len(intent.Parent.Metadata) == 0 ||
 		filepath.Base(intent.Custody) != intent.Custody || !strings.HasPrefix(intent.Custody, ".isolated-candidate-") ||
 		(intent.Phase != "started" && intent.Phase != "landed") {

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	SchemaVersion = 25
+	SchemaVersion = 26
 	// OldestSchemaVersion is the oldest store schema Open still converts. A store below it is
 	// refused with the schema that converts it (.agent/kb/rules/one-upgrade-for-old-state.md).
 	// Raise it only once every known store has passed that waypoint, together with the card.
@@ -580,6 +580,9 @@ func ValidateSourceBinding(binding SourceBinding) error {
 		if binding.PullRequestExpectedHead != binding.Requested.ExpectedHeadCommit {
 			return invalid("pull request expected head disagrees with the requested selector")
 		}
+		if binding.PullRequestExpectedHead != "" && binding.PullRequestExpectedHead != binding.SelectedCommit {
+			return invalid("pull request expected head disagrees with the selected commit")
+		}
 	case SourceCommit:
 		if binding.SelectedRef != nil {
 			return invalid("an exact commit names no ref")
@@ -805,6 +808,16 @@ type StageTurnCandidateRequest struct {
 	CostRecorded      bool
 }
 
+// RecordTurnUsageRequest checkpoints token totals for this logical turn and an
+// optional cumulative cost observation from its current native provider session.
+type RecordTurnUsageRequest struct {
+	SessionID         string
+	TurnID            string
+	Usage             Usage
+	CumulativeCostUSD float64
+	CostRecorded      bool
+}
+
 type RejectTurnCandidateRequest struct {
 	SessionID       string
 	TurnID          string
@@ -816,9 +829,9 @@ type CancelTurnRequest struct {
 	SessionID        string
 	TurnID           string
 	ExpectedRevision int64
-	// Usage is what the prompt rounds that COMPLETED before the cancellation reported, when the
-	// runner settles the turn itself; the API's own cancel carries none. The round that was cut
-	// short reports nothing — usage arrives only in a prompt result — so it is never invented.
+	// Usage merges observed token totals. CostRecorded supplies an optional current native
+	// session counter; the store adds only its unaccounted delta. The runner checkpoints
+	// observations separately, so the reserved API cancellation request stays unchanged.
 	Usage             Usage
 	CumulativeCostUSD float64
 	CostRecorded      bool
@@ -845,9 +858,9 @@ type FailTurnRequest struct {
 	TurnID      string
 	ErrorCode   ErrorCode
 	ErrorDetail string
-	// Usage is what the prompt rounds that COMPLETED before the failure reported (a schema-repair
-	// round is a real request the provider billed). The failing round reports nothing and is
-	// never invented; a turn that fails before any round completes keeps no usage at all.
+	// Usage merges observed token totals, including updates received before a failed prompt.
+	// CostRecorded supplies a current native session counter if its earlier checkpoint failed;
+	// already-accounted turn cost is preserved without interpreting it as another raw counter.
 	Usage             Usage
 	CumulativeCostUSD float64
 	CostRecorded      bool

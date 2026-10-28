@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
@@ -160,7 +161,7 @@ func validPublicationResult(intent workerproto.PublishIntent, result workerproto
 	if r := result.Conflict; result.Status == "conflict" && r != nil && result.Receipt == nil {
 		return r.Repository == intent.Repository.RepositoryRef && r.GitHubRepository == intent.Repository.GitHubRepository &&
 			r.BranchRef == "refs/heads/"+req.Branch && r.CandidateCommitSHA == req.CandidateHead &&
-			validSessionReviewObject(r.ObservedHeadSHA) && r.ObservedHeadSHA != req.CandidateHead && r.PullRequestNumber > 0 &&
+			forkspace.ValidObjectID(r.ObservedHeadSHA) && r.ObservedHeadSHA != req.CandidateHead && r.PullRequestNumber > 0 &&
 			r.PullRequestURL == fmt.Sprintf("https://github.com/%s/pull/%d", intent.Repository.GitHubRepository, r.PullRequestNumber) &&
 			(result.ErrorCode == "publication_branch_changed" || result.ErrorCode == "publication_branch_already_exists")
 	}

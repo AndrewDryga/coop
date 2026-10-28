@@ -54,7 +54,7 @@ func TestEmptySourceJobOwnsPrivateWorkspaceAndSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	if first.Source != nil || first.Workspace == "" || first.Repository == "" ||
-		first.Workspace == first.Repository || !validSessionWorkspaceCommit(first.BaseCommit) {
+		first.Workspace == first.Repository || !forkspace.ValidObjectID(first.BaseCommit) {
 		t.Fatalf("empty workspace authority = %+v", first)
 	}
 	entries, err := os.ReadDir(first.Workspace)

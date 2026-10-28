@@ -263,7 +263,7 @@ func (e *Executor) collectActivity(ctx context.Context, maximumBytes int) ([]wor
 			} else {
 				event.Payload = nil
 			}
-			payload, err := json.Marshal(event)
+			payload, err := encodeWireJSON(event)
 			if err != nil || batchBytes+len(payload) > remainingBytes {
 				break
 			}
@@ -401,8 +401,7 @@ func publicActivityPayload(kind string, raw json.RawMessage) (json.RawMessage, b
 	default:
 		return nil, false
 	}
-	narrated.finish()
-	encoded, err := json.Marshal(public)
+	encoded, err := narrated.finish()
 	return encoded, err == nil
 }
 

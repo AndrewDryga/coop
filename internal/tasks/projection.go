@@ -131,65 +131,6 @@ func copyProjectionRootFile(srcRoot, dstRoot *os.Root, srcRel, dstRel string, be
 	return errors.Join(copyErr, out.Sync(), out.Close())
 }
 
-func walkProjectionRoot(root *os.Root, visit func(string, os.FileInfo) error) error {
-	entriesSeen := 0
-	var walk func(string, os.FileInfo) error
-	walk = func(rel string, expected os.FileInfo) error {
-		dir, err := root.Open(rel)
-		if err != nil {
-			return err
-		}
-		opened, statErr := dir.Stat()
-		if statErr != nil || !opened.IsDir() || !os.SameFile(expected, opened) {
-			_ = dir.Close()
-			if statErr != nil {
-				return statErr
-			}
-			return fmt.Errorf("projection directory %q changed while opening", rel)
-		}
-		entries, readErr := dir.ReadDir(projectionMaxFiles + 1)
-		closeErr := dir.Close()
-		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return errors.Join(readErr, closeErr)
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-		for _, entry := range entries {
-			entriesSeen++
-			if entriesSeen > projectionMaxFiles {
-				return fmt.Errorf("task projection exceeds its %d-entry limit", projectionMaxFiles)
-			}
-			child := entry.Name()
-			if rel != "." {
-				child = filepath.Join(rel, child)
-			}
-			info, err := root.Lstat(child)
-			if err != nil {
-				return err
-			}
-			if info.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("task projection contains symlink %q", child)
-			}
-			if err := visit(child, info); err != nil {
-				return err
-			}
-			if info.IsDir() {
-				if err := walk(child, info); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	rootInfo, err := root.Stat(".")
-	if err != nil {
-		return err
-	}
-	return walk(".", rootInfo)
-}
-
 // walkOpenedProjectionRoot keeps an open handle for every directory while descending. Unlike a
 // pathname walk, an agent cannot swap a checked parent for a symlink between lstat and the child
 // read: each child is resolved relative to the already-open parent inode.
@@ -311,7 +252,28 @@ func copyOpenedProjectionTree(srcRoot, dstRoot *os.Root) error {
 	if err != nil {
 		return err
 	}
+	if err := copyOpenedProjectionEntries(srcRoot, dstRoot); err != nil {
+		return err
+	}
+	afterDigest, err := hashOpenedProjectionTree(srcRoot)
+	if err != nil {
+		return err
+	}
+	destinationDigest, err := hashOpenedProjectionTree(dstRoot)
+	if err != nil {
+		return err
+	}
+	if beforeDigest != afterDigest || beforeDigest != destinationDigest {
+		return errors.New("task projection changed while the host copied it")
+	}
+	return nil
+}
+
+// copyOpenedProjectionEntries bounds the copy itself: source growth after the initial hash
+// must not fill the destination before the final consistency check can reject it.
+func copyOpenedProjectionEntries(srcRoot, dstRoot *os.Root) error {
 	total := int64(0)
+	entriesSeen := 0
 	var copyDir func(*os.Root, *os.Root) error
 	copyDir = func(src, dst *os.Root) error {
 		dir, err := src.Open(".")
@@ -328,6 +290,10 @@ func copyOpenedProjectionTree(srcRoot, dstRoot *os.Root) error {
 		}
 		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 		for _, entry := range entries {
+			entriesSeen++
+			if entriesSeen > projectionMaxFiles {
+				return fmt.Errorf("task projection exceeds its %d-entry limit", projectionMaxFiles)
+			}
 			name := entry.Name()
 			info, err := src.Lstat(name)
 			if err != nil {
@@ -392,21 +358,7 @@ func copyOpenedProjectionTree(srcRoot, dstRoot *os.Root) error {
 		}
 		return nil
 	}
-	if err := copyDir(srcRoot, dstRoot); err != nil {
-		return err
-	}
-	afterDigest, err := hashOpenedProjectionTree(srcRoot)
-	if err != nil {
-		return err
-	}
-	destinationDigest, err := hashOpenedProjectionTree(dstRoot)
-	if err != nil {
-		return err
-	}
-	if beforeDigest != afterDigest || beforeDigest != destinationDigest {
-		return errors.New("task projection changed while the host copied it")
-	}
-	return nil
+	return copyDir(srcRoot, dstRoot)
 }
 
 func copyPathTreeToOpened(src string, dstRoot *os.Root) error {
@@ -623,56 +575,12 @@ func readProjectionManifest(root *os.Root) (projectionManifest, error) {
 }
 
 func hashProjectionTree(dir string) (string, error) {
-	hash := sha256.New()
 	root, _, err := openProjectionRoot(dir)
 	if err != nil {
 		return "", err
 	}
 	defer root.Close()
-	total := int64(0)
-	err = walkProjectionRoot(root, func(rel string, info os.FileInfo) error {
-		if info.IsDir() {
-			fmt.Fprintf(hash, "d\x00%s\x00", filepath.ToSlash(rel))
-			return nil
-		}
-		before, err := projectionRootRegular(root, rel)
-		if err != nil {
-			return err
-		}
-		total += before.Size()
-		if total > projectionMaxTotalBytes {
-			return errors.New("task projection exceeds its bounded byte limit")
-		}
-		fmt.Fprintf(hash, "f\x00%s\x00%d\x00", filepath.ToSlash(rel), before.Size())
-		f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-		if err != nil {
-			return err
-		}
-		after, statErr := f.Stat()
-		if statErr != nil || !os.SameFile(before, after) {
-			_ = f.Close()
-			if statErr != nil {
-				return statErr
-			}
-			return errors.New("task projection changed while hashing")
-		}
-		_, copyErr := io.CopyN(hash, f, before.Size()+1)
-		if copyErr == nil {
-			copyErr = errors.New("task projection file grew while hashing")
-		} else if errors.Is(copyErr, io.EOF) {
-			copyErr = nil
-		}
-		closeErr := f.Close()
-		if err := errors.Join(copyErr, closeErr); err != nil {
-			return err
-		}
-		hash.Write([]byte{0})
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
+	return hashOpenedProjectionTree(root)
 }
 
 func readProjectionQueueIdentity(root *os.Root) (queueIdentityRecord, error) {
@@ -1023,13 +931,6 @@ func syncProjectionDirectory(src, dst string) error {
 			return fmt.Errorf("task projection contains symlink %q", from)
 		}
 		if info.IsDir() {
-			if target, err := os.Lstat(to); err == nil && (!target.IsDir() || target.Mode()&os.ModeSymlink != 0) {
-				if err := removeCanonicalProjectionEntry(to); err != nil {
-					return err
-				}
-			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
 			if err := syncProjectionDirectory(from, to); err != nil {
 				return err
 			}
@@ -1091,7 +992,7 @@ func removeCanonicalProjectionEntry(path string) error {
 		}
 		return errors.Join(errors.New("canonical task entry changed before replacement"), restoreErr)
 	}
-	return os.RemoveAll(filepath.Join(parent, tmp))
+	return root.RemoveAll(tmp)
 }
 
 func replaceProjectionFile(src, dst string) error {

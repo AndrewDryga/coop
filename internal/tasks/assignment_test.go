@@ -812,6 +812,7 @@ func TestUnblockedForkAssignmentRestoresBlockedProjectionForSameGeneration(t *te
 	if canonical.State != StateBlocked {
 		t.Fatalf("canonical state = %s, want blocked", canonical.State)
 	}
+	assertPausePreservesOwner(t, repo, root, "decision", identity)
 	if err := resolveAndUnblock("", root, canonical, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -892,6 +893,9 @@ func TestForkAssignmentReplaysBlockedAcceptanceAtBothCrashBoundaries(t *testing.
 				if err := MoveTaskDir(root, canonical, StateBlocked); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if tc.phase == ForkAssignmentBlocking {
+				assertPausePreservesOwner(t, repo, root, "assigned", assignment.Owner.Fork)
 			}
 			resumed, err := AssignForkTask([]string{root}, ForkAssignmentRequest{
 				AuthorityRepo: repo, Fork: assignment.Owner.Fork,

@@ -72,48 +72,70 @@ func TestPrepareCanonicalAccountsNeverCopiesRenewalAuthority(t *testing.T) {
 }
 
 func TestPrepareCopiesOnlySelectedHostVaultKey(t *testing.T) {
-	source := &config.Config{ConfigDir: t.TempDir()}
-	ag, _ := agents.Get("gemini")
-	for _, account := range []string{"work", "unrelated"} {
-		if err := box.SaveHostCredential(source, ag, account, []byte(account+"-KEY_CANARY")); err != nil {
-			t.Fatal(err)
-		}
-	}
-	prepared, err := Prepare(source.ConfigDir, filepath.Join(t.TempDir(), "isolated"), []Selection{{Provider: "gemini", Account: "work"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	copyConfig := &config.Config{ConfigDir: prepared.ConfigDir}
-	_, value, found, err := box.LoadHostCredential(copyConfig, ag, "work")
-	if err != nil || !found || value != "work-KEY_CANARY" {
-		t.Fatalf("selected key was not isolated: found=%v, error=%v", found, err)
-	}
-	if !prepared.CredentialPresent("gemini", "work") || !prepared.SafeThrough("gemini", "work", time.Now().Add(time.Hour)) {
-		t.Fatal("isolated host-vault key is not ready for the live test")
-	}
-	if _, _, found, err := box.LoadHostCredential(copyConfig, ag, "unrelated"); err != nil || found {
-		t.Fatalf("unrelated account copied: found=%v, error=%v", found, err)
-	}
-	rel := filepath.Join("gemini", "credentials", "work", "authority.json")
-	assertPrivateCopy(t, filepath.Join(source.ConfigDir, rel), filepath.Join(prepared.ConfigDir, rel))
-	if err := filepath.WalkDir(copyConfig.AgentProfileDir("gemini", "work"), func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if strings.Contains(string(data), "KEY_CANARY") {
-			t.Error("host-vault key leaked into the mounted provider home")
-		}
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := prepared.VerifySources(); err != nil {
-		t.Fatal(err)
-	}
-	writeSource(t, filepath.Join(source.ConfigDir, rel), "changed-KEY_CANARY", 0o600)
-	if err := prepared.VerifySources(); err == nil {
-		t.Fatal("source host-vault mutation was not detected")
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "canonical", true: "legacy"}[legacy], func(t *testing.T) {
+			source := &config.Config{ConfigDir: t.TempDir()}
+			ag, _ := agents.Get("gemini")
+			for _, account := range []string{"work", "unrelated"} {
+				var err error
+				if legacy {
+					err = seedLegacyHostKey(source, ag, account, []byte(account+"-KEY_CANARY"))
+				} else {
+					err = box.SaveHostCredential(source, ag, account, []byte(account+"-KEY_CANARY"))
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			sourcePath, err := box.SelectedHostCredentialPath(source, ag, "work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sourceBefore, err := os.ReadFile(sourcePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := Prepare(source.ConfigDir, filepath.Join(t.TempDir(), "isolated"), []Selection{{Provider: "gemini", Account: "work"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			copyConfig := &config.Config{ConfigDir: prepared.ConfigDir}
+			_, value, found, err := box.LoadHostCredential(copyConfig, ag, "work")
+			if err != nil || !found || value != "work-KEY_CANARY" {
+				t.Fatalf("selected key was not isolated: found=%v, error=%v", found, err)
+			}
+			if !prepared.CredentialPresent("gemini", "work") || !prepared.SafeThrough("gemini", "work", time.Now().Add(time.Hour)) {
+				t.Fatal("isolated host-vault key is not ready for the live test")
+			}
+			if _, _, found, err := box.LoadHostCredential(copyConfig, ag, "unrelated"); err != nil || found {
+				t.Fatalf("unrelated account copied: found=%v, error=%v", found, err)
+			}
+			rel := filepath.Join("gemini", "credentials", "work", "authority.json")
+			if sourceAfter, err := os.ReadFile(sourcePath); err != nil || string(sourceAfter) != string(sourceBefore) {
+				t.Fatalf("source key changed: %v", err)
+			}
+			assertPrivateCopy(t, sourcePath, filepath.Join(prepared.ConfigDir, rel))
+			if err := filepath.WalkDir(copyConfig.AgentProfileDir("gemini", "work"), func(path string, entry os.DirEntry, err error) error {
+				if err != nil || entry.IsDir() {
+					return err
+				}
+				data, err := os.ReadFile(path)
+				if strings.Contains(string(data), "KEY_CANARY") {
+					t.Error("host-vault key leaked into the mounted provider home")
+				}
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := prepared.VerifySources(); err != nil {
+				t.Fatal(err)
+			}
+			writeSource(t, sourcePath, "changed-KEY_CANARY", 0o600)
+			if err := prepared.VerifySources(); err == nil {
+				t.Fatal("source host-vault mutation was not detected")
+			}
+
+		})
 	}
 }
 

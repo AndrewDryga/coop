@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
@@ -661,5 +662,53 @@ func TestACPChildProvesTheRefreshedPolicy(t *testing.T) {
 	}
 	if !strings.Contains(string(out), strings.Repeat("c", 64)) || strings.Contains(string(out), strings.Repeat("a", 64)) || child.Policy != strings.Repeat("c", 64) {
 		t.Fatalf("child capture %s (policy %q), want the refreshed policy only", out, child.Policy)
+	}
+}
+
+func TestACPRefreshWorkerUsesTurnEndAndPollingAndJoins(t *testing.T) {
+	for _, cue := range []string{"turn end", "poll"} {
+		t.Run(cue, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h := newRefreshHarness(t)
+				ctx, cancel := context.WithCancel(t.Context())
+				h.r.stop = cancel
+				h.r.stopped = ctx.Done()
+				h.r.now = time.Now
+				cfg := &config.Config{ConfigDir: t.TempDir()}
+				ctrl := acpctl.New(cfg, "claude", "", "", t.TempDir(), acpctl.Selection{}, nil, nil, acpHost())
+				h.approves("new-policy")
+				closeWorker := h.r.start(ctrl)
+				defer closeWorker()
+				synctest.Wait()
+				finishTurn := func(id string) {
+					hooks := ctrl.Hooks()
+					hooks.PromptForwarded([]byte(`{"jsonrpc":"2.0","id":"`+id+`","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}`), false)
+					hooks.ToEditor([]byte(`{"jsonrpc":"2.0","id":"` + id + `","result":{"stopReason":"end_turn"}}`))
+				}
+				if cue == "turn end" {
+					finishTurn("first")
+				} else {
+					time.Sleep(acpRefreshInterval)
+				}
+				synctest.Wait()
+				if h.admits != 1 || len(h.spawns) != 1 || h.r.prepared == nil {
+					t.Fatalf("worker did not adopt on %s: admits=%d spawns=%d", cue, h.admits, len(h.spawns))
+				}
+				pending := h.r.prepared
+				closeWorker()
+				closeWorker()
+				synctest.Wait()
+				if h.stops[pending] != 1 {
+					t.Fatalf("pending child stopped %d times", h.stops[pending])
+				}
+				h.approves("after-close")
+				finishTurn("second")
+				time.Sleep(2 * acpRefreshInterval)
+				synctest.Wait()
+				if h.admits != 1 || len(h.spawns) != 1 {
+					t.Fatal("worker continued after close returned")
+				}
+			})
+		})
 	}
 }

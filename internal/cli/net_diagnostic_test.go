@@ -382,3 +382,20 @@ func TestOriginTextNamesWhereAGrantCameFrom(t *testing.T) {
 		t.Errorf("netCheckOrigin without origins = %q", got)
 	}
 }
+
+func TestDiagnosticRejectsExplicitEmptyOptions(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: "/nonexistent-quality-test-repository", ConfigDir: t.TempDir()}}
+	for _, verb := range []string{"check", "blocked"} {
+		options := []string{"--run"}
+		if verb == "check" {
+			options = append(options, "--protocol")
+		}
+		for _, option := range options {
+			for _, args := range [][]string{{"example.com", option, ""}, {"example.com", option + "="}} {
+				if code, err := a.netDiagnostic(verb, args); code != 2 || err == nil || !strings.Contains(err.Error(), option) {
+					t.Errorf("%s %q: %d %v", verb, args, code, err)
+				}
+			}
+		}
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -2384,10 +2385,10 @@ func (c *Control) Snapshot() Snapshot {
 		rotationLimited = c.rot.Limits()
 	}
 	return Snapshot{
-		Selection: normalizeACPSelection(c.sel), AutoAccount: c.autoAccount, AuthFailed: cloneStringBoolMap(c.authFailed),
-		Limited: cloneStringTimeMap(c.limited), RotationLimited: rotationLimited,
-		PlainTargets: cloneTargetPreferences(c.plainTargets), Cached: cloneRawMessageMap(c.cached), NativeCache: cloneNativeOptionCache(c.nativeCache),
-		Recreate: cloneStringBoolMap(c.recreate),
+		Selection: normalizeACPSelection(c.sel), AutoAccount: c.autoAccount, AuthFailed: maps.Clone(c.authFailed),
+		Limited: maps.Clone(c.limited), RotationLimited: rotationLimited,
+		PlainTargets: maps.Clone(c.plainTargets), Cached: cloneRawMessageMap(c.cached), NativeCache: cloneNativeOptionCache(c.nativeCache),
+		Recreate: maps.Clone(c.recreate),
 		Lead:     c.lead, Model: c.model, Target: c.target, LeadUsesSetModel: c.leadUsesSetModel,
 	}
 }
@@ -2403,7 +2404,7 @@ func (c *Control) Restore(s Snapshot) {
 		s.Target = agents.Target{Provider: s.Lead, Model: s.Model, Effort: c.cfg.EffortFor(s.Lead)}
 	}
 	c.lead, c.sel, c.autoAccount, c.model, c.target, c.leadUsesSetModel = s.Lead, s.Selection, s.AutoAccount, s.Model, s.Target, s.LeadUsesSetModel
-	c.plainTargets = cloneTargetPreferences(s.PlainTargets)
+	c.plainTargets = maps.Clone(s.PlainTargets)
 	if c.plainTargets == nil {
 		c.plainTargets = map[string]targetPreference{}
 	}
@@ -2418,15 +2419,15 @@ func (c *Control) Restore(s Snapshot) {
 	if c.nativeCache == nil {
 		c.nativeCache = map[string]nativeOptionCache{}
 	}
-	c.recreate = cloneStringBoolMap(s.Recreate)
+	c.recreate = maps.Clone(s.Recreate)
 	if c.recreate == nil {
 		c.recreate = map[string]bool{}
 	}
-	c.authFailed = cloneStringBoolMap(s.AuthFailed)
+	c.authFailed = maps.Clone(s.AuthFailed)
 	if c.authFailed == nil {
 		c.authFailed = map[string]bool{}
 	}
-	c.limited = cloneStringTimeMap(s.Limited)
+	c.limited = maps.Clone(s.Limited)
 	if c.limited == nil {
 		c.limited = map[string]time.Time{}
 	}
@@ -2443,39 +2444,6 @@ func (c *Control) Restore(s Snapshot) {
 			c.mu.Unlock()
 		}
 	}
-}
-
-func cloneStringBoolMap(src map[string]bool) map[string]bool {
-	if src == nil {
-		return nil
-	}
-	dst := make(map[string]bool, len(src))
-	for key, value := range src {
-		dst[key] = value
-	}
-	return dst
-}
-
-func cloneStringTimeMap(src map[string]time.Time) map[string]time.Time {
-	if src == nil {
-		return nil
-	}
-	dst := make(map[string]time.Time, len(src))
-	for key, value := range src {
-		dst[key] = value
-	}
-	return dst
-}
-
-func cloneTargetPreferences(src map[string]targetPreference) map[string]targetPreference {
-	if src == nil {
-		return nil
-	}
-	dst := make(map[string]targetPreference, len(src))
-	for key, value := range src {
-		dst[key] = value
-	}
-	return dst
 }
 
 func cloneRawMessageMap(src map[string]json.RawMessage) map[string]json.RawMessage {
@@ -2734,23 +2702,7 @@ func (c *Control) injectedResponse(request, response []byte) []byte {
 		setting = "model=" + req.Params.ModelID
 	}
 	text := fmt.Sprintf("Coop could not apply ACP target setting %s: %s. The adapter may be running a different target.", setting, detail)
-	return sessionMessage(req.Params.SessionID, text)
-}
-
-func sessionMessage(sid, text string) []byte {
-	message := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "session/update",
-		"params": map[string]any{
-			"sessionId": sid,
-			"update": map[string]any{
-				"sessionUpdate": "agent_message_chunk",
-				"content":       map[string]any{"type": "text", "text": text},
-			},
-		},
-	}
-	b, _ := json.Marshal(message)
-	return append(b, '\n')
+	return acpproxy.SessionMessageLine(req.Params.SessionID, text)
 }
 
 // sessionCwdMethods are the editor requests that carry a cwd naming the repo to work in.
@@ -2863,11 +2815,14 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 		c.mu.Unlock()
 		return false, nil, wrapped, false
 	}
+	if h.Method != "session/set_config_option" {
+		return false, nil, nil, false
+	}
 	// On a preset the native knobs are hidden (rewriteConfigOptions drops them — the preset owns
 	// them), but an editor may still SET one: Zed re-applies its persisted default_config_options
 	// to every new session. Forwarding would silently override the preset's pick in the box, so
 	// swallow it and ack with the real (coop-only) option set.
-	if h.Method == "session/set_config_option" && !coopOwnedIDs[h.Params.ConfigID] {
+	if !coopOwnedIDs[h.Params.ConfigID] {
 		if sel := c.selection(); sel.Preset != "" {
 			return true, c.ackOptions(h.ID, h.Params.SessionID), nil, false
 		}

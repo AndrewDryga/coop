@@ -28,7 +28,7 @@ func IndependentGitEnv() []string {
 // CheckoutIndependent is only for a newly owned unpublished clone. Never use
 // its reset on a user's checkout or an execution workspace containing new work.
 func CheckoutIndependent(ctx context.Context, repository, commit, branch string) error {
-	if !validPinnedCommit(commit) {
+	if !ValidObjectID(commit) {
 		return errors.New("invalid independent checkout commit")
 	}
 	args := []string{"update-ref", "--no-deref", "HEAD", commit}
@@ -169,7 +169,7 @@ func materializeIndependentTree(ctx context.Context, source, workspace, sourceCo
 }
 
 func gitModulesEntry(ctx context.Context, repository, commit string) (string, error) {
-	if !validPinnedCommit(commit) {
+	if !ValidObjectID(commit) {
 		return "", errors.New("invalid submodule metadata commit")
 	}
 	data, err := ObserveGit(ctx, repository, "ls-tree", "-z", commit, "--", ".gitmodules")
@@ -181,7 +181,7 @@ func gitModulesEntry(ctx context.Context, repository, commit string) (string, er
 	}
 	header, path, ok := strings.Cut(string(data), "\t")
 	fields := strings.Fields(header)
-	if !ok || path != ".gitmodules\x00" || len(fields) != 3 || fields[0] != "100644" || fields[1] != "blob" || !validPinnedCommit(fields[2]) {
+	if !ok || path != ".gitmodules\x00" || len(fields) != 3 || fields[0] != "100644" || fields[1] != "blob" || !ValidObjectID(fields[2]) {
 		return "", errors.New("unsupported .gitmodules tree entry")
 	}
 	return string(data), nil

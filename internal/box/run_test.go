@@ -4501,3 +4501,81 @@ func (f *filteredExecution) validateMounts(options, files, directories []string)
 func prepareBoxEnvFile(cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps, projectEnv map[string]string) (envFile, tmp string, err error) {
 	return prepareBoxEnvFileWithMarkers(cfg, spec, artifacts, projectEnv, nil)
 }
+
+func TestFutureAuthorityRootOverlap(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(base, "FutureAuthority")
+	for _, test := range []struct {
+		name, path string
+		overlap    bool
+	}{
+		{"exact", root, true}, {"child", filepath.Join(root, "secret"), true},
+		{"case", filepath.Join(base, "futureauthority", "secret"), true},
+		{"parent", base, false}, {"sibling prefix", root + "-other", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := hostSourceOverlap([]string{test.path}, []MCPSourceRoot{{Path: root, Kind: "future authority"}})
+			if err != nil || (got != nil) != test.overlap {
+				t.Fatalf("overlap: %+v %v", got, err)
+			}
+		})
+	}
+	if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("inspection created future root: %v", err)
+	}
+}
+
+func TestCompanionRepositoryInventoryRejectsPartialAuthority(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(base, link); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(base, "file")
+	if err := os.WriteFile(file, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	valid := CompanionRepository{Name: "first", HostPath: base, BaseCommit: strings.Repeat("a", 40)}
+	for _, test := range []struct{ name, value, field string }{
+		{"duplicate", "first", "name"}, {"reserved", "primary", "name"}, {"leading punctuation", "-bad", "name"},
+		{"traversal", "../bad", "name"}, {"long name", strings.Repeat("a", 49), "name"},
+		{"relative", "relative", "path"}, {"unclean", base + "/../elsewhere", "path"}, {"symlink", link, "path"}, {"file", file, "path"},
+		{"short commit", strings.Repeat("a", 39), "commit"}, {"uppercase commit", strings.Repeat("A", 40), "commit"}, {"nonhex", strings.Repeat("g", 64), "commit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			second := valid
+			second.Name = "second"
+			switch test.field {
+			case "name":
+				second.Name = test.value
+			case "path":
+				second.HostPath = test.value
+			case "commit":
+				second.BaseCommit = test.value
+			}
+			mounts, env, err := companionRepositoryMounts([]CompanionRepository{valid, second})
+			if err == nil || mounts != nil || env != nil {
+				t.Fatalf("partial inventory returned: %+v %+v %v", mounts, env, err)
+			}
+		})
+	}
+	for _, size := range []int{40, 64} {
+		companion := valid
+		companion.Name = "a-_" + strings.Repeat("b", 45)
+		companion.BaseCommit = strings.Repeat("b", size)
+		mounts, env, err := companionRepositoryMounts([]CompanionRepository{companion})
+		target := "/coop/repositories/" + companion.Name
+		if err != nil || len(mounts) != 1 || len(env) != 1 {
+			t.Fatalf("valid boundary: %+v %+v %v", mounts, env, err)
+		}
+		if !mounts[0].RO || mounts[0].Source != base || mounts[0].Target != target || env[0].Path != target || env[0].BaseCommit != companion.BaseCommit {
+			t.Fatalf("wrong authority: %+v %+v", mounts, env)
+		}
+	}
+}

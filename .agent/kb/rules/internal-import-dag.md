@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-10-18
+updated: 2026-10-28
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,10 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-28 — added stdlib-only `gitdiff` for exact NUL-delimited change records and line
+  counts. forkctl uses its parsers, while hostsurface and cli exchange typed paths without
+  reserializing filenames into ambiguous display text. This keeps Git execution in forkspace,
+  classification in hostsurface, and display escaping in presentation owners.
 - 2026-10-18 — tasks imports hostsurface for `hostsurface.Key`, so the gate-defining file check
   judges every spelling the way fork merge and session review do (task
   2026-10-18-make-coop-s-path-based-safety-checks-case-aware). hostsurface is a leaf, so no cycle.

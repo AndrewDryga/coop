@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -177,5 +178,88 @@ func TestNetworkExplainPreservesObservedFactsAndDraftBoundary(t *testing.T) {
 	dns.Kind, dns.Port, dns.Candidate = "dns_denied", nil, nil
 	if err := validateDiagnosticDenial(dns, snapshot.PolicyFingerprint); err != nil || dns.Port != nil {
 		t.Fatal("DNS-only evidence invented a transport", err)
+	}
+}
+
+func TestNetworkWhyRawAddressUsesRetainedPolicyAndRedacts(t *testing.T) {
+	s, old := executionFixture(t)
+	mode := egress.Filtered
+	policy, err := s.Admit(old.Project, Admission{InvocationMode: &mode, Operator: []egress.Input{{Rules: []egress.Rule{
+		{To: egress.Destination{CIDR: "10.0.0.0/8"}, Protocol: "tcp", Ports: []int{5432}},
+		{To: egress.Destination{CIDR: "10.0.0.0/8"}, Protocol: "udp", Ports: []int{5353}},
+		{To: egress.Destination{CIDR: "10.0.0.0/8"}, Protocol: "icmp", Types: []string{"echo-request"}},
+	}, Origin: egress.Origin{Kind: "operator", Name: "private-raw-origin"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []Execution
+	for _, protected := range [][]netip.Prefix{nil, {netip.MustParsePrefix("10.42.0.0/16")}} {
+		record, err := executionSmoke(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: old.Project, PolicyFingerprint: policy.Fingerprint, Runtime: "docker", DaemonID: "fixture-daemon", Endpoint: "unix:///fixture.sock", GatewayImage: old.GatewayImage, ClientImage: old.ClientImage, Protected: protected})
+		if err != nil {
+			t.Fatal(err)
+		}
+		records = append(records, record)
+	}
+	evidence := fixtureEvidence(t, s)
+	if err := approve(s, old.Project, egress.None, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(s.Path(), "owner.key")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(old.Project); err != nil {
+		t.Fatal(err)
+	}
+	before := inventory(t, s)
+	for _, record := range records {
+		scope := "not-retained"
+		if len(record.Protected) != 0 {
+			scope = "run-host-inventory"
+		}
+		for _, row := range []struct {
+			address, protocol string
+			port              int
+			allowed           bool
+			reason            string
+		}{
+			{"10.1.2.3", "tcp", 5432, true, "rule_allowed"}, {"10.1.2.3", "udp", 5353, true, "rule_allowed"}, {"10.1.2.3", "icmp", 0, true, "rule_allowed"},
+			{"10.1.2.3", "tcp", 5433, false, "protocol_not_allowed"}, {"127.0.0.1", "tcp", 5432, false, "protected_destination"},
+		} {
+			q := PolicyQuery{Address: netip.MustParseAddr(row.address), Protocol: row.protocol, Port: row.port}
+			got, err := evidence.Why(record.ID, q, true)
+			if err != nil || got.Allowed != row.allowed || got.Reason != row.reason || got.Peer != row.address || got.ProtectedScope != scope || got.Protocol != row.protocol || got.Port != row.port || got.PolicyFingerprint != policy.Fingerprint || got.CurrentPolicy != "not_evaluated" || got.Integrity != retainedIntegrity {
+				t.Fatalf("raw decision: %+v %v", got, err)
+			}
+			if row.allowed && (got.Rule == nil || got.Rule.To.CIDR != "10.0.0.0/8" || got.Rule.Protocol != row.protocol || len(got.Origins) != 1 || got.Origins[0].Name != "private-raw-origin") {
+				t.Fatalf("missing provenance: %+v", got)
+			}
+			redacted, err := evidence.Why(record.ID, q, false)
+			if err != nil || !redacted.Withheld || redacted.Peer != "" || redacted.Domain != "" || redacted.RuleID != "" || redacted.Rule != nil || len(redacted.Origins) != 0 || redacted.Allowed != got.Allowed || redacted.Reason != got.Reason {
+				t.Fatalf("raw disclosure: %+v %v", redacted, err)
+			}
+		}
+		got, err := evidence.Why(record.ID, PolicyQuery{Address: netip.MustParseAddr("10.42.1.1"), Protocol: "tcp", Port: 5432}, true)
+		if err != nil || got.Allowed != (len(record.Protected) == 0) || len(record.Protected) != 0 && got.Reason != "protected_destination" {
+			t.Fatalf("retained host protection: %+v %v", got, err)
+		}
+	}
+	if !reflect.DeepEqual(before, inventory(t, s)) {
+		t.Fatal("diagnostics wrote state")
+	}
+}
+
+func TestPolicyQueryRejectsAmbiguousRawAddress(t *testing.T) {
+	for _, query := range []PolicyQuery{
+		{Domain: "example.com", Address: netip.MustParseAddr("10.1.2.3"), Protocol: "tcp", Port: 22},
+		{Address: netip.MustParseAddr("10.1.2.3"), Protocol: "unknown", Port: 22},
+		{Address: netip.MustParseAddr("10.1.2.3"), Protocol: "icmp", Port: 22},
+		{Address: netip.MustParseAddr("::ffff:10.1.2.3"), Protocol: "tcp", Port: 22},
+		{Address: netip.MustParseAddr("fe80::1%en0"), Protocol: "tcp", Port: 22},
+		{Address: netip.MustParseAddr("10.1.2.3"), Protocol: "tcp", Port: 0},
+		{Address: netip.MustParseAddr("10.1.2.3"), Protocol: "udp", Port: 65536},
+	} {
+		if err := query.Validate(); err == nil {
+			t.Errorf("accepted query: %+v", query)
+		}
 	}
 }

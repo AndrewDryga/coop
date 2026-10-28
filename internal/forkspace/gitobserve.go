@@ -30,7 +30,7 @@ func ObserveGit(ctx context.Context, repository string, args ...string) ([]byte,
 // non-executing view. Drivers, includes and external attributes are unavailable;
 // native EOL/ident/encoding conversion still matches the publication checkout.
 func ObserveCheckoutBlob(ctx context.Context, repository, object, path string, destination io.Writer) error {
-	if !validPinnedCommit(object) {
+	if !ValidObjectID(object) {
 		return errors.New("invalid checkout blob")
 	}
 	cmd, cleanup, err := observationGitCommandWithCheckout(ctx, repository, true, "cat-file", "--filters", "--path="+path, object)
@@ -103,7 +103,7 @@ func observationGitCommandWithCheckout(ctx context.Context, repository string, c
 // ImportIsolatedObjects is the first publication effect. Only objects cross from
 // retained custody; source refs and operational HEAD recovery do not participate.
 func ImportIsolatedObjects(ctx context.Context, source, repository, commit string) error {
-	if !validPinnedCommit(commit) {
+	if !ValidObjectID(commit) {
 		return errors.New("invalid publication commit")
 	}
 	src, err := pinnedSourceView(ctx, source)
@@ -125,7 +125,7 @@ func ImportIsolatedObjects(ctx context.Context, source, repository, commit strin
 // failure can leave a partial checkout: callers must retain the forward journal,
 // never reset, stash, delete index.lock, or treat this as atomic publication.
 func CheckoutIsolatedTree(ctx context.Context, repository, before, publication string) error {
-	if !validPinnedCommit(before) || !validPinnedCommit(publication) {
+	if !ValidObjectID(before) || !ValidObjectID(publication) {
 		return errors.New("invalid isolated publication target")
 	}
 	view, err := fsckGitView(ctx, repository)

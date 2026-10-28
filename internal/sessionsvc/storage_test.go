@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
@@ -637,6 +638,22 @@ func TestSessionHTTPStorageReportsTheWorkerAccounting(t *testing.T) {
 // The derived defaults are policy, not law: an operator whose volume is shared with something else
 // has to be able to say so, in the file they already own, and be told at load if what they wrote
 // cannot hold.
+func TestNewServiceReleasesStoreWhenStorageLimitsAreInvalid(t *testing.T) {
+	cfg := Config{StateRoot: filepath.Join(t.TempDir(), "state"), SourceConfig: &config.Config{}, StorageLimits: &StorageLimits{}}
+	if service, err := NewService(cfg); err == nil {
+		_ = service.Stop()
+		t.Fatal("accepted invalid storage limits")
+	}
+	cfg.StorageLimits = nil
+	service, err := NewService(cfg)
+	if err != nil {
+		t.Fatalf("corrected configuration cannot reopen state: %v", err)
+	}
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStorageLimitsValidateRejectsIncoherentBudgets(t *testing.T) {
 	capacity := int64(100 << 30)
 	if err := DefaultStorageLimits(capacity).Validate(capacity); err != nil {

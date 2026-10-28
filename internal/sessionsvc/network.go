@@ -275,8 +275,8 @@ func sessionSnapshotExport(bound session.Session) bool {
 // custody failure and fails the turn — and, once the child has actually exited, publishes what
 // that run could not reach on the session's event stream.
 //
-// A read failure is an observation gap, not a violation: enforcement already happened at the box
-// boundary, so losing sight of the evidence warns rather than destroying a finished turn.
+// Certification requires a complete inventory. Unreadable evidence cannot prove that every
+// run used the captured policy; keep the private cause in the host log.
 func (r *sessionTurnRunner) sessionNetworkOutcome(bound session.Session, turnID, attemptID string, childExited bool) error {
 	if bound.NetworkMode != string(egress.Filtered) || bound.NetworkFingerprint == "" {
 		return nil
@@ -284,7 +284,7 @@ func (r *sessionTurnRunner) sessionNetworkOutcome(bound session.Session, turnID,
 	records, complete, err := r.sessionNetworkRecords(bound)
 	if err != nil {
 		r.warnNetwork(bound, err)
-		return nil
+		complete = false
 	}
 	if mismatch, err := verifySessionNetworkRuns(bound, records); err != nil {
 		// The turn fails on this, but a caller watching the stream rather than the turn's
@@ -446,8 +446,11 @@ func (s *Service) SessionNetwork(ctx context.Context, id string) (SessionNetwork
 		return SessionNetworkDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()}
 	}
 	defer evidence.Close()
-	records, _, err := sessionExecutions(evidence, bound.ID)
-	if err != nil || len(records) == 0 {
+	records, complete, err := sessionExecutions(evidence, bound.ID)
+	if err != nil || !complete {
+		return SessionNetworkDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: "session network evidence is unavailable or incomplete"}
+	}
+	if len(records) == 0 {
 		return out, nil
 	}
 	newest := records[len(records)-1]
@@ -630,8 +633,11 @@ func (s *Service) SessionNetworkConnections(ctx context.Context, id string) (Ses
 		return SessionNetworkConnectionsDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()}
 	}
 	defer evidence.Close()
-	records, _, err := sessionExecutions(evidence, bound.ID)
-	if err != nil || len(records) == 0 {
+	records, complete, err := sessionExecutions(evidence, bound.ID)
+	if err != nil || !complete {
+		return SessionNetworkConnectionsDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: "session network evidence is unavailable or incomplete"}
+	}
+	if len(records) == 0 {
 		return out, nil
 	}
 	newest := records[len(records)-1]
@@ -687,7 +693,7 @@ func (s *Service) SessionNetworkExplanation(ctx context.Context, id, eventID str
 		return SessionNetworkExplanationDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()}
 	}
 	defer evidence.Close()
-	records, _, err := sessionExecutions(evidence, bound.ID)
+	records, complete, err := sessionExecutions(evidence, bound.ID)
 	if err != nil {
 		return SessionNetworkExplanationDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()}
 	}
@@ -695,11 +701,17 @@ func (s *Service) SessionNetworkExplanation(ctx context.Context, id, eventID str
 	// read it from a network event is most likely looking at the run that just produced it.
 	for i := len(records) - 1; i >= 0; i-- {
 		explanation, err := evidence.Explain(records[i].ID, eventID, policy.ExportDestinations)
-		if err != nil {
+		if errors.Is(err, networkstate.ErrEventNotRetained) || errors.Is(err, networkstate.ErrEvidenceUnavailable) {
 			continue
+		}
+		if err != nil {
+			return SessionNetworkExplanationDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: "session network explanation is unavailable"}
 		}
 		out.Available, out.Explanation = true, &explanation
 		return out, nil
+	}
+	if !complete {
+		return SessionNetworkExplanationDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: "session network evidence is incomplete"}
 	}
 	out.Reason = "event_not_retained"
 	return out, nil

@@ -170,3 +170,48 @@ func mustReadFile(t *testing.T, path string) []byte {
 	}
 	return data
 }
+
+func TestLegacyHostCredentialMtimeTracksSelectedPrivateKey(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	ag, _ := agents.Get("gemini")
+	profile := cfg.AgentProfileDir("gemini", "work")
+	if err := os.MkdirAll(profile, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := ag.HostCredential().Activate(profile); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := hostCredentialDir(cfg, "gemini", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(vault, 0700); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(vault, ag.HostCredential().File)
+	if err := os.WriteFile(key, []byte("fixture-legacy-key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := os.Chtimes(key, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vault, "newer-unrelated"), []byte("unrelated"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profile, "session.jsonl"), []byte("unrelated"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := ProfileTokenMtime(cfg, "gemini", "work"); !ok || !got.Equal(stamp) {
+		t.Fatalf("selected legacy key mtime: %v %v", got, ok)
+	}
+	if err := os.Chmod(key, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ProfileTokenMtime(cfg, "gemini", "work"); ok {
+		t.Fatal("nonprivate key supplied rotation time")
+	}
+	if _, ok := hostCredentialMtime(cfg, ag, "../work"); ok {
+		t.Fatal("invalid account supplied rotation time")
+	}
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -275,6 +276,123 @@ func TestTheSampleLabelRidesOnThePersonsRunArgs(t *testing.T) {
 		cmd := b.coopCommand("tok", nil, "run")
 		if got := (&bench{env: cmd.Env}).getenv("COOP_RUN_ARGS"); got != want {
 			t.Errorf("COOP_RUN_ARGS %q became %q, want %q", own, got, want)
+		}
+	}
+}
+
+const switchStandIn = `#!/bin/sh
+echo $$ > "@LAUNCHED@.pid"
+printf '%s' "$COOP_RUN_ARGS" > "@LAUNCHED@.tmp"
+mv "@LAUNCHED@.tmp" "@LAUNCHED@"
+echo "Full details: coop net inspect 8b --json" >&2
+[ "$1" = acp ] && [ "$COOP_ACP_TRACE" = 1 ] || exit 1
+printf '%s\n' "${COOP_ACP_WARM-unset}" > "@LAUNCHED@.warm"
+trace="$XDG_CONFIG_HOME/coop/acp-trace-$$.log"
+mkdir -p "$XDG_CONFIG_HOME/coop"
+stale=cold
+[ "$BENCH_SERVED" = cold ] && stale=warm
+printf '00:00:00.000 | spawn: %s box for codex@stale\n' "$stale" > "$trace"
+printf '%s\n' '00:00:00.001 | replay: codex@stale is live on stale-adapter' >> "$trace"
+[ "$COOP_ACP_WARM" = 0 ] || printf '%s\n' '00:00:00.002 | warm pool: codex@fresh parked' >> "$trace"
+cp "$trace" "$trace.1"
+IFS= read -r line || exit 1
+printf '%s\n' "$line" > "@LAUNCHED@.requests"
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'
+IFS= read -r line || exit 1
+printf '%s\n' "$line" >> "@LAUNCHED@.requests"
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S","configOptions":[{"id":"coop_provider","currentValue":"claude","options":[{"value":"claude"},{"value":"codex"},{"value":"gemini"}]}]}}'
+IFS= read -r line || exit 1
+printf '%s\n' "$line" >> "@LAUNCHED@.requests"
+printf '00:00:01.000 | spawn: %s box for codex@fresh\n' "$BENCH_SERVED" >> "$trace"
+printf '%s\n' '00:00:01.001 | replay: codex@fresh is live on fixture-adapter' >> "$trace"
+printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"config_option_update","configOptions":[{"id":"coop_provider","currentValue":"codex"}]}}}'
+while IFS= read -r line; do :; done
+`
+
+func TestACPSwitchUsesCurrentBoxEvidenceAndCleansUp(t *testing.T) {
+	for _, warm := range []bool{false, true} {
+		for _, served := range []string{"cold", "warm"} {
+			wanted := "cold"
+			if warm {
+				wanted = "warm"
+			}
+			t.Run(wanted+"-served-"+served, func(t *testing.T) {
+				t.Parallel()
+				b, fake, launched := standInBench(t)
+				b.caseTimeout = wait.Deadline
+				b.env = append(b.env, "BENCH_SERVED="+served)
+				writeExecutable(t, b.coop, strings.ReplaceAll(switchStandIn, "@LAUNCHED@", launched))
+				ctx, cancel := context.WithTimeout(context.Background(), switchSettle+3*wait.Deadline)
+				defer cancel()
+				got, err := b.caseACPSwitch(ctx, nil, warm)
+				if err != nil {
+					t.Fatal(err)
+				}
+				facts := map[string]any{}
+				for _, f := range got.Extra {
+					facts[f.name] = f.value
+				}
+				if facts["lead"] != "claude" || facts["provider"] != "codex" || facts["box"] != served || facts["account"] != "fresh" || facts["adapter"] != "fixture-adapter" {
+					t.Fatalf("stale evidence: %+v", got)
+				}
+				if seconds, ok := facts["ack_seconds"].(float64); !ok || seconds < 0 {
+					t.Fatalf("missing acknowledgement time: %+v", got)
+				}
+				if served == wanted {
+					if !got.OK || got.Seconds == nil || *got.Seconds <= 0 {
+						t.Fatalf("switch not measured: %+v", got)
+					}
+				} else if got.OK || got.Seconds != nil || !strings.Contains(got.Detail, "wanted a "+wanted+" box, but a "+served+" box served") {
+					t.Fatalf("wrong kind entered statistics: %+v", got)
+				}
+				raw, err := os.ReadFile(launched + ".requests")
+				if err != nil {
+					t.Fatal(err)
+				}
+				lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+				methods := []string{"initialize", "session/new", "session/set_config_option"}
+				if len(lines) != len(methods) {
+					t.Fatalf("request sequence: %q", raw)
+				}
+				for i, line := range lines {
+					var request struct {
+						ID     int            `json:"id"`
+						Method string         `json:"method"`
+						Params map[string]any `json:"params"`
+					}
+					if err := json.Unmarshal([]byte(line), &request); err != nil || request.ID != i+1 || request.Method != methods[i] {
+						t.Fatalf("request %d=%q %v", i, line, err)
+					}
+					if i == 2 && (request.Params["sessionId"] != "S" || request.Params["configId"] != "coop_provider" || request.Params["value"] != "codex") {
+						t.Fatalf("wrong switch: %q", line)
+					}
+				}
+				warmSetting, err := os.ReadFile(launched + ".warm")
+				expectedSetting := "unset\n"
+				if !warm {
+					expectedSetting = "0\n"
+				}
+				if err != nil || string(warmSetting) != expectedSetting {
+					t.Fatalf("warm control=%q %v", warmSetting, err)
+				}
+				if !maps.Equal(fake.removed, ownLaunch) {
+					t.Fatalf("cleanup removed %v want %v", fake.removed, ownLaunch)
+				}
+				pidBody, err := os.ReadFile(launched + ".pid")
+				if err != nil {
+					t.Fatal(err)
+				}
+				pid, err := strconv.Atoi(strings.TrimSpace(string(pidBody)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, path := range []string{b.tracePath(pid), b.tracePath(pid) + ".1"} {
+					if _, err := os.Stat(path); !os.IsNotExist(err) {
+						t.Fatalf("retained trace %s: %v", path, err)
+					}
+				}
+			})
 		}
 	}
 }

@@ -32,6 +32,11 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		t.Fatalf("set v%d user_version: %v", version, err)
 	}
+	if version >= 25 {
+		if _, err := db.Exec(`INSERT INTO store_identity(slot, id) VALUES (1, 'store_0123456789abcdef0123456789abcdef')`); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	if _, err := db.Exec(`INSERT INTO operations
 		(id, method, idempotency_key, request_hash, state, resource_type, resource_id, result, created_at, updated_at)

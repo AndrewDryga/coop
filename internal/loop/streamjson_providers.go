@@ -341,7 +341,7 @@ func codexCollabLabel(tool string) string {
 	}
 }
 
-func (d *codexStreamDecoder) emitUnknown(kind string) {
+func (d *ndjsonDecoder) emitUnknown(kind string) {
 	if kind == "" {
 		kind = "unknown"
 	}
@@ -350,16 +350,7 @@ func (d *codexStreamDecoder) emitUnknown(kind string) {
 
 func (d *codexStreamDecoder) lastIterResult() *iterResult { return d.last }
 func (d *codexStreamDecoder) streamOutcome() providerStreamOutcome {
-	if d.malformed {
-		return streamMalformed
-	}
-	if d.failed {
-		return streamFailed
-	}
-	if d.last != nil {
-		return streamSucceeded
-	}
-	return streamIncomplete
+	return d.outcome(d.failed, d.last)
 }
 
 func streamCommandLabel(command string) string {
@@ -571,25 +562,9 @@ func (d *geminiStreamDecoder) result(ev *geminiStreamEvent) {
 	d.toDiagnostic(msg)
 }
 
-func (d *geminiStreamDecoder) emitUnknown(kind string) {
-	if kind == "" {
-		kind = "unknown"
-	}
-	d.emit(d.palette.Dim("· " + cleanDiagnosticLine(kind)))
-}
-
 func (d *geminiStreamDecoder) lastIterResult() *iterResult { return d.last }
 func (d *geminiStreamDecoder) streamOutcome() providerStreamOutcome {
-	if d.malformed {
-		return streamMalformed
-	}
-	if d.failed {
-		return streamFailed
-	}
-	if d.last != nil {
-		return streamSucceeded
-	}
-	return streamIncomplete
+	return d.outcome(d.failed, d.last)
 }
 
 type geminiStreamEvent struct {
@@ -688,14 +663,14 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 		if ev.Usage.OutputTokens != nil {
 			reportedOutput = intPtr(output)
 		}
-		var cost float64
-		costReported := json.Unmarshal(ev.CostUSD, &cost) == nil && cost >= 0 && !math.IsInf(cost, 0) && !math.IsNaN(cost)
-		if !costReported {
-			cost = 0
-		}
 		var reportedCost *float64
-		if costReported {
-			reportedCost = &cost
+		if err := json.Unmarshal(ev.CostUSD, &reportedCost); err != nil ||
+			(reportedCost != nil && (*reportedCost < 0 || math.IsInf(*reportedCost, 0) || math.IsNaN(*reportedCost))) {
+			reportedCost = nil
+		}
+		var cost float64
+		if reportedCost != nil {
+			cost = *reportedCost
 		}
 		d.last = &iterResult{
 			Turns:            ev.NumTurns,
@@ -896,16 +871,7 @@ func (d *grokStreamDecoder) flushText() {
 
 func (d *grokStreamDecoder) lastIterResult() *iterResult { return d.last }
 func (d *grokStreamDecoder) streamOutcome() providerStreamOutcome {
-	if d.malformed {
-		return streamMalformed
-	}
-	if d.failed {
-		return streamFailed
-	}
-	if d.last != nil {
-		return streamSucceeded
-	}
-	return streamIncomplete
+	return d.outcome(d.failed, d.last)
 }
 
 type grokStreamEvent struct {

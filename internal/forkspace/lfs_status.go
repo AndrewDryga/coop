@@ -62,7 +62,7 @@ func verifiedLFSStatus(ctx context.Context, root *os.Root, record []byte, read f
 		return false
 	}
 	blobID := string(fields[7])
-	if !validPinnedCommit(blobID) {
+	if !ValidObjectID(blobID) {
 		return false
 	}
 	path := string(fields[8])

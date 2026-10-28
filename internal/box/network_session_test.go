@@ -1,10 +1,13 @@
 package box
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
@@ -218,4 +221,68 @@ func TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore(t *testi
 			}
 		})
 	}
+}
+
+func TestControllerJobFilteredAdmissionUsesExactJobAuthority(t *testing.T) {
+	cfg, repo, root := admissionFixture(t)
+	rt, _, candidate, images := qualificationInventoryFixture(t)
+	seedCanonicalFixture(t, cfg, "claude", "default")
+	local := egress.Rule{To: egress.Destination{Domain: "local.example.com"}, Protocol: "tls", Ports: []int{443}}
+	rememberFilteredPosture(t, root, repo, []egress.Rule{local})
+	writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), "box: [invalid local settings]\n")
+	store, err := networkstate.Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	before, err := store.ApprovalAt(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := RunSpec{Repo: repo, PolicyRepo: repo, Workdir: repo, ControllerJob: true, Agent: "claude", Homes: true, NetworkClient: egress.ClientACP}
+	job := ControllerJobNetwork{JobDigest: strings.Repeat("a", 64), SessionID: "remote_one", Mode: egress.Filtered, Rules: []egress.Rule{{To: egress.Destination{Domain: "controller.example.com"}, Protocol: "tls", Ports: []int{443}}}, ExportDestinations: true}
+	if _, capture, err := AdmitControllerJobNetwork(cfg, rt, spec, job); !errors.Is(err, ErrNetworkSetupRequired) || capture != nil {
+		if capture != nil {
+			_ = capture.Close()
+		}
+		t.Fatalf("missing qualification: %+v %v", capture, err)
+	}
+	qualified := writeQualificationFixture(t, store, candidate, egress.ClientACP, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+	for _, id := range []string{candidate.ClientImage, candidate.GatewayImage} {
+		writeQualificationImageFixture(t, images, id, id)
+	}
+	mode, capture, err := AdmitControllerJobNetwork(cfg, rt, spec, job)
+	if err != nil || mode != egress.Filtered || capture == nil {
+		t.Fatalf("admission: %q %+v %v", mode, capture, err)
+	}
+	defer capture.Close()
+	if capture.Project != repo || capture.QualificationID != qualified.ID || capture.JobDigest != job.JobDigest || capture.SessionID != job.SessionID {
+		t.Fatalf("capture identity: %+v", capture)
+	}
+	ref := networkstate.JobSnapshotRef{JobDigest: job.JobDigest, SessionID: job.SessionID}
+	policy, err := capture.Store.LoadJobSnapshot(ref, capture.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.ExportDestinations || !policy.Domain("controller.example.com", 443).Allowed || policy.Domain("local.example.com", 443).Allowed || len(policy.Grants) != 1 || len(policy.Dependencies) != 0 {
+		t.Fatalf("job authority widened or lost: %+v", policy)
+	}
+	if origins := policy.Grants[0].Origins; len(origins) != 1 || origins[0].Kind != "controller" || origins[0].Name != job.JobDigest {
+		t.Fatalf("grant provenance: %+v", origins)
+	}
+	for _, wrong := range []networkstate.JobSnapshotRef{{JobDigest: job.JobDigest, SessionID: "remote_other"}, {JobDigest: strings.Repeat("b", 64), SessionID: job.SessionID}} {
+		if _, err := capture.Store.LoadJobSnapshot(wrong, capture.Fingerprint); err == nil {
+			t.Fatalf("foreign authority reused: %+v", wrong)
+		}
+	}
+	after, err := store.ApprovalAt(repo)
+	if err != nil || !reflect.DeepEqual(before, after) || cfg.Egress != "open" {
+		t.Fatalf("local posture changed: %+v %v", after, err)
+	}
+	childRef := SessionNetworkCapture{Project: repo, Fingerprint: capture.Fingerprint, Qualification: qualified.ID, SessionID: job.SessionID, AttemptID: "turn_one", JobDigest: job.JobDigest}
+	child, err := CapturedEgressFromReference(cfg, spec, childRef)
+	if err != nil || child == nil {
+		t.Fatalf("child reopen: %+v %v", child, err)
+	}
+	_ = child.Close()
 }

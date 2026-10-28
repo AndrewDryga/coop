@@ -2081,7 +2081,7 @@ func (s *Store) RestoreWorkspaceTask(
 	binding WorkspaceTaskBinding,
 ) (Session, error) {
 	if sessionID == "" || expectedRevision <= 0 || validateWorkspaceTaskBinding(binding) != nil ||
-		!validWorkspaceCommitIdentity(baseCommit) {
+		!validGitObjectID(baseCommit) {
 		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "restored workspace task binding is invalid"}
 	}
 	encoded, err := json.Marshal(binding)
@@ -2142,14 +2142,6 @@ func (s *Store) RestoreWorkspaceTask(
 	return sess, nil
 }
 
-func validWorkspaceCommitIdentity(value string) bool {
-	if len(value) != 40 && len(value) != 64 {
-		return false
-	}
-	decoded, err := hex.DecodeString(value)
-	return err == nil && len(decoded)*2 == len(value) && strings.ToLower(value) == value
-}
-
 func validateWorkspaceTaskBinding(binding WorkspaceTaskBinding) error {
 	if len(binding.QueueID) != 32 || len(binding.TaskID) != 32 ||
 		len(binding.DraftSHA256) != 64 || !validBoundedText(binding.ID, MaxIDBytes) ||
@@ -2179,9 +2171,8 @@ func validateWorkspaceTaskBinding(binding WorkspaceTaskBinding) error {
 // still marked delivered, or delivered but still on the limited rung.
 //
 // resetNativeSession drops the bound native session id. The caller decides, because only it knows
-// the target grammar: a rung on the same provider and account keeps its transcript, but changing
-// either must clear it — the new target cannot load the old account's session, so every later
-// session/load would fail against an id that outlived its store.
+// the target grammar and transcript custody. Dropping that identity also resets its cost
+// counter; already-accounted logical-turn spend survives the provider change.
 func (s *Store) RotateTurnTarget(ctx context.Context, sessionID, turnID, from, to string, resetNativeSession bool) (Session, Turn, error) {
 	if sessionID == "" || turnID == "" ||
 		!validBoundedText(sessionID, MaxIDBytes) || !validBoundedText(turnID, MaxIDBytes) {
@@ -2221,8 +2212,11 @@ func (s *Store) RotateTurnTarget(ctx context.Context, sessionID, turnID, from, t
 		native = ""
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE sessions SET target = ?, native_session_id = ?, activity = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
-		to, native, string(ActivityStarting), now.UnixNano(), sessionID); err != nil {
+		`UPDATE sessions SET target = ?, native_session_id = ?, activity = ?,
+ usage_cumulative_cost_usd = CASE WHEN ? THEN 0 ELSE usage_cumulative_cost_usd END,
+ usage_cost_recorded = CASE WHEN ? THEN 0 ELSE usage_cost_recorded END,
+ revision = revision + 1, updated_at = ? WHERE id = ?`,
+		to, native, string(ActivityStarting), resetNativeSession, resetNativeSession, now.UnixNano(), sessionID); err != nil {
 		return Session{}, Turn{}, fmt.Errorf("rotate session target: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, send_state = ? WHERE id = ?`,
@@ -2387,6 +2381,7 @@ func (s *Store) ListTurns(ctx context.Context, sessionID string, afterOrdinal in
 	if err != nil {
 		return nil, fmt.Errorf("list turns: %w", err)
 	}
+	defer rows.Close()
 	var turns []Turn
 	for rows.Next() {
 		turn, err := scanTurn(rows)
@@ -2531,6 +2526,18 @@ func scanTurn(row rowScanner) (Turn, error) {
 }
 
 func (s *Store) CancelTurn(ctx context.Context, key string, req CancelTurnRequest) (Turn, error) {
+	return s.cancelTurn(ctx, key, req, false)
+}
+
+// CompleteTurnCancellation is reserved for the runtime owner after cleanup and usage
+// settlement. It can resolve an uncertain waiter using the original request identity;
+// ordinary CancelTurn retries cannot supply that proof.
+func (s *Store) CompleteTurnCancellation(ctx context.Context, key string, req CancelTurnRequest) (Turn, error) {
+	return s.cancelTurn(ctx, key, req, true)
+}
+
+func (s *Store) cancelTurn(ctx context.Context, key string, req CancelTurnRequest, cleanupSettled bool) (Turn, error) {
+
 	hash, err := CanonicalRequestHash(req)
 	if err != nil {
 		return Turn{}, err
@@ -2544,7 +2551,8 @@ func (s *Store) CancelTurn(ctx context.Context, key string, req CancelTurnReques
 	if err != nil {
 		return Turn{}, err
 	}
-	if replay && op.State != OperationReserved && op.State != OperationRunning {
+	resumable := op.State == OperationReserved || op.State == OperationRunning || cleanupSettled && op.State == OperationUncertain
+	if replay && !resumable {
 		if err := tx.Commit(); err != nil {
 			return Turn{}, fmt.Errorf("commit operation replay: %w", err)
 		}
@@ -2566,7 +2574,7 @@ func (s *Store) CancelTurn(ctx context.Context, key string, req CancelTurnReques
 		return Turn{}, fmt.Errorf("read turn for cancellation: %w", err)
 	}
 	if isTerminal(turn.State) {
-		if replay && (op.State == OperationReserved || op.State == OperationRunning) {
+		if replay && resumable {
 			result, err := EncodeTurnOperationResult(turn)
 			if err != nil {
 				return Turn{}, fmt.Errorf("encode observed terminal turn: %w", err)
@@ -2592,7 +2600,7 @@ func (s *Store) CancelTurn(ctx context.Context, key string, req CancelTurnReques
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ? WHERE id = ?`, string(turn.State), now.UnixNano(), string(turn.StopReason), turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("cancel turn: %w", err)
 	}
-	if err := s.settleTurnUsage(ctx, tx, req.SessionID, &turn, req.Usage, req.CumulativeCostUSD, req.CostRecorded); err != nil {
+	if err := s.recordTurnUsageTx(ctx, tx, req.SessionID, &turn, req.Usage, req.CumulativeCostUSD, req.CostRecorded); err != nil {
 		return Turn{}, err
 	}
 	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
@@ -2683,21 +2691,23 @@ func (s *Store) StageTurnCandidate(ctx context.Context, req StageTurnCandidateRe
 	if err := replaceOutputArtifactsTx(ctx, tx, turn.ID, req.Artifacts); err != nil {
 		return Turn{}, err
 	}
+	if err := s.recordTurnUsageTx(ctx, tx, req.SessionID, &turn, req.Usage, req.CumulativeCostUSD, req.CostRecorded); err != nil {
+		return Turn{}, err
+	}
+
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, candidate_message = ?, candidate_sha256 = ?,
 		validation_attempt = ?, validation_error = '', validation_receipt = '',
 		usage_input_tokens = ?, usage_cached_input_tokens = ?, usage_output_tokens = ?,
 		usage_reasoning_tokens = ?, usage_cost_usd = ?, usage_cost_recorded = ? WHERE id = ?`,
 		string(TurnAwaitingValidation), req.Message, req.SHA256, req.Attempt,
-		req.Usage.InputTokens, req.Usage.CachedInputTokens, req.Usage.OutputTokens,
-		req.Usage.ReasoningTokens, req.CumulativeCostUSD, req.CostRecorded, turn.ID); err != nil {
+		turn.Usage.InputTokens, turn.Usage.CachedInputTokens, turn.Usage.OutputTokens,
+		turn.Usage.ReasoningTokens, turn.Usage.CostUSD, turn.Usage.CostRecorded, turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("stage semantic candidate: %w", err)
 	}
 	turn.State = TurnAwaitingValidation
 	turn.Candidate = &TurnCandidate{Message: req.Message, SHA256: req.SHA256, Attempt: req.Attempt}
 	turn.CandidateSHA256 = req.SHA256
 	turn.ValidationAttempt = req.Attempt
-	turn.Usage = req.Usage
-	turn.Usage.CostUSD, turn.Usage.CostRecorded = req.CumulativeCostUSD, req.CostRecorded
 	turn.OutputArtifacts = outputArtifactMetadata(req.Artifacts)
 	if _, err := s.appendEventTx(ctx, tx, req.SessionID, req.TurnID, EventTurnAwaitingValidation, 1,
 		mustJSON(map[string]any{"candidate_sha256": req.SHA256, "attempt": req.Attempt})); err != nil {
@@ -2941,7 +2951,7 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 		}
 		req.Message = turn.Candidate.Message
 		req.Usage = turn.Usage
-		req.CumulativeCostUSD, req.CostRecorded = turn.Usage.CostUSD, turn.Usage.CostRecorded
+		req.CumulativeCostUSD, req.CostRecorded = 0, false
 	} else if turn.State != TurnRunning || turn.SendState != SendStateSent || req.CandidateSHA256 != "" {
 		return Turn{}, &Error{Code: CodeTurnNotRunnable, Detail: "turn is not running after send"}
 	}
@@ -2957,20 +2967,8 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 		turn.ValidationReceipt = s.id("validation")
 	}
 	turn.Candidate = nil
-	turn.Usage = req.Usage
-	turn.Usage.CostUSD, turn.Usage.CostRecorded = 0, false
-	if req.CostRecorded {
-		var previous float64
-		var recorded bool
-		if err := tx.QueryRowContext(ctx, `SELECT usage_cumulative_cost_usd, usage_cost_recorded FROM sessions WHERE id = ?`, req.SessionID).
-			Scan(&previous, &recorded); err != nil {
-			return Turn{}, fmt.Errorf("read cumulative session cost: %w", err)
-		}
-		turn.Usage.CostUSD = req.CumulativeCostUSD
-		if recorded && req.CumulativeCostUSD >= previous {
-			turn.Usage.CostUSD -= previous
-		}
-		turn.Usage.CostRecorded = true
+	if err := s.recordTurnUsageTx(ctx, tx, req.SessionID, &turn, req.Usage, req.CumulativeCostUSD, req.CostRecorded); err != nil {
+		return Turn{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?,
 	    assistant_message = ?, usage_input_tokens = ?, usage_cached_input_tokens = ?,
@@ -3002,11 +3000,8 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 		return Turn{}, fmt.Errorf("append turn.completed: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET active_turn_id = '', activity = ?,
-	    turns_used = turns_used + 1,
-	    usage_cumulative_cost_usd = CASE WHEN ? THEN ? ELSE usage_cumulative_cost_usd END,
-	    usage_cost_recorded = usage_cost_recorded OR ?, updated_at = ? WHERE id = ?`,
-		string(ActivityParked), req.CostRecorded, req.CumulativeCostUSD,
-		req.CostRecorded, now.UnixNano(), req.SessionID); err != nil {
+	    turns_used = turns_used + 1, updated_at = ? WHERE id = ?`,
+		string(ActivityParked), now.UnixNano(), req.SessionID); err != nil {
 		return Turn{}, fmt.Errorf("park session after turn: %w", err)
 	}
 	if sess.TurnsUsed+1 >= sess.MaxTurns {
@@ -3035,12 +3030,14 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	return turn, nil
 }
 
-// settleTurnUsage records, on a turn that did not complete, the usage its finished prompt rounds
-// reported: per-column the greater of what an earlier candidate already persisted and what the
-// runner accumulated (a turn's usage only ever grows), and the cost by the same cumulative rule
-// CompleteTurn applies — the provider reports a session-cumulative figure, so this turn's share is
-// the difference from what the session had recorded. Nothing is written when nothing was reported.
-func (s *Store) settleTurnUsage(ctx context.Context, tx *sql.Tx, sessionID string, turn *Turn, usage Usage, cumulativeCost float64, costRecorded bool) error {
+// recordTurnUsageTx keeps turn totals and the current native-session cost cursor
+// in one transaction. Unknown cost leaves the cursor untouched; a lower observed
+// counter starts a new segment while retaining spend already recorded on the turn.
+func (s *Store) recordTurnUsageTx(ctx context.Context, tx *sql.Tx, sessionID string, turn *Turn, usage Usage, cumulativeCost float64, costRecorded bool) error {
+	if costRecorded && (cumulativeCost < 0 || math.IsNaN(cumulativeCost) || math.IsInf(cumulativeCost, 0)) {
+		return &Error{Code: CodeInvalidRequest, Detail: "turn cost is outside bounds"}
+	}
+
 	if !usage.Recorded() && !costRecorded {
 		return nil
 	}
@@ -3059,12 +3056,10 @@ func (s *Store) settleTurnUsage(ctx context.Context, tx *sql.Tx, sessionID strin
 		if recorded && cumulativeCost >= previous {
 			cost -= previous
 		}
-		if cost > turn.Usage.CostUSD {
-			turn.Usage.CostUSD = cost
-		}
+		turn.Usage.CostUSD += cost
 		turn.Usage.CostRecorded = true
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET usage_cumulative_cost_usd = CASE WHEN ? >= usage_cumulative_cost_usd THEN ? ELSE usage_cumulative_cost_usd END,
-		    usage_cost_recorded = 1 WHERE id = ?`, cumulativeCost, cumulativeCost, sessionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET usage_cumulative_cost_usd = ?,
+		    usage_cost_recorded = 1 WHERE id = ?`, cumulativeCost, sessionID); err != nil {
 			return fmt.Errorf("record cumulative session cost: %w", err)
 		}
 	}
@@ -3115,7 +3110,7 @@ func (s *Store) FailTurn(ctx context.Context, req FailTurnRequest) (Turn, error)
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?, error_code = ?, error_detail = ? WHERE id = ?`, string(turn.State), now.UnixNano(), string(turn.StopReason), string(turn.ErrorCode), turn.ErrorDetail, turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("fail turn: %w", err)
 	}
-	if err := s.settleTurnUsage(ctx, tx, req.SessionID, &turn, req.Usage, req.CumulativeCostUSD, req.CostRecorded); err != nil {
+	if err := s.recordTurnUsageTx(ctx, tx, req.SessionID, &turn, req.Usage, req.CumulativeCostUSD, req.CostRecorded); err != nil {
 		return Turn{}, err
 	}
 	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
@@ -3621,7 +3616,7 @@ func (s *Store) completeOperationTx(ctx context.Context, tx *sql.Tx, id, resourc
 	if len(result) > MaxOperationResultBytes {
 		return &Error{Code: CodeInternal, Detail: "operation result is too large"}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE operations SET state = ?, resource_type = ?, resource_id = ?, result = ?, updated_at = ? WHERE id = ?`, string(OperationSucceeded), resourceType, resourceID, result, s.now().UnixNano(), id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE operations SET state = ?, resource_type = ?, resource_id = ?, result = ?, error_code = '', error_detail = '', updated_at = ? WHERE id = ?`, string(OperationSucceeded), resourceType, resourceID, result, s.now().UnixNano(), id); err != nil {
 		return fmt.Errorf("complete operation: %w", err)
 	}
 	return nil

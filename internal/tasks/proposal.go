@@ -112,16 +112,8 @@ func validateForkTaskProposal(proposal ForkTaskProposal) error {
 }
 
 func decodeForkTaskProposal(data []byte) (ForkTaskProposal, error) {
-	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(data), forkProposalFileLimit+1))
-	dec.DisallowUnknownFields()
 	var proposal ForkTaskProposal
-	if err := dec.Decode(&proposal); err != nil {
-		return ForkTaskProposal{}, err
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return ForkTaskProposal{}, errors.New("fork task proposal contains multiple JSON values")
-		}
+	if err := decodeStrictTaskJSON(io.LimitReader(bytes.NewReader(data), forkProposalFileLimit+1), &proposal, "fork task proposal"); err != nil {
 		return ForkTaskProposal{}, err
 	}
 	if err := validateForkTaskProposal(proposal); err != nil {
@@ -148,51 +140,14 @@ func openSubrootNoWait(root *os.Root, name string) (*os.Root, error) {
 }
 
 func openRealSubroot(base *os.Root, rel string) (*os.Root, error) {
-	rel = filepath.Clean(rel)
-	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, errors.New("rooted task path escapes its workspace")
-	}
-	root, err := base.OpenRoot(".")
-	if err != nil {
-		return nil, err
-	}
-	if rel == "." {
-		return root, nil
-	}
-	for _, component := range strings.Split(rel, string(filepath.Separator)) {
-		if component == "" || component == "." || component == ".." {
-			root.Close()
-			return nil, errors.New("invalid rooted task path component")
-		}
-		before, err := root.Lstat(component)
-		if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
-			root.Close()
-			if err != nil {
-				return nil, err
-			}
-			return nil, fmt.Errorf("%q is a link or not a real directory", component)
-		}
-		next, err := openSubrootNoWait(root, component)
-		if err != nil {
-			root.Close()
-			return nil, err
-		}
-		after, err := next.Stat(".")
-		if err != nil || !os.SameFile(before, after) {
-			next.Close()
-			root.Close()
-			if err != nil {
-				return nil, err
-			}
-			return nil, errors.New("rooted task path changed while opening")
-		}
-		root.Close()
-		root = next
-	}
-	return root, nil
+	return realSubroot(base, rel, false, 0)
 }
 
 func ensureRealSubroot(base *os.Root, rel string, mode os.FileMode) (*os.Root, error) {
+	return realSubroot(base, rel, true, mode)
+}
+
+func realSubroot(base *os.Root, rel string, create bool, mode os.FileMode) (*os.Root, error) {
 	rel = filepath.Clean(rel)
 	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil, errors.New("rooted task path escapes its workspace")
@@ -210,7 +165,7 @@ func ensureRealSubroot(base *os.Root, rel string, mode os.FileMode) (*os.Root, e
 			return nil, errors.New("invalid rooted task path component")
 		}
 		before, err := root.Lstat(component)
-		if errors.Is(err, os.ErrNotExist) {
+		if create && errors.Is(err, os.ErrNotExist) {
 			if err := root.Mkdir(component, mode); err != nil && !errors.Is(err, os.ErrExist) {
 				root.Close()
 				return nil, err
@@ -236,7 +191,10 @@ func ensureRealSubroot(base *os.Root, rel string, mode os.FileMode) (*os.Root, e
 			if err != nil {
 				return nil, err
 			}
-			return nil, errors.New("rooted task path changed while creating")
+			if create {
+				return nil, errors.New("rooted task path changed while creating")
+			}
+			return nil, errors.New("rooted task path changed while opening")
 		}
 		root.Close()
 		root = next
@@ -464,11 +422,10 @@ func materializeForkProposal(record ForkProposalRecord) (ForkProposalRecord, boo
 		return record, false, err
 	}
 	defer unlockLeaseFile(authority)
-	if _, imported, err := exactImportedProposal(record); err != nil || imported {
+	if item, imported, err := exactImportedProposal(record); err != nil || imported {
 		if err != nil {
 			return record, false, err
 		}
-		item, _, _ := exactImportedProposal(record)
 		instance, err := ReadTaskInstance(record.CanonicalRoot, item)
 		if err != nil {
 			return record, false, err

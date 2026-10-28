@@ -3,6 +3,7 @@ package workerconnector
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"unicode/utf8"
 
@@ -88,12 +89,19 @@ func (n *narration) evidence(key string, raw any) {
 	n.public[key] = map[string]any{"preview": utf8Prefix(text, maximumNarrationFieldBytes), "truncated": true}
 }
 
-// finish keeps the event inside its bound, withholding its largest fields
-// first (an input keeps the names of its tool), then records what was withheld.
-func (n *narration) finish() {
+// finish budgets the exact wire encoding, including every withheld explanation.
+// Omitted narrative keeps its typed tool, plan, and prompt evidence.
+func (n *narration) finish() ([]byte, error) {
+	encode := func() ([]byte, error) {
+		if len(n.withheld) > 0 {
+			n.public["withheld"] = n.withheld
+		}
+		return encodeWireJSON(n.public)
+	}
+	encoded, err := encode()
 	for _, key := range []string{"output", "content", "locations", "input", "text", "title"} {
-		if encoded, err := narrationJSON(n.public); err == nil && len(encoded) <= maximumNarrationEventBytes {
-			break
+		if err != nil || len(encoded) <= maximumNarrationEventBytes {
+			return encoded, err
 		}
 		value, ok := n.public[key]
 		if !ok {
@@ -104,18 +112,37 @@ func (n *narration) finish() {
 		if input, ok := value.(map[string]any); ok && key == "input" {
 			names := map[string]any{}
 			for _, name := range []string{"server", "tool", "operation"} {
-				if text, ok := input[name].(string); ok {
-					names[name] = text
-				}
+				copyPublicText(names, name, input[name], 128)
 			}
 			if len(names) > 0 {
 				n.public["input"] = names
 			}
 		}
+		encoded, err = encode()
 	}
-	if len(n.withheld) > 0 {
-		n.public["withheld"] = n.withheld
+	entries, _ := n.public["entries"].([]map[string]any)
+	for i := len(entries) - 1; err == nil && len(encoded) > maximumNarrationEventBytes && i >= 0; i-- {
+		if _, ok := entries[i]["content"]; !ok {
+			continue
+		}
+		delete(entries[i], "content")
+		entries[i]["withheld"] = "too large"
+		encoded, err = encode()
 	}
+	parts, _ := n.public["parts"].([]any)
+	for i := len(parts) - 1; err == nil && len(encoded) > maximumNarrationEventBytes && i >= 0; i-- {
+		part, ok := parts[i].(map[string]any)
+		if !ok || part["kind"] != "text" {
+			continue
+		}
+		delete(part, "text")
+		part["kind"], part["reason"] = "withheld", "too large"
+		encoded, err = encode()
+	}
+	if err == nil && len(encoded) > maximumNarrationEventBytes {
+		return nil, errors.New("public activity exceeds encoded size limit")
+	}
+	return encoded, err
 }
 
 // The session's checkout root stays on the worker: a path under it crosses

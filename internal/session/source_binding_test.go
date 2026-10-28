@@ -89,12 +89,16 @@ func TestStoreRefusesEverySelfInconsistentSourceBinding(t *testing.T) {
 		return &binding
 	}
 	cases := map[string]*SourceBinding{
-		"wrong version":          mutate(SourceDefault, func(b *SourceBinding) { b.Version = 2 }),
-		"unknown kind":           mutate(SourceDefault, func(b *SourceBinding) { b.Kind = "tag" }),
-		"kind disagrees":         mutate(SourceBranch, func(b *SourceBinding) { b.Kind = SourceDefault }),
-		"branch ref undreived":   mutate(SourceBranch, func(b *SourceBinding) { b.SelectedRef = ref("refs/heads/other") }),
-		"pull ref underived":     mutate(SourcePullRequest, func(b *SourceBinding) { b.SelectedRef = ref("refs/pull/515/head") }),
-		"pull number disagrees":  mutate(SourcePullRequest, func(b *SourceBinding) { b.PullRequestNumber = 515 }),
+		"wrong version":         mutate(SourceDefault, func(b *SourceBinding) { b.Version = 2 }),
+		"unknown kind":          mutate(SourceDefault, func(b *SourceBinding) { b.Kind = "tag" }),
+		"kind disagrees":        mutate(SourceBranch, func(b *SourceBinding) { b.Kind = SourceDefault }),
+		"branch ref undreived":  mutate(SourceBranch, func(b *SourceBinding) { b.SelectedRef = ref("refs/heads/other") }),
+		"pull ref underived":    mutate(SourcePullRequest, func(b *SourceBinding) { b.SelectedRef = ref("refs/pull/515/head") }),
+		"pull number disagrees": mutate(SourcePullRequest, func(b *SourceBinding) { b.PullRequestNumber = 515 }),
+		"pull expected head disagrees": mutate(SourcePullRequest, func(b *SourceBinding) {
+			b.Requested.ExpectedHeadCommit = strings.Repeat("5", 40)
+			b.PullRequestExpectedHead = b.Requested.ExpectedHeadCommit
+		}),
 		"commit names a ref":     mutate(SourceCommit, func(b *SourceBinding) { b.SelectedRef = ref("refs/heads/main") }),
 		"commit sha disagrees":   mutate(SourceCommit, func(b *SourceBinding) { b.SelectedCommit = strings.Repeat("5", 40) }),
 		"default diverges":       mutate(SourceDefault, func(b *SourceBinding) { b.SelectedCommit = strings.Repeat("9", 40) }),

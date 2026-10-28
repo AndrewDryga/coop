@@ -22,7 +22,7 @@ import (
 // Scan the actual parent-to-candidate delta, never HEAD...candidate: HEAD in
 // this isolated checkout is already the candidate. No model Git driver runs.
 func scanReviewCandidate(ctx context.Context, repository, parent, candidate string) ([]string, error) {
-	if !validSessionReviewObject(parent) || !validSessionReviewObject(candidate) {
+	if !forkspace.ValidObjectID(parent) || !forkspace.ValidObjectID(candidate) {
 		return nil, errors.New("invalid review scan identity")
 	}
 	command, err := forkspace.GitCommandWithEnv(ctx, repository, sessionCompanionGitEnv(),
@@ -97,7 +97,7 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 		if fields[1] == "160000" {
 			continue // The materializer independently refuses changed gitlinks.
 		}
-		if !validSessionReviewObject(fields[3]) {
+		if !forkspace.ValidObjectID(fields[3]) {
 			err = errors.New("invalid review blob")
 			break
 		}

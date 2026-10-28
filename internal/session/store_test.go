@@ -2084,6 +2084,30 @@ func TestListTurnsCursorIsBounded(t *testing.T) {
 	}
 }
 
+func TestListTurnsReleasesConnectionOnMalformedRow(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitTurn(ctx, "turn", SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "one"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, "UPDATE turns SET usage_input_tokens = 'invalid' WHERE session_id = ?", sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ListTurns(ctx, sess.ID, 0, 10); err == nil || !strings.Contains(err.Error(), "scan listed turn") {
+		t.Fatalf("malformed turn error = %v", err)
+	}
+	readCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if _, err := store.GetSession(readCtx, sess.ID); err != nil {
+		t.Fatalf("malformed row retained the store's connection: %v", err)
+	}
+}
+
 func TestCloseRequiresEmptyQueueAndReplaysBeforeRevision(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))

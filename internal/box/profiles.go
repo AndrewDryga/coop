@@ -186,7 +186,7 @@ func ProfileTokenMtime(cfg *config.Config, agent, profile string) (time.Time, bo
 		if err != nil {
 			return time.Time{}, false
 		}
-		info, err := os.Lstat(filepath.Join(cfg.ConfigDir, agent, "credentials", profile, "authority.json"))
+		info, err := os.Lstat(filepath.Join(cfg.NativeAuthorityConfig().ConfigDir, agent, "credentials", profile, "authority.json"))
 		if err != nil || !info.Mode().IsRegular() {
 			return time.Time{}, false
 		}

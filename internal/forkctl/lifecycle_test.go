@@ -280,6 +280,7 @@ func TestForkVerbsRejectSecondPositional(t *testing.T) {
 	a := &Control{cfg: &config.Config{RepoOverride: t.TempDir()}}
 	for verb, fn := range map[string]func([]string) (int, error){
 		"rm": a.ForkRm, "merge": a.ForkMerge, "stop": a.ForkStop, "logs": a.ForkLogs,
+		"review": a.ForkReview, "path": a.ForkPath, "open": a.ForkOpenEditor,
 	} {
 		code, err := fn([]string{"aaa", "bbb"})
 		if code != 2 || err == nil || !strings.Contains(err.Error(), "one name (got aaa, bbb)") {
@@ -1281,5 +1282,42 @@ func TestStopBeforeDestroyGivesNoContinueHint(t *testing.T) {
 		if hint := strings.Contains(stderr, "Continue: coop fork a claude --loop"); hint == destroy {
 			t.Errorf("destroy=%v: Continue hint shown = %v\n%s", destroy, hint, stderr)
 		}
+	}
+}
+
+func TestForkRmRefusesRetiredGeneration(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "retired")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := forkspace.GitOut(ws, "rev-parse", "HEAD")
+	unlock, err := forkspace.LockState(repo, "retired")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "retired")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	got := runForkCommandAcrossLockedMutation(t, repo, "retired", func() (int, error) {
+		return a.ForkRm([]string{"retired", "--yes"})
+	}, func() {
+		if err := forkspace.RemoveGenerationIfMatchesLocked(repo, identity); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got.code != 1 || got.err == nil || !strings.Contains(got.err.Error(), "generation changed") {
+		t.Fatalf("retired generation: (%d, %v)", got.code, got.err)
+	}
+	after, err := os.Stat(ws)
+	if err != nil || !os.SameFile(before, after) || forkspace.GitOut(ws, "rev-parse", "HEAD") != head {
+		t.Fatalf("workspace changed: %v", err)
 	}
 }

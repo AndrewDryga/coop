@@ -140,7 +140,7 @@ func (o *nativeOpenOwner) close() error {
 	if o.ref.ID == "" {
 		value, present, inspectErr := o.docker.InspectContainer(ctx, o.ref)
 		if inspectErr != nil {
-			return inspectErr
+			return errors.Join(inspectErr, o.docker.Close())
 		}
 		if present {
 			o.ref.ID = value.ID

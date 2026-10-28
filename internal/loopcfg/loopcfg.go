@@ -165,6 +165,10 @@ func Parse(name string, data []byte) (*Config, error) {
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) { // EOF = an all-comments/empty file
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("%s: expected one YAML document", name)
+	}
 	for _, s := range []struct {
 		name  string
 		rungs []string

@@ -1431,41 +1431,8 @@ func (codexAgent) ACPMCPServers(path string, lookupEnv func(string) (string, boo
 		if server["type"] == "sse" {
 			return nil, fmt.Errorf("MCP server %q is declared SSE, which codex-acp refuses — give it a streamable HTTP url, or remove it from the shared configuration when only Codex (as lead or peer) is affected", server["name"])
 		}
-		if err := resolveCodexACPHeaders(server, lookupEnv); err != nil {
-			return nil, err
-		}
 	}
 	return servers, nil
-}
-
-// resolveCodexACPHeaders makes the ACP declaration say what the mounted config.toml says. The
-// adapter maps these headers to codex's http_headers, which does NOT expand ${VAR} — so a
-// reference sent here would travel upstream as the literal characters. It only ever worked because
-// codex-acp deduplicates names already in config.toml and the config's env_http_headers definition
-// wins; that mask slips for a server name the adapter rewrites (whitespace becomes "_") or a user
-// who sets DISABLE_MCP_CONFIG_FILTERING. Resolve it here the way the bearer token already is.
-func resolveCodexACPHeaders(server map[string]any, lookupEnv func(string) (string, bool)) error {
-	headers, _ := server["headers"].([]map[string]any)
-	for _, header := range headers {
-		value, _ := header["value"].(string)
-		name, _ := header["name"].(string)
-		reference, exact := mcp.EnvHeaderReference(value)
-		if !exact {
-			if strings.Contains(value, "${") {
-				return fmt.Errorf("MCP server %q header %q refers to an environment variable in a form Codex cannot resolve; use bearer_token_env_var, or make the whole value one ${VARIABLE}", server["name"], name)
-			}
-			continue
-		}
-		resolved := ""
-		if lookupEnv != nil {
-			resolved, _ = lookupEnv(reference)
-		}
-		if strings.TrimSpace(resolved) == "" {
-			return fmt.Errorf("MCP server %q header %q needs %s, which this run does not carry", server["name"], name, reference)
-		}
-		header["value"] = resolved
-	}
-	return nil
 }
 
 func (codexAgent) DefaultsPublication(*config.Config) ([]ConfigPublication, error) { return nil, nil }

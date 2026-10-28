@@ -70,7 +70,7 @@ func GitCloneContext(ctx context.Context, src, dst string) error {
 // GitClonePinnedContext copies an exact revision without checkout, hardlinks or
 // source-side executable configuration. The caller owns the new destination.
 func GitClonePinnedContext(ctx context.Context, src, dst, commit string) error {
-	if !validPinnedCommit(commit) {
+	if !ValidObjectID(commit) {
 		return errors.New("invalid pinned clone commit")
 	}
 	env := pinnedTransferEnv()
@@ -101,7 +101,7 @@ func GitClonePinnedContext(ctx context.Context, src, dst, commit string) error {
 // GitFetchPinnedContext imports exact objects from another local trusted view;
 // no source drivers, lazy network fetch or recursive submodule commands run.
 func GitFetchPinnedContext(ctx context.Context, src, dst, commit string) error {
-	if !validPinnedCommit(commit) {
+	if !ValidObjectID(commit) {
 		return errors.New("invalid pinned fetch commit")
 	}
 	view, err := pinnedSourceView(ctx, src)
@@ -126,7 +126,7 @@ func GitFetchPinnedContext(ctx context.Context, src, dst, commit string) error {
 // source, or one an alternate list cannot name, is cloned instead, and the clone's refs and
 // remote go.
 func GitCopyPinnedHistoryContext(ctx context.Context, src, dst, commit string) error {
-	if !validPinnedCommit(commit) {
+	if !ValidObjectID(commit) {
 		return errors.New("invalid pinned history commit")
 	}
 	view, err := pinnedSourceView(ctx, src)

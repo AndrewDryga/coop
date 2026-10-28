@@ -178,3 +178,46 @@ func TestACPNetworkScopeSkipsOptionalLeadWithIneligiblePeerAccount(t *testing.T)
 		}
 	}
 }
+
+func TestACPFilteredPresetSpawnBindsSelectedAccounts(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+	for _, provider := range []string{"claude", "codex"} {
+		for _, account := range []string{"default", "work", "other"} {
+			signInCred(t, cfg, provider, account)
+		}
+	}
+	cfg.SetActiveProfile("codex", "work")
+	dir := filepath.Join(cfg.RepoOverride, ".agent", "presets", "scoped")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte("lead: {agent: claude@work}\nroles:\n  same: {mode: consult, agent: claude:fast}\n  other: {mode: consult, agent: codex:review}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lead := agents.Target{Provider: "claude", Accounts: []string{"work"}}
+	for _, peerAccount := range []string{"", "work", "other"} {
+		a := &app{cfg: cfg}
+		if peerAccount != "" {
+			a.acpPeers = []agents.Target{{Provider: "codex", Accounts: []string{peerAccount}}}
+		}
+		targets, bindings, err := a.acpFilteredSpawnScope(lead, "scoped")
+		if peerAccount == "other" {
+			if err == nil || targets != nil || bindings != nil {
+				t.Fatalf("conflicting account scope: %v %v %v", targets, bindings, err)
+			}
+			continue
+		}
+		if err != nil || len(bindings) != 2 || bindings["claude"].Account != "work" || bindings["codex"].Account != "work" || bindings["claude"].Default != "default" || bindings["codex"].Default != "default" {
+			t.Fatalf("preset binding: %v %v", bindings, err)
+		}
+		found := map[string]bool{}
+		for _, target := range targets {
+			found[target.Provider+"@"+target.Account()] = true
+		}
+		for _, name := range []string{"claude@work", "codex@work"} {
+			if !found[name] {
+				t.Fatalf("qualification closure omits %s: %v", name, targets)
+			}
+		}
+	}
+}

@@ -14,7 +14,7 @@ import (
 // Gitlinks reads exact committed dependencies without entering their worktrees
 // or interpreting .gitmodules. Ordinary tree entries are streamed, not retained.
 func Gitlinks(ctx context.Context, repository, commit string) (map[string]string, error) {
-	if !validPinnedCommit(commit) {
+	if !ValidObjectID(commit) {
 		return nil, errors.New("invalid gitlink tree commit")
 	}
 	command, cleanup, err := observationGitCommand(ctx, repository, "ls-tree", "-r", "-z", commit)
@@ -43,7 +43,7 @@ func Gitlinks(ctx context.Context, repository, commit string) (map[string]string
 			continue
 		}
 		id := strings.TrimPrefix(header, "160000 commit ")
-		if !validPinnedCommit(id) || links[path] != "" || len(links) >= 1024 {
+		if !ValidObjectID(id) || links[path] != "" || len(links) >= 1024 {
 			err = errors.New("invalid or excessive gitlinks")
 			break
 		}

@@ -616,3 +616,23 @@ func TestPlanMCPRoutesCarriesAHeaderSecret(t *testing.T) {
 		}
 	}
 }
+
+func TestBrokerServePortsIncludesEveryRouteKind(t *testing.T) {
+	base := networkgateway.CredentialBrokerPort
+	for _, plan := range []*credentialPlan{nil, {}} {
+		if err := plan.checkBrokerServePorts([]int{base}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := &credentialPlan{routes: []*credentialRoute{{}}, mcp: []*mcpRoute{{}}, downloads: []downloadRoute{{}}}
+	for _, port := range []int{base - 1, base, base + 1, base + 2, base + 3} {
+		err := plan.checkBrokerServePorts([]int{port})
+		collision := port >= base && port < base+3
+		if (err != nil) != collision {
+			t.Fatalf("port%d: %v", port, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), strconv.Itoa(port)) {
+			t.Fatalf("collision omitted its port: %v", err)
+		}
+	}
+}

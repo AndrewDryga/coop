@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -68,16 +67,8 @@ func ValidateForkCandidateRecord(candidate ForkCandidate) error {
 }
 
 func decodeForkCandidate(data []byte) (ForkCandidate, error) {
-	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(data), forkCandidateLimit+1))
-	dec.DisallowUnknownFields()
 	var candidate ForkCandidate
-	if err := dec.Decode(&candidate); err != nil {
-		return ForkCandidate{}, err
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return ForkCandidate{}, errors.New("fork candidate contains multiple JSON values")
-		}
+	if err := decodeStrictTaskJSON(io.LimitReader(bytes.NewReader(data), forkCandidateLimit+1), &candidate, "fork candidate"); err != nil {
 		return ForkCandidate{}, err
 	}
 	if err := validateForkCandidate(candidate); err != nil {

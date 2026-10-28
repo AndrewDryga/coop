@@ -409,10 +409,10 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	if hasGenerationNow != hasGeneration || hasGenerationNow && identity != initialIdentity {
+		return 1, fmt.Errorf("fork %q generation changed while awaiting confirmation", name)
+	}
 	if hasGenerationNow {
-		if !hasGeneration || identity != initialIdentity {
-			return 1, fmt.Errorf("fork %q generation changed while awaiting confirmation", name)
-		}
 		if pendingLand, err := ForkHasPendingLand(repo, identity); err != nil {
 			return 1, err
 		} else if pendingLand {
@@ -453,10 +453,13 @@ func (c *Control) ForkRm(args []string) (int, error) {
 // ForkPath prints a fork's filesystem path (for `cd "$(coop fork path <name>)"` and the
 // like). It's the plumbing companion to `coop fork open`, which opens it in your editor.
 func (c *Control) ForkPath(args []string) (int, error) {
-	if len(args) == 0 || args[0] == "" {
+	name, err := oneForkName("path", args)
+	if err != nil {
+		return 2, err
+	}
+	if name == "" {
 		return 2, ui.MissingArgument("fork name", "coop fork path", "coop fork path <name>")
 	}
-	name := args[0]
 	if !forkspace.ValidExistingName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
@@ -476,10 +479,13 @@ func (c *Control) ForkPath(args []string) (int, error) {
 // you can work in or eyeball it on the host. Opening is a host-side action, so it
 // doesn't need the box image built.
 func (c *Control) ForkOpenEditor(args []string) (int, error) {
-	if len(args) == 0 || args[0] == "" {
+	name, err := oneForkName("open", args)
+	if err != nil {
+		return 2, err
+	}
+	if name == "" {
 		return 2, ui.MissingArgument("fork name", "coop fork open", "coop fork open <name>")
 	}
-	name := args[0]
 	if !forkspace.ValidExistingName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}

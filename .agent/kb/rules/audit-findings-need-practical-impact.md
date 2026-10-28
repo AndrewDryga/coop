@@ -4,7 +4,7 @@ description: audit realistic agent access and practical impact; avoid speculativ
 scope: agent-workflow
 sources: [AGENTS.md]
 check: none
-updated: 2026-09-28
+updated: 2026-10-28
 ---
 
 # Require a realistic actor, reachable path, and meaningful impact for audit work
@@ -50,7 +50,21 @@ exclusions in affected tasks and park excluded runnable work through the task CL
 unrelated prior authorizations. Task authoring is not implementation, and a speedup claim needs
 matched before/after evidence without skipped features, safety checks or incomplete cleanup.
 
+When the human asks to review or adopt every finding, apply practical judgment to the complete
+inventory. Give every finding an explicit source-backed disposition; groups need named members
+and a shared reason. A small set of useful fixes is progress, not evidence that the rest were
+reviewed. Keep generated candidates, executed checks, actual failures and unreviewed work
+separate. Reconcile counts before claiming completion, and carry every justified fix through the
+requested verification. Neither a low change count nor a large one establishes completeness.
+
 ## Changelog
+
+- 2026-10-28 — the user rejected selected-example adoption of Crapper, Dryer and Mutator findings.
+  Swept the existing spec/work/review instructions, pragmatic-design and requested-outcome rules,
+  and quality-tool notes. The workflow already requires full approved outcomes; this card now
+  requires complete finding dispositions and separate candidate/execution accounting. The local
+  audit inventory reconciles 1,842 complexity findings, 343 duplicate pairs and 60,726 generated
+  mutation candidates. Practical judgment remains review-only (`check: none`).
 
 - 2026-09-28 — the user corrected a Fable campaign that reported 94/111 Coop commits inspected
   without asking Fable to assess all six requested review lenses. Swept the earlier review prompts

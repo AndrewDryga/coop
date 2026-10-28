@@ -11,13 +11,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkview"
 )
 
 func collectorFixture(t *testing.T) (*Collector, *BootInstant) {
 	t.Helper()
+	return collectorFixtureWithPolicy(t, testPolicy(t))
+}
+
+func collectorFixtureWithPolicy(t *testing.T, policy egress.Snapshot) (*Collector, *BootInstant) {
+	t.Helper()
 	now := BootInstant(time.Hour)
-	controller := testController(t, func(context.Context, string) error { return nil })
+	controller := newTestController(t, policy, func(context.Context, string) error { return nil })
 	controller.clock.read = func() (BootInstant, error) { return now, nil }
 	r, err := NewResolver(controller.policy, nil, nil, controller.clock, func(context.Context, []byte) ([]byte, error) { return nil, Failure("unused_fixture") })
 	if err != nil {
@@ -346,5 +352,53 @@ func TestSocketDenialStormBoundsDetailWithoutInventingPacketTotals(t *testing.T)
 			t.Fatal("same-sample evidence reused ID")
 		}
 		ids[d.ID] = true
+	}
+}
+
+func TestCollectorGrantCounterRegressionsRemainLowerBounds(t *testing.T) {
+	policy := transportPolicy(t, egress.Rule{To: egress.Destination{CIDR: "10.1.0.0/16"}, Protocol: "tcp", Ports: []int{5432}}, egress.Rule{To: egress.Destination{CIDR: "10.2.0.0/16"}, Protocol: "udp", Ports: []int{5353}})
+	a, b := counterFor(t, policy, "tcp", "10.1.0.0/16"), counterFor(t, policy, "udp", "10.2.0.0/16")
+	ruleIDs := map[string]string{}
+	for _, grant := range policy.Grants {
+		ruleIDs[grant.CounterName()] = grant.ID
+	}
+	for _, test := range []struct {
+		name    string
+		grants  map[string]GrantCount
+		want    GrantCount
+		partial bool
+	}{
+		{"increase and new", map[string]GrantCount{a: {Packets: 11, Bytes: 110}, b: {Packets: 1, Bytes: 2}}, GrantCount{Packets: 11, Bytes: 110}, false},
+		{"packets reset", map[string]GrantCount{a: {Packets: 9, Bytes: 120}}, GrantCount{Packets: 10, Bytes: 120}, true},
+		{"bytes reset", map[string]GrantCount{a: {Packets: 11, Bytes: 90}}, GrantCount{Packets: 11, Bytes: 100}, true},
+		{"missing", nil, GrantCount{Packets: 10, Bytes: 100}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c, now := collectorFixtureWithPolicy(t, policy)
+			publish := func(sequence networkview.Count, grants map[string]GrantCount) {
+				c.publish(KernelSample{Sequence: sequence, BootAt: *now, At: time.Unix(100, 0), EnforcerReady: true, Counters: &KernelCounters{Grants: grants}}, nil, nil, nil, nil, nil, true)
+			}
+			publish(1, map[string]GrantCount{a: {Packets: 10, Bytes: 100}})
+			publish(2, test.grants)
+			snap := c.Snapshot()
+			rows := map[string]GrantCount{}
+			for _, row := range snap.AddressGrants {
+				rows[row.RuleID] = GrantCount{Packets: row.Packets, Bytes: row.Bytes}
+			}
+			wantStatus := "exact"
+			if test.partial {
+				wantStatus = "lower-bound"
+			}
+			if rows[ruleIDs[a]] != test.want || snap.Coverage.KernelPackets.Status != wantStatus {
+				t.Fatalf("retained counters: %+v coverage=%+v", rows, snap.Coverage.KernelPackets)
+			}
+			if !test.partial && rows[ruleIDs[b]] != test.grants[b] {
+				t.Fatalf("new grant lost: %+v", rows)
+			}
+			publish(3, map[string]GrantCount{a: {Packets: 20, Bytes: 200}})
+			if test.partial && c.Snapshot().Coverage.KernelPackets.Status != "lower-bound" {
+				t.Fatal("lost counter history became exact")
+			}
+		})
 	}
 }

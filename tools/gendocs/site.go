@@ -363,7 +363,7 @@ var terminalSources = map[string]terminalSource{
 			shape("Review a fork: coop fork review <name>"), shape("Changes in fork {}"), shape("Into: {}"),
 			shape("{} · {} · +{} −{}", `"  %s · %s · +%d −%d"`), shape("Commits", `say("Commits")`), shape("Files", `say("Files")`),
 			shape("code:", `dossierCode   = "code"`), shape("tests:", `dossierTests  = "tests"`),
-			shape("{}  {}  +{} -{}", `" + f.path`, `"  +%d -%d"`), shape("Project checks will run when you merge."),
+			shape("{}  {}  +{} -{}", `" + ui.SafeInline(f.path)`, `"  +%d -%d"`), shape("Project checks will run when you merge."),
 			shape("Merge fork {} into {}"), shape("{} · +{} −{}", `"  %s · +%d −%d"`),
 			shape("Merge these commits? [Y/n] {}", `"Merge these commits?"`, `"Y/n"`), shape("Rebasing onto {}"),
 			shape("Running project checks"), shape("Running: {}"), shape("Merged fork {} into {}")}},

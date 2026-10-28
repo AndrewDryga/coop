@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"sort"
 	"strings"
@@ -314,6 +315,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 			p.setupReqs = map[string]setupRequest{}
 			p.authPending = map[authenticationScope]string{}
 			p.sessions = map[string]*sess{}
+			p.byAdapter = map[string]string{}
 			p.mu.Unlock()
 			child, err = p.startChild(ctx, factory, p.currentRestartEpoch())
 			if err != nil {
@@ -2001,7 +2003,7 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 	bindings := map[string]replayBinding{}
 	var recreated []string
 	// A session whose re-create FAILED is dead on the new box — collect it and tell the thread
-	// after the swap (sessionNoticeLine), so the failure is visible where the user is looking.
+	// after the swap (SessionMessageLine), so the failure is visible where the user is looking.
 	type replayFailure struct {
 		editorID string
 		msg      string
@@ -2337,7 +2339,7 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 			p.controlMu.Unlock()
 			return errReplaySuperseded
 		}
-		line := sessionNoticeLine(f.editorID,
+		line := SessionMessageLine(f.editorID,
 			"⚠ This session could not be re-established after the box restarted: "+f.msg+
 				"\nSwitch the provider or account back (or close the conflicting session), then send a message to retry.")
 		traceLine("box→editor(replay-failed)", line)
@@ -2530,7 +2532,7 @@ func (p *proxy) swapChildAt(
 	}
 	p.generation = nextGeneration
 	p.initResult = clone(initResult)
-	p.authMethods = cloneBoolMap(authMethods)
+	p.authMethods = maps.Clone(authMethods)
 	p.initGeneration = p.generation
 	var forceWrites [][]byte
 	var released []clientLine
@@ -2701,17 +2703,6 @@ func authenticationMethodIDs(result json.RawMessage) map[string]bool {
 	return methods
 }
 
-func cloneBoolMap(src map[string]bool) map[string]bool {
-	if src == nil {
-		return nil
-	}
-	dst := make(map[string]bool, len(src))
-	for key, value := range src {
-		dst[key] = value
-	}
-	return dst
-}
-
 func sortedKeys(src map[string]bool) []string {
 	keys := make([]string, 0, len(src))
 	for key := range src {
@@ -2863,10 +2854,10 @@ func (p *proxy) sessionLifecycleRequestLocked(method string, epoch uint64, sid s
 	return append(encoded, '\n')
 }
 
-// sessionNoticeLine is a synthetic agent_message_chunk to the editor — how a replay failure
+// SessionMessageLine is a synthetic agent_message_chunk to the editor — how a replay failure
 // becomes VISIBLE in the thread, instead of dying in stderr while the toolbar silently keeps
 // stale options and every next prompt errors against a session that no longer exists.
-func sessionNoticeLine(sid, text string) []byte {
+func SessionMessageLine(sid, text string) []byte {
 	upd := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "session/update",
@@ -2915,6 +2906,9 @@ func newRequest(id string, params json.RawMessage) []byte {
 	p := map[string]json.RawMessage{}
 	if len(params) > 0 {
 		_ = json.Unmarshal(params, &p)
+	}
+	if p == nil {
+		p = map[string]json.RawMessage{}
 	}
 	delete(p, "sessionId") // session/new mints a new id; it never carries one
 	paramsJSON, _ := json.Marshal(p)
@@ -2967,6 +2961,9 @@ func loadRequest(id, sid string, params json.RawMessage) []byte {
 	p := map[string]json.RawMessage{}
 	if len(params) > 0 {
 		_ = json.Unmarshal(params, &p)
+	}
+	if p == nil {
+		p = map[string]json.RawMessage{}
 	}
 	sidJSON, _ := json.Marshal(sid)
 	p["sessionId"] = sidJSON

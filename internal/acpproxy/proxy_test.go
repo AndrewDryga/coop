@@ -364,7 +364,7 @@ func TestProxyTargetSettingFailureBlocksPrompt(t *testing.T) {
 			if len(parse(response).Error) == 0 {
 				return nil
 			}
-			return sessionNoticeLine(sessionID(parse(request).Params), "target rejected")
+			return SessionMessageLine(sessionID(parse(request).Params), "target rejected")
 		},
 	}
 	h := newProxyHarness(t, 1, hooks)
@@ -504,7 +504,7 @@ func TestProxyInjectedFailureNoticeRemapsAdapterSession(t *testing.T) {
 	request := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":"N2","configId":"model","value":"bad"}}`, id))
 	p := &proxy{
 		out:         &out,
-		hooks:       &Hooks{InjectedResponse: func([]byte, []byte) []byte { return sessionNoticeLine("N2", "rejected") }},
+		hooks:       &Hooks{InjectedResponse: func([]byte, []byte) []byte { return SessionMessageLine("N2", "rejected") }},
 		sessions:    map[string]*sess{"S1": {adapterID: "N2"}},
 		byAdapter:   map[string]string{"N2": "S1"},
 		injected:    map[string][]byte{id: request},
@@ -2919,7 +2919,7 @@ func TestProxyCommitsSessionLifecycleOnlyAfterSuccess(t *testing.T) {
 	if s := p.sessions["S1"]; s == nil || !s.closed || s.adapterID != "N1" || p.byAdapter["N1"] != "S1" || !p.retired["N1"] {
 		t.Fatalf("successful close did not deactivate and retain native identity: session=%+v byAdapter=%v retired=%v", s, p.byAdapter, p.retired)
 	}
-	if late := p.remapToEditor(sessionNoticeLine("N1", "late")); late != nil {
+	if late := p.remapToEditor(SessionMessageLine("N1", "late")); late != nil {
 		t.Fatalf("late notification for closed native N1 was not dropped: %s", late)
 	}
 	go p.fromClient([]byte(`{"jsonrpc":"2.0","id":6,"method":"session/resume","params":{"sessionId":"S1","cwd":"/w"}}` + "\n"))
@@ -3084,6 +3084,39 @@ func TestProxyResumeReplaysOnFirstChild(t *testing.T) {
 	}
 	clientInW.Close()
 	<-done
+}
+
+func TestProxyResumeNormalizesNullSessionParams(t *testing.T) {
+	for _, turned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("turned=%v", turned), func(t *testing.T) {
+			snap := &Snapshot{
+				Initialize: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`),
+				Sessions:   []SessionSnap{{EditorID: "S1", AdapterID: "N1", Provider: "codex", Params: json.RawMessage(`null`), Turned: turned}},
+			}
+			h := newProxyHarnessWith(t, 1, nil, RunOpts{Resume: snap})
+			for i := 0; i < 2; i++ {
+				line := readLine(t, h.childIn[0])
+				frame := parse(line)
+				if i == 0 && frame.Method != "initialize" {
+					t.Fatalf("first replay frame = %s", line)
+				}
+				if i == 1 {
+					want := "session/new"
+					if turned {
+						want = "session/load"
+					}
+					var params map[string]any
+					if frame.Method != want || json.Unmarshal(frame.Params, &params) != nil || params == nil {
+						t.Fatalf("session replay frame = %s", line)
+					}
+					if turned && params["sessionId"] != "N1" || !turned && params["sessionId"] != nil {
+						t.Fatalf("replay native identity = %v", params)
+					}
+				}
+				writeLine(t, h.children[0].outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"N1"}}`, frame.ID))
+			}
+		})
+	}
 }
 
 func TestProxyInvalidResumeStartsFresh(t *testing.T) {
@@ -3260,9 +3293,14 @@ func TestProxyResumeReplayTimeoutRespawnsClean(t *testing.T) {
 	if m := parse(readLine(t, childIn2)).Method; m != "session/new" {
 		t.Fatalf("clean respawn (c2) should receive the new session/new, got %q", m)
 	}
-	writeLine(t, c2.outW, `{"jsonrpc":"2.0","id":9,"result":{"sessionId":"S9"}}`)
-	if h := parse(readLine(t, clientOut)); string(h.ID) != "9" { // the editor sees its result — not frozen
-		t.Fatalf("editor should see the session/new result (id 9), got id %q", string(h.ID))
+	// Native IDs belong to a child generation; a fresh child may reuse the abandoned N1.
+	writeLine(t, c2.outW, `{"jsonrpc":"2.0","id":9,"result":{"sessionId":"N1"}}`)
+	if h := parse(readLine(t, clientOut)); string(h.ID) != "9" || sessionID(h.Result) != "N1" {
+		t.Errorf("new session inherited abandoned resume identity: id=%s result=%s", h.ID, h.Result)
+	}
+	writeLine(t, c2.outW, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"N1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"fresh"}}}}`)
+	if h := parse(readLine(t, clientOut)); sessionID(h.Params) != "N1" {
+		t.Errorf("fresh session update inherited abandoned resume identity: %s", h.Params)
 	}
 	if calls.Load() < 2 {
 		t.Fatalf("hung first box should have forced a respawn (>=2 factory calls), got %d", calls.Load())

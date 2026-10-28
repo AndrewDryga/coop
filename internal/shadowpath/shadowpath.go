@@ -587,7 +587,7 @@ func NewDecider(repo string) func(string) (bool, error) {
 			if p.dir != "" {
 				remaining = relSlash[len(p.dir)+1:]
 			}
-			if MatchesAny(name, p.globs.Base) || MatchesPath(p.prefix+remaining, p.globs.Path) {
+			if MatchesAny(name, p.globs.Base) || MatchesAny(p.prefix+remaining, p.globs.Path) {
 				return true, nil
 			}
 		}
@@ -738,14 +738,14 @@ func shadowedByCoopignore(relSlash string, enclosing []enclosingPolicy, loadDir 
 		base = relSlash[i+1:]
 	}
 	for _, p := range enclosing {
-		if MatchesAny(base, p.globs.Base) || MatchesPath(p.prefix+relSlash, p.globs.Path) {
+		if MatchesAny(base, p.globs.Base) || MatchesAny(p.prefix+relSlash, p.globs.Path) {
 			return true
 		}
 	}
 	dir, remaining := "", relSlash
 	for {
 		g := loadDir(dir)
-		if MatchesAny(base, g.Base) || MatchesPath(remaining, g.Path) {
+		if MatchesAny(base, g.Base) || MatchesAny(remaining, g.Path) {
 			return true
 		}
 		i := strings.IndexByte(remaining, '/')
@@ -764,15 +764,6 @@ func shadowedByCoopignore(relSlash string, enclosing []enclosingPolicy, loadDir 
 func MatchesAny(name string, globs []string) bool {
 	for _, glob := range globs {
 		if ok, _ := filepath.Match(glob, name); ok {
-			return true
-		}
-	}
-	return false
-}
-
-func MatchesPath(relSlash string, globs []string) bool {
-	for _, glob := range globs {
-		if ok, _ := filepath.Match(glob, relSlash); ok {
 			return true
 		}
 	}

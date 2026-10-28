@@ -3,8 +3,10 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -936,6 +938,109 @@ fi
 			}
 			if strings.Contains(string(calls), "ps ") {
 				t.Errorf("runtime calls = %q, want no re-check for an unprovable target", calls)
+			}
+		})
+	}
+}
+
+func TestForegroundClientCancellationKeepsControllerAlive(t *testing.T) {
+	const roleEnv = "COOP_TEST_FOREGROUND_ROLE"
+	const modeEnv = "COOP_TEST_FOREGROUND_MODE"
+	const testArg = "-test.run=^TestForegroundClientCancellationKeepsControllerAlive$"
+	mode := os.Getenv(modeEnv)
+	switch os.Getenv(roleEnv) {
+	case "client":
+		signal.Reset(syscall.SIGTERM)
+		if mode == "ignore-term" {
+			signal.Ignore(syscall.SIGTERM)
+		}
+		ready := os.NewFile(3, "foreground-ready")
+		if _, err := fmt.Fprintf(ready, "%d %d\n", os.Getpid(), syscall.Getpgrp()); err != nil {
+			t.Fatal(err)
+		}
+		_ = ready.Close()
+		for {
+			time.Sleep(time.Hour)
+		}
+	case "controller":
+		if syscall.Getpgrp() != os.Getpid() {
+			t.Fatal("controller not isolated in own process group")
+		}
+		signal.Reset(syscall.SIGTERM)
+		reader, writer, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer reader.Close()
+		defer writer.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), killGrace+leaderReapTimeout+4*time.Second)
+		defer cancel()
+		cmd := exec.Command(os.Args[0], testArg, "-test.timeout=15s")
+		cmd.Env = append(os.Environ(), roleEnv+"=client")
+		cmd.ExtraFiles = []*os.File{writer}
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		type readyResult struct {
+			pid, group int
+			err        error
+		}
+		ready := make(chan readyResult, 1)
+		go func() {
+			var value readyResult
+			_, value.err = fmt.Fscan(reader, &value.pid, &value.group)
+			ready <- value
+			cancel()
+		}()
+		started := time.Now()
+		code, runErr := runForegroundCommand(ctx, cmd)
+		_ = writer.Close()
+		_ = reader.Close()
+		value := <-ready
+		if value.err != nil {
+			t.Fatalf("client readiness: %v", value.err)
+		}
+		if value.pid <= 1 || value.group != os.Getpid() {
+			t.Fatalf("client pid/group=%d/%d controller=%d", value.pid, value.group, os.Getpid())
+		}
+		if code != -1 || !errors.Is(runErr, context.Canceled) || runErr.Error() != context.Canceled.Error() {
+			t.Fatalf("cancellation=%d %v", code, runErr)
+		}
+		if cmd.ProcessState == nil {
+			t.Fatal("returned without reaped process state")
+		}
+		status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+		wantSignal := syscall.SIGTERM
+		if mode == "ignore-term" {
+			wantSignal = syscall.SIGKILL
+			if time.Since(started) < killGrace {
+				t.Fatal("TERM-resistant client lost grace period")
+			}
+		}
+		if !ok || !status.Signaled() || status.Signal() != wantSignal {
+			t.Fatalf("status=%v want signal %v", status, wantSignal)
+		}
+		if _, err := syscall.Wait4(value.pid, nil, syscall.WNOHANG, nil); !errors.Is(err, syscall.ECHILD) {
+			t.Fatalf("client not already reaped: %v", err)
+		}
+		if syscall.Getpgrp() != os.Getpid() {
+			t.Fatal("controller group changed")
+		}
+		fmt.Println("FOREGROUND_CONTROLLER_SURVIVED")
+		return
+	}
+	for _, mode := range []string{"term", "ignore-term"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), killGrace+leaderReapTimeout+8*time.Second)
+			defer cancel()
+			cmd := contextCommand(ctx, os.Args[0], testArg, "-test.timeout=15s")
+			cmd.Env = append(os.Environ(), roleEnv+"=controller", modeEnv+"="+mode)
+			defer func() {
+				if cmd.Process != nil {
+					_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+				}
+			}()
+			output, err := cmd.CombinedOutput()
+			if err != nil || !strings.Contains(string(output), "FOREGROUND_CONTROLLER_SURVIVED") {
+				t.Fatalf("isolated %s controller: %v\n%s", mode, err, output)
 			}
 		})
 	}

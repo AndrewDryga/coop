@@ -681,6 +681,16 @@ func (h *sessionHTTPHandler) checkpointWorkspace(w http.ResponseWriter, r *http.
 }
 
 func (h *sessionHTTPHandler) restoreWorkspaceCheckpoint(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if !sessionQueryOnly(w, r) {
+		return
+	}
+	for _, header := range []string{"Idempotency-Key", "Content-Type", "X-Coop-Expected-Revision", "X-Coop-Workspace-Checkpoint"} {
+		if len(r.Header.Values(header)) > 1 {
+			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "workspace checkpoint headers must have one value")
+			return
+		}
+	}
+
 	key := sessionIdempotencyKey(r)
 	if key == "" {
 		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "idempotency key is required")

@@ -127,8 +127,8 @@ func readForkCandidateControlFile(path, kind string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-func decodeStrictCandidateJSON(data []byte, dst any, kind string) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
+func decodeStrictTaskJSON(reader io.Reader, dst any, kind string) error {
+	dec := json.NewDecoder(reader)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return err
@@ -241,7 +241,7 @@ func readForkCandidateRound(repo string, identity forkspace.Identity, ref forkCa
 		return forkCandidateRoundRecord{}, err
 	}
 	var record forkCandidateRoundRecord
-	if err := decodeStrictCandidateJSON(data, &record, "fork candidate round"); err != nil {
+	if err := decodeStrictTaskJSON(bytes.NewReader(data), &record, "fork candidate round"); err != nil {
 		return forkCandidateRoundRecord{}, err
 	}
 	if err := validateForkCandidateRound(record, identity); err != nil {
@@ -276,7 +276,7 @@ func readForkCandidateState(repo string, identity forkspace.Identity) (forkCandi
 		return forkCandidateState{legacy: &candidate}, true, nil
 	case forkCandidateManifestVersion:
 		var manifest forkCandidateManifest
-		if err := decodeStrictCandidateJSON(data, &manifest, "fork candidate manifest"); err != nil {
+		if err := decodeStrictTaskJSON(bytes.NewReader(data), &manifest, "fork candidate manifest"); err != nil {
 			return forkCandidateState{}, false, err
 		}
 		if err := validateForkCandidateManifest(manifest, identity); err != nil {

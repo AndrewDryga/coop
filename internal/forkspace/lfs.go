@@ -27,7 +27,7 @@ type LFSPointer struct {
 // VisitLFSPointers streams a pinned checkout's tree, attributes and small blobs.
 // Neither worktree attributes nor executable Git filters determine its result.
 func VisitLFSPointers(ctx context.Context, repository, commit string, visit func(LFSPointer) error) error {
-	if !validPinnedCommit(commit) {
+	if !ValidObjectID(commit) {
 		return errors.New("invalid LFS source commit")
 	}
 	_, err := ObserveGit(ctx, repository,
@@ -485,7 +485,7 @@ func ParseLFSPointer(pointer []byte) (string, int64, bool) {
 		return "", 0, false
 	}
 	oid := strings.TrimPrefix(lines[1], "oid sha256:")
-	if len(oid) != 64 || !validPinnedCommit(oid) {
+	if len(oid) != 64 || !ValidObjectID(oid) {
 		return "", 0, false
 	}
 	text := strings.TrimPrefix(lines[2], "size ")

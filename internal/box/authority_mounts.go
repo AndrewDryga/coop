@@ -13,6 +13,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/fsidentity"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -550,7 +551,7 @@ func checkMutableMountSources(sources []authorityBind) error {
 			if exact {
 				continue
 			}
-			rawInside, err := aliasesAuthorityAncestor(root.source, filepath.Dir(filepath.Clean(source.source)))
+			rawInside, err := fsidentity.AliasesAncestor(root.source, filepath.Dir(filepath.Clean(source.source)))
 			if err != nil {
 				return err
 			}
@@ -719,7 +720,7 @@ func checkAuthoritySource(source string, writable bool, projects, private, forkH
 		// inside a writable project can be swapped to an authority path after this check and before
 		// the runtime opens it. Check the raw parent as well as the currently resolved source so a
 		// symlink that is safe at validation time gets no race window.
-		parentInside, err := aliasesAuthorityAncestor(project, filepath.Dir(filepath.Clean(source)))
+		parentInside, err := fsidentity.AliasesAncestor(project, filepath.Dir(filepath.Clean(source)))
 		if err != nil {
 			return err
 		}
@@ -796,11 +797,11 @@ func authorityPathsOverlap(a, b string) (bool, error) {
 	if pathContains(a, b) || pathContains(b, a) {
 		return true, nil
 	}
-	left, err := aliasesAuthorityAncestor(a, b)
+	left, err := fsidentity.AliasesAncestor(a, b)
 	if err != nil || left {
 		return left, err
 	}
-	return aliasesAuthorityAncestor(b, a)
+	return fsidentity.AliasesAncestor(b, a)
 }
 
 func authorityContains(root, path string) (contains, exact bool, err error) {
@@ -820,36 +821,13 @@ func authorityContains(root, path string) (contains, exact bool, err error) {
 	if rootErr == nil && pathErr == nil && os.SameFile(rootInfo, pathInfo) {
 		return true, true, nil
 	}
-	contains, err = aliasesAuthorityAncestor(root, path)
+	contains, err = fsidentity.AliasesAncestor(root, path)
 	return contains, false, err
 }
 
 func pathContains(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func aliasesAuthorityAncestor(root, path string) (bool, error) {
-	rootInfo, err := os.Stat(root)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	for current := path; ; current = filepath.Dir(current) {
-		info, err := os.Stat(current)
-		if err == nil && os.SameFile(rootInfo, info) {
-			return true, nil
-		}
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return false, err
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return false, nil
-		}
-	}
 }
 
 func parseAuthorityMountPlan(options []string) (authorityMountPlan, error) {

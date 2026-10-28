@@ -81,7 +81,7 @@ func writeCheckpointRepository(ctx context.Context, workspace, base, head, tree 
 			return err
 		}
 		fields := strings.Fields(string(header))
-		if len(fields) != 3 || !validSessionReviewObject(fields[0]) ||
+		if len(fields) != 3 || !forkspace.ValidObjectID(fields[0]) ||
 			(fields[1] != "commit" && fields[1] != "tree" && fields[1] != "blob") {
 			return errors.New("invalid checkpoint Git object")
 		}
@@ -117,7 +117,7 @@ func writeCheckpointRepository(ctx context.Context, workspace, base, head, tree 
 		return err
 	}
 	visit := func(commit string) error {
-		if !validSessionReviewObject(commit) {
+		if !forkspace.ValidObjectID(commit) {
 			return errors.New("invalid checkpoint LFS tree")
 		}
 		links, err := forkspace.Gitlinks(ctx, private, commit)
@@ -218,7 +218,7 @@ func readCheckpointRepository(ctx context.Context, repository string, input io.R
 			!header.ChangeTime.IsZero() || header.Devmajor != 0 || header.Devminor != 0 || len(header.PAXRecords) != 0 {
 			return errors.New("invalid checkpoint repository header")
 		}
-		if len(parts) == 3 && parts[0] == "objects" && validSessionReviewObject(parts[2]) &&
+		if len(parts) == 3 && parts[0] == "objects" && forkspace.ValidObjectID(parts[2]) &&
 			(parts[1] == "commit" || parts[1] == "tree" || parts[1] == "blob") {
 			mark, err := os.OpenFile(filepath.Join(seen, parts[2]), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 			if err != nil {
@@ -239,7 +239,7 @@ func readCheckpointRepository(ctx context.Context, repository string, input io.R
 			}
 			continue
 		}
-		if len(parts) != 2 || parts[0] != "lfs" || len(parts[1]) != 64 || !validSessionReviewObject(parts[1]) {
+		if len(parts) != 2 || parts[0] != "lfs" || len(parts[1]) != 64 || !forkspace.ValidObjectID(parts[1]) {
 			return errors.New("undeclared checkpoint repository member")
 		}
 		if err := os.WriteFile(filepath.Join(seen, "lfs-"+parts[1]), nil, 0600); err != nil {

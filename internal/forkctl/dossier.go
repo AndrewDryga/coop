@@ -1,17 +1,18 @@
 package forkctl
 
 // The review dossier's file classifier: parent-computed, deterministic risk ordering
-// for `coop fork review`. Everything is derived from git facts (--name-status +
-// --numstat output strings) so a fork can't steer its own review via its narrative;
+// for `coop fork review`. Everything is derived from exact Git change records and line counts so a fork can't steer its own review via its narrative;
 // the only agent-authored section of the brief (the task log) is labeled as the
-// agent's claim in forkBrief. Pure functions over strings — no git calls — so the
+// agent's claim in forkBrief. Pure functions over decoded records — no git calls — so the
 // classifier table-tests without a repo.
 
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
+
+	"github.com/AndrewDryga/coop/internal/gitdiff"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // Dossier section titles, in the order they print: what steers agents and toolchains
@@ -26,13 +27,13 @@ const (
 // dossierFile is one changed file under a dossier section.
 type dossierFile struct {
 	status     string // the --name-status letter (R100 → R)
-	path       string // a rename keeps the NEW path (the last tab field, as PolicyScan does)
-	adds, dels int    // -1 when unknown (binary blob, or a rename the numstat lookup misses)
+	path       string // a rename keeps the new path
+	adds, dels int    // -1 when unknown (binary blob or missing counts)
 }
 
 // render is the printed dossier line: status, path, and +N -N when known.
 func (f dossierFile) render() string {
-	s := f.status + "  " + f.path
+	s := f.status + "  " + ui.SafeInline(f.path)
 	if f.adds >= 0 {
 		s += fmt.Sprintf("  +%d -%d", f.adds, f.dels)
 	}
@@ -45,41 +46,16 @@ type dossierSection struct {
 	files []dossierFile
 }
 
-// classifyChanged buckets `git diff --name-status` lines into review-risk order —
-// config & instructions → code (churn desc) → tests → docs — attaching per-file
-// +N -N from `git diff --numstat`. Empty categories are omitted; empty input is nil.
-func classifyChanged(nameStatus, numstat string) []dossierSection {
-	nameStatus = strings.TrimSpace(nameStatus)
-	if nameStatus == "" {
-		return nil
-	}
-	// numstat lookup by path. A rename is spelled "a => b" there, so its lookup below
-	// misses and the line prints without counts — no rename-tracking cleverness.
-	counts := map[string][2]int{}
-	for _, line := range strings.Split(strings.TrimSpace(numstat), "\n") {
-		f := strings.Split(line, "\t")
-		if len(f) != 3 {
-			continue
-		}
-		a, aerr := strconv.Atoi(f[0])
-		d, derr := strconv.Atoi(f[1])
-		if aerr != nil || derr != nil {
-			continue // "-" on a binary blob
-		}
-		counts[f[2]] = [2]int{a, d}
-	}
+// classifyChanged orders exact changed paths by review risk, attaching line
+// counts where known. Empty categories are omitted.
+func classifyChanged(changes []gitdiff.Change, counts map[string][2]int) []dossierSection {
 	buckets := map[string][]dossierFile{}
-	for _, line := range strings.Split(nameStatus, "\n") {
-		f := strings.Split(line, "\t")
-		if len(f) < 2 || f[0] == "" {
-			continue
-		}
-		path := f[len(f)-1]
-		df := dossierFile{status: f[0][:1], path: path, adds: -1, dels: -1}
-		if c, ok := counts[path]; ok {
+	for _, change := range changes {
+		df := dossierFile{status: change.Status[:1], path: change.Path, adds: -1, dels: -1}
+		if c, ok := counts[change.Path]; ok {
 			df.adds, df.dels = c[0], c[1]
 		}
-		cat := dossierCategory(path)
+		cat := dossierCategory(change.Path)
 		buckets[cat] = append(buckets[cat], df)
 	}
 	// Code orders by churn (added+deleted desc); unknown counts sink. Other sections

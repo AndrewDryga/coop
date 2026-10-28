@@ -468,9 +468,5 @@ func (w *providerWatchdog) armToolCap() {
 // progress so a completion that lands just before a deadline is never misread as silence;
 // box.Run returning stops the watchdog for good.
 func (w *providerWatchdog) terminal() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if len(w.openTools) == 0 {
-		w.arm(w.policy.idle, outcomeIdleTimeout)
-	}
+	w.progress()
 }

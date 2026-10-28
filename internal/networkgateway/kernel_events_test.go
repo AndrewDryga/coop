@@ -200,3 +200,42 @@ func TestKernelTerminalBarrierWakesTheSampler(t *testing.T) {
 		t.Fatalf("the terminal barrier waited %s for the sampler's tick", took)
 	}
 }
+
+func TestKernelGrantCountersValidateNamesPrecisionAndCapacity(t *testing.T) {
+	withGrants := func(names []string) string {
+		var extra strings.Builder
+		for _, name := range names {
+			fmt.Fprintf(&extra, `,{"counter":{"family":"inet","table":"coop_net","name":%q,"packets":0,"bytes":0}}`, name)
+		}
+		return strings.TrimSuffix(kernelFixture(), "]}") + extra.String() + "]}"
+	}
+	name := "grant_" + strings.Repeat("a", 24)
+	valid := strings.Replace(withGrants([]string{name}), `"name":"`+name+`","packets":0,"bytes":0`, `"name":"`+name+`","packets":9007199254740993,"bytes":-1`, 1)
+	got, err := parseKernelCounters([]byte(valid))
+	if err != nil || uint64(got.Grants[name].Packets) != 1<<53+1 || uint64(got.Grants[name].Bytes) != ^uint64(0) {
+		t.Fatalf("grant precision: %+v %v", got, err)
+	}
+	for _, names := range [][]string{{name, name}, {"grant_" + strings.Repeat("A", 24)}, {"grant_" + strings.Repeat("a", 23)}, {"grant_" + strings.Repeat("a", 25)}, {"grant_" + strings.Repeat("g", 24)}, {"other_" + strings.Repeat("a", 24)}} {
+		if _, err := parseKernelCounters([]byte(withGrants(names))); err == nil {
+			t.Fatalf("accepted counters: %q", names)
+		}
+	}
+	for _, count := range []int{MaxKernelGrantCounters, MaxKernelGrantCounters + 1} {
+		names := make([]string, count)
+		for i := range names {
+			names[i] = fmt.Sprintf("grant_%024x", i)
+		}
+		raw := withGrants(names)
+		if len(raw) > MaxKernelCounterBytes {
+			t.Fatal("count fixture exceeded byte bound")
+		}
+		got, err := parseKernelCounters([]byte(raw))
+		if count == MaxKernelGrantCounters {
+			if err != nil || len(got.Grants) != count {
+				t.Fatalf("exact grant limit: %d %v", len(got.Grants), err)
+			}
+		} else if err == nil {
+			t.Fatal("excess grant count accepted")
+		}
+	}
+}

@@ -776,3 +776,27 @@ func TestSignUnpushedIgnoresLocalSSHDefaultKeyCommand(t *testing.T) {
 		t.Fatalf("repository-local SSH defaultKeyCommand executed: %v", err)
 	}
 }
+
+func TestCmdSignRejectsEmptyFromBeforeRepositoryAccess(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: filepath.Join(t.TempDir(), "missing")}}
+	for _, args := range [][]string{{"--from"}, {"--from", ""}, {"--from", "--help"}} {
+		if code, err := a.cmdSign(args); code != 2 || err == nil || !strings.Contains(err.Error(), "--from") {
+			t.Errorf("sign %q: %d %v", args, code, err)
+		}
+	}
+}
+
+func TestCmdSignEmptyFromDoesNotRewriteUnpushedCommit(t *testing.T) {
+	repo, git := signingRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	git("push", "-qu", "origin", "main")
+	git("commit", "-q", "--allow-empty", "-m", "unsigned work")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	if code, err := a.cmdSign([]string{"--from", ""}); code != 2 || err == nil {
+		t.Errorf("empty from: %d %v", code, err)
+	}
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != head || !headUnsigned(repo) {
+		t.Errorf("unsigned commit changed: %s -> %s", head, got)
+	}
+}

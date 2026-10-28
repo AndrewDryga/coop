@@ -371,7 +371,8 @@ func TestLoopCustomPreflightRunsTheActiveRung(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
 	writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), "preflight:\n  enabled: true\n  prompt: tidy the queue\n")
 	cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
-	c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+	rt, checkCleanup := recordLoopServiceCleanup(t, repo)
+	c := New(cfg, rt, "test", Host{})
 	var launched []box.RunSpec
 	c.boxRun = func(s box.RunSpec) (int, error) { launched = append(launched, s); return 0, nil }
 	rot := ladder.NewRotation([]agents.Target{target("codex", "work"), target("claude", "personal")})
@@ -383,6 +384,7 @@ func TestLoopCustomPreflightRunsTheActiveRung(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "read HEAD") {
 		t.Fatalf("run = (%d, %v), want the stop at the HEAD read so only the pre-flight box launched", code, err)
 	}
+	checkCleanup(c.runID)
 	if len(launched) != 1 {
 		t.Fatalf("boxes launched = %d, want exactly the pre-flight one", len(launched))
 	}

@@ -63,7 +63,7 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 
 | State | Where | Current | Oldest read | Older versions today | Converting build |
 |---|---|---|---|---|---|
-| Session database schema | `<state>/session.sqlite` | 25 | 1 | converted when the service opens the store | schema 25 (v10.1.2 and later) |
+| Session database schema | `<state>/session.sqlite` | 26 | 1 | converted when the service opens the store | builds using schema 26 |
 | Turn retry receipts | rows in `<state>/session.sqlite` | 1 | unversioned | read in place | `coop sessions compact` (v10.1.2 and later) |
 | Worker command receipts | `<state>/connector/commands/` | 1 | 1 | none exist | none |
 | Worker event streams | `<state>/connector/event-streams/` | 1 | 1 | none exist | none |
@@ -101,6 +101,7 @@ retire v1 once those all write v2. Retiring it also removes `legacyLabelsAreLoca
 label then reads as unknown: reported, never removed.
 
 ## Changelog
+- 2026-10-28 — advanced the current session schema to 26 for accumulated turn costs; retained schema 25 historical waypoint examples and the existing conversion floor. Swept all version constants through TestOneUpgradeWaypoints.
 - 2026-10-19 — network records are named by plain hashes (task
   2026-10-15-simplify-network-record-keys-and-setup-records): rows for the network withdrawal (2,
   moved from 1 on lookup) and the setup record (2, older refused by name); the network approval is 4,

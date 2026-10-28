@@ -1,6 +1,7 @@
 package hostsurface
 
 import (
+	"github.com/AndrewDryga/coop/internal/gitdiff"
 	"strings"
 	"testing"
 )
@@ -70,12 +71,16 @@ func TestClassifyJudgesEverySpelling(t *testing.T) {
 }
 
 func TestFindingsReadsNameStatusAndKeepsRenameTargets(t *testing.T) {
-	listing := "M\tmain.go\nA\t.githooks/pre-commit\nR100\told.mk\tMakefile\nD\t.envrc\nM\t.claude/settings.json\nM\t.claude/settings.json\n"
-	got := Findings(listing)
+	changes := []gitdiff.Change{
+		{Status: "M", Path: "main.go"}, {Status: "A", Path: ".githooks/pre-commit"},
+		{Status: "R100", OldPath: "old.mk", Path: "Makefile"}, {Status: "D", Path: ".envrc"},
+		{Status: "M", Path: ".claude/settings.json"}, {Status: "M", Path: ".claude/settings.json"},
+	}
+	got := Findings(changes)
 	if len(got) != 3 || got[0].Path != ".claude/settings.json" || got[1].Path != ".githooks/pre-commit" || got[2].Path != "Makefile" {
 		t.Fatalf("Findings = %+v; want the hook, the settings file (once) and the renamed Makefile, sorted", got)
 	}
-	if Findings("") != nil {
+	if Findings(nil) != nil {
 		t.Fatal("empty listing must yield nothing")
 	}
 }

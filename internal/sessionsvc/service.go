@@ -95,20 +95,6 @@ func sessionTargetList(targets []agents.Target) string {
 	return strings.Join(parts, " ")
 }
 
-func validCompanionRepositoryName(name string) bool {
-	if name == "" || name == "primary" || len(name) > 48 {
-		return false
-	}
-	for index, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
-			(index > 0 && (r == '-' || r == '_')) {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
 type CreateRemoteSessionRequest struct {
 	Task              string                   `json:"task"`
 	Job               json.RawMessage          `json:"job"`
@@ -467,7 +453,7 @@ func NewService(cfg Config) (*Service, error) {
 	}
 	if cfg.StorageLimits != nil {
 		if err := service.setStorageLimits(*cfg.StorageLimits); err != nil {
-			return nil, err
+			return nil, errors.Join(err, store.Close())
 		}
 	}
 	if cfg.RunnerFactory != nil {
@@ -1508,15 +1494,16 @@ func (s *Service) drainSession(ctx context.Context, sessionID string) {
 		_, runErr := s.runBoundSessionTurn(runCtx, bound, leased)
 		turnCancel()
 		s.finishRuntimeSlot(bound, runErr)
+		cleanupPending := s.runtimeCleanupPending(bound.ID)
 		unlock()
 		s.mu.Lock()
 		requested, cancelKey, cancelReq := active.requested, active.key, active.request
 		delete(s.active, leased.ID)
 		s.mu.Unlock()
-		if requested && !sessionRunnerCleanupFailed(runErr) {
+		if requested && !cleanupPending && !errors.Is(runErr, errTurnUsageUnsettled) {
 			// The real ACP runner performs this after child cleanup. This fallback makes injected
 			// runners obey the same durable rule without making tests depend on ACP internals.
-			cancelled, cancelErr := s.store.CancelTurn(context.Background(), cancelKey, cancelReq)
+			cancelled, cancelErr := s.store.CompleteTurnCancellation(context.Background(), cancelKey, cancelReq)
 			if cancelErr == nil {
 				_ = cancelled
 			} else if session.CodeOf(cancelErr) != session.CodeTurnNotRunnable {
@@ -1528,7 +1515,7 @@ func (s *Service) drainSession(ctx context.Context, sessionID string) {
 			// A test runner may return an error without terminalizing its lease. Do not leave a
 			// durable starting turn wedged; the production runner already records its own detail.
 			current, getErr := s.store.GetTurn(context.Background(), sessionID, leased.ID)
-			if getErr == nil && (current.State == session.TurnStarting || current.State == session.TurnRunning) && !requested {
+			if getErr == nil && (current.State == session.TurnStarting || current.State == session.TurnRunning) && !requested && !errors.Is(runErr, errTurnUsageUnsettled) {
 				_, _ = s.store.FailTurn(context.Background(), session.FailTurnRequest{SessionID: sessionID, TurnID: leased.ID, ErrorCode: session.CodeInternal, ErrorDetail: boundedSessionServiceError(runErr)})
 			}
 			code := session.CodeOf(runErr)
@@ -1544,8 +1531,20 @@ func (s *Service) drainSession(ctx context.Context, sessionID string) {
 }
 
 func sessionRunnerCleanupFailed(err error) bool {
-	var failure *sessionACPFailure
-	return errors.As(err, &failure) && failure.code == sessionACPCleanupError
+	if failure, ok := err.(*sessionACPFailure); ok && failure.code == sessionACPCleanupError {
+		return true
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, cause := range wrapped.Unwrap() {
+			if sessionRunnerCleanupFailed(cause) {
+				return true
+			}
+		}
+	case interface{ Unwrap() error }:
+		return sessionRunnerCleanupFailed(wrapped.Unwrap())
+	}
+	return false
 }
 
 func boundedSessionServiceError(err error) string {
@@ -3038,6 +3037,9 @@ func (s *Service) CancelTurn(ctx context.Context, key string, req session.Cancel
 	}
 	if sessionTurnTerminal(turn.State) {
 		if replay {
+			if s.runtimeCleanupPending(bound.ID) {
+				return s.uncertainCancelOperation(ctx, op, "active turn runtime cleanup is still pending")
+			}
 			return s.completeObservedCancel(ctx, op, turn)
 		}
 		err := &session.Error{Code: session.CodeTurnNotRunnable, Detail: "turn is already terminal"}
@@ -3127,14 +3129,13 @@ func (s *Service) CancelTurn(ctx context.Context, key string, req session.Cancel
 	defer timer.Stop()
 	select {
 	case <-done:
-		observed, err := s.store.GetTurn(context.Background(), req.SessionID, req.TurnID)
-		if err != nil {
-			return s.uncertainCancelOperation(ctx, op, "active turn cleanup could not be read")
+		// A terminal turn can retain an unfinished runtime. Only the cleanup owner's
+		// cancellation receipt proves that this request finished.
+		latest, err := s.store.GetOperationByID(context.Background(), op.ID)
+		if err == nil && (latest.State == session.OperationSucceeded || latest.State == session.OperationFailed) {
+			return replayCancelOperation(latest)
 		}
-		if sessionTurnTerminal(observed.State) {
-			return s.completeObservedCancel(context.Background(), op, observed)
-		}
-		return s.uncertainCancelOperation(ctx, op, "active turn cleanup finished without a terminal result")
+		return s.uncertainCancelOperation(ctx, op, "active turn cleanup finished without a settled cancellation receipt")
 	case <-timer.C:
 		return s.uncertainCancelOperation(ctx, op, "active turn cleanup is still pending")
 	case <-ctx.Done():

@@ -337,22 +337,10 @@ func sessionWorkspaceCommitContext(ctx context.Context, dir, revision string) (s
 		return "", fmt.Errorf("resolve commit %q: output exceeds bounds", revision)
 	}
 	commit := strings.TrimSpace(string(out))
-	if !validSessionWorkspaceCommit(commit) {
+	if !forkspace.ValidObjectID(commit) {
 		return "", fmt.Errorf("resolve commit %q: malformed identity %q", revision, commit)
 	}
 	return commit, nil
-}
-
-func validSessionWorkspaceCommit(commit string) bool {
-	if len(commit) != 40 && len(commit) != 64 {
-		return false
-	}
-	for _, r := range commit {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 func sessionWorkspaceBranch(dir string) (string, error) {
@@ -386,7 +374,7 @@ type forkAllocationGuard interface {
 // already-persisted base. An existing path is read-only inspected: a crash-recovery retry must
 // never reset, clean, or replace an ambiguous workspace it did not create.
 func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuard, repo, generatedName, base, storeID, sessionID string) (sessionWorkspace, error) {
-	if repo == "" || !filepath.IsAbs(repo) || !forkspace.ValidName(generatedName) || !validSessionWorkspaceCommit(base) {
+	if repo == "" || !filepath.IsAbs(repo) || !forkspace.ValidName(generatedName) || !forkspace.ValidObjectID(base) {
 		return sessionWorkspace{}, errors.New("invalid session workspace binding")
 	}
 	if storeID == "" || sessionID == "" {
@@ -432,49 +420,33 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 	if created {
 		createdPath, createErr := forkspace.SetupPinnedContext(ctx, repo, generatedName, base)
 		if createErr != nil {
-			return sessionWorkspace{}, removeCreatedSessionWorkspace(repo, ws, fmt.Errorf("create session workspace: %w", createErr))
+			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, fmt.Errorf("create session workspace: %w", createErr))
 		}
 		if createdPath != ws {
 			return sessionWorkspace{}, fmt.Errorf("setup fork returned unexpected workspace %q", createdPath)
 		}
-		cleanupPartial := func(cause error) error {
-			handle, info, pinErr := forkspace.Pin(ws)
-			if errors.Is(pinErr, os.ErrNotExist) {
-				return cause
-			}
-			if pinErr != nil {
-				return errors.Join(cause, fmt.Errorf("cannot prove ownership of partial workspace %q: %w", ws, pinErr))
-			}
-			defer handle.Close()
-			if !forkspace.SamePinned(ws, info) {
-				return errors.Join(cause, fmt.Errorf("partial workspace %q changed before cleanup", ws))
-			}
-			if removeErr := os.RemoveAll(ws); removeErr != nil {
-				return errors.Join(cause, fmt.Errorf("remove partial workspace %q: %w", ws, removeErr))
-			}
-			return cause
-		}
+
 		if head, headErr := sessionWorkspaceCommitContext(ctx, ws, "HEAD"); headErr != nil {
-			return sessionWorkspace{}, cleanupPartial(fmt.Errorf("verify new session workspace HEAD: %w", headErr))
+			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, fmt.Errorf("verify new session workspace HEAD: %w", headErr))
 		} else if head != base {
 			if _, _, resetErr := runSessionWorkspaceGitWithEnvContext(
 				ctx, ws, sessionWorkspaceGitOutputLimit, nil, "reset", "--hard", base,
 			); resetErr != nil {
-				return sessionWorkspace{}, cleanupPartial(fmt.Errorf("reset new session workspace to persisted base: %w", resetErr))
+				return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, fmt.Errorf("reset new session workspace to persisted base: %w", resetErr))
 			}
 		}
 	}
 
 	if err := materializeSessionSubmodules(ctx, repo, ws, base); err != nil {
 		if created {
-			return sessionWorkspace{}, removeCreatedSessionWorkspace(repo, ws, err)
+			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, err)
 		}
 		return sessionWorkspace{}, err
 	}
 	workspace, err := verifySessionWorkspaceContext(ctx, repo, generatedName, ws, base)
 	if err != nil {
 		if created {
-			return sessionWorkspace{}, removeCreatedSessionWorkspace(repo, ws, err)
+			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, err)
 		}
 		return sessionWorkspace{}, fmt.Errorf("refusing to adopt existing session workspace: %w", err)
 	}
@@ -488,7 +460,7 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 			if _, present, inspectErr := forkspace.ReadGeneration(repo, generatedName); present || inspectErr != nil {
 				return sessionWorkspace{}, fmt.Errorf("%w: %w", errSessionWorkspacePublicationPending, errors.Join(cause, inspectErr))
 			}
-			return sessionWorkspace{}, removeCreatedSessionWorkspace(repo, ws, cause)
+			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, cause)
 		}
 		published, present, inspectErr := forkspace.ReadGeneration(repo, generatedName)
 		if inspectErr == nil && present {
@@ -571,7 +543,7 @@ func removeStaleSessionWorkspaceReservationsLocked(repo, name, storeID, sessionI
 	return forkspace.RequireForkNameAvailable(repo, name)
 }
 
-func removeCreatedSessionWorkspace(repo, path string, cause error) error {
+func removeCreatedSessionWorkspace(path string, cause error) error {
 	handle, info, pinErr := forkspace.Pin(path)
 	if errors.Is(pinErr, os.ErrNotExist) {
 		return cause
@@ -890,7 +862,7 @@ func sessionWorkspaceTree(dir, revision string) (string, error) {
 		return "", err
 	}
 	tree := strings.TrimSpace(string(out))
-	if !validSessionWorkspaceCommit(tree) {
+	if !forkspace.ValidObjectID(tree) {
 		return "", fmt.Errorf("malformed tree identity %q", tree)
 	}
 	return tree, nil
@@ -1284,7 +1256,7 @@ func discardSessionWorkspaceLocked(plan WorkspaceDiscardPlan) error {
 }
 
 func sessionWorkspaceUnmergedFromParent(repo, workspace, parentHead string) (bool, error) {
-	if !validSessionWorkspaceCommit(parentHead) {
+	if !forkspace.ValidObjectID(parentHead) {
 		return false, errors.New("parent commit is invalid")
 	}
 	if _, _, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,

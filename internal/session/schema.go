@@ -603,6 +603,12 @@ func migrate(db *sql.DB) error {
 		}
 		version = 25
 	}
+	if version < 26 {
+		if err := backfillTurnCosts(tx); err != nil {
+			return fmt.Errorf("migrate schema v26: %w", err)
+		}
+		version = 26
+	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}

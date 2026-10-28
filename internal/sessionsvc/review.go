@@ -534,22 +534,10 @@ func ReviewGitIdentity(dir, revision string) (string, string, error) {
 		return "", "", fmt.Errorf("resolve tree for %s: %w", head, err)
 	}
 	tree := strings.TrimSpace(string(treeRaw))
-	if !validSessionReviewObject(tree) {
+	if !forkspace.ValidObjectID(tree) {
 		return "", "", fmt.Errorf("resolve tree for %s: malformed identity %q", head, tree)
 	}
 	return head, tree, nil
-}
-
-func validSessionReviewObject(value string) bool {
-	if len(value) != 40 && len(value) != 64 {
-		return false
-	}
-	for _, r := range value {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 func sessionReviewIsAncestor(dir, base, head string) (bool, error) {
@@ -571,9 +559,9 @@ func sessionReviewIsAncestor(dir, base, head string) (bool, error) {
 func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation, intent sessionReviewIntent) (ReviewDossier, error) {
 	if intent.OperationID != op.ID || intent.SessionID == "" || intent.Repository == "" || intent.Workspace == "" ||
 		!forkspace.ValidGeneration(forkspace.Generation(intent.ForkGeneration)) || intent.SessionRevision <= 0 ||
-		!validSessionReviewObject(intent.CreationBase) || !validSessionReviewObject(intent.SourceHead) ||
-		!validSessionReviewObject(intent.SourceTree) || !validSessionReviewObject(intent.ParentHead) ||
-		!validSessionReviewObject(intent.ParentTree) || intent.MaxPatchBytes <= 0 || intent.MaxPatchBytes > session.MaxPatchBytesLimit {
+		!forkspace.ValidObjectID(intent.CreationBase) || !forkspace.ValidObjectID(intent.SourceHead) ||
+		!forkspace.ValidObjectID(intent.SourceTree) || !forkspace.ValidObjectID(intent.ParentHead) ||
+		!forkspace.ValidObjectID(intent.ParentTree) || intent.MaxPatchBytes <= 0 || intent.MaxPatchBytes > session.MaxPatchBytesLimit {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review operation intent is invalid")
 	}
 	if intent.Source != nil && session.ValidateSourceBinding(*intent.Source) != nil {
@@ -763,7 +751,7 @@ func nameReviewDefaultBranch(ctx context.Context, dir string, source *session.So
 		return nil
 	}
 	commit := source.DefaultCommit
-	if !validSessionReviewObject(commit) || forkspace.GitRefCommand(ctx, dir, "cat-file", "-e", commit+"^{commit}").Run() != nil {
+	if !forkspace.ValidObjectID(commit) || forkspace.GitRefCommand(ctx, dir, "cat-file", "-e", commit+"^{commit}").Run() != nil {
 		commit = parent
 	}
 	branch := strings.TrimPrefix(source.DefaultRef, "refs/heads/")

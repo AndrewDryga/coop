@@ -499,6 +499,7 @@ const (
 // must then drop that server, because sending the reference itself authenticates nothing and looks
 // to the server like a malformed credential.
 func resolveHeaderReferences(value string, lookupEnv func(string) (string, bool)) (string, bool) {
+	var replacements []string
 	for _, name := range headerReferences(value) {
 		resolved := ""
 		if lookupEnv != nil {
@@ -507,17 +508,10 @@ func resolveHeaderReferences(value string, lookupEnv func(string) (string, bool)
 		if strings.TrimSpace(resolved) == "" {
 			return "", false
 		}
-		value = strings.ReplaceAll(value, "${"+name+"}", resolved)
+		replacements = append(replacements, "${"+name+"}", resolved)
 	}
-	return value, true
-}
-
-// EnvHeaderReference reports the variable a header value refers to when the value is EXACTLY that
-// reference, for an adapter that has to resolve one itself. The shared file's grammar lives here;
-// what each client does with it belongs to that client's adapter.
-func EnvHeaderReference(value string) (string, bool) {
-	name, shape := envReference(value)
-	return name, shape == referenceExact
+	// Replace only the original template: a secret may itself contain reference syntax.
+	return strings.NewReplacer(replacements...).Replace(value), true
 }
 
 // envReference classifies a header value, returning the referenced name when there is one.
@@ -874,12 +868,18 @@ func bindCoopServer(snapshot []byte, name string, server map[string]any) ([]byte
 			return nil, fmt.Errorf("parsing session MCP snapshot: %w", err)
 		}
 	}
+	if root == nil {
+		root = map[string]json.RawMessage{}
+	}
 
 	definitions := map[string]json.RawMessage{}
 	if raw := root["mcpServers"]; len(raw) > 0 {
 		if err := json.Unmarshal(raw, &definitions); err != nil {
 			return nil, fmt.Errorf("parsing session MCP snapshot mcpServers: %w", err)
 		}
+	}
+	if definitions == nil {
+		definitions = map[string]json.RawMessage{}
 	}
 	if _, exists := definitions[name]; exists {
 		return nil, fmt.Errorf("shared MCP config reserves server %q", name)
@@ -987,6 +987,9 @@ func validateCanonicalServerFields(name string, definition json.RawMessage) erro
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(definition, &fields); err != nil {
 		return fmt.Errorf("MCP server %q: %w", name, err)
+	}
+	if fields == nil {
+		return fmt.Errorf("MCP server %q must be an object", name)
 	}
 	for _, key := range sortedKeys(fields) {
 		for _, canonical := range canonicalServerFields {
@@ -1099,6 +1102,9 @@ func readJSONObject(path string) (map[string]any, error) {
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("existing %s is not valid JSON: %w", path, err)
+	}
+	if out == nil {
+		return nil, fmt.Errorf("existing %s must be a JSON object", path)
 	}
 	return out, nil
 }

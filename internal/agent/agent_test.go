@@ -2276,3 +2276,52 @@ func TestCodexControllerJobConfigTurnsOffPluginSync(t *testing.T) {
 		t.Fatalf("an ordinary box's config = %+v, %v", ordinary, err)
 	}
 }
+
+func TestCodexACPResolvesHTTPHeaders(t *testing.T) {
+	for _, test := range []struct {
+		name, value, resolved, want string
+		lookup, present, drop       bool
+	}{
+		{name: "literal", value: "literal-value", want: "literal-value"},
+		{name: "whole reference", value: "${TOKEN}", resolved: "exact secret", want: "exact secret", lookup: true, present: true},
+		{name: "missing", value: "${TOKEN}", lookup: true, drop: true},
+		{name: "no lookup", value: "${TOKEN}", drop: true},
+		{name: "blank", value: "${TOKEN}", resolved: " \t", lookup: true, present: true, drop: true},
+		{name: "mixed", value: "Bearer ${TOKEN}", resolved: "exact secret", lookup: true, present: true, want: "Bearer exact secret"},
+		{name: "opaque secret", value: "${TOKEN}", resolved: "${OTHER}", lookup: true, present: true, want: "${OTHER}"},
+		{name: "opaque mixed secret", value: "Bearer ${TOKEN}", resolved: "${OTHER}", lookup: true, present: true, want: "Bearer ${OTHER}"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "mcp.json")
+			raw, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"server": map[string]any{"url": "https://example.test/mcp", "headers": map[string]string{"X-Token": test.value}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustWrite(t, file, string(raw))
+			var lookup func(string) (string, bool)
+			if test.lookup {
+				lookup = func(name string) (string, bool) {
+					if name != "TOKEN" {
+						t.Fatalf("unexpected variable %q", name)
+					}
+					return test.resolved, test.present
+				}
+			}
+			agent, _ := Get("codex")
+			servers, err := agent.ACPMCPServers(file, lookup)
+			if test.drop {
+				if err != nil || len(servers) != 0 {
+					t.Fatalf("header refusal: %v", err)
+				}
+				return
+			}
+			if err != nil || len(servers) != 1 {
+				t.Fatalf("servers: %+v %v", servers, err)
+			}
+			headers := servers[0]["headers"].([]map[string]any)
+			if len(headers) != 1 || headers[0]["name"] != "X-Token" || headers[0]["value"] != test.want {
+				t.Fatalf("outgoing headers: %+v", headers)
+			}
+		})
+	}
+}

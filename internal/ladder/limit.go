@@ -173,6 +173,7 @@ func ParseResetTime(output string, now time.Time) time.Time {
 		}
 		s = strings.TrimSpace(s[:len(s)-len(tz[0])])
 	}
+	localNow := now.In(loc)
 	s = strings.ToLower(s)
 	// Strip spaces before AM/PM and the optional prose "at" so both
 	// "Jun 18, 8pm" and "August 20 at 2 PM" reach the same layouts.
@@ -187,7 +188,7 @@ func ParseResetTime(output string, now time.Time) time.Time {
 		"January 2, 3:04pm", "January 2, 3pm", "January 2 3:04pm", "January 2 3pm",
 	} {
 		if t, err := time.ParseInLocation(lay, s, loc); err == nil {
-			r := time.Date(now.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, loc)
+			r := time.Date(localNow.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 			if r.Before(now.Add(-24 * time.Hour)) {
 				r = r.AddDate(1, 0, 0)
 			}
@@ -197,7 +198,7 @@ func ParseResetTime(output string, now time.Time) time.Time {
 	// Time only: "11am" / "8:30pm" — the next time that clock reading comes round.
 	for _, lay := range []string{"3:04pm", "3pm"} {
 		if t, err := time.ParseInLocation(lay, s, loc); err == nil {
-			r := time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), 0, 0, loc)
+			r := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 			if !r.After(now) {
 				r = r.AddDate(0, 0, 1)
 			}

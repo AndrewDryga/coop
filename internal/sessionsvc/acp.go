@@ -417,7 +417,8 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 	runtimeRunID := leased.RuntimeRunID
 	var assistant string
 	usage := leased.Usage
-	var candidateUsage session.Usage
+	var candidateUsage, pendingUsage session.Usage
+	usagePending := false
 	var outputArtifacts []session.OutputArtifact
 	protocolComplete := false
 	candidatePublished := false
@@ -488,6 +489,19 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		if networkErr := r.sessionNetworkOutcome(bound, leased.ID, networkAttempt, !parked); networkErr != nil {
 			baseErr = errors.Join(baseErr, networkErr)
 		}
+		if usagePending {
+			checkpointCtx, cancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
+			stored, err := r.store.RecordTurnUsage(checkpointCtx, session.RecordTurnUsageRequest{
+				SessionID: bound.ID, TurnID: leased.ID, Usage: usage,
+				CumulativeCostUSD: pendingUsage.CostUSD, CostRecorded: pendingUsage.CostRecorded,
+			})
+			cancel()
+			if err == nil {
+				usage, usagePending = stored, false
+			} else {
+				baseErr = errors.Join(baseErr, err)
+			}
+		}
 		if protocolComplete && baseErr == nil {
 			completed, err := r.completeTurn(bound, leased, assistant, outputArtifacts, usage)
 			if err != nil {
@@ -499,13 +513,12 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 				result = completed
 			}
 		}
-		if !protocolComplete && !cleanupFailed && errors.Is(ctx.Err(), context.Canceled) && baseErr != nil {
+		if !protocolComplete && !cleanupFailed && !usagePending && errors.Is(ctx.Err(), context.Canceled) && baseErr != nil {
 			if lookup, ok := ctx.Value(sessionCancelRequestContextKey{}).(func() (string, session.CancelTurnRequest, bool)); ok {
 				if key, request, requested := lookup(); requested && key != "" {
 					cancelCtx, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
-					// The runner settles the cancellation with what its finished rounds reported.
-					request.Usage, request.CumulativeCostUSD, request.CostRecorded = settledUsage(usage)
-					cancelled, err := r.store.CancelTurn(cancelCtx, key, request)
+					// Usage was checkpointed separately; preserve the reserved request identity.
+					cancelled, err := r.store.CompleteTurnCancellation(cancelCtx, key, request)
 					cancel()
 					if err == nil {
 						result, baseErr = cancelled, nil
@@ -516,7 +529,19 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			}
 		}
 		if baseErr != nil {
-			result = r.failTurn(bound, leased, baseErr, result, usage)
+			pending := session.Usage{}
+			if usagePending {
+				pending = pendingUsage
+			}
+			failed, err := r.failTurn(bound, leased, baseErr, result, usage, pending)
+			if err == nil {
+				result = failed
+			} else {
+				baseErr = errors.Join(baseErr, err)
+				if usagePending {
+					baseErr = errors.Join(baseErr, errTurnUsageUnsettled)
+				}
+			}
 		}
 		settled := result.ID == leased.ID && result.SessionID == bound.ID &&
 			result.State != session.TurnStarting && result.State != session.TurnRunning
@@ -686,6 +711,21 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		assistant, outputArtifacts, candidateUsage, err = r.runACP(
 			ctx, execution.child, bound, leased, prompt, checkpointSend,
 		)
+		if candidateUsage.Recorded() {
+			pendingUsage, usagePending = candidateUsage, true
+			usage = addSessionUsage(usage, candidateUsage)
+			checkpointCtx, cancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
+			stored, checkpointErr := r.store.RecordTurnUsage(checkpointCtx, session.RecordTurnUsageRequest{
+				SessionID: bound.ID, TurnID: leased.ID, Usage: usage,
+				CumulativeCostUSD: candidateUsage.CostUSD, CostRecorded: candidateUsage.CostRecorded,
+			})
+			cancel()
+			if checkpointErr != nil {
+				runErr = errors.Join(err, checkpointErr)
+				return result, runErr
+			}
+			usage, usagePending = stored, false
+		}
 		if err == nil {
 			if len(outputArtifacts) == 0 {
 				// Schema and semantic repair may change only the structured candidate.
@@ -693,7 +733,6 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 				// provider explicitly produced replacement artifacts in this round.
 				outputArtifacts = carriedOutputArtifacts
 			}
-			usage = addSessionUsage(usage, candidateUsage)
 			if bound.NativeSessionID == "" {
 				bound.NativeSessionID = execution.child.nativeSessionID
 			}
@@ -798,12 +837,6 @@ func addSessionUsage(total, candidate session.Usage) session.Usage {
 	total.CachedInputTokens += candidate.CachedInputTokens
 	total.OutputTokens += candidate.OutputTokens
 	total.ReasoningTokens += candidate.ReasoningTokens
-	// ACP reports cost as a cumulative native-session value. The last observed
-	// value supersedes the earlier one; adding it would double-charge repairs.
-	if candidate.CostRecorded {
-		total.CostUSD = candidate.CostUSD
-		total.CostRecorded = true
-	}
 	return total
 }
 
@@ -917,18 +950,18 @@ func sessionACPReportedCost(raw json.RawMessage) (float64, bool) {
 		Update struct {
 			SessionUpdate string `json:"sessionUpdate"`
 			Cost          *struct {
-				Amount   float64 `json:"amount"`
-				Currency string  `json:"currency"`
+				Amount   *float64 `json:"amount"`
+				Currency string   `json:"currency"`
 			} `json:"cost"`
 		} `json:"update"`
 	}
 	if json.Unmarshal(raw, &params) != nil || params.Update.SessionUpdate != "usage_update" ||
-		params.Update.Cost == nil || params.Update.Cost.Currency != "USD" ||
-		params.Update.Cost.Amount < 0 || math.IsNaN(params.Update.Cost.Amount) ||
-		math.IsInf(params.Update.Cost.Amount, 0) {
+		params.Update.Cost == nil || params.Update.Cost.Currency != "USD" || params.Update.Cost.Amount == nil ||
+		*params.Update.Cost.Amount < 0 || math.IsNaN(*params.Update.Cost.Amount) ||
+		math.IsInf(*params.Update.Cost.Amount, 0) {
 		return 0, false
 	}
-	return params.Update.Cost.Amount, true
+	return *params.Update.Cost.Amount, true
 }
 
 func acpFailure(code session.ErrorCode, detail string) error {
@@ -961,12 +994,9 @@ func turnDeadline(err error, doing string) error {
 func (r *sessionTurnRunner) completeTurn(bound session.Session, leased session.Turn, assistant string, artifacts []session.OutputArtifact, usage session.Usage) (session.Turn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
 	defer cancel()
-	cumulativeCost, costRecorded := usage.CostUSD, usage.CostRecorded
-	usage.CostUSD, usage.CostRecorded = 0, false
 	return r.completion.CompleteTurn(ctx, session.CompleteTurnRequest{
 		SessionID: bound.ID, TurnID: leased.ID, Message: assistant,
 		Artifacts: artifacts, Usage: usage,
-		CumulativeCostUSD: cumulativeCost, CostRecorded: costRecorded,
 	})
 }
 
@@ -981,28 +1011,20 @@ func (r *sessionTurnRunner) stageTurnCandidate(
 	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
 	defer cancel()
 	digest := sha256.Sum256([]byte(assistant))
-	cumulativeCost, costRecorded := usage.CostUSD, usage.CostRecorded
-	usage.CostUSD, usage.CostRecorded = 0, false
 	return r.store.StageTurnCandidate(ctx, session.StageTurnCandidateRequest{
 		SessionID: bound.ID, TurnID: leased.ID, Message: assistant,
 		SHA256: fmt.Sprintf("%x", digest[:]), Attempt: attempt,
 		Artifacts: artifacts, Usage: usage,
-		CumulativeCostUSD: cumulativeCost, CostRecorded: costRecorded,
 	})
 }
 
-// settledUsage splits the runner's accumulated usage the way completion does: the token columns
-// are the turn's own, the cost is the provider's session-cumulative figure the store turns into
-// this turn's share. A turn that never finished a round carries nothing.
-func settledUsage(usage session.Usage) (session.Usage, float64, bool) {
-	cumulativeCost, costRecorded := usage.CostUSD, usage.CostRecorded
-	usage.CostUSD, usage.CostRecorded = 0, false
-	return usage, cumulativeCost, costRecorded
-}
+// errTurnUsageUnsettled prevents a generic terminal fallback from discarding a
+// provider observation after both checkpoint and settlement writes failed.
+var errTurnUsageUnsettled = errors.New("reported turn usage could not be persisted")
 
-func (r *sessionTurnRunner) failTurn(bound session.Session, leased session.Turn, cause error, current session.Turn, usage session.Usage) session.Turn {
+func (r *sessionTurnRunner) failTurn(bound session.Session, leased session.Turn, cause error, current session.Turn, usage, pending session.Usage) (session.Turn, error) {
 	if r.store == nil || bound.ID == "" || leased.ID == "" || leased.SessionID != bound.ID {
-		return current
+		return current, nil
 	}
 	code := sessionACPProcessError
 	detail := "ACP child failed"
@@ -1016,13 +1038,12 @@ func (r *sessionTurnRunner) failTurn(bound session.Session, leased session.Turn,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
 	defer cancel()
-	tokens, cumulativeCost, costRecorded := settledUsage(usage)
 	failed, err := r.store.FailTurn(ctx, session.FailTurnRequest{SessionID: bound.ID, TurnID: leased.ID, ErrorCode: code, ErrorDetail: detail,
-		Usage: tokens, CumulativeCostUSD: cumulativeCost, CostRecorded: costRecorded})
+		Usage: usage, CumulativeCostUSD: pending.CostUSD, CostRecorded: pending.CostRecorded})
 	if err != nil {
-		return current
+		return current, err
 	}
-	return failed
+	return failed, nil
 }
 
 func (r *sessionTurnRunner) removeTurnBox(repo, runID string) error {
@@ -2835,7 +2856,7 @@ func (r *sessionTurnRunner) runACP(
 	leased session.Turn,
 	promptText string,
 	checkpointSend bool,
-) (string, []session.OutputArtifact, session.Usage, error) {
+) (message string, artifacts []session.OutputArtifact, reported session.Usage, runErr error) {
 	if process == nil || process.frames == nil {
 		return "", nil, session.Usage{}, acpFailure(sessionACPProcessError, "ACP child is unavailable")
 	}
@@ -2849,6 +2870,11 @@ func (r *sessionTurnRunner) runACP(
 	var outputArtifacts []session.OutputArtifact
 	var cumulativeCostUSD float64
 	var costRecorded bool
+	var observed session.Usage
+	defer func() {
+		reported = observed
+		reported.CostUSD, reported.CostRecorded = cumulativeCostUSD, costRecorded
+	}()
 	collectAssistant := false
 	// Narration is bound to the admitted prompt for the same reason assistant
 	// text is: startup, auth, and status frames are not work the caller asked
@@ -3195,6 +3221,14 @@ func (r *sessionTurnRunner) runACP(
 	if json.Unmarshal(result, &promptResult) != nil || !validACPStopReason(promptResult.StopReason) {
 		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "session/prompt returned an invalid stop reason")
 	}
+	observed = promptResult.Usage.session()
+	if !observed.Recorded() && promptResult.Meta != nil {
+		observed = promptResult.Meta.Usage.session()
+	}
+	// Some adapters report only the last model call; use their native turn record.
+	if record, ok := turnRecordOf(limitProvider); ok {
+		observed = wholeTurnUsage(ctx, record, process.nativeHome, nativeID, observed)
+	}
 	if promptResult.Meta != nil {
 		if failure := sessionACPTerminalFailureError(
 			promptResult.Meta.JetBrains.Air.Version,
@@ -3230,21 +3264,7 @@ func (r *sessionTurnRunner) runACP(
 	if total > session.MaxTurnArtifactBytes {
 		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "turn output artifacts exceed their total bound")
 	}
-	// The whole point of parsing it. The first version read the usage into a
-	// struct and returned only the message, so CompleteTurnRequest.Usage was
-	// never set and every turn persisted four zeros — plumbing that existed,
-	// compiled, and carried nothing.
-	usage := promptResult.Usage.session()
-	if !usage.Recorded() && promptResult.Meta != nil {
-		usage = promptResult.Meta.Usage.session()
-	}
-	// codex-acp reports only the turn's last model call; its adapter reads the
-	// client's own record of every call.
-	if record, ok := turnRecordOf(limitProvider); ok && process != nil {
-		usage = wholeTurnUsage(ctx, record, process.nativeHome, nativeID, usage)
-	}
-	usage.CostUSD, usage.CostRecorded = cumulativeCostUSD, costRecorded
-	return string(assistant), outputArtifacts, usage, nil
+	return string(assistant), outputArtifacts, observed, nil
 }
 
 // sessionACPClientCapabilities opts into typed failures and command-output deltas.

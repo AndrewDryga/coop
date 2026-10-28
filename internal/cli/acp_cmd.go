@@ -1093,6 +1093,22 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		return nil, err
 	}
 	cidDir, cidPath := "", ""
+	mcpDir, mcpPath, mcpRunID := "", "", ""
+	preparing := true
+	defer func() {
+		if preparing {
+			_ = inR.Close()
+			_ = inW.Close()
+			_ = outR.Close()
+			_ = outW.Close()
+			if cidDir != "" {
+				_ = os.RemoveAll(cidDir)
+			}
+			if mcpDir != "" {
+				_ = os.RemoveAll(mcpDir)
+			}
+		}
+	}()
 	activityRole := forkspace.ExecutionRoleActive
 	if len(activityRoles) > 0 && activityRoles[0] != "" {
 		activityRole = activityRoles[0]
@@ -1108,10 +1124,6 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	policy := acpPolicy(admitted)
 	capture, err := acpChildCapture(admitted, superID)
 	if err != nil {
-		inR.Close()
-		inW.Close()
-		outR.Close()
-		outW.Close()
 		return nil, err
 	}
 	if capture != "" {
@@ -1124,20 +1136,12 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 				ctrl.WaitForPresetRung(ctx)
 			case acct != "" && activityRole == forkspace.ExecutionRoleWarm && ctrl.Cooling(t.Provider, acct):
 				// A warm box waits for nothing: the pool leaves the slot empty instead.
-				inR.Close()
-				inW.Close()
-				outR.Close()
-				outW.Close()
 				return nil, fmt.Errorf("%s account %q is %w", t.Provider, acct, errACPAccountCooling)
 			case acct != "":
 				ctrl.WaitForReset(ctx, t.Provider, acct)
 			}
 		}
 		if err := ctx.Err(); err != nil {
-			inR.Close()
-			inW.Close()
-			outR.Close()
-			outW.Close()
 			return nil, err
 		}
 		if ctrl != nil {
@@ -1154,18 +1158,10 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	if a.acpCapture != nil {
 		bindings, err := a.acpFilteredLaunchProof(ctrl, t, psName)
 		if err != nil {
-			inR.Close()
-			inW.Close()
-			outR.Close()
-			outW.Close()
 			return nil, err
 		}
 		encoded, err := json.Marshal(bindings)
 		if err != nil {
-			inR.Close()
-			inW.Close()
-			outR.Close()
-			outW.Close()
 			return nil, fmt.Errorf("encode ACP account bindings: %w", err)
 		}
 		env = append(env, acpAccountBindingsEnv+"="+string(encoded))
@@ -1177,7 +1173,6 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			env = append(env, "COOP_ACP_CIDFILE="+cidPath)
 		}
 	}
-	mcpDir, mcpPath, mcpRunID := "", "", ""
 	if activityRole != forkspace.ExecutionRoleProbe {
 		id := newSupervisorID()
 		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -1185,13 +1180,6 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			mcpDir, err = box.NewSessionMCPHandoffDir(a.cfg, repo)
 		}
 		if err != nil {
-			inR.Close()
-			inW.Close()
-			outR.Close()
-			outW.Close()
-			if cidDir != "" {
-				os.RemoveAll(cidDir)
-			}
 			return nil, fmt.Errorf("prepare this editor child's shared tools: %w", err)
 		}
 		mcpRunID = "acp-" + id
@@ -1205,18 +1193,9 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	// `docker run` grandchild; killing the whole group (-pgid) reaches the run client too.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
-		inR.Close()
-		inW.Close()
-		outR.Close()
-		outW.Close()
-		if cidDir != "" {
-			os.RemoveAll(cidDir)
-		}
-		if mcpDir != "" {
-			os.RemoveAll(mcpDir)
-		}
 		return nil, err
 	}
+	preparing = false
 	inR.Close()  // the child holds the read end now
 	outW.Close() // ...and the write end; outR sees EOF when the child exits
 	pid := cmd.Process.Pid

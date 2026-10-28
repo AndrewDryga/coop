@@ -192,7 +192,7 @@ func LoadReview(repo string) (Review, error) {
 			return Review{}, fmt.Errorf("%s: review: %w", File, err)
 		}
 	}
-	if review.Compose, err = reviewRelPath("compose", review.Compose); err != nil {
+	if review.Compose, err = projectRelPath("review.compose", review.Compose); err != nil {
 		return Review{}, err
 	}
 	if err := validateLiteralEnv("review.env", review.Env); err != nil {
@@ -341,13 +341,13 @@ func Parse(data []byte) (*Project, error) {
 			return nil, fmt.Errorf("%s: box.pids %q — use a positive integer, or 0/unlimited for no cap", File, p.Box.Pids)
 		}
 	}
-	if p.Box.Dockerfile, err = boxRelPath("dockerfile", p.Box.Dockerfile); err != nil {
+	if p.Box.Dockerfile, err = projectRelPath("box.dockerfile", p.Box.Dockerfile); err != nil {
 		return nil, err
 	}
-	if p.Box.Compose, err = boxRelPath("compose", p.Box.Compose); err != nil {
+	if p.Box.Compose, err = projectRelPath("box.compose", p.Box.Compose); err != nil {
 		return nil, err
 	}
-	if p.Review.Compose, err = reviewRelPath("compose", p.Review.Compose); err != nil {
+	if p.Review.Compose, err = projectRelPath("review.compose", p.Review.Compose); err != nil {
 		return nil, err
 	}
 	if err := validateLiteralEnv("box.env", p.Box.Env); err != nil {
@@ -407,28 +407,17 @@ func isEnvNameStart(c byte) bool {
 	return c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
 }
 
-// boxRelPath validates an optional repo-relative box path (box.dockerfile / box.compose): empty
+// projectRelPath validates an optional repo-relative box or review path: empty
 // stays empty (the default applies later); otherwise it must be a relative path inside the repo,
 // returned cleaned — the same tighten-only rule as subprojects, so a committed file can't point
 // coop's build/compose at something outside the repo.
-func boxRelPath(field, val string) (string, error) {
+func projectRelPath(field, val string) (string, error) {
 	if val == "" {
 		return "", nil
 	}
 	clean := filepath.Clean(val)
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%s: box.%s %q must be a relative path inside the repo", File, field, val)
-	}
-	return clean, nil
-}
-
-func reviewRelPath(field, val string) (string, error) {
-	if val == "" {
-		return "", nil
-	}
-	clean := filepath.Clean(val)
-	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%s: review.%s %q must be a relative path inside the repo", File, field, val)
+		return "", fmt.Errorf("%s: %s %q must be a relative path inside the repo", File, field, val)
 	}
 	return clean, nil
 }

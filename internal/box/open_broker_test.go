@@ -298,3 +298,54 @@ func TestOpenBrokerFilesStayReadableUnderAPrivateUmask(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenBrokerRebuildsStaleImageBeforeLaunching(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		name := "success"
+		if fail {
+			name = "build failure"
+		}
+		t.Run(name, func(t *testing.T) {
+			cfg, spec := openBrokerFixture(t)
+			dir := t.TempDir()
+			calls := filepath.Join(dir, "calls")
+			source := filepath.Join(dir, "context.tar")
+			shim := filepath.Join(dir, "docker")
+			buildEnd := "exit 0"
+			if fail {
+				buildEnd = "printf 'discard-one\ndiscard-two\nkeep-three\nkeep-four\nkeep-five\nkeep-six\n' >&2; exit 17"
+			}
+			body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(calls) + "\n" +
+				"case \"$1 $2\" in \"image inspect\") printf 'stale-definition\\n'; exit 0 ;; esac\n" +
+				"case \"$1\" in info) printf 'linux/amd64\\n'; exit 0 ;; build) cat > " + strconv.Quote(source) + "; " + buildEnd + " ;; network) exit 1 ;; ps) exit 0 ;; esac\n" +
+				"case \"$*\" in *\" broker\") echo 172.18.0.5; cat > /dev/null; exit 0 ;; esac\nexit 0\n"
+			writeRepoFile(t, shim, body)
+			if err := os.Chmod(shim, 0755); err != nil {
+				t.Fatal(err)
+			}
+			code, err := runWithCompositionArtifacts(cfg, runtime.Runtime{Name: shim}, spec, defaultCompositionArtifactOps())
+			raw, readErr := os.ReadFile(calls)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			log := string(raw)
+			wantBuild := "build --label " + gatewayimage.BuildLabel + "=" + gatewayimage.Fingerprint() + " -t " + gatewayimage.Tag() + " --platform linux/amd64 -"
+			buildAt, helperAt, boxAt := strings.Index(log, wantBuild), strings.Index(log, "--name coop-broker-"), strings.Index(log, "--label coop=box")
+			if buildAt < 0 {
+				t.Fatalf("wrong rebuild: %s", log)
+			}
+			if data, err := os.ReadFile(source); err != nil || len(data) == 0 {
+				t.Fatalf("missing build context: %v", err)
+			}
+			if fail {
+				if err == nil || code == 0 || !strings.Contains(err.Error(), "keep-six") || strings.Contains(err.Error(), "discard-") || helperAt >= 0 || boxAt >= 0 {
+					t.Fatalf("failed build launched or lost bounded cause: code=%d err=%v log=%s", code, err, log)
+				}
+				return
+			}
+			if err != nil || code != 0 || helperAt <= buildAt || boxAt <= helperAt || !strings.Contains(log, gatewayimage.Tag()+" broker") {
+				t.Fatalf("launch order: code=%d err=%v log=%s", code, err, log)
+			}
+		})
+	}
+}

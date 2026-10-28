@@ -40,20 +40,8 @@ func landIntentPath(repo string, identity forkspace.Identity) string {
 	return forkspace.LandIntentPath(repo, identity)
 }
 
-func validObjectID(value string) bool {
-	if len(value) != 40 && len(value) != 64 {
-		return false
-	}
-	for _, r := range value {
-		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') {
-			return false
-		}
-	}
-	return true
-}
-
 func validateLandIntent(intent landIntent) error {
-	if intent.Version != landIntentVersion || !validObjectID(intent.ParentBefore) || intent.CreatedAt.IsZero() {
+	if intent.Version != landIntentVersion || !forkspace.ValidObjectID(intent.ParentBefore) || intent.CreatedAt.IsZero() {
 		return errors.New("invalid fork land intent")
 	}
 	if err := tasks.ValidateForkCandidateRecord(intent.Candidate); err != nil {
@@ -65,7 +53,7 @@ func validateLandIntent(intent landIntent) error {
 			return errors.New("preparing land intent already has rebased identity")
 		}
 	case landRebased, landRestoring, landApproved, landLanded:
-		if !validObjectID(intent.RebasedHead) || !validObjectID(intent.RebasedTree) {
+		if !forkspace.ValidObjectID(intent.RebasedHead) || !forkspace.ValidObjectID(intent.RebasedTree) {
 			return errors.New("fork land intent is missing rebased identity")
 		}
 	default:
@@ -197,7 +185,7 @@ func restoreCandidateWorkspace(repo, ws, name string, candidate tasks.ForkCandid
 }
 
 func resetLandAfterParentAdvance(repo, ws, name string, intent landIntent, parentHead string) (landIntent, error) {
-	if !validObjectID(parentHead) {
+	if !forkspace.ValidObjectID(parentHead) {
 		return intent, errors.New("parent has no exact HEAD for land retry")
 	}
 	if err := restoreCandidateWorkspace(repo, ws, name, intent.Candidate); err != nil {
@@ -254,7 +242,7 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 		intent.RebasedHead = forkspace.GitOut(ws, "rev-parse", "HEAD")
 		intent.RebasedTree = forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
 		intent.Phase = landRebased
-		if !validObjectID(intent.RebasedHead) || !validObjectID(intent.RebasedTree) {
+		if !forkspace.ValidObjectID(intent.RebasedHead) || !forkspace.ValidObjectID(intent.RebasedTree) {
 			return intent, false, errors.New("rebased fork has no exact HEAD/tree")
 		}
 		if err := writeLandIntent(repo, intent); err != nil {

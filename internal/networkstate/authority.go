@@ -134,7 +134,7 @@ func CheckPathExposure(path string, exposed []string) error {
 		// Check both directions: the mount may be an alias of an authority
 		// ancestor OR a file/future descendant below an aliased authority root.
 		for _, pair := range [][2]string{{source, canonical}, {canonical, source}} {
-			overlaps, err := aliasesAncestor(pair[0], pair[1])
+			overlaps, err := fsidentity.AliasesAncestor(pair[0], pair[1])
 			if err != nil {
 				return fmt.Errorf("network state mount isolation: %w", err)
 			}
@@ -182,35 +182,6 @@ func canonicalPath(path string) (string, error) {
 func contains(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// Path spelling is not identity on case-insensitive filesystems or through bind
-// mounts. Compare each existing state ancestor with the actual exposed inode.
-func aliasesAncestor(source, path string) (bool, error) {
-	mount, err := os.Stat(source)
-	if errors.Is(err, os.ErrNotExist) {
-		// canonicalPath already resolved every existing ancestor. Lexical
-		// overlap still rejects a future authority descendant; there is no
-		// source inode to compare until composition creates the mount.
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	for {
-		info, err := os.Stat(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return false, err
-		}
-		if err == nil && os.SameFile(mount, info) {
-			return true, nil
-		}
-		parent := filepath.Dir(path)
-		if parent == path {
-			return false, nil
-		}
-		path = parent
-	}
 }
 
 func privateInfo(info os.FileInfo, dir bool) error {

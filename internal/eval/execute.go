@@ -64,15 +64,6 @@ func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Stor
 	if len(frozen) != len(plan.Configs) {
 		return RunSummary{}, fmt.Errorf("have %d frozen configurations, plan has %d", len(frozen), len(plan.Configs))
 	}
-	schedule := buildSchedule(plan, frozen)
-
-	// Every requested trial is pending on disk before any work, so the run's denominator is fixed
-	// and an interruption leaves an honest partial record.
-	for _, t := range schedule {
-		if err := store.WriteTrial(pendingRecord(store.ID(), t)); err != nil {
-			return RunSummary{}, err
-		}
-	}
 
 	// The caller may have spent part of this budget preparing the run. Use the earlier absolute
 	// deadline for both cancellation and admission; an earlier context must not gain a fresh trial
@@ -84,6 +75,22 @@ func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Stor
 	admitUntil := deadline.Add(-cleanupReserve)
 	runCtx, cancelRun := context.WithDeadline(ctx, deadline)
 	defer cancelRun()
+
+	schedule, err := buildSchedule(runCtx, plan, frozen)
+	if err != nil {
+		return RunSummary{}, err
+	}
+
+	// Every requested trial is pending on disk before any work, so the run's denominator is fixed
+	// and an interruption leaves an honest partial record.
+	for _, t := range schedule {
+		if err := runCtx.Err(); err != nil {
+			return RunSummary{}, err
+		}
+		if err := store.WriteTrial(pendingRecord(store.ID(), t)); err != nil {
+			return RunSummary{}, err
+		}
+	}
 
 	var mu sync.Mutex
 	counts := map[TrialStatus]int{}
@@ -210,7 +217,7 @@ func runningRecord(runID string, t Trial, started time.Time) TrialRecord {
 // and within each repetition it rotates which configuration leads and interleaves configurations
 // across cases, so no configuration gets every case before another starts and the lead alternates
 // across repetitions. The order is what a run records and what a reader can reproduce.
-func buildSchedule(plan *Plan, frozen []FrozenConfig) []Trial {
+func buildSchedule(ctx context.Context, plan *Plan, frozen []FrozenConfig) ([]Trial, error) {
 	cases := plan.Suite.Cases
 	n := len(frozen)
 	var out []Trial
@@ -222,13 +229,16 @@ func buildSchedule(plan *Plan, frozen []FrozenConfig) []Trial {
 		}
 		for _, c := range cases {
 			for k := 0; k < n; k++ {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				idx := (lead + k) % n
 				out = append(out, Trial{Case: c, ConfigIndex: idx, Config: frozen[idx], Repetition: rep, Order: order})
 				order++
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 func pendingRecord(runID string, t Trial) TrialRecord {

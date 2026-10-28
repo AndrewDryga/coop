@@ -51,6 +51,9 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 				i++
 				value = args[i]
 			}
+			if value == "" {
+				return opts, ui.MissingOptionValue("--run", command, command+" "+netDiagnosticExample(verb)+" --run e644f07a")
+			}
 			if opts.run != "" {
 				return opts, ui.RepeatedOption("--run", command)
 			}
@@ -69,6 +72,9 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 				value = args[i]
 			}
 			if name == "--protocol" {
+				if value == "" {
+					return opts, ui.MissingOptionValue(name, command, "coop net check example.com --protocol tls")
+				}
 				if opts.policy.Protocol != "" {
 					return opts, ui.RepeatedOption("--protocol", command)
 				}
@@ -445,7 +451,7 @@ func writeNetHistoricalCheck(w io.Writer, p ui.Palette, result networkstate.Poli
 		writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " was blocked as " + clause + run})
 		return
 	}
-	writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " was blocked" + run, Cause: netSentence(result.Message)})
+	writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " was blocked" + run, Cause: upperFirstSentence(result.Message)})
 }
 
 // netBlockedClause names the boundary that refused a recorded attempt as a noun
@@ -494,17 +500,6 @@ func netOriginText(origin networkstate.PolicyOrigin) string {
 	default:
 		return origin.Kind
 	}
-}
-
-func netSentence(text string) string {
-	if text == "" {
-		return text
-	}
-	text = strings.ToUpper(text[:1]) + text[1:]
-	if !strings.HasSuffix(text, ".") {
-		text += "."
-	}
-	return text
 }
 
 // --------------------------------------------------------------- blocked ----
@@ -731,7 +726,7 @@ func netBlockedCause(explanation networkstate.EventExplanation, grouped bool) st
 	case "observation_unavailable":
 		return "Coop could not record enough information to explain this attempt."
 	}
-	return netSentence(explanation.Message)
+	return upperFirstSentence(explanation.Message)
 }
 
 // netBlockedVerb keeps three different things apart in the title: a policy

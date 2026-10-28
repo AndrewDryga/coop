@@ -300,15 +300,7 @@ func ValidateStrictTargets(strict bool, requested []agents.Target) error {
 // Success applies the operator contract: standard mode tolerates prerequisite skips only; strict
 // mode requires every registered provider attempted and passed with no skip or failure.
 func (s Summary) Success() bool {
-	if s.Totals.Failed != 0 {
-		return false
-	}
-	if !s.Strict {
-		return true
-	}
-	return s.Totals.Requested == len(agents.Names()) &&
-		s.Totals.Attempted == s.Totals.Requested &&
-		s.Totals.Passed == s.Totals.Requested && s.Totals.Skipped == 0
+	return s.Totals.success(s.Strict)
 }
 
 func (s Summary) Line() (string, error) {
@@ -382,15 +374,7 @@ func (s ConsultSummary) PeerResults() []ProviderResult {
 }
 
 func (s ConsultSummary) Success() bool {
-	if s.Totals.Failed != 0 {
-		return false
-	}
-	if !s.Strict {
-		return true
-	}
-	return s.Totals.Requested == len(agents.Names()) &&
-		s.Totals.Attempted == s.Totals.Requested &&
-		s.Totals.Passed == s.Totals.Requested && s.Totals.Skipped == 0
+	return s.Totals.success(s.Strict)
 }
 
 func (s ConsultSummary) Line() (string, error) {
@@ -1115,4 +1099,16 @@ func writeTreeInt(w io.Writer, value uint64) {
 	var encoded [8]byte
 	binary.BigEndian.PutUint64(encoded[:], value)
 	_, _ = w.Write(encoded[:])
+}
+
+func (s SummaryTotals) success(strict bool) bool {
+	if s.Failed != 0 {
+		return false
+	}
+	if !strict {
+		return true
+	}
+	return s.Requested == len(agents.Names()) &&
+		s.Attempted == s.Requested &&
+		s.Passed == s.Requested && s.Skipped == 0
 }

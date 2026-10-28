@@ -186,6 +186,10 @@ func run(ctx context.Context, args []string, b *bench, cases []benchCase, stdout
 		fmt.Fprintln(b.log, "usage: go run ./tools/lifecyclebench --out <dir> [--samples N] [--cases a,b] [--coop <path>] [--repo <dir>]")
 		return 2
 	}
+	if *samples <= 0 {
+		fmt.Fprintln(b.log, "lifecyclebench: samples must be positive")
+		return 2
+	}
 	// Absolute, always: every case runs with its working directory set to the workspace, so a
 	// relative name — even one LookPath happily confirms here — resolves against the wrong directory
 	// there and fails as "no such file" on the first sample.
@@ -209,6 +213,10 @@ func run(ctx context.Context, args []string, b *bench, cases []benchCase, stdout
 	}
 	if len(unknown) > 0 {
 		fmt.Fprintf(b.log, "lifecyclebench: unknown case(s): %s\n", strings.Join(unknown, ", "))
+		return 2
+	}
+	if len(selected) == 0 {
+		fmt.Fprintln(b.log, "lifecyclebench: select at least one case")
 		return 2
 	}
 

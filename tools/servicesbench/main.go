@@ -119,6 +119,10 @@ func run(ctx context.Context, args []string, b *bench, stdout, stderr io.Writer)
 		fmt.Fprintln(stderr, "usage: go run ./tools/servicesbench --repo <project> --out <dir> [--samples N] [--coop <path>]")
 		return 2
 	}
+	if *samples <= 0 {
+		fmt.Fprintln(stderr, "servicesbench: samples must be positive")
+		return 2
+	}
 	// Absolute, always: every call runs in the project, so a relative name such as ./coop would
 	// resolve against the project there.
 	b.coop, b.repo = absolute(*coop), *repo

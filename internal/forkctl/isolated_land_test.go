@@ -1271,3 +1271,80 @@ func TestLandStateNeverWritesThroughACoopLink(t *testing.T) {
 		})
 	}
 }
+
+func TestForkMergeAllDispatchesMixedForksAndStopsAtRefusal(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		name := "success"
+		if force {
+			name = "isolated-refusal"
+		}
+		t.Run(name, func(t *testing.T) {
+			repo, isolatedWS, _, c := isolatedTestFork(t)
+			isolatedHead := isolatedTestCommit(t, isolatedWS, "isolated.txt", "isolated work\n")
+			workspaces := map[string]string{"isolated": isolatedWS}
+			heads := map[string]string{"isolated": isolatedHead}
+			for _, fork := range []string{"a-busy", "b-first", "z-last"} {
+				ws, err := forkspace.Setup(repo, fork)
+				if err != nil {
+					t.Fatal(err)
+				}
+				workspaces[fork] = ws
+				heads[fork] = isolatedTestCommit(t, ws, fork+".txt", fork+" work\n")
+			}
+			if err := forkspace.WritePid(repo, "a-busy", os.Getpid(), ""); err != nil {
+				t.Fatal(err)
+			}
+			pidPath := forkspace.PidPath(repo, "a-busy")
+			beforePID, err := os.ReadFile(pidPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"--all", "--yes"}
+			if force {
+				args = append(args, "--force")
+			}
+			code, err := c.ForkMerge(args)
+			if force {
+				if code != 1 || err == nil || !strings.Contains(err.Error(), "--force cannot bypass isolated publication policy") {
+					t.Fatalf("mixed refusal=%d %v", code, err)
+				}
+			} else if code != 0 || err != nil {
+				t.Fatalf("mixed merge=%d %v", code, err)
+			}
+			if body, err := os.ReadFile(filepath.Join(repo, "b-first.txt")); err != nil || string(body) != "b-first work\n" {
+				t.Fatalf("first fork did not land: %q %v", body, err)
+			}
+			if pathExists(workspaces["b-first"]) {
+				t.Fatal("first fork not removed")
+			}
+			if !pathExists(workspaces["a-busy"]) || forkspace.GitOut(workspaces["a-busy"], "rev-parse", "HEAD") != heads["a-busy"] {
+				t.Fatal("busy fork changed")
+			}
+			afterPID, err := os.ReadFile(pidPath)
+			if err != nil || !bytes.Equal(beforePID, afterPID) {
+				t.Fatalf("busy record changed: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(repo, "a-busy.txt")); !os.IsNotExist(err) {
+				t.Fatalf("busy fork landed: %v", err)
+			}
+			for _, fork := range []string{"isolated", "z-last"} {
+				path := filepath.Join(repo, fork+".txt")
+				if force {
+					if !pathExists(workspaces[fork]) || forkspace.GitOut(workspaces[fork], "rev-parse", "HEAD") != heads[fork] {
+						t.Fatalf("refusal changed %s", fork)
+					}
+					if _, err := os.Stat(path); !os.IsNotExist(err) {
+						t.Fatalf("refusal landed %s: %v", fork, err)
+					}
+				} else {
+					if body, err := os.ReadFile(path); err != nil || string(body) != fork+" work\n" {
+						t.Fatalf("%s did not land: %q %v", fork, body, err)
+					}
+					if pathExists(workspaces[fork]) {
+						t.Fatalf("%s not removed", fork)
+					}
+				}
+			}
+		})
+	}
+}

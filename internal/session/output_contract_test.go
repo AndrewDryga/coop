@@ -41,3 +41,33 @@ func TestOutputContractUnicodeDiagnostics(t *testing.T) {
 		}
 	}
 }
+
+func TestOutputContractRejectsAmbiguousJSON(t *testing.T) {
+	contract := func(schema string) *OutputContract {
+		data := json.RawMessage(schema)
+		digest := sha256.Sum256(data)
+		return &OutputContract{JSONSchema: data, SHA256: hex.EncodeToString(digest[:])}
+	}
+	for _, schema := range []string{
+		`{"type":"string","type":"number"}`, `{"properties":{"answer":{"type":"string","type":"number"}}}`,
+		`{"properties":{"answer":true,"\u0061nswer":false}}`, `true false`,
+	} {
+		if _, err := CompileOutputContract(contract(schema)); CodeOf(err) != CodeInvalidRequest {
+			t.Fatalf("ambiguous schema accepted: %s %v", schema, err)
+		}
+	}
+	validator, err := CompileOutputContract(contract(`true`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, data := range []string{`{"answer":1,"answer":2}`, `{"outer":{"answer":1,"answer":2}}`, `[{"answer":1,"\u0061nswer":2}]`, `{} []`} {
+		if err := validator.Validate([]byte(data)); err == nil || !strings.Contains(err.Error(), "unique-property JSON value") {
+			t.Fatalf("ambiguous response accepted: %s %v", data, err)
+		}
+	}
+	for _, data := range []string{`{"a":{"answer":1},"b":{"answer":2}}`, `[{"answer":1},{"answer":2}]`, "{}\n\t"} {
+		if err := validator.Validate([]byte(data)); err != nil {
+			t.Fatalf("valid response: %s %v", data, err)
+		}
+	}
+}

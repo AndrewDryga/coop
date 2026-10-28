@@ -30,7 +30,7 @@ func freezeReviewCommit(ctx context.Context, candidate reviewScratch, op session
 	output, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, candidate.dir, 1024, env,
 		"commit-tree", tree, "-p", candidate.base, "-m", reviewCommitMessage(message, op.ID))
 	commit := strings.TrimSpace(string(output))
-	if err != nil || truncated || !validSessionReviewObject(commit) {
+	if err != nil || truncated || !forkspace.ValidObjectID(commit) {
 		return "", "", errors.Join(err, errors.New("cannot freeze reviewed commit"))
 	}
 	if err := forkspace.GitRefCommand(ctx, candidate.dir, "update-ref", "refs/heads/"+candidate.name, commit, head).Run(); err != nil {

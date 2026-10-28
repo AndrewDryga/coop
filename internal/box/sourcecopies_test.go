@@ -215,14 +215,16 @@ func TestRepositoryCopiesApplyAliasAndTargetSecretRules(t *testing.T) {
 	for _, policy := range []struct {
 		name, location, rule string
 	}{
-		{"alias rule", ".coopignore", ".agent/skills/private.txt\n"},
-		{"target rule", "source/.coopignore", "private.txt\n"},
+		{"alias rule", ".coopignore", ".agent/skills/private.txt\n.agent/skills/nested/private.txt\n"},
+		{"target rule", "source/.coopignore", "private.txt\nnested/private.txt\n"},
 	} {
 		t.Run(policy.name, func(t *testing.T) {
 			repo := t.TempDir()
 			writeCopyFixture(t, filepath.Join(repo, policy.location), policy.rule)
 			writeCopyFixture(t, filepath.Join(repo, "source", "SKILL.md"), "public")
 			writeCopyFixture(t, filepath.Join(repo, "source", "private.txt"), "secret")
+			writeCopyFixture(t, filepath.Join(repo, "source", "nested", "private.txt"), "nested secret")
+			writeCopyFixture(t, filepath.Join(repo, "source", "nested", "public.txt"), "nested public")
 			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -238,6 +240,12 @@ func TestRepositoryCopiesApplyAliasAndTargetSecretRules(t *testing.T) {
 			}
 			if got, err := os.ReadFile(filepath.Join(mounts[0].host, "SKILL.md")); err != nil || string(got) != "public" {
 				t.Fatalf("public skill = %q, %v", got, err)
+			}
+			if raw, err := os.ReadFile(filepath.Join(mounts[0].host, "nested", "public.txt")); err != nil || string(raw) != "nested public" {
+				t.Fatalf("nested public: %q %v", raw, err)
+			}
+			if _, err := os.Stat(filepath.Join(mounts[0].host, "nested", "private.txt")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("nested secret exported: %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(mounts[0].host, "private.txt")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("protected target re-exported: %v", err)

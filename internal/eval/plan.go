@@ -3,6 +3,7 @@ package eval
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -77,10 +78,13 @@ func BuildPlan(s *Suite, configs []Configuration, opts Options) (*Plan, error) {
 	if opts.LoopConfigOverride != "" {
 		loopConfig = opts.LoopConfigOverride
 	}
-	trials := len(s.Cases) * len(configs) * repeat
-	if trials == 0 {
+	if len(s.Cases) == 0 {
 		return nil, errors.New("the plan has no trials")
 	}
+	if len(s.Cases) > math.MaxInt/len(configs) || len(s.Cases)*len(configs) > math.MaxInt/repeat {
+		return nil, errors.New("the trial matrix exceeds the supported size")
+	}
+	trials := len(s.Cases) * len(configs) * repeat
 	if jobs > trials {
 		jobs = trials // never reserve more workers than there is work
 	}

@@ -1870,3 +1870,24 @@ func TestRemovedExposureFlagsAreRefused(t *testing.T) {
 		t.Fatalf("a flag past -- was refused instead of reaching the agent: %v", err)
 	}
 }
+
+func TestCmdRunDelimiterForwardsLeadingOptions(t *testing.T) {
+	for _, command := range []string{"--help", "--bare"} {
+		t.Run(command, func(t *testing.T) {
+			recorder := filepath.Join(t.TempDir(), "calls")
+			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(), BaseImage: "test-base", ImageOverride: "test-image", Egress: "none"}
+			a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+			if code, err := a.cmdRun([]string{"--", command}); code != 0 || err != nil {
+				t.Fatalf("run: %d %v", code, err)
+			}
+			raw, err := os.ReadFile(recorder)
+			if err != nil || !strings.Contains(string(raw), " "+command+"\n") {
+				t.Fatalf("command not forwarded: %s %v", raw, err)
+			}
+		})
+	}
+	a := &app{cfg: &config.Config{}}
+	if code, err := a.cmdRun([]string{"--typo"}); code != 2 || err == nil {
+		t.Fatalf("unknown option: %d %v", code, err)
+	}
+}

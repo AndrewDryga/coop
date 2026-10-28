@@ -59,7 +59,13 @@ func TestACPUsageUpdateCarriesProviderReportedUSDCost(t *testing.T) {
 	if !ok || amount != 0.375 {
 		t.Fatalf("reported cost = %v, ok=%t", amount, ok)
 	}
+	if amount, ok := sessionACPReportedCost(json.RawMessage(`{"update":{"sessionUpdate":"usage_update","cost":{"amount":0,"currency":"USD"}}}`)); !ok || amount != 0 {
+		t.Fatalf("explicit zero cost = %v, known=%v", amount, ok)
+	}
 	for _, raw := range []string{
+		`{"update":{"sessionUpdate":"usage_update","cost":{"currency":"USD"}}}`,
+		`{"update":{"sessionUpdate":"usage_update","cost":{"amount":null,"currency":"USD"}}}`,
+
 		`{"update":{"sessionUpdate":"usage_update","cost":{"amount":-1,"currency":"USD"}}}`,
 		`{"update":{"sessionUpdate":"usage_update","cost":{"amount":1,"currency":"EUR"}}}`,
 		`{"update":{"sessionUpdate":"assistant_message_chunk"}}`,

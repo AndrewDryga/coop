@@ -1326,6 +1326,8 @@ func moveBlockedAuditUnblock(root string, t Item, transition *blockedAuditUnbloc
 		}
 		if ownerRecord.Fork.Phase == ForkAssignmentBlocked {
 			next := ownerRecord
+			fork := *ownerRecord.Fork
+			next.Fork = &fork
 			next.Fork.Phase = ForkAssignmentPaused
 			next.Fork.CandidateID = ""
 			next.Fork.ProjectionDigest = ""
@@ -2823,6 +2825,9 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 		if i >= len(refs) {
 			i = -1 // past the last decision → done
 		}
+	}
+	if err := sc.Err(); err != nil {
+		return -1, fmt.Errorf("read decision answer: %w", err)
 	}
 	// Answers, parks and deletions are counted separately: they are different outcomes, and a session
 	// that did several must not report any one of them as the whole story.

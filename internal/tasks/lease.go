@@ -449,15 +449,7 @@ func removeTrustedDoneDeparture(root, id string) error {
 	if err != nil {
 		return err
 	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return err
-	}
-	defer registry.Close()
-	if err := registry.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
+	return removeLeaseAuthorityRecord(name)
 }
 
 func appendTrustedDoneDeparture(root, id, nonce string) error {
@@ -584,15 +576,7 @@ func removeAuditReopenRecord(root, id string) error {
 	if err != nil {
 		return err
 	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		return err
-	}
-	defer registry.Close()
-	if err := registry.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
+	return removeLeaseAuthorityRecord(name)
 }
 
 func auditReopenRecordExists(root, id string) bool {
@@ -983,4 +967,17 @@ func leaseProvider(provider string) string {
 		}
 	}
 	return truncate(p, 20)
+}
+
+// removeLeaseAuthorityRecord retires metadata, never a held lock inode.
+func removeLeaseAuthorityRecord(name string) error {
+	registry, err := OpenLeaseAuthorityRoot()
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	if err := registry.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }

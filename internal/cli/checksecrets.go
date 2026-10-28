@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/gitdiff"
 	"github.com/AndrewDryga/coop/internal/hostsurface"
 	"github.com/AndrewDryga/coop/internal/secretscan"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -136,7 +137,7 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 		blankBefore(&said)
 		ui.Note("%s", ui.Bold("Review files that run commands"))
 		for _, finding := range surfaces {
-			ui.Note("  %s", finding.Path)
+			ui.Note("  %s", ui.SafeInline(finding.Path))
 			ui.Note("    %s", finding.Reason)
 			ui.Note("")
 		}
@@ -486,7 +487,7 @@ func hostSurfacesChanged(repo string) []hostsurface.Finding {
 	if err != nil {
 		return nil
 	}
-	var listing strings.Builder
+	var changes []gitdiff.Change
 	for _, entry := range strings.Split(string(out), "\x00") {
 		if len(entry) < 4 {
 			continue
@@ -501,7 +502,7 @@ func hostSurfacesChanged(repo string) []hostsurface.Finding {
 		case strings.ContainsRune(status, 'A'):
 			code = "A"
 		}
-		listing.WriteString(code + "\t" + path + "\n")
+		changes = append(changes, gitdiff.Change{Status: code, Path: path})
 	}
-	return hostsurface.Findings(listing.String())
+	return hostsurface.Findings(changes)
 }

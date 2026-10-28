@@ -67,16 +67,8 @@ func openStateRoot(repo, dir string, create bool) (*os.Root, error) {
 }
 
 func decodeForkAssignmentIndex(data []byte) (ForkAssignmentIndex, error) {
-	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(data), forkAssignmentIndexLimit+1))
-	dec.DisallowUnknownFields()
 	var record ForkAssignmentIndex
-	if err := dec.Decode(&record); err != nil {
-		return ForkAssignmentIndex{}, err
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return ForkAssignmentIndex{}, errors.New("fork assignment index contains multiple JSON values")
-		}
+	if err := decodeStrictTaskJSON(io.LimitReader(bytes.NewReader(data), forkAssignmentIndexLimit+1), &record, "fork assignment index"); err != nil {
 		return ForkAssignmentIndex{}, err
 	}
 	if err := validateForkAssignmentIndex(record); err != nil {

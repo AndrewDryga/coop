@@ -9,10 +9,13 @@ import (
 
 func TestHistoricalSchemaFixturesStayFrozen(t *testing.T) {
 	const want = "216533374394b6b5294c300905f43b1dca9b911f771f7f6c12f5013078340436"
-	if len(legacySchemas) != 24 {
-		t.Fatalf("historical versions=%d, want24", len(legacySchemas))
+	if len(legacySchemas) != 25 {
+		t.Fatalf("historical versions=%d, want25", len(legacySchemas))
 	}
-	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(legacySchemas, "")))); got != want {
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(legacySchemas[24]))); got != "5caf80ce8e079b9cf7d2396db462369c5edb8e83c0c420c76b2caf1add304ea6" {
+		t.Fatalf("historical v25 DDL drifted: %s", got)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(legacySchemas[:24], "")))); got != want {
 		t.Fatalf("historical DDL drifted: %s", got)
 	}
 }
@@ -208,5 +211,16 @@ ALTER TABLE sessions ADD COLUMN source_binding TEXT NOT NULL DEFAULT '';
 	`
 ALTER TABLE sessions ADD COLUMN job_document TEXT NOT NULL DEFAULT '';
 ALTER TABLE sessions ADD COLUMN job_digest TEXT NOT NULL DEFAULT '';
+`,
+	// v25 frozen from23fbdc1b; the earlier1-24 prefix remains byte-identical.
+	`
+CREATE TABLE store_identity (
+    slot INTEGER PRIMARY KEY CHECK (slot = 1),
+    id TEXT NOT NULL
+);
+CREATE TABLE session_owner_bindings (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    store_id TEXT NOT NULL
+);
 `,
 }

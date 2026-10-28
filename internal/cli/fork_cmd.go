@@ -617,7 +617,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 				unlock()
 				return 1, err
 			}
-			if hasCurrentGeneration && (!hadGeneration || currentGeneration != originalGeneration) {
+			if hasCurrentGeneration != hadGeneration || hasCurrentGeneration && currentGeneration != originalGeneration {
 				unlock()
 				return 1, fmt.Errorf("--fresh: fork %q generation changed while awaiting recreation", fa.name)
 			}

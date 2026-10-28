@@ -243,7 +243,7 @@ func TestDoctorCoopignoreCheckNeedsCoopignore(t *testing.T) {
 	if !strings.Contains(doctorProbe, "ID=sandbox.coopignore        check empty "+rel+"\n") {
 		t.Fatalf("the probe's .coopignore check does not read %s:\n%s", rel, doctorProbe)
 	}
-	if shadowpath.MatchesAny(filepath.Base(rel), shadowpath.SecretGlobs) || shadowpath.MatchesPath(rel, shadowpath.SecretGlobs) {
+	if shadowpath.MatchesAny(filepath.Base(rel), shadowpath.SecretGlobs) || shadowpath.MatchesAny(rel, shadowpath.SecretGlobs) {
 		t.Fatalf("%s matches a built-in secret pattern, so the check passes even if .coopignore is ignored", rel)
 	}
 	dir, err := buildFixture()
@@ -269,6 +269,22 @@ func TestDoctorCoopignoreCheckNeedsCoopignore(t *testing.T) {
 // reaches them: a global config that signs commits with a gpg that is missing, runs hooks that fail
 // every commit and checkout, and renames a clone's remote would otherwise fail coop doctor's checks
 // (or sign the fixture with the person's key).
+func TestBuildFixtureRemovesTemporaryProjectWhenGitFails(t *testing.T) {
+	tmp, bin := t.TempDir(), t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("PATH", bin)
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nexit 17\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if dir, err := buildFixture(); err == nil || dir != "" {
+		t.Fatalf("failed fixture = %q, %v", dir, err)
+	}
+	entries, err := os.ReadDir(tmp)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("failed fixture left temporary files: %v, %v", entries, err)
+	}
+}
+
 func TestBuildFixtureIgnoresThePersonsGitConfig(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

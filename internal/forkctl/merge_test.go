@@ -1529,7 +1529,7 @@ func TestPolicyScanFlagsInteractionFiles(t *testing.T) {
 		t.Errorf("PolicyScan blocked on a Makefile edit:\n%s", w)
 	}
 	var surfaces []string
-	for _, f := range HostSurfaces(repo, "evil") {
+	for _, f := range mustHostSurfaces(t, repo, "evil") {
 		surfaces = append(surfaces, f.Path)
 	}
 	if got := strings.Join(surfaces, " "); got != ".envrc .githooks/pre-commit Makefile" {
@@ -2430,4 +2430,44 @@ func readLines(t *testing.T, path string) []string {
 		t.Fatal(err)
 	}
 	return strings.Split(strings.TrimSpace(string(data)), "\n")
+}
+
+func TestForkMergeQueueReportsCleanupFailureAndContinues(t *testing.T) {
+	repo := initRepo(t)
+	var first string
+	for _, name := range []string{"a", "b"} {
+		ws, err := forkspace.Setup(repo, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeTaskFile(t, filepath.Join(ws, name+".txt"), name+"\n")
+		if name == "a" {
+			first = ws
+			writeTaskFile(t, filepath.Join(ws, filepath.FromSlash(project.DefaultCompose)), "services:\n  db:\n    image: postgres:18.4-alpine\n")
+		}
+		git(t, ws, "add", "-A")
+		git(t, ws, "commit", "-qm", name)
+	}
+	late := filepath.Join(first, "shutdown.txt")
+	t.Setenv("COOP_TEST_LATE_FILE", late)
+	shim := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nfor arg in \"$@\"; do\n if [ \"$arg\" = down ]; then printf 'late work\\n' > \"$COOP_TEST_LATE_FILE\"; fi\ndone\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: shim}}
+	code, err := c.ForkMerge([]string{"--all", "--force", "--yes"})
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "cleanup fork a") {
+		t.Errorf("cleanup result: %d %v", code, err)
+	}
+	for _, name := range []string{"a", "b"} {
+		if raw, err := os.ReadFile(filepath.Join(repo, name+".txt")); err != nil || string(raw) != name+"\n" {
+			t.Errorf("landing %s: %q %v", name, raw, err)
+		}
+	}
+	if raw, err := os.ReadFile(late); err != nil || string(raw) != "late work\n" {
+		t.Errorf("late work lost: %q %v", raw, err)
+	}
+	if pathExists(forkspace.Workspace(repo, "b")) {
+		t.Error("second fork not cleaned up")
+	}
 }

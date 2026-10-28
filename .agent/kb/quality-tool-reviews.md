@@ -21,7 +21,8 @@ they produce useful counters.
 Mutator's trial revision could not match Go import-path profile keys to absolute source paths:
 it skipped every mutation and exited zero until the module prefix was normalized. Preserve raw
 coverage and statement/hit identity when adapting paths. Inspect test diagnostics: compilation
-failures and timeouts count as kills upstream. Include relevant consumer tests; a package-only
+failures and timeouts count as kills upstream. A Go `--- FAIL:` header also accompanies a panic;
+the trial had 45 assertion-only kills, 2 assertion-plus-panic kills and 6 panic-only kills. Include relevant consumer tests; a package-only
 survivor can already be guarded by a caller. Equivalent clamp mutations in `LimitWait` cannot
 change observable behavior; realistic retry timing and classification mutants can.
 
@@ -39,7 +40,14 @@ construction. Inherited review stages share rotation pointers, including cooldow
 Current and resumed-cohort ladders are built before the loop's frozen network admission and move
 together only at the existing cohort handoff. A lower complexity number alone is not a redesign.
 
+The follow-up task `2026-10-28-review-every-recorded-quality-tool-finding` inventories all 1,842
+complexity findings and 343 duplicate pairs with explicit retain/fix/already-fixed dispositions.
+Generated mutation candidates are a different population: 60,726 candidates across 58 packages
+are not 60,726 executed tests or surviving bugs. Retain exact per-site execution evidence and
+remap recorded sites when source edits move their byte offsets; never reuse stale overlay hashes.
+
 ## Changelog
+- 2026-10-28 — extended review to the complete recorded inventory; adopted shared semantic policy, real behavioral repairs and missing boundary tests while retaining simple dispatch and independent oracles.
 - 2026-10-28 — recorded the measured tool limitations and deliberate retain/share decisions;
   adopted real rate-limit regressions and the three shared policy boundaries, preserving
   independent oracles, provider ownership, frozen admission and inherited rotation state.

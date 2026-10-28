@@ -21,7 +21,7 @@ func SetupContext(ctx context.Context, repo, name string) (ws string, err error)
 // SetupPinnedContext creates a session workspace at an already-validated commit without using
 // Git's racy local hardlink clone optimization. Ordinary forks keep SetupContext's faster clone.
 func SetupPinnedContext(ctx context.Context, repo, name, commit string) (ws string, err error) {
-	if !validPinnedCommit(commit) {
+	if !ValidObjectID(commit) {
 		return "", errors.New("invalid pinned commit")
 	}
 	return setupContext(ctx, repo, name, commit, false)
@@ -33,7 +33,7 @@ func SetupIsolatedContext(ctx context.Context, repo, name, commit string) (strin
 	if err := QualifyDefaultLFSStorage(ctx, repo); err != nil {
 		return "", err
 	}
-	if !validPinnedCommit(commit) {
+	if !ValidObjectID(commit) {
 		return "", errors.New("invalid isolated commit")
 	}
 	return setupContext(ctx, repo, name, commit, true)
@@ -115,7 +115,9 @@ func setupContext(ctx context.Context, repo, name, commit string, isolated bool)
 	return ws, nil
 }
 
-func validPinnedCommit(commit string) bool {
+// ValidObjectID accepts full lowercase SHA-1 or SHA-256 object identities.
+// Callers still establish object existence and type in their own repository.
+func ValidObjectID(commit string) bool {
 	if len(commit) != 40 && len(commit) != 64 {
 		return false
 	}

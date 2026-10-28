@@ -235,3 +235,50 @@ func TestNativeBrokerVerifiedUpstreamTLSAndNoRedirect(t *testing.T) {
 		}
 	})
 }
+
+func TestNativeBrokerDynamicRoutesAndQueryContracts(t *testing.T) {
+	f := newNativeTransportFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "forwarded") }), func(origin *NativeBrokerOrigin) {
+		base := origin.Requests[0]
+		uuid := base
+		uuid.Method, uuid.Path, uuid.Segment, uuid.Suffix = "DELETE", "/sessions/", "uuid", "/data"
+		token := base
+		token.Method, token.Path, token.Segment, token.Suffix = "POST", "/v1beta/models/", "token", ":generateContent"
+		segments := base
+		segments.Path, segments.Segment = "/v1internal/operations/", "segments"
+		query := base
+		query.Path = "/v1/sessions/search"
+		query.Queries = []NativeBrokerQuery{{Name: "limit", Values: []string{"100"}}, {Name: "query", Optional: true, MaxBytes: 4096}}
+		origin.Requests = []NativeBrokerRequestLine{uuid, token, segments, query}
+	})
+	for _, test := range []struct {
+		method, path string
+		allowed      bool
+	}{
+		{"DELETE", "/sessions/12345678-abcd-1234-abcd-123456789abc/data", true},
+		{"DELETE", "/sessions/12345678-ABCD-1234-abcd-123456789abc/data", false},
+		{"DELETE", "/sessions/12345678abcd1234abcd123456789abc/data", false},
+		{"DELETE", "/sessions/12345678-abcd-1234-abcd-123456789abc", false},
+		{"POST", "/v1beta/models/gemini-2.5-flash:generateContent", true},
+		{"POST", "/v1beta/models/..:generateContent", false}, {"POST", "/v1beta/models/:generateContent", false}, {"POST", "/v1beta/models/a/b:generateContent", false},
+		{"GET", "/v1internal/operations/projects/p/locations/us/operations/op:1", true},
+		{"GET", "/v1internal/operations/projects//op", false}, {"GET", "/v1internal/operations/projects/./op", false}, {"GET", "/v1internal/operations/projects/../op", false},
+		{"GET", "/v1/sessions/search?limit=100", true}, {"GET", "/v1/sessions/search?limit=100&query=hello", true},
+		{"GET", "/v1/sessions/search?limit=100&query=" + strings.Repeat("x", 4096), true},
+		{"GET", "/v1/sessions/search", false}, {"GET", "/v1/sessions/search?limit=99", false}, {"GET", "/v1/sessions/search?limit=100&limit=100", false},
+		{"GET", "/v1/sessions/search?limit=100&unknown=x", false}, {"GET", "/v1/sessions/search?limit=100&query=%0A", false}, {"GET", "/v1/sessions/search?limit=100&query=" + strings.Repeat("x", 4097), false},
+	} {
+		before := f.forwarded.Load()
+		req := f.request(t, test.path)
+		req.Method = test.method
+		response, body := nativeResponse(t, f.client, req)
+		wantStatus := http.StatusForbidden
+		wantForwarded := before
+		if test.allowed {
+			wantStatus = http.StatusOK
+			wantForwarded++
+		}
+		if response.StatusCode != wantStatus || f.forwarded.Load() != wantForwarded || test.allowed && body != "forwarded" {
+			t.Fatalf("route %s %.100s: status=%d forwarded=%d body=%.100s", test.method, test.path, response.StatusCode, f.forwarded.Load()-before, body)
+		}
+	}
+}

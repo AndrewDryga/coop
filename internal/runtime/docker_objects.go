@@ -350,9 +350,8 @@ type DockerNetwork struct {
 // reach sibling containers, other sessions' boxes and the daemon's own gateway,
 // none of which any rule may grant.
 //
-// A network that disappears between the listing and the inspection cannot be
-// reached either, so partial output with an error is accepted as long as some
-// network was read; a daemon that answers nothing is a failure.
+// Failed listing or inspection discards partial stdout: an incomplete inventory
+// cannot establish which daemon networks the policy must protect.
 func (d *Docker) Networks(ctx context.Context) ([]DockerNetwork, error) {
 	if err := d.Verify(ctx); err != nil {
 		return nil, err

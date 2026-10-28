@@ -3411,20 +3411,8 @@ func appendTaskLogChunk(taskDir, line string) error {
 			return err
 		}
 	}
-	f, err := root.OpenFile("log.md", os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o644)
+	f, after, err := openTaskLogForAppend(root, before)
 	if err != nil {
-		return err
-	}
-	after, err := f.Stat()
-	if err != nil || (statErr == nil && !os.SameFile(before, after)) {
-		_ = f.Close()
-		if err != nil {
-			return err
-		}
-		return errors.New("task log changed while opening")
-	}
-	if err := validateTaskMetadataFile("log.md", after); err != nil {
-		_ = f.Close()
 		return err
 	}
 	if after.Size()+int64(len(line)) > taskMetadataFileLimit {
@@ -3436,6 +3424,28 @@ func appendTaskLogChunk(taskDir, line string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// openTaskLogForAppend pins the checked regular file without waiting if its
+// directory entry was replaced by a FIFO between inspection and open.
+func openTaskLogForAppend(root *os.Root, before os.FileInfo) (*os.File, os.FileInfo, error) {
+	f, err := root.OpenFile("log.md", os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o644)
+	if err != nil {
+		return nil, nil, err
+	}
+	after, err := f.Stat()
+	if err != nil || (before != nil && !os.SameFile(before, after)) {
+		_ = f.Close()
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, errors.New("task log changed while opening")
+	}
+	if err := validateTaskMetadataFile("log.md", after); err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	return f, after, nil
 }
 
 // appendTaskLog appends a one-line note to a task folder's log.md, best-effort.

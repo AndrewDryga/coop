@@ -85,7 +85,16 @@ cannot detect a two-second sent-receipt timeout. Keep the external SQLite writer
 five-second busy timeout; matching that boundary made the fixture fail on Linux. Whole-turn
 cancellation coverage separately proves that a cancelled caller still retains the sent receipt.
 
+Caller cancellation can stop waiting before teardown finishes. Its exact operation stays
+`uncertain` until the cleanup owner calls `CompleteTurnCancellation`, which can settle that same
+request without changing its hash. Ordinary `CancelTurn` calls cannot turn an uncertain receipt
+into success. A terminal turn alone is insufficient proof: the service also checks retained
+cleanup ownership and unsettled usage, including cleanup failures nested in joined errors.
+Successful settlement clears the earlier uncertainty diagnostic. A natural completion remains
+completed while the cancellation receipt records the observed terminal result.
+
 ## Changelog
+- 2026-10-28 — tied uncertain cancellation settlement to completed runtime/usage cleanup; verified delayed teardown, caller cancellation, natural completion, and retained cleanup failures.
 - 2026-10-28 — isolated the delivered-receipt checkpoint's regression from prompt-log timing;
   three-second contention still fails the old two-second budget without racing SQLite's busy timeout.
 - 2026-10-28 — extended startup custody to native binding and send intent, and detached

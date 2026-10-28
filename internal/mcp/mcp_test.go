@@ -1264,3 +1264,21 @@ func TestGenerateCodexControllerJobTurnsOffWhatCodexSyncsAtStart(t *testing.T) {
 		}
 	}
 }
+
+func TestACPHeaderSubstitutionsPreserveOpaqueSecrets(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "mcp.json")
+	if err := os.WriteFile(file, []byte(`{"mcpServers":{"s":{"url":"https://example.test/mcp","headers":{"X-Key":"${A}:${B}:${A}"}}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	servers, err := ACPServers(file, func(name string) (string, bool) {
+		value, ok := map[string]string{"A": "${B}", "B": "secret"}[name]
+		return value, ok
+	})
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("servers: %+v %v", servers, err)
+	}
+	headers := servers[0]["headers"].([]map[string]any)
+	if headers[0]["value"] != "${B}:secret:${B}" {
+		t.Fatalf("secret re-expanded: %+v", headers)
+	}
+}

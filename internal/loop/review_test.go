@@ -103,66 +103,83 @@ func TestWorkCredentialFallbackReusesServicesOnlyFromCleanUnchangedTree(t *testi
 }
 
 func TestReviewVerdictUsesOneExactSessionCorrection(t *testing.T) {
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	repo, git := gitrepo.New(t)
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, "source.go"), []byte("package source\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	git("add", ".gitignore", "source.go")
-	git("commit", "-qm", "base")
-	task := taskForLease(t, repo, stateDone, "task-a")
+	for _, returned := range []string{"absent", "same", "different"} {
+		t.Run(returned, func(t *testing.T) {
+			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+			t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+			repo, git := gitrepo.New(t)
+			if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repo, "source.go"), []byte("package source\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			git("add", ".gitignore", "source.go")
+			git("commit", "-qm", "base")
+			task := taskForLease(t, repo, stateDone, "task-a")
 
-	c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}, runtime.Runtime{Name: "true"}, "test", Host{})
-	c.net = newNetworkLog()
-	c.runID = "correction-test"
-	launches := 0
-	c.boxRun = func(spec box.RunSpec) (int, error) {
-		launches++
-		if spec.OnRuntimeLaunch != nil {
-			spec.OnRuntimeLaunch()
-		}
-		verdict := "AUDIT EVIDENCE — task-a — gate: focused tests passed — findings: none\nREVIEW COMPLETE — PASS — reopened: none"
-		if !spec.FormatCorrection {
-			verdict += "\ntrailing prose"
-		} else if spec.Preset != nil || len(spec.Peers) != 0 || spec.TaskTools != nil {
-			t.Fatal("format correction repeated preset peers or task tooling")
-		}
-		_, _ = fmt.Fprintf(spec.Stdout, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":%q}]}}\n", verdict)
-		_, _ = fmt.Fprintln(spec.Stdout, `{"type":"result","subtype":"success","num_turns":1,"duration_ms":1}`)
-		return 0, nil
-	}
-	type commandCall struct {
-		prompt, id string
-		resume     bool
-	}
-	var commands []commandCall
-	command := func(_ string, prompt, id string, resume bool) ([]string, bool, bool) {
-		commands = append(commands, commandCall{prompt: prompt, id: id, resume: resume})
-		return []string{"claude", "-p", prompt}, true, true
-	}
-	rot := ladder.NewRotation([]agents.Target{{Provider: "claude", Accounts: []string{"test"}}})
-	observed := 0
-	run, err := c.runReviewVerdict(context.Background(), repo, "image", rot, "", "review", "signoff", command,
-		[]string{repo}, []string{task.ID}, "", nil, loopcfg.ReviewWritesTasks, io.Discard, nil, nil,
-		func(reviewRunResult, time.Time, string) { observed++ })
-	if err != nil {
-		t.Fatalf("corrected review: %v\n%s", err, run.output)
-	}
-	if launches != 2 || len(commands) != 2 || commands[0].resume || !commands[1].resume || commands[0].id == "" || commands[1].id != commands[0].id {
-		t.Fatalf("review/correction launches = %d commands = %+v", launches, commands)
-	}
-	if !strings.Contains(commands[1].prompt, "Validation error:") || !strings.Contains(commands[1].prompt, "AUDIT EVIDENCE — task-a") {
-		t.Fatalf("correction prompt lacks precise repair data:\n%s", commands[1].prompt)
-	}
-	if observed != 1 || run.retries != 1 {
-		t.Fatalf("recovery episode observer/retries = %d/%d, want 1/1", observed, run.retries)
-	}
-	if current, ok, err := tasks.CurrentTask(repo, task.ID); err != nil || !ok || current.State != stateDone {
-		t.Fatalf("passing correction changed completed task: %+v %v %v", current, ok, err)
+			c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}, runtime.Runtime{Name: "true"}, "test", Host{})
+			c.net = newNetworkLog()
+			c.runID = "correction-test"
+			type commandCall struct {
+				prompt, id string
+				resume     bool
+			}
+			var commands []commandCall
+			launches := 0
+			c.boxRun = func(spec box.RunSpec) (int, error) {
+				launches++
+				if spec.OnRuntimeLaunch != nil {
+					spec.OnRuntimeLaunch()
+				}
+				verdict := "AUDIT EVIDENCE — task-a — gate: focused tests passed — findings: none\nREVIEW COMPLETE — PASS — reopened: none"
+				if !spec.FormatCorrection {
+					verdict += "\ntrailing prose"
+				} else if spec.Preset != nil || len(spec.Peers) != 0 || spec.TaskTools != nil {
+					t.Fatal("format correction repeated preset peers or task tooling")
+				}
+				_, _ = fmt.Fprintf(spec.Stdout, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":%q}]}}\n", verdict)
+				sessionID := commands[0].id
+				if spec.FormatCorrection {
+					switch returned {
+					case "absent":
+						sessionID = ""
+					case "different":
+						sessionID = "00000000-0000-4000-8000-000000000001"
+					}
+				}
+				_, _ = fmt.Fprintf(spec.Stdout, "{\"type\":\"result\",\"subtype\":\"success\",\"num_turns\":1,\"duration_ms\":1,\"session_id\":%q}\n", sessionID)
+				return 0, nil
+			}
+			command := func(_ string, prompt, id string, resume bool) ([]string, bool, bool) {
+				commands = append(commands, commandCall{prompt: prompt, id: id, resume: resume})
+				return []string{"claude", "-p", prompt}, true, true
+			}
+			rot := ladder.NewRotation([]agents.Target{{Provider: "claude", Accounts: []string{"test"}}})
+			observed := 0
+			run, err := c.runReviewVerdict(context.Background(), repo, "image", rot, "", "review", "signoff", command,
+				[]string{repo}, []string{task.ID}, "", nil, loopcfg.ReviewWritesTasks, io.Discard, nil, nil,
+				func(reviewRunResult, time.Time, string) { observed++ })
+			if returned == "different" {
+				if err == nil || !strings.Contains(err.Error(), "different reviewer session") || len(run.reopened) != 0 {
+					t.Fatalf("foreign correction = %+v, %v; want refusal without task changes", run, err)
+				}
+			} else if err != nil {
+				t.Fatalf("corrected review: %v\n%s", err, run.output)
+			}
+			if launches != 2 || len(commands) != 2 || commands[0].resume || !commands[1].resume || commands[0].id == "" || commands[1].id != commands[0].id {
+				t.Fatalf("review/correction launches = %d commands = %+v", launches, commands)
+			}
+			if !strings.Contains(commands[1].prompt, "Validation error:") || !strings.Contains(commands[1].prompt, "AUDIT EVIDENCE — task-a") {
+				t.Fatalf("correction prompt lacks precise repair data:\n%s", commands[1].prompt)
+			}
+			if observed != 1 || run.retries != 1 {
+				t.Fatalf("recovery episode observer/retries = %d/%d, want 1/1", observed, run.retries)
+			}
+			if current, ok, err := tasks.CurrentTask(repo, task.ID); err != nil || !ok || current.State != stateDone {
+				t.Fatalf("passing correction changed completed task: %+v %v %v", current, ok, err)
+			}
+		})
 	}
 }
 

@@ -2,13 +2,14 @@
 name: session-migration-fixtures
 description: historical SQLite fixtures own frozen DDL and rows, independent of current migrations; test clocks and IDs are private store state
 subsystem: session
-sources: [internal/session/legacy_schema_test.go, internal/session/migration_test.go, internal/session/schema.go, internal/session/store.go, internal/session/store_test.go, internal/session/compact.go]
-updated: 2026-10-17
+sources: [internal/session/legacy_schema_test.go, internal/session/migration_test.go, internal/session/schema.go, internal/session/store.go, internal/session/store_test.go, internal/session/compact.go, internal/session/cost_migration.go, internal/session/cost_migration_test.go]
+updated: 2026-10-28
 ---
 
-Historical session databases are built from test-owned literal DDL increments 1–24,
-frozen from 260ccd2, plus handwritten rows containing only that version's columns.
-`TestHistoricalSchemaFixturesStayFrozen` pins their count and combined byte digest.
+Historical session databases are built from test-owned literal DDL increments 1–25,
+with versions 1–24 frozen from 260ccd2 and version 25 captured before schema 26.
+Handwritten rows contain only their version's columns.
+`TestHistoricalSchemaFixturesStayFrozen` pins the original prefix and version 25 separately.
 Do not build an old fixture through current `Open`, `migrate` or `schemaV*` constants:
 that can make a broken migration redefine the database it is supposed to repair.
 When adding a schema version, capture the previous released shape independently,
@@ -23,6 +24,7 @@ ID generator only after a real open; compaction retains its private store option
 This does not replace SQLite, fsync, migration or lock behavior with test doubles.
 
 ## Changelog
+- 2026-10-28 — froze version 25 independently; schema 26 fixtures exercise pending cost normalization, proven idle epoch resets, ambiguous-history preservation and unchanged receipts.
 - 2026-10-17 — spacing in "increments 1–24" and "from 260ccd2" (and the same comment in
   legacy_schema_test.go).
 - 2026-10-14 — separated historical fixture DDL from production constants; a renamed

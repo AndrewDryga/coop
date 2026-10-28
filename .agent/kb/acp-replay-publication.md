@@ -3,7 +3,7 @@ name: acp-replay-publication
 description: ACP replacement sessions become authoritative as one generation before held editor work is released
 subsystem: acp
 sources: [internal/acpproxy/proxy.go, internal/acpproxy/proxy_test.go, internal/acpproxy/cancel.go, internal/acpproxy/cancel_test.go, internal/acpproxy/factory.go, internal/acpproxy/factory_test.go, internal/acpctl/cancel.go, internal/acpctl/cancel_test.go]
-updated: 2026-10-10
+updated: 2026-10-28
 ---
 
 Across SIGHUP, the proxy serializes exactly one initialize request plus explicit editor, adapter,
@@ -17,6 +17,9 @@ the durable sessions, negotiates all load/new results off to the side, rejects d
 bindings, then swaps the complete binding set atomically (`replayAt`, `duplicateReplayBinding`, and
 `swapChildAt` in `internal/acpproxy/proxy.go`). A provider switch therefore
 uses direct `session/new`, never probes a foreign id, and only successful bindings publish.
+When initial resume replay fails and starts fresh, discard both restored sessions and their
+native-to-editor remaps. A fresh child may reuse an abandoned native ID; its updates must retain
+the new session identity. `setChild` separately clears retired, unavailable and reactivating state.
 
 Prompts arriving after a switch acknowledgement wait behind `restarting` until settings, recreation
 hooks, and config updates are complete; the final release revalidates each session
@@ -50,6 +53,8 @@ Natural EOF retires those resources before entering the replacement factory, not
 quota wait. The launcher checks cancellation after quota waits and before launching a replacement process.
 
 ## Changelog
+- 2026-10-28 - cleared restored remaps on failed initial resume; the timeout recovery regression now
+  reuses the old native ID and verifies its new response/update identity under the race detector.
 - 2026-10-10 - reverified child retirement and binding publication; documented transient setup refusal, with failed-before/after regression and actual same-session selector recovery.
 - 2026-09-12 - documented presentation-only held-prompt notification; verified two-account quota, manual selection, cancellation, and provider-switch process regression
 - 2026-09-12 - documented cancellation ownership and interruptible factory waits; verified held/active cancellation, quota-switch scripts, and replacement-context barriers

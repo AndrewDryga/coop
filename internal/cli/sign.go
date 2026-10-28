@@ -316,7 +316,7 @@ func (a *app) cmdSign(args []string) (int, error) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--from":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
 				return 2, ui.MissingOptionValue("--from", "coop sign", "coop sign --from origin/main")
 			}
 			from, i = args[i+1], i+1

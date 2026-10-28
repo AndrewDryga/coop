@@ -30,6 +30,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/mcp"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
@@ -141,7 +142,7 @@ func TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes(t *testing.T) {
 	if result.State != session.TurnCompleted || result.AssistantMessage != `{"reply":"valid"}` {
 		t.Fatalf("completed contracted turn = %+v", result)
 	}
-	if result.Usage.InputTokens != 20 || result.Usage.OutputTokens != 4 {
+	if result.Usage.InputTokens != 20 || result.Usage.OutputTokens != 4 || !result.Usage.CostRecorded || result.Usage.CostUSD != 0.5 {
 		t.Fatalf("repair usage = %+v, want both provider attempts", result.Usage)
 	}
 	methods := readSessionACPLog(t, fixture.childLog)
@@ -3554,6 +3555,23 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, readOn
 		network = egress.Open
 	}
 	root := t.TempDir()
+	if network == egress.Filtered {
+		// The scripted child never launches a gateway. Give its evidence reader a real,
+		// empty private inventory; missing storage is now correctly a certification error.
+		t.Setenv("XDG_STATE_HOME", filepath.Join(root, "network-state"))
+		path, err := box.NetworkStatePath()
+		if err != nil {
+			t.Fatal(err)
+		}
+		evidence, err := networkstate.Open(path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := evidence.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	source := filepath.Join(root, "shared-agents")
 	writeSessionTestCredential(t, source, sessionTarget)
 	for name, body := range map[string]string{
@@ -4075,18 +4093,24 @@ func TestSessionACPChildHelper(t *testing.T) {
 			case "activity-paths":
 				sendACPActivityPaths(send, frame.Params.SessionID, cwd)
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
-			case "invalid-contract-once-then-failure":
+			case "invalid-contract-once-then-failure", "invalid-contract-once-then-hang":
 				// Round one is a real, billed request that produced invalid JSON; round two — the
 				// schema repair — is where the provider fails. What round one reported must survive.
 				marker := os.Getenv("COOP_TEST_SESSION_CONTRACT_MARKER")
 				if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
 					_ = os.WriteFile(marker, []byte("rejected"), 0o600)
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "usage_update", "cost": map[string]any{"amount": 0.25, "currency": "USD"}}}})
+
 					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": `{"reply":"invalid"}}`}}}})
 					send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
 						"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 10, "outputTokens": 2},
 					}})
 					break
 				}
+				if scenario == "invalid-contract-once-then-hang" {
+					break
+				}
+
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
 					"stopReason": "end_turn",
 					"_meta": map[string]any{"jetbrains": map[string]any{"air": map[string]any{
@@ -4148,6 +4172,13 @@ func TestSessionACPChildHelper(t *testing.T) {
 				} else if scenario == "invalid-contract-always" {
 					message = `{"reply":"invalid"}}`
 				}
+				if scenario == "invalid-contract-once" {
+					cost := 0.5
+					if message != `{"reply":"valid"}` {
+						cost = 0.25
+					}
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "usage_update", "cost": map[string]any{"amount": cost, "currency": "USD"}}}})
+				}
 				if scenario == "semantic-tool-image-output" || scenario == "schema-repair-tool-image-output" {
 					marker := os.Getenv("COOP_TEST_SESSION_IMAGE_MARKER")
 					if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
@@ -4187,15 +4218,24 @@ func TestSessionACPChildHelper(t *testing.T) {
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
 					"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 10, "outputTokens": 2},
 				}})
-			case "usage":
+			case "usage", "usage-error", "usage-cancelled":
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
 					"sessionId": frame.Params.SessionID,
 					"update": map[string]any{"sessionUpdate": "usage_update", "used": 123, "size": 200000,
 						"cost": map[string]any{"amount": 0.375, "currency": "USD"}},
 				}})
+				if scenario == "usage-error" {
+					send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "error": map[string]any{"code": -32000, "message": "provider failed after reporting spend"}})
+					break
+				}
+				stop := "end_turn"
+				if scenario == "usage-cancelled" {
+					stop = "cancelled"
+				}
+
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": "measured"}}}})
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
-					"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 1200, "outputTokens": 34},
+					"stopReason": stop, "usage": map[string]any{"inputTokens": 1200, "outputTokens": 34},
 				}})
 			case "large-tool-output":
 				chunk := strings.Repeat("e", 1<<20)
@@ -4383,4 +4423,43 @@ func TestCloseWarmExecutionsStopsWorkspacesTogether(t *testing.T) {
 func accumulateSessionACPUpdate(agent agents.Agent, raw json.RawMessage, expectedSession string, assistant *[]byte) error {
 	_, err := accumulateSessionACPUpdateArtifacts(agent, raw, expectedSession, assistant, nil)
 	return err
+}
+
+func TestSessionACPStopKillsResidualGroupAfterLeaderExits(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "while read -r line; do :; done")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	process, err := startSessionACPProcess(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.stop()
+	ready := filepath.Join(t.TempDir(), "ready")
+	member := exec.Command("sh", "-c", `trap '' TERM; : > "$1"; exec sleep 60`, "fixture", ready)
+	member.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: cmd.Process.Pid}
+	if err := member.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer member.Process.Kill()
+	done := make(chan error, 1)
+	go func() { done <- member.Wait() }()
+	wait.ForFile(t, ready)
+	process.stopGrace = time.Second
+	if err := process.stop(); err != nil {
+		t.Fatalf("stop residual group: %v", err)
+	}
+	select {
+	case err := <-done:
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ProcessState.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
+			t.Fatalf("residual process exit: %v", err)
+		}
+	case <-time.After(wait.Deadline):
+		t.Fatal("residual process not reaped")
+	}
+	if sessionACPGroupAlive(cmd.Process.Pid) {
+		t.Fatal("residual group survived")
+	}
+	if err := process.stop(); err != nil {
+		t.Fatalf("second stop: %v", err)
+	}
 }

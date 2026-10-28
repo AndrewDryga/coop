@@ -321,7 +321,8 @@ func (a *app) cmdRun(args []string) (int, error) {
 	// Intercept the meta cases before entering the box. We can't lean on the dispatch's --help
 	// handling here: it's `--`-blind, so it would mistake `coop run -- --help` (run --help in the
 	// box) for a help request. Honor -- ourselves.
-	if len(args) > 0 && args[0] == "--" {
+	delimited := len(args) > 0 && args[0] == "--"
+	if delimited {
 		args = args[1:] // everything after -- runs verbatim
 	} else if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		printHelpPage(runHelp) // not forwarded to the box, where it would exec `--help` and crash
@@ -333,7 +334,7 @@ func (a *app) cmdRun(args []string) (int, error) {
 	}
 	// A leading option Coop did not take is a typo, not a program: refuse it HERE, before the box
 	// is checked or built. Past `--` the same token is the command's own and is forwarded verbatim.
-	if strings.HasPrefix(args[0], "-") {
+	if !delimited && strings.HasPrefix(args[0], "-") {
 		return 2, unknownOptionErr(args[0], "coop run", runOptions)
 	}
 	return a.runInBox(args, "", nil) // raw command runner — not an agent session

@@ -114,6 +114,8 @@ func TestLoadRejects(t *testing.T) {
 		"bad preset name":           "work:\n  agent: [\"has space\"]\n",
 		"between enabled no prompt": "between:\n  enabled: true\n",
 		"unknown review writes":     "signoff:\n  writes: source\n",
+		"second document":           "work:\n  agent: [claude]\n---\nwork:\n  agent: [grok]\n",
+		"empty second document":     "work:\n  agent: [claude]\n---\n",
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

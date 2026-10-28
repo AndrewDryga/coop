@@ -1,11 +1,16 @@
 package workerconnector
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 // Ryker's timeline showed "Run command — the worker reported that a command
@@ -95,6 +100,165 @@ func TestPublicActivityBoundsWhatACommandPrinted(t *testing.T) {
 	}
 	if terminal, _ := narrated["terminal_exit"].(map[string]any); len(terminal) != 2 || terminal["exit_code"] != float64(2) || terminal["signal"] != "SIGTERM" {
 		t.Fatalf("truncated output lost typed terminal exit: %.300s", payload)
+	}
+}
+
+func TestPublicActivityBoundsFinalEncoding(t *testing.T) {
+	for _, text := range []string{strings.Repeat("<", 16_000), strings.Repeat("x", 16_300)} {
+		encoded, err := encodeWireJSON(map[string]any{
+			"tool_call_id": "bounded", "kind": "execute", "status": "completed",
+			"input":  map[string]any{"server": "controller", "tool": "inspect", "arguments": text},
+			"output": text, "content": text, "locations": text,
+			"title":         strings.Repeat("<", maximumNarrationTitleBytes),
+			"terminal_exit": map[string]any{"exit_code": 2},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, ok := publicActivityPayload("tool.completed", encoded)
+		if !ok || len(payload) > maximumNarrationEventBytes {
+			t.Fatalf("final encoding = %d bytes, accepted=%v; want bounded event", len(payload), ok)
+		}
+		var event map[string]any
+		if err := json.Unmarshal(payload, &event); err != nil {
+			t.Fatal(err)
+		}
+		input, _ := event["input"].(map[string]any)
+		terminal, _ := event["terminal_exit"].(map[string]any)
+		if input["server"] != "controller" || input["tool"] != "inspect" || terminal["exit_code"] != float64(2) {
+			t.Fatalf("bounded event lost tool identity or terminal status: %.500s", payload)
+		}
+		if text[0] == 'x' && event["withheld"] == nil {
+			t.Fatal("oversized aggregate lost its withheld explanation")
+		}
+		if text[0] == '<' && event["withheld"] != nil {
+			t.Fatal("bounded HTML-rich evidence was unnecessarily withheld")
+		}
+	}
+}
+
+func TestPublicActivityBoundsToolNamesAlongsidePathEvidence(t *testing.T) {
+	paths := make([]any, 16)
+	for i := range paths {
+		paths[i] = map[string]any{"source": fmt.Sprintf("/locations/%d/path", i), "scope": "project", "path": fmt.Sprintf("%02d", i) + strings.Repeat("\x01", 510)}
+	}
+	raw, err := encodeWireJSON(map[string]any{
+		"tool_call_id": "bounded-names", "kind": "execute", "status": "completed",
+		"input":         map[string]any{"server": strings.Repeat("x", 16_300), "tool": "inspect"},
+		"path_context":  map[string]any{"basis": "lexical", "paths": paths},
+		"terminal_exit": map[string]any{"exit_code": 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, ok := publicActivityPayload("tool.completed", raw)
+	if !ok || len(payload) > maximumNarrationEventBytes {
+		t.Fatalf("bounded event = %d bytes, accepted=%v", len(payload), ok)
+	}
+	var event map[string]any
+	if err := json.Unmarshal(payload, &event); err != nil {
+		t.Fatal(err)
+	}
+	input := event["input"].(map[string]any)
+	if input["server"] != nil || input["tool"] != "inspect" || event["withheld"].(map[string]any)["input"] != "too large" {
+		t.Fatalf("oversized name not withheld: %.500s", payload)
+	}
+	if event["tool_call_id"] != "bounded-names" || event["terminal_exit"].(map[string]any)["exit_code"] != float64(2) || len(event["path_context"].(map[string]any)["paths"].([]any)) != len(paths) {
+		t.Fatal("bounded event lost tool, terminal, or path evidence")
+	}
+}
+
+func TestPublicActivityBoundsNestedTextWithoutLosingEvidence(t *testing.T) {
+	formatting := strings.Repeat("\x1b[0m", 256)
+	entries := make([]any, maximumPlanSteps)
+	for i := range entries {
+		entries[i] = map[string]any{"content": formatting, "status": "completed", "priority": "high"}
+	}
+	text := strings.Repeat(formatting, 16)
+	part := map[string]any{"kind": "text", "text": text, "sha256": sha256Text(text), "bytes": len(text)}
+	for kind, source := range map[string]map[string]any{
+		"model.plan":  {"entries": entries},
+		"prompt.sent": {"version": 1, "state": "sent", "text_sha256": sha256Text(text + text), "text_bytes": len(text) * 2, "parts": []any{part, part}, "blocks": []any{}},
+	} {
+		t.Run(kind, func(t *testing.T) {
+			raw, err := encodeWireJSON(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, ok := publicActivityPayload(kind, raw)
+			if !ok || len(payload) > maximumNarrationEventBytes {
+				t.Fatalf("%s payload = %d bytes, accepted=%v", kind, len(payload), ok)
+			}
+			var value map[string]any
+			if err := json.Unmarshal(payload, &value); err != nil {
+				t.Fatal(err)
+			}
+			withheld := 0
+			if kind == "model.plan" {
+				steps := value["entries"].([]any)
+				if len(steps) != len(entries) || value["step_count"] != float64(len(entries)) {
+					t.Fatalf("lost plan steps: %v", value)
+				}
+				for _, raw := range steps {
+					step := raw.(map[string]any)
+					if step["status"] != "completed" || step["priority"] != "high" {
+						t.Fatalf("lost plan evidence: %v", step)
+					}
+					if step["withheld"] == "too large" {
+						withheld++
+					} else if step["content"] != formatting {
+						t.Fatal("changed retained plan text")
+					}
+				}
+			} else {
+				parts := value["parts"].([]any)
+				if len(parts) != 2 || value["state"] != "sent" || value["text_sha256"] != sha256Text(text+text) {
+					t.Fatal("lost prompt identity")
+				}
+				for _, raw := range parts {
+					part := raw.(map[string]any)
+					if part["sha256"] != sha256Text(text) || part["bytes"] != float64(len(text)) {
+						t.Fatal("lost prompt part identity")
+					}
+					if part["kind"] == "withheld" && part["reason"] == "too large" {
+						withheld++
+					} else if part["text"] != text {
+						t.Fatal("changed retained prompt text")
+					}
+				}
+			}
+			if withheld == 0 {
+				t.Fatal("oversized nested text did not record withholding")
+			}
+		})
+	}
+}
+
+func TestActivityEnvelopeKeepsBoundedWireEncoding(t *testing.T) {
+	now := time.Date(2026, 9, 4, 18, 0, 0, 0, time.UTC)
+	raw, err := encodeWireJSON(map[string]any{"tool_call_id": "html", "output": strings.Repeat("<", 16_000)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &eventAPI{events: []workerproto.SessionEvent{{ID: "event-1", SessionID: "coop-session-1", Sequence: 1, Type: "tool.completed", Version: 1, OccurredAt: now, Payload: raw}}}
+	executor, err := NewExecutor(ExecutorConfig{API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.journal.bindEventStream(createCommand(now.Add(time.Minute)), "coop-session-1"); err != nil {
+		t.Fatal(err)
+	}
+	batches, err := executor.collectActivity(context.Background(), maximumPollBytes)
+	if err != nil || len(batches) != 1 || len(batches[0].Events) != 1 {
+		t.Fatalf("activity = %+v, %v", batches, err)
+	}
+	envelope := batches[0].Events[0].Payload
+	if len(envelope) > maximumNarrationEventBytes || strings.Contains(string(envelope), `\u003c`) {
+		t.Fatalf("event envelope expanded bounded payload to %d bytes", len(envelope))
+	}
+	wire, err := encodeWireJSON(batches)
+	if err != nil || strings.Contains(string(wire), `\u003c`) {
+		t.Fatalf("poll encoding expanded activity: %v", err)
 	}
 }
 

@@ -3,7 +3,7 @@ name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
 sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go]
-updated: 2026-10-17
+updated: 2026-10-28
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -196,7 +196,12 @@ file, so ambient configuration cannot redirect the wrapper to another file. A fu
 adds ordinary `CommandArgs` must decide whether its nested commands need an equivalent environment;
 mounting the raw snapshot for every scoped credential is not the fallback.
 
+ACP header interpolation processes the original template once. Resolved secret bytes are opaque,
+including `${...}` syntax; Codex does not run a second expansion after the shared renderer.
+Native Codex TOML still owns its distinct exact-reference restriction.
+
 ## Changelog
+- 2026-10-28 — removed stale Codex ACP expansion and made generic substitutions simultaneous; outgoing headers preserve reference-like secret bytes.
 - 2026-10-17 — the Responder binding was renamed: `BindResponderState`/`responder-state` are
   `BindControllerTools`/`controller-tools` since 0e7c5c45; verified against internal/mcp/mcp.go and
   `captureSessionMCP` in internal/sessionsvc/acp.go.

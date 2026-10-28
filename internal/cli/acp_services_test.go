@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"io"
 	"os"
 	"os/exec"
@@ -72,5 +73,32 @@ func TestSpawnBoxRecordsItsChildForTheServicesGuard(t *testing.T) {
 	child.Stop()
 	if a.acpChildren.running("session") {
 		t.Fatal("a stopped child still holds the session's services")
+	}
+}
+
+func TestSpawnBoxStartFailureReleasesPreparation(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+	a := &app{cfg: cfg, rt: runtime.Runtime{Name: "docker"}, rtSet: true}
+	child, err := a.spawnBox(t.Context(), filepath.Join(tmp, "missing-program"), nil, "failed-start", nil, agents.Target{Provider: "codex"}, "", true, io.Discard)
+	if err == nil || child != nil {
+		t.Fatalf("start failure: %+v %v", child, err)
+	}
+	if a.acpChildren.running("failed-start") {
+		t.Fatal("failed child recorded as running")
+	}
+	for _, root := range []string{tmp, cfg.ConfigDir} {
+		if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if strings.HasPrefix(entry.Name(), "coop-acp-cid-") || strings.HasPrefix(entry.Name(), "coop-acp-mcp-") {
+				t.Errorf("preparation leaked %s", path)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

@@ -52,7 +52,7 @@ func isolatedTree(repo, commit string) ([]isolatedTreeEntry, error) {
 		}
 		header, path, ok := strings.Cut(string(record), "\t")
 		fields := strings.Fields(header)
-		if !ok || len(fields) != 3 || !validObjectID(fields[2]) || !safeIsolatedTreePath(path) {
+		if !ok || len(fields) != 3 || !forkspace.ValidObjectID(fields[2]) || !safeIsolatedTreePath(path) {
 			return nil, errors.New("isolated publication has an invalid or reserved Git tree path")
 		}
 		if fields[0] != "100644" && fields[0] != "100755" && fields[0] != "120000" && fields[0] != "160000" {
@@ -112,7 +112,7 @@ func captureIsolatedReviewBase(repo string) (isolatedParent, error) {
 		return isolatedParent{}, err
 	}
 	head, err := observed(canonical, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil || !validObjectID(head) {
+	if err != nil || !forkspace.ValidObjectID(head) {
 		return isolatedParent{}, errors.Join(errors.New("isolated review needs a committed parent HEAD"), err)
 	}
 	tree, err := observed(canonical, "rev-parse", "--verify", head+"^{tree}")
@@ -164,7 +164,7 @@ func captureIsolatedCheckoutBounded(repo string, detachedAllowed bool, depth int
 		return isolatedParent{}, errors.Join(errors.New("isolated land needs an attached target branch"), err)
 	}
 	head, err := observed(canonical, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil || !validObjectID(head) {
+	if err != nil || !forkspace.ValidObjectID(head) {
 		return isolatedParent{}, errors.Join(errors.New("isolated parent has no exact commit"), err)
 	}
 	if expectedCommit == "" {

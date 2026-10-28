@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 )
@@ -115,7 +116,7 @@ func sessionCompanionBoxPath(name string) string {
 
 func sessionCompanionWorkspace(stateRoot, sessionID, name string) (string, error) {
 	if !filepath.IsAbs(stateRoot) || !validSessionPathComponent(sessionID) ||
-		!validCompanionRepositoryName(name) {
+		!box.ValidCompanionName(name) {
 		return "", errors.New("invalid companion workspace binding")
 	}
 	root, err := filepath.EvalSymlinks(stateRoot)
@@ -130,8 +131,8 @@ func ensureSessionCompanionContext(
 	binding session.CompanionRepository,
 ) (session.CompanionRepository, error) {
 	if !filepath.IsAbs(binding.Repository) ||
-		!validSessionWorkspaceCommit(binding.BaseCommit) ||
-		!validCompanionRepositoryName(binding.Name) {
+		!forkspace.ValidObjectID(binding.BaseCommit) ||
+		!box.ValidCompanionName(binding.Name) {
 		return session.CompanionRepository{}, errors.New("invalid companion repository binding")
 	}
 	expected, err := sessionCompanionWorkspace(stateRoot, sessionID, binding.Name)
@@ -682,7 +683,7 @@ func sessionCompanionCommitContext(ctx context.Context, dir, revision string) (s
 		return "", fmt.Errorf("resolve companion commit %q: %w", revision, err)
 	}
 	commit := strings.TrimSpace(string(out))
-	if !validSessionWorkspaceCommit(commit) {
+	if !forkspace.ValidObjectID(commit) {
 		return "", fmt.Errorf("resolve companion commit %q: malformed identity %q", revision, commit)
 	}
 	return commit, nil

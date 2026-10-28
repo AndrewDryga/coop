@@ -256,6 +256,20 @@ func TestAFailedUpStopsTheBenchInsteadOfMislabelingSamples(t *testing.T) {
 	}
 }
 
+func TestRunRefusesNonpositiveSamplesWithoutTouchingServices(t *testing.T) {
+	for _, samples := range []string{"0", "-1"} {
+		repo, coop, log := project(t)
+		var stderr bytes.Buffer
+		code := run(context.Background(), []string{"--repo", repo, "--out", filepath.Join(t.TempDir(), "results"), "--coop", coop, "--samples", samples}, newBench(), io.Discard, &stderr)
+		if code != 2 || !strings.Contains(stderr.String(), "samples must be positive") {
+			t.Errorf("samples=%s: exit %d, said %q", samples, code, stderr.String())
+		}
+		if _, err := os.Stat(log); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("invalid sample count invoked services", err)
+		}
+	}
+}
+
 func TestRunRefusesAnIncompleteCommand(t *testing.T) {
 	for _, args := range [][]string{{"--out", "x"}, {"--repo", "x"}, {"--repo", "x", "--out", "y", "extra"}} {
 		var stderr bytes.Buffer

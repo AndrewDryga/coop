@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestUsageCredentialLeaseCoordinatesOriginalHome(t *testing.T) {
@@ -240,7 +242,144 @@ func TestUsageNativeHelperPlanHasOnlySelectedAuthority(t *testing.T) {
 	var out quotaOutput
 	_, _ = out.Write(make([]byte, (1<<20)+3))
 	_, _ = out.Write([]byte("more"))
-	if !out.exceeded || out.Len() != 1<<20 {
+	if !out.exceeded || out.buffer.Len() != 1<<20 {
 		t.Fatal("native output was not bounded")
+	}
+}
+
+func TestUsageNativeBoundsOutputAndCleansBeforeReturn(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		size, exit int
+		cancel     bool
+	}{
+		{name: "small", size: 32}, {name: "limit", size: 1 << 20}, {name: "overflow", size: 1<<20 + 1}, {name: "nonzero", size: 32, exit: 17}, {name: "canceled", cancel: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ag, _ := agents.Get("gemini")
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
+			profile := cfg.AgentProfileDir("gemini", "work")
+			if err := os.MkdirAll(profile, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(profile, "oauth_creds.json"), []byte(`{"access_token":"fixture","refresh_token":"fixture-refresh"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			alive := filepath.Join(dir, "alive")
+			output := filepath.Join(dir, "output")
+			expected := strings.Repeat("x", test.size)
+			if err := os.WriteFile(output, []byte(expected), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("COOP_QUOTA_ALIVE", alive)
+			t.Setenv("COOP_QUOTA_OUTPUT", output)
+			run := "cat \"$COOP_QUOTA_OUTPUT\"; exit " + strconv.Itoa(test.exit)
+			if test.cancel {
+				run = "exec sleep 60"
+			}
+			script := `#!/bin/sh
+case "$1" in
+ps) if [ -f "$COOP_QUOTA_ALIVE" ]; then printf 'fixture-container\n'; fi ;;
+inspect) printf '{}\n' ;;
+image) printf 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+run) touch "$COOP_QUOTA_ALIVE"; ` + run + ` ;;
+rm) rm -f "$COOP_QUOTA_ALIVE" ;;
+*) exit 1 ;;
+esac
+`
+			docker := filepath.Join(dir, "docker")
+			if err := os.WriteFile(docker, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			type result struct {
+				data []byte
+				err  error
+			}
+			done := make(chan result, 1)
+			go func() {
+				data, err := ReadUsageQuotaNative(ctx, cfg, runtime.Runtime{Name: docker}, ag, "work", []string{"/usr/local/bin/node", "fixture"})
+				done <- result{data, err}
+			}()
+			if test.cancel {
+				wait.ForFile(t, alive)
+				cancel()
+			}
+			var got result
+			select {
+			case got = <-done:
+			case <-time.After(wait.Deadline):
+				t.Fatal("quota helper did not return")
+			}
+			if test.cancel || test.exit != 0 || test.size > 1<<20 {
+				if got.err == nil || got.data != nil {
+					t.Fatalf("failed helper exposed output: %d bytes %v", len(got.data), got.err)
+				}
+			} else if got.err != nil || string(got.data) != expected {
+				t.Fatalf("quota output: %d bytes %v", len(got.data), got.err)
+			}
+			if _, err := os.Stat(alive); !os.IsNotExist(err) {
+				t.Fatalf("helper still alive at return: %v", err)
+			}
+			leaseCtx, stop := context.WithTimeout(t.Context(), wait.Deadline)
+			defer stop()
+			lease, err := credentialUseLease(leaseCtx, cfg, profile, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lease.close()
+		})
+	}
+}
+
+func TestRunRefusesUnsettledHistoryAndReleasesAllHomes(t *testing.T) {
+	for _, test := range []struct {
+		name, receipt string
+		allowed       bool
+	}{
+		{"pending", `{"Version":1,"Done":false}`, false}, {"malformed", `{`, false}, {"unsupported", `{"Version":2,"Done":true}`, false}, {"complete", `{"Version":1,"Done":true}`, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			homes := map[string]string{"codex": filepath.Join(t.TempDir(), "home"), "claude": filepath.Join(t.TempDir(), "home")}
+			for _, home := range homes {
+				if err := os.MkdirAll(home, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			imports := filepath.Join(filepath.Dir(homes["claude"]), "imports")
+			if err := os.Mkdir(imports, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(imports, "receipt.json"), []byte(test.receipt), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := (&config.Config{ConfigDir: t.TempDir()}).WithNativeHomes(homes)
+			spec := RunSpec{Ctx: t.Context(), Agent: "codex", Homes: true, Peers: []agents.Target{{Provider: "claude"}}}
+			release, err := runCredentialUseLeases(cfg, runtime.Runtime{Name: "docker"}, &spec)
+			if test.allowed {
+				if err != nil || release == nil {
+					t.Fatalf("complete history refused: %v", err)
+				}
+				release()
+			} else {
+				if release != nil {
+					t.Cleanup(release)
+				}
+				if err == nil || release != nil {
+					t.Fatalf("unsettled history admitted: %v", err)
+				}
+			}
+			for provider, home := range homes {
+				ctx, cancel := context.WithTimeout(t.Context(), wait.Deadline)
+				lease, err := credentialUseLease(ctx, cfg, home, true)
+				cancel()
+				if err != nil {
+					t.Fatalf("%s history lease retained: %v", provider, err)
+				}
+				lease.close()
+			}
+		})
 	}
 }

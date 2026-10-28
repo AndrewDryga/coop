@@ -23,6 +23,19 @@ import (
 // TestMain keeps the package's tests out of the developer's real Coop state.
 func TestMain(m *testing.M) { os.Exit(teststate.Isolate(m.Run)) }
 
+func TestRunCommandReportsRealProcessOutcomes(t *testing.T) {
+	got, err := runCommand(5*time.Second, "/bin/sh", "-c", "printf stdout; printf stderr >&2; exit 7")
+	if err != nil || got.stdout != "stdout" || got.stderr != "stderr" || got.code != 7 {
+		t.Fatalf("nonzero process = %+v, %v", got, err)
+	}
+	if _, err := runCommand(time.Second, filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("missing executable reported success")
+	}
+	if _, err := runCommand(50*time.Millisecond, "/bin/sh", "-c", "exec sleep 60"); err == nil || !strings.Contains(err.Error(), "did not finish within") {
+		t.Fatalf("timed out process = %v", err)
+	}
+}
+
 func TestPercentile(t *testing.T) {
 	// Eight samples is a realistic run, and p95 has to land between the top two rather than snapping
 	// to the max — otherwise every p95 is just "the slowest sample" under another name.
@@ -277,6 +290,9 @@ func TestRunRefusesWhatItCannotMeasure(t *testing.T) {
 		said    string
 	}{
 		{"an unknown case", quietRuntime, []string{"--cases", "fake,nope"}, "unknown case(s): nope"},
+		{"no cases", quietRuntime, []string{"--cases", " , "}, "at least one case"},
+		{"no samples", quietRuntime, []string{"--samples", "0"}, "samples must be positive"},
+		{"negative samples", quietRuntime, []string{"--samples", "-1"}, "samples must be positive"},
 		{"a coop it cannot run", quietRuntime, []string{"--coop", notExecutable}, "is not executable"},
 		{"no output directory", quietRuntime, []string{"--out", ""}, "usage:"},
 		{"a stray argument", quietRuntime, []string{"extra"}, "usage:"},

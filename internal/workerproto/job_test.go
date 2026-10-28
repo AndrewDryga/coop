@@ -56,6 +56,27 @@ func TestJobExactCommitRequiresExplicitNullSelectedRef(t *testing.T) {
 	}
 }
 
+func TestJobPullRequestExpectedHeadMatchesSelectedCommit(t *testing.T) {
+	for _, expected := range []string{"", strings.Repeat("a", 40), strings.Repeat("b", 40)} {
+		spec := validJobSpec()
+		binding := &spec.Source.Binding
+		binding.Kind = session.SourcePullRequest
+		binding.Requested = session.SourceSelector{Kind: session.SourcePullRequest, Number: 1, ExpectedHeadCommit: expected}
+		binding.SelectedRef = ptrString("refs/pull/1/head")
+		binding.PullRequestNumber = 1
+		binding.PullRequestExpectedHead = expected
+		document, err := json.Marshal(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = DecodeJobSpec(document)
+		wantError := expected != "" && expected != binding.SelectedCommit
+		if (err != nil) != wantError {
+			t.Fatalf("expected head %q: error=%v, want error=%v", expected, err, wantError)
+		}
+	}
+}
+
 func TestJobSpecRoundTripAndDigest(t *testing.T) {
 	spec := validJobSpec()
 	// Pin the cross-language JSON escape boundary as well as object-key ordering.

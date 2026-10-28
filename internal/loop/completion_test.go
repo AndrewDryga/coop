@@ -44,7 +44,12 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 				writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [ ] required verification is still pending\n")
 			}
 			cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
-			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+			rt := runtime.Runtime{Name: "true"}
+			var checkCleanup func(string)
+			if scenario == "explicit no change" || scenario == "abnormal exit" {
+				rt, checkCleanup = recordLoopServiceCleanup(t, repo)
+			}
+			c := New(cfg, rt, "test", Host{})
 			attempts := 0
 			const sessionID = "018f6352-6281-7ae1-a1d5-07c3399de43d"
 			c.boxRun = func(s box.RunSpec) (int, error) {
@@ -169,6 +174,9 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 			output := captureStderr(t, func() {
 				code, err = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: 1, Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
 			})
+			if checkCleanup != nil {
+				checkCleanup(c.runID)
+			}
 			if scenario == "edit after no-change completion" {
 				if code == 0 || err == nil || attempts != 1 {
 					t.Fatalf("post-completion mutation accepted: %d, %v, %d attempts", code, err, attempts)

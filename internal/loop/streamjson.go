@@ -596,16 +596,7 @@ func (d *streamDecoder) event(raw json.RawMessage) {
 
 func (d *streamDecoder) lastIterResult() *iterResult { return d.last }
 func (d *streamDecoder) streamOutcome() providerStreamOutcome {
-	if d.malformed {
-		return streamMalformed
-	}
-	if d.failed {
-		return streamFailed
-	}
-	if d.last != nil {
-		return streamSucceeded
-	}
-	return streamIncomplete
+	return d.outcome(d.failed, d.last)
 }
 
 type boundedNarration struct {
@@ -1467,4 +1458,18 @@ type toolInput struct {
 	Pattern      string `json:"pattern"`
 	Description  string `json:"description"`
 	SubagentType string `json:"subagent_type"`
+}
+
+// outcome gives terminal parse errors precedence over provider success reports.
+func (d *ndjsonDecoder) outcome(failed bool, last *iterResult) providerStreamOutcome {
+	if d.malformed {
+		return streamMalformed
+	}
+	if failed {
+		return streamFailed
+	}
+	if last != nil {
+		return streamSucceeded
+	}
+	return streamIncomplete
 }

@@ -8,25 +8,25 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/gitdiff"
 )
 
 // The classifier is pure string→struct: every category lands, instructions beat docs
-// (AGENTS.md never files under docs), code orders by churn, a rename (whose numstat
-// spelling misses the lookup) renders without counts, and empty input is nil.
+// (AGENTS.md never files under docs), code orders by churn, a rename retains its counts, and empty input is nil.
 func TestClassifyChanged(t *testing.T) {
 	nameStatus := strings.Join([]string{
-		"M\tAGENTS.md",
-		"M\t.claude/settings.json",
-		"M\tgo.mod",
-		"A\t.github/workflows/ci.yml",
-		"M\tinternal/cli/util.go",
-		"M\tinternal/cli/fork.go",
-		"R100\told.go\tnew.go",
-		"A\timg.png",
-		"A\tinternal/cli/fork_test.go",
-		"M\tREADME.md",
-		"M\tdocs/guide.md",
-	}, "\n")
+		"M\x00AGENTS.md",
+		"M\x00.claude/settings.json",
+		"M\x00go.mod",
+		"A\x00.github/workflows/ci.yml",
+		"M\x00internal/cli/util.go",
+		"M\x00internal/cli/fork.go",
+		"R100\x00old.go\x00new.go",
+		"A\x00img.png",
+		"A\x00internal/cli/fork_test.go",
+		"M\x00README.md",
+		"M\x00docs/guide.md",
+	}, "\x00") + "\x00"
 	numstat := strings.Join([]string{
 		"3\t1\tAGENTS.md",
 		"2\t0\t.claude/settings.json",
@@ -34,14 +34,22 @@ func TestClassifyChanged(t *testing.T) {
 		"10\t0\t.github/workflows/ci.yml",
 		"5\t2\tinternal/cli/util.go",
 		"100\t50\tinternal/cli/fork.go",
-		"1\t1\told.go => new.go", // numstat's rename spelling — the lookup misses it
-		"-\t-\timg.png",          // binary — no counts
+		"1\t1\t\x00old.go\x00new.go", // NUL-framed rename
+		"-\t-\timg.png",              // binary — no counts
 		"30\t0\tinternal/cli/fork_test.go",
 		"4\t4\tREADME.md",
 		"2\t2\tdocs/guide.md",
-	}, "\n")
+	}, "\x00") + "\x00"
 
-	secs := classifyChanged(nameStatus, numstat)
+	changes, err := gitdiff.NameStatus(nameStatus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts, err := gitdiff.Numstat(numstat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secs := classifyChanged(changes, counts)
 	titles := make([]string, len(secs))
 	for i, s := range secs {
 		titles[i] = s.title
@@ -62,7 +70,7 @@ func TestClassifyChanged(t *testing.T) {
 	if got := paths(secs[0]); got != "AGENTS.md,.claude/settings.json,go.mod,.github/workflows/ci.yml" {
 		t.Errorf("config section = %s", got)
 	}
-	// Code orders by churn desc; unknown-count files (rename, binary) sink, input order kept.
+	// Code orders by churn desc; binary counts stay unknown.
 	if got := paths(secs[1]); got != "internal/cli/fork.go,internal/cli/util.go,new.go,img.png" {
 		t.Errorf("code section = %s", got)
 	}
@@ -73,15 +81,15 @@ func TestClassifyChanged(t *testing.T) {
 		t.Errorf("docs section = %s", got)
 	}
 
-	// Rendering: counts when known, none for the rename miss; R100 collapses to R.
+	// Rendering: counts when known, including renames; R100 collapses to R.
 	if got := secs[1].files[0].render(); got != "M  internal/cli/fork.go  +100 -50" {
 		t.Errorf("render with counts = %q", got)
 	}
-	if got := secs[1].files[2].render(); got != "R  new.go" {
+	if got := secs[1].files[2].render(); got != "R  new.go  +1 -1" {
 		t.Errorf("rename render = %q", got)
 	}
 
-	if classifyChanged("", "") != nil {
+	if classifyChanged(nil, nil) != nil {
 		t.Error("empty input should classify to nil")
 	}
 }
