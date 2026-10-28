@@ -34,7 +34,16 @@ func TestPrivateObservationReadsCacheWithoutProbingOrRenewing(t *testing.T) {
 			t.Error("observer fixture leaked")
 		}
 	})
-	wait.For(t, "private observation listener", func() bool { _, err := os.Lstat(path); return err == nil })
+	// Bind publishes the socket before listen is ready. Under a loaded race
+	// gate, observing that file let the first client lose the startup race.
+	wait.For(t, "private observation listener", func() bool {
+		conn, err := net.DialTimeout("unix", path, ControlTimeout)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	})
 	for range 20 {
 		value, err := observeAt(context.Background(), path, c.identity)
 		if err != nil || value.Network.Sequence != 1 {
