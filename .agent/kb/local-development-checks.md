@@ -2,8 +2,8 @@
 name: local-development-checks
 description: explicit local check scopes, reverse-consumer guard and conservative broad fallback
 subsystem: development
-sources: [Makefile, internal/local_checks_test.go, release_test.go, runtime_selection_test.go, live_selection_test.go, AGENTS.md, CONTRIBUTING.md, .agent/project.yaml, internal/testutil/procharness/binaries.go, internal/testutil/procharness/stdio.go, internal/testutil/procharness/capture.go, internal/testutil/gitrepo/committed.go, .github/workflows/ci.yml]
-updated: 2026-10-17
+sources: [Makefile, internal/local_checks_test.go, release_test.go, runtime_selection_test.go, live_selection_test.go, AGENTS.md, CONTRIBUTING.md, .agent/project.yaml, internal/testutil/procharness/binaries.go, internal/testutil/procharness/stdio.go, internal/testutil/procharness/capture.go, internal/testutil/gitrepo/committed.go, internal/scaffold/adapter_manifest_test.go, internal/scaffold/scaffold_test.go, .github/workflows/ci.yml]
+updated: 2026-10-28
 ---
 
 `make check-local SCOPE=<owner>` has explicit rules/docs and six Go scopes: agent, runtime,
@@ -21,6 +21,12 @@ fixtures to their owner, and holds observed dynamic consumers: ACP builds the ro
 CLI's network fixture builds box/testdata/mcpprobe. Missing/deleted consumers/fixtures fail.
 It validates reviewed Make constants; it never chooses checks at runtime. Keep those source
 ownership facts current when a subprocess caller changes.
+
+`TestInitAdapterManifest` pins the complete generated scaffold, including embedded skill bytes,
+paths, modes and links. After an intentional template edit, review and refresh its fixed digests
+and run the full `go test -count=1 ./internal/scaffold` package;
+`TestSkillsTemplatesMatchCanonical` proves the two skill copies agree but does not qualify the
+changed generated output. Docs-only checks do not exercise either Go test.
 
 Docs/rules run actual docs, alignment, site and KB checks; they do not run Docker, race,
 process benchmarks or live models. A local scope pass is not the completed broad candidate gate.
@@ -61,6 +67,9 @@ owners still build their real inputs. Pure log cap/rune tests avoid full review 
 large-output pager, HTTP, session custody and failed-review owners remain.
 
 ## Changelog
+- 2026-10-28 — documented the embedded-template output fingerprint after approved skill edits
+  passed focused copy checks but left five manifest expectations stale; reproduced the failure
+  and confirmed that restoring only the four prior skill templates restores the old fingerprints.
 - 2026-10-17 — `check-unit` runs the unit tests with only `TEST_HOST_PROGRAMS` on PATH; the race
   owners do not stand in for that part, so the card names the by-hand `make test-minimal-path`
   (task 2026-10-16-inventory-the-host-programs-untagged-unit-tests).
