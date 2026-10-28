@@ -20,6 +20,12 @@ func TestDetectLimit(t *testing.T) {
 			"Claude AI usage limit reached|1700000000000", true, false, time.Unix(1700000000, 0)},
 		{"retry-after seconds",
 			"Error: rate limited. Please retry after 45s.", true, false, now.Add(45 * time.Second)},
+		{"retry after abbreviated minutes",
+			"retry after 2m", true, false, now.Add(2 * time.Minute)},
+		{"retry after abbreviated hours",
+			"retry after 2h", true, false, now.Add(2 * time.Hour)},
+		{"zero http retry-after",
+			"retry-after: 0", true, false, now},
 		{"try again in N seconds",
 			"overloaded; try again in 30 seconds", true, false, now.Add(30 * time.Second)},
 		{"retry after N minutes",
@@ -93,6 +99,8 @@ func TestDetectLimit(t *testing.T) {
 func TestDetectIterationLimitRejectsNarration(t *testing.T) {
 	now := time.Unix(1_000_000_000, 0)
 	for _, output := range []string{
+		"You've reached the end of the file.",
+		"The fixture says you've hit your weekly limit",
 		"fixture task text discusses rate limit handling but this is an ordinary failure",
 		"fixture task says error: rate limited while reviewing an ordinary failure",
 		"review output limit handling before retrying the test",
@@ -103,13 +111,17 @@ func TestDetectIterationLimitRejectsNarration(t *testing.T) {
 			t.Errorf("DetectIterationLimit(%q) = %+v, want ordinary failure", output, got)
 		}
 	}
-	for _, output := range []string{
-		"usage limit reached\nretry-after: 3600",
-		"HTTP 429 Too Many Requests",
-		"Output Limit Reached: maximum output length",
+	for _, tc := range []struct {
+		output        string
+		outputLimited bool
+	}{
+		{"usage limit reached\nretry-after: 3600", false},
+		{"HTTP 429 Too Many Requests", false},
+		{"You've hit your weekly limit", false},
+		{"Output Limit Reached: maximum output length", true},
 	} {
-		if got := DetectIterationLimit(output, now); !got.Limited {
-			t.Errorf("DetectIterationLimit(%q) = %+v, want limit", output, got)
+		if got := DetectIterationLimit(tc.output, now); !got.Limited || got.OutputLimited != tc.outputLimited {
+			t.Errorf("DetectIterationLimit(%q) = %+v, want limit with OutputLimited=%v", tc.output, got, tc.outputLimited)
 		}
 	}
 }
@@ -162,6 +174,12 @@ func TestParseResetTime(t *testing.T) {
 		{"date and time in utc",
 			base, "You've hit your weekly limit · resets Jun 18, 8pm (UTC)",
 			time.Date(2026, time.June, 18, 20, 0, 0, 0, time.UTC)},
+		{"explicit date later today",
+			base, "resets Jun 16, 8pm (UTC)",
+			time.Date(2026, time.June, 16, 20, 0, 0, 0, time.UTC)},
+		{"explicit date recently past keeps this year",
+			base, "resets Jun 16, 11am (UTC)",
+			time.Date(2026, time.June, 16, 11, 0, 0, 0, time.UTC)},
 		{"date and time with minutes",
 			base, "resets Jun 18, 8:30pm (UTC)",
 			time.Date(2026, time.June, 18, 20, 30, 0, 0, time.UTC)},
@@ -223,6 +241,7 @@ func TestLimitWait(t *testing.T) {
 			LimitHint{Limited: true, ResetAt: now.Add(48 * time.Hour)}, 1, 48*time.Hour + limitBuffer},
 		{"an absurd far-future reset clamps to the ceiling",
 			LimitHint{Limited: true, ResetAt: now.Add(30 * 24 * time.Hour)}, 1, LimitMaxWait},
+		{"unknown reset with caller attempt zero", LimitHint{Limited: true}, 0, time.Minute},
 		{"unknown reset backs off: attempt 1 → 1m", LimitHint{Limited: true}, 1, time.Minute},
 		{"unknown reset backs off: attempt 3 → 4m", LimitHint{Limited: true}, 3, 4 * time.Minute},
 		{"unknown reset backs off: capped at 32m", LimitHint{Limited: true}, 99, 32 * time.Minute},

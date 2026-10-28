@@ -62,14 +62,25 @@ func TestRotationUnknownResetBacksOff(t *testing.T) {
 
 func TestRotationNonfutureResetStillCoolsTarget(t *testing.T) {
 	now := time.Unix(1000, 0)
-	for _, reset := range []time.Time{time.Time{}, now.Add(-time.Hour), now} {
-		r := rts("a", "b")
-		if sleep, _ := r.OnLimit(reset, 3, now); sleep != 0 || r.Active().String() != "claude@b" {
-			t.Fatalf("reset %v: sleep=%v active=%q, want free target b", reset, sleep, r.Active())
-		}
-		if until, want := r.limited["claude@a"], now.Add(4*time.Minute); !until.Equal(want) {
-			t.Fatalf("reset %v: normalized cooling deadline = %v, want backoff %v", reset, until, want)
-		}
+	for _, tc := range []struct {
+		name    string
+		attempt int
+		backoff time.Duration
+	}{
+		{"session caller starts at zero", 0, time.Minute},
+		{"repeated limit backs off", 3, 4 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, reset := range []time.Time{time.Time{}, now.Add(-time.Hour), now} {
+				r := rts("a", "b")
+				if sleep, _ := r.OnLimit(reset, tc.attempt, now); sleep != 0 || r.Active().String() != "claude@b" {
+					t.Fatalf("reset %v: sleep=%v active=%q, want free target b", reset, sleep, r.Active())
+				}
+				if until, want := r.LimitedUntil("claude@a"), now.Add(tc.backoff); !until.Equal(want) {
+					t.Fatalf("reset %v: normalized cooling deadline = %v, want backoff %v", reset, until, want)
+				}
+			}
+		})
 	}
 }
 
