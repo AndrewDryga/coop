@@ -2,8 +2,8 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
-updated: 2026-10-26
+sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/acknowledged_results.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
+updated: 2026-10-27
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -72,7 +72,14 @@ The traps the code does not make obvious:
   session: its metadata-only origin must be durable before receipt deletion. The fair activity scan
   resolves only that original key and operation ID, verifies a succeeded CreateRemoteSession/session
   resource, then writes the stream before marking its origin bound. Uncertain operations remain
-  pending. Only exact event ACKs advance cursors; lookup/activity errors cannot block response commands.
+  pending. An authenticated ACK that cannot retire local custody suppresses only that exact
+  result in memory; its original receipt bytes remain on disk and restart requires a fresh ACK.
+  Retained ACKs yield to activity, commands and event ACKs. At most one repair runs per poll,
+  with a two-second deadline and backoff from five seconds to two minutes. A conflicting create
+  can retire only after an original-key lookup proves its exact accepted operation failed with
+  no resource, while its existing same-generation origin remains failed and unchanged. No origin,
+  stream or cursor is rewritten. Only exact event ACKs advance cursors; lookup/activity errors
+  cannot block response commands.
 - **Slow commands do not serialize fleet reads.** Run owns one FIFO mutation lane and four
   read slots for strictly decoded GET/HEAD requests. Invalid requests and every other method
   remain in the mutation lane; placement-fence exemptions are not a read classification.
@@ -144,6 +151,9 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-10-27 — kept acknowledged create conflicts from starving activity; bounded exact-operation
+  repair preserves original receipt bytes until retirement and leaves generation watermarks intact.
+  Regressions cover restart, crossed identity, delayed repair, timeout and preserved stream custody.
 - 2026-10-26 — activity classification uses the actual ACP cwd while host-root privacy stays
   separate; runner regressions cover fresh, resumed and legacy sessions without changing
   lexical containment semantics or the narrated event shape.

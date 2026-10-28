@@ -168,6 +168,10 @@ func (j *journal) save(entry journalEntry) (journalEntry, error) {
 func (j *journal) read(path string) (journalEntry, error) {
 	j.publication.Lock()
 	defer j.publication.Unlock()
+	return j.readLocked(path)
+}
+
+func (j *journal) readLocked(path string) (journalEntry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return journalEntry{}, err
@@ -212,29 +216,52 @@ func (j *journal) pending() ([]journalEntry, error) {
 func (j *journal) acknowledgeResults(commandIDs []string) error {
 	var failures error
 	for _, commandID := range commandIDs {
-		path := j.path(commandID)
-		entry, err := j.read(path)
+		entry, err := j.read(j.path(commandID))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		if err != nil {
-			return err
+		if err == nil {
+			err = j.acknowledgeResult(entry)
 		}
-		if entry.State != "completed" || entry.Result == nil {
-			return fmt.Errorf("acknowledge incomplete worker command %s", commandID)
-		}
-		if err := j.preserveCreateOrigin(entry); err != nil {
-			failures = errors.Join(failures, fmt.Errorf("preserve worker create %s before acknowledgement: %w", commandID, err))
-			continue
-		}
-		if err := os.Remove(path + ".body"); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove acknowledged response body: %w", err)
-		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove acknowledged worker command result: %w", err)
-		}
+		failures = errors.Join(failures, err)
 	}
 	return failures
+}
+
+func (j *journal) acknowledgeResult(entry journalEntry) error {
+	if entry.State != "completed" || entry.Result == nil {
+		return fmt.Errorf("acknowledge incomplete worker command %s", entry.CommandID)
+	}
+	if err := j.preserveCreateOrigin(entry); err != nil {
+		return fmt.Errorf("preserve worker create %s before acknowledgement: %w", entry.CommandID, err)
+	}
+	return j.removeAcknowledgedResult(entry)
+}
+
+// A receipt can finish while a poll is in flight. An ACK only retires the
+// exact result it answered, never a different publication under the same ID.
+func (j *journal) removeAcknowledgedResult(expected journalEntry) error {
+	j.publication.Lock()
+	defer j.publication.Unlock()
+	path := j.path(expected.CommandID)
+	entry, err := j.readLocked(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if entry.State != "completed" || entry.CommandDigest != expected.CommandDigest ||
+		entry.Result == nil || expected.Result == nil || !sameResult(*entry.Result, *expected.Result) {
+		return ErrCommandConflict
+	}
+	if err := os.Remove(path + ".body"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove acknowledged response body: %w", err)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove acknowledged worker command result: %w", err)
+	}
+	return nil
 }
 
 func (j *journal) path(commandID string) string {

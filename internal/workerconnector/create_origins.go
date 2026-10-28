@@ -17,6 +17,8 @@ import (
 
 const createOriginVersion = 1
 
+var errCreateOriginConflict = errors.New("worker create origin identity conflicts")
+
 // Origins outlive both command receipts and discarded streams. A bound/failed origin is also
 // the generation watermark: replay must never resurrect an older placement or discarded stream.
 type createOrigin struct {
@@ -47,12 +49,12 @@ func (j *journal) preserveCreateOrigin(entry journalEntry) error {
 	return j.withActivityLock(func() error { return j.preserveCreateOriginLocked(entry) })
 }
 
-func (j *journal) preserveCreateOriginLocked(entry journalEntry) error {
+func createOriginFromReceipt(entry journalEntry) (createOrigin, error) {
 	command, result := entry.Command, entry.Result
 	computed, err := commandDigest(*command)
 	if err != nil || computed != entry.CommandDigest || command.Validate() != nil || result.Validate() != nil ||
 		entry.CommandID != command.CommandID || result.CommandID != command.CommandID || result.OperationKey != command.IdempotencyKey {
-		return errors.New("worker create receipt identity is malformed")
+		return createOrigin{}, errors.New("worker create receipt identity is malformed")
 	}
 	var resource struct {
 		Operation createOperation `json:"operation"`
@@ -62,10 +64,10 @@ func (j *journal) preserveCreateOriginLocked(entry journalEntry) error {
 	}
 	var response workerproto.APIResponse
 	if err := json.Unmarshal(result.Resource, &response); err != nil || response.Status < 200 || response.Status >= 300 {
-		return nil
+		return createOrigin{}, nil
 	}
 	if err := json.Unmarshal(response.Body, &resource); err != nil {
-		return errors.New("worker create receipt resource is malformed")
+		return createOrigin{}, errors.New("worker create receipt resource is malformed")
 	}
 	op := resource.Operation
 	// Older synchronous receipts proved session.id directly. Async receipts must prove the
@@ -75,15 +77,23 @@ func (j *journal) preserveCreateOriginLocked(entry journalEntry) error {
 			(op.ID != "" && !reference(op.ID, 256)) || (op.State != "" && op.State != "succeeded") ||
 			(op.ResourceType != "" && op.ResourceType != "session") ||
 			(op.ResourceID != "" && op.ResourceID != resource.Session.ID) {
-			return errors.New("worker synchronous create identity conflicts")
+			return createOrigin{}, errors.New("worker synchronous create identity conflicts")
 		}
 	} else if !reference(op.ID, 256) || op.Method != "CreateRemoteSession" || !createOperationState(op.State) {
-		return errors.New("worker create receipt has no accepted operation identity")
+		return createOrigin{}, errors.New("worker create receipt has no accepted operation identity")
 	}
 	origin := createOrigin{
 		Version: createOriginVersion, WorkerID: command.WorkerID, SessionRef: command.SessionRef, PlacementGeneration: command.PlacementGeneration,
 		CommandID: command.CommandID, CommandDigest: computed, OperationKey: command.IdempotencyKey,
 		OperationID: op.ID, State: "pending", CoopSessionID: resource.Session.ID,
+	}
+	return origin, nil
+}
+
+func (j *journal) preserveCreateOriginLocked(entry journalEntry) error {
+	origin, err := createOriginFromReceipt(entry)
+	if err != nil || origin.CommandID == "" {
+		return err
 	}
 	current, err := j.readCreateOrigin(j.createOriginPath(origin.SessionRef))
 	if err == nil {
@@ -92,7 +102,7 @@ func (j *journal) preserveCreateOriginLocked(entry journalEntry) error {
 		}
 		if current.PlacementGeneration == origin.PlacementGeneration {
 			if !sameCreateOrigin(current, origin) || (origin.CoopSessionID != "" && current.CoopSessionID != "" && origin.CoopSessionID != current.CoopSessionID) {
-				return errors.New("worker create origin identity conflicts")
+				return errCreateOriginConflict
 			}
 			if current.State != "pending" || current.CoopSessionID == "" {
 				return nil

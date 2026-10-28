@@ -32,12 +32,13 @@ type ConnectorConfig struct {
 }
 
 type Connector struct {
-	executor  *Executor
-	hello     func(context.Context, time.Time) workerproto.WorkerHello
-	now       func() time.Time
-	sequence  uint64
-	transport Transport
-	workerID  string
+	executor     *Executor
+	hello        func(context.Context, time.Time) workerproto.WorkerHello
+	now          func() time.Time
+	sequence     uint64
+	transport    Transport
+	workerID     string
+	acknowledged acknowledgedResults
 }
 
 func NewConnector(config ConnectorConfig) (*Connector, error) {
@@ -51,7 +52,7 @@ func NewConnector(config ConnectorConfig) (*Connector, error) {
 	}
 	return &Connector{
 		executor: config.Executor, hello: config.Hello, now: config.Now,
-		transport: config.Transport, workerID: hello.ID,
+		transport: config.Transport, workerID: hello.ID, acknowledged: make(acknowledgedResults),
 	}, nil
 }
 
@@ -85,7 +86,7 @@ func (c *Connector) pollOnce(ctx context.Context, dispatch func(workerproto.Comm
 		AcknowledgedCommandIDs: []string{}, CommandResults: []workerproto.CommandResult{},
 		EventBatches: []workerproto.EventBatch{},
 	}
-	page, err := c.executor.journal.nextReceiptPage(poll, entries)
+	page, err := c.executor.journal.nextReceiptPage(poll, c.acknowledged.unsent(entries))
 	if err != nil {
 		return err
 	}
@@ -120,9 +121,7 @@ func (c *Connector) pollOnce(ctx context.Context, dispatch func(workerproto.Comm
 	// Fairness is not custody authority: a cursor write failure must not prevent
 	// acknowledged receipts from freeing space or discard newly delivered commands.
 	pollErr := errors.Join(page.issue, activityErr, c.executor.journal.advanceReceiptScan(page.cursor))
-	if err := c.executor.journal.acknowledgeResults(response.AcknowledgedResultCommandIDs); err != nil {
-		pollErr = errors.Join(pollErr, err)
-	}
+	pollErr = errors.Join(pollErr, c.acceptAcknowledgements(poll, entries, response.AcknowledgedResultCommandIDs))
 	// One command the worker cannot execute right now — an expired lease, a redelivery for
 	// another worker, a conflicting receipt, an artifact fetch that failed for now — must not
 	// starve the rest of the batch or the event acknowledgements behind it. Each failure is
@@ -137,7 +136,8 @@ func (c *Connector) pollOnce(ctx context.Context, dispatch func(workerproto.Comm
 	}
 	// Event narration cannot delay commands or turn settlement. A failed
 	// acknowledgement remains replayable from the previous durable cursor.
-	return errors.Join(pollErr, c.executor.journal.acknowledgeEvents(response.EventAcknowledgements))
+	pollErr = errors.Join(pollErr, c.executor.journal.acknowledgeEvents(response.EventAcknowledgements))
+	return errors.Join(pollErr, c.repairAcknowledgement(ctx, entries))
 }
 
 func (c *Connector) Run(ctx context.Context, interval time.Duration, onError func(error)) error {
