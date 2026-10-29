@@ -60,9 +60,11 @@ func ReadQuiescence(ctx context.Context, root string) (Quiescence, error) {
 		return out, fmt.Errorf("unsupported session schema %d", version)
 	}
 	// Unknown states stay busy rather than becoming a false idle result after a schema change.
+	// Stored uncertain creates/discards cannot replay. A discard becomes uncertain only after
+	// recovery acquires its operation lock; an executing discard remains reserved/running.
 	if err := tx.QueryRowContext(ctx, `SELECT
   (SELECT COUNT(*) FROM turns WHERE state NOT IN ('completed','failed','cancelled','interrupted','budget_exhausted')),
-  (SELECT COUNT(*) FROM operations WHERE state NOT IN ('succeeded','failed') AND NOT (state='uncertain' AND method='CreateRemoteSession')),
+  (SELECT COUNT(*) FROM operations WHERE state NOT IN ('succeeded','failed') AND NOT (state='uncertain' AND method IN ('CreateRemoteSession','Discard'))),
   (SELECT COUNT(*) FROM sessions WHERE active_turn_id<>'' OR queued_turn_count<>0 OR activity<>'parked' OR state NOT IN ('open','exhausted','closed','discarded'))
  `).Scan(&out.ActiveTurns, &out.ActiveOperations, &out.ActiveSessions); err != nil {
 		return out, fmt.Errorf("read active session work: %w", err)

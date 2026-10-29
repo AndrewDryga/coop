@@ -516,7 +516,7 @@ BEFORE RESTARTING A WORKER
   from a candidate container image: this also prevents sidecar writes if the
   service stops during inspection.
   Zero counts mean no durable work remains; retain graceful service shutdown
-  to finish any runtime cleanup. A dormant uncertain create receipt remains
+  to finish any runtime cleanup. Dormant uncertain create and discard receipts remain
   unresolved and does not count as running work.
 
 EXIT STATUS

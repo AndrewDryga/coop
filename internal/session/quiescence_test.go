@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -121,7 +122,7 @@ func readQuiescenceProcess(root string) (Quiescence, error) {
 	return snapshot, err
 }
 
-func TestQuiescenceDistinguishesDormantCreateUncertaintyFromActiveCleanup(t *testing.T) {
+func TestQuiescenceDistinguishesDormantUncertaintyFromActiveCleanup(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	store := openTestStore(t, root)
@@ -137,17 +138,30 @@ func TestQuiescenceDistinguishesDormantCreateUncertaintyFromActiveCleanup(t *tes
 		{"CreateRemoteSession", "reserved", true},
 		{"CreateRemoteSession", "running", true},
 		{"CreateRemoteSession", "uncertain", false},
+		// A retained uncertain discard made an idle production worker unavailable for
+		// every upgrade in October 2026. Its unknown outcome must survive inspection.
+		{"Discard", "reserved", true},
+		{"Discard", "running", true},
+		{"Discard", "uncertain", false},
 		{"CancelTurn", "uncertain", true},
 		{"CancelTurn", "succeeded", false},
 		{"CloseSession", "failed", false},
 		{"CreateRemoteSession", "unknown", true},
 	} {
-		if _, err := store.db.Exec("UPDATE operations SET method=?,state=? WHERE id=?", tc.method, tc.state, op.ID); err != nil {
+		if _, err := store.db.Exec("UPDATE operations SET method=?,state=?,error_code='operation_uncertain' WHERE id=?", tc.method, tc.state, op.ID); err != nil {
+			t.Fatal(err)
+		}
+		before, err := store.GetOperation(ctx, "origin")
+		if err != nil {
 			t.Fatal(err)
 		}
 		snapshot, err := ReadQuiescence(ctx, root)
 		if err != nil || snapshot.Idle == tc.busy {
 			t.Fatalf("%+v: snapshot=%+v err=%v", tc, snapshot, err)
+		}
+		after, err := store.GetOperation(ctx, "origin")
+		if err != nil || !reflect.DeepEqual(before, after) {
+			t.Fatalf("inspection changed retained operation: before=%+v after=%+v err=%v", before, after, err)
 		}
 	}
 	if _, err := store.db.Exec("UPDATE operations SET state='failed'"); err != nil {

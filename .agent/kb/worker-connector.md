@@ -18,8 +18,8 @@ The traps the code does not make obvious:
   drains new submissions, waits for transport commands, and runs `coop sessions quiescence`
   from the candidate image with only the session state volume mounted read-only. The inspector
   reads a consistent live-WAL snapshot across every turn, operation and session marker; it never
-  migrates the old store. Uncertain creation receipts cannot resume and remain retained; other
-  uncertain operations block the restart. Zero counts concern durable work, not in-memory runtime
+  migrates the old store. Stored uncertain creation and discard receipts cannot resume and remain
+  retained; reserved/running cleanup and other uncertain operations block the restart. Zero counts concern durable work, not in-memory runtime
   cleanup: shutdown still joins the daemon normally. A separate-process test verifies that the
   inspector leaves database and WAL/index bytes unchanged while the writer stays open.
 
@@ -269,3 +269,5 @@ The traps the code does not make obvious:
 - 2026-09-05 — created during the pre-release audit, against the sources listed.
 
 - 2026-10-28 — a successful retry whose session was already discarded can retire its exact ACKed receipt after original-operation, frozen-job and terminal-session proof; origin and activity bytes remain unchanged.
+
+- 2026-10-29 - distinguish dormant uncertain discard receipts from executing cleanup; the operation lock proves inactivity without claiming its result.
