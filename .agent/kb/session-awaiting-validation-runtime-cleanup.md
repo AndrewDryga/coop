@@ -3,7 +3,7 @@ name: session-awaiting-validation-runtime-cleanup
 description: every started turn retains its exact runtime receipt through teardown; awaiting-validation owns durable candidate authority but no live provider runtime
 subsystem: sessions
 sources: [internal/session/store.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/forkspace/generation.go, internal/forkspace/reservation.go]
-updated: 2026-10-28
+updated: 2026-10-29
 ---
 
 # Awaiting validation is durable authority, not runtime authority
@@ -93,7 +93,15 @@ cleanup ownership and unsettled usage, including cleanup failures nested in join
 Successful settlement clears the earlier uncertainty diagnostic. A natural completion remains
 completed while the cancellation receipt records the observed terminal result.
 
+A quarantined idle session may close after exact private-runtime proof under the session runtime
+lock. The runner must support unproven-session cleanup; ordinary workspace cleanup is never a
+fallback. The current revision, parked activity and empty active/queued turn set are required,
+and the store rechecks revision and turns transactionally after proof. Closing retains quarantine,
+workspace, services and history. Replaying a saved successful close reads its immutable receipt
+before validating the workspace's later identity; a fresh key cannot close a terminal session.
+
 ## Changelog
+- 2026-10-29 — separated quarantined close from workspace authority and preserved closed receipt replay after later workspace loss; covered missing/failed proof, stale state, queued turns and racing admission.
 - 2026-10-28 — tied uncertain cancellation settlement to completed runtime/usage cleanup; verified delayed teardown, caller cancellation, natural completion, and retained cleanup failures.
 - 2026-10-28 — isolated the delivered-receipt checkpoint's regression from prompt-log timing;
   three-second contention still fails the old two-second budget without racing SQLite's busy timeout.

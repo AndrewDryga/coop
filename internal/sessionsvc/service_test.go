@@ -1317,8 +1317,12 @@ func TestSessionServiceStartupQuarantinesUnprovenLegacySession(t *testing.T) {
 			return err
 		},
 	} {
+		detail := "legacy remote session"
+		if name == "close" {
+			detail = "no active or queued turns"
+		}
 		if err := call(); session.CodeOf(err) != session.CodeInvalidSessionState ||
-			!strings.Contains(err.Error(), "legacy remote session") {
+			!strings.Contains(err.Error(), detail) {
 			t.Fatalf("%s quarantine error = %v", name, err)
 		}
 	}

@@ -2386,12 +2386,16 @@ func (s *Service) Close(ctx context.Context, key string, req session.CloseSessio
 	if err != nil {
 		return session.Session{}, err
 	}
-	if err := s.validateSessionForkAuthority(ctx, current); err != nil {
-		return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
-	}
+	// A saved close is immutable history, not a new grant over today's workspace.
 	if current.State == session.SessionClosed {
 		closed, closeErr := s.store.CloseSession(ctx, key, req)
 		return closed, s.correlateOperationError(ctx, key, closeErr)
+	}
+	if s.sessionQuarantined(current.ID) {
+		return s.closeQuarantinedSession(ctx, key, req, current)
+	}
+	if err := s.validateSessionForkAuthority(ctx, current); err != nil {
+		return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	if current.Revision != req.ExpectedRevision {
 		return session.Session{}, session.ErrRevisionConflict
@@ -2409,6 +2413,31 @@ func (s *Service) Close(ctx context.Context, key string, req session.CloseSessio
 		}
 		s.markHistoricalRuntimeClean(current.ID)
 	}
+	closed, closeErr := s.store.CloseSession(ctx, key, req)
+	return closed, s.correlateOperationError(ctx, key, closeErr)
+}
+
+// Closing quarantine proves only the private runtime stopped. It must not adopt,
+// repair or clean the workspace, and no active or queued turn may be hidden by it.
+func (s *Service) closeQuarantinedSession(ctx context.Context, key string, req session.CloseSessionRequest, current session.Session) (session.Session, error) {
+	if current.Revision != req.ExpectedRevision {
+		return session.Session{}, session.ErrRevisionConflict
+	}
+	if (current.State != session.SessionOpen && current.State != session.SessionExhausted) ||
+		current.Activity != session.ActivityParked || current.ActiveTurnID != "" || current.QueuedTurnCount != 0 {
+		return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: "quarantined session must have no active or queued turns"}
+	}
+	cleaner, ok := s.runner.(sessionRunnerUnprovenRuntimeCleaner)
+	if !ok {
+		return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: "quarantined session requires exact private runtime cleanup proof"}
+	}
+	if err := cleaner.CleanupUnprovenSessionRuntime(ctx, current); err != nil {
+		s.runtimeCleanupFailed(current.ID)
+		return session.Session{}, err
+	}
+	s.markHistoricalRuntimeClean(current.ID)
+	// Admission does not take the runtime lock: the store must recheck the
+	// revision and queue atomically after proof, without changing old receipts.
 	closed, closeErr := s.store.CloseSession(ctx, key, req)
 	return closed, s.correlateOperationError(ctx, key, closeErr)
 }
