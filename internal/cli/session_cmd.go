@@ -142,17 +142,65 @@ func parseSessionCheckFlags(args []string) (state string, err error) {
 	return state, nil
 }
 
+func parseSessionQuiescenceFlags(args []string) (state string, jsonOutput bool, err error) {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--json":
+			if jsonOutput {
+				return "", false, errors.New("sessions quiescence: --json may be specified once")
+			}
+			jsonOutput = true
+		case "--state":
+			if state != "" || i+1 == len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return "", false, errors.New("sessions quiescence: --state requires one value")
+			}
+			i++
+			state = args[i]
+		default:
+			return "", false, fmt.Errorf("sessions quiescence: unknown flag %q", args[i])
+		}
+	}
+	return state, jsonOutput, nil
+}
+
+func runSessionQuiescence(state string, jsonOutput bool) (int, error) {
+	state, err := sessionStatePath(state)
+	if err != nil {
+		return 2, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	snapshot, err := session.ReadQuiescence(ctx, state)
+	if err != nil {
+		return 1, err
+	}
+	if jsonOutput {
+		if err := json.NewEncoder(os.Stdout).Encode(snapshot); err != nil {
+			return 1, err
+		}
+	} else if snapshot.Idle {
+		ui.Note("No queued or running work remains in the session store.")
+	} else {
+		ui.Note("Work remains: %d turns, %d operations, %d active sessions.", snapshot.ActiveTurns, snapshot.ActiveOperations, snapshot.ActiveSessions)
+	}
+	if !snapshot.Idle {
+		return 3, nil
+	}
+	return 0, nil
+}
+
 // sessionCommands are the `coop sessions` subcommands — the one list the dispatch below, the
 // unknown-subcommand correction, the help router and shell completion all read.
-var sessionCommands = []string{"connect", "doctor", "check", "compact"}
+var sessionCommands = []string{"connect", "doctor", "check", "quiescence", "compact"}
 
 // sessionFlags are each subcommand's flags as its parser accepts them; shell completion reads them,
 // and TestSessionsCompletionMatchesTheParsers holds the two together.
 var sessionFlags = map[string][]string{
-	"connect": {"--controller", "--token-file", "--state", "--ca-file"},
-	"doctor":  {"--socket", "--json"},
-	"check":   {"--state"},
-	"compact": {"--state", "--backup"},
+	"connect":    {"--controller", "--token-file", "--state", "--ca-file"},
+	"doctor":     {"--socket", "--json"},
+	"check":      {"--state"},
+	"quiescence": {"--state", "--json"},
+	"compact":    {"--state", "--backup"},
 }
 
 func (a *app) cmdSessions(args []string) (int, error) {
@@ -172,6 +220,12 @@ func (a *app) cmdSessions(args []string) (int, error) {
 			return 2, err
 		}
 		return runSessionDoctor(socket, jsonOutput)
+	case "quiescence":
+		state, jsonOutput, err := parseSessionQuiescenceFlags(args[1:])
+		if err != nil {
+			return 2, err
+		}
+		return runSessionQuiescence(state, jsonOutput)
 	case "check":
 		state, err := parseSessionCheckFlags(args[1:])
 		if err != nil {

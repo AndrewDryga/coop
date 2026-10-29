@@ -252,7 +252,7 @@ var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
 	"doctor", "approve", "net", "net runs", "net inspect", "net check", "net blocked",
 	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "version",
-	"acp", "sessions", "sessions doctor", "sessions check", "sessions compact", "sessions connect",
+	"acp", "sessions", "sessions doctor", "sessions check", "sessions quiescence", "sessions compact", "sessions connect",
 	"prompt", "completion")
 
 // manualPage is one command's page for the manual, in plain text: run and fork have their own
@@ -418,6 +418,7 @@ COMMANDS
   connect  connect this machine to a controller
   doctor   check whether the local service is ready
   check    see whether this build can use the session data as it is
+  quiescence  inspect queued and running work before a restart
   compact  back up session data and reduce its disk usage
 
 CONNECT THIS MACHINE
@@ -430,7 +431,8 @@ COMMAND HELP
   coop help sessions connect
   coop help sessions doctor
   coop help sessions check
-  coop help sessions compact`,
+  coop help sessions compact
+  coop help sessions quiescence`,
 
 	"sessions connect": `coop sessions connect: run a worker for a remote controller
 
@@ -493,6 +495,35 @@ EXIT STATUS
   2  invalid arguments
   3  this build would convert the data; older builds can't open it afterwards
   4  this build can't use the data: it is too old or too new
+
+DEFAULT SESSION DATA
+  ~/.local/state/coop/sessions`,
+
+	"sessions quiescence": `coop sessions quiescence: inspect queued and running work before a restart
+
+Usage:
+  coop sessions quiescence [--state <path>] [--json]
+
+OPTIONS
+  --state <path>  read this session-data directory
+  --json          print the snapshot as JSON
+
+BEFORE RESTARTING A WORKER
+  Drain new submissions at the controller first. This command reads every
+  committed turn and operation, including the running service's write-ahead log.
+  It requires the running service's existing database, WAL and index files.
+  It never migrates session data. Mount the data read-only when inspecting it
+  from a candidate container image: this also prevents sidecar writes if the
+  service stops during inspection.
+  Zero counts mean no durable work remains; retain graceful service shutdown
+  to finish any runtime cleanup. A dormant uncertain create receipt remains
+  unresolved and does not count as running work.
+
+EXIT STATUS
+  0  no queued or running work remains in the session store
+  1  the store is unavailable, damaged or uses an unsupported schema
+  2  invalid arguments
+  3  work remains
 
 DEFAULT SESSION DATA
   ~/.local/state/coop/sessions`,

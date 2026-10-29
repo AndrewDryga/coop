@@ -2,7 +2,7 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/create_origin_retries.go, internal/workerconnector/acknowledged_results.go, internal/workerconnector/discarded_create.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
+sources: [internal/session/quiescence.go, internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/create_origin_retries.go, internal/workerconnector/acknowledged_results.go, internal/workerconnector/discarded_create.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
 updated: 2026-10-28
 ---
 
@@ -13,6 +13,15 @@ Method, relative path, allowed headers and JSON or streamed body carry every API
 product-specific commands. The connector never listens on TCP or accepts a shell command (`internal/cli/session_connect.go`).
 
 The traps the code does not make obvious:
+
+- **An accepted HTTP request is not finished native work.** Before a restart the controller
+  drains new submissions, waits for transport commands, and runs `coop sessions quiescence`
+  from the candidate image with only the session state volume mounted read-only. The inspector
+  reads a consistent live-WAL snapshot across every turn, operation and session marker; it never
+  migrates the old store. Uncertain creation receipts cannot resume and remain retained; other
+  uncertain operations block the restart. Zero counts concern durable work, not in-memory runtime
+  cleanup: shutdown still joins the daemon normally. A separate-process test verifies that the
+  inspector leaves database and WAL/index bytes unchanged while the writer stays open.
 
 - **One connection owns one private service.** `startLocalSessionService` refuses a live socket,
   ready or unhealthy, rather than reusing another controller's service. Concurrent workers need

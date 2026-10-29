@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -180,5 +181,41 @@ func TestRunSessionCompactCreatesANewBackup(t *testing.T) {
 	}
 	if info, err := os.Stat(backup); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("backup info = %+v err=%v", info, err)
+	}
+}
+
+func TestSessionQuiescenceMissingStoreFailsWithoutCreatingState(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	code, err := (&app{}).cmdSessions([]string{"quiescence", "--state", root, "--json"})
+	if code != 1 || err == nil {
+		t.Fatalf("missing state reported idle: %d %v", code, err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatal("inspection created state", err)
+	}
+	for _, args := range [][]string{{"--state"}, {"--state", ""}, {"--json", "--json"}, {"--state", "a", "--state", "b"}, {"--unknown"}} {
+		if _, _, err := parseSessionQuiescenceFlags(args); err == nil {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+}
+
+func TestSessionQuiescenceExitStatusDistinguishesIdleFromUnfinishedNativeWork(t *testing.T) {
+	root := t.TempDir()
+	store, err := session.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	code, err := runSessionQuiescence(root, false)
+	if err != nil || code != 0 {
+		t.Fatalf("idle: %d %v", code, err)
+	}
+	if _, _, err := store.ReserveOperation(context.Background(), "CreateRemoteSession", "new-work", map[string]string{"external_ref": "queued"}); err != nil {
+		t.Fatal(err)
+	}
+	code, err = runSessionQuiescence(root, false)
+	if err != nil || code != 3 {
+		t.Fatalf("unfinished native work: %d %v", code, err)
 	}
 }

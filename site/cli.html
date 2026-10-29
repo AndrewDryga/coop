@@ -138,6 +138,7 @@
 <li><a href="#coop-sessions-let-other-applications-start-and-manage-agents">coop sessions: let other applications start and manage agents</a></li>
 <li><a href="#coop-sessions-doctor-check-the-local-session-service">coop sessions doctor: check the local session service</a></li>
 <li><a href="#coop-sessions-check-see-whether-this-build-can-use-the-session-data-as-it-is">coop sessions check: see whether this build can use the session data as it is</a></li>
+<li><a href="#coop-sessions-quiescence-inspect-queued-and-running-work-before-a-restart">coop sessions quiescence: inspect queued and running work before a restart</a></li>
 <li><a href="#coop-sessions-compact-back-up-session-data-and-reduce-its-disk-usage">coop sessions compact: back up session data and reduce its disk usage</a></li>
 <li><a href="#coop-sessions-connect-run-a-worker-for-a-remote-controller">coop sessions connect: run a worker for a remote controller</a></li>
 <li><a href="#coop-prompt-print-a-short-project-status-for-your-shell-or-tmux">coop prompt: print a short project status for your shell or tmux</a></li>
@@ -1694,6 +1695,7 @@ COMMANDS
   connect  connect this machine to a controller
   doctor   check whether the local service is ready
   check    see whether this build can use the session data as it is
+  quiescence  inspect queued and running work before a restart
   compact  back up session data and reduce its disk usage
 
 CONNECT THIS MACHINE
@@ -1706,7 +1708,8 @@ COMMAND HELP
   coop help sessions connect
   coop help sessions doctor
   coop help sessions check
-  coop help sessions compact</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-doctor-check-the-local-session-service"><h2>coop sessions doctor: check the local session service</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions doctor: check the local session service code example" tabindex="0"><code>Usage:
+  coop help sessions compact
+  coop help sessions quiescence</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-doctor-check-the-local-session-service"><h2>coop sessions doctor: check the local session service</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions doctor: check the local session service code example" tabindex="0"><code>Usage:
   coop sessions doctor [options]
 
 OPTIONS
@@ -1738,6 +1741,31 @@ EXIT STATUS
   2  invalid arguments
   3  this build would convert the data; older builds can&#39;t open it afterwards
   4  this build can&#39;t use the data: it is too old or too new
+
+DEFAULT SESSION DATA
+  ~/.local/state/coop/sessions</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-quiescence-inspect-queued-and-running-work-before-a-restart"><h2>coop sessions quiescence: inspect queued and running work before a restart</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions quiescence: inspect queued and running work before a restart code example" tabindex="0"><code>Usage:
+  coop sessions quiescence [--state &lt;path&gt;] [--json]
+
+OPTIONS
+  --state &lt;path&gt;  read this session-data directory
+  --json          print the snapshot as JSON
+
+BEFORE RESTARTING A WORKER
+  Drain new submissions at the controller first. This command reads every
+  committed turn and operation, including the running service&#39;s write-ahead log.
+  It requires the running service&#39;s existing database, WAL and index files.
+  It never migrates session data. Mount the data read-only when inspecting it
+  from a candidate container image: this also prevents sidecar writes if the
+  service stops during inspection.
+  Zero counts mean no durable work remains; retain graceful service shutdown
+  to finish any runtime cleanup. A dormant uncertain create receipt remains
+  unresolved and does not count as running work.
+
+EXIT STATUS
+  0  no queued or running work remains in the session store
+  1  the store is unavailable, damaged or uses an unsupported schema
+  2  invalid arguments
+  3  work remains
 
 DEFAULT SESSION DATA
   ~/.local/state/coop/sessions</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-compact-back-up-session-data-and-reduce-its-disk-usage"><h2>coop sessions compact: back up session data and reduce its disk usage</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions compact: back up session data and reduce its disk usage code example" tabindex="0"><code>Usage:
