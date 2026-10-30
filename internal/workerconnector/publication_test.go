@@ -96,6 +96,8 @@ func TestPublicationPushesExactReviewedCommitAndRecoversLostPRResponse(t *testin
 	}}
 	if _, err := host.publish(ctx, repo, intent); err == nil {
 		t.Fatal("lost PR response was not exercised")
+	} else if code, detail := workerproto.PublicationRetryDiagnostic(err); code != "publication_pull_request_write_failed" || detail != "Publication stage: pull_request_write. HTTP status: 502." {
+		t.Fatalf("lost PR response diagnosis = %q %q", code, detail)
 	}
 	if result, err := host.publish(ctx, repo, intent); err == nil || result.Status == "refused" {
 		t.Fatalf("stale PR projection must remain retryable: %+v %v", result, err)

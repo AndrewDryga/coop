@@ -525,6 +525,21 @@ func (s *Store) ReconcileOperation(
 	return rows == 1, err
 }
 
+// RecordPublicationRetry retains the exact running intent. A later receipt or
+// changed intent wins over a diagnostic from an older attempt.
+func (s *Store) RecordPublicationRetry(ctx context.Context, operation Operation, code ErrorCode, detail string) error {
+	if operation.ID == "" || operation.Method != "PublishReview" || operation.State != OperationRunning || code == "" {
+		return &Error{Code: CodeInvalidRequest, Detail: "invalid publication retry diagnostic"}
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE operations SET error_code = ?, error_detail = ?, updated_at = ?
+		WHERE id = ? AND method = 'PublishReview' AND state = ? AND updated_at = ?
+		  AND resource_type = ? AND resource_id = ? AND result IS ?`,
+		string(code), boundedErrorDetail(detail), s.now().UnixNano(), operation.ID,
+		string(OperationRunning), operation.UpdatedAt.UnixNano(), operation.ResourceType, operation.ResourceID, operation.Result)
+	return err
+}
+
 func (s *Store) CompleteOperation(ctx context.Context, id, resourceType, resourceID string, result []byte) error {
 	if len(result) > MaxOperationResultBytes {
 		return &Error{Code: CodeInvalidRequest, Detail: "operation result is too large"}

@@ -121,7 +121,7 @@ type githubPublicationPull struct {
 func (p publicationHost) publish(ctx context.Context, repository string, intent workerproto.PublishIntent) (workerproto.PublishResult, error) {
 	ctx, err := withSourceCredentials(ctx, p.stateRoot)
 	if err != nil {
-		return workerproto.PublishResult{}, err
+		return workerproto.PublishResult{}, publicationRetry("credentials", err)
 	}
 	result, err := p.publishCandidate(ctx, repository, intent)
 	var refusal publicationRefusal
@@ -129,6 +129,19 @@ func (p publicationHost) publish(ctx context.Context, repository string, intent 
 		return workerproto.PublishResult{Status: "refused", ErrorCode: string(refusal)}, nil
 	}
 	return result, err
+}
+
+func publicationRetry(stage string, err error) error {
+	var refusal publicationRefusal
+	if errors.As(err, &refusal) {
+		return err
+	}
+	retry := &workerproto.PublicationRetryError{Stage: stage}
+	var status *BodyStatusError
+	if errors.As(err, &status) {
+		retry.HTTPStatus = status.Status
+	}
+	return retry
 }
 
 type publicationRefusal string
@@ -142,44 +155,44 @@ func (p publicationHost) publishCandidate(ctx context.Context, repository string
 	}
 	grant, err := p.grant(ctx, intent)
 	if err != nil {
-		return empty, err
+		return empty, publicationRetry("grant", err)
 	}
 	req := intent.Request
 	head, err := sourceGitValue(ctx, repository, "", "", "rev-parse", "--verify", req.CandidateHead+"^{commit}")
 	if err != nil || head != req.CandidateHead {
-		return empty, errors.New("reviewed commit unavailable")
+		return empty, &workerproto.PublicationRetryError{Stage: "candidate"}
 	}
 	tree, err := sourceGitValue(ctx, repository, "", "", "rev-parse", "--verify", req.CandidateHead+"^{tree}")
 	if err != nil || tree != req.CandidateTree {
-		return empty, errors.New("reviewed tree unavailable")
+		return empty, &workerproto.PublicationRetryError{Stage: "candidate"}
 	}
 	if err := forkspace.CopyLFSObjects(ctx, repository, head); err != nil {
-		return empty, errors.New("reviewed LFS object unavailable")
+		return empty, &workerproto.PublicationRetryError{Stage: "candidate"}
 	}
 	base := "/repos/" + intent.Repository.GitHubRepository
 	var remoteRepository struct {
 		ID int64 `json:"id"`
 	}
 	if err := p.github(ctx, grant.Token, "GET", base, nil, &remoteRepository); err != nil {
-		return empty, err
+		return empty, publicationRetry("repository", err)
 	}
 	if remoteRepository.ID != intent.Repository.GitHubRepositoryID {
 		return empty, publicationRefusal("publication_pull_request_mismatch")
 	}
 	pull, err := p.findPull(ctx, grant, intent)
 	if err != nil {
-		return empty, err
+		return empty, publicationRetry("pull_request_lookup", err)
 	}
 	observed, err := p.branchHead(ctx, repository, grant.Token, req.Branch)
 	if err != nil {
-		return empty, err
+		return empty, publicationRetry("branch_lookup", err)
 	}
 	if observed != req.ExpectedHead && observed != head {
 		return publicationConflict(intent, observed, pull), nil
 	}
 	if observed != head {
 		if err := p.pushLFS(ctx, repository, grant.Token, intent); err != nil {
-			return empty, err
+			return empty, publicationRetry("lfs_upload", err)
 		}
 		ref := "refs/heads/" + req.Branch
 		if err := sourceGitIO(ctx, repository, grant.Token, p.protocol, nil, io.Discard,
@@ -187,13 +200,13 @@ func (p publicationHost) publishCandidate(ctx context.Context, repository string
 			p.remote, head+":"+ref); err != nil {
 			observed, lookupErr := p.branchHead(ctx, repository, grant.Token, req.Branch)
 			if lookupErr != nil {
-				return empty, lookupErr
+				return empty, publicationRetry("branch_lookup", lookupErr)
 			}
 			if observed != head {
 				if observed != req.ExpectedHead {
 					return publicationConflict(intent, observed, pull), nil
 				}
-				return empty, err
+				return empty, publicationRetry("git_push", err)
 			}
 		}
 	}
@@ -201,20 +214,20 @@ func (p publicationHost) publishCandidate(ctx context.Context, repository string
 		// Reconcile again after the push: another retry may have created the PR.
 		pull, err = p.findPull(ctx, grant, intent)
 		if err != nil {
-			return empty, err
+			return empty, publicationRetry("pull_request_lookup", err)
 		}
 	}
 	if pull == nil {
 		pull = &githubPublicationPull{}
 		body := map[string]any{"title": req.Title, "body": req.Body, "head": req.Branch, "base": req.BaseBranch, "draft": true}
 		if err := p.github(ctx, grant.Token, "POST", base+"/pulls", body, pull); err != nil {
-			return empty, err
+			return empty, publicationRetry("pull_request_write", err)
 		}
 	} else {
 		// Updating the exact PR preserves a human's ready-for-review choice.
 		path := fmt.Sprintf("%s/pulls/%d", base, pull.Number)
 		if err := p.github(ctx, grant.Token, "PATCH", path, map[string]string{"title": req.Title, "body": req.Body}, pull); err != nil {
-			return empty, err
+			return empty, publicationRetry("pull_request_write", err)
 		}
 	}
 	if !exactPublicationPull(*pull, grant, intent) {
@@ -223,7 +236,7 @@ func (p publicationHost) publishCandidate(ctx context.Context, repository string
 	if pull.Head.SHA != head {
 		// GitHub's PR projection may lag the successful Git push. Reconcile on
 		// retry; a stale response must not permanently refuse the exact candidate.
-		return empty, errors.New("published pull request head not yet confirmed")
+		return empty, &workerproto.PublicationRetryError{Stage: "pull_request_confirmation"}
 	}
 	return workerproto.PublishResult{Status: "published", Receipt: &workerproto.PublicationReceipt{
 		Repository: intent.Repository.RepositoryRef, BranchRef: "refs/heads/" + req.Branch, CandidateTree: req.CandidateTree,
@@ -353,7 +366,7 @@ func (p publicationHost) github(ctx context.Context, token, method, path string,
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("publication GitHub request failed (%d)", response.StatusCode)
+		return &BodyStatusError{Status: response.StatusCode}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
 	if err != nil || len(data) > 2<<20 || json.Unmarshal(data, result) != nil {

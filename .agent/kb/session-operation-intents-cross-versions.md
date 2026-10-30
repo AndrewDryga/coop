@@ -2,8 +2,8 @@
 name: session-operation-intents-cross-versions
 description: persisted operation intents survive upgrades; replay requires proven frozen job authority and never reconstructs it from retired local policies
 subsystem: session-api
-sources: [internal/sessionsvc/service.go, internal/sessionsvc/review.go, internal/session/store.go]
-updated: 2026-10-18
+sources: [internal/sessionsvc/service.go, internal/sessionsvc/review.go, internal/sessionsvc/publication.go, internal/session/store.go, internal/workerproto/publication_retry.go, internal/workerconnector/publication.go]
+updated: 2026-10-30
 ---
 
 operations.result doubles as the write-ahead intent for a running cross-process operation.
@@ -42,7 +42,15 @@ operation. Correlated failures retain the operation ID while public errors redac
 Startup and the watchdog reconcile other stale operations rather than guessing external effects;
 a stranded reserved row can fail as interrupted admission because no effect was attempted.
 
+Publication retries keep their exact intent running because Git or GitHub may have accepted a
+write before its response was lost. Each failed attempt records only a finite host-owned stage
+and optional HTTP status in the operation's error fields; it never stores a provider body or
+Git stderr. The public operation DTO already carries those fields. Recording a diagnosis cannot
+replace a completed receipt, and completion clears the old diagnosis. A controller's pending
+checks do not count actual worker executions: the operation may be waiting for a background slot.
+
 ## Changelog
+- 2026-10-30 — retain safe publication retry diagnostics without changing intent or replay custody.
 - 2026-10-18 — no durability barrier to repeat any more: an interrupted publication is retried (task 2026-10-15-drop-directory-fsyncs-and-sync-retry-ladders).
 - 2026-09-30 — rechecked replay against strict v2 JobSpec decoding; v1 has no complete
   work/review authority and remains inspectable history only.

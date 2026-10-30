@@ -1254,6 +1254,41 @@ func TestReconcileOperationRejectsAStaleSnapshotWithTheSameClock(t *testing.T) {
 	}
 }
 
+func TestPublicationRetryCannotOverwriteACompletedReceipt(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	op, _, err := store.ReserveOperation(ctx, "PublishReview", "retry-diagnostic", map[string]string{"task": "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := []byte(`{"candidate":"retained"}`)
+	if err := store.MarkOperationRunning(ctx, op.ID, intent); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.GetOperationByID(ctx, op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordPublicationRetry(ctx, snapshot, "publication_grant_failed", "Publication stage: grant. HTTP status: 503."); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.GetOperationByID(ctx, op.ID)
+	if err != nil || current.State != OperationRunning || string(current.Result) != string(intent) || current.ErrorCode != "publication_grant_failed" {
+		t.Fatalf("retry lost intent: %+v %v", current, err)
+	}
+	if err := store.CompleteOperation(ctx, op.ID, "publication", "session", []byte(`{"receipt":"published"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordPublicationRetry(ctx, current, "publication_grant_failed", "late retry"); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.GetOperationByID(ctx, op.ID)
+	if err != nil || completed.State != OperationSucceeded || completed.ErrorCode != "" || completed.ErrorDetail != "" || string(completed.Result) != `{"receipt":"published"}` {
+		t.Fatalf("late diagnostic overwrote receipt: %+v %v", completed, err)
+	}
+}
+
 func TestMarkOperationUncertainPreservesRunningIntent(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))

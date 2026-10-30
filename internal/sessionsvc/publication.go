@@ -132,7 +132,8 @@ func (s *Service) runPublishOperation(ctx context.Context, operationID string) e
 	if err != nil {
 		// Git/HTTP may have succeeded before a disconnect. Preserve the intent;
 		// a retry obtains a fresh grant and reconciles the same branch and PR.
-		return err
+		code, detail := workerproto.PublicationRetryDiagnostic(err)
+		return errors.Join(err, s.store.RecordPublicationRetry(ctx, op, session.ErrorCode(code), detail))
 	}
 	if !validPublicationResult(intent, result) {
 		return errors.New("host publication returned a mismatched receipt")

@@ -78,6 +78,11 @@ func TestPublicationRetainsIntentAndPublishesReviewedSHAAfterWorkspaceMoves(t *t
 	if interrupted.State != session.OperationRunning {
 		t.Fatal("publication intent lost")
 	}
+	// A production publication stayed pending for dozens of controller checks,
+	// with every worker error discarded. Retain a safe reason without losing custody.
+	if interrupted.ErrorCode != "publication_retry_failed" || !bytes.Equal(interrupted.Result, op.Result) {
+		t.Fatalf("retry diagnostic or intent lost: code=%q", interrupted.ErrorCode)
+	}
 	if err := service.runPublishOperation(ctx, op.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +96,9 @@ func TestPublicationRetainsIntentAndPublishesReviewedSHAAfterWorkspaceMoves(t *t
 	replayed, err := service.PublishReview(ctx, "publish", sess.ID, review.OperationID, req)
 	if err != nil || replayed.ID != op.ID || replayed.State != session.OperationSucceeded || calls != 2 {
 		t.Fatalf("replay: %+v %v calls=%d", replayed, err, calls)
+	}
+	if replayed.ErrorCode != "" || replayed.ErrorDetail != "" {
+		t.Fatal("completed publication retained stale retry failure")
 	}
 	changed := req
 	changed.CandidateHead = review.ParentHead
