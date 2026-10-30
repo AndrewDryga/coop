@@ -82,7 +82,7 @@ main:focus { outline: none; }
 /* Navigation */
 .nav { display: flex; align-items: center; justify-content: space-between; gap: 24px; height: 76px; }
 .brand { display: inline-flex; align-items: center; gap: 12px; min-height: 44px; color: var(--text); font-size: 1.625rem; font-weight: 700; letter-spacing: -0.03em; text-decoration: none; }
-.brand img { display: block; width: 36px; height: 32px; }
+.brand img { display: block; width: 25.2px; height: 22.4px; }
 .brand > span { display: flex; }
 /* Center the lowercase body with the mark; the p descender extends below it. */
 .brand .brand-wordmark { width: 77.2px; height: 22.5px; transform: translateY(13%); }
@@ -415,7 +415,7 @@ main:focus { outline: none; }
 /* Footer */
 .footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 32px; margin-top: 96px; padding-block: 32px 48px; border-top: 1px solid var(--divider); color: var(--muted); font-size: 1rem; }
 .brand-small { gap: 8px; font-size: 1.25rem; }
-.brand-small img { width: 27px; height: 24px; }
+.brand-small img { width: 18.9px; height: 16.8px; }
 .brand-small .brand-wordmark { width: 60px; height: auto; }
 .footer nav { display: flex; gap: 24px; }
 .footer nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--body); text-decoration: none; }
@@ -766,7 +766,7 @@ main:focus { outline: none; }
   .nav-links { gap: 24px; }
   .nav { height: 64px; }
   .brand { font-size: 1.4375rem; gap: 8px; }
-  .brand img { width: 31.5px; height: 28px; }
+  .brand img { width: 22.05px; height: 19.6px; }
   .brand .brand-wordmark { width: 68.6px; height: 20px; }
   .story-lead { padding-top: 24px; }
   .hero-lead, .step p, .group-panel > p { font-size: 1.125rem; }

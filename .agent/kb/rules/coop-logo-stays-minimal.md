@@ -25,7 +25,13 @@ the square canvas width to match the inset Ryker and Emisar marks. Align navigat
 wordmarks by their lowercase body, allowing the p descender to extend below that
 center; centering the full SVG canvas lifts the lettering above the mark. The concept raster's texture and label are not production artwork.
 
+In website navigation, keep the symbol subordinate to the wordmark: a 25.2 × 22.4px
+mark beside the 77.2 × 22.5px wordmark on desktop, with the same proportions on
+smaller screens. Aligning the centers alone does not correct an oversized symbol.
+
 ## Changelog
+- 2026-10-30 — reduced website header/footer symbols by 30% after the owner still
+  found the symbol oversized; kept wordmark size and optical alignment unchanged.
 - 2026-10-30 — corrected oversized sibling product tiles and header wordmark alignment
   after the owner compared the live pages. Judge visible artwork, not equal image boxes.
 - 2026-10-30 — recorded the owner's concept selection, simplicity correction and palette
