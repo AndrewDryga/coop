@@ -1,8 +1,9 @@
 <div align="center">
 
-# co:op
-
-<img src=".github/assets/coop.png" alt="co:op" width="180">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/assets/coop-lockup.svg">
+  <img src="brand/assets/coop-lockup-light.svg" alt="co:op" width="420">
+</picture>
 
 Run coding agents with their permission prompts off, in a sandbox that holds only your project.
 Then give them a task queue and let them work through it overnight.

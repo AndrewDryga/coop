@@ -18,24 +18,35 @@ real product screen.
 | [preview.png](preview.png) | Desktop image of the reference |
 | [preview-mobile.png](preview-mobile.png) | Mobile image of the reference |
 | [specimen.css](specimen.css) | Specimen implementation, separate from the reusable tokens |
-| [assets/coop-flat.svg](assets/coop-flat.svg) | Flat vector rendition of the approved geometric website mark |
+| [assets/coop-mark.svg](assets/coop-mark.svg) | Approved Contained entrance mark with transparent surround |
+| [assets/coop-wordmark.svg](assets/coop-wordmark.svg) | Outlined co:op lettering; no font dependency |
+| [assets/coop-lockup.svg](assets/coop-lockup.svg) | Complete logo for dark surfaces |
+| [assets/coop-lockup-light.svg](assets/coop-lockup-light.svg) | Complete logo for light surfaces |
+| [assets/coop-flat.svg](assets/coop-flat.svg) | Rounded graphite avatar/favicon tile |
+| [../.github/assets/coop.png](../.github/assets/coop.png) | 512px GitHub/avatar PNG |
 | [assets/approved-direction.png](assets/approved-direction.png) | Approved raster reference; not a production icon |
 | [assets/fonts/InterVariable.woff2](assets/fonts/InterVariable.woff2) | Same unmodified variable font as Emisar |
 | [assets/fonts/LICENSE.txt](assets/fonts/LICENSE.txt) | Inter's SIL Open Font License |
 
-The SVG turns the approved silhouette into solid fills with truly transparent corners. The
-raster reference has simulated lighting and a baked-in checkerboard. Neither is part of the
-production direction. The chicken illustration in the README is a separate asset, and it
-stays unchanged.
+The production vectors reproduce the approved Contained entrance concept with flat fills.
+The raster records the approval; its texture and option label are not part of the logo.
+The former chicken illustration is replaced by the same mark used on the website.
 
 ## Implementation handoff
 
-> Read `brand/DESIGN.md` and inspect `brand/index.html` before editing `site/`.
-> Use the dark-only tokens and the geometric website mark. Keep the README illustration
-> unchanged. Keep the existing static HTML/CSS/JS architecture, the useful content and the
-> URLs. Build co:op's workspace-and-task story. Don't make a recolored Emisar page.
-> Verify the product's real, supported behavior before you write claims or terminal examples.
-> Complete the guide's acceptance checklist before publication.
+Use the supplied mark and outlined wordmark; preserve their geometry, negative space and
+Coop colors. Supporting text stays in Inter. Keep the existing static website architecture,
+content and URLs. The approved simplicity and palette also apply to icons, social cards,
+README artwork and product cards in sibling repositories.
+
+The site copies `coop-mark.svg` and `coop-wordmark.svg` into `site/assets/img/`;
+`favicon.svg` is a copy of `coop-flat.svg`. Update both copies when changing the artwork.
+Render PNG/ICO exports from those vectors, then refresh the website social cards and this
+folder's desktop/mobile previews. See [the export instructions](../site/README.md#seo-assets).
+
+The AndrewDryga project card uses a copy of `coop-mark.svg`. Ryker's public product card
+and Protectorate's profile and Ryker design reference use copies of `coop-flat.svg`.
+Those repositories keep their own assets; none loads from a sibling checkout at runtime.
 
 ## Font
 

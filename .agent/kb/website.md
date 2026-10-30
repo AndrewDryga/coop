@@ -3,7 +3,7 @@ name: website
 description: site/ is static and partly generated; tools/gendocs owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
 subsystem: website
 sources: [tools/gendocs/references.go, tools/gendocs/references_test.go, tools/site/reference.tpl.html, docs/networking.md, site/networking.html, tools/site/sandbox-guide.tpl.html, tools/site/overnight-guide.tpl.html, site/sandbox-guide.html, site/overnight-guide.html, tools/gendocs/site.go, tools/gendocs/scenes.go, tools/gendocs/site_test.go, tools/lifecyclebench/main.go, tools/servicesbench/main.go, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/docs.html, site/README.md, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/aligncomments/main.go, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
-updated: 2026-10-21
+updated: 2026-10-30
 ---
 
 The homepage and docs are static files in `site/`, published by `.github/workflows/pages.yml` on
@@ -205,6 +205,10 @@ Orchestrator board at morning (`og-orchestrator.png`). They and the icons, drawn
 nothing. A site test checks each landing page names its committed card.
 
 ## Changelog
+- 2026-10-30 — adopted the approved Contained entrance mark and outlined wordmark. Website
+  navigation uses `site/assets/img/coop-mark.svg` and `coop-wordmark.svg`; favicon/app/avatar
+  exports derive from `brand/assets/coop-flat.svg`. README and sibling product cards share the
+  same artwork. The old chicken illustration and typed navigation wordmark are superseded.
 - 2026-10-20 — the two public walkthroughs are generated from their templates in tools/site.
   They reuse the docs navigation and copy behavior, with scoped `.guide` presentation in
   site.css. Their source/editorial review and responsive browser evidence are retained in

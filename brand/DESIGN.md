@@ -31,8 +31,8 @@ not turn off a user's assistive display preferences.
 
 The chosen territory is a working boundary: a visible place where assigned work happens.
 The other candidates were ruled out. A terminal-only treatment would hide task
-orchestration. A green gate would copy Emisar. A chicken-themed website would turn the
-README illustration into the whole brand.
+orchestration. A green gate would copy Emisar. Literal chicken imagery would distract from the
+bounded workspace the product provides.
 
 ## 2. One company, distinct products
 
@@ -65,25 +65,32 @@ repository identifiers stay `coop`. Don't use "Coop OS" as a standalone category
 sandbox and orchestration system for coding agents. co:op isn't a replacement for macOS or
 Linux.
 
-Use [coop-flat.svg](assets/coop-flat.svg): the amber house, the cyan circular entrance and
-the charcoal tile. It's a clean vector rendition of the
-[approved visual direction](assets/approved-direction.png). It isn't a new symbol.
+Use the approved **Contained entrance** artwork: a detached amber roof, an amber body,
+and a fully enclosed graphite entrance with a thin cyan rim. The enclosure suggests an
+isolated workspace. Keep it minimal: no chickens, eggs, ramps, fences, locks or shields.
 
-- Use only solid amber `#E6A95C`, cyan `#62D3F0` and charcoal `#111315`.
-- Keep the roof silhouette, rounded corners, circular opening and centered tile.
-- No bevel, wood texture, gradient, glow, extra outline or simulated lighting.
-- Corners outside the tile use real transparency. Never fake it with checkerboard pixels.
-- Default navigation: a 32px mark, a 12px gap and a 26px wordmark. Set the wordmark in Inter
-  at 700 with tracking −0.03em. Only the colon is amber. Don't create another custom
-  alphabet.
-- Around a standalone tile, leave clear space of at least one quarter of its width. The nav
-  lockup's explicit gap is the compact exception.
-- Minimum tile size: 16px for favicon use and 24px in UI. In navigation, 32px is preferred.
-  Check 16, 24, 32 and 64px at actual size before you export the production set.
-- No enlarged decorative watermark of the logo behind the hero.
-
-The README illustration in `.github/assets/coop.png` stays as it is. It isn't the favicon,
-the navigation mark or the design system's primary visual device.
+- [coop-mark.svg](assets/coop-mark.svg) is the standalone mark on a transparent canvas.
+- [coop-wordmark.svg](assets/coop-wordmark.svg) is the outlined geometric lettering.
+  Use it instead of typing the logo in Inter. Inter remains the website's prose/UI font.
+- [coop-lockup.svg](assets/coop-lockup.svg) combines the mark and ivory wordmark for dark
+  surfaces; [coop-lockup-light.svg](assets/coop-lockup-light.svg) uses graphite lettering.
+- [coop-flat.svg](assets/coop-flat.svg) puts the same mark on a rounded graphite tile for
+  favicons and avatars. The GitHub/avatar PNG is `.github/assets/coop.png`.
+- Use solid amber `#E6A95C`, cyan `#62D3F0`, graphite `#0E1014` and ivory `#ECE7DE`.
+  The wordmark colon is amber. Mint belongs to semantic success states, not the logo.
+- Preserve the roof separation, circular opening, narrow cyan rim and rounded corners.
+  No bevel, wood texture, gradient, glow, extra symbols or simulated lighting.
+- The [approved raster](assets/approved-direction.png) records the concept. Production
+  artwork uses the flat vectors, without the generated raster's texture or option label.
+- Default navigation: a 36×32px mark, 12px gap and 77.2×22.5px wordmark. The footer and
+  narrow screens use the smaller sizes in `site.css`; the smallest phones show the mark alone.
+- Around standalone artwork, leave clear space of at least one quarter of its width.
+  The navigation's explicit gap is the compact exception.
+- Minimum tile size: 16px for favicons and 24px in UI. Inspect 16, 24, 32 and 64px exports.
+- Transparent corners remain transparent. Maskable and Apple icons use a full square
+  graphite canvas so the platform can apply its own mask.
+- No enlarged decorative watermark behind the hero. The README uses the same approved
+  lockup; the earlier chicken illustration is superseded.
 
 ## 4. Color and dark material
 
@@ -305,8 +312,8 @@ separate from this guide.
 - [ ] All site surfaces stay dark, even when the OS asks for light mode.
 - [ ] Side by side, Emisar and co:op look related. With their logos covered, you can still
   tell them apart: shared type and craft, different color, device and composition.
-- [ ] The README illustration is unchanged, and the website mark matches the approved
-  geometry.
+- [ ] The README, website, icons and sibling product cards use the approved Contained
+  entrance geometry and Coop colors.
 - [ ] A visitor can identify the product, the next step and the useful mechanism in five
   seconds.
 - [ ] Claims and commands match current product behavior, and examples state their

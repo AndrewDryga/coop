@@ -82,8 +82,9 @@ main:focus { outline: none; }
 /* Navigation */
 .nav { display: flex; align-items: center; justify-content: space-between; gap: 24px; height: 76px; }
 .brand { display: inline-flex; align-items: center; gap: 12px; min-height: 44px; color: var(--text); font-size: 1.625rem; font-weight: 700; letter-spacing: -0.03em; text-decoration: none; }
-.brand img { display: block; width: 32px; height: 32px; }
-.brand .colon { color: var(--amber); }
+.brand img { display: block; width: 36px; height: 32px; }
+.brand > span { display: flex; }
+.brand .brand-wordmark { width: 77.2px; height: 22.5px; }
 .nav-links { display: flex; align-items: center; gap: 32px; }
 .nav-links > a:not(.button) { display: inline-flex; align-items: center; min-height: 44px; color: var(--body); font-size: 1rem; font-weight: 500; text-decoration: none; }
 .nav-links > a[aria-current="page"] { color: var(--text); }
@@ -413,7 +414,8 @@ main:focus { outline: none; }
 /* Footer */
 .footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 32px; margin-top: 96px; padding-block: 32px 48px; border-top: 1px solid var(--divider); color: var(--muted); font-size: 1rem; }
 .brand-small { gap: 8px; font-size: 1.25rem; }
-.brand-small img { width: 24px; height: 24px; }
+.brand-small img { width: 27px; height: 24px; }
+.brand-small .brand-wordmark { width: 60px; height: auto; }
 .footer nav { display: flex; gap: 24px; }
 .footer nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--body); text-decoration: none; }
 @media (hover: hover) { .footer nav a:hover { color: var(--text); } }
@@ -763,7 +765,8 @@ main:focus { outline: none; }
   .nav-links { gap: 24px; }
   .nav { height: 64px; }
   .brand { font-size: 1.4375rem; gap: 8px; }
-  .brand img { width: 28px; height: 28px; }
+  .brand img { width: 31.5px; height: 28px; }
+  .brand .brand-wordmark { width: 68.6px; height: 20px; }
   .story-lead { padding-top: 24px; }
   .hero-lead, .step p, .group-panel > p { font-size: 1.125rem; }
   .stage { margin-top: 32px; }
@@ -809,6 +812,7 @@ main:focus { outline: none; }
   .nav-links { gap: 12px; }
   .nav .button-small { padding: 0 12px; }
   .brand { gap: 6px; }
+  .brand .brand-wordmark { width: 58px; height: auto; }
 }
 /* the smallest phones show the mark alone, so the menu still fits */
 @media (max-width: 340px) {

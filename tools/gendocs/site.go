@@ -26,7 +26,7 @@ import (
 
 const (
 	siteHost = "coop.dryga.com"
-	markPath = "assets/img/favicon.svg" // co:op's mark, as the nav and footer show it
+	markPath = "assets/img/coop-mark.svg" // co:op's mark, as the nav and footer show it
 )
 
 // sitePages renders the generated pages from the checkout at root, keyed by their path in it.

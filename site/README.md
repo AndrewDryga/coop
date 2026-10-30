@@ -131,7 +131,11 @@ changes. `zed-coop.png` is a real Zed screenshot, cropped by hand (see `.agent/k
 Work in a scratch folder and copy the results into `assets/img/`; below, `$CHROME` is the Chrome
 or Chromium binary.
 
-The icons are the brand's mark, `brand/assets/coop-flat.svg`, and `favicon.svg` is a copy of it.
+The navigation and footer use local copies of `brand/assets/coop-mark.svg` and
+`coop-wordmark.svg`; do not retype the logo. The icons use the matching tile,
+`brand/assets/coop-flat.svg`, and `favicon.svg` is a copy of it. Keep those copies together.
+The README uses the supplied dark/light vector lockups; `.github/assets/coop.png` is a
+512px avatar export of the same tile.
 Draw the mark at 1024×1024 (an HTML page holding the SVG at `100vw` by `100vh`) and scale it down:
 `icon-192.png`, `icon-512.png`, and `favicon.ico` bundling 16, 32 and 48. `apple-touch-icon.png`
 (180) puts the glyph on a square tile with no rounded corners, since iOS rounds them;
