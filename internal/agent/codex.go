@@ -128,7 +128,7 @@ func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 		{CredentialFree: true, Host: "chatgpt.com", Method: "GET", Path: "/backend-api/plugins/featured", Query: "platform=codex"},
 	}
 	if selection == "apikey" {
-		for _, route := range []struct{ method, path string }{{"POST", "/v1/responses"}, {"GET", "/v1/responses"}, {"POST", "/v1/responses/compact"}} {
+		for _, route := range []struct{ method, path string }{{"POST", "/v1/responses"}, {"GET", "/v1/responses"}, {"POST", "/v1/responses/compact"}, {"POST", "/v1/images/generations"}, {"POST", "/v1/images/edits"}} {
 			out = append(out, NativeBrokerRoute{Host: "api.openai.com", Method: route.method, Path: route.path, Header: "Authorization", HeaderPrefix: "Bearer "})
 		}
 		return out, nil
@@ -142,6 +142,8 @@ func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	add("POST", "/backend-api/codex/responses", "")
 	add("POST", "/backend-api/codex/responses/compact", "")
 	add("GET", "/backend-api/codex/responses", "")
+	add("POST", "/backend-api/codex/images/generations", "")
+	add("POST", "/backend-api/codex/images/edits", "")
 	add("GET", "/backend-api/codex/models", "client_version=0.159.2")
 	add("GET", "/backend-api/wham/accounts/check", "")
 	out[len(out)-1].AccountResponse = &NativeBrokerAccountResponse{

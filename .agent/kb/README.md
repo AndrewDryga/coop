@@ -94,6 +94,7 @@ card is still TRUE; only reading it against its `sources` does that.
 - [native-credential-cutover](native-credential-cutover.md) — existing native writer locks keep their inode during private normalization; uncertain legacy grants remain in custody
 - [native-broker-account-discovery](native-broker-account-discovery.md) — guard-selected public account aliases must match native discovery without changing workspace routing
 - [native-broker-managed-policy](native-broker-managed-policy.md) — Claude policy retrieval needs its exact native settings route and must retain genuine upstream policy and errors
+- [native-broker-images](native-broker-images.md) — Codex generation and editing require exact image routes for each provider credential family
 - [native-broker-lease-reads](native-broker-lease-reads.md) — the host renews up to 10 minutes ahead, runs on one account take turns retrying, and the held access stays leased through a passing failure; VM lease reads use fresh descriptors and the existing load deadline, never a cached grant
 - [native-helper-file-modes](native-helper-file-modes.md) — native helper read mounts keep their intended modes under a private umask while outer custody remains owner-only
 - [mcp-authority-projection](mcp-authority-projection.md) — one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
