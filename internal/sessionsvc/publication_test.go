@@ -24,6 +24,13 @@ func TestPublicationRetainsIntentAndPublishesReviewedSHAAfterWorkspaceMoves(t *t
 	defer service.Stop()
 	sess := createReviewSession(t, service, "publish")
 	sessionWorkspaceWrite(t, filepath.Join(sess.Workspace, "result.txt"), "reviewed\n")
+	// An authorized alerting task could not open its PR because its required replay
+	// setup changed CI. Publication must keep that workflow in the exact reviewed tree.
+	workflow := "name: replay\non: push\njobs:\n  replay:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ./scripts/replay.sh\n"
+	if err := os.MkdirAll(filepath.Join(sess.Workspace, ".github/workflows"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceWrite(t, filepath.Join(sess.Workspace, ".github/workflows/replay.yml"), workflow)
 	sessionWorkspaceGit(t, sess.Workspace, "add", ".")
 	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "work")
 	ctx := context.Background()
@@ -31,12 +38,18 @@ func TestPublicationRetainsIntentAndPublishesReviewedSHAAfterWorkspaceMoves(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !review.Publishable || !review.CandidateRetained || len(review.PolicyFindings) != 0 {
+		t.Fatalf("authorized workflow was not retained for publication: %+v", review)
+	}
 	req := workerproto.PublishRequest{AuthorizationRef: "approved", CandidateHead: review.CandidateHead, CandidateTree: review.CandidateTree, Branch: "coop/fix", BaseBranch: "main", Title: "Fix", Body: "Reviewed work"}
 	calls := 0
 	service.reviewPublisher = func(_ context.Context, dir string, intent workerproto.PublishIntent) (workerproto.PublishResult, error) {
 		calls++
 		if intent.Request != req || dir == sess.Workspace || gitOut(dir, "rev-parse", "HEAD") != review.CandidateHead {
 			t.Fatal("publisher used live workspace or changed intent")
+		}
+		if got := gitOut(dir, "show", "HEAD:.github/workflows/replay.yml"); got != strings.TrimSpace(workflow) {
+			t.Fatalf("published workflow = %q, want reviewed bytes", got)
 		}
 		if calls == 1 {
 			return workerproto.PublishResult{}, errors.New("lost remote response")

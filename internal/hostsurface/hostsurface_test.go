@@ -84,3 +84,19 @@ func TestFindingsReadsNameStatusAndKeepsRenameTargets(t *testing.T) {
 		t.Fatal("empty listing must yield nothing")
 	}
 }
+
+func TestPublicationAllowsCIWithoutChangingLocalForkProtection(t *testing.T) {
+	for _, p := range []string{".github/workflows/ci.yml", ".GitHub/Workflows/ci.yml", ".git\u200bhub/workflows/ci.yml"} {
+		if got := PublicationBlocker("M", p); got != "" {
+			t.Errorf("authorized CI publication blocked: %q", got)
+		}
+		if reason, automatic := Classify("M", p); reason == "" || !automatic {
+			t.Errorf("local fork protection changed: reason=%q automatic=%v", reason, automatic)
+		}
+	}
+	for _, p := range []string{".envrc", ".github/workflows/.ENVRC", ".github/workflows/.git\u200battributes", ".github/workflows/.githooks/pre-commit", ".github/workflows/.claude/settings.json", ".github/workflows/.agent/project.yaml"} {
+		if got := PublicationBlocker("A", p); got == "" {
+			t.Errorf("local execution was allowed: %q", p)
+		}
+	}
+}

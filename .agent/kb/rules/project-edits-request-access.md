@@ -2,9 +2,9 @@
 name: project-edits-request-access
 description: project configuration requests access; one host approval grants it, checked before execution and enforced throughout agent and service runs
 scope: security
-sources: [internal/cli/net_approve.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/box/run.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/composecheck.go, internal/cli/acp_refresh.go]
+sources: [internal/cli/net_approve.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/box/run.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/composecheck.go, internal/cli/acp_refresh.go, internal/sessionsvc/review_scan.go, internal/hostsurface/hostsurface.go]
 check: none
-updated: 2026-10-15
+updated: 2026-10-30
 ---
 
 # Approve added access, not ordinary development
@@ -25,6 +25,11 @@ live box runs. A request field or process/API carrier cannot become authority; s
 **Why:** the user asked how unapproved edits could be kept from taking effect, then approved one
 high-level command and this enforcement boundary. This is not a mandate to approve every risky file.
 
+For controller-authorized repository publication, CI workflow edits are ordinary task work.
+Do not ask the person to approve them merely because CI will run. Preserve the exact-candidate
+grant, checks, credential scanning and local host protections; repository CI permissions still
+bound what CI can do. The controller owns task scope, not this path scanner.
+
 **How to apply:** review actual startup dependencies, volume identity and read/write access, not
 just editable labels. Keep ordinary source/script/image changes, approved writes and project-owned
 storage automatic, except that a service receiving approved secret files or outside volumes
@@ -40,6 +45,11 @@ Tests must prove refusal before execution/mounts, same-snapshot publication/star
 denial from agent-controlled services. A command rename or UI warning is not enforcement.
 
 ## Changelog
+
+- 2026-10-30 — the user rejected a policy-owner handoff for an authorized task's CI replay
+  setup: "I do not need to review such things, let agent just do it!" Swept session review,
+  host classification and both fork import paths. Fixed the session publication veto; local
+  protections remain unchanged. Regression: `TestPublicationRetainsIntentAndPublishesReviewedSHAAfterWorkspaceMoves`.
 
 - 2026-10-15 — human-approved rewording: a box's policy stays immutable, but a running `coop acp`
   session may replace its boxes with freshly admitted ones (task

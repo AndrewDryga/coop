@@ -58,6 +58,22 @@ func Key(p string) string {
 // (A/M/R/C/T…); a deletion never counts — removing a hook cannot run anything. It judges the
 // path's Key, so every spelling of a surface counts.
 func Classify(status, relPath string) (reason string, automatic bool) {
+	return classify(status, relPath, true)
+}
+
+// PublicationBlocker names automatic local execution that a controller-authorized
+// remote publication must still refuse. CI belongs to the authorized repository
+// task, not the worker host. Classify keeps it visible for local fork review/merge.
+// Classification order matters: a local hook nested under workflows stays blocked.
+func PublicationBlocker(status, relPath string) string {
+	reason, automatic := classify(status, relPath, false)
+	if automatic {
+		return reason
+	}
+	return ""
+}
+
+func classify(status, relPath string, includeCI bool) (reason string, automatic bool) {
 	if status != "" && status[0] == 'D' {
 		return "", false
 	}
@@ -106,7 +122,9 @@ func Classify(status, relPath string) (reason string, automatic bool) {
 	case hasSegment(p, ".idea") && strings.HasSuffix(base, ".xml"):
 		return "Defines commands run by your IDE.", true
 	case dir == ".github/workflows" || strings.HasPrefix(p, ".github/workflows/"):
-		return "Runs on the project's CI runners.", true
+		if includeCI {
+			return "Runs on the project's CI runners.", true
+		}
 	}
 	return "", false
 }

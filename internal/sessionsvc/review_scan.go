@@ -91,7 +91,7 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 		case hidden:
 			add("secret-like file: " + path)
 		}
-		if reason, automatic := hostsurface.Classify(fields[4], path); automatic {
+		if reason := hostsurface.PublicationBlocker(fields[4], path); reason != "" {
 			add(path + " — " + reason)
 		}
 		if fields[1] == "160000" {

@@ -1306,6 +1306,13 @@ turns. It never builds or uses an image from the job repository&#39;s Dockerfile
 <p>The check can create ignored build files in its temporary checkout. If it changes the reviewed
 source, the result cannot be published. Publication is also blocked when no check is configured,
 the check fails or cannot start.</p>
+<p>Controller-authorized publication permits CI workflow edits: running repository checks is part
+of the authorized task, not a separate human approval. The scan still checks workflow contents
+for credentials and refuses hidden files, changed <code>.coopignore</code> files, automatic local hooks
+and new package installation scripts. A hook nested under <code>.github/workflows/</code> remains a local
+execution finding. Local fork merge protections are unchanged. Publication still needs a fresh
+controller grant for the exact retained candidate and destination; repository CI permissions
+and environment protections continue to apply.</p>
 <p>The JSON response encodes the patch preview as base64. A shortened preview does not prevent
 publication. co:op saves the exact candidate commit and verified LFS objects in private host
 storage, separate from the model&#39;s workspace, so publication does not depend on transferring the

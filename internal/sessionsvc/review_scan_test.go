@@ -57,6 +57,38 @@ func reviewBinaryPayload(size int) []byte {
 	return bytes.Repeat(line, size/len(line)+1)
 }
 
+func TestWorkflowPublicationStillScansCredentialsAndLocalExecution(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, contents, want string
+	}{
+		{"credential", ".github/workflows/ci.yml", "# ghp_" + strings.Repeat("Q7r9", 10), "possible secret in .github/workflows/ci.yml"},
+		{"large-credential", ".github/workflows/ci.yml", string(reviewBinaryPayload(5<<20)) + "ghp_" + strings.Repeat("Q7r9", 10), "possible secret in .github/workflows/ci.yml"},
+		{"host-hook", ".envrc", "echo host", "direnv"},
+		{"nested-host-hook", ".github/workflows/.envrc", "echo host", "direnv"},
+		{"hidden-policy", ".coopignore", "private/", "edits a .coopignore"},
+		{"lifecycle", ".github/workflows/package.json", `{"scripts":{"postinstall":"node install.js"}}`, "adds a postinstall script"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			git("commit", "--allow-empty", "-qm", "base")
+			parent := gitOut(repo, "rev-parse", "HEAD")
+			for path, contents := range map[string]string{".github/workflows/replay.yml": "name: replay\n", tc.path: tc.contents} {
+				if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, path)), 0700); err != nil {
+					t.Fatal(err)
+				}
+				sessionWorkspaceWrite(t, filepath.Join(repo, path), contents)
+			}
+			git("add", ".")
+			git("commit", "-qm", "candidate")
+			findings, err := scanReviewCandidate(t.Context(), repo, parent, gitOut(repo, "rev-parse", "HEAD"))
+			joined := strings.Join(findings, "\n")
+			if err != nil || !strings.Contains(joined, tc.want) || strings.Contains(joined, "CI runners") {
+				t.Fatalf("findings = %q, %v; want %q without a blanket CI veto", findings, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestReviewScanUsesPinnedDeltaAndDoesNotBlockOrdinaryLargeFiles(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "--allow-empty", "-qm", "base")

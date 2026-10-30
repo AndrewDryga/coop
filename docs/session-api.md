@@ -1205,6 +1205,14 @@ The check can create ignored build files in its temporary checkout. If it change
 source, the result cannot be published. Publication is also blocked when no check is configured,
 the check fails or cannot start.
 
+Controller-authorized publication permits CI workflow edits: running repository checks is part
+of the authorized task, not a separate human approval. The scan still checks workflow contents
+for credentials and refuses hidden files, changed `.coopignore` files, automatic local hooks
+and new package installation scripts. A hook nested under `.github/workflows/` remains a local
+execution finding. Local fork merge protections are unchanged. Publication still needs a fresh
+controller grant for the exact retained candidate and destination; repository CI permissions
+and environment protections continue to apply.
+
 The JSON response encodes the patch preview as base64. A shortened preview does not prevent
 publication. co:op saves the exact candidate commit and verified LFS objects in private host
 storage, separate from the model's workspace, so publication does not depend on transferring the

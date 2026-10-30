@@ -1,9 +1,9 @@
 ---
 name: host-execution-surfaces
-description: which changed files count as "runs on your machine", the two tiers, and the two places coop surfaces them (fork review/merge, check-secrets)
+description: local execution classifications, fork protections and controller-authorized CI publication
 subsystem: hostsurface
-sources: [internal/hostsurface/hostsurface.go, internal/forkctl/merge.go, internal/forkctl/review.go, internal/forkctl/isolated_candidate.go, internal/cli/checksecrets.go]
-updated: 2026-10-08
+sources: [internal/hostsurface/hostsurface.go, internal/forkctl/merge.go, internal/forkctl/review.go, internal/forkctl/isolated_candidate.go, internal/cli/checksecrets.go, internal/sessionsvc/review_scan.go]
+updated: 2026-10-30
 ---
 
 Shared-write boxes can plant metadata that native host tools execute even before a merge,
@@ -38,18 +38,30 @@ A deletion (`D` status) never counts — removing a hook cannot run anything.
 Isolated publication scans every incoming immutable tree, not only the final diff. It retains
 these path/content risk checks, denies changed gitlinks/.gitmodules, and offers no force bypass.
 
-The two consumers:
+Controller-authorized session publication uses `PublicationBlocker`, which permits CI-only
+edits while preserving every local automatic surface. It still scans the workflow bytes for
+credentials and checks hidden files and package lifecycle changes. A hook nested under workflows
+is classified before CI and remains blocked. The controller's exact-candidate publication grant
+is the authority; ordinary task CI edits need no separate human review. Local fork protections
+keep using `Classify` unchanged.
+
+The consumers:
 - `coop fork review` prints all findings; `coop fork merge` blocks on the automatic ones.
 - `coop check-secrets` reports the working tree's changed surfaces (staged, unstaged, untracked)
   under `Review files that run commands`, AFTER its verdict; it never changes the exit code, which
   stays the secret scan's.
+- Session review refuses local execution and content findings before retaining the exact
+  candidate for controller-authorized publication.
 
-There is no third, task-side consumer: the task-flags feature (`flags.json`, `Item.HasFlags`,
+There is no task-side consumer: the task-flags feature (`flags.json`, `Item.HasFlags`,
 `coop tasks flags --ack`) was removed outright on 2026-09-11, so completion writes no record and
 the board carries no acknowledgement marker. Old `flags.json` files are inert: nothing reads,
 writes or deletes them. Review agent work at the fork boundary instead.
 
 ## Changelog
+- 2026-10-30: separated authorized remote CI publication from local fork execution policy;
+  swept the classifier, session scanner, fork merge and isolated candidate consumers. Local
+  protections are unchanged; publication and scanner regressions cover the distinction.
 - 2026-10-08: qualified isolated history scanning and corrected the shared-write host-execution
   assumption; ordinary policy still allows explicit --force, isolated publication does not.
 - 2026-09-11: task-flags consumer removed with the feature; card is the classifier + its two
