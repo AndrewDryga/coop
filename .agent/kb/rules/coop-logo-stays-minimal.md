@@ -21,15 +21,17 @@ does not replace Coop's amber/cyan branding.
 
 Inspect the native vector against the approved raster and review small exports and actual
 page placement. In sibling product tiles, keep the visible Coop symbol near 63% of
-the square canvas width to match the inset Ryker and Emisar marks. Align navigation
-wordmarks by their lowercase body, allowing the p descender to extend below that
-center; centering the full SVG canvas lifts the lettering above the mark. The concept raster's texture and label are not production artwork.
+the square canvas width to match the inset Ryker and Emisar marks. The concept raster's
+texture and label are not production artwork.
 
-In website navigation, keep the symbol subordinate to the wordmark: a 25.2 × 22.4px
-mark beside the 77.2 × 22.5px wordmark on desktop, with the same proportions on
-smaller screens. Aligning the centers alone does not correct an oversized symbol.
+In website navigation, use a 28.8 × 25.6px symbol beside the 77.2 × 22.5px wordmark
+on desktop, with smaller responsive sizes. Align the visible bottom of the symbol with
+the full wordmark bottom, including the p descender. Center the combined row within
+the link target. Account for the mark's 20-unit bottom padding in its 320-unit SVG canvas.
 
 ## Changelog
+- 2026-10-30 — owner requested bottom alignment and a slightly larger symbol; raised
+  it from 70% to 80% of the original size and replaced optical-center alignment.
 - 2026-10-30 — reduced website header/footer symbols by 30% after the owner still
   found the symbol oversized; kept wordmark size and optical alignment unchanged.
 - 2026-10-30 — corrected oversized sibling product tiles and header wordmark alignment
