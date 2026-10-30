@@ -20,9 +20,14 @@ locks or shields. The Emisar/Ryker relationship comes from simple geometry; thei
 does not replace Coop's amber/cyan branding.
 
 Inspect the native vector against the approved raster and review small exports and actual
-page placement. The concept raster's texture and label are not production artwork.
+page placement. In sibling product tiles, keep the visible Coop symbol near 63% of
+the square canvas width to match the inset Ryker and Emisar marks. Align navigation
+wordmarks by their lowercase body, allowing the p descender to extend below that
+center; centering the full SVG canvas lifts the lettering above the mark. The concept raster's texture and label are not production artwork.
 
 ## Changelog
+- 2026-10-30 — corrected oversized sibling product tiles and header wordmark alignment
+  after the owner compared the live pages. Judge visible artwork, not equal image boxes.
 - 2026-10-30 — recorded the owner's concept selection, simplicity correction and palette
   correction; replaced the site, README, app/favicon/social and sibling product marks.
   Visual geometry needs human review, so there is no automated check claim.
