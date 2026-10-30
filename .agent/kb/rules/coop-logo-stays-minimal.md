@@ -26,10 +26,13 @@ texture and label are not production artwork.
 
 In website navigation, use a 28.8 × 25.6px symbol beside the 77.2 × 22.5px wordmark
 on desktop, with smaller responsive sizes. Align the visible bottom of the symbol with
-the full wordmark bottom, including the p descender. Center the combined row within
-the link target. Account for the mark's 20-unit bottom padding in its 320-unit SVG canvas.
+the main letter body bottom at y=166, not the p descender at y=225. The p must
+extend below the symbol. Account for the mark's 20-unit bottom padding in its
+320-unit canvas and the wordmark's 59-unit descender, scaled from its 772-unit width.
 
 ## Changelog
+- 2026-10-30 — owner clarified baseline alignment: the p must descend below the
+  symbol. Raised the symbol to the main letter baseline without resizing either asset.
 - 2026-10-30 — owner requested bottom alignment and a slightly larger symbol; raised
   it from 70% to 80% of the original size and replaced optical-center alignment.
 - 2026-10-30 — reduced website header/footer symbols by 30% after the owner still
