@@ -641,7 +641,7 @@ func TestDockerEndpointAndCreationGrammarRefuseEscapes(t *testing.T) {
 			t.Fatalf("unexpected creation grammar: %q", options)
 		}
 	}
-	if !validDockerCreateOptions([]string{"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "container:" + strings.Repeat("a", 64), "-i"}) {
+	if !validDockerCreateOptions([]string{"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "container:" + strings.Repeat("a", 64), "--no-healthcheck", "-i"}) {
 		t.Fatal("valid composed options rejected")
 	}
 }

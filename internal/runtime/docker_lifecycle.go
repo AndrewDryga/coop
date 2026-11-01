@@ -88,7 +88,7 @@ func validDockerCreateOptions(options []string) bool {
 	}
 	for i := 0; i < len(options); i++ {
 		switch options[i] {
-		case "--init", "--read-only", "-i", "-t", "-it":
+		case "--init", "--read-only", "--no-healthcheck", "-i", "-t", "-it":
 		case "--mount", "-v", "-e", "--env-file", "-w", "--workdir", "--memory", "--cpus", "--pids-limit", "--cap-drop", "--cap-add", "--security-opt", "--network", "--user", "--log-driver", "--log-opt", "--tmpfs", "--entrypoint", "--label", "-p", "--add-host", "--hostname", "--dns", "--dns-search", "--dns-option":
 			i++
 			if i >= len(options) || len(options[i]) > 64<<10 || strings.ContainsRune(options[i], '\x00') {
