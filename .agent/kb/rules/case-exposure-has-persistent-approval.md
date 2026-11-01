@@ -18,11 +18,24 @@ short count during launch. Check both agent and service mount plans.
 Docker creation and observation must support the mount plans case protection produces.
 Bounds on inspection must not strand a successfully created ordinary box.
 
+Coop must work with existing supported host filesystem configurations and the user's shared
+checkout. Do not require users to move projects onto a case-sensitive host volume, reformat
+storage, or change filesystem settings as the default solution. Handle runtime/share differences
+inside Coop and distinguish usability from the strength of secret isolation. A diagnostic warning
+is not enforcement; preserving strong isolation on an alias-exposing share requires a mechanism
+that actually denies access through those aliases. Qualify any replacement on the real runtime
+before presenting it as a supported solution.
+
 **Why:** the user reported Coop was unusable: repeating
 `COOP_ALLOW_CASE_EXPOSED_SECRETS=1` was annoying, and the resulting launch failed inspection.
 They explicitly requested removal of the feature or persistent approval via `coop approve`.
 
 ## Changelog
+- 2026-11-01 — user corrected the host-volume recommendation: "we need coop to work no matter
+  how host is configured". Swept box/configuration docs, spelling detection, case approval and
+  doctor source: no existing requirement to move projects to a case-sensitive volume. Recorded
+  the design constraint; this prose update does not implement or qualify a replacement mount
+  mechanism. The automated check above covers approval; host independence also needs review.
 - 2026-11-01 — swept agent launch, service launch, approval UI, spelling budgets and Docker
   create/inspect limits. Added exact-path approval, case-only review, both launch checks, and
   aligned Docker bounds. The failed live container had 1,780 mounts and 772,918 bytes of mount
