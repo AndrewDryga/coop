@@ -83,7 +83,7 @@ func (d *Docker) Image(ctx context.Context, name string) (string, map[string]str
 // box layer separately validates mounts and verifies its role's security
 // contract before start. Name, image, restart and auto-remove are never options.
 func validDockerCreateOptions(options []string) bool {
-	if len(options) > 4096 {
+	if len(options) > 2*maxDockerMounts+256 {
 		return false
 	}
 	for i := 0; i < len(options); i++ {

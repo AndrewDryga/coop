@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/AndrewDryga/coop/internal/box"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,7 +45,7 @@ func TestApprovalReviewIsOneStableDiff(t *testing.T) {
 		before: &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{approvalRule("github.com"), approvalRule("registry.npmjs.org")}},
 		after:  &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{approvalRule("github.com"), approvalRule("api.example.com")}}}
 	var out bytes.Buffer
-	if err := confirmNetApproval(context.Background(), review, &out, func() bool { return true }); err != nil {
+	if err := confirmProjectApproval(context.Background(), review, nil, &out, func() bool { return true }); err != nil {
 		t.Fatalf("confirmNetApproval: %v", err)
 	}
 	assertApprovedOutput(t, "21m-net-approve-review", out.String())
@@ -68,7 +71,7 @@ func TestApprovalReviewShowsTheModeChange(t *testing.T) {
 		before: &networkstate.Approval{Posture: egress.None},
 		after:  &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{approvalRule("docs.example.com")}}}
 	var out bytes.Buffer
-	if err := confirmNetApproval(context.Background(), review, &out, func() bool { return true }); err != nil {
+	if err := confirmProjectApproval(context.Background(), review, nil, &out, func() bool { return true }); err != nil {
 		t.Fatalf("confirmNetApproval: %v", err)
 	}
 	assertApprovedOutput(t, "21n-net-approve-mode-change", out.String())
@@ -84,7 +87,7 @@ func TestApprovalReviewExplainsIdentityOnlyReapproval(t *testing.T) {
 			approved := &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{approvalRule("docs.example.com")}}
 			review := &fakeApprovalReview{before: approved, after: approved, pending: &networkstate.PendingApproval{Cause: cause}}
 			var out bytes.Buffer
-			if err := confirmNetApproval(context.Background(), review, &out, func() bool { return true }); err != nil {
+			if err := confirmProjectApproval(context.Background(), review, nil, &out, func() bool { return true }); err != nil {
 				t.Fatal(err)
 			}
 			for _, want := range []string{"Why approval is needed:", cause, "NETWORK RULES\n    docs.example.com:443 · TLS\n"} {
@@ -162,7 +165,7 @@ func TestApprovalReviewExplainsTheModeInHumanWords(t *testing.T) {
 func TestApprovalCancelledLeavesNothingBehind(t *testing.T) {
 	review := &fakeApprovalReview{after: &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{approvalRule("new.example")}}}
 	var out bytes.Buffer
-	err := confirmNetApproval(context.Background(), review, &out, func() bool {
+	err := confirmProjectApproval(context.Background(), review, nil, &out, func() bool {
 		if out.Len() == 0 {
 			t.Error("the confirmation was asked before the review was shown")
 		}
@@ -179,7 +182,7 @@ func TestApprovalCancelledLeavesNothingBehind(t *testing.T) {
 func TestApprovalContextCancellationCannotCommitAnAnswer(t *testing.T) {
 	review := &fakeApprovalReview{after: &networkstate.Approval{Posture: egress.Filtered}}
 	ctx, cancel := context.WithCancel(context.Background())
-	err := confirmNetApproval(ctx, review, &bytes.Buffer{}, func() bool {
+	err := confirmProjectApproval(ctx, review, nil, &bytes.Buffer{}, func() bool {
 		cancel()
 		return true
 	})
@@ -192,7 +195,7 @@ func TestApprovalContextCancellationCannotCommitAnAnswer(t *testing.T) {
 }
 
 func TestApprovalRefusesAnEmptyReview(t *testing.T) {
-	err := confirmNetApproval(context.Background(), &fakeApprovalReview{}, &bytes.Buffer{}, func() bool { return true })
+	err := confirmProjectApproval(context.Background(), &fakeApprovalReview{}, nil, &bytes.Buffer{}, func() bool { return true })
 	if err == nil {
 		t.Fatal("a review with nothing to approve was confirmed")
 	}
@@ -201,7 +204,7 @@ func TestApprovalRefusesAnEmptyReview(t *testing.T) {
 func TestApprovalSurfacesACommitFailure(t *testing.T) {
 	review := &fakeApprovalReview{after: &networkstate.Approval{Posture: egress.Filtered},
 		commitErr: errors.New("network approval changed after review")}
-	err := confirmNetApproval(context.Background(), review, &bytes.Buffer{}, func() bool { return true })
+	err := confirmProjectApproval(context.Background(), review, nil, &bytes.Buffer{}, func() bool { return true })
 	if err == nil || !strings.Contains(err.Error(), "changed after review") {
 		t.Fatalf("commit failure = %v", err)
 	}
@@ -247,5 +250,79 @@ func TestNetChangeSavedButUntoldIsASuccessWithACaution(t *testing.T) {
 	out = captureStderr(t, func() { code, err = reportNetChange(failure, netApproveApproved) })
 	if code != 1 || !errors.Is(err, failure) || strings.Contains(out, netApproveApproved) {
 		t.Fatalf("a failed change = (%d, %v), printed %q; want exit 1 and no success line", code, err, out)
+	}
+}
+
+func TestApprovalIncludesCaseOnlyAccessAndFreezesPaths(t *testing.T) {
+	for _, networkChange := range []bool{false, true} {
+		t.Run(fmt.Sprint(networkChange), func(t *testing.T) {
+			t.Setenv(box.ServiceStateRootEnv, t.TempDir())
+			repo := t.TempDir()
+			file := filepath.Join(repo, "credentials.json")
+			if err := os.WriteFile(file, []byte("inert"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(repo, "CREDENTIALS.JSON")); err != nil {
+				t.Skip("requires a disk that folds case")
+			}
+			cases, err := box.ReviewCaseExposure(t.Context(), nil, repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			network := &fakeApprovalReview{}
+			if networkChange {
+				network.after = &networkstate.Approval{Posture: egress.Filtered}
+			}
+			var out bytes.Buffer
+			err = confirmProjectApproval(t.Context(), network, cases, &out, func() bool { return false })
+			if err == nil || len(box.UnapprovedCaseExposures(repo, []string{"credentials.json"})) != 1 {
+				t.Fatal("declined approval persisted")
+			}
+			out.Reset()
+			err = confirmProjectApproval(t.Context(), network, cases, &out, func() bool {
+				if err := os.WriteFile(filepath.Join(repo, "production-secret.pem"), []byte("inert"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				return true
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), "FILE ACCESS ON THIS DISK") || !strings.Contains(out.String(), "credentials.json") {
+				t.Fatal(out.String())
+			}
+			if (network.committed == 1) != networkChange {
+				t.Fatalf("network commits=%d", network.committed)
+			}
+			pending := box.UnapprovedCaseExposures(repo, []string{"credentials.json", "production-secret.pem"})
+			if len(pending) != 1 || pending[0] != "production-secret.pem" {
+				t.Fatal(pending)
+			}
+		})
+	}
+}
+
+func TestApprovalFileFailureDoesNotPublishNetworkOrReportSuccess(t *testing.T) {
+	t.Setenv(box.ServiceStateRootEnv, t.TempDir())
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "credentials.json"), []byte("inert"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "CREDENTIALS.JSON")); err != nil {
+		t.Skip("requires a disk that folds case")
+	}
+	cases, err := box.ReviewCaseExposure(t.Context(), nil, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	network := &fakeApprovalReview{after: &networkstate.Approval{Posture: egress.Filtered}, commitErr: networkstate.ErrSessionsNotTold}
+	err = confirmProjectApproval(t.Context(), network, cases, &bytes.Buffer{}, func() bool {
+		if err := os.Remove(filepath.Join(repo, ".coop-service-approval")); err != nil {
+			t.Fatal(err)
+		}
+		return true
+	})
+	if err == nil || network.committed != 0 || errors.Is(err, networkstate.ErrSessionsNotTold) {
+		t.Fatalf("failed file approval: network commits=%d err=%v", network.committed, err)
 	}
 }

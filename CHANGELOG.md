@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Remember case-exposure approvals on a Mac.** `coop approve` now reviews and remembers
+  exact hidden-file paths that remain readable under another letter case. New paths still need
+  approval, so ordinary launches no longer require repeating an environment override.
+- **Start boxes with many protected files.** Docker inspection now accommodates the thousands
+  of mounts Coop creates for case protection, fixing launches that failed after container
+  creation with "Docker observation exceeded its bound".
+
 - **Retain completed work after a session closes.** An idle closed session can now save its
   workspace checkpoint, including task notes and uncommitted changes, without reopening the
   session or allowing another model turn. Discarded sessions remain unavailable.

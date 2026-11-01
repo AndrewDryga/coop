@@ -126,13 +126,17 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 }
 
 // launchMounts is ComputeMounts for a launch. Hidden files a box could read under another letter
-// case refuse it, unless its owner accepted that risk with COOP_ALLOW_CASE_EXPOSED_SECRETS; then
+// case refuse it, unless its owner approved the paths or accepted the one-run override; then
 // they come back to be named at launch.
 func launchMounts(cfg *config.Config, repo, workdir string) ([]Mount, []string, error) {
 	mounts, err := ComputeMounts(repo, workdir)
 	var uncovered *UncoveredSpellings
-	if errors.As(err, &uncovered) && cfg.AllowCaseExposedSecrets {
-		return mounts, uncovered.Paths, nil
+	if errors.As(err, &uncovered) {
+		pending := UnapprovedCaseExposures(repo, uncovered.Paths)
+		if cfg.AllowCaseExposedSecrets || len(pending) == 0 {
+			return mounts, uncovered.Paths, nil
+		}
+		return mounts, nil, &UncoveredSpellings{Paths: pending}
 	}
 	return mounts, nil, err
 }

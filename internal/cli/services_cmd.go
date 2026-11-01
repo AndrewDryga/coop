@@ -77,12 +77,12 @@ func (a *app) cmdUp(args []string) (int, error) {
 	if err != nil {
 		return 1, composeRefusal("Could not start services from "+rel, rel, err, "coop up")
 	}
-	if len(exposed) > 0 && !a.cfg.AllowCaseExposedSecrets {
-		headline, reason, fix := uncoveredSpellingsBlock(exposed, "your services", "a service")
+	if pending := box.UnapprovedCaseExposures(repo, exposed); len(pending) > 0 && !a.cfg.AllowCaseExposedSecrets {
+		headline, reason, fix := uncoveredSpellingsBlock(pending, "your services", "a service")
 		return 1, reported(headline, reason, fix)
 	}
-	for _, path := range exposed {
-		ui.Warn("%s is readable by your services under another letter case (COOP_ALLOW_CASE_EXPOSED_SECRETS)", ui.SafeInline(path))
+	if len(exposed) > 0 {
+		ui.Warn("Accepted case exposure: %d hidden files may be read by your services under another letter case.", len(exposed))
 	}
 	renewal := review.Renewal()
 	volumePending := review.VolumeApprovalNeeded

@@ -45,9 +45,15 @@ func TestUpRefusesAHiddenFileServicesCouldReadUnderAnotherCase(t *testing.T) {
 	if !folds {
 		return
 	}
-	a.cfg.AllowCaseExposedSecrets = true
+	review, err := box.ReviewCaseExposure(t.Context(), nil, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := review.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	out = captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
-	if code != 0 || !strings.Contains(out, "config/credentials.json is readable by your services under another letter case") {
+	if code != 0 || !strings.Contains(out, "Accepted case exposure: 1 hidden files") {
 		t.Fatalf("coop up with the setting = %d:\n%s", code, out)
 	}
 }

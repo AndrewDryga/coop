@@ -103,8 +103,11 @@ Coop therefore covers every uppercase and lowercase spelling of a hidden filenam
 <code>.coopignore</code>. These protections apply in the box and in every service that mounts the repo.</p>
 <p>Longer hidden filenames, such as <code>.env.production</code> and <code>credentials.json</code>, cannot be covered
 this way. Coop refuses to start the box, and <code>coop up</code> refuses to start the services. Move the
-file into a hidden folder, which stays hidden under every spelling, or give it a shorter name.
-You can set <code>COOP_ALLOW_CASE_EXPOSED_SECRETS=1</code> to start anyway and accept that exposure.</p>
+file into a hidden folder, which stays hidden under every spelling, or run <code>coop approve</code> to
+review and remember access to the listed files. Approval applies to those exact paths, including
+future contents, for new agent and service runs. Newly exposed paths need another approval;
+already running boxes stay unchanged. <code>.coopignore</code> policy files cannot receive this approval.
+The one-run override <code>COOP_ALLOW_CASE_EXPOSED_SECRETS=1</code> remains available.</p>
 <p>Templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code>) stay visible. The defaults are compiled into
 co:op (<code>internal/shadowpath/shadowpath.go</code>).</p>
 <h3 id="your-own-paths-coopignore">Your own paths: .coopignore</h3>

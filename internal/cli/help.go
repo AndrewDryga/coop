@@ -1966,6 +1966,9 @@ Usage: coop approve
 
   Shows what .agent/project.yaml asks for, compared with your last approval.
   Confirm the changes to allow new runs to use them.
+  On a case-insensitive disk, also reviews hidden files that remain readable
+  under another letter case. Remembers those exact paths for future agent
+  and service runs; newly exposed paths need approval again.
   If nothing changed, there is nothing to approve.
 
   Running boxes keep the rules they started with. A running editor session

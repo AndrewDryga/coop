@@ -253,6 +253,12 @@ func TestDockerFixtureProcess(t *testing.T) {
 				os.Exit(1)
 			}
 			fixture.Container = dockerFixtureContainer()
+			for i := 2; i+1 < len(args); i++ {
+				if args[i] == "-v" {
+					parts := strings.Split(args[i+1], ":")
+					fixture.Container.Mounts = append(fixture.Container.Mounts, DockerMount{Type: "bind", Source: parts[0], Destination: parts[1], RW: parts[2] != "ro"})
+				}
+			}
 			fixture.Mutations++
 			if fixture.Mode == "create-post-fail" {
 				fixture.Mode = "inspect-fail"
@@ -261,7 +267,7 @@ func TestDockerFixtureProcess(t *testing.T) {
 			fmt.Println(fixture.Container.ID)
 		case "inspect":
 			if fixture.Mode == "overflow" {
-				fmt.Print(strings.Repeat("x", 2<<20))
+				fmt.Print(strings.Repeat("x", maxDockerContainerObservation+1))
 				break
 			}
 			if fixture.Container == nil || fixture.Mode == "inspect-fail" || fixture.Mode == "list-fail" {
@@ -1236,5 +1242,35 @@ func TestAttachedClientJoinsCoopsGroupOnlyWhenItDrivesTheTerminal(t *testing.T) 
 				t.Fatalf("client group %d against coop's %d: shares=%v, want %v", group, syscall.Getpgrp(), shared, terminal)
 			}
 		})
+	}
+}
+
+func TestDockerCaseCoverMountsSurviveCreateAndInspect(t *testing.T) {
+	rt, _ := fixtureDocker(t, dockerFixture{})
+	d, err := BindDocker(t.Context(), rt, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ref := dockerFixtureRef()
+	ref.ID = ""
+	var options []string
+	for i := 0; i < 2200; i++ {
+		options = append(options, "-v", fmt.Sprintf("/private/coop/decoy:/workspace/%s/%d:ro", strings.Repeat("directory/", 12), i))
+	}
+	options = append(options, "--read-only", "--cap-drop", "ALL")
+	id, err := d.CreateContainer(t.Context(), DockerCreate{Ref: ref, Image: dockerFixtureContainer().Image, Options: options})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref.ID = id
+	got, present, err := d.InspectContainer(t.Context(), ref)
+	if err != nil || !present || len(got.Mounts) != 2200 {
+		t.Fatalf("mount observation: count=%d present=%v err=%v", len(got.Mounts), present, err)
+	}
+	for _, m := range got.Mounts {
+		if m.RW || m.Source != "/private/coop/decoy" {
+			t.Fatal("decoy lost protection", m)
+		}
 	}
 }

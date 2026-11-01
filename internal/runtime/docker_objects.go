@@ -69,6 +69,11 @@ type DockerMount struct {
 	RW                              bool
 }
 
+// Secret file case covers can require thousands of mounts. Observation must
+// accommodate the mount plans accepted at creation, including their JSON overhead.
+const maxDockerMounts = 8192
+const maxDockerContainerObservation = 4 << 20
+
 const dockerContainerFormat = `{"ID":{{json .Id}},"Name":{{json .Name}},"Image":{{json .Image}},"User":{{json .Config.User}},
 "Labels":{{json .Config.Labels}},"Tty":{{json .Config.Tty}},"OpenStdin":{{json .Config.OpenStdin}},
 "NetworkMode":{{json .HostConfig.NetworkMode}},"PidMode":{{json .HostConfig.PidMode}},"IpcMode":{{json .HostConfig.IpcMode}},
@@ -92,7 +97,7 @@ func (d *Docker) InspectContainer(ctx context.Context, ref DockerRef) (DockerCon
 	if target == "" {
 		target = ref.Name
 	}
-	data, err := d.output(ctx, 256<<10, "container", "inspect", "--format", dockerContainerFormat, target)
+	data, err := d.output(ctx, maxDockerContainerObservation, "container", "inspect", "--format", dockerContainerFormat, target)
 	if err != nil {
 		absent, checkErr := d.containerAbsent(ctx, ref)
 		if checkErr == nil && absent {
@@ -101,7 +106,7 @@ func (d *Docker) InspectContainer(ctx context.Context, ref DockerRef) (DockerCon
 		return DockerContainer{}, false, errors.Join(err, checkErr)
 	}
 	var value DockerContainer
-	if json.Unmarshal(data, &value) != nil || !dockerHexID(value.ID) || !strings.HasPrefix(value.Name, "/") || len(value.Mounts) > 512 || len(value.Tmpfs) > 32 || len(value.Labels) > 256 || value.RestartCount < 0 ||
+	if json.Unmarshal(data, &value) != nil || !dockerHexID(value.ID) || !strings.HasPrefix(value.Name, "/") || len(value.Mounts) > maxDockerMounts || len(value.Tmpfs) > 32 || len(value.Labels) > 256 || value.RestartCount < 0 ||
 		!slices.Contains([]string{"created", "running", "paused", "restarting", "removing", "exited", "dead"}, value.State.Status) {
 		return DockerContainer{}, false, errors.New("invalid Docker container observation")
 	}

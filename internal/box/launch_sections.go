@@ -166,15 +166,16 @@ func (s *launchSections) coopignoreComments(entries []string, quiet bool) {
 }
 
 // caseExposed warns about hidden files a box can still read under another letter case, which the
-// launch's owner accepted with COOP_ALLOW_CASE_EXPOSED_SECRETS.
+// launch's owner accepted through approval or the one-run override.
 func (s *launchSections) caseExposed(paths []string, quiet bool) {
-	for _, path := range paths {
-		switch {
-		case s.on:
-			ui.Caution("%s is readable in the box under another letter case (COOP_ALLOW_CASE_EXPOSED_SECRETS)", ui.SafeInline(path))
-		case !quiet:
-			ui.Warn("%s is readable in the box under another letter case (COOP_ALLOW_CASE_EXPOSED_SECRETS)", ui.SafeInline(path))
-		}
+	if len(paths) == 0 {
+		return
+	}
+	switch {
+	case s.on:
+		ui.Caution("Accepted case exposure: %d hidden files may be read under another letter case.", len(paths))
+	case !quiet:
+		ui.Warn("Accepted case exposure: %d hidden files may be read under another letter case.", len(paths))
 	}
 }
 

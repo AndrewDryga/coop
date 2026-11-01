@@ -140,6 +140,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [scaffold-config-reads-well](scaffold-config-reads-well.md) — scaffolded config leads every field with its comment and works as-is
 
 **Security**
+- [case-exposure-has-persistent-approval](case-exposure-has-persistent-approval.md) — remember reviewed case-exposed secret paths through coop approve without granting future paths or policy writes
 - [restricted-project-builds-are-explicit](restricted-project-builds-are-explicit.md) — restricted launches require explicit builds; native host terminals may confirm one private snapshot, never future edits
 - [eval-oracles-outside-agent-authority](eval-oracles-outside-agent-authority.md) — hidden eval material stays outside mounts, Git history, images, caches and every candidate tool path
 - [project-edits-request-access](project-edits-request-access.md) — one host approval grants requested access; check before execution and enforce agent/service permissions without approving ordinary edits

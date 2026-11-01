@@ -38,16 +38,24 @@ func (a *app) cmdApprove(args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	if review.Unchanged() {
+	caseReview, err := box.ReviewCaseExposure(ctx, a.cfg, repo)
+	if err != nil {
+		return 1, errors.Join(err, review.Close())
+	}
+	if review.Unchanged() && len(caseReview.Pending) == 0 {
 		// No security question has an answer that could change anything, so
 		// none is asked and nothing is written — not even a fresher timestamp.
 		ui.Note("%s", netApproveUnchanged)
 		return 0, nil
 	}
-	err = confirmNetApproval(ctx, review, os.Stderr, func() bool {
-		return confirmNetApprovalPrompt(ctx)
+	prompt, done := netApprovePrompt, netApproveApproved
+	if review.Unchanged() {
+		prompt, done = "Remember this file access for future runs and service starts?", "File access approved for future runs and service starts"
+	}
+	err = confirmProjectApproval(ctx, review, caseReview, os.Stderr, func() bool {
+		return confirmTerminalPrompt(ctx, prompt)
 	})
-	return reportNetChange(errors.Join(err, review.Close()), netApproveApproved)
+	return reportNetChange(errors.Join(err, review.Close()), done)
 }
 
 // reportNetChange finishes a confirmed approval change. One that was saved but could not reach
@@ -63,10 +71,6 @@ func reportNetChange(err error, done string) (int, error) {
 		ui.Warn("%s", netSessionsNotTold)
 	}
 	return 0, nil
-}
-
-func confirmNetApprovalPrompt(ctx context.Context) bool {
-	return confirmTerminalPrompt(ctx, netApprovePrompt)
 }
 
 func confirmTerminalPrompt(ctx context.Context, prompt string) bool {
@@ -117,9 +121,9 @@ type netApprovalReview interface {
 	Commit(context.Context) error
 }
 
-func confirmNetApproval(ctx context.Context, review netApprovalReview, out io.Writer, confirm func() bool) error {
+func confirmProjectApproval(ctx context.Context, review netApprovalReview, cases *box.CaseExposureReview, out io.Writer, confirm func() bool) error {
 	after := review.After()
-	if after == nil {
+	if after == nil && (cases == nil || len(cases.Pending) == 0) {
 		return errors.New("there is nothing to approve for this project")
 	}
 	var b strings.Builder
@@ -128,7 +132,18 @@ func confirmNetApproval(ctx context.Context, review netApprovalReview, out io.Wr
 	if pending := review.Pending(); pending != nil && pending.Sentence() != "" {
 		fmt.Fprintf(&b, "\nWhy approval is needed:\n  %s\n", pending.Sentence())
 	}
-	writeNetAccessChange(&b, p, review.Before(), after.Posture, after.Envelope)
+	if after != nil {
+		writeNetAccessChange(&b, p, review.Before(), after.Posture, after.Envelope)
+	}
+	if cases != nil && len(cases.Pending) > 0 {
+		fmt.Fprintln(&b, "\nFILE ACCESS ON THIS DISK")
+		fmt.Fprintln(&b, "  These hidden files can be read under another letter case:")
+		for _, path := range cases.Paths {
+			fmt.Fprintf(&b, "    %s\n", ui.SafeInline(path))
+		}
+		fmt.Fprintln(&b, "  Approval remembers these paths, including future contents, for agents and services.")
+		fmt.Fprintln(&b, "  New paths need approval. Already running boxes stay unchanged.")
+	}
 	if _, err := io.WriteString(out, b.String()); err != nil {
 		return err
 	}
@@ -142,7 +157,20 @@ func confirmNetApproval(ctx context.Context, review netApprovalReview, out io.Wr
 	if !confirmed {
 		return errors.New("cancelled — nothing was approved")
 	}
-	return review.Commit(ctx)
+	// Save file access before the network generation wakes editor supervisors.
+	if cases != nil {
+		if err := cases.Commit(ctx); err != nil {
+			return fmt.Errorf("could not save file access approval: %w", err)
+		}
+	}
+	if after != nil {
+		err := review.Commit(ctx)
+		if err != nil && !errors.Is(err, networkstate.ErrSessionsNotTold) && cases != nil && len(cases.Pending) > 0 {
+			return fmt.Errorf("file access was saved, but network approval failed: %w", err)
+		}
+		return err
+	}
+	return nil
 }
 
 // writeNetAccessChange is the review a person reads before approving: the

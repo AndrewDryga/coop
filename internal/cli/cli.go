@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -308,9 +309,19 @@ func uncoveredSpellingsBlock(paths []string, who, one string) (headline, reason,
 	if len(names) > 1 {
 		headline = fmt.Sprintf("Coop cannot hide %d files from %s", len(names), who)
 	}
-	reason = "This disk ignores letter case, so " + one + " could open " + strings.Join(names, ", ") +
+	listed := strings.Join(names, ", ")
+	if len(names) > 3 {
+		listed = strings.Join(names[:3], ", ") + fmt.Sprintf(" and %d more files", len(names)-3)
+	}
+	reason = "This disk ignores letter case, so " + one + " could open " + listed +
 		" under another spelling and read the real file. Coop covers every spelling of a hidden name only for names of up to 11 letters, and only so many in one launch."
-	fix = "Move the file into a hidden folder (a folder is hidden under every spelling), give it a shorter name, or set COOP_ALLOW_CASE_EXPOSED_SECRETS=1 to start anyway."
+	fix = "Run 'coop approve' to review and remember access to these files, or move them into a hidden folder. COOP_ALLOW_CASE_EXPOSED_SECRETS=1 accepts exposure for one run."
+	for _, path := range paths {
+		if box.IsCoopignoreName(filepath.Base(path)) {
+			fix = "Policy files cannot receive a file-access approval. Move nearby secret files into a hidden folder to reduce the number of case covers needed."
+			break
+		}
+	}
 	return headline, reason, fix
 }
 
