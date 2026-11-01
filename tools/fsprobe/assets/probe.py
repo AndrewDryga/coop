@@ -2,9 +2,11 @@
 import ctypes
 import errno
 import json
+import mmap
 import os
 from pathlib import Path
 import sys
+import time
 
 
 def read(path):
@@ -36,17 +38,52 @@ elif mode in ("read", "replacement", "unicode"):
         raise OSError(ctypes.get_errno(), "prctl")
     paths = [".env", ".ENV", ".Env", ".eNv", ".enV", ".EnV", ".ENv",
              "env-link", "env-hard", "replacement-hard", "Café.pem", "CAFÉ.PEM",
-             "Cafe\u0301.pem", "key.pem", "\u212aEY.PEM", "private/key", "PRIVATE/key",
+             "Cafe\u0301.pem", "Café", "key.pem", "\u212aEY.PEM", "private/key", "PRIVATE/key",
              ".coopignore", ".COOPIGNORE", "policy-link", "policy-hard", "public.txt"]
     if mode == "replacement":
         # Open the newly created hardlink FIRST, before a protected name could
         # classify the replacement inode. Reserve this spelling until now.
         paths = ["replacement-hard", ".eNV"] + paths
     if mode == "unicode":
-        paths = ["café.pem", "cAFÉ.PEM", "caFe\u0301.PeM", "\u212aey.PeM"] + paths
+        paths = ["café.pem", "cAFÉ.PEM", "caFe\u0301.PeM", "\u212aey.PeM", "cAFÉ", "caFe\u0301"] + paths
     print(json.dumps({path: read(root / path) for path in dict.fromkeys(paths)}))
 elif mode == "ancestor":
     print(json.dumps(read(root / "nested/.env")))
+elif mode == "open-first":
+    # No stat: the kernel observation must precede any userspace refresh.
+    print(json.dumps(read(root / sys.argv[3])))
+elif mode == "guest-alias":
+    # Mutation FIRST: reading the secret before linking/renaming would let an
+    # inode-learning policy hide its failure to enforce the mutation itself.
+    try:
+        if sys.argv[3] == "link":
+            os.link(root / ".env", root / "guest-alias")
+        elif sys.argv[3] == "rename":
+            os.rename(root / ".env", root / "guest-alias")
+        elif sys.argv[3] == "replace":
+            (root / "guest-save").write_text("MUTATED")
+            os.replace(root / "guest-save", root / ".env")
+        else:
+            raise ValueError(sys.argv[3])
+        outcome = {"result": "mutated"}
+    except OSError as error:
+        outcome = {"result": "error", "errno": error.errno}
+    print(json.dumps({"outcome": outcome, "alias": read(root / "guest-alias")}))
+elif mode == "hold":
+    # Keep a previously permitted descriptor and mapping while the HOST adds a
+    # protected alias and edits the inode. This is distinct from a new open.
+    with open(root / "held-public", "rb") as stream:
+        with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as mapping:
+            (root / "held-ready").write_text("READY")
+            deadline = time.monotonic() + 8
+            while not (root / "held-release").exists():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("host did not release held descriptor")
+                time.sleep(0.02)
+            fd_body = stream.read(256).decode("utf-8")
+            map_body = mapping[:256].decode("utf-8")
+            print(json.dumps({"descriptor": fd_body, "mapping": map_body,
+                              "fresh_open": read(root / "held-public")}))
 elif mode == "mutate":
     operation, spelling = sys.argv[3:5]
     target = root / spelling

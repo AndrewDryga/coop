@@ -195,12 +195,17 @@ func fixturePath(path string) bool {
 	if strings.EqualFold(path, ".coopignore") {
 		return true
 	}
+	for _, name := range []string{"Café", "guest-alias", "guest-save", "held-public", "held-ready", "held-release"} {
+		if path == name {
+			return true
+		}
+	}
 	for _, prefix := range []string{"policy-link-", "policy-hard-"} {
 		if strings.HasPrefix(path, prefix) && len(path) == len(prefix)+1 && path[len(prefix)] >= '0' && path[len(prefix)] <= '5' {
 			return true
 		}
 	}
-	for _, name := range []string{".env", ".ENV", ".COOPIGNORE", "Café.pem", "key.pem", ".coopignore", "identity", "public.txt", "env-link", "env-hard", "policy-link", "policy-hard", "replacement-hard", "editor-save", "new-public", "renamed-public", "policy-save", "moved-policy", "new-policy-link"} {
+	for _, name := range []string{".env", ".ENV", ".COOPIGNORE", "Café.pem", "key.pem", ".coopignore", "identity", "public.txt", "env-link", "env-hard", "policy-link", "policy-hard", "replacement-hard", "editor-save", "new-public", "renamed-public", "policy-save", "moved-policy", "new-policy-link", "warm-add", "warm-remove", "fresh-host-alias", "public-hard", "public-linked"} {
 		if path == name {
 			return true
 		}
@@ -248,7 +253,7 @@ func (f *fixture) seed() error {
 	}
 	for _, base := range []string{"workspace", "workspace/nested"} {
 		for name, body := range map[string]string{
-			".env": "INERT_SECRET", "Café.pem": "INERT_SECRET", "key.pem": "INERT_SECRET",
+			".env": "INERT_SECRET", "Café.pem": "INERT_SECRET", "Café": "INERT_SECRET", "key.pem": "INERT_SECRET",
 			"private/key": "INERT_SECRET", ".coopignore": "fixture policy\n", "public.txt": "PUBLIC",
 			"identity": f.name,
 		} {
@@ -281,6 +286,7 @@ type runner struct {
 	image, source, token string
 	refs                 []cruntime.DockerRef
 	programIDs           []uint32
+	mapID                uint32
 	report               *report
 }
 
@@ -338,7 +344,7 @@ func (r *runner) workload(ctx context.Context, f *fixture, name, base, target st
 	options := []string{"--network", "none", "--read-only", "--no-healthcheck", "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "32", "--memory", "256m", "--entrypoint", "/usr/bin/python3"}
 	binds := [][3]string{{filepath.Join(f.path, base), target, ""}, {r.source, "/probe", "ro"}}
 	if masked {
-		for _, name := range []string{".env", "Café.pem", "key.pem"} {
+		for _, name := range []string{".env", "Café.pem", "Café", "key.pem"} {
 			binds = append(binds, [3]string{filepath.Join(f.path, "empty"), target + "/" + name, "ro"})
 		}
 		binds = append(binds, [3]string{filepath.Join(f.path, "empty-dir"), target + "/private", "ro"}, [3]string{filepath.Join(f.path, "policy"), target + "/.coopignore", "ro"})
@@ -416,11 +422,13 @@ func (r *runner) attach(ctx context.Context, f *fixture, groups [2]uint64) error
 	var proof struct {
 		Attached   int
 		ProgramIDs []uint32 `json:"program_ids"`
+		MapID      uint32   `json:"map_id"`
 	}
-	if json.Unmarshal([]byte(stdout.String()), &proof) != nil || proof.Attached != 12 || len(proof.ProgramIDs) != 6 {
+	if json.Unmarshal([]byte(stdout.String()), &proof) != nil || proof.Attached != 12 || len(proof.ProgramIDs) != 6 || proof.MapID == 0 {
 		return errors.New("missing attachment evidence")
 	}
 	r.programIDs = proof.ProgramIDs
+	r.mapID = proof.MapID
 	// Prove actual access only after the privileged loader container is gone.
 	return r.docker.RemoveContainer(ctx, ref)
 }
@@ -428,29 +436,40 @@ func (r *runner) attach(ctx context.Context, f *fixture, groups [2]uint64) error
 func (r *runner) programsGone() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
+	args := []string{"--check-gone"}
+	for _, id := range r.programIDs {
+		args = append(args, strconv.FormatUint(uint64(id), 10))
+	}
+	args = append(args, strconv.FormatUint(uint64(r.mapID), 10))
+	data, err := r.observer(ctx, "kernel-cleanup", args...)
+	var proof struct {
+		Gone int `json:"programs_gone"`
+		Maps int `json:"maps_gone"`
+	}
+	if err == nil && (json.Unmarshal(data, &proof) != nil || proof.Gone != 6 || proof.Maps != 1) {
+		err = errors.New("kernel program/map cleanup unconfirmed")
+	}
+	return errors.Join(err, r.cleanup())
+}
+
+func (r *runner) observer(ctx context.Context, stage string, args ...string) ([]byte, error) {
 	value, err := mount(r.source, "/probe", true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	options := []string{"--network", "none", "--read-only", "--no-healthcheck", "--user", "0", "--cap-drop", "ALL", "--cap-add", "SYS_ADMIN", "--security-opt", "seccomp=unconfined", "--pids-limit", "32", "--memory", "512m", "--tmpfs", "/tmp:exec", "--entrypoint", "/bin/sh", "--mount", value}
-	command := []string{"-c", "gcc -O2 -Wall -Wextra -Werror /probe/loader.c -o /tmp/loader && exec timeout 20 /tmp/loader --check-gone \"$@\"", "cleanup"}
-	for _, id := range r.programIDs {
-		command = append(command, strconv.FormatUint(uint64(id), 10))
-	}
-	ref, err := r.create(ctx, "cleanup", options, command)
+	command := append([]string{"-c", "gcc -O2 -Wall -Wextra -Werror /probe/loader.c -o /tmp/loader && exec timeout 20 /tmp/loader \"$@\"", "observer"}, args...)
+	ref, err := r.create(ctx, stage, options, command)
 	if err != nil {
-		return errors.Join(err, r.cleanup())
+		return nil, err
 	}
 	var stdout, stderr boundedBuffer
 	code, runErr := r.docker.StartAttached(ctx, ref, nil, &stdout, &stderr, nil)
-	r.report.Observations = append(r.report.Observations, observation{Layout: "loader", Stage: "kernel-cleanup", Evidence: raw(map[string]any{"exit": code, "stdout": stdout.String(), "stderr": stderr.String()})})
-	var proof struct {
-		Gone int `json:"programs_gone"`
+	r.report.Observations = append(r.report.Observations, observation{Layout: "loader", Stage: stage, Evidence: raw(map[string]any{"exit": code, "stdout": stdout.String(), "stderr": stderr.String()})})
+	if runErr == nil && (code != 0 || stdout.overflow || stderr.overflow || !json.Valid([]byte(stdout.String()))) {
+		runErr = errors.New("kernel observation incomplete: " + stderr.String())
 	}
-	if runErr == nil && (code != 0 || stdout.overflow || stderr.overflow || json.Unmarshal([]byte(stdout.String()), &proof) != nil || proof.Gone != 6) {
-		runErr = errors.New("kernel program cleanup unconfirmed: " + stderr.String())
-	}
-	return errors.Join(runErr, r.cleanup())
+	return []byte(stdout.String()), errors.Join(runErr, r.docker.RemoveContainer(ctx, ref))
 }
 
 type boundedBuffer struct {

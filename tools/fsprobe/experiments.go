@@ -23,7 +23,7 @@ type readResult struct {
 	Errno        int
 }
 
-var readPaths = []string{".env", ".ENV", ".Env", ".eNv", ".enV", ".EnV", ".ENv", "env-link", "env-hard", "replacement-hard", "Café.pem", "CAFÉ.PEM", "Cafe\u0301.pem", "key.pem", "\u212aEY.PEM", "private/key", "PRIVATE/key", ".coopignore", ".COOPIGNORE", "policy-link", "policy-hard", "public.txt"}
+var readPaths = []string{".env", ".ENV", ".Env", ".eNv", ".enV", ".EnV", ".ENv", "env-link", "env-hard", "replacement-hard", "Café.pem", "CAFÉ.PEM", "Cafe\u0301.pem", "Café", "key.pem", "\u212aEY.PEM", "private/key", "PRIVATE/key", ".coopignore", ".COOPIGNORE", "policy-link", "policy-hard", "public.txt"}
 
 func reads(data []byte, mode string) (map[string]readResult, error) {
 	var result map[string]readResult
@@ -33,7 +33,7 @@ func reads(data []byte, mode string) (map[string]readResult, error) {
 	case "replacement":
 		expected = append(expected, ".eNV")
 	case "unicode":
-		expected = append(expected, "café.pem", "cAFÉ.PEM", "caFe\u0301.PeM", "\u212aey.PeM")
+		expected = append(expected, "café.pem", "cAFÉ.PEM", "caFe\u0301.PeM", "\u212aey.PeM", "cAFÉ", "caFe\u0301")
 	default:
 		return nil, errors.New("unknown read mode")
 	}
@@ -200,7 +200,7 @@ func (r *runner) experiments(ctx context.Context, f *fixture, bpf bool) error {
 		if err = r.observeReads(ctx, l, "host-atomic-replacement", "replacement"); err != nil {
 			return err
 		}
-		for _, name := range []string{"Café.pem", "key.pem"} {
+		for _, name := range []string{"Café.pem", "Café", "key.pem"} {
 			if err = f.write(l.base+"/editor-save", "INERT_UNICODE_REPLACEMENT"); err != nil {
 				return err
 			}
@@ -221,6 +221,17 @@ func (r *runner) experiments(ctx context.Context, f *fixture, bpf bool) error {
 		}
 		if err = r.policy(ctx, f, l); err != nil {
 			return err
+		}
+		if bpf {
+			if err = r.guestAliases(ctx, f, l); err != nil {
+				return err
+			}
+			if err = r.linkMetadata(ctx, f, l); err != nil {
+				return err
+			}
+			if err = r.heldDescriptor(ctx, f, l); err != nil {
+				return err
+			}
 		}
 	}
 	// Replacing a whole ancestor changes the parent identity used by the candidate.
@@ -263,6 +274,11 @@ func (r *runner) experiments(ctx context.Context, f *fixture, bpf bool) error {
 	}
 	if err := f.verify(); err != nil {
 		return err
+	}
+	if bpf {
+		if err := r.openTelemetry(ctx); err != nil {
+			return err
+		}
 	}
 	// Fixed rules are not Coop's full policy. Never turn evidence into an admission grant.
 	r.report.Qualified = false
