@@ -58,6 +58,11 @@ compatibility costs. Choose a focused redesign when it yields a simpler, correct
 layering exceptions onto the old model. Deliver it in verifiable steps through the full approved
 outcome; judge simplicity by the resulting system, not the size of the diff.
 
+For performance work, measure the complete workflow and its critical path before adding
+a cache, daemon or warm pool. Include idle memory/CPU, rebuild peaks, scaling across projects,
+and invalidation/cleanup costs. Set bounds on retained resources. Keep only changes whose
+measured benefit earns the ongoing complexity without weakening correctness.
+
 ## 4. Output
 - A numbered list of **small, independently verifiable steps**, each with its own
   done-condition (what gate proves it).

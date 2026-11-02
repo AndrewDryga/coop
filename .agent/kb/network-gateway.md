@@ -9,6 +9,12 @@ updated: 2026-11-02
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
 (`cmd/coop-net/main.go`), and puts the agent in the controller's network namespace.
 
+Network helpers are fresh per run: `ReadLaunchConfig` loads their authority at process
+startup and `NewController`/`NewGuard` clone that policy. A generic READY pool would need an
+explicit activation and custody-transfer protocol; swapping a configuration file is insufficient.
+`runBox` already overlaps `prepareRuntime` with filesystem admission. Measure the join
+critical path before treating helper preparation time as time a warm pool could save.
+
 Private helper IPC/observation uses protocol2 and kernel-qualified boot-clock coordinates.
 `OpenBootClock` pins the reading thread and verifies its current/child namespaces agree with
 the process leader's before and after reading bounded, canonical `timens_offsets`. Namespace
@@ -313,6 +319,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-02 — checked startup policy capture and concurrent preparation against the helper
+  constructors, main entrypoint and launch path. Recorded the activation/measurement boundary
+  after rejecting a speculative warm pool; other gateway sections were not reverified.
 - 2026-11-02 — moved bound named-volume exposure reads to the frozen socket; retained fresh
   mount checks, shared backing-path projection, daemon fences and unknown-outcome refusals.
 - 2026-11-02 — network census uses a bounded list read plus exact Swarm inspections instead of CLI processes;

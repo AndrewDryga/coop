@@ -39,11 +39,11 @@ func TestInitAdapterManifest(t *testing.T) {
 		agents []string
 		want   string
 	}{
-		{"none", nil, "0fd3a7eba0065b845ac4c41a306ae64ab440d115e24eabea168b331084e1cbd0"},
-		{"claude", []string{"claude"}, "18433081666e0eac56ca818526f60e74141305ac69ce1844ce6c3739c2063a46"},
-		{"codex", []string{"codex"}, "ec48c8c498a78af9162f94d6e786ed578cda1e4576f49145baa56aa7c3edf5e1"},
-		{"gemini", []string{"gemini"}, "b276fd7aaa56ad98aa4073af09b84a919d93c5618b9e40701ebc364f9d93f4c6"},
-		{"all", []string{"claude", "codex", "gemini"}, "b0d83c539b11c374f1f26404ad61d3c8c249f0fb4ad1ee0c5520e0e7e35578f1"},
+		{"none", nil, "06971861108e9072780d31f6f89e3fdc899f20888ff1255205f5ae3301d8ac2e"},
+		{"claude", []string{"claude"}, "48d4d373739164401ead5f08a95b23ed0d9665b5020a29bd8d32468a5c7610c0"},
+		{"codex", []string{"codex"}, "09f7510e1bdcdff261fb4438e06d4526a8c741bfa880ee9c6dace1f346a3b1b4"},
+		{"gemini", []string{"gemini"}, "5f58da92884c6faf4986258c0e76f981a11d21f418ac3eebe06034175d262a37"},
+		{"all", []string{"claude", "codex", "gemini"}, "e14670881a888bc3247be19969e13cf5fdc864211e9d460bd5b901c73b288452"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := t.TempDir()

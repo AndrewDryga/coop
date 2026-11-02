@@ -70,6 +70,12 @@ actual EPERM/EACCES is mandatory, a successful open or any other error fails imm
 public-content checks remain required. The probe records how many missing observations occurred;
 it never refreshes another alias or restarts the qualification to make a failure disappear.
 
+FSEvents is not authoritative evidence that a retained inventory is current. Its flush can
+return before completed filesystem changes are reported, even after draining the callback
+queue. [Watchman documents the same unsupported synchronization guarantee](https://github.com/facebook/watchman/blob/main/website/docs/cookies.md#limitation-macos-fsevents).
+The November 2026 prototype reproduced this on 100 fsynced creates. A live index would still
+need fresh authority; a settling delay or watcher restart fallback does not close that gap.
+
 ## Trusted-host snapshot contract
 
 The host and external editor are trusted. Public edits/hardlinks/moves work normally. Existing
@@ -178,6 +184,9 @@ The ACP live conformance test accepts the same qualification switch to inspect t
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
 ## Changelog
+- 2026-11-02 — recorded the failed FSEvents freshness experiment and Watchman limitation;
+  rechecked inventory and final-validation ownership in the snapshot/walk sources. No scan
+  was replaced with persistent observer state. Other enforcement sections were not reverified.
 - 2026-11-02 — split reusable controller infrastructure from fresh per-run policies; documented
   exact generation custody, nested mount depth, recycled-kptr publication and explicit revocation.
 - 2026-11-02 — removed CLI processes from exact start/removal and overlapped filtered retirement
