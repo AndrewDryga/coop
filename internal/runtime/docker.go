@@ -414,6 +414,10 @@ func (d *Docker) readInfo(ctx context.Context) (DockerInfo, error) {
 }
 
 func (d *Docker) daemonGet(ctx context.Context, path string) (*http.Response, error) {
+	return d.daemonRequest(ctx, http.MethodGet, path)
+}
+
+func (d *Docker) daemonRequest(ctx context.Context, method, path string) (*http.Response, error) {
 	// The socket is the endpoint's literal bytes after unix://, as the docker CLI reads it for every
 	// other operation: a URL-decoded path could name a different socket, and so another daemon.
 	socket, ok := strings.CutPrefix(d.endpoint, "unix://")
@@ -431,7 +435,7 @@ func (d *Docker) daemonGet(ctx context.Context, path string) (*http.Response, er
 		// the Docker client follows no redirect, and neither does this
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker"+path, nil)
+	request, err := http.NewRequestWithContext(ctx, method, "http://docker"+path, nil)
 	if err != nil {
 		return nil, errors.Join(errDockerCommandNotStarted, err)
 	}

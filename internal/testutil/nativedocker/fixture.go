@@ -112,6 +112,18 @@ func Process(t *testing.T) {
 }
 
 func (f *nativeOnlineFixture) serve(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/containers/") && r.URL.RawQuery == "force=true" {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		id := strings.TrimPrefix(r.URL.Path, "/containers/")
+		if _, present := f.containers[id]; !present {
+			http.NotFound(w, r)
+			return
+		}
+		delete(f.containers, id)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if r.Method == http.MethodGet && r.URL.Path == "/info" {
 		_ = json.NewEncoder(w).Encode(dockersock.Info{ID: "fixture-daemon", OSType: "linux", Architecture: "amd64", ServerVersion: "29.1", KernelVersion: "fixture", SecurityOptions: []string{}})
 		return
@@ -294,15 +306,6 @@ func (f *nativeOnlineFixture) command(request nativeOnlineRequest) (nativeOnline
 			return nativeOnlineReply{Output: "ready\n", HoldID: id}, nil
 		case "ls":
 			return f.list(args[2:], true)
-		case "rm":
-			if len(args) != 4 || args[2] != "--force" {
-				return fail()
-			}
-			if _, present := f.containers[args[3]]; !present {
-				return fail()
-			}
-			delete(f.containers, args[3])
-			return nativeOnlineReply{}, nil
 		}
 	case "ps":
 		return f.list(args[1:], false)

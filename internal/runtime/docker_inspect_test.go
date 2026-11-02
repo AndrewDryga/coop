@@ -17,10 +17,6 @@ import (
 
 func fixtureDockerAPI(file string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.NotFound(w, r)
-			return
-		}
 		if r.URL.Path == "/info" {
 			info, err := fixtureDaemonInfo(file)
 			if err != nil {
@@ -34,6 +30,32 @@ func fixtureDockerAPI(file string) http.Handler {
 		data, err := os.ReadFile(file)
 		if err != nil || json.Unmarshal(data, &fixture) != nil {
 			http.Error(w, "unavailable", 500)
+			return
+		}
+		if r.Method == http.MethodDelete && fixture.Container != nil && r.URL.Path == "/containers/"+fixture.Container.ID && r.URL.RawQuery == "force=true" {
+			fixture.Container = nil
+			fixture.Mutations++
+			data, _ := json.Marshal(fixture)
+			if os.WriteFile(file, data, 0600) != nil {
+				http.Error(w, "fixture write failed", 500)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodPost && fixture.Container != nil && r.URL.Path == "/containers/"+fixture.Container.ID+"/start" && fixture.Mode != "no-start" {
+			fixture.Container.State = DockerContainerState{Status: "running", Running: true, StartedAt: time.Now().UTC()}
+			fixture.Mutations++
+			data, _ := json.Marshal(fixture)
+			if os.WriteFile(file, data, 0600) != nil {
+				http.Error(w, "fixture write failed", 500)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.NotFound(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/volumes/") && fixture.Mode == "shared-volume" {

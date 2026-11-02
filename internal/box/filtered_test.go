@@ -314,6 +314,7 @@ func fixtureLabelsMatch(want, have map[string]string) bool {
 	return true
 }
 func (d *filteredDaemonFixture) RemoveVolume(_ context.Context, ref runtime.DockerRef) error {
+	d.arrive("remove:" + ref.Labels["coop.network.role"])
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	role := ref.Labels["coop.network.role"]

@@ -109,32 +109,6 @@ func (d *Docker) InspectContainer(ctx context.Context, ref DockerRef) (DockerCon
 	return value, true, nil
 }
 
-func (d *Docker) containerAbsent(ctx context.Context, ref DockerRef) (bool, error) {
-	if err := d.Verify(ctx); err != nil {
-		return false, err
-	}
-	filter := "name=" + ref.Name
-	if ref.ID != "" {
-		filter = "id=" + ref.ID
-	}
-	data, err := d.output(ctx, 64<<10, "container", "ls", "--all", "--no-trunc", "--filter", filter, "--format", `{"name":{{json .Names}},"id":{{json .ID}}}`)
-	if err != nil {
-		return false, err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	for {
-		var item struct{ Name, ID string }
-		if err := decoder.Decode(&item); errors.Is(err, io.EOF) {
-			return true, nil
-		} else if err != nil || !dockerHexID(item.ID) || !dockerName(item.Name) {
-			return false, errors.New("invalid Docker absence observation")
-		}
-		if ref.ID != "" && item.ID == ref.ID || ref.ID == "" && item.Name == ref.Name {
-			return false, nil
-		}
-	}
-}
-
 type DockerVolume struct {
 	Name, Driver, Scope, CreatedAt string
 	Labels, Options                map[string]string

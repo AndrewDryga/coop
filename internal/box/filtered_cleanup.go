@@ -28,7 +28,21 @@ func (f *filteredExecution) resource(role string) networkstate.Resource {
 // Cleanup starts only after host generators and the observation goroutine have
 // stopped. Each operation has its own deadline so one wedged resource cannot
 // prevent containment attempts on the others.
-func (f *filteredExecution) cleanup(workload string) (agentGone bool, result error) {
+func (f *filteredExecution) cleanup(workload string) (bool, error) {
+	var retire func() error
+	if f.filesystem != nil {
+		retire = f.filesystem.close
+	}
+	return f.cleanupWithFilesystem(workload, retire)
+}
+
+func (f *filteredExecution) cleanupWithFilesystem(workload string, retire func() error) (agentGone bool, result error) {
+	filesystemClosed := false
+	defer func() {
+		if retire != nil && !filesystemClosed {
+			result = errors.Join(result, retire())
+		}
+	}()
 	if f.preparedServices != nil && f.preparedServices.cleanup != nil {
 		defer f.preparedServices.cleanup()
 	}
@@ -82,87 +96,103 @@ func (f *filteredExecution) cleanup(workload string) (agentGone bool, result err
 	result = errors.Join(result, f.removeResource(evidence, "agent"))
 	agentGone = f.resource("agent").State == "gone"
 	retainEvidence := false
-	guard, guardRan, resolveErr := f.resolveContainer("guard")
-	result = errors.Join(result, resolveErr)
-	// A guard that was only created never ran: there is nothing to stop and no final observation to
-	// take — asking the daemon for one reports a missing file, a failure that never happened.
-	if resolveErr == nil && guard.ID != "" && guardRan {
-		if agentGone {
-			ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
-			// This round-trip happens after exact agent absence. A guard that
-			// already terminated cannot produce the causal readiness reply.
-			if _, err := f.docker.ExecRead(ctx, guard, 4096, "/usr/local/bin/coop-net", "probe"); err == nil {
-				result = errors.Join(result, f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
-					return f.store.RecordObserverAfterWorkload(ctx, r.ID, r.Revision)
-				}))
+	finishNetwork := func() error {
+		var networkErr error
+		guard, guardRan, resolveErr := f.resolveContainer("guard")
+		networkErr = errors.Join(networkErr, resolveErr)
+		// A guard that was only created never ran: there is nothing to stop and no final observation to
+		// take — asking the daemon for one reports a missing file, a failure that never happened.
+		if resolveErr == nil && guard.ID != "" && guardRan {
+			if agentGone {
+				ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
+				// This round-trip happens after exact agent absence. A guard that
+				// already terminated cannot produce the causal readiness reply.
+				if _, err := f.docker.ExecRead(ctx, guard, 4096, "/usr/local/bin/coop-net", "probe"); err == nil {
+					networkErr = errors.Join(networkErr, f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+						return f.store.RecordObserverAfterWorkload(ctx, r.ID, r.Revision)
+					}))
+				}
+				cancel()
 			}
-			cancel()
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
-		stopErr := f.docker.StopContainer(ctx, guard, 10)
-		cancel()
-		result = errors.Join(result, stopErr)
-		if stopErr == nil && agentGone {
-			// Terminal collector evidence is not workload-wide coverage when an
-			// agent might still survive. Never accept that misleading final frame.
 			ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
-			data, captureErr := f.docker.CopyArchive(ctx, guard, networkgateway.FinalObservationPath, networkgateway.MaxSnapshotBytes+64<<10)
-			if captureErr == nil {
-				var observation []byte
-				observation, captureErr = finalObservationFile(data)
+			stopErr := f.docker.StopContainer(ctx, guard, 10)
+			cancel()
+			networkErr = errors.Join(networkErr, stopErr)
+			if stopErr == nil && agentGone {
+				// Terminal collector evidence is not workload-wide coverage when an
+				// agent might still survive. Never accept that misleading final frame.
+				ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
+				data, captureErr := f.docker.CopyArchive(ctx, guard, networkgateway.FinalObservationPath, networkgateway.MaxSnapshotBytes+64<<10)
 				if captureErr == nil {
-					snapshot, decodeErr := f.readObservation(observation)
-					if decodeErr != nil || !snapshot.Terminal {
-						captureErr = errors.New("terminal network observation is invalid")
-					} else if persistErr := f.accept(ctx, snapshot); persistErr != nil {
-						// Do not destroy the last source after ambiguous persistence.
-						retainEvidence, captureErr = true, persistErr
+					var observation []byte
+					observation, captureErr = finalObservationFile(data)
+					if captureErr == nil {
+						snapshot, decodeErr := f.readObservation(observation)
+						if decodeErr != nil || !snapshot.Terminal {
+							captureErr = errors.New("terminal network observation is invalid")
+						} else if persistErr := f.accept(ctx, snapshot); persistErr != nil {
+							// Do not destroy the last source after ambiguous persistence.
+							retainEvidence, captureErr = true, persistErr
+						}
 					}
 				}
+				cancel()
+				// Missing/corrupt final evidence becomes a partial receipt. It must
+				// not prevent stopping the workload or exact-owned resource cleanup.
+				networkErr = errors.Join(networkErr, captureErr)
 			}
+		}
+		// Removing the guard and stopping the controller are independent — the guard has stopped and its
+		// final observation is taken — so they run together; only the controller's removal needs the
+		// guard gone.
+		var guardErr, controllerErr error
+		var steps sync.WaitGroup
+		if !retainEvidence {
+			steps.Go(func() { guardErr = f.removeResource(evidence, "guard") })
+		}
+		steps.Go(func() {
+			controller, _, err := f.resolveContainer("controller")
+			if err != nil || controller.ID == "" {
+				controllerErr = err
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
+			controllerErr = f.docker.StopContainer(ctx, controller, 0)
 			cancel()
-			// Missing/corrupt final evidence becomes a partial receipt. It must
-			// not prevent stopping the workload or exact-owned resource cleanup.
-			result = errors.Join(result, captureErr)
+		})
+		steps.Wait()
+		networkErr = errors.Join(networkErr, guardErr, controllerErr)
+		if !retainEvidence && f.resource("guard").State == "gone" && agentGone {
+			networkErr = errors.Join(networkErr, f.removeResource(evidence, "controller"))
 		}
-	}
-	// Removing the guard and stopping the controller are independent — the guard has stopped and its
-	// final observation is taken — so they run together; only the controller's removal needs the
-	// guard gone. Each runtime call is a CLI process of about a tenth of a second.
-	var guardErr, controllerErr error
-	var steps sync.WaitGroup
-	if !retainEvidence {
-		steps.Go(func() { guardErr = f.removeResource(evidence, "guard") })
-	}
-	steps.Go(func() {
-		controller, _, err := f.resolveContainer("controller")
-		if err != nil || controller.ID == "" {
-			controllerErr = err
-			return
+		consumersGone := agentGone && f.resource("guard").State == "gone" && f.resource("controller").State == "gone"
+		if consumersGone {
+			// With every consumer gone the two volumes are independent too.
+			var ipcErr, observationsErr error
+			var volumes sync.WaitGroup
+			volumes.Go(func() { ipcErr = f.removeResource(evidence, "ipc") })
+			volumes.Go(func() { observationsErr = f.removeResource(evidence, "observations") })
+			volumes.Wait()
+			networkErr = errors.Join(networkErr, ipcErr, observationsErr)
+			ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
+			networkErr = errors.Join(networkErr, f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+				return evidence.CleanupArtifacts(ctx, r.ID, r.Revision)
+			}))
+			cancel()
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
-		controllerErr = f.docker.StopContainer(ctx, controller, 0)
-		cancel()
-	})
-	steps.Wait()
-	result = errors.Join(result, guardErr, controllerErr)
-	if !retainEvidence && f.resource("guard").State == "gone" && agentGone {
-		result = errors.Join(result, f.removeResource(evidence, "controller"))
+		return networkErr
 	}
-	consumersGone := agentGone && f.resource("guard").State == "gone" && f.resource("controller").State == "gone"
-	if consumersGone {
-		// With every consumer gone the two volumes are independent too.
-		var ipcErr, observationsErr error
-		var volumes sync.WaitGroup
-		volumes.Go(func() { ipcErr = f.removeResource(evidence, "ipc") })
-		volumes.Go(func() { observationsErr = f.removeResource(evidence, "observations") })
-		volumes.Wait()
-		result = errors.Join(result, ipcErr, observationsErr)
-		ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
-		result = errors.Join(result, f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
-			return evidence.CleanupArtifacts(ctx, r.ID, r.Revision)
-		}))
-		cancel()
+	// Remove the shared consumer once before overlapping independent retirement.
+	// If absence is uncertain, preserve sequential containment and its custody.
+	if retire != nil && agentGone {
+		filesystemClosed = true
+		result = errors.Join(result, together(context.Background(), finishNetwork, retire))
+	} else {
+		result = errors.Join(result, finishNetwork())
+		if retire != nil {
+			filesystemClosed = true
+			result = errors.Join(result, retire())
+		}
 	}
 	if !retainEvidence {
 		ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)

@@ -782,6 +782,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}()
 
 	var filtered *filteredExecution
+	filteredTornDown := false
 	var execution forkspace.ExecutionRecord
 	var interrupt *hostInterrupt // the host signal that cancelled this run, if one did
 	// A failure from here to the main process is rendered once, under the section in progress,
@@ -825,7 +826,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// One implementation, called from every path that starts a filtered launch — see
 			// filteredExecution.teardown for why it must not be copied into a second launcher.
 			defer func() {
-				result, teardownErr = filtered.teardown(spec, sections, execution, exitCode, result, stopped)
+				if !filteredTornDown {
+					filteredTornDown = true
+					result, teardownErr = filtered.teardown(spec, sections, execution, exitCode, result, stopped)
+				}
 			}()
 		}
 		if err != nil {
@@ -866,7 +870,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// Register before the join: together also waits for peers before rethrowing
 	// a panic, and a successful admission still needs cleanup on that path.
 	defer func() {
-		if admission != nil && !filesystemClosed {
+		if filtered != nil {
+			// Retire before composition artifacts, after native credential revocation.
+			// The local admission also survives a panic before normal assignment.
+			filtered.filesystem = admission
+			filteredTornDown = true
+			result, teardownErr = filtered.teardown(spec, sections, execution, exitCode, result, stopped)
+		} else if admission != nil && !filesystemClosed {
 			result = errors.Join(result, admission.close())
 		}
 	}()

@@ -119,8 +119,13 @@ Filtered launches prepare the trusted filesystem owner and network helpers concu
 branches finish before cleanup or workload creation; errors never abandon an in-flight branch.
 After creating the stopped workload, final filesystem validation overlaps final network checks.
 Both must pass before authorization and attach. Native credentials are revoked before filesystem
-retirement. Container inspection uses the frozen Docker socket with daemon checks on both sides;
-an HTTP failure or malformed response is unknown, never absence. Image identity, layer chains
+retirement. Filtered cleanup confirms the shared agent is gone, then overlaps filesystem
+retirement with the remaining network cleanup. Both branches settle before the network receipt
+is sealed or the run returns; composition artifacts survive the join. Early preparation failures
+and panics retain the same local-admission cleanup fallback. Container inspection uses the frozen Docker socket with daemon checks on both sides;
+an HTTP failure or malformed response is unknown, never absence. Exact noninteractive container starts and force removal also use this bound socket, preserving
+never-started checks and fresh postconditions; ambiguous removal succeeds only after proven absence.
+Image identity, layer chains
 and execution defaults also use fresh bounded socket observations, with no mutable-tag cache.
 Full image metadata has a separate wire bound; each selected projection retains its 64KiB bound.
 
@@ -151,6 +156,8 @@ The ACP live conformance test accepts the same qualification switch to inspect t
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
 ## Changelog
+- 2026-11-02 — removed CLI processes from exact start/removal and overlapped filtered retirement
+  after consumer absence, preserving credential/artifact ordering and joining before receipt seal.
 - 2026-11-02 — shared fresh normalization across all guards through exclusively C-owned unpinned
   replacements; documented the scalar ABI, reused maps and lifecycle tests against packaged sources.
 - 2026-11-02 — synchronized denied probe opens with bounded host-rename visibility, requiring

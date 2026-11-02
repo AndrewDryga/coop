@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"slices"
@@ -127,7 +128,7 @@ func (d *Docker) StartContainer(ctx context.Context, ref DockerRef) error {
 	if err := d.beforeStart(ctx, ref); err != nil {
 		return err
 	}
-	if _, err := d.output(ctx, 1024, "container", "start", ref.ID); err != nil {
+	if err := d.containerMutation(ctx, http.MethodPost, ref.ID, "/start"); err != nil {
 		return err
 	}
 	value, present, err := d.InspectContainer(ctx, ref)
@@ -403,9 +404,9 @@ func (d *Docker) RemoveContainer(ctx context.Context, ref DockerRef) error {
 	if err != nil || !present {
 		return err
 	}
-	_, removeErr := d.output(ctx, 1024, "container", "rm", "--force", ref.ID)
-	absent, err := d.containerAbsent(ctx, ref)
-	if err == nil && absent {
+	removeErr := d.containerMutation(ctx, http.MethodDelete, ref.ID, "?force=true")
+	_, present, err = d.InspectContainer(ctx, ref)
+	if err == nil && !present {
 		return nil
 	}
 	return errors.Join(errors.New("Docker container cleanup remains pending"), removeErr, err)
