@@ -343,7 +343,7 @@ func TestTerminalDriftNamesThePageBlockAndLine(t *testing.T) {
 }
 
 func TestPagesShareTheMainNavigation(t *testing.T) {
-	for name, install := range map[string]string{"index.html": "#start", "orchestrator.html": "#start", "docs.html": "./#start", "sandbox-guide.html": "./#start", "overnight-guide.html": "./#start"} {
+	for name, install := range map[string]string{"index.html": "#start", "orchestrator.html": "#start", "docs.html": "./#start", "sandbox-guide.html": "./#start", "overnight-guide.html": "./#start", "claude-code-sandbox.html": "./#start", "codex-sandbox.html": "./#start", "gemini-cli-sandbox.html": "./#start", "grok-cli-sandbox.html": "./#start"} {
 		page := parsePage(t, readSite(t, name))
 		for _, href := range []string{"orchestrator.html", "docs.html", "https://github.com/AndrewDryga/coop", install} {
 			if !slices.Contains(page.mainNav, href) {
@@ -360,7 +360,7 @@ func TestPagesShareTheMainNavigation(t *testing.T) {
 }
 
 func TestGuideCommandsCopyAsRunnableShell(t *testing.T) {
-	for _, name := range []string{"sandbox-guide.html", "overnight-guide.html"} {
+	for _, name := range []string{"sandbox-guide.html", "overnight-guide.html", "claude-code-sandbox.html", "codex-sandbox.html", "gemini-cli-sandbox.html", "grok-cli-sandbox.html"} {
 		page := parsePage(t, readSite(t, name))
 		if len(page.copySources) == 0 {
 			t.Errorf("%s has no copyable walkthrough commands", name)
@@ -381,7 +381,7 @@ func offSite(href string) bool {
 }
 
 func TestLinksOffTheSiteOpenInANewTabWithNofollow(t *testing.T) {
-	for _, name := range []string{"index.html", "orchestrator.html", "docs.html", "sandbox-guide.html", "overnight-guide.html"} {
+	for _, name := range []string{"index.html", "orchestrator.html", "docs.html", "sandbox-guide.html", "overnight-guide.html", "claude-code-sandbox.html", "codex-sandbox.html", "gemini-cli-sandbox.html", "grok-cli-sandbox.html"} {
 		external := 0
 		for _, e := range parsePage(t, readSite(t, name)).elements {
 			href := e.attrs["href"]
@@ -520,7 +520,7 @@ func TestALinkToAMissingPageIsReported(t *testing.T) {
 	}
 }
 
-var sitemapPage = regexp.MustCompile(`<loc>https://coop\.dryga\.com/([^<]*)</loc>`)
+var sitemapPage = regexp.MustCompile(`<loc>https://` + regexp.QuoteMeta(siteHost) + `/([^<]*)</loc>`)
 
 func TestSitemapListsEveryCanonicalPage(t *testing.T) {
 	listed := map[string]bool{}

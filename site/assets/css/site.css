@@ -455,8 +455,8 @@ main:focus { outline: none; }
 .doc-section h3 { font-size: 1.5rem; line-height: 1.3333; letter-spacing: -0.015em; }
 /* the rhythm: :where keeps the block rules light, so a subheading's own spacing always wins */
 .doc-section > * + * { margin-top: var(--flow); }
-.doc-section > :where(.cmds, .code-file, .window, .why, .callout, .table-scroll),
-.doc-section > :where(.cmds, .code-file, .window, .why, .callout, .table-scroll) + * { margin-top: var(--block); }
+.doc-section > :where(.cmds, .code-file, .terminal-example, .window, .why, .callout, .table-scroll),
+.doc-section > :where(.cmds, .code-file, .terminal-example, .window, .why, .callout, .table-scroll) + * { margin-top: var(--block); }
 .doc-section > h3 { margin-top: 48px; }
 .doc-section > h3 + * { margin-top: 16px; }
 .doc-section > :is(ul:not(.cmds), ol) { padding-left: 1.4em; }
@@ -522,13 +522,35 @@ main:focus { outline: none; }
 .guide-section h2 { display: flex; align-items: baseline; gap: 16px; }
 .guide-step { flex: none; color: var(--muted); font: 400 1rem/1.5 var(--mono); letter-spacing: 0; }
 .guide .guide-location { margin-top: 32px; color: var(--muted); font: 400 0.875rem/1.5 var(--mono); }
-.guide .guide-location + .cmds { margin-top: 12px; }
+.guide .guide-location + :is(.cmds, .terminal-example) { margin-top: 12px; }
 .guide .cmds { grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; }
 .guide .cmds .copy { grid-column: 2; }
 .guide .cmds code { min-width: 0; }
+.guide .cmds .command-block { align-items: start; }
+.guide .cmds .command-block code { padding-block: 8px; }
 .guide .copy-failed > .copy-status { position: static; grid-column: 1 / -1; grid-row: auto; width: auto; margin: 4px 0 6px; padding: 10px 12px; box-shadow: none; }
 .guide .code-file.copy-failed > .copy-status { margin-inline: 12px; }
 .guide .code-file-name { overflow-wrap: anywhere; font-size: 0.875rem; }
+/* Commands and their output share one terminal surface; Copy still selects only the command. */
+.guide .terminal-example { padding: 12px 0 20px; border-radius: 12px; background: var(--surface); }
+.guide .terminal-example .cmds { padding-block: 0; border-radius: 0; background: transparent; }
+.guide .terminal-example .cmds li { align-items: start; }
+.guide .terminal-example .cmds code { padding-block: 8px; }
+.guide .terminal-example > .cmds:not(:first-child) { margin-top: 24px; }
+.guide .terminal-example pre.code { margin-top: 4px; padding: 0 24px; border-radius: 0; background: transparent; }
+.guide .terminal-example > pre.code + .cmds { margin-top: 32px; }
+.guide .terminal-example pre.terminal-table { max-width: 100%; overflow-x: auto; white-space: pre; overflow-wrap: normal; }
+.guide .terminal-example samp { color: color-mix(in srgb, var(--muted) 80%, var(--body)); font: inherit; }
+.guide .terminal-platform { margin: 16px 24px 0; color: var(--muted); font: 400 0.875rem/1.5 var(--mono); }
+.guide .terminal-platform + pre.code { margin-top: 8px; }
+.guide .terminal-output-tabs { display: flex; gap: 16px; margin: 0 24px 8px; border-bottom: 1px solid var(--line); }
+.guide .terminal-output-tabs button { padding: 8px 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font: 500 0.875rem/1.5 var(--sans); cursor: pointer; }
+.guide .terminal-example > .terminal-output-tabs + .cmds { margin-top: 0; }
+.guide .terminal-output-tabs button:hover { color: var(--text); }
+.guide .terminal-output-tabs button[aria-selected="true"] { border-bottom-color: currentColor; color: var(--text); }
+.guide [data-output-tabs-ready] .terminal-platform { display: none; }
+.guide [data-output-platform][hidden] { display: none; }
+
 .guide-checkpoint { padding-left: 20px; border-left: 2px solid var(--cyan); }
 .guide-checkpoint > p + p { margin-top: 8px; }
 .guide-example { margin-inline: 0; padding: 24px; border: 1px solid var(--edge); border-radius: 12px; background: var(--surface); }
@@ -542,6 +564,8 @@ main:focus { outline: none; }
 .guide-detail { border-block: 1px solid var(--line); font-size: 1rem; line-height: 1.75; }
 .guide-detail summary { position: relative; padding: 16px 32px 16px 0; color: var(--text); font-weight: 500; cursor: pointer; list-style: none; }
 .guide-detail summary::-webkit-details-marker { display: none; }
+.guide-help > summary { display: flex; align-items: flex-start; gap: 12px; }
+.guide-help > summary > .icon { width: 18px; height: 18px; margin-top: 5px; color: var(--muted); }
 .guide-detail summary::after { content: "+"; position: absolute; right: 4px; top: 16px; color: var(--cyan); font-family: var(--mono); }
 .guide-detail[open] summary::after { content: "−"; }
 .guide-detail > div { padding-bottom: 24px; }
@@ -567,6 +591,8 @@ main:focus { outline: none; }
   .guide-example { padding: 20px; }
 }
 @media (forced-colors: active) {
+  .guide .terminal-example { border: 1px solid CanvasText; }
+  .guide .terminal-example :is(.cmds, pre.code) { border: 0; }
   .guide-checkpoint { border-color: Highlight; }
   .guide-hero, .guide-example, .guide-detail, .guide-next { border-color: CanvasText; }
   .guide-checklist li::before { border-color: CanvasText; }
@@ -801,6 +827,8 @@ main:focus { outline: none; }
   .cmd-note { grid-column: 1; grid-row: 2; padding-left: 4ch; text-indent: -2ch; }
   .cmds .copy { grid-column: 2; grid-row: 1 / span 2; }
   .code-file-name { padding-left: 16px; }
+  .guide .terminal-example pre.code { padding-inline: 16px; }
+  .guide .terminal-platform, .guide .terminal-output-tabs { margin-inline: 16px; }
   .footer > p { margin-left: 0; }
   .platform { padding-top: 32px; }
   .footer { margin-top: 64px; }
@@ -832,6 +860,8 @@ main:focus { outline: none; }
   *, *::before, *::after { transition-duration: 0ms !important; transition-delay: 0ms !important; animation: none !important; }
 }
 @media (forced-colors: active) {
+  .guide .terminal-example { border: 1px solid CanvasText; }
+  .guide .terminal-example :is(.cmds, pre.code) { border: 0; }
   .window, .scene-card, .seat, .svc, .why, .docs-main pre.code, .cmds, .code-file { border: 1px solid CanvasText; }
   .wall rect { stroke: Highlight; }
   .slot.live, .seat.is-asked { outline: 1px solid Highlight; outline-offset: -1px; }

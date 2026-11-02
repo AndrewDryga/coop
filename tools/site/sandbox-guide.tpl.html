@@ -85,7 +85,7 @@
               <li><code data-copy-source>coop version</code></li>
               <li><code data-copy-source>coop login claude</code></li>
             </ul>
-<p>Sign in to Claude Code. co:op uses your provider account, with that account's model access and usage limits.</p>
+<p>Sign in to Claude Code. You keep the same models and subscription limits as in Claude Code.</p>
 <details class="guide-detail"><summary>Using Codex instead?</summary><div><p>Sign in with this command, then use <code>coop codex</code> in step 5. The project, file and network checks are the same.</p><ul class="cmds" role="list">
               <li><code data-copy-source>coop login codex</code></li>
             </ul></div></details>
@@ -160,6 +160,7 @@ customer-export.csv</pre></div>
 <div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>You have reviewed every changed file and can explain the result. The relevant project checks pass when you run them yourself.</p></div>
           </section><section class="doc-section guide-section" id="next">
             <h2><span class="guide-step" aria-hidden="true">06</span>Build on a verified first run</h2>
+<p>Want instructions for your agent? Choose <a href="claude-code-sandbox.html">Claude Code</a>, <a href="codex-sandbox.html">Codex CLI</a>, <a href="gemini-cli-sandbox.html">Gemini CLI</a> or <a href="grok-cli-sandbox.html">Grok CLI</a>.</p>
 <p>Keep the next task small until the project builds and tests reliably inside the container. For a queue that can continue without your supervision, use the overnight walkthrough.</p>
 <details class="guide-detail"><summary>Other runtimes and editor sessions</summary><div><p>Use Docker for the provider sessions in this guide. It supports the helper that keeps your provider credentials outside the container. Apple container can run commands with open networking and no credentials, but cannot replace Docker for this setup.</p><p>An agent connected through ACP can ask your editor to read files or run commands on your computer. The editor controls that access. Read the <a href="docs.html#editors">editor documentation</a> before using it.</p></div></details>
           </section>

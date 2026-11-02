@@ -4,12 +4,14 @@ description: CLI docs, website copy and messages use direct English while preser
 scope: cli-output
 sources: [internal/cli/help.go, internal/cli/models.go, internal/cli/usage.go, internal/box/launch_sections.go, internal/tasks/cmd.go, docs, install.sh, tools/site, tools/gendocs/references.go, site/docs.html]
 check: none
-updated: 2026-10-21
+updated: 2026-11-02
 ---
 
 # Write public docs and messages in plain English
 
-Say what happened and what the user can do next. Prefer "could not check this sign-in" to
+Say what happened and what the user can do next. Name subscription limits, API usage limits
+and API charges directly; do not call them an account’s “allowance”. Keep the sign-in method
+and billing distinction accurate. Prefer "could not check this sign-in" to
 "authentication authority unavailable", and "saved private commits" to "committed custody".
 Keep technical names when users need them to find a file, understand a restriction or use an API.
 
@@ -26,6 +28,9 @@ Preserve command syntax, flags, paths, configuration/API values and link targets
 provider output or protocol values. Trace callers before changing a string used for comparisons,
 stored templates or both human and machine output. Generated docs and transcript fixtures must
 follow their source. A changed expected sentence is not permission to weaken its behavior test.
+
+Use separate sentences instead of semicolons in explanatory prose. Preserve semicolons in
+commands, code and literal output.
 
 Apply the same review to website introductions, walkthroughs and reference summaries. Use
 Humanizer when a passage sounds staged or repetitive. Use the user-approved passage below as
@@ -85,3 +90,8 @@ control the edit; editorial judgment is still needed, so there is no keyword-ban
   a retired coop ps remedy and unsafe duplicate-task deletion advice. Preserved decision scaffold
   markers, cancellation/staleness comparison strings, shared JSON verdicts and provider bytes.
   Changes remain local and pending the user's review; no publication or prior approval is claimed.
+
+- 2026-11-02 — owner rejected “account’s allowance”. Swept all four provider guides, the
+  general and overnight walkthroughs, and the account reference. Named subscription limits
+  or API limits and charges directly; simplified nearby reader prose without changing
+  commands, sample outputs, auth choices or the approved Claude introduction.

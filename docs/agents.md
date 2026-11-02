@@ -143,7 +143,7 @@ trusted inside the container, where the box provides the sandbox.
 
 ## Several accounts and failover
 
-You can save several accounts for one provider, each with a name and its own rate-limit allowance.
+You can save several accounts for one provider, each with its own name and usage limits.
 When one account reaches its limit, an unattended run can switch to another account and keep
 working.
 

@@ -75,7 +75,7 @@ func sitePages(root string, generated map[string]string) (map[string]string, err
 		filepath.Join("site", "orchestrator.html"): stampAssets(externalLinks(typographic(orchestrator)), version),
 		filepath.Join("site", "docs.html"):         stampAssets(externalLinks(filled), version),
 	}
-	for _, name := range []string{"sandbox-guide", "overnight-guide"} {
+	for _, name := range []string{"sandbox-guide", "overnight-guide", "claude-code-sandbox", "codex-sandbox", "gemini-cli-sandbox", "grok-cli-sandbox"} {
 		guide, err := fillTemplate(root, name+".tpl.html", nil)
 		if err != nil {
 			return nil, err

@@ -12,7 +12,7 @@ for (const field of document.querySelectorAll(".cmds li, .code-file")) {
   const name = field.querySelector(".code-file-name");
   const button = Object.assign(document.createElement("button"), { className: "copy", type: "button", innerHTML: COPY_ICONS });
   button.dataset.copy = "";
-  button.setAttribute("aria-label", `Copy ${name ? name.textContent : source.textContent.trim()}`);
+  button.setAttribute("aria-label", `Copy ${source.dataset.copyLabel || (name ? name.textContent : source.textContent.trim())}`);
   const status = Object.assign(document.createElement("span"), { className: "copy-status" });
   status.setAttribute("role", "status");
   status.dataset.copyStatus = "";
@@ -56,6 +56,55 @@ for (const button of document.querySelectorAll("[data-copy]")) {
       status.textContent = "Copy blocked. Press Cmd+C or Ctrl+C.";
     }
   });
+}
+
+// Platform output tabs. Without JavaScript, both labeled examples remain visible.
+for (const group of document.querySelectorAll("[data-terminal-outputs]")) {
+  const panels = [...group.querySelectorAll("[data-output-platform]")];
+  const list = document.createElement("div");
+  list.className = "terminal-output-tabs";
+  list.setAttribute("role", "tablist");
+  list.setAttribute("aria-label", "Example output by operating system");
+  const buttons = panels.map((panel) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = `${panel.id}-tab`;
+    button.textContent = panel.dataset.outputPlatform;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-controls", panel.id);
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", button.id);
+    panel.tabIndex = 0;
+    list.append(button);
+    return button;
+  });
+  const select = (index) => {
+    buttons.forEach((button, i) => {
+      button.setAttribute("aria-selected", String(i === index));
+      button.tabIndex = i === index ? 0 : -1;
+      panels[i].hidden = i !== index;
+    });
+  };
+  buttons.forEach((button, index) => {
+    button.addEventListener("click", () => select(index));
+    button.addEventListener("keydown", (event) => {
+      let next;
+      if (event.key === "ArrowRight") next = (index + 1) % buttons.length;
+      else if (event.key === "ArrowLeft") next = (index + buttons.length - 1) % buttons.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = buttons.length - 1;
+      else return;
+      event.preventDefault();
+      select(next);
+      buttons[next].focus();
+    });
+  });
+  group.closest(".terminal-example").prepend(list);
+  group.dataset.outputTabsReady = "";
+  const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent;
+  const preferred = /linux/i.test(platform) ? "Linux" : "macOS";
+  const initial = panels.findIndex((panel) => panel.dataset.outputPlatform === preferred);
+  select(initial < 0 ? 0 : initial);
 }
 
 // The agent switcher rewrites the sign-in and start commands (the Orchestrator page starts a loop);

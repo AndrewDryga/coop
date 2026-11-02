@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Run Grok CLI in a sandbox · co:op</title>
+  <meta name="description" content="Sign in to Grok CLI, run it in a local Docker container, and review every change against your starting commit.">
+  <link rel="canonical" href="https://coop.dryga.com/grok-cli-sandbox.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/grok-cli-sandbox.html">
+  <meta property="og:title" content="Run Grok CLI in a sandbox">
+  <meta property="og:description" content="Sign in to Grok CLI, run it in a local Docker container, and review every change against your starting commit.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, protected secret files, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg?v=contained-entrance" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico?v=contained-entrance" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
+  <link rel="manifest" href="site.webmanifest?v=contained-entrance">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=25cdfa0036">
+  <script src="assets/js/site.js?v=25cdfa0036" defer></script>
+  <script src="assets/js/analytics.js?v=25cdfa0036" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/coop-mark.svg" width="32" height="32" alt="">
+      <span><img class="brand-wordmark" src="assets/img/coop-wordmark.svg" width="77" height="22" alt=""></span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap guide" tabindex="-1">
+<header class="guide-hero"><div class="guide-intro"><p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Grok CLI</p><h1>Run Grok CLI in a sandbox.</h1><p class="guide-lead">Sign in to Grok CLI, run it in a local Docker container, and review every change against your starting commit.</p></div></header>
+<div class="docs guide-body"><details class="docs-side" open><summary>In this walkthrough</summary><nav aria-label="On this page"><ol role="list"><li><a href="#before-you-start"><span aria-hidden="true">00</span>Before you start</a></li><li><a href="#boundary"><span aria-hidden="true">01</span>Why use a sandbox?</a></li><li><a href="#setup"><span aria-hidden="true">02</span>Install and sign in</a></li><li><a href="#project"><span aria-hidden="true">03</span>Create the demo</a></li><li><a href="#network"><span aria-hidden="true">04</span>See what the agent can connect to</a></li><li><a href="#run"><span aria-hidden="true">05</span>Start the agent</a></li><li><a href="#shadow-secret"><span aria-hidden="true">06</span>Verify secret protection</a></li><li><a href="#provider-token"><span aria-hidden="true">07</span>Verify credential protection</a></li><li><a href="#blocked-website"><span aria-hidden="true">08</span>Block a website</a></li><li><a href="#allow-website"><span aria-hidden="true">09</span>Allow one website</a></li><li><a href="#network-receipt"><span aria-hidden="true">10</span>Read the network receipt</a></li><li><a href="#review"><span aria-hidden="true">11</span>Review and troubleshoot</a></li></ol></nav></details><article class="docs-main" aria-label="Step-by-step instructions">
+<section class="doc-section guide-section" id="before-you-start"><h2><span class="guide-step" aria-hidden="true">00</span>Before you start</h2>
+<p>You’ll need:</p>
+<ul><li>A Mac or Linux computer with Git installed and Docker running</li><li>A Grok account with access to its coding CLI</li></ul>
+</section>
+
+<section class="doc-section guide-section" id="boundary"><h2><span class="guide-step" aria-hidden="true">01</span>Why use a sandbox?</h2>
+<p>Coding agents run commands, install packages, and change files. A mistake can affect more than the project you’re working on. An attacker can also hide instructions in content the agent reads, tricking it into running harmful commands. This is called prompt injection.</p>
+<p>A sandbox limits what the agent can access and how much damage it can do if something goes wrong. You can give it room to work without giving it access to everything.</p>
+<p>co:op runs Grok CLI in a Docker container on your computer:</p>
+<ul>
+  <li>File access is limited to the project and folders you share.</li>
+  <li>Secret files appear empty or cannot be read.</li>
+  <li>Networking is restricted to the provider and allowed services and websites.</li>
+  <li>Your provider API key or sign-in token is not mounted into the container.</li>
+</ul>
+<p>Grok can still edit the files it can see and send their contents to xAI. Grok’s usage limits still apply.</p>
+</section>
+<section class="doc-section guide-section" id="setup"><h2><span class="guide-step" aria-hidden="true">02</span>Install co:op and sign in</h2>
+<ul class="cmds" role="list"><li><code data-copy-source>curl -fsSL https://coop.dryga.com/install.sh | sh</code></li></ul>
+<p>If the installer asks you to update your <code>PATH</code>, run the command it prints. Then check the version:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop version</code></li></ul>
+<pre class="code"><samp>coop 12.0.1</samp></pre>
+</div>
+
+<p>The installer runs a downloaded script. Check the <a href="docs.html#install">installation reference</a> for release verification.</p>
+<p>Next, sign in:</p>
+<ul class="cmds" role="list"><li><code data-copy-source>coop login grok</code></li></ul>
+<p>Open the link shown in your terminal, enter the code, and sign in with an account that includes Grok CLI access. Wait for the terminal to confirm sign-in. See the <a href="https://docs.x.ai/build/cli/reference" target="_blank" rel="nofollow noopener">Grok CLI reference</a> for details.</p><p>co:op uses Grok’s device sign-in. An xAI API key cannot replace it.</p>
+<details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>Using a custom image?</summary><div><p>Use co:op’s standard image for this walkthrough. It includes <code>node</code>, <code>curl</code> and Git, which the examples need. A custom image may not include them.</p></div></details>
+</section>
+<section class="doc-section guide-section" id="project"><h2><span class="guide-step" aria-hidden="true">03</span>Create a test project</h2>
+<p>To try co:op, run these commands to create a test project. Use the same terminal window throughout the walkthrough:</p>
+<ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="demo setup">coop_demo_dir=$(mktemp -d &quot;$HOME/coop-sandbox-demo.XXXXXX&quot;) &amp;&amp;
+cd &quot;$coop_demo_dir&quot; &amp;&amp;
+git init &amp;&amp;
+printf &#x27;%s\n&#x27; &#x27;# co:op sandbox demo&#x27; &gt; README.md &amp;&amp;
+git add README.md &amp;&amp;
+git -c user.name=&#x27;Sandbox demo&#x27; \
+    -c user.email=&#x27;sandbox-demo@example.invalid&#x27; \
+    -c commit.gpgsign=false \
+    commit -m &#x27;Create sandbox demo&#x27; &amp;&amp;
+coop init</code></li></ul>
+<p><code>coop init</code> sets filtered networking for this new project.</p>
+<p>Create a file with a fake secret:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="dummy secret setup">(umask 077; set -C; printf &#x27;%s\n&#x27; &#x27;COOP_DEMO_VALUE=not-a-real-secret&#x27; &gt; .env.coop-demo) &amp;&amp;
+wc -c &lt; .env.coop-demo</code></li></ul>
+<pre class="code"><samp>34</samp></pre>
+</div>
+
+<p>We’ll use this fake secret to check that co:op hides it from the agent.</p>
+
+
+</section>
+<section class="doc-section guide-section" id="network"><h2><span class="guide-step" aria-hidden="true">04</span>See what the agent can connect to</h2>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop net</code></li></ul>
+<ul class="cmds" role="list"><li><code data-copy-source>coop net check https://example.com</code></li></ul>
+<pre class="code"><samp>✗ example.com:443 is blocked — no approved rule allows it.</samp></pre>
+</div>
+
+<p><code>coop net check</code> checks the rules without visiting the website. In this new project, <code>example.com</code> should be blocked. If it is allowed, check that you’re in the demo folder.</p>
+<details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>What can Grok connect to?</summary><div><p>Grok can reach <code>cli-chat-proxy.grok.com</code> and <code>code.grok.com</code>, and refresh its sign-in through <code>auth.x.ai</code>. Other websites still need their own rules.</p></div></details>
+<p>To add local MCP servers, follow the <a href="integrations.html#mcp-servers">MCP setup guide</a>.</p>
+
+
+</section>
+<section class="doc-section guide-section" id="run"><h2><span class="guide-step" aria-hidden="true">05</span>Start Grok CLI</h2>
+<p>Run this command to check your setup:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop doctor</code></li></ul>
+<pre class="code"><samp>Checking the Coop box on the Docker runtime
+
+Protecting secrets
+  ✓ .env is hidden
+  ✓ .envrc is hidden
+  …
+
+✓ All 37 checks passed</samp></pre>
+</div>
+<p>Start Grok CLI:</p>
+<ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="start the agent">coop_review_base=$(git rev-parse HEAD) &amp;&amp;
+coop grok --egress filtered</code></li></ul>
+<p>The first command saves the starting commit ID so you can review all changes later. On the first filtered launch, co:op also checks that Docker can enforce its network rules.</p>
+
+<details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>Can I use another container runtime?</summary><div><p>This sign-in setup requires Docker with filtered networking. Host networking and Apple’s <code>container</code> runtime are not supported.</p></div></details>
+<details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>Why the agent runs without approval prompts</summary><div><p>co:op runs Grok CLI in a Docker container and limits its file and network access.</p><p>co:op starts Grok with <code>--permission-mode bypassPermissions</code> inside the container. Grok can work without asking permission for every command, within the file and network access you allow.</p><p>The agent can also read or change this project’s saved history and settings.</p></div></details>
+</section>
+<section class="doc-section guide-section" id="shadow-secret"><h2><span class="guide-step" aria-hidden="true">06</span>Verify how co:op hides secrets</h2>
+<p>Ask Grok to run:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>wc -c README.md .env.coop-demo</code></li></ul>
+<div data-terminal-outputs>
+<div id="secret-output-macos" data-output-platform="macOS">
+<p class="terminal-platform">macOS</p>
+<pre class="code"><samp>21 README.md
+wc: .env.coop-demo: Operation not permitted
+21 total</samp></pre>
+</div>
+<div id="secret-output-linux" data-output-platform="Linux">
+<p class="terminal-platform">Linux</p>
+<pre class="code"><samp>21 README.md
+ 0 .env.coop-demo
+21 total</samp></pre>
+</div>
+</div>
+</div>
+
+<p>The agent can read <code>README.md</code>, but co:op blocks access to the secret or shows it as an empty file.</p>
+<p>Files matching <code>.env.*</code> are protected automatically. To hide other files or folders, add them to <a href="box.html#your-own-paths-coopignore">.coopignore</a>.</p>
+<p>To scan project files for credentials, open a second terminal in the demo folder and run:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop check-secrets --include-ignored</code></li></ul>
+<pre class="code"><samp>✓ No possible secrets found
+  Checked project files, including Git-ignored files the box can read.</samp></pre>
+</div>
+</section>
+<section class="doc-section guide-section" id="provider-token"><h2><span class="guide-step" aria-hidden="true">07</span>Verify that Grok can’t read your login credentials</h2>
+<p>To keep Grok from reading or leaking your login credentials, co:op gives it placeholders and adds the real credentials outside the sandbox when forwarding requests to xAI. Ask Grok to run this script to check what it received:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source data-copy-kind="command" data-copy-label="Grok credential check">node &lt;&lt;&#x27;JS&#x27;
+try {
+  if (process.env.COOP_BOX !== &#x27;1&#x27;) throw new Error();
+  const text = require(&#x27;node:child_process&#x27;).execFileSync(
+    &#x27;/run/coop-native-grok&#x27;, {encoding: &#x27;utf8&#x27;, stdio: [&#x27;ignore&#x27;, &#x27;pipe&#x27;, &#x27;ignore&#x27;]});
+  const auth = JSON.parse(text);
+  if (auth.access_token !== &#x27;coop-native-grok-v1&#x27; ||
+      auth.refresh_token || process.env.XAI_API_KEY) {
+    throw new Error();
+  }
+  console.log(&#x27;PASS: Grok receives the public sign-in stand-in, with no refresh token in the helper response&#x27;);
+} catch {
+  console.error(&#x27;FAIL: the expected Grok credential setup was not verified&#x27;);
+  process.exitCode = 1;
+}
+JS</code></li></ul>
+<pre class="code"><samp>PASS: Grok receives the public sign-in stand-in, with no refresh token in the helper response</samp></pre>
+</div>
+
+<p>If the check fails, investigate without printing credentials or pasting them into a prompt. Commands such as <code>env</code>, <code>printenv</code> and <code>cat</code> can expose them.</p>
+</section>
+<section class="doc-section guide-section" id="blocked-website"><h2><span class="guide-step" aria-hidden="true">08</span>Watch a website get blocked</h2>
+<p>Ask the agent to visit <code>example.com</code>:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source data-copy-kind="command" data-copy-label="website request">curl --noproxy &#x27;*&#x27; --fail --silent --show-error \
+  --connect-timeout 5 --max-time 15 \
+  --output /dev/null --write-out &#x27;HTTP %{http_code}\n&#x27; \
+  https://example.com/</code></li></ul>
+<pre class="code"><samp>curl: (6) Could not resolve host: example.com
+HTTP 000</samp></pre>
+</div>
+
+<p>The request should fail, but an error alone does not tell you why. Quit Grok CLI, then list its network sessions:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop net runs</code></li></ul>
+<pre class="code terminal-table" tabindex="0" aria-label="Recent network runs"><samp>Recent network runs
+
+  RUN       WHEN         ACTIVITY
+  317fc92d  today 18:51  no external connections · 8 blocked</samp></pre>
+</div>
+<p>Find the session you just closed by its start time. Here, its run ID is <code>317fc92d</code>. Replace that ID with yours in the command below to see why the request was blocked:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop net blocked example.com --run 317fc92d</code></li></ul>
+<pre class="code"><samp>example.com was blocked
+  Run 317fc92d · today at 18:51
+
+No approved rule allowed this DNS lookup. It happened 4 times.
+
+The record has no connection type or port to use in a rule.</samp></pre>
+</div>
+</section>
+<section class="doc-section guide-section" id="allow-website"><h2><span class="guide-step" aria-hidden="true">09</span>Allow just one website</h2>
+<p>In the demo’s <code>.agent/project.yaml</code>, add this rule under the existing <code>box</code> entry. Keep the other settings:</p>
+<div class="code-file"><p class="code-file-name">.agent/project.yaml · example.com rule</p><pre class="code" data-copy-source>box:
+  egress: filtered
+  egress_rules:
+    - to: {domain: &quot;example.com&quot;}
+      protocol: tls
+      ports: [443]</pre></div>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop approve</code></li></ul>
+<pre class="code"><samp>NETWORK RULES (+ new)
+  + example.com:443 · TLS
+
+✓ Approved for new runs and running editor sessions</samp></pre>
+<ul class="cmds" role="list"><li><code data-copy-source>coop net check https://example.com</code></li></ul>
+</div>
+
+<p>Approve only the new rule for <code>example.com</code> on TLS port 443. It allows this website, not its subdomains or other ports. The check should now say it is allowed.</p>
+<ul class="cmds" role="list"><li><code data-copy-source>coop grok --egress filtered</code></li></ul>
+<p>The new Grok CLI session uses the updated rules; a session already running would keep the old ones. Ask the agent to try the request again:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source data-copy-kind="command" data-copy-label="website request">curl --noproxy &#x27;*&#x27; --fail --silent --show-error \
+  --connect-timeout 5 --max-time 15 \
+  --output /dev/null --write-out &#x27;HTTP %{http_code}\n&#x27; \
+  https://example.com/</code></li></ul>
+<pre class="code"><samp>HTTP 200</samp></pre>
+</div>
+
+<p>If it still fails, check the new run’s network receipt for the reason. Leave filtered networking on.</p>
+<p>Now give the agent a small task:</p>
+<blockquote class="guide-example"><p class="guide-label">Example prompt</p><p>Add one sentence to README.md explaining that this is a sandbox demo. Run git diff --check and show its exit status. Do not install dependencies or commit the change. Stop after showing the diff.</p></blockquote>
+<p>Check the diff and command output, then quit Grok CLI so co:op can finish recording the session’s network activity.</p>
+</section>
+<section class="doc-section guide-section" id="network-receipt"><h2><span class="guide-step" aria-hidden="true">10</span>Read the network receipt</h2>
+<p>List the sessions again to find the one where you allowed <code>example.com</code>:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop net runs</code></li></ul>
+<pre class="code terminal-table" tabindex="0" aria-label="Recent network runs"><samp>Recent network runs
+
+  RUN       WHEN         ACTIVITY
+  baf22d50  today 18:52  1 connection
+  317fc92d  today 18:51  no external connections · 8 blocked</samp></pre>
+</div>
+<p>Here, the session with allowed traffic is <code>baf22d50</code>. Replace it with your run ID below to inspect its traffic:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop net inspect baf22d50</code></li></ul>
+<pre class="code"><samp>Network run baf22d501bca66d3a7622b59e8ef001c
+
+  Allowed   1 connection · 773 B sent · 5.4 KB received
+    example.com:443 · TLS
+  …</samp></pre>
+</div>
+<p>The first session showed <code>example.com</code> blocked. This one shows a connection to <code>example.com:443</code>.</p>
+<p>For the full record, including whether the session and cleanup finished, use JSON:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop net inspect baf22d50 --json</code></li></ul>
+<pre class="code"><samp>{
+  &quot;receipt&quot;: {
+    &quot;finality&quot;: &quot;final&quot;,
+    &quot;completeness&quot;: &quot;complete&quot;,
+    &quot;cleanup_outcome&quot;: &quot;complete&quot;
+  }
+}</samp></pre>
+</div>
+<p>The values shown above mean the run ended, its network record is complete, and cleanup finished. Follow up on any warnings. <code>UNKNOWN</code> means co:op could not measure something; it does not mean zero.</p>
+<p>To export the receipt:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop net export baf22d50</code></li></ul>
+</div>
+<details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>What does the export include?</summary><div><p><code>coop net inspect … --json</code> puts these fields under <code>receipt</code>. In an export, they are at the top level.</p><p>Exports hide remote names and addresses by default. Add <code>--include-addresses</code> to include them, and review the file before sharing it. The digest is a checksum, not a signature. See <a href="networking.html#observed-versus-counted">what the network record measures</a>.</p></div></details>
+
+
+</section>
+<section class="doc-section guide-section" id="review"><h2><span class="guide-step" aria-hidden="true">11</span>Review changes and fix problems</h2>
+<p>Back in the same terminal, review what the agent changed:</p>
+<ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="review changes">git status --short &amp;&amp;
+git log --oneline &quot;$coop_review_base&quot;..HEAD &amp;&amp;
+git diff &quot;$coop_review_base&quot;</code></li></ul>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>git diff --check &quot;$coop_review_base&quot; &amp;&amp; printf &#x27;Diff check passed\n&#x27;</code></li></ul>
+<pre class="code"><samp>Diff check passed</samp></pre>
+</div>
+
+<p>This compares the project with the commit saved before the agent started, including changes it staged or committed. Open any untracked files separately; Git does not include their contents in the diff.</p>
+<details class="guide-detail"><summary>Grok rejects the login or an API key</summary><div><p>Exit Grok, run <code>coop login grok</code> and sign in with an account that includes CLI access. Use co:op’s login command rather than Grok’s login or logout commands inside the container.</p><p>co:op’s Grok integration does not support <code>XAI_API_KEY</code>. Use device sign-in with an account that includes CLI access. Changing network rules will not make an API key work.</p></div></details><details class="guide-detail"><summary>A dependency or documentation request is blocked</summary><div><p>Run <code>coop net blocked &lt;host&gt;</code> in your terminal, replacing <code>&lt;host&gt;</code> with the blocked hostname. Add the access you need to <code>.agent/project.yaml</code>, then run <code>coop approve</code>. Restart the agent to use the new rules.</p>
+<p>The <a href="networking.html">networking guide</a> explains the rules. If Docker or a sandbox check fails, fix the reported problem before trying again with filtered networking.</p>
+</div></details>
+<p>Ready to use your own project? Follow the <a href="sandbox-guide.html">general sandbox walkthrough</a> to protect its secrets, set up its tools and approve its network access. Each project needs its own approval. Review and test the agent’s changes before keeping them.</p>
+<p>For longer jobs, the <a href="overnight-guide.html">overnight walkthrough</a> shows how to run a task queue. You can delete the test project at <code>$coop_demo_dir</code> when you’re finished; this does not sign you out.</p>
+
+<h3>Using another coding agent?</h3><ul class="reference-list" role="list"><li><a href="claude-code-sandbox.html">Run Claude Code in a sandbox</a><p>Claude sign-in, connectors and the container boundary.</p></li><li><a href="codex-sandbox.html">Run Codex CLI in a sandbox</a><p>ChatGPT device sign-in, API accounts and Codex settings.</p></li><li><a href="gemini-cli-sandbox.html">Run Gemini CLI in a sandbox</a><p>AI Studio keys, Google routes and supported authentication.</p></li></ul></section>
+</article></div></main>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">
+      <span><img class="brand-wordmark" src="assets/img/coop-wordmark.svg" width="77" height="22" alt=""></span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/ryker" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

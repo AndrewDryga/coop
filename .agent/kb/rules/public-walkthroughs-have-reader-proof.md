@@ -4,7 +4,7 @@ description: public walkthroughs need a coherent worked path, observable checkpo
 scope: docs
 sources: [tools/site/sandbox-guide.tpl.html, tools/site/overnight-guide.tpl.html, site/README.md, brand/DESIGN.md]
 check: none
-updated: 2026-10-20
+updated: 2026-11-02
 ---
 
 # Public walkthroughs need reader proof
@@ -19,14 +19,53 @@ not establish publication quality.
   alongside the actual contents. Anchor the desktop contents and article under a page-wide,
   left-aligned introduction, so the contents do not hang below an empty column. Keep intro
   text at a comfortable measure. Label where commands run.
+- Provider-guide prerequisites are step00 in the article and contents, immediately above
+  “What this sandbox controls”; keep them out of the hero.
+- Open sandbox guides with a short, scannable list: limited file access, shadowed secrets,
+  restricted networking and provider credentials kept outside the container. Put native-client
+  permission flags and implementation detail beside the relevant step or in a disclosure.
 - Review cognitive load and reading order, not just overflow and component legibility. The
   reader should find one obvious route from title to preparation to the first action.
 - Carry one worked path through preparation, execution, recovery and review. Never switch
   silently from a fork to the parent checkout or lose queue scope on resume.
-- Give consequential steps an observable checkpoint and a useful next action when blocked.
+- Show the results of consequential steps and explain failures inline. Do not add repeated
+  “What to look for” or “Check before continuing” callouts that restate the instructions.
+  Assume a capable reader who needs domain facts, not reminders to follow each step.
+- Apply reader feedback across the whole walkthrough, paragraph by paragraph, including
+  its provider variants. Explain what a step demonstrates; omit obvious directions such as
+  “copy and run the whole block” and repeated reminders to inspect output. Put optional
+  setup alternatives and implementation details in named help disclosures. Preserve approved
+  wording and the conditions that make a check meaningful.
+- Execute published walkthrough commands where possible and retain a command-by-command
+  ledger. Source review, syntax checks and fixtures are separate evidence. Add short output
+  excerpts at consequential steps; label variable samples and expected results, preserve
+  unexecuted/login-blocked rows, and never present a fixture as a real provider session.
+- Do not add terminal-location captions such as “Host terminal” or “Inside Claude Code ·
+  shell tool” above provider-guide commands. Let the surrounding steps establish where to
+  run them; explain transitions once in ordinary prose.
+- Give a safe sequence of related commands one copy control, rather than one per line.
+  Use `&&` between dependent setup steps, so a failure stops the block. Keep human approval
+  separate. For run IDs, show a realistic listing, identify the session, and tell the reader
+  to replace the example ID in the next command. Do not add shell `read` prompts or temporary
+  variables where a direct CLI example is clearer.
+- Show a command and its output in one terminal block, with a blank line between them.
+  Make output slightly dimmer than the command while keeping it easy to read. Keep output
+  closer to its command than to the next command, so each pair reads as one group.
+  Remove per-output captions such as “Example version · yours may be newer”. Keep the copy
+  source limited to the command; preserve useful host/agent and platform context. Put each
+  output immediately after the command that produced it, not after an unrelated command.
+- Keep disposable approval-demo projects on the same filesystem as co:op’s state. Use a
+  temporary directory under the home directory for the normal setup; `/tmp` can be a separate
+  filesystem on Linux. Verify the approval itself, not just the earlier blocked request.
+- A sandbox walkthrough demonstrates its boundaries in separate worked sections: a harmless
+  secret is hidden, an actual request is blocked, one website is approved and retried, the
+  correct run’s network receipt is inspected, and the provider’s public credential stand-in
+  is checked without printing secrets. Run checks inside the provider session; a separate raw
+  shell has different credentials and cannot prove the provider container’s view.
 - Distinguish an illustrative task from actual command output or a measured result.
-- Keep critical boundaries beside the affected action; put optional alternatives in named
-  disclosures. Preserve the full reading path without JavaScript.
+- Keep critical boundaries beside the affected action; put only optional explanations and
+  alternatives in named disclosures. Required steps, including credential-check scripts,
+  stay visible in the main reading path. Preserve the full reading path without JavaScript.
 - Check real copy behavior, keyboard access, narrow-screen layout and failure feedback.
   Retain findings and their disposition; source review is not live-provider verification.
 
@@ -46,3 +85,36 @@ not establish publication quality.
 - 2026-10-20 — user found the contents dangling under the empty left half of the header.
   Moved both introductions to the page’s left edge and gave the header a full-width divider
   above the contents/article layout. The simple reading order and short copy remain.
+
+- 2026-11-02 — owner required hands-on secret, network, receipt and credential demonstrations
+  in the provider walkthroughs. Replaced summary-only steps across all four guides with a
+  disposable project and explicit observations. Empty shadow files and denied eBPF reads are
+  both valid; failed requests require a recorded block, and absent evidence stays unverified.
+
+- 2026-11-02 — owner found the opening four paragraphs too complex. Replaced them across
+  the four provider guides with one sentence and four concrete boundaries. Moved native
+  permission-mode explanations to an expandable note at launch.
+
+- 2026-11-02 — owner requested executed-command coverage and expected outputs. Added
+  important file, credential, network, approval and receipt output examples; started a fresh
+  command ledger and corrected the new guides’ installer URL to the currently working host.
+
+- 2026-11-02 — owner moved provider prerequisites into the numbered walkthrough as step00,
+  directly before the boundary summary. Updated all four guides and their contents links.
+
+- 2026-11-02 — Linux Cloud Shell replay exposed cross-device approval failure from /tmp.
+  Moved all four demo folders under $HOME, retained the failure, and added observed Linux
+  zero-byte shadow output alongside the protected-Mac example.
+
+- 2026-11-02 — owner requested command/output as one terminal block without example-version
+  captions. Combined all11 output examples per provider guide, kept command-only copy controls
+  and required platform/context labels, and documented the shared terminal pattern.
+
+- 2026-11-02 — owner requested copying safe command sequences as a block. Grouped demo setup,
+  dummy-file creation, guarded agent launch and Git review on all4 provider guides. Used fail-stop
+  chains; kept approval and run-ID entry commands separate. Actual host replay and injected
+  failure checks distinguish shell-flow proof from provider/model execution.
+
+- 2026-11-02 — owner rejected repeated “What to look for” callouts as patronizing. Removed
+  provider-guide checkpoint frames and redundant progress summaries; kept unique failure
+  conditions, credential scope and recovery as ordinary prose beside the relevant command.
