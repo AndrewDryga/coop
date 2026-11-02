@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up
   protection before the agent opens. Filesystem and network checks still finish before it starts.
@@ -25,6 +23,15 @@
 - **Retain completed work after a session closes.** An idle closed session can now save its
   workspace checkpoint, including task notes and uncommitted changes, without reopening the
   session or allowing another model turn. Discarded sessions remain unavailable.
+
+- **Generate and edit images in Codex.** Filtered Codex sessions allow the client's native
+  image-generation and editing requests through the selected account's credential routes.
+
+- **See when an agent is stopping.** Coop announces shutdown as soon as the agent exits, before
+  waiting for cleanup and printing the final result and network statistics.
+
+- **Follow a walkthrough for your agent.** New Claude Code, Codex, Gemini CLI and Grok CLI guides
+  group initial setup separately from hands-on secret, credential and network protection checks.
 
 ## 12.0.1
 
