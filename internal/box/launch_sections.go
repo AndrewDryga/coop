@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -430,19 +429,12 @@ func (s *launchSections) stopped(reason string) {
 	ui.Note("\nThe Coop box has stopped: %s.", reason)
 }
 
-// stopSlow is how long a teardown may run before a person watching a silent terminal deserves to
-// be told what it is waiting on. A var so a test can drop it to zero.
-var stopSlow = 2 * time.Second
-
-// stopping notes that shutdown is underway, but ONLY when it outlasts stopSlow: a fast teardown
-// needs no narration, and the completed sentence follows either way. It returns the stop for the
-// timer, which the caller defers so the notice can never print after the box is already gone.
-func (s *launchSections) stopping() func() {
-	if !s.interactive {
-		return func() {}
+// stopping announces cleanup as soon as the provider exits. A Ctrl-C handled
+// inside the provider never reaches this point; stopped still requires proof.
+func (s *launchSections) stopping() {
+	if s.interactive {
+		ui.Note("\nStopping %s", s.subject)
 	}
-	timer := time.AfterFunc(stopSlow, func() { ui.Note("\nStopping the Coop box…") })
-	return func() { timer.Stop() }
 }
 
 // failed renders a launch that stopped before its main process as the nested failure of the

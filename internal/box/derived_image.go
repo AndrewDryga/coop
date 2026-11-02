@@ -119,6 +119,7 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.C
 					ui.Section("Project box")
 					ui.Note("  Using %s", dfRel)
 					ui.Pass("Unchanged since its explicit build")
+					ui.Note("")
 				}
 				return image, tag, nil
 			}

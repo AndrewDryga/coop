@@ -223,18 +223,6 @@ func TestDockerFixtureProcess(t *testing.T) {
 		}
 	case "container":
 		switch args[1] {
-		case "stop":
-			if !bound || len(args) != 5 || args[2] != "-t" || !slices.Contains([]string{"0", "10"}, args[3]) || args[4] != dockerFixtureRef().ID {
-				os.Exit(109)
-			}
-			if fixture.Mode == "stop-fail" || fixture.Container == nil {
-				os.Exit(1)
-			}
-			fixture.Mutations++
-			if fixture.Mode != "stop-ineffective" {
-				fixture.Container.State = DockerContainerState{Status: "exited", FinishedAt: time.Now().UTC()}
-			}
-			store()
 		case "create":
 			if fixture.Mode == "create-fail" {
 				os.Exit(1)
@@ -463,19 +451,27 @@ func TestDockerFixtureProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestDockerStopUsesPortableTimeoutAndConfirmsTerminalState(t *testing.T) {
+func TestDockerStopPreservesGraceAndConfirmsTerminalState(t *testing.T) {
 	for _, grace := range []int{0, 10} {
 		t.Run(strconv.Itoa(grace), func(t *testing.T) {
 			container := dockerFixtureContainer()
 			container.State = DockerContainerState{Status: "running", Running: true}
-			rt, _ := fixtureDocker(t, dockerFixture{Container: container})
-			d, err := BindDocker(t.Context(), rt, fixtureSock(), "")
+			rt, file := fixtureDocker(t, dockerFixture{Container: container})
+			ordinary := fixtureDockerAPI(file)
+			endpoint := dockersock.ServeHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/stop") && r.URL.RawQuery != "t="+strconv.Itoa(grace) {
+					t.Errorf("stop grace changed: %s", r.URL.RawQuery)
+				}
+				ordinary.ServeHTTP(w, r)
+			}))
+			d, err := BindDocker(t.Context(), rt, endpoint, "")
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer d.Close()
+			d.binary = "/unavailable-docker"
 			if err := d.StopContainer(t.Context(), dockerFixtureRef(), grace); err != nil {
-				t.Fatal("portable exact stop failed", err)
+				t.Fatal("bound exact stop failed", err)
 			}
 			value, present, err := d.InspectContainer(t.Context(), dockerFixtureRef())
 			if err != nil || !present || value.State.Running || value.State.Status != "exited" {

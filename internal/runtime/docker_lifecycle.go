@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -386,9 +387,7 @@ func (d *Docker) StopContainer(ctx context.Context, ref DockerRef, graceSeconds 
 	if !value.State.Running && !value.State.Paused && !slices.Contains([]string{"restarting", "removing"}, value.State.Status) {
 		return nil
 	}
-	// Docker 27 calls the long option --time, while newer clients call it
-	// --timeout. The short option is stable across supported worker clients.
-	_, stopErr := d.output(ctx, 1024, "container", "stop", "-t", strconv.Itoa(graceSeconds), ref.ID)
+	stopErr := d.containerMutation(ctx, http.MethodPost, ref.ID, "/stop?t="+strconv.Itoa(graceSeconds))
 	value, present, err = d.InspectContainer(ctx, ref)
 	if err == nil && (!present || !value.State.Running && !value.State.Paused && slices.Contains([]string{"exited", "dead"}, value.State.Status)) {
 		return nil
@@ -437,11 +436,33 @@ func (d *Docker) ExecApply(ctx context.Context, ref DockerRef, command ...string
 }
 
 func (d *Docker) CopyArchive(ctx context.Context, ref DockerRef, source string, limit int) ([]byte, error) {
+	if ctx == nil || limit <= 0 || limit > 4<<20 {
+		return nil, errors.New("invalid bounded Docker archive read")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	_, present, err := d.InspectContainer(ctx, ref)
-	if err != nil || ref.ID == "" || !present || !strings.HasPrefix(source, "/") || strings.ContainsAny(source, "\x00\r\n") {
+	if err != nil || !dockerHexID(ref.ID) || !present || !strings.HasPrefix(source, "/") || strings.ContainsAny(source, "\x00\r\n") {
 		return nil, errors.Join(errors.New("Docker retained evidence source unavailable"), err)
 	}
-	return d.output(ctx, limit, "container", "cp", ref.ID+":"+source, "-")
+	// docker cp CONTAINER:path - streams this same tar response. Keep it bounded
+	// and private; the caller validates its release-owned archive contents.
+	response, err := d.daemonRequest(ctx, http.MethodGet, "/containers/"+ref.ID+"/archive?path="+url.QueryEscape(source))
+	if err != nil {
+		return nil, errors.Join(errors.New("Docker archive read failed"), ctx.Err())
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, errors.New("Docker archive unavailable")
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
+	if err != nil || len(data) > limit {
+		return nil, errors.Join(errors.New("Docker archive exceeded its bound or was incomplete"), ctx.Err())
+	}
+	if err := d.Verify(ctx); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 // DockerFile is one regular file's identity inside an image: what the runtime

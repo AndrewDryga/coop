@@ -4,7 +4,7 @@ description: "Unprefixed human output, truthful progress, useful results, and re
 scope: cli-output
 sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/box/run.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/session_cmd.go, internal/cli/models.go, internal/cli/eval_cmd.go, internal/forkctl/merge.go, internal/forkctl/rm.go]
 check: "none"
-updated: 2026-10-17
+updated: 2026-11-02
 ---
 
 # Command output: no prefixes, useful results, truthful progress
@@ -15,7 +15,9 @@ updated: 2026-10-17
   a proved success, ⚠ for an actual caution, and ✗ for failure. `Starting Codex` has no success
   icon: the provider session has not yet completed.
 - State what has actually happened. `The Coop box has stopped` follows confirmed stop, never
-  the event that merely begins cleanup. While waiting, say `Stopping the Coop box…`.
+  the event that merely begins cleanup. Immediately after the provider exits, say
+  `Stopping Claude Code` (using the selected product name) before waiting for owned cleanup.
+  A Ctrl-C that only cancels a provider prompt must not announce shutdown.
   Separate process exit, stopped box, and remaining resource cleanup.
 - Announce a catalog fetch before waiting for it. A current cached list is a passive read and
   needs no progress line; a due or forced refresh is active work, even when it succeeds.
@@ -72,6 +74,12 @@ is not proof the live helpers conform; regression tests must exercise all output
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-11-02 — announce filtered cleanup immediately, replacing the old two-second timer, and
+  separate the independently rendered project summary from Protecting secrets. Swept launch,
+  filtered cleanup and open-run exit: the open --rm path already returns after removal; quiet,
+  batch and ACP narration stay silent. TestLaunchStoppingImmediatelyPrecedesCleanup,
+  TestLaunchSectionsAreSilentOutsideInteractiveRuns and
+  TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot pin these boundaries.
 - 2026-10-17 — the 2026-08-09 sweep entry names `cmdSign`, `startUpdateCheck` and `cli.Main` instead
   of line numbers.
 - 2026-10-17 — at a terminal, `coop fork rm <name> --force` ran its answered question straight

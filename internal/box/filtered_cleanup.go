@@ -338,15 +338,7 @@ func (f *filteredExecution) removeResource(evidence *networkstate.Evidence, role
 func (f *filteredExecution) teardown(spec RunSpec, sections *launchSections, execution forkspace.ExecutionRecord,
 	exitCode int, result error, stopped string) (reported error, teardownErr error) {
 	workload := f.workloadOutcome(exitCode, result, spec.Ctx.Err() != nil)
-	// This process owns the box, its gateway, its volumes and its receipt: none of it
-	// is --rm, so the stop is only real once cleanup says so. A teardown slow enough
-	// to look like a hang says what it is waiting on while it runs.
-	settled := func() {}
-	if stopped != "" {
-		settled = sections.stopping()
-	}
 	gone, cleanupErr := f.cleanup(workload)
-	settled()
 	if execution.ID != "" && gone {
 		cleanupErr = errors.Join(cleanupErr, forkspace.EndExecution(spec.ActivityRepo, execution))
 	}

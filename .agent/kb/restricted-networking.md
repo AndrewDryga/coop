@@ -3,7 +3,7 @@ name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
 sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/legacy_records.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile]
-updated: 2026-10-19
+updated: 2026-11-02
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -36,6 +36,12 @@ between that flag and `docker run`:
 5. **Per-host qualification** — `SetupNetwork` (`box/network_setup.go`), run by the first filtered
    launch that finds no current proof (`box/network_admission.go`, `ensureNetworkQualification`)
    and by `coop net setup` on demand.
+
+Exact container stop and bounded retained-archive reads use the frozen Docker HTTP endpoint
+directly. Stop keeps the requested grace period and requires a fresh inspection proving absence
+or a terminal state, including after a lost reply. CopyArchive reads at most the caller's bound
+(up to 4 MiB), rejects partial/error responses and verifies daemon identity before returning
+bytes to the caller's tar validator. Neither operation launches a Docker CLI subprocess.
 
 Authority never comes from the repository or the box. A repo's `box.egress`, its `box.egress_rules`,
 and a rules file that lives inside an agent mount, are *requests*; a human turns them into a grant
@@ -331,6 +337,7 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-02 — exact stops and bounded archive reads use the bound HTTP connection; custody, terminal-state reconciliation and retained-evidence validation remain mandatory.
 - 2026-10-19 — record names are plain SHA-256 of their inputs, no longer keyed with `owner.key`,
   which now only keys snapshot fingerprints and review digests. An approval filed under the old
   keyed name (versions 1 to 3; new ones are 4) refuses its project, marker or not, until

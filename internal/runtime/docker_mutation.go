@@ -5,13 +5,19 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
 // Only fixed, empty-body container operations use this path. Custody/start
 // checks stay in the caller, and a response never substitutes for its postcondition.
 func (d *Docker) containerMutation(ctx context.Context, method, id, suffix string) error {
-	if !dockerHexID(id) || !(method == http.MethodPost && suffix == "/start" || method == http.MethodDelete && suffix == "?force=true") {
+	stop := false
+	if grace, err := strconv.Atoi(strings.TrimPrefix(suffix, "/stop?t=")); err == nil {
+		stop = grace >= 0 && grace <= 10 && suffix == "/stop?t="+strconv.Itoa(grace)
+	}
+	if !dockerHexID(id) || !(method == http.MethodPost && (suffix == "/start" || stop) || method == http.MethodDelete && suffix == "?force=true") {
 		return errors.New("invalid Docker container mutation")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)

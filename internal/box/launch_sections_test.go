@@ -228,6 +228,19 @@ func TestExplainedMarksOnlyANamedInterruption(t *testing.T) {
 	}
 }
 
+func TestLaunchStoppingImmediatelyPrecedesCleanup(t *testing.T) {
+	got := captureStderr(t, func() {
+		s := newLaunchSections(RunSpec{Agent: "claude"})
+		s.stopping()
+		ui.Note("CLEANUP")
+		s.stopped("main process exited with status 0")
+	})
+	want := "\nStopping Claude Code\nCLEANUP\n\nThe Coop box has stopped: main process exited with status 0.\n"
+	if got != want {
+		t.Fatalf("shutdown feedback = %q, want %q", got, want)
+	}
+}
+
 // Ordinary batch runs, quiet probes and ACP children keep their bounded output: every narration
 // call is a no-op and a failure comes back exactly as it was, for the caller's own reporting.
 func TestLaunchSectionsAreSilentOutsideInteractiveRuns(t *testing.T) {
@@ -239,7 +252,7 @@ func TestLaunchSectionsAreSilentOutsideInteractiveRuns(t *testing.T) {
 			s.secrets(3)
 			s.internet(&config.Config{Egress: "open"}, spec, nil)
 			s.starting()
-			s.stopping()()
+			s.stopping()
 			s.stopped("main process exited with status 0")
 			if err := s.failed(cause); err != cause {
 				t.Errorf("%+v: failed() = %v, want the cause untouched", spec, err)

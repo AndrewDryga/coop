@@ -175,7 +175,14 @@ func TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot(t *testing.T) {
 	}
 	write("main.go", "package main\n")
 	write(".agent/Dockerfile", reusableDockerfile)
-	image, _, err := filteredProjectImage(t.Context(), runtime.Runtime{}, &config.Config{}, d, f.store, RunSpec{Repo: repo, Quiet: true}, candidate)
+	var image string
+	output := captureStderr(t, func() {
+		image, _, err = filteredProjectImage(t.Context(), runtime.Runtime{}, &config.Config{}, d, f.store, RunSpec{Repo: repo}, candidate)
+		newLaunchSections(RunSpec{Agent: "claude"}).secrets(53)
+	})
+	if !strings.Contains(output, "Unchanged since its explicit build\n\nProtecting secrets\n") {
+		t.Fatalf("project summary runs into secret protection: %q", output)
+	}
 	if err != nil || image != fixtureBuiltImage {
 		t.Fatalf("actual reviewed inputs cannot reuse approved output: %q / %v", image, err)
 	}

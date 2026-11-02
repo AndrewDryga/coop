@@ -1514,6 +1514,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// The reason is only knowable here; the sentence it feeds prints from the teardown
 			// above, once the box this process owns is actually gone.
 			stopped = stopReason(code, launchErr, interrupt)
+			// Announce before deferred credential revocation and owned resource cleanup.
+			sections.stopping()
 		}
 		return finish(code, launchErr)
 	}

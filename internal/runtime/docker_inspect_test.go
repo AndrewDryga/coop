@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -45,6 +46,24 @@ func fixtureDockerAPI(file string) http.Handler {
 		}
 		if r.Method == http.MethodPost && fixture.Container != nil && r.URL.Path == "/containers/"+fixture.Container.ID+"/start" && fixture.Mode != "no-start" {
 			fixture.Container.State = DockerContainerState{Status: "running", Running: true, StartedAt: time.Now().UTC()}
+			fixture.Mutations++
+			data, _ := json.Marshal(fixture)
+			if os.WriteFile(file, data, 0600) != nil {
+				http.Error(w, "fixture write failed", 500)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodPost && fixture.Container != nil && r.URL.Path == "/containers/"+fixture.Container.ID+"/stop" {
+			grace, err := strconv.Atoi(r.URL.Query().Get("t"))
+			if err != nil || grace < 0 || grace > 10 || r.URL.RawQuery != "t="+strconv.Itoa(grace) || fixture.Mode == "stop-fail" {
+				http.Error(w, "stop failed", 500)
+				return
+			}
+			if fixture.Mode != "stop-ineffective" {
+				fixture.Container.State = DockerContainerState{Status: "exited", FinishedAt: time.Now().UTC()}
+			}
 			fixture.Mutations++
 			data, _ := json.Marshal(fixture)
 			if os.WriteFile(file, data, 0600) != nil {

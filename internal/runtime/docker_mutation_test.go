@@ -28,6 +28,9 @@ func TestDockerContainerMutationsUseBoundAPI(t *testing.T) {
 	if err := d.StartContainer(t.Context(), ref); err == nil {
 		t.Fatal("restarted container")
 	}
+	if err := d.StopContainer(t.Context(), ref, 0); err != nil {
+		t.Fatal(err)
+	}
 	if err := d.RemoveContainer(t.Context(), ref); err != nil {
 		t.Fatal(err)
 	}
@@ -37,10 +40,17 @@ func TestDockerContainerMutationsUseBoundAPI(t *testing.T) {
 }
 
 func TestDockerContainerMutationUnknownOutcomes(t *testing.T) {
-	for _, operation := range []string{"start", "remove"} {
-		for _, fault := range []string{"rejected", "redirect", "oversized", "truncated", "cancelled", "unchanged", "daemon-replaced", "lost-reply"} {
+	for _, operation := range []string{"start", "stop", "remove"} {
+		for _, fault := range []string{"rejected", "redirect", "oversized", "truncated", "cancelled", "unchanged", "daemon-replaced", "lost-reply", "lost-stop-reply"} {
+			if fault == "lost-stop-reply" && operation != "stop" {
+				continue
+			}
 			t.Run(operation+"/"+fault, func(t *testing.T) {
-				rt, file := fixtureDocker(t, dockerFixture{Container: dockerFixtureContainer()})
+				container := dockerFixtureContainer()
+				if operation == "stop" {
+					container.State = DockerContainerState{Status: "running", Running: true}
+				}
+				rt, file := fixtureDocker(t, dockerFixture{Container: container})
 				ordinary := fixtureDockerAPI(file)
 				var mutated atomic.Bool
 				ctx, cancel := context.WithCancel(t.Context())
@@ -80,7 +90,7 @@ func TestDockerContainerMutationUnknownOutcomes(t *testing.T) {
 						w.WriteHeader(http.StatusNoContent)
 					case "daemon-replaced":
 						ordinary.ServeHTTP(w, r)
-					case "lost-reply":
+					case "lost-reply", "lost-stop-reply":
 						data, err := os.ReadFile(file)
 						if err != nil {
 							t.Error(err)
@@ -91,7 +101,11 @@ func TestDockerContainerMutationUnknownOutcomes(t *testing.T) {
 							t.Error(err)
 							return
 						}
-						fixture.Container = nil
+						if fault == "lost-stop-reply" {
+							fixture.Container.State = DockerContainerState{Status: "exited"}
+						} else {
+							fixture.Container = nil
+						}
 						data, _ = json.Marshal(fixture)
 						if err = os.WriteFile(file, data, 0600); err != nil {
 							t.Error(err)
@@ -108,10 +122,12 @@ func TestDockerContainerMutationUnknownOutcomes(t *testing.T) {
 				d.binary = "/unavailable-docker"
 				if operation == "start" {
 					err = d.StartContainer(ctx, dockerFixtureRef())
+				} else if operation == "stop" {
+					err = d.StopContainer(ctx, dockerFixtureRef(), 0)
 				} else {
 					err = d.RemoveContainer(ctx, dockerFixtureRef())
 				}
-				wantSuccess := operation == "remove" && fault == "lost-reply"
+				wantSuccess := operation != "start" && (fault == "lost-reply" || fault == "lost-stop-reply")
 				if (err == nil) != wantSuccess {
 					t.Fatalf("success=%v error=%v", wantSuccess, err)
 				}
@@ -137,6 +153,9 @@ func TestDockerContainerMutationRequiresCustody(t *testing.T) {
 	ref.Labels = map[string]string{"wrong": "owner"}
 	if err := d.StartContainer(t.Context(), ref); err == nil {
 		t.Fatal("started foreign container")
+	}
+	if err := d.StopContainer(t.Context(), ref, 0); err == nil {
+		t.Fatal("stopped foreign container")
 	}
 	if err := d.RemoveContainer(t.Context(), ref); err == nil {
 		t.Fatal("removed foreign container")
