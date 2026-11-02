@@ -88,7 +88,8 @@ the Makefile's `TEST_HOST_PROGRAMS`, which macOS and Linux ship. Some tests also
 `sha256sum` or `shasum` when installed, and skip, naming the program, when it is missing; the
 services bench's tests read the load average with `sysctl` on macOS and pass without it. CI's
 `check-unit` runs them with only the required programs on PATH (`make test-minimal-path`), so
-a test that needs another program without skipping fails there.
+a test that needs another program without skipping fails there. The doctor probe needs
+`ls` to prove public directory contents remain visible, so it is a required host utility.
 
 The gate needs `staticcheck`, `govulncheck`, `shellcheck` and `git-lfs`. The Makefile pins
 `govulncheck` and installs Staticcheck with `make install-staticcheck` from

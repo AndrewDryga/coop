@@ -2,8 +2,8 @@
 name: doctor-report-accounting
 description: how `coop doctor` counts — the 37 checks, the outcomes a row can have, and why a failed probe adds one failure plus the checks it was carrying
 subsystem: doctor
-sources: [internal/cli/doctor.go, internal/cli/doctor_report.go, internal/cli/doctor_checks.go]
-updated: 2026-11-01
+sources: [internal/cli/doctor.go, internal/cli/doctor_report.go, internal/cli/doctor_checks.go, internal/cli/doctor_test.go, Makefile]
+updated: 2026-11-02
 ---
 
 `coop doctor` is the one command whose point IS the ledger: the person asked coop to perform
@@ -43,6 +43,9 @@ fixture unreadable inside the box.
 Secret checks read actual bytes: denial and empty mount shadows both pass. The directory check
 also reads its known child, so hiding names alone cannot pass. Exact public file reads and a public
 directory listing must succeed; missing tools or blanket read denial cannot produce a clean report.
+The host-side regression runs that same shell probe, so its `cat` and `ls` readers both belong
+in `TEST_HOST_PROGRAMS`. Omitting `ls` made all three normal visibility cases fail only in
+minimal-PATH CI; the broken-readers case must keep proving the positive controls fail closed.
 
 Credential fixtures start owner-private (0700 directories, 0600 files); the selected provider has
 valid inert OAuth and identity input with distant expiry, imported through fresh host sign-in
@@ -54,6 +57,8 @@ traverse a foreign-owned private bind. A real image keeps its configured USER so
 detects incompatible image ownership. Docker Desktop has a different host UID mapping.
 
 ## Changelog
+- 2026-11-02 — added the doctor probe's required `ls` reader to the minimal test PATH;
+  reproduced the existing visibility regression before fixing the host-tool inventory.
 - 2026-11-01 — removed empty-decoy metadata assumptions for BPF denial, retained public/negative
   controls and the 37-check total, and added uncounted backend/fallback context. The user approved
   doctor/docs polish; updated the directory label and matching approved transcripts together.

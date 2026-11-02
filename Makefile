@@ -36,7 +36,7 @@ test: require-git-lfs ## Run unit tests (no container runtime needed)
 # and names it when it is missing; CONTRIBUTING.md lists both sets. `which`, not `command -v`,
 # because true and false are shell builtins and the tests need the programs. CGO_ENABLED=0 builds
 # the tests the way the release builds coop, which no C compiler on PATH would force anyway.
-TEST_HOST_PROGRAMS := git git-lfs sh awk basename cat chmod cmp cp cut dd dirname env false find grep gzip head install ln mkdir mkfifo mktemp mv od ps rm rmdir sed sleep stat tail tar tee touch tr true uname wc
+TEST_HOST_PROGRAMS := git git-lfs sh awk basename cat chmod cmp cp cut dd dirname env false find grep gzip head install ln ls mkdir mkfifo mktemp mv od ps rm rmdir sed sleep stat tail tar tee touch tr true uname wc
 
 test-minimal-path: require-git-lfs ## Run unit tests with only TEST_HOST_PROGRAMS and go on PATH
 	@bin="$$(mktemp -d)" && trap 'rm -rf "$$bin"' EXIT && ln -s "$$(go env GOROOT)/bin/go" "$$bin/go" && \
