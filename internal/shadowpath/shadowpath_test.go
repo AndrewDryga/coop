@@ -672,6 +672,7 @@ func TestGlobSetMatchesFilepathMatch(t *testing.T) {
 	tricky := []string{`a\*b`, `\*.pem`, `*\[x`, `x[a-c]y`, `[!.]env`, `a]b`, `*.[kp]e[my]`, `id_??a*`, `[`, `a[b`, `*\`, `?`, `*`, ``}
 	lists := map[string][]string{
 		"secret": SecretGlobs, "allow": AllowGlobs, "template": allowTemplateGlobs, "hard": hardSecretGlobs, "tricky": tricky,
+		"literals": {"", "plain", "plain", "dir/file", "résumé", "re\u0301sume\u0301", "政策"},
 	}
 	var names []string
 	alphabet := ""

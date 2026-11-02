@@ -2,8 +2,8 @@
 name: secret-shadow-walk
 description: every launch walks the whole checkout from a real-folder root (a linked root and a link to home are refused, though a box that writes the root's parent can still swap it), gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs; the .coopignore files above the repository, short of home, apply too
 subsystem: box
-sources: [internal/box/mounts.go, internal/box/hidden_files.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, internal/forkctl/merge.go, internal/sessionsvc/review_scan.go, tools/lifecyclebench]
-updated: 2026-11-01
+sources: [internal/box/filesystem_walk.go, internal/box/filesystem_snapshot.go, internal/box/mounts.go, internal/box/hidden_files.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, internal/forkctl/merge.go, internal/sessionsvc/review_scan.go, tools/lifecyclebench]
+updated: 2026-11-02
 ---
 
 The mount backend uses `box.ComputeMounts`; qualified eBPF launches capture the same semantic
@@ -93,7 +93,11 @@ inventory to omit absent-policy lookups, including directories with no policy an
 them. Case variants still cause the canonical safe read; links, directories and unreadable files
 retain the ordinary decider's behavior. This is a per-inventory optimization, never a listing
 cache across launches. Built-in basename decisions are memoized within each decider because they
-do not depend on the containing directory; project policy remains path-dependent.
+do not depend on the containing directory; project policy remains path-dependent. Clean paths
+from `ReadDir` are joined and split directly during BPF inventory/classification; general decider
+queries still normalize their input. Compiled literal globs use exact byte lookup, while any
+pattern containing a wildcard, bracket or escape retains the existing matcher. Unicode literals
+are not normalized by this optimization.
 
 **The rest was CPU, not disk** (measured 2026-10-06, 40k paths in 6k directories, warm). The walk's
 own directory reads took 0.12 s; deciding took 0.47 s, of which `filepath.Match` against the 64
@@ -171,6 +175,9 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-11-02 — avoid repeated cleaning of inventory paths and linear literal-glob scans; checked
+  walker and classification sources plus the differential glob corpus. Historical measurements
+  and unrelated mount-backend sections were not reverified.
 - 2026-11-01 — documented complete-inventory policy discovery and per-decider basename memoization;
   fresh BPF final validation and bounded parallel metadata traversal live in filesystem-enforcement.
 - 2026-11-01 — distinguished mount discovery from integrated BPF admission and linked its

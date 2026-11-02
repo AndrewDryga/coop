@@ -169,14 +169,17 @@ func filesystemNamedFlags(root string, inventory *filesystemInventory, before re
 		if rel != "." {
 			// Lexical order visits parents first; inherited directory protection therefore
 			// includes every descendant without reinterpreting an allow pattern.
-			parent := path.Dir(rel)
+			parent, name := ".", rel
+			if i := strings.LastIndexByte(rel, '/'); i >= 0 {
+				parent, name = rel[:i], rel[i+1:]
+			}
 			f = flags[parent] & fsfilter.Secret
-			skip := suppressed[parent] || directory && path.Base(rel) == ".git"
+			skip := suppressed[parent] || directory && name == ".git"
 			origin, remembered := before[id]
 			moved := remembered && origin != rel
 			if !skip {
 				switch {
-				case object.mode.IsRegular() && IsCoopignoreName(path.Base(rel)) && isCoopignore(filepath.Join(root, rel)):
+				case object.mode.IsRegular() && IsCoopignoreName(name) && isCoopignore(filepath.Join(root, rel)):
 					f |= fsfilter.ReadOnly
 				default:
 					hidden, err := decide(rel)

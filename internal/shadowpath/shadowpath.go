@@ -685,9 +685,12 @@ func readRepoPolicy(root, dirRel string) ([]byte, error) {
 // globSet is MatchesAny over a fixed list of patterns, for a caller that asks about many names.
 // A name can match a pattern only if it starts with the text before the pattern's first wildcard
 // and ends with the text after its last one, and almost no name passes both string comparisons;
-// filepath.Match still decides every name that does. Matching 40,000 names against SecretGlobs
-// with filepath.Match alone took 0.31 s (2026-10-06).
-type globSet []compiledGlob
+// Literal patterns use exact lookup; filepath.Match decides the remaining wildcard candidates.
+// Matching 40,000 names against SecretGlobs with filepath.Match alone took 0.31 s (2026-10-06).
+type globSet struct {
+	literals map[string]bool
+	patterns []compiledGlob
+}
 
 type compiledGlob struct {
 	pattern, prefix, suffix string
@@ -698,19 +701,23 @@ type compiledGlob struct {
 const wildcards = `*?[]\`
 
 func compileGlobs(globs []string) globSet {
-	set := make(globSet, len(globs))
-	for i, glob := range globs {
-		prefix, suffix := glob, ""
-		if first := strings.IndexAny(glob, wildcards); first >= 0 {
-			prefix, suffix = glob[:first], glob[strings.LastIndexAny(glob, wildcards)+1:]
+	set := globSet{literals: map[string]bool{}}
+	for _, glob := range globs {
+		first := strings.IndexAny(glob, wildcards)
+		if first < 0 {
+			set.literals[glob] = true
+			continue
 		}
-		set[i] = compiledGlob{pattern: glob, prefix: prefix, suffix: suffix}
+		set.patterns = append(set.patterns, compiledGlob{pattern: glob, prefix: glob[:first], suffix: glob[strings.LastIndexAny(glob, wildcards)+1:]})
 	}
 	return set
 }
 
 func (set globSet) matches(name string) bool {
-	for _, glob := range set {
+	if set.literals[name] {
+		return true
+	}
+	for _, glob := range set.patterns {
 		if !strings.HasPrefix(name, glob.prefix) || !strings.HasSuffix(name, glob.suffix) {
 			continue
 		}

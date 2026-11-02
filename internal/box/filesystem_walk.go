@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -91,7 +90,10 @@ func inventoryFilesystem(root, exclude string, fullMetadata bool) (*filesystemIn
 				return
 			}
 			for _, d := range entries {
-				rel := path.Join(dir, d.Name())
+				rel := d.Name()
+				if dir != "." {
+					rel = dir + "/" + rel
+				}
 				if rel == exclude {
 					continue
 				}
