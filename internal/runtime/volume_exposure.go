@@ -44,15 +44,38 @@ func (r Runtime) ExistingNamedVolumeExposure(ctx context.Context, names []string
 // ExistingNamedVolumeExposure inventories only this bound daemon. Mutable
 // Docker context and proxy settings cannot redirect an authority exposure check.
 func (d *Docker) ExistingNamedVolumeExposure(ctx context.Context, names []string) (VolumeExposure, error) {
+	if len(names) > 64 {
+		return VolumeExposure{}, errors.New("runtime volume inventory exceeds its limit")
+	}
+	for _, name := range names {
+		if !volumeName(name) {
+			return VolumeExposure{}, errors.New("invalid selected runtime volume name")
+		}
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	if err := d.Verify(ctx); err != nil {
 		return VolumeExposure{}, err
 	}
-	exposure, err := (volumeReader{runtimeDocker, d.output}).existing(ctx, names)
-	if err != nil {
-		return VolumeExposure{}, err
+	var exposure VolumeExposure
+	var seen []string
+	for _, name := range names {
+		if slices.Contains(seen, name) {
+			continue
+		}
+		seen = append(seen, name)
+		definition, present, err := d.inspectVolumeDefinition(ctx, name)
+		if err != nil {
+			return VolumeExposure{}, err
+		}
+		if present {
+			if err := exposure.add(definition, false); err != nil {
+				return VolumeExposure{}, err
+			}
+		}
 	}
 	if err := d.Verify(ctx); err != nil {
 		return VolumeExposure{}, err
@@ -139,30 +162,37 @@ func (r volumeReader) named(ctx context.Context, names []string, prepare bool) (
 		if err != nil {
 			return VolumeExposure{}, err
 		}
-		roots, err := volumeBackingPaths(definition, r.dialect == runtimeAppleContainer)
-		if err != nil {
+		if err := exposure.add(definition, r.dialect == runtimeAppleContainer); err != nil {
 			return VolumeExposure{}, err
-		}
-		mountpoint, err := volumeMountpointExposure(roots[0])
-		if err != nil {
-			return VolumeExposure{}, err
-		}
-		if mountpoint != roots[0] {
-			exposure.ManagedParents = append(exposure.ManagedParents, mountpoint)
-			roots[0] = mountpoint
-		}
-		exposure.Sources = append(exposure.Sources, roots...)
-		if len(definition.Options) == 0 {
-			if exposure.PlainLocalVolumes == nil {
-				exposure.PlainLocalVolumes = map[string]PlainLocalVolume{}
-			}
-			exposure.PlainLocalVolumes[name] = PlainLocalVolume{definition.Mountpoint, roots[0], definition.CreatedAt}
-		}
-		if len(roots) > 1 {
-			exposure.BindSources = append(exposure.BindSources, roots[1:]...)
 		}
 	}
 	return exposure, nil
+}
+
+func (e *VolumeExposure) add(definition volumeDefinition, apple bool) error {
+	roots, err := volumeBackingPaths(definition, apple)
+	if err != nil {
+		return err
+	}
+	mountpoint, err := volumeMountpointExposure(roots[0])
+	if err != nil {
+		return err
+	}
+	if mountpoint != roots[0] {
+		e.ManagedParents = append(e.ManagedParents, mountpoint)
+		roots[0] = mountpoint
+	}
+	e.Sources = append(e.Sources, roots...)
+	if len(definition.Options) == 0 {
+		if e.PlainLocalVolumes == nil {
+			e.PlainLocalVolumes = map[string]PlainLocalVolume{}
+		}
+		e.PlainLocalVolumes[definition.Name] = PlainLocalVolume{definition.Mountpoint, roots[0], definition.CreatedAt}
+	}
+	if len(roots) > 1 {
+		e.BindSources = append(e.BindSources, roots[1:]...)
+	}
+	return nil
 }
 
 // Rootful daemons keep ordinary volume data beneath a directory a docker-group

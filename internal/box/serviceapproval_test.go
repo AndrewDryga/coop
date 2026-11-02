@@ -31,22 +31,40 @@ func serviceFixtureDaemon(t *testing.T, recorder string) string {
 			_ = json.NewEncoder(w).Encode(dockersock.Info{ID: id, OSType: "linux", Architecture: "amd64", ServerVersion: "29.1", KernelVersion: "fixture", SecurityOptions: []string{}})
 			return
 		}
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/volumes/") {
+			name := strings.TrimPrefix(r.URL.Path, "/volumes/")
+			if !recordServiceFixtureRead(t, w, recorder, "volume", name) {
+				return
+			}
+			if state := os.Getenv("COOP_TEST_VOLUME_STATE"); state != "" {
+				info, err := os.Stat(state)
+				if err != nil || !info.Mode().IsRegular() {
+					http.NotFound(w, r)
+					return
+				}
+			}
+			options := map[string]string{}
+			if os.Getenv("COOP_TEST_VOLUME_OPTS") == "bind" {
+				options = map[string]string{"type": "none", "o": "bind", "device": "/"}
+			}
+			mountpoint := os.Getenv("COOP_TEST_VOLUME_MOUNTPOINT")
+			if mountpoint == "" {
+				mountpoint = "/var/lib/docker/volumes/" + name + "/_data"
+			}
+			created := os.Getenv("COOP_TEST_VOLUME_CREATED")
+			if created == "" {
+				created = "2026-01-01T00:00:00Z"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"Name": name, "Driver": "local", "Scope": "local", "Mountpoint": mountpoint, "CreatedAt": created, "Options": options})
+			return
+		}
 		if !strings.HasPrefix(r.URL.Path, "/images/") || !strings.HasSuffix(r.URL.Path, "/json") {
 			http.NotFound(w, r)
 			return
 		}
 		name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/images/"), "/json")
-		if recorder != "" {
-			file, err := os.OpenFile(recorder, os.O_APPEND|os.O_WRONLY, 0600)
-			if err != nil {
-				t.Error(err)
-				http.Error(w, "fixture failed", 500)
-				return
-			}
-			_, err = fmt.Fprintln(file, "image inspect", name)
-			if closeErr := file.Close(); err != nil || closeErr != nil {
-				t.Error("record image read", err, closeErr)
-			}
+		if !recordServiceFixtureRead(t, w, recorder, "image", name) {
+			return
 		}
 		immutable := strings.HasPrefix(name, "sha256:")
 		state := os.Getenv("COOP_TEST_IMAGE_STATE")
@@ -64,6 +82,25 @@ func serviceFixtureDaemon(t *testing.T, recorder string) string {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"Id": id, "Config": map[string]any{"Labels": map[string]string{}}})
 	}))
+}
+
+func recordServiceFixtureRead(t *testing.T, w http.ResponseWriter, recorder, kind, name string) bool {
+	t.Helper()
+	if recorder == "" {
+		return true
+	}
+	file, err := os.OpenFile(recorder, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Error(err)
+		http.Error(w, "fixture failed", 500)
+		return false
+	}
+	_, err = fmt.Fprintln(file, kind, "inspect", name)
+	if closeErr := file.Close(); err != nil || closeErr != nil {
+		t.Error("record fixture read", err, closeErr)
+		return false
+	}
+	return true
 }
 
 func serviceReviewRuntime(t *testing.T, recorder string) runtime.Runtime {

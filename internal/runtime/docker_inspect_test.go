@@ -36,6 +36,22 @@ func fixtureDockerAPI(file string) http.Handler {
 			http.Error(w, "unavailable", 500)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/volumes/") && fixture.Mode == "shared-volume" {
+			if fixture.SharedVolume == nil || strings.TrimPrefix(r.URL.Path, "/volumes/") != fixture.SharedVolume.Name {
+				http.NotFound(w, r)
+				return
+			}
+			if fixture.AfterVolumeID != "" {
+				fixture.ID = fixture.AfterVolumeID
+				data, _ := json.Marshal(fixture)
+				if os.WriteFile(file+".volume", data, 0600) != nil || os.Rename(file+".volume", file) != nil {
+					http.Error(w, "fixture write failed", 500)
+					return
+				}
+			}
+			_ = json.NewEncoder(w).Encode(fixture.SharedVolume)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/images/") && strings.HasSuffix(r.URL.Path, "/json") {
 			if fixture.Mode == "execution-malformed" {
 				fmt.Fprint(w, "invalid JSON")
