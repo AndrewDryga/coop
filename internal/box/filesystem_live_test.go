@@ -413,6 +413,19 @@ func TestFilesystemServiceReuseRuntime(t *testing.T) {
 		t.Fatal("changed protected identity reused old admission")
 	}
 	t.Log("changed protected identity re-admitted the service and retired its old controller")
+	docker, err := runtime.BindDockerForSetup(t.Context(), rt, third.Endpoint, third.DaemonID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer docker.Close()
+	if err := docker.RemoveContainer(t.Context(), third.Controller.Container); err != nil {
+		t.Fatal(err)
+	}
+	fourth := start()
+	if fourth.Parent == third.Parent || fourth.Controller.Name == third.Controller.Name {
+		t.Fatal("dead controller reused instead of replacing the service admission")
+	}
+	t.Log("controller death replaced the service under a fresh protected generation")
 }
 
 func TestFilesystemMixedServicesRuntime(t *testing.T) {
@@ -457,9 +470,7 @@ func TestFilesystemMixedServicesRuntime(t *testing.T) {
 	start := func() error {
 		var output bytes.Buffer
 		_, err := UpServicesReviewed(rt, repo, file, nil, &output, &output)
-		if err != nil {
-			t.Log(output.String())
-		}
+		t.Log(output.String())
 		return err
 	}
 	if err := start(); err != nil {
@@ -478,6 +489,9 @@ func TestFilesystemMixedServicesRuntime(t *testing.T) {
 		records := map[string]filesystemRecord{}
 		for _, entry := range entries {
 			r, err := readFilesystemRecord(filepath.Join(state, entry.Name()))
+			if err != nil {
+				t.Logf("read admission %s: %v", entry.Name(), err)
+			}
 			if err == nil && r.Workspace == repo && r.Services {
 				if _, duplicate := records[r.Service]; duplicate {
 					t.Fatalf("duplicate retained admission for %s", r.Service)
@@ -745,7 +759,7 @@ func TestFilesystemBootGuardRuntime(t *testing.T) {
 			if err := a.consumer(ref); err != nil {
 				t.Fatal(err)
 			}
-			options := []string{"--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--cgroup-parent", "/" + a.record.Parent, "--entrypoint", fsfilter.ControlPath + "/guard", "--mount", networkMount("bind", control, fsfilter.ControlPath, true), "--mount", networkMount("bind", repo, "/workspace", false)}
+			options := []string{"--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--cgroup-parent", a.record.cgroupParent(), "--entrypoint", fsfilter.ControlPath + "/guard", "--mount", networkMount("bind", control, fsfilter.ControlPath, true), "--mount", networkMount("bind", repo, "/workspace", false)}
 			imageID, _, err := a.docker.Image(t.Context(), image)
 			if err != nil {
 				t.Fatal(err)

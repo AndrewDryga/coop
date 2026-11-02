@@ -199,7 +199,7 @@ func (a *filesystemAdmission) guarded(ctx context.Context, image string, command
 		return nil, nil, err
 	}
 	options = slices.Clone(options)
-	options = append(options, "--cgroup-parent", "/"+a.record.Parent, "--entrypoint", fsfilter.ControlPath+"/guard", "--mount", networkMount("bind", dir, fsfilter.ControlPath, true))
+	options = append(options, "--cgroup-parent", a.record.cgroupParent(), "--entrypoint", fsfilter.ControlPath+"/guard", "--mount", networkMount("bind", dir, fsfilter.ControlPath, true))
 	return options, []string{"guard", fsfilter.ControlPath + "/manifest.json"}, nil
 }
 
@@ -209,7 +209,7 @@ func (a *filesystemAdmission) verify(ctx context.Context, ref runtime.DockerRef,
 		return errors.Join(errors.New("filesystem workload observation unavailable"), err)
 	}
 	nnp := slices.Contains(value.SecurityOpt, "no-new-privileges") || slices.Contains(value.SecurityOpt, "no-new-privileges=true") || slices.Contains(value.SecurityOpt, "no-new-privileges:true")
-	if value.Image != image || value.CgroupParent != "/"+a.record.Parent || !slices.Equal(value.Entrypoint, []string{fsfilter.ControlPath + "/guard"}) || !slices.Equal(value.Cmd, []string{"guard", fsfilter.ControlPath + "/manifest.json"}) || value.Privileged || len(value.CapAdd) != 0 || a.record.Service == "" && !slices.Contains(value.CapDrop, "ALL") || !nnp || value.PidMode != "" || value.UsernsMode != "" || value.CgroupnsMode != "" && value.CgroupnsMode != "private" {
+	if value.Image != image || value.CgroupParent != a.record.cgroupParent() || !slices.Equal(value.Entrypoint, []string{fsfilter.ControlPath + "/guard"}) || !slices.Equal(value.Cmd, []string{"guard", fsfilter.ControlPath + "/manifest.json"}) || value.Privileged || len(value.CapAdd) != 0 || a.record.Service == "" && !slices.Contains(value.CapDrop, "ALL") || !nnp || value.PidMode != "" || value.UsernsMode != "" || value.CgroupnsMode != "" && value.CgroupnsMode != "private" {
 		return errors.New("filesystem workload does not match its protection contract")
 	}
 	var health []string

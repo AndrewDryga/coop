@@ -42,6 +42,7 @@ func lockFilesystemAdmission(dir string, create bool) (*os.File, error) {
 }
 
 func (a *filesystemAdmission) releaseLease() {
+	a.controller.closeLease()
 	if a.lease != nil {
 		a.lease.Close()
 		a.lease = nil
@@ -106,7 +107,18 @@ func (r filesystemRecord) validate() error {
 			return errors.New("invalid filesystem probe record")
 		}
 	}
+	if r.Controller != nil {
+		if err := r.Controller.validate(); err != nil {
+			return err
+		}
+		if r.Controller.Ready == nil || r.Controller.Endpoint != r.Endpoint || r.Controller.DaemonID != r.DaemonID || r.Controller.Image != r.Image {
+			return errors.New("filesystem admission controller differs")
+		}
+	}
 	if r.Ready != nil {
+		if !r.matchesController(*r.Ready) {
+			return errors.New("filesystem admission belongs to another controller")
+		}
 		return r.Ready.Validate(r.Parent)
 	}
 	return nil
@@ -116,6 +128,12 @@ func (r filesystemRecord) validate() error {
 // admissions. Service protection remains until every restartable consumer is
 // absent; a successful process exit alone never authorizes removing it.
 func RecoverFilesystemAdmissions(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
+	admissions, err := recoverFilesystemAdmissions(ctx, rt, workspace)
+	controllers, controllerErr := recoverFilesystemControllers(ctx, rt)
+	return admissions + controllers, errors.Join(err, controllerErr)
+}
+
+func recoverFilesystemAdmissions(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
 	state, err := serviceStateRoot("filesystem")
 	if err != nil {
 		return 0, err
@@ -195,6 +213,12 @@ func recoverFilesystemAdmission(ctx context.Context, rt runtime.Runtime, dir str
 		}
 	}
 	a := &filesystemAdmission{docker: docker, dir: dir, record: record, lease: lease}
+	if record.Controller != nil {
+		a.controller, err = leaseRecordedFilesystemController(ctx, docker, *record.Controller, false)
+		if err != nil {
+			return false, err
+		}
+	}
 	err = a.closeContext(ctx)
 	return err == nil, err
 }

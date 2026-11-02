@@ -86,7 +86,12 @@ func (d *Docker) ObserveContainerLogs(ctx context.Context, ref DockerRef, tail, 
 	if err != nil || !present {
 		return value, nil, errors.Join(errors.New("Docker helper is unavailable"), err)
 	}
-	data, err := d.output(ctx, limit, "container", "logs", "--tail", strconv.Itoa(tail), ref.ID)
+	// Docker routes container stderr to CLI stderr even when logs succeeds.
+	// It shares the same bound; ownership was checked before reading either.
+	if d.closed.Load() {
+		return value, nil, errDockerCommandNotStarted
+	}
+	data, err := dockerCommandOutput(ctx, d.binary, d.env, limit, true, "--config", d.clientConfig, "--host", d.endpoint, "container", "logs", "--tail", strconv.Itoa(tail), ref.ID)
 	return value, data, err
 }
 
@@ -97,7 +102,7 @@ const dockerCgroupBatch = 128
 // retained parent again on restart, even while its cgroup currently has no tasks.
 // The caller serializes creation and retirement for this parent.
 func (d *Docker) CgroupParentUnused(ctx context.Context, parent string) error {
-	if !strings.HasPrefix(parent, "/coop-fs-") || strings.ContainsAny(strings.TrimPrefix(parent, "/"), "/\x00\r\n") {
+	if !validFilesystemCgroupParent(parent) {
 		return errors.New("invalid filesystem cgroup parent")
 	}
 	// Other admissions can retire unrelated containers while this inventory is
@@ -173,7 +178,8 @@ func checkCgroupParents(data []byte, ids []string, parent string) error {
 			return errors.New("invalid Docker cgroup-parent observation")
 		}
 		delete(wanted, row.ID)
-		if strings.TrimPrefix(*row.Parent, "/") == strings.TrimPrefix(parent, "/") {
+		observed, target := strings.TrimPrefix(*row.Parent, "/"), strings.TrimPrefix(parent, "/")
+		if observed == target || strings.HasPrefix(observed, target+"/") {
 			return errors.New("filesystem protection retained for a restartable Docker container")
 		}
 	}
@@ -181,4 +187,21 @@ func checkCgroupParents(data []byte, ids []string, parent string) error {
 		return errors.New("incomplete Docker cgroup-parent observation")
 	}
 	return nil
+}
+
+// A controller root or its single admission child. Descendant consumers are
+// checked by bounded path prefix, including stopped/restartable containers.
+func validFilesystemCgroupParent(parent string) bool {
+	if !strings.HasPrefix(parent, "/") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(parent, "/"), "/")
+	valid := func(name, prefix string) bool {
+		suffix := strings.TrimPrefix(name, prefix)
+		return strings.HasPrefix(name, prefix) && len(suffix) == 32 && strings.Trim(suffix, "0123456789abcdef") == ""
+	}
+	if len(parts) == 1 {
+		return valid(parts[0], "coop-fs-") || valid(parts[0], "coop-fs-controller-")
+	}
+	return len(parts) == 2 && valid(parts[0], "coop-fs-controller-") && valid(parts[1], "coop-fs-")
 }

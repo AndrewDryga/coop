@@ -26,6 +26,7 @@ static void test_snapshot(void) {
     if (!out) _exit(83);
     struct bpf_object *all[] = {object, normalizer};
     for (int i = 0; i < 2; i++) {
+        if (!all[i]) continue;
         struct bpf_program *program;
         bpf_object__for_each_program(program, all[i])
             test_record(out, "program", bpf_program__name(program), bpf_program__fd(program));
@@ -48,7 +49,7 @@ static int test_fault(const char *name) {
     return fault && !strcmp(fault, name);
 }
 static void test_signal(void) {
-    if (test_fault("owner-death")) _exit(47);
+    if (test_fault("controller-death")) _exit(47);
     struct bpf_program *program = bpf_object__find_program_by_name(object, "guard_file_open");
     struct bpf_prog_info info = {0}; uint32_t size = sizeof(info);
     if (!program || bpf_obj_get_info_by_fd(bpf_program__fd(program), &info, &size)) _exit(85);

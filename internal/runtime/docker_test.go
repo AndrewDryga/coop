@@ -74,6 +74,7 @@ type dockerFixture struct {
 	Copy                      string
 	CopyBody                  string
 	Logs                      string
+	ErrorLogs                 string
 	Execution                 *DockerImageExecution
 	CgroupParents             map[string]string
 	SettleAt                  time.Time
@@ -309,6 +310,7 @@ func TestDockerFixtureProcess(t *testing.T) {
 				os.Exit(111)
 			}
 			fmt.Print(fixture.Logs)
+			fmt.Fprint(os.Stderr, fixture.ErrorLogs)
 		case "ls":
 			if fixture.Mode == "list-fail" {
 				os.Exit(1)

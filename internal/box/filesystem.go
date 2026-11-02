@@ -25,7 +25,8 @@ var errFilesystemUnsupported = errors.New("filesystem runtime is not qualified")
 var errFilesystemCustodyPending = errors.New("filesystem cleanup requires reconciliation")
 
 type filesystemRecord struct {
-	Version                               int `json:"version"`
+	Controller                            *filesystemControllerRecord `json:",omitempty"`
+	Version                               int                         `json:"version"`
 	Parent, Endpoint, DaemonID, Image     string
 	Helper                                runtime.DockerRef
 	Consumers                             []runtime.DockerRef
@@ -43,6 +44,7 @@ type filesystemRecord struct {
 }
 
 type filesystemAdmission struct {
+	controller        *filesystemController
 	docker            *runtime.Docker
 	dir               string
 	record            filesystemRecord
@@ -190,7 +192,16 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 		if err != nil {
 			return err
 		}
+		controller, err := acquireFilesystemController(ctx, docker, image, roots)
+		if err != nil {
+			return err
+		}
 		a.record.Image = image
+		a.controller = controller
+		a.record.Controller = &controller.record
+		if err := filesystemJSON(filepath.Join(a.dir, "controller.json"), controller.record.Ready); err != nil {
+			return err
+		}
 		if err := a.persist(); err != nil {
 			return err
 		}
@@ -198,7 +209,7 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 		for i, root := range roots {
 			options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/sources/%d", i+1), true))
 		}
-		id, err := a.create(ctx, runtime.DockerCreate{Ref: a.record.Helper, Image: image, Options: options, Command: []string{"admit", "/sources", "/state/policy.json", "/host-cgroup/" + parent}})
+		id, err := a.create(ctx, runtime.DockerCreate{Ref: a.record.Helper, Image: image, Options: options, Command: []string{"admit", "/sources", "/state/policy.json", parent, "/state/controller.json"}})
 		a.record.Helper.ID = id
 		if saveErr := a.persist(); err != nil || saveErr != nil {
 			return errors.Join(err, saveErr)
@@ -233,7 +244,9 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 		return nil, err
 	}
 	if err := a.waitReady(ctx); err != nil {
-		return nil, errors.Join(errFilesystemUnsupported, err)
+		// A qualified controller already exists. Owner publication failure is
+		// a launch failure, not permission to replace guarded services with mounts.
+		return nil, err
 	}
 	if err := a.qualifyShares(ctx, probeRef); err != nil {
 		return nil, errors.Join(errFilesystemUnsupported, err)
@@ -286,13 +299,16 @@ func (a *filesystemAdmission) waitReady(ctx context.Context) error {
 		}
 		for _, line := range bytes.Split(data, []byte{'\n'}) {
 			var ready fsfilter.Ready
-			if json.Unmarshal(line, &ready) == nil && ready.Validate(a.record.Parent) == nil {
+			if json.Unmarshal(line, &ready) == nil && ready.Validate(a.record.Parent) == nil && a.record.matchesController(ready) {
 				a.record.Ready = &ready
 				return a.persist()
 			}
 		}
 		if !value.State.Running {
-			return fmt.Errorf("filesystem helper did not become ready: %s", strings.TrimSpace(string(data)))
+			// Logs and state are observed separately. Fetch once more after the
+			// terminal state so a fast failure cannot lose its final diagnostic.
+			final, logErr := a.docker.ContainerLogs(ctx, a.record.Helper, 30, 1<<20)
+			return errors.Join(fmt.Errorf("filesystem helper exited with status %d before readiness: %s", value.State.ExitCode, strings.TrimSpace(string(final))), logErr)
 		}
 		select {
 		case <-ctx.Done():
@@ -318,7 +334,7 @@ func (a *filesystemAdmission) createShareProbe(ctx context.Context, roots []stri
 	if err := a.consumer(ref); err != nil {
 		return ref, err
 	}
-	options := []string{"--network", "none", "--user", "0", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--cgroup-parent", "/" + a.record.Parent, "--mount", networkMount("bind", a.dir, "/state", true)}
+	options := []string{"--network", "none", "--user", "0", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--cgroup-parent", a.record.cgroupParent(), "--mount", networkMount("bind", a.dir, "/state", true)}
 	for i, root := range roots {
 		options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/sources/%d", i+1), true))
 	}
@@ -479,13 +495,17 @@ func (a *filesystemAdmission) closeContext(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := a.docker.CgroupParentUnused(ctx, "/"+a.record.Parent); err != nil {
+	if err := a.docker.CgroupParentUnused(ctx, a.record.cgroupParent()); err != nil {
 		return err
 	}
 	if err := a.remove(ctx, a.record.Helper); err != nil {
 		return err
 	}
-	if a.record.Image != "" {
+	if a.record.Image != "" && a.record.Controller != nil {
+		if err := a.retireSharedPolicy(ctx); err != nil {
+			return err
+		}
+	} else if a.record.Image != "" {
 		ref := filesystemRef(a.record.Parent, "recovery")
 		if err := a.remove(ctx, ref); err != nil {
 			return err

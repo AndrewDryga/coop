@@ -11,8 +11,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -64,7 +62,6 @@ func currentBoot() (string, error) {
 }
 
 func run(args []string) error {
-	const loader = "/usr/local/libexec/coop-fs-kernel"
 	if len(args) == 2 && args[0] == "unicode-table" {
 		data, err := fsfilter.UnicodeData()
 		if err != nil {
@@ -72,34 +69,8 @@ func run(args []string) error {
 		}
 		return os.WriteFile(args[1], data, 0444)
 	}
-	if len(args) == 2 && args[0] == "abandon" && fsfilter.ValidParent(args[1]) {
-		// A helper which never published birth attached nothing. rmdir alone
-		// refuses an unexpected surviving pin; no unknown program is detached.
-		return syscall.Exec(loader, []string{loader, "release", "/host-cgroup/" + args[1], "0", "0", "0", "0"}, os.Environ())
-	}
-	if len(args) == 2 && args[0] == "release" {
-		var birth fsfilter.Birth
-		if err := decode(args[1], &birth); err != nil {
-			return err
-		}
-		parent := strings.TrimPrefix(birth.Parent, "/")
-		if err := birth.Validate(parent); err != nil {
-			return err
-		}
-		current, err := currentBoot()
-		if err != nil {
-			return err
-		}
-		if current != birth.BootID {
-			// A new kernel has none of the old attachments. Never apply old
-			// numeric identities to objects created during the new boot.
-			return nil
-		}
-		command := []string{loader, "release", "/host-cgroup/" + parent, strconv.FormatUint(birth.CgroupInode, 10), strconv.FormatUint(birth.CgroupDevice, 10), strconv.FormatUint(birth.PinDirectoryInode, 10), strconv.FormatUint(birth.PinDirectoryDevice, 10)}
-		for _, link := range birth.Programs {
-			command = append(command, fmt.Sprintf("%s:%d:%d", link.Name, link.ID, link.Program))
-		}
-		return syscall.Exec(loader, command, os.Environ())
+	if handled, err := sharedCommand(args); handled {
+		return err
 	}
 	if len(args) == 2 && (args[0] == "probe" || args[0] == "probe-warm") {
 		return probeShare(args[1], args[0] == "probe-warm")
@@ -148,14 +119,10 @@ func run(args []string) error {
 		}
 		return syscall.Exec(executable, command, os.Environ())
 	}
-	if len(args) != 4 || args[0] != "admit" {
+	if len(args) != 5 || args[0] != "admit" || !fsfilter.ValidParent(args[3]) {
 		return errors.New("expected guard, healthcheck or admit")
 	}
-	parent := args[3]
-	if filepath.Dir(parent) != "/host-cgroup" || !fsfilter.ValidParent(filepath.Base(parent)) {
-		return errors.New("invalid owned cgroup parent")
-	}
-	return admit(args[1], args[2], parent)
+	return admit(args[1], args[2], args[3], args[4])
 }
 
 func main() {

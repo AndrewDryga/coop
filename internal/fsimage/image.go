@@ -41,7 +41,7 @@ func Fingerprint() string {
 func Tag() string { return "coop-filesystem:" + Fingerprint()[:32] }
 
 var directories = []string{"cmd/coop-fs", "internal/fsfilter"}
-var fixedFiles = []string{"go.mod", "go.sum", "LICENSE", "internal/fsfilter/assets/filter.c", "internal/fsfilter/assets/loader.c"}
+var fixedFiles = []string{"go.mod", "go.sum", "LICENSE", "internal/fsfilter/assets/filter.c", "internal/fsfilter/assets/loader.c", "internal/fsfilter/assets/shared.h"}
 
 func sourcePath(name string) bool {
 	return slices.Contains(fixedFiles, name) || name == path.Clean(name) && slices.Contains(directories, path.Dir(name)) && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")

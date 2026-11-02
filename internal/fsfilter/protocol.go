@@ -32,13 +32,16 @@ type Link struct {
 }
 
 type Ready struct {
-	Status      string `json:"status"`
-	Parent      string `json:"parent"`
-	BootID      string `json:"boot_id"`
-	CgroupInode uint64 `json:"cgroup_inode"`
-	Programs    int    `json:"programs"`
-	Pins        int    `json:"pins"`
-	Links       []Link `json:"links"`
+	Controller  string         `json:"controller,omitempty"`
+	Token       uint64         `json:"token,omitempty"`
+	Maps        []KernelObject `json:"maps,omitempty"`
+	Status      string         `json:"status"`
+	Parent      string         `json:"parent"`
+	BootID      string         `json:"boot_id"`
+	CgroupInode uint64         `json:"cgroup_inode"`
+	Programs    int            `json:"programs"`
+	Pins        int            `json:"pins"`
+	Links       []Link         `json:"links"`
 }
 
 // Birth is durable before the first LSM attachment. Program identities are known
@@ -85,6 +88,15 @@ var hookNames = []string{
 }
 
 func (r Ready) Validate(parent string) error {
+	if r.Controller != "" {
+		if r.Status != "ready" || r.Parent != "/"+parent || !ValidParent(parent) || !ValidController(r.Controller) || !ValidBootID(r.BootID) || r.CgroupInode == 0 || r.Token == 0 || r.Pins < 1 || r.Pins > MaxPaths || r.Programs != 0 || len(r.Links) != 0 || !exactKernelObjects(r.Maps, []string{"objects", "paths", "devices", "config"}) {
+			return errors.New("invalid shared filesystem admission receipt")
+		}
+		return nil
+	}
+	if r.Token != 0 || len(r.Maps) != 0 {
+		return errors.New("unexpected shared admission objects")
+	}
 	if r.Status != "ready" || r.Parent != "/"+parent || !ValidParent(parent) || !ValidBootID(r.BootID) || r.CgroupInode == 0 || r.Programs != len(hookNames) || r.Pins < 1 || r.Pins > MaxPaths || len(r.Links) != len(hookNames) {
 		return errors.New("invalid filesystem admission receipt")
 	}

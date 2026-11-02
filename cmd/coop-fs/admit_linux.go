@@ -6,29 +6,43 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/fsfilter"
 )
 
-// C owns every protected descriptor and kernel attachment. Its program load
-// overlaps host discovery, but complete policy plus EOF still precede LSM attachment.
-func admit(sources, policyPath, parent string) error {
+// C holds fresh inode pins and publishes only this admission. The shared
+// controller already denies its subtree until the final owner publication.
+func admit(sources, policyPath, parent, controllerPath string) error {
 	id, err := currentBoot()
 	if err != nil {
 		return err
 	}
-	if err := os.Mkdir(parent, 0700); err != nil {
+	var controller fsfilter.ControllerReady
+	if err := decode(controllerPath, &controller); err != nil {
+		return err
+	}
+	if err := controller.Validate(); err != nil {
+		return err
+	}
+	if controller.Birth.BootID != id {
+		return errors.New("filesystem controller belongs to another kernel")
+	}
+	token, err := admissionToken()
+	if err != nil {
 		return err
 	}
 	read, write, err := os.Pipe()
 	if err != nil {
-		return errors.Join(err, os.Remove(parent))
+		return err
 	}
-	command := exec.Command("/usr/local/libexec/coop-fs-kernel", sources, parent, id)
+	args := []string{"owner", sources, parent, id, strconv.FormatUint(token, 10)}
+	args = append(args, controllerArguments(controller.Birth, controller.Links)...)
+	command := exec.Command("/usr/local/libexec/coop-fs-kernel", args...)
 	command.Stdin, command.Stdout, command.Stderr = read, os.Stdout, os.Stderr
 	if err := command.Start(); err != nil {
-		return errors.Join(err, read.Close(), write.Close(), os.Remove(parent))
+		return errors.Join(err, read.Close(), write.Close())
 	}
 	read.Close()
 	done := make(chan struct{})

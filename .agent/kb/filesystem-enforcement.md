@@ -2,7 +2,7 @@
 name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
-sources: [internal/box/filesystem.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, cmd/coop-fs/probe_linux.go, cmd/coop-fs/probe_linux_test.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
+sources: [internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, cmd/coop-fs/probe_linux.go, cmd/coop-fs/probe_linux_test.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
 updated: 2026-11-02
 ---
 
@@ -36,16 +36,16 @@ access applied after protected entries; policy files and directories cannot be g
 
 The helper image generates its immutable Unicode wire table at build time. Admissions compile
 unique exact path/ancestor rows (never normalized hashes as allow authority), followed by all
-grants. Fresh-helper creation and program loading overlap the host inventory. The trusted share
+grants. Fresh-owner creation and controller acquisition overlap the host inventory. The trusted share
 probe is created stopped in that same branch; it starts only after complete policy and READY.
 Only this branch writes custody, and both branches settle before publication or failure/panic
 cleanup. Sparse path/object maps
 retain the accepted upper bounds without preallocating every element. Host capture and remembering
 finish before atomic policy publication. Go supervises the C loader and pipes the encoded policy;
-C alone pins descriptors and becomes the task-storage owner. Exact EOF, map freeze and durable
-birth all precede LSM attachment/READY. Child failure is observed during publication; its timeout
+C alone pins descriptors and retains its exact task reference. Exact EOF, map freeze and durable
+run birth precede publication into the controller tables and READY. Child failure is observed during publication; its timeout
 never limits the admitted owner lifetime. Each real guest identity stays pinned until enforcement
-is detached. The helper descriptor limit covers the accepted 100,000 pinned objects plus
+is revoked. The helper descriptor limit covers the accepted 100,000 pinned objects plus
 map/program/root descriptors; Docker defaults must not silently lower that policy limit.
 Final pre-execution revalidation remains fresh.
 
@@ -88,8 +88,8 @@ mutations are denied; .coopignore is readable but cannot be changed, including t
 Private writable mappings of read-only policy are allowed because they cannot change host bytes.
 
 The same C source builds the guards and one fresh filename-normalization EXT program per
-admission. The loader reuses that admission's exact `work` and `runes` maps and attaches the
-replacement to every guard before C reads the policy or attaches LSM hooks. Its scalar call looks up
+controller generation. The loader reuses that generation's exact `work` and `runes` maps and
+attaches the replacement to every guard before attaching LSM hooks. Its scalar call looks up
 existing current-thread scratch; missing scratch or replacement denies. The base stub preserves
 all four arguments and a compiler memory clobber because the replacement writes scratch through
 its map lookup. The final depth bound stays adjacent to the indexed store, after `bpf_loop`.
@@ -97,13 +97,35 @@ Only C owns the unpinned replacement links; ordinary cleanup destroys them after
 links, before either object closes. C death drops replacements while durable guards retain the
 existing owner-death denial. No replacement custody is transferred to the host or another run.
 
-A task-storage reference to the helper detects owner death. Pinned links survive it and deny
+An exact task reference to each inode owner and the controller detects their deaths. Pinned links survive it and deny
 all access on admitted share devices until retirement. The unprivileged workload gets no BPF
 capability or cgroup control. Its fixed read-only guard checks the VM boot identity before
 executing the image entrypoint/command; service healthchecks use the same guard. Ordinary image
 healthchecks currently use the fallback backend because Docker's CLI health command invokes an
 image-owned shell before the guard. Compose command/healthcheck extraction undoes `$$` once;
 image defaults remain literal.
+
+One release-owned controller stays warm per immutable helper image and Docker daemon. Its frozen
+scope map names the exact root; a separately frozen depth comes from the real cgroup-mount ancestry
+(the VM mount need not be the global hierarchy root). Four outer maps select fresh frozen inner
+maps by admission cgroup ID, including deeper descendants. Missing or partial policy denies.
+No workload receives controller state or BPF descriptors.
+
+The owner HASH has an ordinary publication state and a fresh token beside its task kptr. Recycled
+kernel hash slots may retain kptr fields even after deletion; userspace map updates skip those
+fields. A non-null kptr is therefore not readiness. Enrollment atomically claims unpublished
+state, exchanges/releases the recycled reference, then publishes ready. Readers acquire that
+state before task liveness checks. Retirement explicitly clears publication and releases the kptr
+before deleting the entry; it never relies on deferred allocator destruction. Duplicate or
+wrong-token publication and live-owner revocation are refused.
+
+Registry then generation is the only controller lock order. Enrollment holds a shared generation
+lease; retirement needs its exclusive lease plus no durable admission references and no stopped
+or running descendant containers. A dead controller is never restarted: fresh launches and
+retained-service replacements use a new root, while old admissions stay denied. Only unused dead
+or obsolete generations retire; the current live generation stays warm. Controller birth precedes
+pins; run birth precedes shared-table insertion. Recovery checks exact object kinds, IDs, schemas
+and known pin names before mutation. Missing birth after READY retains custody.
 
 The private record stores frozen endpoint/daemon identity, immutable images and consumers,
 creation intent, supervisor identity, READY/birth receipts, probe custody and a held lease.
@@ -156,6 +178,8 @@ The ACP live conformance test accepts the same qualification switch to inspect t
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
 ## Changelog
+- 2026-11-02 — split reusable controller infrastructure from fresh per-run policies; documented
+  exact generation custody, nested mount depth, recycled-kptr publication and explicit revocation.
 - 2026-11-02 — removed CLI processes from exact start/removal and overlapped filtered retirement
   after consumer absence, preserving credential/artifact ordering and joining before receipt seal.
 - 2026-11-02 — shared fresh normalization across all guards through exclusively C-owned unpinned

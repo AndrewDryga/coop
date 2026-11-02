@@ -282,6 +282,10 @@ func dockerName(value string) bool {
 // Every control call is finite and retains bounded output. Error prose never
 // contains runtime stderr: image labels and daemon errors can contain secrets.
 func dockerOutput(ctx context.Context, binary string, env []string, limit int, args ...string) ([]byte, error) {
+	return dockerCommandOutput(ctx, binary, env, limit, false, args...)
+}
+
+func dockerCommandOutput(ctx context.Context, binary string, env []string, limit int, combined bool, args ...string) ([]byte, error) {
 	if ctx == nil || limit <= 0 || limit > 4<<20 {
 		return nil, errors.Join(errDockerCommandNotStarted, errors.New("invalid bounded Docker operation"))
 	}
@@ -291,6 +295,10 @@ func dockerOutput(ctx context.Context, binary string, env []string, limit int, a
 	out.limit = limit
 	cmd := contextCommand(ctx, binary, args...)
 	cmd.Env, cmd.Stdout, cmd.Stderr = env, &out, io.Discard
+	// os/exec shares one pipe when both destinations are the same writer.
+	if combined {
+		cmd.Stderr = &out
+	}
 	if err := cmd.Start(); err != nil {
 		// Start failed before a client could submit a daemon request. Keep this
 		// distinct from a failed Wait, whose external outcome is ambiguous.

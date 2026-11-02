@@ -161,6 +161,20 @@ func reuseLockedServiceFilesystem(ctx context.Context, rt runtime.Runtime, dir s
 		return nil, nil
 	}
 	a := &filesystemAdmission{docker: docker, dir: dir, record: r, snapshots: []*filesystemSnapshot{snapshot}, workloadImage: image, lease: lease, reused: true}
+	if r.Controller != nil {
+		a.controller, err = leaseRecordedFilesystemController(ctx, docker, *r.Controller, true, r.Workspace)
+		if errors.Is(err, errFilesystemControllerStopped) {
+			return nil, nil // replace the denied service under a fresh controller
+		}
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if !keep {
+				a.controller.closeLease()
+			}
+		}()
+	}
 	if err := a.verify(ctx, ref, image); err != nil {
 		return nil, err
 	}
@@ -411,7 +425,7 @@ func prepareServiceFilesystemStart(ctx context.Context, rt runtime.Runtime, repo
 			}
 		}
 		svc["container_name"], svc["image"], svc["pull_policy"] = ref.Name, image, "never"
-		svc["cgroup_parent"] = "/" + a.record.Parent
+		svc["cgroup_parent"] = a.record.cgroupParent()
 		svc["entrypoint"] = []string{fsfilter.ControlPath + "/guard"}
 		svc["command"] = []string{"guard", fsfilter.ControlPath + "/manifest.json"}
 		svc["security_opt"] = []string{"no-new-privileges:true"}

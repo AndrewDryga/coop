@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,28 +27,30 @@ func partialFilesystemImage(t *testing.T, docker *runtime.Docker) string {
 	t.Helper()
 	changed := false
 	image := filesystemFixtureImage(t, docker, "partial-attachment", func(name string, data []byte) []byte {
-		if name == "internal/fsfilter/assets/loader.c" {
-			marker := `if (snprintf(path, PATH_MAX, "%s/%s", pin_directory, stage) >= PATH_MAX || bpf_link__pin(link, path)) goto fail;`
-			if bytes.Count(data, []byte(marker)) != 1 {
-				t.Fatal("partial-attach injection point changed")
-			}
-			injection := `
-        if (nattached == 1) {
-            if (getenv("COOP_TEST_UNKNOWN_PIN")) {
-                char unexpected[PATH_MAX];
-                if (snprintf(unexpected, sizeof(unexpected), "%s/unexpected", pin_directory) >= PATH_MAX || bpf_obj_pin(bpf_link__fd(link), unexpected)) goto fail;
-            }
-            int marker = open("/state/partial-ready", O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC, 0600);
-            if (marker < 0 || close(marker)) goto fail;
-            for (;;) pause();
-        }`
-			data = bytes.Replace(data, []byte(marker), []byte(marker+injection), 1)
-			changed = true
+		if name != "internal/fsfilter/assets/shared.h" {
+			return data
 		}
-		return data
+		marker := `        nattached++;`
+		if bytes.Count(data, []byte(marker)) != 1 {
+			t.Fatal("partial attachment injection point changed")
+		}
+		injection := `
+        if(nattached==1){
+            if(getenv("COOP_TEST_UNKNOWN_PIN")){
+                char extra[PATH_MAX];if(path_at(extra,pin_directory,"unexpected")||bpf_obj_pin(bpf_link__fd(link),extra))return -1;
+            }
+            if(getenv("COOP_TEST_SUBSTITUTED_PIN")){
+                if(unlink(link_paths[0])||bpf_obj_pin(map_fd("scope"),link_paths[0]))return -1;
+            }
+            int marker=open("/state/partial-ready",O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC,0600);
+            if(marker<0||close(marker))return -1;
+            for(;;)pause();
+        }`
+		changed = true
+		return bytes.Replace(data, []byte(marker), []byte(marker+injection), 1)
 	})
 	if !changed {
-		t.Fatal("missing loader source")
+		t.Fatal("missing controller source")
 	}
 	return image
 }
@@ -102,6 +105,10 @@ func filesystemFixtureImage(t *testing.T, docker *runtime.Docker, purpose string
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
+		if err := cleanupTestFilesystemControllerImage(image.ID); err != nil {
+			t.Error(err)
+			return
+		}
 		if data, err := exec.CommandContext(ctx, binary, "--host", endpoint, "image", "rm", image.ID).CombinedOutput(); err != nil {
 			t.Errorf("fixture image cleanup: %v %s", err, data)
 		}
@@ -111,7 +118,7 @@ func filesystemFixtureImage(t *testing.T, docker *runtime.Docker, purpose string
 
 func TestFilesystemPartialAttachmentRecoveryRuntime(t *testing.T) {
 	if os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" || os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE") == "" {
-		t.Skip("requires explicit local Docker qualification")
+		t.Skip("requires local Docker qualification")
 	}
 	docker, err := runtime.BindDocker(t.Context(), runtime.Runtime{Name: "docker"}, "", "")
 	if err != nil {
@@ -119,106 +126,58 @@ func TestFilesystemPartialAttachmentRecoveryRuntime(t *testing.T) {
 	}
 	defer docker.Close()
 	image := partialFilesystemImage(t, docker)
-	for _, unknown := range []bool{false, true} {
-		t.Run(map[bool]string{false: "partial", true: "unexpected-pin"}[unknown], func(t *testing.T) {
-			repo, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
+	for _, fault := range []string{"partial", "unexpected-pin", "substituted-link"} {
+		t.Run(fault, func(t *testing.T) {
+			var env []string
+			if fault == "unexpected-pin" {
+				env = []string{"COOP_TEST_UNKNOWN_PIN=1"}
+			} else if fault == "substituted-link" {
+				env = []string{"COOP_TEST_SUBSTITUTED_PIN=1"}
+			}
+			c := fixtureFilesystemController(t, docker, image, env, "partial-ready", false)
+			var birth fsfilter.ControllerBirth
+			data, err := os.ReadFile(filepath.Join(c.dir, "birth.json"))
+			if err != nil || json.Unmarshal(data, &birth) != nil || birth.Validate() != nil {
+				t.Fatalf("missing complete controller birth before pin: %s %v", data, err)
+			}
+			log, err := docker.ContainerLogs(t.Context(), c.record.Container, 30, 1<<20)
+			if err != nil || bytes.Contains(log, []byte(`"status":"controller-ready"`)) {
+				t.Fatalf("partial controller reached READY: %s %v", log, err)
+			}
+			if err = c.remove(t.Context(), docker, c.record.Container); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("inert fixture"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			dir, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			parent := "coop-fs-" + randid.Hex(16)
-			binding, err := runtime.BindDockerForSetup(t.Context(), runtime.Runtime{Name: "docker"}, docker.Endpoint(), docker.Info().ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			a := &filesystemAdmission{docker: binding, dir: dir, record: filesystemRecord{Version: 1, Parent: parent, Endpoint: binding.Endpoint(), DaemonID: binding.Info().ID, Image: image, Helper: filesystemRef(parent, "owner"), Workspace: repo, Supervisor: supervisorLabelValue(workspaceScope(repo), os.Getpid())}}
-			a.lease, err = lockFilesystemAdmission(dir, true)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := a.persist(); err != nil {
-				t.Fatal(err)
-			}
-			defer func() {
-				if _, err := os.Stat(dir); os.IsNotExist(err) {
-					return
+			c.closeLease()
+			removed, err := recoverFilesystemController(t.Context(), runtime.Runtime{Name: "docker"}, c.dir)
+			if fault == "partial" {
+				if err != nil || !removed {
+					t.Fatal("partial controller recovery", err)
 				}
-				// Retry through a fresh binding after the deliberate uncertain cleanup.
-				next, err := runtime.BindDockerForSetup(context.Background(), runtime.Runtime{Name: "docker"}, a.record.Endpoint, a.record.DaemonID)
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				a.docker = next
-				if err := a.close(); err != nil {
-					t.Error(err)
-				}
-			}()
-			policy := fsfilter.Admission{Roots: []fsfilter.Policy{{Profile: fsfilter.Profile{Fold: true, Normalize: true}, Entries: []fsfilter.Entry{{Path: ".env", Flags: fsfilter.Secret}}}}}
-			if err := filesystemJSON(filepath.Join(dir, "policy.json"), policy); err != nil {
-				t.Fatal(err)
-			}
-			options := append(a.helperOptions(false), "--mount", networkMount("bind", repo, "/sources/1", true))
-			if unknown {
-				options = append(options, "-e", "COOP_TEST_UNKNOWN_PIN=1")
-			}
-			if _, err := a.create(t.Context(), runtime.DockerCreate{Ref: a.record.Helper, Image: image, Options: options, Command: []string{"admit", "/sources", "/state/policy.json", "/host-cgroup/" + parent}}); err != nil {
-				t.Fatal(err)
-			}
-			if err := a.docker.StartContainer(t.Context(), a.record.Helper); err != nil {
-				t.Fatal(err)
-			}
-			deadline := time.Now().Add(time.Minute)
-			for {
-				if _, err := os.Stat(filepath.Join(dir, "partial-ready")); err == nil {
-					break
-				}
-				if time.Now().After(deadline) {
-					log, _ := a.docker.ContainerLogs(t.Context(), a.record.Helper, 30, 1<<20)
-					t.Fatalf("partial-attach barrier not reached: %s", log)
-				}
-				time.Sleep(25 * time.Millisecond)
-			}
-			var birth fsfilter.Birth
-			data, err := os.ReadFile(filepath.Join(dir, "birth.json"))
-			if err != nil || json.Unmarshal(data, &birth) != nil || birth.Validate(parent) != nil {
-				t.Fatalf("missing complete birth before first pin: %s %v", data, err)
-			}
-			log, err := a.docker.ContainerLogs(t.Context(), a.record.Helper, 30, 1<<20)
-			if err != nil || bytes.Contains(log, []byte(`"status":"ready"`)) {
-				t.Fatalf("fixture reached READY: %s %v", log, err)
-			}
-			if err := a.docker.StopContainer(t.Context(), a.record.Helper, 0); err != nil {
-				t.Fatal(err)
-			}
-			err = a.close()
-			if !unknown {
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Log("killed loader after first durable pin; birth receipt reconciled partial attachment")
 				return
 			}
-			if err == nil {
-				t.Fatal("unexpected pin was removed without authority")
+			if err == nil || removed {
+				t.Fatal("unexpected pin removed without authority")
 			}
-			if _, err := os.Stat(filepath.Join(dir, "record.json")); err != nil {
-				t.Fatal("lost custody after uncertain cleanup", err)
+			if _, err = os.Stat(filepath.Join(c.dir, "record.json")); err != nil {
+				t.Fatal("lost custody", err)
 			}
-			// Remove only the extra pin this fixture created; the normal recovery helper
-			// must then reconcile its recorded attachment without any forced detach.
-			args := []string{"--host", docker.Endpoint(), "run", "--rm", "--user", "0", "--network", "none", "--cap-drop", "ALL", "--cap-add", "SYS_ADMIN", "--security-opt", "seccomp=unconfined", "--mount", networkMount("bind", "/sys/fs/bpf/"+parent, "/pins", false), "--entrypoint", "python3", os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE"), "-c", "import os; os.unlink('/pins/unexpected')"}
-			data, err = exec.CommandContext(t.Context(), docker.Binary(), args...).CombinedOutput()
-			if err != nil {
-				t.Fatalf("remove fixture's unexpected pin: %v %s", err, data)
+			pin := "unexpected"
+			if fault == "substituted-link" {
+				for _, program := range birth.Programs {
+					if strings.HasPrefix(program.Name, "guard_") {
+						pin = program.Name
+						break
+					}
+				}
 			}
-			t.Log("unexpected pin refused retirement and retained custody; retry removes only recorded attachments")
+			args := []string{"--host", docker.Endpoint(), "run", "--rm", "--user", "0", "--network", "none", "--cap-drop", "ALL", "--cap-add", "SYS_ADMIN", "--security-opt", "seccomp=unconfined", "--mount", networkMount("bind", "/sys/fs/bpf/"+c.record.Name, "/pins", false), "--entrypoint", "python3", os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE"), "-c", "import os;os.unlink('/pins/" + pin + "')"}
+			if out, err := exec.CommandContext(t.Context(), docker.Binary(), args...).CombinedOutput(); err != nil {
+				t.Fatalf("remove fixture pin: %v %s", err, out)
+			}
+			if removed, err = recoverFilesystemController(t.Context(), runtime.Runtime{Name: "docker"}, c.dir); err != nil || !removed {
+				t.Fatal("retry partial controller recovery", err)
+			}
+			t.Log("unknown pin retained custody; exact receipt reconciled after fixture removed its extra pin")
 		})
 	}
 }

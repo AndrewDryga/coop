@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT
- * Admission-owned denial sets. Workloads never receive map/program descriptors.
+ * Shared enforcement with fresh admission-owned denial sets. Workloads never receive map/program descriptors.
  * Compile with clang -target bpfel; CO-RE relocates the minimal kernel views.
  */
 #include <linux/bpf.h>
@@ -30,6 +30,7 @@ static long (*loop)(u32, void *, void *, u64) = (void *)BPF_FUNC_loop;
 #ifndef FS_NORMALIZATION
 static long (*read_str)(void *, u32, const void *) = (void *)BPF_FUNC_probe_read_kernel_str;
 static void *(*kptr_xchg)(void *, void *) = (void *)BPF_FUNC_kptr_xchg;
+static u64 (*ancestor_cgroup)(int) = (void *)BPF_FUNC_get_current_ancestor_cgroup_id;
 static long (*under_cgroup)(void *, u32) = (void *)BPF_FUNC_current_task_under_cgroup;
 extern struct task_struct *bpf_task_acquire(struct task_struct *) __attribute__((section(".ksyms")));
 extern void bpf_task_release(struct task_struct *) __attribute__((section(".ksyms")));
@@ -57,7 +58,7 @@ struct key { u64 a, b; u32 root, reserved; };
 struct name_key { u64 a, b; };
 struct rune_mapping { u32 decomposition[4], fold[4], ndecomposition, nfold, ccc; };
 struct settings { u32 normalize, fold; };
-struct owner { struct task_struct __attribute__((btf_type_tag("kptr"))) *task; };
+struct owner { struct task_struct __attribute__((btf_type_tag("kptr"))) *task; u64 token, published; };
 struct scratch {
     struct name_key names[MAX_DEPTH];
     u32 input[MAX_RUNES], output[MAX_RUNES];
@@ -73,17 +74,27 @@ struct { UINT(type, BPF_MAP_TYPE_TASK_STORAGE); UINT(map_flags, BPF_F_NO_PREALLO
 #ifndef FS_NORMALIZATION
 struct { UINT(type, BPF_MAP_TYPE_CGROUP_ARRAY); UINT(max_entries, 1);
     TYPE(key, u32); TYPE(value, u32); } scope SEC(".maps");
-/* Sparse maps allow program loading before the host census supplies row counts. */
-struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 100000); UINT(map_flags, BPF_F_NO_PREALLOC);
-    TYPE(key, struct object_key); TYPE(value, struct label); } objects SEC(".maps");
 struct { UINT(type, BPF_MAP_TYPE_ARRAY); UINT(max_entries, 1);
-    TYPE(key, u32); TYPE(value, struct owner); } owners SEC(".maps");
-struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 100000); UINT(map_flags, BPF_F_NO_PREALLOC);
-    TYPE(key, struct key); TYPE(value, u32); } paths SEC(".maps");
-struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 32);
-    TYPE(key, u32); TYPE(value, u32); } devices SEC(".maps");
-struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 32);
-    TYPE(key, u32); TYPE(value, struct settings); } config SEC(".maps");
+    TYPE(key, u32); TYPE(value, u32); } dispatch SEC(".maps");
+/* Sparse maps allow program loading before the host census supplies row counts. */
+struct objects_map { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 100000); UINT(map_flags, BPF_F_NO_PREALLOC);
+    UINT(key_size, sizeof(struct object_key)); UINT(value_size, sizeof(struct label)); };
+struct objects_map objects_template SEC(".maps");
+struct { UINT(type, BPF_MAP_TYPE_HASH_OF_MAPS); UINT(max_entries, 1024); TYPE(key, u64); TYPE(value, u32); struct objects_map *values[]; } objects SEC(".maps");
+struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 1025); UINT(map_flags, BPF_F_NO_PREALLOC);
+    TYPE(key, u64); TYPE(value, struct owner); } owners SEC(".maps");
+struct paths_map { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 100000); UINT(map_flags, BPF_F_NO_PREALLOC);
+    UINT(key_size, sizeof(struct key)); UINT(value_size, sizeof(u32)); };
+struct paths_map paths_template SEC(".maps");
+struct { UINT(type, BPF_MAP_TYPE_HASH_OF_MAPS); UINT(max_entries, 1024); TYPE(key, u64); TYPE(value, u32); struct paths_map *values[]; } paths SEC(".maps");
+struct devices_map { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 32);
+    TYPE(key, u32); TYPE(value, u32); };
+struct devices_map devices_template SEC(".maps");
+struct { UINT(type, BPF_MAP_TYPE_HASH_OF_MAPS); UINT(max_entries, 1024); TYPE(key, u64); TYPE(value, u32); struct devices_map *values[]; } devices SEC(".maps");
+struct config_map { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 32);
+    UINT(key_size, sizeof(u32)); UINT(value_size, sizeof(struct settings)); };
+struct config_map config_template SEC(".maps");
+struct { UINT(type, BPF_MAP_TYPE_HASH_OF_MAPS); UINT(max_entries, 1024); TYPE(key, u64); TYPE(value, u32); struct config_map *values[]; } config SEC(".maps");
 #ifdef FS_DIAGNOSTICS
 struct diagnostic { u64 ino; u32 dev, reason, operation; char name[256]; };
 struct { UINT(type, BPF_MAP_TYPE_ARRAY); UINT(max_entries, 1);
@@ -111,23 +122,47 @@ INLINE int restricted(u32 flags, int operation, int leaf) {
 /* Inode pins belong to this exact tagged task, not a reusable PID number.
  * PF_EXITING precedes exit_files. Call again after classification and before allow.
  */
-NOINLINE int owner_alive(void) {
-    u32 zero = 0;
+NOINLINE int owner_alive(u64 zero) {
     struct owner *owner = lookup(&owners, &zero);
-    if (!owner) return 0;
+    if (!owner || __sync_val_compare_and_swap(&owner->published, 1, 1) != 1) return 0;
     struct task_struct *task = owner->task;
     return task && !(task->flags & 0x4) && !task->exit_state;
 }
 
-SEC("syscall") int admit_owner(void *ctx) {
-    u32 zero = 0;
+/* Hash slots may retain kptr fields when recycled. The ordinary published
+ * field is reset by the fresh BPF_NOEXIST insertion; a leftover reference is
+ * never authority. Replace it only once, then publish after the exchange. */
+NOINLINE int set_owner(u64 zero, u64 token) {
     struct owner *owner = lookup(&owners, &zero);
-    if (!owner || owner->task) return 1;
+    if (!owner || owner->token != token || __sync_val_compare_and_swap(&owner->published, 0, 2)) return 1;
     struct task_struct *task = bpf_task_acquire(current_task());
     if (!task) return 1;
     struct task_struct *old = kptr_xchg(&owner->task, task);
     if (old) bpf_task_release(old);
+    __sync_lock_test_and_set(&owner->published, 1);
     return 0;
+}
+/* The trusted owner supplies only its fresh cgroup ID. Its task reference is
+ * the last publication step; existing admissions never replace their owner. */
+SEC("syscall") int admit_owner(u64 *id) {
+    if (*id && !owner_alive(0)) return 1;
+    return set_owner(id[0], id[1]);
+}
+/* Consumer absence and owner removal precede this trusted call. Revoke before
+ * deleting the row: recycled HASH slots can otherwise retain dead task refs. */
+SEC("syscall") int release_owner(u64 *id) {
+    if (!id[0]) return 1;
+    struct owner *owner = lookup(&owners, &id[0]);
+    if (!owner) return 0;
+    if (owner->token != id[1] || owner_alive(id[0])) return 1;
+    __sync_lock_test_and_set(&owner->published, 0);
+    struct task_struct *old = kptr_xchg(&owner->task, 0);
+    if (old) bpf_task_release(old);
+    return 0;
+}
+SEC("syscall") int hierarchy_root(u64 *id) {
+    for (int i = 0; i < 64; i++) id[i] = ancestor_cgroup(i);
+    return id[0] ? 0 : 1;
 }
 #endif
 
@@ -269,7 +304,8 @@ __attribute__((noinline)) int name_key(u32 length, u32 normalize_names, u32 fold
     return result;
 }
 
-struct walk_context { struct dentry *d; struct scratch *s; struct settings *settings; u32 root, depth; int operation, result, identify; };
+struct policy { void *objects, *paths, *devices, *config; u64 id; };
+struct walk_context { void *objects; struct dentry *d; struct scratch *s; struct settings *settings; u32 root, depth; int operation, result, identify; };
 static long walk_step(u32 i, void *data) {
         struct walk_context *c = data;
         if (i >= MAX_DEPTH) { c->result = -1; return 1; }
@@ -277,7 +313,7 @@ static long walk_step(u32 i, void *data) {
         struct inode *inode = d->d_inode;
         struct object_key object = {};
         if (inode) { object.ino = inode->i_ino; object.dev = inode->i_sb->s_dev; }
-        struct label *label = inode ? lookup(&objects, &object) : 0;
+        struct label *label = inode ? lookup(c->objects, &object) : 0;
         if (label) {
             if (i == 0 && (label->flags & GRANTED)) { c->result = c->operation ? -1 : 2; return 1; }
             if (restricted(label->flags, c->operation, i == 0)) { c->result = -1; return 1; }
@@ -293,7 +329,7 @@ static long walk_step(u32 i, void *data) {
         if (i == MAX_DEPTH-1) { c->result = -1; return 1; }
         return 0;
 }
-struct path_context { struct scratch *s; struct key key; u32 depth; int operation, denied; };
+struct path_context { void *paths; struct scratch *s; struct key key; u32 depth; int operation, denied; };
 static long path_step(u32 n, void *data) {
     struct path_context *c = data;
     if (n >= c->depth) return 1;
@@ -301,78 +337,85 @@ static long path_step(u32 n, void *data) {
     if (i >= MAX_DEPTH) { c->denied = 1; return 1; }
     c->key.a = c->key.a * PRIME_A ^ c->s->names[i].a;
     c->key.b = c->key.b * PRIME_B ^ c->s->names[i].b;
-    u32 *flags = lookup(&paths, &c->key);
+    u32 *flags = lookup(c->paths, &c->key);
     if (flags && restricted(*flags, c->operation, i == 0)) { c->denied = 1; return 1; }
     return 0;
 }
 
-NOINLINE int access(struct dentry *d, int operation) {
+NOINLINE int access(struct dentry *d, int operation, struct policy *policy) {
     if (!d) return 1;
     struct inode *inode = d->d_inode;
     struct dentry *parent = d->d_parent;
     if (!inode && parent) inode = parent->d_inode;
     if (!inode) return 1;
     u32 device = inode->i_sb->s_dev;
-    if (!lookup(&devices, &device)) return 1;
-    if (!owner_alive()) return denied(d, operation, 1);
-    struct walk_context identified = {d, 0, 0, 0, 0, operation, 0, 1};
+    if (!lookup(policy->devices, &device)) return 1;
+    if (!(owner_alive(policy->id) && owner_alive(0))) return denied(d, operation, 1);
+    struct walk_context identified = {policy->objects, d, 0, 0, 0, 0, operation, 0, 1};
     if (loop(MAX_DEPTH, walk_step, &identified, 0) < 0 || identified.result < 0) return denied(d, operation, 3);
-    if (identified.result == 1 || identified.result == 2) return owner_alive();
+    if (identified.result == 1 || identified.result == 2) return (owner_alive(policy->id) && owner_alive(0));
     if (!identified.root) return denied(d, operation, 4);
-    if (!identified.depth) return owner_alive();
-    struct settings *settings = lookup(&config, &identified.root);
+    if (!identified.depth) return (owner_alive(policy->id) && owner_alive(0));
+    struct settings *settings = lookup(policy->config, &identified.root);
     struct scratch *s = task_storage(&work, current_task(), 0, BPF_LOCAL_STORAGE_GET_F_CREATE);
     if (!settings) return denied(d, operation, 20);
     if (!s) return denied(d, operation, 21);
-    struct walk_context c = {d, s, settings, 0, 0, operation, 0, 0};
+    struct walk_context c = {policy->objects, d, s, settings, 0, 0, operation, 0, 0};
     if (loop(MAX_DEPTH, walk_step, &c, 0) < 0 || c.result < 0) return denied(d, operation, 3);
     if (c.root != identified.root || c.depth != identified.depth || c.result) return denied(d, operation, 4);
-    struct path_context p = {s, {SEED_A, SEED_B, c.root, 0}, c.depth, operation, 0};
+    struct path_context p = {policy->paths, s, {SEED_A, SEED_B, c.root, 0}, c.depth, operation, 0};
     if (loop(MAX_DEPTH, path_step, &p, 0) < 0 || p.denied) return denied(d, operation, 5);
-    return owner_alive();
+    return (owner_alive(policy->id) && owner_alive(0));
 }
 
-INLINE int file_access(struct file *file, int operation) {
-    return !file || access(file->f_path.dentry, operation);
+INLINE int file_access(struct file *file, int operation, struct policy *policy) {
+    return !file || access(file->f_path.dentry, operation, policy);
 }
 /* Preserve prior LSM decisions; the cgroup map retains the exact parent object. */
 #define HOOK(name, argc) \
-    static int check_##name(u64 *ctx); \
+    static int check_##name(u64 *ctx, struct policy *policy); \
     SEC("lsm/" #name) int guard_##name(u64 *ctx) { \
         int prior = ctx[argc]; \
         if (prior) return prior; \
         long governed = under_cgroup(&scope, 0); \
-        if (governed <= 0) return 0; \
-        return check_##name(ctx) ? 0 : -1; \
+        if (!governed) return 0; \
+        if (governed < 0) return -1; \
+        u32 zero = 0; u32 *level = lookup(&dispatch, &zero); \
+        if (!level || *level < 2 || *level >= 64) return -1; \
+        u64 id = ancestor_cgroup(*level); \
+        if (!id) return -1; \
+        struct policy policy = {lookup(&objects, &id), lookup(&paths, &id), lookup(&devices, &id), lookup(&config, &id), id}; \
+        if (!policy.objects || !policy.paths || !policy.devices || !policy.config) return -1; \
+        return check_##name(ctx, &policy) ? 0 : -1; \
     } \
-    static int check_##name(u64 *ctx)
-HOOK(file_open, 1) { struct file *f = (void *)ctx[0]; return file_access(f, (f->f_flags & (3|512)) ? WRITE : 0); }
-HOOK(file_permission, 2) { return file_access((void *)ctx[0], (ctx[1] & 2) ? WRITE : 0); }
-HOOK(file_truncate, 1) { return file_access((void *)ctx[0], WRITE); }
-HOOK(file_receive, 1) { struct file *f = (void *)ctx[0]; return file_access(f, (f->f_flags & 3) ? WRITE : 0); }
+    static int check_##name(u64 *ctx, struct policy *policy)
+HOOK(file_open, 1) { struct file *f = (void *)ctx[0]; return file_access(f, (f->f_flags & (3|512)) ? WRITE : 0, policy); }
+HOOK(file_permission, 2) { return file_access((void *)ctx[0], (ctx[1] & 2) ? WRITE : 0, policy); }
+HOOK(file_truncate, 1) { return file_access((void *)ctx[0], WRITE, policy); }
+HOOK(file_receive, 1) { struct file *f = (void *)ctx[0]; return file_access(f, (f->f_flags & 3) ? WRITE : 0, policy); }
 /* Private writable mappings are copy-on-write, not mutations of the file. */
-HOOK(mmap_file, 4) { return file_access((void *)ctx[0], (ctx[2] & 2) && (ctx[3] & 1) ? WRITE : 0); }
-HOOK(file_mprotect, 3) { struct vm_area_struct *v = (void *)ctx[0]; return file_access(v->vm_file, (ctx[2] & 2) && (v->vm_flags & 8) ? WRITE : 0); }
-HOOK(inode_setattr, 3) { return access((void *)ctx[1], WRITE); }
-HOOK(inode_unlink, 2) { return access((void *)ctx[1], MOVE); }
-HOOK(inode_rmdir, 2) { return access((void *)ctx[1], MOVE); }
-HOOK(inode_link, 3) { return access((void *)ctx[0], MOVE) && access((void *)ctx[2], MOVE); }
-HOOK(inode_rename, 4) { return access((void *)ctx[1], MOVE) && access((void *)ctx[3], MOVE); }
-HOOK(inode_create, 3) { return access((void *)ctx[1], WRITE); }
-HOOK(inode_mkdir, 3) { return access((void *)ctx[1], WRITE); }
-HOOK(inode_symlink, 3) { return access((void *)ctx[1], WRITE); }
-HOOK(inode_mknod, 4) { return access((void *)ctx[1], WRITE); }
-HOOK(inode_follow_link, 3) { return access((void *)ctx[0], 0); }
-HOOK(inode_readlink, 1) { return access((void *)ctx[0], 0); }
-HOOK(inode_getattr, 1) { struct path *p = (void *)ctx[0]; return access(p->dentry, 0); }
-HOOK(inode_getxattr, 2) { return access((void *)ctx[0], 0); }
-HOOK(inode_listxattr, 1) { return access((void *)ctx[0], 0); }
-HOOK(inode_setxattr, 6) { return access((void *)ctx[1], WRITE); }
-HOOK(inode_removexattr, 3) { return access((void *)ctx[1], WRITE); }
-HOOK(inode_get_acl, 3) { return access((void *)ctx[1], 0); }
-HOOK(inode_set_acl, 4) { return access((void *)ctx[1], WRITE); }
-HOOK(inode_remove_acl, 3) { return access((void *)ctx[1], WRITE); }
-HOOK(inode_file_setattr, 2) { return access((void *)ctx[0], WRITE); }
-HOOK(inode_file_getattr, 2) { return access((void *)ctx[0], 0); }
+HOOK(mmap_file, 4) { return file_access((void *)ctx[0], (ctx[2] & 2) && (ctx[3] & 1) ? WRITE : 0, policy); }
+HOOK(file_mprotect, 3) { struct vm_area_struct *v = (void *)ctx[0]; return file_access(v->vm_file, (ctx[2] & 2) && (v->vm_flags & 8) ? WRITE : 0, policy); }
+HOOK(inode_setattr, 3) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_unlink, 2) { return access((void *)ctx[1], MOVE, policy); }
+HOOK(inode_rmdir, 2) { return access((void *)ctx[1], MOVE, policy); }
+HOOK(inode_link, 3) { return access((void *)ctx[0], MOVE, policy) && access((void *)ctx[2], MOVE, policy); }
+HOOK(inode_rename, 4) { return access((void *)ctx[1], MOVE, policy) && access((void *)ctx[3], MOVE, policy); }
+HOOK(inode_create, 3) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_mkdir, 3) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_symlink, 3) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_mknod, 4) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_follow_link, 3) { return access((void *)ctx[0], 0, policy); }
+HOOK(inode_readlink, 1) { return access((void *)ctx[0], 0, policy); }
+HOOK(inode_getattr, 1) { struct path *p = (void *)ctx[0]; return access(p->dentry, 0, policy); }
+HOOK(inode_getxattr, 2) { return access((void *)ctx[0], 0, policy); }
+HOOK(inode_listxattr, 1) { return access((void *)ctx[0], 0, policy); }
+HOOK(inode_setxattr, 6) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_removexattr, 3) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_get_acl, 3) { return access((void *)ctx[1], 0, policy); }
+HOOK(inode_set_acl, 4) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_remove_acl, 3) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_file_setattr, 2) { return access((void *)ctx[0], WRITE, policy); }
+HOOK(inode_file_getattr, 2) { return access((void *)ctx[0], 0, policy); }
 #endif
 char LICENSE[] SEC("license") = "GPL";

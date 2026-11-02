@@ -423,12 +423,10 @@ func (d *Docker) ExecRead(ctx context.Context, ref DockerRef, limit int, command
 }
 
 // ExecApply runs one release-owned, fixed-argv command in a running helper
-// container for its effect rather than its output. It is the single host-driven
-// mutation a filtered run makes after launch — re-rendering the controller's
-// protected set when the host's topology grows (box/filtered_launch.go
-// reconcileTopology) — and carries ExecRead's guards: the exact immutable
-// container, running and unpaused, never an argv a request supplied. A non-zero
-// exit is an error the caller treats as fail-closed.
+// container for its effect rather than its output. Network topology updates
+// and filesystem retirement use it with exact custody receipts. It carries
+// ExecRead's guards: an immutable container, running and unpaused, never an argv
+// a request supplied. A non-zero exit retains custody for reconciliation.
 func (d *Docker) ExecApply(ctx context.Context, ref DockerRef, command ...string) error {
 	value, present, err := d.InspectContainer(ctx, ref)
 	if err != nil || ref.ID == "" || !present || !value.State.Running || value.State.Paused || len(command) == 0 {

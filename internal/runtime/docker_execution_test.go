@@ -113,7 +113,7 @@ func TestDockerCgroupParentRetainsStoppedConsumers(t *testing.T) {
 func TestDockerHelperLogsRemainBoundedAndOwned(t *testing.T) {
 	container := dockerFixtureContainer()
 	container.State = DockerContainerState{Status: "exited"}
-	rt, file := fixtureDocker(t, dockerFixture{Container: container, Logs: "admission refused\n"})
+	rt, file := fixtureDocker(t, dockerFixture{Container: container, ErrorLogs: "admission refused\n"})
 	d, err := BindDocker(t.Context(), rt, fixtureSock(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestDockerHelperLogsRemainBoundedAndOwned(t *testing.T) {
 			t.Fatal("read unrelated helper logs")
 		}
 	}
-	writeDockerFixture(t, file, dockerFixture{Container: container, Logs: strings.Repeat("x", 2048)})
+	writeDockerFixture(t, file, dockerFixture{Container: container, Logs: strings.Repeat("x", 512), ErrorLogs: strings.Repeat("x", 1024)})
 	if _, err := d.ContainerLogs(t.Context(), dockerFixtureRef(), 10, 1024); err == nil {
 		t.Fatalf("unbounded logs: %v", err)
 	}
@@ -214,5 +214,34 @@ func TestDockerCgroupInventoryReconcilesOnlyProvenDisappearance(t *testing.T) {
 				t.Fatal("uncertain or occupied parent released")
 			}
 		})
+	}
+}
+
+func TestFilesystemCgroupParentIncludesNestedConsumers(t *testing.T) {
+	root := "/coop-fs-controller-" + strings.Repeat("a", 32)
+	run := root + "/coop-fs-" + strings.Repeat("b", 32)
+	for _, parent := range []string{root, run, "/coop-fs-" + strings.Repeat("c", 32)} {
+		if !validFilesystemCgroupParent(parent) {
+			t.Fatalf("rejected owned parent %q", parent)
+		}
+	}
+	for _, parent := range []string{root + "/", run + "/extra", root + "/../other", strings.TrimPrefix(root, "/"), "/coop-fs-short"} {
+		if validFilesystemCgroupParent(parent) {
+			t.Fatalf("accepted invalid parent %q", parent)
+		}
+	}
+	id := strings.Repeat("d", 64)
+	for _, observed := range []string{run, run + "/deeper", strings.TrimPrefix(run, "/")} {
+		data := []byte(fmt.Sprintf(`{"ID":%q,"Parent":%q}`, id, observed))
+		if checkCgroupParents(data, []string{id}, root) == nil {
+			t.Fatalf("released root containing %s", observed)
+		}
+		if checkCgroupParents(data, []string{id}, run) == nil {
+			t.Fatalf("released admission containing %s", observed)
+		}
+	}
+	data := []byte(fmt.Sprintf(`{"ID":%q,"Parent":%q}`, id, run+"0"))
+	if err := checkCgroupParents(data, []string{id}, run); err != nil {
+		t.Fatal("matched sibling prefix", err)
 	}
 }

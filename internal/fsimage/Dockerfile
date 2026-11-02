@@ -28,7 +28,7 @@ RUN mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/co
  && cp LICENSE /out/usr/share/coop-fs/LICENSE \
  && cp -L --parents /usr/share/doc/libbpf1/copyright /usr/share/doc/libelf1/copyright \
     /usr/share/doc/zlib1g/copyright /usr/share/doc/libc6/copyright /out/ \
- && cp internal/fsfilter/assets/loader.c internal/fsfilter/assets/filter.c /out/usr/share/coop-fs/
+ && cp internal/fsfilter/assets/loader.c internal/fsfilter/assets/filter.c internal/fsfilter/assets/shared.h /out/usr/share/coop-fs/
 
 FROM scratch
 COPY --from=build /out/ /

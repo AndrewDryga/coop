@@ -4,7 +4,6 @@ package box
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -46,18 +45,19 @@ func normalizerFilesystemImage(t *testing.T, docker *runtime.Docker) string {
         if (nnormalizer_links == 13 && test_fault("partial")) {
             test_snapshot(); errno = ECANCELED; return -1;
         }`)
-			replace("int main(int argc, char **argv) {", `int main(int argc, char **argv) {
-    if (argc > 1 && (!strcmp(argv[1], "test-gone") || !strcmp(argv[1], "test-signal"))) return test_control(argc, argv);`)
-			replace("sigaddset(&releases, SIGUSR1);", "sigaddset(&releases, SIGUSR1); sigaddset(&releases, SIGUSR2);")
-			replace("if (fflush(stdout)) goto fail;", "if (fflush(stdout)) goto fail;\n    test_snapshot();")
-			replace("        int busy = children();", "        if (signal == SIGUSR2) { test_signal(); continue; }\n        int busy = children();")
-		case "cmd/coop-fs/admit_linux.go":
+		case "internal/fsfilter/assets/shared.h":
 			changed++
-			replace("childErr = command.Wait()", `childErr = command.Wait()
-        if os.Getenv("COOP_TEST_NORMALIZER") == "owner-death" {
-            _ = os.WriteFile("/state/child-reaped", nil, 0600)
-            for { time.Sleep(time.Hour) }
-        }`)
+			replace("int main(int argc,char **argv) {", `int main(int argc,char **argv) {
+    if(argc>1&&(!strcmp(argv[1],"test-gone")||!strcmp(argv[1],"test-signal")))return test_control(argc,argv);`)
+			replace("if(!object||validate_hooks()||bpf_object__load(object)||load_normalizer(&options))return -1;", `if(!object||validate_hooks()||bpf_object__load(object))return -1;
+    if(test_fault("load-exit")){test_snapshot();_exit(42);}
+    if(load_normalizer(&options))return -1;`)
+			replace(`    puts("]}");if(fflush(stdout))return -1;`, `    puts("]}");if(fflush(stdout))return -1;
+    test_snapshot();
+    sigset_t signals;sigemptyset(&signals);sigaddset(&signals,SIGUSR2);
+    if(sigprocmask(SIG_BLOCK,&signals,NULL))return -1;
+    for(;;){int signal;if(sigwait(&signals,&signal))return -1;test_signal();}`)
+
 		}
 		return data
 	})
@@ -67,28 +67,22 @@ func normalizerFilesystemImage(t *testing.T, docker *runtime.Docker) string {
 	return image
 }
 
-func filesystemNormalizerMarker(t *testing.T, a *filesystemAdmission, name string) []byte {
+func filesystemNormalizerController(t *testing.T, docker *runtime.Docker, image, fault string) (*filesystemController, []filesystemKernelIdentity) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
-	defer cancel()
-	for {
-		data, err := os.ReadFile(filepath.Join(a.dir, name))
-		if err == nil {
-			return data
+	c := fixtureFilesystemController(t, docker, image, []string{"COOP_TEST_NORMALIZER=" + fault}, "normalizer-ids", fault != "partial" && fault != "load-exit")
+	data := fixtureFilesystemMarker(t, docker, c.record.Container, c.dir, "normalizer-ids")
+	var ids []filesystemKernelIdentity
+	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
+		var id filesystemKernelIdentity
+		if err := json.Unmarshal(line, &id); err != nil || id.ID == 0 {
+			t.Fatalf("invalid kernel identity: %s %v", line, err)
 		}
-		if !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-		select {
-		case <-ctx.Done():
-			data, _ := exec.CommandContext(t.Context(), a.docker.Binary(), "--host", a.record.Endpoint, "logs", "--tail", "20", a.record.Helper.ID).CombinedOutput()
-			t.Fatalf("missing %s: %s", name, data)
-		case <-time.After(10 * time.Millisecond):
-		}
+		ids = append(ids, id)
 	}
+	return c, ids
 }
 
-func filesystemNormalizerAdmission(t *testing.T, docker *runtime.Docker, image, fault string, roots []string, policies []fsfilter.Policy) (*filesystemAdmission, []filesystemKernelIdentity) {
+func filesystemNormalizerAdmission(t *testing.T, docker *runtime.Docker, c *filesystemController, roots []string, policies []fsfilter.Policy) *filesystemAdmission {
 	t.Helper()
 	binding, err := runtime.BindDockerForSetup(t.Context(), runtime.Runtime{Name: "docker"}, docker.Endpoint(), docker.Info().ID)
 	if err != nil {
@@ -99,50 +93,45 @@ func filesystemNormalizerAdmission(t *testing.T, docker *runtime.Docker, image, 
 		t.Fatal(err)
 	}
 	parent := "coop-fs-" + randid.Hex(16)
-	a := &filesystemAdmission{docker: binding, dir: dir, record: filesystemRecord{Version: 1, Parent: parent, Endpoint: binding.Endpoint(), DaemonID: binding.Info().ID, Image: image, Helper: filesystemRef(parent, "owner"), Workspace: roots[0], Supervisor: supervisorLabelValue(workspaceScope(roots[0]), os.Getpid())}}
+	a := &filesystemAdmission{docker: binding, dir: dir, record: filesystemRecord{Version: 1, Parent: parent, Endpoint: binding.Endpoint(), DaemonID: binding.Info().ID, Image: c.record.Image, Helper: filesystemRef(parent, "owner"), Workspace: roots[0], Supervisor: supervisorLabelValue(workspaceScope(roots[0]), os.Getpid()), Controller: &c.record}}
+	a.controller, err = leaseRecordedFilesystemController(t.Context(), binding, c.record, true, roots...)
+	if err != nil {
+		t.Fatal(err)
+	}
 	a.lease, err = lockFilesystemAdmission(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			return
-		}
-		if err := a.close(); err != nil {
-			t.Error(err)
+		if _, err := os.Stat(dir); err == nil {
+			if err = a.close(); err != nil {
+				t.Error(err)
+			}
 		}
 	})
-	if err := a.persist(); err != nil {
+	if err = a.persist(); err != nil {
 		t.Fatal(err)
 	}
-	if err := filesystemJSON(filepath.Join(dir, "policy.json"), fsfilter.Admission{Roots: policies}); err != nil {
+	if err = filesystemJSON(filepath.Join(dir, "controller.json"), c.record.Ready); err != nil {
 		t.Fatal(err)
 	}
-	options := append(a.helperOptions(false), "-e", "COOP_TEST_NORMALIZER="+fault)
+	if err = filesystemJSON(filepath.Join(dir, "policy.json"), fsfilter.Admission{Roots: policies}); err != nil {
+		t.Fatal(err)
+	}
+	options := a.helperOptions(false)
 	for i, root := range roots {
 		options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/sources/%d", i+1), true))
 	}
-	if _, err := a.create(t.Context(), runtime.DockerCreate{Ref: a.record.Helper, Image: image, Options: options, Command: []string{"admit", "/sources", "/state/policy.json", "/host-cgroup/" + parent}}); err != nil {
+	if _, err = a.create(t.Context(), runtime.DockerCreate{Ref: a.record.Helper, Image: c.record.Image, Options: options, Command: []string{"admit", "/sources", "/state/policy.json", parent, "/state/controller.json"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.docker.StartContainer(t.Context(), a.record.Helper); err != nil {
+	if err = a.docker.StartContainer(t.Context(), a.record.Helper); err != nil {
 		t.Fatal(err)
 	}
-	data := filesystemNormalizerMarker(t, a, "normalizer-ids")
-	var ids []filesystemKernelIdentity
-	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
-		var id filesystemKernelIdentity
-		if err := json.Unmarshal(line, &id); err != nil || id.ID == 0 {
-			t.Fatalf("invalid kernel identity: %s: %v", line, err)
-		}
-		ids = append(ids, id)
+	if err = a.waitReady(t.Context()); err != nil {
+		t.Fatal(err)
 	}
-	if fault != "partial" {
-		if err := a.waitReady(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return a, ids
+	return a
 }
 
 func filesystemNormalizerConsumer(t *testing.T, a *filesystemAdmission, roots []string) runtime.DockerRef {
@@ -155,7 +144,7 @@ func filesystemNormalizerConsumer(t *testing.T, a *filesystemAdmission, roots []
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := []string{"--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--cgroup-parent", "/" + a.record.Parent, "--entrypoint", "python3"}
+	options := []string{"--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--cgroup-parent", a.record.cgroupParent(), "--entrypoint", "python3"}
 	for i, root := range roots {
 		options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/root%d", i+1), true))
 	}
@@ -189,7 +178,7 @@ func filesystemNormalizerGone(t *testing.T, docker *runtime.Docker, image string
 
 func TestFilesystemNormalizerLifetimeRuntime(t *testing.T) {
 	if os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" || os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE") == "" {
-		t.Skip("requires explicit local Docker qualification")
+		t.Skip("requires local Docker qualification")
 	}
 	docker, err := runtime.BindDocker(t.Context(), runtime.Runtime{Name: "docker"}, "", "")
 	if err != nil {
@@ -197,33 +186,43 @@ func TestFilesystemNormalizerLifetimeRuntime(t *testing.T) {
 	}
 	defer docker.Close()
 	image := normalizerFilesystemImage(t, docker)
-	for _, fault := range []string{"normal", "detach", "partial", "owner-death"} {
+	for _, fault := range []string{"normal", "detach", "partial", "load-exit", "controller-death"} {
 		t.Run(fault, func(t *testing.T) {
-			root := filesystemNormalizerRoot(t)
-			a, ids := filesystemNormalizerAdmission(t, docker, image, fault, []string{root}, []fsfilter.Policy{filesystemNormalizerPolicy("alpha")})
-			filesystemNormalizerIdentities(t, ids, fault == "partial")
-			if fault == "partial" {
-				if err := a.waitReady(t.Context()); err == nil {
-					t.Fatal("partial replacement reached READY")
+			c, ids := filesystemNormalizerController(t, docker, image, fault)
+			filesystemNormalizerIdentities(t, ids, fault)
+			if fault == "partial" || fault == "load-exit" {
+				if c.record.Ready != nil {
+					t.Fatal("partial controller reached READY")
 				}
-				if _, err := os.Stat(filepath.Join(a.dir, "birth.json")); !os.IsNotExist(err) {
+				if _, err := os.Stat(filepath.Join(c.dir, "birth.json")); !os.IsNotExist(err) {
 					t.Fatal("partial replacement published birth", err)
 				}
 			} else {
+				root := filesystemNormalizerRoot(t)
+				a := filesystemNormalizerAdmission(t, docker, c, []string{root}, []fsfilter.Policy{filesystemNormalizerPolicy("alpha")})
 				ref := filesystemNormalizerConsumer(t, a, []string{root})
-				filesystemNormalizerExec(t, a, ref, "assert open('/root1/beta').read() == 'fixture'\ndeny('/root1/alpha', open)")
-				if fault == "detach" || fault == "owner-death" {
-					if _, err := a.docker.ExecRead(t.Context(), a.record.Helper, 4096, "/usr/local/libexec/coop-fs-kernel", "test-signal"); err != nil {
+				filesystemNormalizerExec(t, a, ref, "assert open('/root1/beta').read()=='fixture'\ndeny('/root1/alpha',open)")
+				if fault == "detach" || fault == "controller-death" {
+					if _, err := docker.ExecRead(t.Context(), c.record.Container, 4096, "/usr/local/libexec/coop-fs-kernel", "test-signal"); err != nil {
 						t.Fatal(err)
 					}
 					if fault == "detach" {
-						filesystemNormalizerMarker(t, a, "replacement-detached")
-						filesystemNormalizerExec(t, a, ref, "assert os.stat('/root1/beta').st_size == 7\ndeny('/root1/beta', open)\ndeny('/root1/alpha', open)")
+						fixtureFilesystemMarker(t, docker, c.record.Container, c.dir, "replacement-detached")
+						filesystemNormalizerExec(t, a, ref, "assert os.stat('/root1/beta').st_size==7\ndeny('/root1/beta',open)\ndeny('/root1/alpha',open)")
 					} else {
-						filesystemNormalizerMarker(t, a, "child-reaped")
-						value, present, err := a.docker.InspectContainer(t.Context(), a.record.Helper)
-						if err != nil || !present || !value.State.Running {
-							t.Fatal("Go supervisor did not survive C owner death", err)
+						deadline := time.Now().Add(time.Minute)
+						for {
+							value, present, err := docker.InspectContainer(t.Context(), c.record.Container)
+							if err != nil || !present {
+								t.Fatal(err)
+							}
+							if !value.State.Running {
+								break
+							}
+							if time.Now().After(deadline) {
+								t.Fatal("controller did not exit")
+							}
+							time.Sleep(10 * time.Millisecond)
 						}
 						filesystemNormalizerExec(t, a, ref, "for p in ['/root1/alpha','/root1/beta']:\n for op in [open,os.stat]: deny(p,op)")
 						var transient []filesystemKernelIdentity
@@ -235,41 +234,54 @@ func TestFilesystemNormalizerLifetimeRuntime(t *testing.T) {
 						filesystemNormalizerGone(t, docker, image, transient)
 					}
 				}
+				inner := filesystemInnerIdentities(a)
+				if err := a.close(); err != nil {
+					t.Fatal(err)
+				}
+				filesystemNormalizerGone(t, docker, image, inner)
 			}
-			if err := a.close(); err != nil {
-				t.Fatal(err)
-			}
+			retireFixtureFilesystemController(t, docker, c)
 			filesystemNormalizerGone(t, docker, image, ids)
-			t.Logf("%s: %d captured kernel identities retired", fault, len(ids)-1)
+			t.Logf("%s: all captured controller identities retired", fault)
 		})
 	}
 	t.Run("concurrent-distinct-roots", func(t *testing.T) {
+		c, shared := filesystemNormalizerController(t, docker, image, "normal")
 		roots := []string{filesystemNormalizerRoot(t), filesystemNormalizerRoot(t)}
-		a, first := filesystemNormalizerAdmission(t, docker, image, "normal", roots, []fsfilter.Policy{filesystemNormalizerPolicy("alpha"), filesystemNormalizerPolicy("beta")})
-		b, second := filesystemNormalizerAdmission(t, docker, image, "normal", roots, []fsfilter.Policy{filesystemNormalizerPolicy("beta"), filesystemNormalizerPolicy("alpha")})
-		filesystemNormalizerIdentities(t, first, false)
-		filesystemNormalizerIdentities(t, second, false)
+		a := filesystemNormalizerAdmission(t, docker, c, roots, []fsfilter.Policy{filesystemNormalizerPolicy("alpha"), filesystemNormalizerPolicy("beta")})
+		b := filesystemNormalizerAdmission(t, docker, c, roots, []fsfilter.Policy{filesystemNormalizerPolicy("beta"), filesystemNormalizerPolicy("alpha")})
+		filesystemNormalizerIdentities(t, shared, "normal")
+		first, second := filesystemInnerIdentities(a), filesystemInnerIdentities(b)
 		for _, x := range first {
 			for _, y := range second {
-				if x.Kind != "function" && x.Kind == y.Kind && x.ID == y.ID {
-					t.Fatalf("admissions share kernel authority: %+v", x)
+				if x.ID == y.ID {
+					t.Fatal("shared fresh policy authority")
 				}
 			}
 		}
 		one, two := filesystemNormalizerConsumer(t, a, roots), filesystemNormalizerConsumer(t, b, roots)
 		filesystemNormalizerExec(t, a, one, "deny('/root1/alpha',open)\ndeny('/root2/beta',open)\nassert open('/root1/beta').read()==open('/root2/alpha').read()=='fixture'")
-		checkSecond := "deny('/root1/beta',open)\ndeny('/root2/alpha',open)\nassert open('/root1/alpha').read()==open('/root2/beta').read()=='fixture'"
-		filesystemNormalizerExec(t, b, two, checkSecond)
+		check := "deny('/root1/beta',open)\ndeny('/root2/alpha',open)\nassert open('/root1/alpha').read()==open('/root2/beta').read()=='fixture'"
+		filesystemNormalizerExec(t, b, two, check)
 		if err := a.close(); err != nil {
 			t.Fatal(err)
 		}
 		filesystemNormalizerGone(t, docker, image, first)
-		filesystemNormalizerExec(t, b, two, checkSecond)
+		filesystemNormalizerExec(t, b, two, check)
 		if err := b.close(); err != nil {
 			t.Fatal(err)
 		}
 		filesystemNormalizerGone(t, docker, image, second)
+		retireFixtureFilesystemController(t, docker, c)
+		filesystemNormalizerGone(t, docker, image, shared)
 	})
+}
+func filesystemInnerIdentities(a *filesystemAdmission) []filesystemKernelIdentity {
+	var ids []filesystemKernelIdentity
+	for _, m := range a.record.Ready.Maps {
+		ids = append(ids, filesystemKernelIdentity{Kind: "map", Name: m.Name, ID: m.ID})
+	}
+	return ids
 }
 
 func filesystemNormalizerRoot(t *testing.T) string {
@@ -298,7 +310,7 @@ func filesystemNormalizerExec(t *testing.T, a *filesystemAdmission, ref runtime.
 	}
 }
 
-func filesystemNormalizerIdentities(t *testing.T, ids []filesystemKernelIdentity, partial bool) {
+func filesystemNormalizerIdentities(t *testing.T, ids []filesystemKernelIdentity, fault string) {
 	t.Helper()
 	maps, guards := map[string]uint32{}, map[uint32]bool{}
 	var extension, function uint32
@@ -318,7 +330,7 @@ func filesystemNormalizerIdentities(t *testing.T, ids []filesystemKernelIdentity
 		}
 	}
 	for _, name := range []string{"work", "runes"} {
-		if maps["base/"+name] == 0 || maps["base/"+name] != maps["extension/"+name] {
+		if fault != "load-exit" && (maps["base/"+name] == 0 || maps["base/"+name] != maps["extension/"+name]) {
 			t.Fatalf("extension did not reuse %s: %v", name, maps)
 		}
 	}
@@ -335,8 +347,11 @@ func filesystemNormalizerIdentities(t *testing.T, ids []filesystemKernelIdentity
 		}
 	}
 	wantReplacements, wantBase := 27, 27
-	if partial {
+	if fault == "partial" {
 		wantReplacements, wantBase = 13, 0
+	}
+	if fault == "load-exit" {
+		wantReplacements, wantBase = 0, 0
 	}
 	if len(guards) != 27 || replacements != wantReplacements || baseLinks != wantBase {
 		t.Fatalf("unexpected attachment shape: guards=%d replacements=%d base=%d", len(guards), replacements, baseLinks)

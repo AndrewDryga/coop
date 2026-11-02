@@ -278,15 +278,28 @@ func preloadFilesystemImage(t *testing.T, docker *runtime.Docker) string {
 			data = bytes.Replace(data, []byte(before), []byte(after), 1)
 		}
 		switch name {
-		case "internal/fsfilter/assets/loader.c":
+		case "internal/fsfilter/assets/shared.h":
 			changed++
-			replace("    if (bpf_object__load(object)) goto fail;", `    if (bpf_object__load(object)) goto fail;
-    const char *fault = getenv("COOP_TEST_FS_FAULT");
+			replace("    char magic[8];uint32_t header[5];FILE *in=stdin;", `    const char *fault = getenv("COOP_TEST_FS_FAULT");
     if (!fault) fault = "";
-    int loaded = open("/state/programs-loaded", O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC, 0600);
-    if (loaded < 0 || close(loaded)) goto fail;
-    if (!strcmp(fault, "load-exit")) _exit(42);`)
-			replace("    if (fflush(stdout)) goto fail;", `    if (fflush(stdout)) goto fail;
+    int loaded = open("/state/policy-maps-created", O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC, 0600);
+    if (loaded < 0 || close(loaded)) return -1;
+    if (!strcmp(fault, "load-exit")) _exit(42);
+    char magic[8];uint32_t header[5];FILE *in=stdin;`)
+			replace(`    for(int i=0;i<4;i++)if(bpf_map_update_elem(shared_fd('m',policy_names[i]),&key,&policy_maps[i],BPF_NOEXIST))return -1;`, `    if (!strcmp(fault,"publish-0")) _exit(48);
+    for(int i=0;i<4;i++) {
+        if(bpf_map_update_elem(shared_fd('m',policy_names[i]),&key,&policy_maps[i],BPF_NOEXIST))return -1;
+        char stage[16];snprintf(stage,sizeof(stage),"publish-%d",i+1);
+        if (!strcmp(fault,stage)) _exit(48);
+    }`)
+			replace(`    if(invoke(shared_fd('p',"admit_owner"),key,token))return -1;`, `    if (!strcmp(fault,"delayed") && !invoke(shared_fd('p',"admit_owner"),key,token^1)) return -1;
+    if(invoke(shared_fd('p',"admit_owner"),key,token))return -1;
+    if (!strcmp(fault,"delayed")) {
+        if (!invoke(shared_fd('p',"admit_owner"),key,token) ||
+            !invoke(shared_fd('p',"admit_owner"),key,token^1) ||
+            !invoke(shared_fd('p',"release_owner"),key,token)) return -1;
+    }`)
+			replace(`    map_json(stdout);puts("}");if(fflush(stdout))return -1;`, `    map_json(stdout);puts("}");if(fflush(stdout))return -1;
     if (!strcmp(fault, "child-death")) {
         while (access("/state/exit-child", F_OK)) usleep(10000);
         _exit(47);
@@ -339,7 +352,7 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 	}
 	defer docker.Close()
 	image := preloadFilesystemImage(t, docker)
-	for _, fault := range []string{"delayed", "missing", "load-exit", "malformed", "truncated", "trailing", "stream-pause", "child-death", "capacity"} {
+	for _, fault := range []string{"delayed", "missing", "load-exit", "malformed", "truncated", "trailing", "stream-pause", "child-death", "capacity", "publish-0", "publish-1", "publish-2", "publish-3", "publish-4"} {
 		t.Run(fault, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 			defer cancel()
@@ -362,6 +375,7 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 			}
 			parent := "coop-fs-" + randid.Hex(16)
 			a := &filesystemAdmission{docker: binding, dir: dir, record: filesystemRecord{Version: 1, Parent: parent, Endpoint: binding.Endpoint(), DaemonID: binding.Info().ID, Image: image, Helper: filesystemRef(parent, "owner"), Workspace: repo, Supervisor: supervisorLabelValue(workspaceScope(repo), os.Getpid())}}
+			bindFilesystemTestController(t, a, []string{repo})
 			a.lease, err = lockFilesystemAdmission(dir, true)
 			if err != nil {
 				t.Fatal(err)
@@ -378,7 +392,7 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 				t.Fatal(err)
 			}
 			options := append(a.helperOptions(false), "--mount", networkMount("bind", repo, "/sources/1", true), "-e", "COOP_TEST_FS_FAULT="+fault)
-			if _, err := a.create(ctx, runtime.DockerCreate{Ref: a.record.Helper, Image: image, Options: options, Command: []string{"admit", "/sources", "/state/policy.json", "/host-cgroup/" + parent}}); err != nil {
+			if _, err := a.create(ctx, runtime.DockerCreate{Ref: a.record.Helper, Image: image, Options: options, Command: []string{"admit", "/sources", "/state/policy.json", parent, "/state/controller.json"}}); err != nil {
 				t.Fatal(err)
 			}
 			if err := a.docker.StartContainer(ctx, a.record.Helper); err != nil {
@@ -395,7 +409,7 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 				}
 			}
 			marker := func(name string) bool { _, err := os.Stat(filepath.Join(dir, name)); return err == nil }
-			await(func() bool { return marker("programs-loaded") })
+			await(func() bool { return marker("policy-maps-created") })
 			noAuthority := func() {
 				t.Helper()
 				if marker("birth.json") {
@@ -445,7 +459,17 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 					}
 					return !value.State.Running
 				})
-				noAuthority()
+				if strings.HasPrefix(fault, "publish-") {
+					if !marker("birth.json") {
+						t.Fatal("partial publication lacks durable birth")
+					}
+					_, log, err := a.docker.ObserveContainerLogs(ctx, a.record.Helper, 30, 1<<20)
+					if err != nil || bytes.Contains(log, []byte(`"status":"ready"`)) {
+						t.Fatalf("partial publication reached READY: %s %v", log, err)
+					}
+				} else {
+					noAuthority()
+				}
 				return
 			}
 			if err := a.waitReady(ctx); err != nil {
@@ -464,9 +488,6 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 				t.Logf("100000 pinned objects within the 512MiB/32-PID helper limit: %s", data)
 				return
 			}
-			if fault == "delayed" {
-				return
-			}
 			ref := filesystemRef(parent, "consumer")
 			if err := a.consumer(ref); err != nil {
 				t.Fatal(err)
@@ -475,7 +496,7 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			options = []string{"--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--cgroup-parent", "/" + parent, "--mount", networkMount("bind", repo, "/workspace", true), "--entrypoint", "python3"}
+			options = []string{"--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--cgroup-parent", a.record.cgroupParent(), "--mount", networkMount("bind", repo, "/workspace", true), "--entrypoint", "python3"}
 			ref.ID, err = a.create(ctx, runtime.DockerCreate{Ref: ref, Image: client, Options: options, Command: []string{"-c", "import time; time.sleep(120)"}})
 			if err != nil {
 				t.Fatal(err)
@@ -485,6 +506,12 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 			}
 			if _, err := a.docker.ExecRead(ctx, ref, 4096, "python3", "-c", "assert open('/workspace/public').read() == 'fixture'"); err != nil {
 				t.Fatal("public control failed before owner death", err)
+			}
+			if fault == "delayed" {
+				if _, err := a.docker.ExecRead(ctx, ref, 4096, "python3", "-c", "import errno\ntry: open('/workspace/.ENV')\nexcept OSError as e: assert e.errno==errno.EPERM\nelse: raise AssertionError('secret exposed')"); err != nil {
+					t.Fatal(err)
+				}
+				return
 			}
 			if err := os.WriteFile(filepath.Join(dir, "exit-child"), nil, 0600); err != nil {
 				t.Fatal(err)
