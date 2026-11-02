@@ -309,16 +309,27 @@ func TestExecutionListingHasBoundedSummaryPagesAndContinuation(t *testing.T) {
 	if err != nil || all.Next != "" || all.Incomplete || !reflect.DeepEqual(all.Executions, append(first.Executions, second.Executions...)) {
 		t.Fatalf("complete census differs from pages: %+v, %v", all, err)
 	}
-	for _, name := range []string{"execution-copy.json", "execution-" + strings.Repeat("f", 32) + ".json"} {
+	for i, summary := range all.Executions {
+		record, err := evidence.Execution(summary.ID)
+		if err != nil || summary.Project != record.Project || !summary.StartedAt.Equal(record.StartedAt) {
+			t.Fatalf("summary does not describe its own record: %+v, %v", summary, err)
+		}
+		if i > 0 && all.Executions[i-1].ID >= summary.ID {
+			t.Fatal("execution summaries are not in cursor order")
+		}
+	}
+	unreadable := []string{"execution-copy.json", "execution-" + strings.Repeat("0", 32) + ".json", "execution-" + strings.Repeat("f", 32) + ".json"}
+	for _, name := range unreadable {
 		if err := os.WriteFile(filepath.Join(s.Path(), name), []byte("invalid"), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	all, err = evidence.ExecutionInventory()
-	if err != nil || !all.Incomplete || all.Unreadable != 2 || len(all.UnreadableNames) != 2 || len(all.Executions) != ExecutionPageSize+1 || all.Next != "" {
-		t.Fatalf("complete census lost records or unreadable names: %+v, %v", all, err)
+	for range 3 {
+		current, err := evidence.ExecutionInventory()
+		if err != nil || !current.Incomplete || current.Unreadable != len(unreadable) || !slices.Equal(current.UnreadableNames, unreadable) || !reflect.DeepEqual(current.Executions, all.Executions) || current.Next != "" {
+			t.Fatalf("complete census lost records or unreadable names: %+v, %v", current, err)
+		}
 	}
-
 }
 
 // Every page of the run listing reads the whole folder, so a file no run is named after counts as

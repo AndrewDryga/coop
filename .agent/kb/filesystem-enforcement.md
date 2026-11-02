@@ -2,8 +2,8 @@
 name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
-sources: [internal/box/filesystem.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go]
-updated: 2026-11-01
+sources: [internal/box/filesystem.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go]
+updated: 2026-11-02
 ---
 
 ## Selection and policy
@@ -18,7 +18,7 @@ stay inside Docker. `make filesystem-sources-check` detects stale embedded sourc
 One host walk applies the shared shadow-policy decider and remembered identities. Policy discovery
 prunes hidden descendants and .git as the mount backend does, while identity inventory visits both
 to close existing hardlink aliases. It persists
-semantic origins under the shared hidden-file record lock before runtime setup. A rejected
+semantic origins under the shared hidden-file record lock before policy publication. A rejected
 admission therefore cannot forget old identities after a host atomic save. Legacy mount
 persistence preserves prior omitted identities at surviving aliases instead of erasing them.
 Removing a rule declassifies its original object only when no remembered alias survives.
@@ -32,8 +32,15 @@ access applied after protected entries; policy files and directories cannot be g
 
 The helper image generates its immutable Unicode wire table at build time. Admissions compile
 unique exact path/ancestor rows (never normalized hashes as allow authority), followed by all
-grants. Map capacities derive from bounded row counts before loading. Each real guest identity
-still stays pinned until enforcement is detached. Final pre-execution revalidation remains fresh.
+grants. The fresh helper loads programs while the host inventories roots. Sparse path/object maps
+retain the accepted upper bounds without preallocating every element. Host capture and remembering
+finish before atomic policy publication. Go supervises the C loader and pipes the encoded policy;
+C alone pins descriptors and becomes the task-storage owner. Exact EOF, map freeze and durable
+birth all precede attachment/READY. Child failure is observed during publication; its timeout
+never limits the admitted owner lifetime. Each real guest identity stays pinned until enforcement
+is detached. The helper descriptor limit covers the accepted 100,000 pinned objects plus
+map/program/root descriptors; Docker defaults must not silently lower that policy limit.
+Final pre-execution revalidation remains fresh.
 
 Inventory uses at most eight directory workers, bounded read batches and one million entries.
 Each opened directory must match its discovered identity. No symlink is followed, no hidden or
@@ -117,6 +124,8 @@ The ACP live conformance test accepts the same qualification switch to inspect t
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
 ## Changelog
+- 2026-11-02 — fresh-helper program loading overlaps the host census; complete policy and EOF
+  still precede attachment, with one C descriptor owner supervised by Go.
 - 2026-11-01 — bounded parallel inventory, fresh selective APFS final validation, warmed alias
   qualification, inventory-aware policy lookup and overlapped trusted startup checks. Removed
   repeated pre-workload inventories while preserving the final stopped-container barrier.

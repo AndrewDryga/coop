@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -578,19 +579,38 @@ func (e *Evidence) executions(after string, limit int) (ExecutionPage, error) {
 	if limit > 0 && len(ids) > limit {
 		ids, page.Next = ids[:limit], ids[limit-1]
 	}
-	for _, id := range ids {
-		record, err := e.Execution(id)
-		if errors.Is(err, ErrEvidenceUnavailable) {
+	// Recovery reads every retained record. Bound concurrent reads without
+	// retaining their full snapshots or changing the listing's sorted order.
+	results := make([]struct {
+		summary ExecutionSummary
+		err     error
+	}, len(ids))
+	workers := min(4, len(ids))
+	var reads sync.WaitGroup
+	for worker := range workers {
+		reads.Go(func() {
+			for i := worker; i < len(ids); i += workers {
+				record, err := e.Execution(ids[i])
+				results[i].err = err
+				if err == nil {
+					results[i].summary = summarize(record)
+				}
+			}
+		})
+	}
+	reads.Wait()
+	for i, result := range results {
+		if errors.Is(result.err, ErrEvidenceUnavailable) {
 			// Only retention removes a record, and only a finished one. Gone
 			// since the directory was read is gone, not unreadable.
 			continue
 		}
-		if err != nil {
+		if result.err != nil {
 			page.Incomplete, page.Unreadable = true, page.Unreadable+1
-			page.UnreadableNames = append(page.UnreadableNames, "execution-"+id+".json")
+			page.UnreadableNames = append(page.UnreadableNames, "execution-"+ids[i]+".json")
 			continue
 		}
-		page.Executions = append(page.Executions, summarize(record))
+		page.Executions = append(page.Executions, result.summary)
 	}
 	return page, nil
 }

@@ -2,8 +2,8 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture per box, and which surface reads which evidence
 subsystem: networking
-sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go, internal/networkstate/qualification.go, internal/box/network_setup.go, internal/session/schema.go, internal/workerproto/protocol.go, internal/cli/acp_refresh.go]
-updated: 2026-10-19
+sources: [internal/networkstate/execution.go, internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go, internal/networkstate/qualification.go, internal/box/network_setup.go, internal/session/schema.go, internal/workerproto/protocol.go, internal/cli/acp_refresh.go]
+updated: 2026-11-02
 ---
 
 Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; a
@@ -100,6 +100,10 @@ did), REPAIR (what coop normally does itself). Its verbs differ in what they rea
 | `setup` | mutating: builds the image pair and records the host qualification — the same work a filtered launch performs itself when this host has no current proof, so it is a prepare-ahead/recheck verb, not a prerequisite |
 | `recover [<run>]` | settles a run whose supervisor died — exact-owned removal, then a final `supervisor_lost` receipt (`RecoverNetworkRuns` in `box/network_recover.go`). The same pass runs from the orphan sweep at loop/fork start AND from `coop net inspect` before it reports a cleanup as incomplete (`cli/net_cmd.go`, `netSettleCleanup`). The unscoped pass also removes finished records past `networkstate.ExecutionRetention` (90 days) whose cleanup is complete, re-read under the run's lock; a record still owed cleanup, unreadable or a link is never removed, so the listing stays small without a scan cap. A record it cannot read is skipped and counted (`UnreadableNetworkRuns`, returned beside the recoveries): the other runs still settle, and `coop net recover` names each unreadable record's file and exits 1. A file no run is named after counts once, on the first page of the listing |
 
+The execution census validates records with at most four concurrent readers, retains only
+summaries/errors, and joins every reader before reducing results in cursor order. It caches no
+record or authority: recovery still rereads pending runs, and retention rereads under its lock.
+
 **Policy snapshots** (`snapshot-<fingerprint>.json`, one per distinct capture) go last in the same
 unscoped pass, and only from a listing of every run record read whole: an unread record may be the
 run that names one (`networkstate/snapshot_retention.go`, `RemoveUnusedSnapshots`). Only a snapshot a
@@ -182,6 +186,8 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-11-02 — bounded parallel execution-record reads preserve the complete census, deterministic
+  summaries and unreadable reports; verified fresh recovery and locked retention reads.
 - 2026-10-28 — distinguished unavailable/incomplete evidence from absence in certification and remote reads; checked real malformed retained records, session ownership, and disclosure fixtures.
 - 2026-10-19 — an unreadable run record no longer stops the unscoped recovery pass: it is skipped
   and counted, and snapshot retention still waits for a listing read whole (task

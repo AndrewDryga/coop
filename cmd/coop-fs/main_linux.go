@@ -155,32 +155,7 @@ func run(args []string) error {
 	if filepath.Dir(parent) != "/host-cgroup" || !fsfilter.ValidParent(filepath.Base(parent)) {
 		return errors.New("invalid owned cgroup parent")
 	}
-	var policy fsfilter.Admission
-	if err := decode(args[2], &policy); err != nil {
-		return err
-	}
-	id, err := currentBoot()
-	if err != nil {
-		return err
-	}
-	if err := os.Mkdir(parent, 0o700); err != nil {
-		return err
-	}
-	wire, err := os.CreateTemp("/tmp", "coop-fs-policy-")
-	if err != nil {
-		return errors.Join(err, os.Remove(parent))
-	}
-	unicodeData, readErr := os.ReadFile("/usr/share/coop-fs/unicode.bin")
-	writeErr := readErr
-	if writeErr == nil {
-		writeErr = fsfilter.WriteKernelPolicies(wire, policy.Roots, unicodeData)
-	}
-	closeErr := wire.Close()
-	if writeErr != nil || closeErr != nil {
-		return errors.Join(writeErr, closeErr, os.Remove(wire.Name()), os.Remove(parent))
-	}
-	err = syscall.Exec(loader, []string{loader, args[1], wire.Name(), parent, id}, os.Environ())
-	return errors.Join(err, os.Remove(wire.Name()), os.Remove(parent))
+	return admit(args[1], args[2], parent)
 }
 
 func main() {

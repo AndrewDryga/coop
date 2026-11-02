@@ -200,7 +200,11 @@ func TestFilesystemPerformanceRuntime(t *testing.T) {
 }
 
 const filesystemBenchmarkMemory = `import glob,json,pathlib
-p=pathlib.Path('/proc/1')
+supervisor=pathlib.Path('/proc/1')
+children=sorted({pid for task in (supervisor/'task').iterdir() for pid in (task/'children').read_text().split()})
+assert len(children)==1,'expected one C descriptor owner'
+p=pathlib.Path('/proc')/children[0]
+assert (p/'comm').read_text().strip()=='coop-fs-kernel','unexpected descriptor owner'
 maps={}
 for name in glob.glob(str(p/'fdinfo/*')):
  fields=dict(line.split(':',1) for line in pathlib.Path(name).read_text().splitlines() if ':' in line)
@@ -208,7 +212,7 @@ for name in glob.glob(str(p/'fdinfo/*')):
 assert maps,'no BPF map descriptors observed'
 cg=(p/'cgroup').read_text().split('0::',1)[1].splitlines()[0]
 cg=pathlib.Path('/cg')/cg.lstrip('/')
-print(json.dumps(dict(maps=list(maps.values()),smaps=(p/'smaps_rollup').read_text(),status=(p/'status').read_text(),memory_current=(cg/'memory.current').read_text(),memory_peak=(cg/'memory.peak').read_text(),memory_stat=(cg/'memory.stat').read_text())))
+print(json.dumps(dict(maps=list(maps.values()),smaps=(p/'smaps_rollup').read_text(),status=(p/'status').read_text(),supervisor_status=(supervisor/'status').read_text(),memory_current=(cg/'memory.current').read_text(),memory_peak=(cg/'memory.peak').read_text(),memory_stat=(cg/'memory.stat').read_text())))
 `
 
 const filesystemBenchmarkWorkload = `import errno,json,os,pathlib,time

@@ -64,15 +64,16 @@ struct scratch {
 
 struct { UINT(type, BPF_MAP_TYPE_CGROUP_ARRAY); UINT(max_entries, 1);
     TYPE(key, u32); TYPE(value, u32); } scope SEC(".maps");
-struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 100000);
+/* Sparse maps allow program loading before the host census supplies row counts. */
+struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 100000); UINT(map_flags, BPF_F_NO_PREALLOC);
     TYPE(key, struct object_key); TYPE(value, struct label); } objects SEC(".maps");
 struct { UINT(type, BPF_MAP_TYPE_ARRAY); UINT(max_entries, 1);
     TYPE(key, u32); TYPE(value, struct owner); } owners SEC(".maps");
-struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 100000);
+struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 100000); UINT(map_flags, BPF_F_NO_PREALLOC);
     TYPE(key, struct key); TYPE(value, u32); } paths SEC(".maps");
 struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 20000);
     TYPE(key, u32); TYPE(value, struct rune_mapping); } runes SEC(".maps");
-struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 128);
+struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 32);
     TYPE(key, u32); TYPE(value, u32); } devices SEC(".maps");
 struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 32);
     TYPE(key, u32); TYPE(value, struct settings); } config SEC(".maps");

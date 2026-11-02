@@ -160,8 +160,7 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 	if err := a.record.validate(); err != nil {
 		return nil, err
 	}
-	var policies fsfilter.Admission
-	for i, root := range roots {
+	for _, root := range roots {
 		probe, err := newFilesystemProbe(root, func(record filesystemProbeRecord) error {
 			a.record.Probes = append(a.record.Probes, record)
 			return a.persist()
@@ -170,20 +169,6 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 			return nil, errors.Join(errFilesystemUnsupported, err)
 		}
 		a.probes = append(a.probes, probe)
-		// Persist captured identities before setup: even a rejected attempt must
-		// retain old aliases across an ordinary host atomic save and fresh retry.
-		snapshot, err := captureRememberedFilesystemSnapshot(ctx, root, probe.profile, grants[i], probe.relative)
-		if err != nil {
-			return nil, err
-		}
-		a.snapshots = append(a.snapshots, snapshot)
-		policy := snapshot.policy
-		policy.Entries = slices.Clone(policy.Entries)
-		probe.add(&policy)
-		policies.Roots = append(policies.Roots, policy)
-	}
-	if err := filesystemJSON(filepath.Join(dir, "policy.json"), policies); err != nil {
-		return nil, err
 	}
 	image, labels, err := docker.Image(ctx, fsimage.Tag())
 	if errors.Is(err, runtime.ErrDockerImageMissing) {
@@ -221,6 +206,26 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 	if err := docker.StartContainer(ctx, a.record.Helper); err != nil {
 		return nil, err
 	}
+	// Program loading overlaps the host census. The helper cannot seed or attach
+	// until every root is captured, remembered and atomically published below.
+	var policies fsfilter.Admission
+	for i, root := range roots {
+		probe := a.probes[i]
+		// Remember captured identities before publication so a rejected admission
+		// retains old aliases across an ordinary host atomic save and fresh retry.
+		snapshot, err := captureRememberedFilesystemSnapshot(ctx, root, probe.profile, grants[i], probe.relative)
+		if err != nil {
+			return nil, err
+		}
+		a.snapshots = append(a.snapshots, snapshot)
+		policy := snapshot.policy
+		policy.Entries = slices.Clone(policy.Entries)
+		probe.add(&policy)
+		policies.Roots = append(policies.Roots, policy)
+	}
+	if err := filesystemJSON(filepath.Join(dir, "policy.json"), policies); err != nil {
+		return nil, err
+	}
 	if err := a.waitReady(ctx); err != nil {
 		return nil, errors.Join(errFilesystemUnsupported, err)
 	}
@@ -239,7 +244,10 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 }
 
 func (a *filesystemAdmission) helperOptions(readonlyState bool) []string {
+	// Every admitted object stays open; leave room for maps, programs and roots.
+	descriptors := fsfilter.MaxPaths + 128
 	return []string{"--network", "none", "--user", "0", "--read-only", "--no-healthcheck", "--cap-drop", "ALL", "--cap-add", "SYS_ADMIN", "--security-opt", "seccomp=unconfined", "--cgroupns", "host", "--tmpfs", "/tmp:exec", "--pids-limit", "32", "--memory", "512m",
+		"--ulimit", fmt.Sprintf("nofile=%d:%d", descriptors, descriptors),
 		"--mount", networkMount("bind", "/sys/fs/cgroup", "/host-cgroup", false), "--mount", networkMount("bind", "/sys/fs/bpf", "/host-bpf", false), "--mount", networkMount("bind", a.dir, "/state", readonlyState)}
 }
 

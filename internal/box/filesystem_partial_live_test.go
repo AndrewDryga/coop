@@ -24,27 +24,9 @@ import (
 // durable pin. Production has no fault-injection environment or runtime knob.
 func partialFilesystemImage(t *testing.T, docker *runtime.Docker) string {
 	t.Helper()
-	source, err := fsimage.Context()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	w := tar.NewWriter(&out)
-	r := tar.NewReader(bytes.NewReader(source))
 	changed := false
-	for {
-		h, err := r.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, err := io.ReadAll(r)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if h.Name == "internal/fsfilter/assets/loader.c" {
+	image := filesystemFixtureImage(t, docker, "partial-attachment", func(name string, data []byte) []byte {
+		if name == "internal/fsfilter/assets/loader.c" {
 			marker := `if (snprintf(path, PATH_MAX, "%s/%s", pin_directory, stage) >= PATH_MAX || bpf_link__pin(link, path)) goto fail;`
 			if bytes.Count(data, []byte(marker)) != 1 {
 				t.Fatal("partial-attach injection point changed")
@@ -62,6 +44,36 @@ func partialFilesystemImage(t *testing.T, docker *runtime.Docker) string {
 			data = bytes.Replace(data, []byte(marker), []byte(marker+injection), 1)
 			changed = true
 		}
+		return data
+	})
+	if !changed {
+		t.Fatal("missing loader source")
+	}
+	return image
+}
+
+func filesystemFixtureImage(t *testing.T, docker *runtime.Docker, purpose string, alter func(string, []byte) []byte) string {
+	t.Helper()
+	source, err := fsimage.Context()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	w := tar.NewWriter(&out)
+	r := tar.NewReader(bytes.NewReader(source))
+	for {
+		h, err := r.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = alter(h.Name, data)
 		h.Size = int64(len(data))
 		if err := w.WriteHeader(h); err != nil {
 			t.Fatal(err)
@@ -69,9 +81,6 @@ func partialFilesystemImage(t *testing.T, docker *runtime.Docker) string {
 		if _, err := w.Write(data); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if !changed {
-		t.Fatal("missing loader source")
 	}
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
@@ -81,7 +90,7 @@ func partialFilesystemImage(t *testing.T, docker *runtime.Docker) string {
 		t.Fatal(err)
 	}
 	defer log.Close()
-	image, err := docker.BuildImage(t.Context(), runtime.DockerBuild{Tag: "coop-filesystem-test:" + randid.Hex(16), Platform: "linux/" + runtime.Architecture(docker.Info().Architecture), Labels: map[string]string{"coop.filesystem.test": "partial-attachment"}}, out.Bytes(), log, log)
+	image, err := docker.BuildImage(t.Context(), runtime.DockerBuild{Tag: "coop-filesystem-test:" + randid.Hex(16), Platform: "linux/" + runtime.Architecture(docker.Info().Architecture), Labels: map[string]string{"coop.filesystem.test": purpose}}, out.Bytes(), log, log)
 	if err != nil {
 		data, _ := os.ReadFile(log.Name())
 		if len(data) > 8000 {

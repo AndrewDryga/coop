@@ -337,50 +337,43 @@ int main(int argc, char **argv) {
         return 0;
     }
     const char *stage = "read policy";
-    if (argc != 5) { fprintf(stderr, "expected root, private policy, owned parent, boot identity\n"); return 1; }
+    if (argc != 4) { fprintf(stderr, "expected root, owned parent, boot identity\n"); return 1; }
     sigset_t releases; sigemptyset(&releases); sigaddset(&releases, SIGUSR1);
     if (sigprocmask(SIG_BLOCK, &releases, NULL)) { perror("block release signal"); return 1; }
-    FILE *in = fopen(argv[2], "rb");
-    if (!in) goto fail;
+    FILE *in = stdin;
     if (kernel_filesystems()) goto fail;
+    struct bpf_object_open_opts options = {.sz = sizeof(options), .kernel_log_buf = verifier_log, .kernel_log_size = sizeof(verifier_log)};
+    object = bpf_object__open_file("/usr/local/libexec/coop-fs/filter.o", &options);
+    if (!object) goto fail;
+    stage = "load kernel programs";
+    if (validate_hooks()) goto fail;
+    if (bpf_object__load(object)) goto fail;
+    stage = "read policy";
     char magic[8]; uint32_t header[5];
     if (read_exact(in, magic, sizeof(magic)) || memcmp(magic, "COOPFS03", 8) || read_exact(in, header, sizeof(header)) || !header[0] || header[0] > 32 || header[1] > LIMIT || !header[2] || header[2] > 20000 || header[3] > LIMIT-header[0] || header[4] > LIMIT-header[0]-header[3]) { errno = EINVAL; goto fail; }
     uint32_t object_capacity = header[0]+header[3]+header[4];
     pins = calloc(object_capacity, sizeof(*pins));
     if (!pins) goto fail;
-    struct bpf_object_open_opts options = {.sz = sizeof(options), .kernel_log_buf = verifier_log, .kernel_log_size = sizeof(verifier_log)};
-    object = bpf_object__open_file("/usr/local/libexec/coop-fs/filter.o", &options);
-    if (!object) goto fail;
-    const char *map_names[] = {"paths", "objects", "runes", "config", "devices"};
-    uint32_t capacities[] = {header[1] ? header[1] : 1, object_capacity, header[2], header[0], header[0]};
-    for (unsigned i = 0; i < sizeof(capacities)/sizeof(capacities[0]); i++) {
-        struct bpf_map *map = bpf_object__find_map_by_name(object, map_names[i]);
-        if (!map || bpf_map__set_max_entries(map, capacities[i])) goto fail;
-    }
-    stage = "load kernel programs";
-    if (validate_hooks()) goto fail;
-    if (bpf_object__load(object)) goto fail;
     stage = "seed protected objects";
     if (seed_policy(in, header, argv[1])) goto fail;
     fclose(in); in = NULL;
-    if (unlink(argv[2])) goto fail;
     struct bpf_program *owner = bpf_object__find_program_by_name(object, "admit_owner");
     stage = "establish descriptor owner";
     struct bpf_test_run_opts run = {.sz = sizeof(run)};
     if (!owner || bpf_prog_test_run_opts(bpf_program__fd(owner), &run) || run.retval) { errno = EINVAL; goto fail; }
-    group = open(argv[3], O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    group = open(argv[2], O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     stage = "open owned cgroup";
     if (group < 0 || children() != 0) goto fail;
     uint32_t zero = 0;
     int scope = map_fd("scope");
     if (scope < 0 || bpf_map_update_elem(scope, &zero, &group, BPF_ANY) || bpf_map_freeze(scope)) goto fail;
     char directory[PATH_MAX];
-    if (snprintf(directory, sizeof(directory), "/host-bpf/%s", strrchr(argv[3], '/')+1) >= (int)sizeof(directory)) { errno = ENAMETOOLONG; goto fail; }
+    if (snprintf(directory, sizeof(directory), "/host-bpf/%s", strrchr(argv[2], '/')+1) >= (int)sizeof(directory)) { errno = ENAMETOOLONG; goto fail; }
     stage = "create persistent attachment directory";
     if (mkdir(directory, 0700)) goto fail;
     strcpy(pin_directory, directory);
     stage = "persist attachment birth";
-    if (write_birth(argv[3], argv[4])) goto fail;
+    if (write_birth(argv[2], argv[3])) goto fail;
     struct bpf_program *program;
     bpf_object__for_each_program(program, object) {
         if (program == owner) continue;
@@ -394,7 +387,7 @@ int main(int argc, char **argv) {
     }
     struct stat group_stat;
     if (fstat(group, &group_stat)) goto fail;
-    printf("{\"status\":\"ready\",\"parent\":\"/%s\",\"boot_id\":\"%s\",\"cgroup_inode\":%llu,\"programs\":%d,\"pins\":%d,\"links\":[", strrchr(argv[3], '/')+1, argv[4], (unsigned long long)group_stat.st_ino, nattached, npins);
+    printf("{\"status\":\"ready\",\"parent\":\"/%s\",\"boot_id\":\"%s\",\"cgroup_inode\":%llu,\"programs\":%d,\"pins\":%d,\"links\":[", strrchr(argv[2], '/')+1, argv[3], (unsigned long long)group_stat.st_ino, nattached, npins);
     for (int i = 0; i < nattached; i++) {
         struct bpf_link_info info = {0}; uint32_t size = sizeof(info);
         if (bpf_obj_get_info_by_fd(bpf_link__fd(attached[i]), &info, &size)) goto fail;
@@ -408,13 +401,13 @@ int main(int argc, char **argv) {
         int busy = children();
         if (busy != 0) { fprintf(stderr, "filesystem guard retains custody: child observation %d\n", busy); continue; }
         if (cleanup()) return 1;
-        if (rmdir(argv[3])) { perror("remove owned cgroup"); return 1; }
+        if (rmdir(argv[2])) { perror("remove owned cgroup"); return 1; }
         return 0;
     }
 fail:
     fprintf(stderr, "filesystem admission (%s): %s\n", stage, strerror(errno));
     if (in) fclose(in);
     if (cleanup()) return 1;
-    if (rmdir(argv[3])) perror("remove failed admission cgroup");
+    if (rmdir(argv[2])) perror("remove failed admission cgroup");
     return 1;
 }
