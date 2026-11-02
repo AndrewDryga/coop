@@ -18,6 +18,8 @@ RUN mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/co
  && /out/usr/local/bin/coop-fs unicode-table /out/usr/share/coop-fs/unicode.bin \
  && clang-16 -O2 -g -target bpfel -mcpu=v3 -I/usr/include/"$(gcc -print-multiarch)" -Wall -Werror \
     -c internal/fsfilter/assets/filter.c -o /out/usr/local/libexec/coop-fs/filter.o \
+ && clang-16 -O2 -g -target bpfel -mcpu=v3 -I/usr/include/"$(gcc -print-multiarch)" -Wall -Werror -DFS_NORMALIZATION \
+    -c internal/fsfilter/assets/filter.c -o /out/usr/local/libexec/coop-fs/normalize.o \
  && gcc -O2 -Wall -Werror internal/fsfilter/assets/loader.c -lbpf -lelf -lz -o /out/usr/local/libexec/coop-fs-kernel \
  && ldd /out/usr/local/libexec/coop-fs-kernel > /tmp/coop-fs-libraries \
  && ! grep -q 'not found' /tmp/coop-fs-libraries \

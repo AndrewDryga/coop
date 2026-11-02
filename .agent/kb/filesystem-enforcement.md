@@ -2,7 +2,7 @@
 name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
-sources: [internal/box/filesystem.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, cmd/coop-fs/probe_linux.go, cmd/coop-fs/probe_linux_test.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
+sources: [internal/box/filesystem.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, cmd/coop-fs/probe_linux.go, cmd/coop-fs/probe_linux_test.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
 updated: 2026-11-02
 ---
 
@@ -43,7 +43,7 @@ cleanup. Sparse path/object maps
 retain the accepted upper bounds without preallocating every element. Host capture and remembering
 finish before atomic policy publication. Go supervises the C loader and pipes the encoded policy;
 C alone pins descriptors and becomes the task-storage owner. Exact EOF, map freeze and durable
-birth all precede attachment/READY. Child failure is observed during publication; its timeout
+birth all precede LSM attachment/READY. Child failure is observed during publication; its timeout
 never limits the admitted owner lifetime. Each real guest identity stays pinned until enforcement
 is detached. The helper descriptor limit covers the accepted 100,000 pinned objects plus
 map/program/root descriptors; Docker defaults must not silently lower that policy limit.
@@ -87,6 +87,16 @@ only to the frozen cgroup parent and its descendants. Secret reads, metadata and
 mutations are denied; .coopignore is readable but cannot be changed, including through aliases.
 Private writable mappings of read-only policy are allowed because they cannot change host bytes.
 
+The same C source builds the guards and one fresh filename-normalization EXT program per
+admission. The loader reuses that admission's exact `work` and `runes` maps and attaches the
+replacement to every guard before C reads the policy or attaches LSM hooks. Its scalar call looks up
+existing current-thread scratch; missing scratch or replacement denies. The base stub preserves
+all four arguments and a compiler memory clobber because the replacement writes scratch through
+its map lookup. The final depth bound stays adjacent to the indexed store, after `bpf_loop`.
+Only C owns the unpinned replacement links; ordinary cleanup destroys them after the durable LSM
+links, before either object closes. C death drops replacements while durable guards retain the
+existing owner-death denial. No replacement custody is transferred to the host or another run.
+
 A task-storage reference to the helper detects owner death. Pinned links survive it and deny
 all access on admitted share devices until retirement. The unprivileged workload gets no BPF
 capability or cgroup control. Its fixed read-only guard checks the VM boot identity before
@@ -97,7 +107,7 @@ image defaults remain literal.
 
 The private record stores frozen endpoint/daemon identity, immutable images and consumers,
 creation intent, supervisor identity, READY/birth receipts, probe custody and a held lease.
-Birth is synced before the first attachment. Recovery accepts only the recorded pin directory,
+Birth is synced before the first LSM attachment. Recovery accepts only the recorded pin directory,
 program IDs and link types; unexpected pins retain custody. Removal order is consumers, proof
 that the parent has no remaining Docker references (stopped containers count), owner, kernel
 release, exact inert probes and finally private state. Unknown outcomes retain records.
@@ -134,10 +144,15 @@ SIGKILL, owner death, partial attachment, unexpected-pin refusal, stale VM boot 
 metadata/mutation, COW mappings and public hardlinks. Enable `COOP_FILESYSTEM_RUNTIME_TEST=1`
 and name a local `COOP_FILESYSTEM_CLIENT_IMAGE`; these are test inputs, not product settings.
 A test-only compiled loader pause reproduces partial attachment without a production fault knob.
+The normalizer fixture records exact program, map and link IDs, verifies map reuse and independent
+multi-root admissions, detaches one replacement, fails partial setup and kills C while Go remains
+alive. Kernel ID lookups prove retirement after cleanup; each observation FD closes immediately.
 The ACP live conformance test accepts the same qualification switch to inspect the actual guard
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
 ## Changelog
+- 2026-11-02 — shared fresh normalization across all guards through exclusively C-owned unpinned
+  replacements; documented the scalar ABI, reused maps and lifecycle tests against packaged sources.
 - 2026-11-02 — synchronized denied probe opens with bounded host-rename visibility, requiring
   actual permission denial and retaining missing-observation counts. Verified the probe and
   warmed-alias test against plain-Docker controls; other enforcement sections were not reverified.
@@ -146,7 +161,7 @@ and prove .env/.ENV denial before prompts and after replay. Live provider calls 
 - 2026-11-02 — overlapped owner/probe creation with capture, including joined panic cleanup;
   image observations now use the frozen socket with fresh identity fences and separate bounds.
 - 2026-11-02 — fresh-helper program loading overlaps the host census; complete policy and EOF
-  still precede attachment, with one C descriptor owner supervised by Go.
+  still precede LSM attachment, with one C descriptor owner supervised by Go.
 - 2026-11-01 — bounded parallel inventory, fresh selective APFS final validation, warmed alias
   qualification, inventory-aware policy lookup and overlapped trusted startup checks. Removed
   repeated pre-workload inventories while preserving the final stopped-container barrier.

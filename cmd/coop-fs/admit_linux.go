@@ -12,7 +12,7 @@ import (
 )
 
 // C owns every protected descriptor and kernel attachment. Its program load
-// overlaps host discovery, but complete policy plus EOF still precede attachment.
+// overlaps host discovery, but complete policy plus EOF still precede LSM attachment.
 func admit(sources, policyPath, parent string) error {
 	id, err := currentBoot()
 	if err != nil {

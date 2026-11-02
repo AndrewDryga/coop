@@ -34,7 +34,9 @@ struct object_key { uint64_t ino; uint32_t dev, reserved; };
 struct label { uint32_t flags, root; };
 struct rune_mapping { uint32_t decomposition[4], fold[4], ndecomposition, nfold, ccc; };
 struct settings { uint32_t normalize, fold; };
-static struct bpf_object *object;
+static struct bpf_object *object, *normalizer;
+static struct bpf_link *normalizer_links[32];
+static int nnormalizer_links;
 static int objects, devices, *pins, npins, nattached, group = -1;
 static struct bpf_link *attached[32];
 static char link_paths[32][PATH_MAX], pin_directory[PATH_MAX];
@@ -107,6 +109,31 @@ static int map_fd(const char *name) {
     struct bpf_map *map = bpf_object__find_map_by_name(object, name);
     if (!map) { errno = EINVAL; return -1; }
     return bpf_map__fd(map);
+}
+static int load_normalizer(const struct bpf_object_open_opts *options) {
+    struct bpf_program *first = bpf_object__find_program_by_name(object, "guard_file_open");
+    if (!first) { errno = EINVAL; return -1; }
+    normalizer = bpf_object__open_file("/usr/local/libexec/coop-fs/normalize.o", options);
+    if (!normalizer) return -1;
+    struct bpf_map *map;
+    bpf_object__for_each_map(map, normalizer) {
+        int fd = map_fd(bpf_map__name(map));
+        if (fd < 0 || bpf_map__reuse_fd(map, fd)) return -1;
+    }
+    struct bpf_program *replacement = bpf_object__find_program_by_name(normalizer, "normalize_name");
+    if (!replacement) { errno = EINVAL; return -1; }
+    if (bpf_program__set_attach_target(replacement, bpf_program__fd(first), "name_key") || bpf_object__load(normalizer)) return -1;
+    struct bpf_program *program;
+    bpf_object__for_each_program(program, object) {
+        if (strncmp(bpf_program__name(program), "guard_", 6)) continue;
+        if (nnormalizer_links >= 32) { errno = E2BIG; return -1; }
+        struct bpf_link *link = bpf_program__attach_freplace(replacement, bpf_program__fd(program), "name_key");
+        if (!link) return -1;
+        /* Unpinned and exclusively owned here: closing restores the denying
+         * stub. Durable custody still belongs to the ordinary base LSM links. */
+        normalizer_links[nnormalizer_links++] = link;
+    }
+    return 0;
 }
 static int seed(int fd, uint32_t flags, uint32_t root) {
     struct stat st;
@@ -204,6 +231,12 @@ static int cleanup(void) {
     nattached = 0;
     if (pin_directory[0] && rmdir(pin_directory)) { perror("remove filesystem pins"); return -1; }
     pin_directory[0] = 0;
+    for (int i = nnormalizer_links-1; i >= 0; i--) {
+        if (bpf_link__destroy(normalizer_links[i])) { perror("detach filesystem normalizer"); return -1; }
+        normalizer_links[i] = NULL;
+    }
+    nnormalizer_links = 0;
+    if (normalizer) { bpf_object__close(normalizer); normalizer = NULL; }
     if (object) { bpf_object__close(object); object = NULL; }
     for (int i = 0; i < npins; i++) close(pins[i]);
     npins = 0;
@@ -348,6 +381,8 @@ int main(int argc, char **argv) {
     stage = "load kernel programs";
     if (validate_hooks()) goto fail;
     if (bpf_object__load(object)) goto fail;
+    stage = "load shared filename normalization";
+    if (load_normalizer(&options)) goto fail;
     stage = "read policy";
     char magic[8]; uint32_t header[5];
     if (read_exact(in, magic, sizeof(magic)) || memcmp(magic, "COOPFS03", 8) || read_exact(in, header, sizeof(header)) || !header[0] || header[0] > 32 || header[1] > LIMIT || !header[2] || header[2] > 20000 || header[3] > LIMIT-header[0] || header[4] > LIMIT-header[0]-header[3]) { errno = EINVAL; goto fail; }

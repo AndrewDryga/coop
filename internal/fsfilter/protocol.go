@@ -41,7 +41,7 @@ type Ready struct {
 	Links       []Link `json:"links"`
 }
 
-// Birth is durable before the first attachment. Program identities are known
+// Birth is durable before the first LSM attachment. Program identities are known
 // after load, so one immutable receipt also reconciles a partially attached run.
 type Birth struct {
 	Parent             string `json:"parent"`

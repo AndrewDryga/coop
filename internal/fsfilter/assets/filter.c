@@ -24,14 +24,16 @@ struct vm_area_struct { struct file *vm_file; unsigned long vm_flags; } CORE;
 struct task_struct { unsigned int flags; int exit_state; struct task_struct *group_leader; } CORE;
 
 static void *(*lookup)(void *, const void *) = (void *)BPF_FUNC_map_lookup_elem;
-static long (*read_str)(void *, u32, const void *) = (void *)BPF_FUNC_probe_read_kernel_str;
 static struct task_struct *(*current_task)(void) = (void *)BPF_FUNC_get_current_task_btf;
-static void *(*kptr_xchg)(void *, void *) = (void *)BPF_FUNC_kptr_xchg;
 static void *(*task_storage)(void *, struct task_struct *, void *, u64) = (void *)BPF_FUNC_task_storage_get;
-static long (*under_cgroup)(void *, u32) = (void *)BPF_FUNC_current_task_under_cgroup;
 static long (*loop)(u32, void *, void *, u64) = (void *)BPF_FUNC_loop;
+#ifndef FS_NORMALIZATION
+static long (*read_str)(void *, u32, const void *) = (void *)BPF_FUNC_probe_read_kernel_str;
+static void *(*kptr_xchg)(void *, void *) = (void *)BPF_FUNC_kptr_xchg;
+static long (*under_cgroup)(void *, u32) = (void *)BPF_FUNC_current_task_under_cgroup;
 extern struct task_struct *bpf_task_acquire(struct task_struct *) __attribute__((section(".ksyms")));
 extern void bpf_task_release(struct task_struct *) __attribute__((section(".ksyms")));
+#endif
 
 #define SECRET 1
 #define READONLY 2
@@ -62,6 +64,13 @@ struct scratch {
     u8 name[256];
 };
 
+struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 20000);
+    TYPE(key, u32); TYPE(value, struct rune_mapping); } runes SEC(".maps");
+/* Cgroup LSM can be preempted: per-CPU scratch could mix two tasks' decisions.
+ * Task-local storage follows the current thread and is freed on its exit. */
+struct { UINT(type, BPF_MAP_TYPE_TASK_STORAGE); UINT(map_flags, BPF_F_NO_PREALLOC);
+    TYPE(key, int); TYPE(value, struct scratch); } work SEC(".maps");
+#ifndef FS_NORMALIZATION
 struct { UINT(type, BPF_MAP_TYPE_CGROUP_ARRAY); UINT(max_entries, 1);
     TYPE(key, u32); TYPE(value, u32); } scope SEC(".maps");
 /* Sparse maps allow program loading before the host census supplies row counts. */
@@ -71,16 +80,10 @@ struct { UINT(type, BPF_MAP_TYPE_ARRAY); UINT(max_entries, 1);
     TYPE(key, u32); TYPE(value, struct owner); } owners SEC(".maps");
 struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 100000); UINT(map_flags, BPF_F_NO_PREALLOC);
     TYPE(key, struct key); TYPE(value, u32); } paths SEC(".maps");
-struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 20000);
-    TYPE(key, u32); TYPE(value, struct rune_mapping); } runes SEC(".maps");
 struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 32);
     TYPE(key, u32); TYPE(value, u32); } devices SEC(".maps");
 struct { UINT(type, BPF_MAP_TYPE_HASH); UINT(max_entries, 32);
     TYPE(key, u32); TYPE(value, struct settings); } config SEC(".maps");
-/* Cgroup LSM can be preempted: per-CPU scratch could mix two tasks' decisions.
- * Task-local storage follows the current thread and is freed on its exit. */
-struct { UINT(type, BPF_MAP_TYPE_TASK_STORAGE); UINT(map_flags, BPF_F_NO_PREALLOC);
-    TYPE(key, int); TYPE(value, struct scratch); } work SEC(".maps");
 #ifdef FS_DIAGNOSTICS
 struct diagnostic { u64 ino; u32 dev, reason, operation; char name[256]; };
 struct { UINT(type, BPF_MAP_TYPE_ARRAY); UINT(max_entries, 1);
@@ -126,7 +129,9 @@ SEC("syscall") int admit_owner(void *ctx) {
     if (old) bpf_task_release(old);
     return 0;
 }
+#endif
 
+#ifdef FS_NORMALIZATION
 INLINE u32 ccc(u32 rune) {
     struct rune_mapping *value = lookup(&runes, &rune);
     return value ? value->ccc : 0;
@@ -236,21 +241,32 @@ static long hash_step(u32 i, void *data) {
     c->b = (c->b ^ rune) * PRIME_B;
     return 0;
 }
-__attribute__((noinline)) int name_key(struct scratch *s, u32 length, struct settings *settings, u32 depth) {
-    if (!s || !settings || length > 255) return -1;
+SEC("freplace/name_key") int normalize_name(u32 length, u32 normalize_names, u32 fold, u32 depth) {
+    struct scratch *s = task_storage(&work, current_task(), 0, 0);
+    if (!s || length > 255) return -1;
     struct decode_context c = {s, length, 0, 0, 0, 0};
     if (loop(256, decode_step, &c, 0) < 0 || c.error) return -1;
     int n = c.count;
-    if (c.nonascii && settings->normalize) n = normalize(s, n, 0);
+    if (c.nonascii && normalize_names) n = normalize(s, n, 0);
     if (n < 0) return -1;
-    if (c.nonascii && settings->fold) n = normalize(s, n, 1);
+    if (c.nonascii && fold) n = normalize(s, n, 1);
     if (n < 0) return -1;
-    if (c.nonascii && settings->normalize) n = normalize(s, n, 0);
-    if (n < 0 || depth >= MAX_DEPTH) return -1;
-    struct hash_context h = {s, SEED_A, SEED_B, n, !c.nonascii && settings->fold};
+    if (c.nonascii && normalize_names) n = normalize(s, n, 0);
+    if (n < 0) return -1;
+    struct hash_context h = {s, SEED_A, SEED_B, n, !c.nonascii && fold};
     if (loop(MAX_RUNES, hash_step, &h, 0) < 0) return -1;
+    /* Check at the store: bpf_loop can discard bounds on scalar spills. */
+    if (depth >= MAX_DEPTH) return -1;
     s->names[depth] = (struct name_key){h.a, h.b};
     return 0;
+}
+#else
+/* One fresh freplace program serves every guard; its absence must deny.
+ * Keep the call ABI and the replacement's memory effects visible to Clang. */
+__attribute__((noinline)) int name_key(u32 length, u32 normalize_names, u32 fold, u32 depth) {
+    int result = -1;
+    asm volatile("" : "+r"(result) : "r"(length), "r"(normalize_names), "r"(fold), "r"(depth) : "memory");
+    return result;
 }
 
 struct walk_context { struct dentry *d; struct scratch *s; struct settings *settings; u32 root, depth; int operation, result, identify; };
@@ -269,7 +285,7 @@ static long walk_step(u32 i, void *data) {
         }
         if (!c->identify) {
             long n = read_str(c->s->name, sizeof(c->s->name), d->d_name.name);
-            if (n <= 0 || n > 256 || name_key(c->s, n-1, c->settings, i)) { c->result = -1; return 1; }
+            if (n <= 0 || n > 256 || name_key(n-1, c->settings->normalize, c->settings->fold, i)) { c->result = -1; return 1; }
         }
         struct dentry *parent = d->d_parent;
         if (!parent || parent == d) { c->result = 1; return 1; }
@@ -358,4 +374,5 @@ HOOK(inode_set_acl, 4) { return access((void *)ctx[1], WRITE); }
 HOOK(inode_remove_acl, 3) { return access((void *)ctx[1], WRITE); }
 HOOK(inode_file_setattr, 2) { return access((void *)ctx[0], WRITE); }
 HOOK(inode_file_getattr, 2) { return access((void *)ctx[0], 0); }
+#endif
 char LICENSE[] SEC("license") = "GPL";
