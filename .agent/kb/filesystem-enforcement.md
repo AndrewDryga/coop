@@ -2,7 +2,7 @@
 name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
-sources: [internal/box/filesystem.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go]
+sources: [internal/box/filesystem.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
 updated: 2026-11-02
 ---
 
@@ -32,7 +32,10 @@ access applied after protected entries; policy files and directories cannot be g
 
 The helper image generates its immutable Unicode wire table at build time. Admissions compile
 unique exact path/ancestor rows (never normalized hashes as allow authority), followed by all
-grants. The fresh helper loads programs while the host inventories roots. Sparse path/object maps
+grants. Fresh-helper creation and program loading overlap the host inventory. The trusted share
+probe is created stopped in that same branch; it starts only after complete policy and READY.
+Only this branch writes custody, and both branches settle before publication or failure/panic
+cleanup. Sparse path/object maps
 retain the accepted upper bounds without preallocating every element. Host capture and remembering
 finish before atomic policy publication. Go supervises the C loader and pipes the encoded policy;
 C alone pins descriptors and becomes the task-storage owner. Exact EOF, map freeze and durable
@@ -98,7 +101,9 @@ branches finish before cleanup or workload creation; errors never abandon an in-
 After creating the stopped workload, final filesystem validation overlaps final network checks.
 Both must pass before authorization and attach. Native credentials are revoked before filesystem
 retirement. Container inspection uses the frozen Docker socket with daemon checks on both sides;
-an HTTP failure or malformed response is unknown, never absence.
+an HTTP failure or malformed response is unknown, never absence. Image identity, layer chains
+and execution defaults also use fresh bounded socket observations, with no mutable-tag cache.
+Full image metadata has a separate wire bound; each selected projection retains its 64KiB bound.
 
 Service admissions outlive the starting process. Unchanged readonly/no-repo-bind services reuse
 the same helper/consumer; changed service config or protected identities obtain a new admission.
@@ -124,6 +129,8 @@ The ACP live conformance test accepts the same qualification switch to inspect t
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
 ## Changelog
+- 2026-11-02 — overlapped owner/probe creation with capture, including joined panic cleanup;
+  image observations now use the frozen socket with fresh identity fences and separate bounds.
 - 2026-11-02 — fresh-helper program loading overlaps the host census; complete policy and EOF
   still precede attachment, with one C descriptor owner supervised by Go.
 - 2026-11-01 — bounded parallel inventory, fresh selective APFS final validation, warmed alias

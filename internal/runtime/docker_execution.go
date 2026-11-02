@@ -57,15 +57,13 @@ func (d *Docker) ImageExecution(ctx context.Context, id string) (DockerImageExec
 	if !strings.HasPrefix(id, "sha256:") || !dockerHexID(strings.TrimPrefix(id, "sha256:")) {
 		return value, errors.New("startup inspection requires an immutable Docker image")
 	}
-	if err := d.Verify(ctx); err != nil {
-		return value, err
-	}
-	const format = `{"ID":{{json .Id}},"Entrypoint":{{json (index .Config "Entrypoint")}},"Cmd":{{json (index .Config "Cmd")}},"Shell":{{json (index .Config "Shell")}},"Healthcheck":{{json (index .Config "Healthcheck")}},"Volumes":{{json (index .Config "Volumes")}}}`
-	data, err := d.output(ctx, 64<<10, "image", "inspect", "--format", format, id)
+	image, err := d.inspectImageJSON(ctx, id)
 	if err != nil {
 		return value, err
 	}
-	if json.Unmarshal(data, &value) != nil || value.ID != id {
+	c := image.Config
+	value = DockerImageExecution{ID: image.ID, Entrypoint: c.Entrypoint, Cmd: c.Cmd, Shell: c.Shell, Healthcheck: c.Healthcheck, Volumes: c.Volumes}
+	if value.ID != id || !dockerImageProjectionFits(value) {
 		return DockerImageExecution{}, errors.New("invalid Docker image startup observation")
 	}
 	return value, nil

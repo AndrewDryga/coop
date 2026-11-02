@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
-	"text/template"
 	"time"
 
 	coopconfig "github.com/AndrewDryga/coop/internal/config"
@@ -27,22 +26,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
-
-func TestDockerImageTemplateAcceptsOmittedLabels(t *testing.T) {
-	format, err := template.New("docker-inspect").Option("missingkey=error").Funcs(template.FuncMap{
-		"json": func(value any) string { data, _ := json.Marshal(value); return string(data) },
-	}).Parse(dockerImageFormat)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	if err := format.Execute(&output, map[string]any{"Id": "sha256:" + strings.Repeat("a", 64), "Config": map[string]any{}}); err != nil {
-		t.Fatal("unlabelled image inspection failed", err)
-	}
-	if !strings.Contains(output.String(), `"Labels":null`) {
-		t.Fatal("absent labels changed meaning", output.String())
-	}
-}
 
 func TestDockerWorkloadKeepsOwnerBindingAndPrivateConfig(t *testing.T) {
 	rt, file := fixtureDocker(t, dockerFixture{Container: dockerFixtureContainer()})
@@ -422,19 +405,6 @@ func TestDockerFixtureProcess(t *testing.T) {
 			fmt.Println("Total reclaimed space: 0B")
 		default:
 			os.Exit(99)
-		}
-	case "image":
-		if !bound || args[1] != "inspect" {
-			os.Exit(108)
-		}
-		if strings.Contains(args[3], "Entrypoint") {
-			if fixture.Mode == "execution-malformed" {
-				fmt.Print("invalid JSON")
-			} else {
-				emit(fixture.Execution)
-			}
-		} else {
-			emit(map[string]any{"ID": "sha256:" + strings.Repeat("d", 64), "Labels": map[string]string{}, "Layers": fixture.Layers})
 		}
 	case "volume":
 		if fixture.Mode == "shared-volume" {

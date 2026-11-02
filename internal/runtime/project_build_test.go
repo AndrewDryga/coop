@@ -21,7 +21,7 @@ func TestDockerImageAbsenceRequiresAnExactDaemon404(t *testing.T) {
 		missing bool
 	}{
 		{"missing", http.StatusNotFound, false, true},
-		{"CLI observation failure", http.StatusOK, false, false},
+		{"empty successful response", http.StatusOK, false, false},
 		{"daemon failure", http.StatusInternalServerError, false, false},
 		{"daemon replaced after absence", http.StatusNotFound, true, false},
 	} {

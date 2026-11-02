@@ -147,13 +147,8 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 		docker.Close()
 		return nil, err
 	}
-	defer func() {
-		if result != nil {
-			if cleanup := a.close(); cleanup != nil {
-				result = errors.Join(result, errFilesystemCustodyPending, fmt.Errorf("filesystem custody retained at %s: %w", a.dir, cleanup))
-			}
-		}
-	}()
+	transferred := false
+	defer a.cleanupUntransferred(&result, &transferred)
 	if err := a.persist(); err != nil {
 		return nil, err
 	}
@@ -170,58 +165,69 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 		}
 		a.probes = append(a.probes, probe)
 	}
-	image, labels, err := docker.Image(ctx, fsimage.Tag())
-	if errors.Is(err, runtime.ErrDockerImageMissing) {
-		if progress != nil {
-			progress("Building the filesystem protection helper")
-		}
-		log, openErr := os.OpenFile(filepath.Join(dir, "build.log"), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
-		if openErr != nil {
-			return nil, openErr
-		}
-		image, err = fsimage.Build(ctx, docker, log)
-		err = errors.Join(err, log.Close())
-		if err != nil {
-			err = filesystemBuildError(err, filepath.Join(dir, "build.log"))
-		}
-	} else if err == nil && labels[fsimage.BuildLabel] != fsimage.Fingerprint() {
-		err = errors.New("filesystem helper image has an unexpected build identity")
-	}
-	if err != nil {
-		return nil, err
-	}
-	a.record.Image = image
-	if err := a.persist(); err != nil {
-		return nil, err
-	}
-	options := a.helperOptions(false)
-	for i, root := range roots {
-		options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/sources/%d", i+1), true))
-	}
-	id, err := a.create(ctx, runtime.DockerCreate{Ref: a.record.Helper, Image: image, Options: options, Command: []string{"admit", "/sources", "/state/policy.json", "/host-cgroup/" + parent}})
-	a.record.Helper.ID = id
-	if saveErr := a.persist(); err != nil || saveErr != nil {
-		return nil, errors.Join(err, saveErr)
-	}
-	if err := docker.StartContainer(ctx, a.record.Helper); err != nil {
-		return nil, err
-	}
-	// Program loading overlaps the host census. The helper cannot seed or attach
-	// until every root is captured, remembered and atomically published below.
+	// Only the owner branch writes custody. Policy publication and cleanup wait
+	// for both branches; the trusted probe stays stopped until qualification.
 	var policies fsfilter.Admission
-	for i, root := range roots {
-		probe := a.probes[i]
-		// Remember captured identities before publication so a rejected admission
-		// retains old aliases across an ordinary host atomic save and fresh retry.
-		snapshot, err := captureRememberedFilesystemSnapshot(ctx, root, probe.profile, grants[i], probe.relative)
-		if err != nil {
-			return nil, err
+	var probeRef runtime.DockerRef
+	prepareOwner := func() error {
+		image, labels, err := docker.Image(ctx, fsimage.Tag())
+		if errors.Is(err, runtime.ErrDockerImageMissing) {
+			if progress != nil {
+				progress("Building the filesystem protection helper")
+			}
+			log, openErr := os.OpenFile(filepath.Join(dir, "build.log"), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
+			if openErr != nil {
+				return openErr
+			}
+			image, err = fsimage.Build(ctx, docker, log)
+			err = errors.Join(err, log.Close())
+			if err != nil {
+				err = filesystemBuildError(err, filepath.Join(dir, "build.log"))
+			}
+		} else if err == nil && labels[fsimage.BuildLabel] != fsimage.Fingerprint() {
+			err = errors.New("filesystem helper image has an unexpected build identity")
 		}
-		a.snapshots = append(a.snapshots, snapshot)
-		policy := snapshot.policy
-		policy.Entries = slices.Clone(policy.Entries)
-		probe.add(&policy)
-		policies.Roots = append(policies.Roots, policy)
+		if err != nil {
+			return err
+		}
+		a.record.Image = image
+		if err := a.persist(); err != nil {
+			return err
+		}
+		options := a.helperOptions(false)
+		for i, root := range roots {
+			options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/sources/%d", i+1), true))
+		}
+		id, err := a.create(ctx, runtime.DockerCreate{Ref: a.record.Helper, Image: image, Options: options, Command: []string{"admit", "/sources", "/state/policy.json", "/host-cgroup/" + parent}})
+		a.record.Helper.ID = id
+		if saveErr := a.persist(); err != nil || saveErr != nil {
+			return errors.Join(err, saveErr)
+		}
+		if err := docker.StartContainer(ctx, a.record.Helper); err != nil {
+			return err
+		}
+		probeRef, err = a.createShareProbe(ctx, roots)
+		return err
+	}
+	capture := func() error {
+		for i, root := range roots {
+			probe := a.probes[i]
+			// Remember captured identities before publication so a rejected admission
+			// retains old aliases across an ordinary host atomic save and fresh retry.
+			snapshot, err := captureRememberedFilesystemSnapshot(ctx, root, probe.profile, grants[i], probe.relative)
+			if err != nil {
+				return err
+			}
+			a.snapshots = append(a.snapshots, snapshot)
+			policy := snapshot.policy
+			policy.Entries = slices.Clone(policy.Entries)
+			probe.add(&policy)
+			policies.Roots = append(policies.Roots, policy)
+		}
+		return nil
+	}
+	if err := together(ctx, prepareOwner, capture); err != nil {
+		return nil, err
 	}
 	if err := filesystemJSON(filepath.Join(dir, "policy.json"), policies); err != nil {
 		return nil, err
@@ -229,7 +235,7 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 	if err := a.waitReady(ctx); err != nil {
 		return nil, errors.Join(errFilesystemUnsupported, err)
 	}
-	if err := a.qualifyShares(ctx, roots); err != nil {
+	if err := a.qualifyShares(ctx, probeRef); err != nil {
 		return nil, errors.Join(errFilesystemUnsupported, err)
 	}
 	// Only release-owned helpers have run. The stopped workload's final
@@ -240,7 +246,24 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 		}
 	}
 	a.probes = nil
+	transferred = true
 	return a, nil
+}
+
+// A preparation panic must release its resources after every parallel branch settles.
+func (a *filesystemAdmission) cleanupUntransferred(result *error, transferred *bool) {
+	panicked := recover()
+	if !*transferred {
+		if cleanup := a.close(); cleanup != nil {
+			*result = errors.Join(*result, errFilesystemCustodyPending, fmt.Errorf("filesystem custody retained at %s: %w", a.dir, cleanup))
+		}
+	}
+	if panicked != nil {
+		if *result != nil {
+			panic(fmt.Sprintf("%v\nfilesystem cleanup: %v", panicked, *result))
+		}
+		panic(panicked)
+	}
 }
 
 func (a *filesystemAdmission) helperOptions(readonlyState bool) []string {
@@ -290,7 +313,24 @@ func (a *filesystemAdmission) consumer(ref runtime.DockerRef) error {
 	return a.persist()
 }
 
-func (a *filesystemAdmission) qualifyShares(ctx context.Context, roots []string) error {
+func (a *filesystemAdmission) createShareProbe(ctx context.Context, roots []string) (runtime.DockerRef, error) {
+	ref := filesystemRef(a.record.Parent, "probe")
+	if err := a.consumer(ref); err != nil {
+		return ref, err
+	}
+	options := []string{"--network", "none", "--user", "0", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--cgroup-parent", "/" + a.record.Parent, "--mount", networkMount("bind", a.dir, "/state", true)}
+	for i, root := range roots {
+		options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/sources/%d", i+1), true))
+	}
+	id, err := a.create(ctx, runtime.DockerCreate{Ref: ref, Image: a.record.Image, Options: options, Command: []string{"probe", "/state/probe.json"}})
+	ref.ID = id
+	if saveErr := a.consumer(ref); err != nil || saveErr != nil {
+		return ref, errors.Join(err, saveErr)
+	}
+	return ref, nil
+}
+
+func (a *filesystemAdmission) qualifyShares(ctx context.Context, ref runtime.DockerRef) error {
 	var warm fsfilter.ShareProbe
 	for i, p := range a.probes {
 		warm.Readable = append(warm.Readable, fmt.Sprintf("/sources/%d/%s/warm-alias", i+1, p.relative))
@@ -309,19 +349,6 @@ func (a *filesystemAdmission) qualifyShares(ctx context.Context, roots []string)
 	}
 	if err := filesystemJSON(filepath.Join(a.dir, "probe.json"), probe); err != nil {
 		return err
-	}
-	ref := filesystemRef(a.record.Parent, "probe")
-	if err := a.consumer(ref); err != nil {
-		return err
-	}
-	options := []string{"--network", "none", "--user", "0", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--cgroup-parent", "/" + a.record.Parent, "--mount", networkMount("bind", a.dir, "/state", true)}
-	for i, root := range roots {
-		options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/sources/%d", i+1), true))
-	}
-	id, err := a.create(ctx, runtime.DockerCreate{Ref: ref, Image: a.record.Image, Options: options, Command: []string{"probe", "/state/probe.json"}})
-	ref.ID = id
-	if saveErr := a.consumer(ref); err != nil || saveErr != nil {
-		return errors.Join(err, saveErr)
 	}
 	var output bytes.Buffer
 	code, err := a.docker.StartAttached(ctx, ref, nil, &output, &output, nil)

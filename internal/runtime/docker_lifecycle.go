@@ -5,12 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -37,46 +34,22 @@ var ErrDockerOwnership = errors.New("Docker resource ownership conflict")
 
 var errDockerStartupProbe = errors.New("attached Docker startup observation unavailable")
 
-const dockerImageFormat = `{"ID":{{json .Id}},"Labels":{{json (index .Config "Labels")}}}`
-
 // ErrDockerImageMissing is proven absence on the bound daemon, not an inspection failure.
 var ErrDockerImageMissing = errors.New("Docker image is missing")
 
 func (d *Docker) Image(ctx context.Context, name string) (string, map[string]string, error) {
-	if !dockerToken(name, 512) || strings.HasPrefix(name, "-") {
-		return "", nil, errors.New("invalid Docker image reference")
-	}
-	if err := d.Verify(ctx); err != nil {
-		return "", nil, err
-	}
-	// Docker omits Config.Labels entirely for ordinary unlabelled images;
-	// direct .Config.Labels fails its missingkey template policy before JSON.
-	data, err := d.output(ctx, 64<<10, "image", "inspect", "--format", dockerImageFormat, name)
+	image, err := d.inspectImageJSON(ctx, name)
 	if err != nil {
-		// A CLI failure alone proves nothing. Only the exact daemon's API 404 establishes
-		// absence, with identity checks on both sides; transport and malformed data stay errors.
-		probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		defer cancel()
-		response, probeErr := d.daemonGet(probeCtx, "/images/"+url.PathEscape(name)+"/json")
-		if probeErr == nil {
-			defer response.Body.Close()
-			if response.StatusCode == http.StatusNotFound {
-				if verifyErr := d.Verify(probeCtx); verifyErr != nil {
-					return "", nil, verifyErr
-				}
-				return "", nil, ErrDockerImageMissing
-			}
-		}
 		return "", nil, err
 	}
-	var image struct {
+	projection := struct {
 		ID     string
 		Labels map[string]string
-	}
-	if json.Unmarshal(data, &image) != nil || !strings.HasPrefix(image.ID, "sha256:") || !dockerHexID(strings.TrimPrefix(image.ID, "sha256:")) || len(image.Labels) > 256 {
+	}{image.ID, image.Config.Labels}
+	if len(projection.Labels) > 256 || !dockerImageProjectionFits(projection) {
 		return "", nil, errors.New("invalid Docker image observation")
 	}
-	return image.ID, image.Labels, nil
+	return image.ID, projection.Labels, nil
 }
 
 // Only the already-composed workload arguments cross this finite grammar. The
@@ -556,8 +529,6 @@ func (d *Docker) TreeDigest(ctx context.Context, ref DockerRef, source string, l
 	return tree, err
 }
 
-const dockerImageLayerFormat = `{"ID":{{json .Id}},"Layers":{{json .RootFS.Layers}}}`
-
 // maxDockerImageLayers bounds one chain. Docker's own limit is far lower; an
 // image claiming more is not one this host built.
 const maxDockerImageLayers = 256
@@ -566,22 +537,15 @@ const maxDockerImageLayers = 256
 // chain is the only proof of derivation the runtime can give: a derived image's
 // chain STARTS with its base's, and a `FROM` line is a claim, not evidence.
 func (d *Docker) ImageLayers(ctx context.Context, name string) (string, []string, error) {
-	if !dockerToken(name, 512) || strings.HasPrefix(name, "-") {
-		return "", nil, errors.New("invalid Docker image reference")
-	}
-	if err := d.Verify(ctx); err != nil {
-		return "", nil, err
-	}
-	data, err := d.output(ctx, 64<<10, "image", "inspect", "--format", dockerImageLayerFormat, name)
+	value, err := d.inspectImageJSON(ctx, name)
 	if err != nil {
 		return "", nil, err
 	}
-	var image struct {
+	image := struct {
 		ID     string
 		Layers []string
-	}
-	if json.Unmarshal(data, &image) != nil || !strings.HasPrefix(image.ID, "sha256:") || !dockerHexID(strings.TrimPrefix(image.ID, "sha256:")) ||
-		len(image.Layers) == 0 || len(image.Layers) > maxDockerImageLayers {
+	}{value.ID, value.RootFS.Layers}
+	if len(image.Layers) == 0 || len(image.Layers) > maxDockerImageLayers || !dockerImageProjectionFits(image) {
 		return "", nil, errors.New("invalid Docker image observation")
 	}
 	for _, layer := range image.Layers {

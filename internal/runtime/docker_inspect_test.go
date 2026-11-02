@@ -30,14 +30,22 @@ func fixtureDockerAPI(file string) http.Handler {
 			_ = json.NewEncoder(w).Encode(info)
 			return
 		}
-		if !strings.HasPrefix(r.URL.Path, "/containers/") || !strings.HasSuffix(r.URL.Path, "/json") {
-			http.NotFound(w, r)
-			return
-		}
 		var fixture dockerFixture
 		data, err := os.ReadFile(file)
 		if err != nil || json.Unmarshal(data, &fixture) != nil {
 			http.Error(w, "unavailable", 500)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/images/") && strings.HasSuffix(r.URL.Path, "/json") {
+			if fixture.Mode == "execution-malformed" {
+				fmt.Fprint(w, "invalid JSON")
+			} else {
+				_ = json.NewEncoder(w).Encode(fixtureImageAPI(fixture))
+			}
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/containers/") || !strings.HasSuffix(r.URL.Path, "/json") {
+			http.NotFound(w, r)
 			return
 		}
 		switch fixture.Mode {

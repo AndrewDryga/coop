@@ -2,7 +2,10 @@ package box
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,21 +20,56 @@ import (
 
 // serviceFixtureDaemon serves the fixture daemon's identity on a new socket: fixture-daemon,
 // unless COOP_TEST_DAEMON names a replacement.
-func serviceFixtureDaemon(t *testing.T) string {
+func serviceFixtureDaemon(t *testing.T, recorder string) string {
 	t.Helper()
-	return dockersock.Serve(t, func() (dockersock.Info, error) {
-		id := os.Getenv("COOP_TEST_DAEMON")
-		if id == "" {
-			id = "fixture-daemon"
+	return dockersock.ServeHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/info" {
+			id := os.Getenv("COOP_TEST_DAEMON")
+			if id == "" {
+				id = "fixture-daemon"
+			}
+			_ = json.NewEncoder(w).Encode(dockersock.Info{ID: id, OSType: "linux", Architecture: "amd64", ServerVersion: "29.1", KernelVersion: "fixture", SecurityOptions: []string{}})
+			return
 		}
-		return dockersock.Info{ID: id, OSType: "linux", Architecture: "amd64", ServerVersion: "29.1", KernelVersion: "fixture", SecurityOptions: []string{}}, nil
-	})
+		if !strings.HasPrefix(r.URL.Path, "/images/") || !strings.HasSuffix(r.URL.Path, "/json") {
+			http.NotFound(w, r)
+			return
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/images/"), "/json")
+		if recorder != "" {
+			file, err := os.OpenFile(recorder, os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				t.Error(err)
+				http.Error(w, "fixture failed", 500)
+				return
+			}
+			_, err = fmt.Fprintln(file, "image inspect", name)
+			if closeErr := file.Close(); err != nil || closeErr != nil {
+				t.Error("record image read", err, closeErr)
+			}
+		}
+		immutable := strings.HasPrefix(name, "sha256:")
+		state := os.Getenv("COOP_TEST_IMAGE_STATE")
+		_, stateErr := os.Stat(state)
+		if name == os.Getenv("COOP_TEST_MISSING_IMAGE") || (!immutable && (os.Getenv("COOP_TEST_MISSING_TAG") == "1" || (state != "" && stateErr != nil))) {
+			http.NotFound(w, r)
+			return
+		}
+		id := os.Getenv("COOP_TEST_IMAGE_ID")
+		if id == "" {
+			id = "sha256:" + strings.Repeat("a", 64)
+		}
+		if immutable {
+			id = name
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"Id": id, "Config": map[string]any{"Labels": map[string]string{}}})
+	}))
 }
 
 func serviceReviewRuntime(t *testing.T, recorder string) runtime.Runtime {
 	t.Helper()
 	t.Setenv("DOCKER_CONTEXT", "")
-	t.Setenv("DOCKER_HOST", serviceFixtureDaemon(t))
+	t.Setenv("DOCKER_HOST", serviceFixtureDaemon(t, recorder))
 	path := filepath.Join(t.TempDir(), "docker")
 	script := "#!/bin/sh\n"
 	if recorder != "" {
@@ -44,11 +82,6 @@ func serviceReviewRuntime(t *testing.T, recorder string) runtime.Runtime {
 	}
 	script += `for last; do :; done
 case "$*" in
-  *"image inspect --format"*)
-    if [ "$last" = "$COOP_TEST_MISSING_IMAGE" ] || { [ "$COOP_TEST_MISSING_TAG" = 1 ] && [ "${last#sha256:}" = "$last" ]; } || { [ -n "$COOP_TEST_IMAGE_STATE" ] && [ ! -f "$COOP_TEST_IMAGE_STATE" ] && [ "${last#sha256:}" = "$last" ]; }; then exit 1; fi
-    id="${COOP_TEST_IMAGE_ID:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
-    case "$last" in sha256:*) id="$last" ;; esac
-    printf '{"ID":"%s","Labels":{}}\n' "$id" ;;
   *" pull "*) if [ -n "$COOP_TEST_IMAGE_STATE" ]; then touch "$COOP_TEST_IMAGE_STATE"; fi ;;
   *"volume inspect"*)
 	if [ -n "$COOP_TEST_VOLUME_STATE" ] && [ ! -f "$COOP_TEST_VOLUME_STATE" ]; then exit 1; fi
@@ -602,7 +635,7 @@ func TestVolumeApprovalRefusesChangedDaemonOrVolumeObject(t *testing.T) {
 			}
 			switch change {
 			case "endpoint":
-				t.Setenv("DOCKER_HOST", serviceFixtureDaemon(t))
+				t.Setenv("DOCKER_HOST", serviceFixtureDaemon(t, ""))
 			case "daemon":
 				t.Setenv("COOP_TEST_DAEMON", "different-daemon")
 			case "created-at":

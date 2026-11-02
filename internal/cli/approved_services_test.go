@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -34,15 +36,30 @@ type composeShim struct {
 func (s composeShim) build(t *testing.T) runtime.Runtime {
 	t.Helper()
 	t.Setenv("DOCKER_CONTEXT", "")
-	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
-		return dockersock.Info{ID: "fixture-daemon", OSType: "linux", Architecture: "amd64", ServerVersion: "29.1", KernelVersion: "fixture", SecurityOptions: []string{}}, nil
-	}))
+	t.Setenv("DOCKER_HOST", dockersock.ServeHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/info" {
+			_ = json.NewEncoder(w).Encode(dockersock.Info{ID: "fixture-daemon", OSType: "linux", Architecture: "amd64", ServerVersion: "29.1", KernelVersion: "fixture", SecurityOptions: []string{}})
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/images/") || !strings.HasSuffix(r.URL.Path, "/json") {
+			http.NotFound(w, r)
+			return
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/images/"), "/json")
+		id := os.Getenv("COOP_TEST_IMAGE_ID")
+		if id == "" {
+			id = "sha256:" + strings.Repeat("a", 64)
+		}
+		if strings.HasPrefix(name, "sha256:") {
+			id = name
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"Id": id, "Config": map[string]any{"Labels": map[string]string{}}})
+	})))
 	dir := t.TempDir()
 	path := filepath.Join(dir, "docker")
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\ncase \"$*\" in\n")
 	script.WriteString("  info) exit 0 ;;\n")
-	script.WriteString("  *\"image inspect --format\"*) for last; do :; done; case \"$last\" in sha256:*) id=\"$last\" ;; *) id=\"${COOP_TEST_IMAGE_ID:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}\" ;; esac; printf '{\"ID\":\"%s\",\"Labels\":{}}\\n' \"$id\" ;;\n")
 	script.WriteString("  *\"volume inspect\"*) for last; do :; done; printf '{\"Name\":\"%s\",\"Driver\":\"local\",\"Scope\":\"local\",\"Mountpoint\":\"/var/lib/docker/volumes/%s/_data\",\"CreatedAt\":\"2026-01-01T00:00:00Z\",\"Options\":{}}\\n' \"$last\" \"$last\" ;;\n")
 	script.WriteString("  *\"config --services\"*)\n")
 	for _, name := range s.services {

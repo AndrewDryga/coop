@@ -5,6 +5,7 @@ package box
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,10 +19,17 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-func TestFilesystemPreloadCaptureFailureRuntime(t *testing.T) {
+func TestFilesystemPreloadBeforeCaptureRuntime(t *testing.T) {
 	if os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
 		t.Skip("requires explicit local Docker qualification")
 	}
+	for _, outcome := range []string{"success", "capture-error", "cancel", "probe-create-unknown"} {
+		t.Run(outcome, func(t *testing.T) { filesystemBlockedCapture(t, outcome) })
+	}
+}
+
+func filesystemBlockedCapture(t *testing.T, outcome string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	repo, err := filepath.EvalSymlinks(t.TempDir())
@@ -37,7 +45,8 @@ func TestFilesystemPreloadCaptureFailureRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Hold the real capture lock until the early helper is observed running.
+	// Both containers must exist before capture proceeds, but the probe must
+	// remain stopped and the owner must have attached no policy.
 	locked, release, lockDone := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() {
 		lockDone <- withHiddenFilesLock(ctx, repo, func() error {
@@ -61,11 +70,38 @@ func TestFilesystemPreloadCaptureFailureRuntime(t *testing.T) {
 			}
 		}
 	}
+	defer unlock()
 	done := make(chan struct{})
 	var admission *filesystemAdmission
 	var captureErr error
+	var grants []string
+	if outcome == "capture-error" {
+		grants = []string{"missing-grant"}
+	}
+	var faultBinding *runtime.Docker
+	if outcome == "probe-create-unknown" {
+		// The real daemon creates the probe, but the caller loses its receipt.
+		binary, err := exec.LookPath("docker")
+		if err != nil {
+			t.Fatal(err)
+		}
+		quoted := "'" + strings.ReplaceAll(binary, "'", "'\"'\"'") + "'"
+		shim := filepath.Join(t.TempDir(), "docker")
+		script := "#!/bin/sh\ncase \" $* \" in *\" container create \"*\" coop.filesystem.role=probe \"*) " + quoted + " \"$@\" >/dev/null; exit $? ;; esac\nexec " + quoted + " \"$@\"\n"
+		if err := os.WriteFile(shim, []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+		faultBinding, err = runtime.BindDockerForSetup(ctx, runtime.Runtime{Name: shim}, docker.Endpoint(), docker.Info().ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	go func() {
-		admission, captureErr = prepareFilesystemAdmission(ctx, runtime.Runtime{Name: "docker"}, []string{repo}, [][]string{{"missing-grant"}}, nil)
+		if faultBinding != nil {
+			admission, captureErr = prepareBoundFilesystemAdmission(ctx, []string{repo}, [][]string{grants}, faultBinding, nil)
+		} else {
+			admission, captureErr = prepareFilesystemAdmission(ctx, runtime.Runtime{Name: "docker"}, []string{repo}, [][]string{grants}, nil)
+		}
 		close(done)
 	}()
 	t.Cleanup(func() {
@@ -79,6 +115,7 @@ func TestFilesystemPreloadCaptureFailureRuntime(t *testing.T) {
 		}
 	})
 	var observed filesystemRecord
+	var stoppedProbe runtime.DockerRef
 	for observed.Helper.ID == "" {
 		paths, err := filepath.Glob(filepath.Join(state, "coop-fs-*", "record.json"))
 		if err != nil {
@@ -93,8 +130,33 @@ func TestFilesystemPreloadCaptureFailureRuntime(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if present && value.State.Running {
-				observed = record
+			if !present || !value.State.Running {
+				continue
+			}
+			for _, ref := range record.Consumers {
+				if ref.Labels["coop.filesystem.role"] != "probe" || (ref.ID == "" && outcome != "probe-create-unknown") {
+					continue
+				}
+				probe, present, err := docker.InspectContainer(ctx, ref)
+				if err != nil {
+					t.Fatal("early probe unavailable", err)
+				}
+				if !present {
+					continue
+				}
+				if probe.State.Status != "created" || probe.State.Running || !probe.State.StartedAt.IsZero() {
+					t.Fatal("probe started before capture completed", probe.State)
+				}
+				if record.Ready != nil {
+					t.Fatal("admission became ready before capture completed")
+				}
+				for _, name := range []string{"policy.json", "birth.json"} {
+					if _, err := os.Stat(filepath.Join(filepath.Dir(file), name)); !os.IsNotExist(err) {
+						t.Fatal("policy authority published before capture completed", name, err)
+					}
+				}
+				ref.ID = probe.ID
+				observed, stoppedProbe = record, ref
 				break
 			}
 		}
@@ -109,13 +171,37 @@ func TestFilesystemPreloadCaptureFailureRuntime(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+	if outcome == "cancel" {
+		cancel()
+	}
 	unlock()
 	<-done
-	if admission != nil || captureErr == nil || !strings.Contains(captureErr.Error(), "ineligible filesystem read grant") {
-		t.Fatal("expected host capture failure after helper start", captureErr)
+	switch outcome {
+	case "success":
+		if admission == nil || captureErr != nil || admission.record.Ready == nil {
+			t.Fatal("capture did not complete admission", captureErr)
+		}
+		if err := admission.close(); err != nil {
+			t.Fatal(err)
+		}
+		admission = nil
+	case "capture-error":
+		if admission != nil || captureErr == nil || !strings.Contains(captureErr.Error(), "ineligible filesystem read grant") {
+			t.Fatal("expected host capture failure after helper start", captureErr)
+		}
+	case "probe-create-unknown":
+		if admission != nil || captureErr == nil || !strings.Contains(captureErr.Error(), "Docker container create outcome is invalid") {
+			t.Fatal("ambiguous probe create continued admission", captureErr)
+		}
+	case "cancel":
+		if admission != nil || !errors.Is(captureErr, context.Canceled) {
+			t.Fatal("canceled capture continued admission", captureErr)
+		}
 	}
-	if _, present, err := docker.InspectContainer(ctx, observed.Helper); err != nil || present {
-		t.Fatal("capture failure retained its helper", err)
+	for _, ref := range []runtime.DockerRef{observed.Helper, stoppedProbe} {
+		if _, present, err := docker.InspectContainer(t.Context(), ref); err != nil || present {
+			t.Fatal("capture cleanup retained a container", ref.Name, err)
+		}
 	}
 	for _, probe := range observed.Probes {
 		if _, err := os.Stat(filepath.Join(probe.Root, probe.Leaf)); !os.IsNotExist(err) {
@@ -125,6 +211,59 @@ func TestFilesystemPreloadCaptureFailureRuntime(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join(state, observed.Parent+"-*"))
 	if err != nil || len(paths) != 0 {
 		t.Fatal("capture failure retained custody", paths, err)
+	}
+}
+
+func TestFilesystemPreparationPanicCleanupRuntime(t *testing.T) {
+	if os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
+		t.Skip("requires explicit local Docker qualification")
+	}
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := prepareFilesystemAdmission(t.Context(), runtime.Runtime{Name: "docker"}, []string{repo}, [][]string{nil}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer, err := runtime.BindDocker(t.Context(), runtime.Runtime{Name: "docker"}, a.docker.Endpoint(), a.docker.Info().ID)
+	if err != nil {
+		_ = a.close()
+		t.Fatal(err)
+	}
+	defer observer.Close()
+	var recovered any
+	var result error
+	transferred, settled := false, false
+	var probe runtime.DockerRef
+	func() {
+		defer func() { recovered = recover() }()
+		defer a.cleanupUntransferred(&result, &transferred)
+		panicking := make(chan struct{})
+		result = together(t.Context(), func() error {
+			<-panicking
+			var createErr error
+			probe, createErr = a.createShareProbe(t.Context(), []string{repo})
+			settled = true
+			return createErr
+		}, func() error {
+			close(panicking)
+			panic("fixture preparation panic")
+		})
+	}()
+	if !settled || probe.ID == "" || !strings.Contains(fmt.Sprint(recovered), "fixture preparation panic") {
+		t.Fatalf("panic did not join preparation: settled=%t probe=%s panic=%v", settled, probe.ID, recovered)
+	}
+	if result != nil {
+		t.Fatal("panic cleanup failed", result)
+	}
+	for _, ref := range []runtime.DockerRef{a.record.Helper, probe} {
+		if _, present, err := observer.InspectContainer(t.Context(), ref); err != nil || present {
+			t.Fatal("panic cleanup retained a container", ref.Name, err)
+		}
+	}
+	if _, err := os.Stat(a.dir); !os.IsNotExist(err) {
+		t.Fatal("panic cleanup retained custody", err)
 	}
 }
 

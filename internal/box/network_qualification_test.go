@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -117,14 +117,26 @@ func TestNetworkCaptureRequiresACompletedQualification(t *testing.T) {
 func qualificationInventoryFixture(t *testing.T) (runtime.Runtime, *runtime.Docker, networkstate.CandidateSpec, string) {
 	t.Helper()
 	t.Setenv("DOCKER_CONTEXT", "")
-	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
-		return dockersock.Info{ID: "fixture-daemon", ServerVersion: "29.4.0", KernelVersion: "fixture", OSType: "linux", Architecture: "aarch64"}, nil
-	}))
 	images := t.TempDir()
+	t.Setenv("DOCKER_HOST", dockersock.ServeHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/info" {
+			_ = json.NewEncoder(w).Encode(dockersock.Info{ID: "fixture-daemon", ServerVersion: "29.4.0", KernelVersion: "fixture", OSType: "linux", Architecture: "aarch64"})
+			return
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/images/sha256:"), "/json")
+		if strings.Contains(name, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		data, err := os.ReadFile(filepath.Join(images, name))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	})))
 	shim := filepath.Join(t.TempDir(), "docker")
-	body := "#!/bin/sh\nwhile [ \"$1\" = --host ] || [ \"$1\" = --config ]; do shift 2; done\n" +
-		"case \"$1 $2\" in \"image inspect\") for image in \"$@\"; do :; done; cat " + strconv.Quote(images) + "/\"${image#sha256:}\" ;; *) exit 91 ;; esac\n"
-	if err := os.WriteFile(shim, []byte(body), 0700); err != nil {
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 91\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	rt := runtime.Runtime{Name: shim}
@@ -144,7 +156,7 @@ func qualificationInventoryFixture(t *testing.T) (runtime.Runtime, *runtime.Dock
 
 func writeQualificationImageFixture(t *testing.T, dir, requested, actual string) {
 	t.Helper()
-	data, err := json.Marshal(map[string]any{"ID": actual, "Labels": map[string]string{}})
+	data, err := json.Marshal(map[string]any{"Id": actual, "Config": map[string]any{"Labels": map[string]string{}}})
 	if err != nil {
 		t.Fatal(err)
 	}

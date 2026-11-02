@@ -116,6 +116,10 @@ func (f *nativeOnlineFixture) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(dockersock.Info{ID: "fixture-daemon", OSType: "linux", Architecture: "amd64", ServerVersion: "29.1", KernelVersion: "fixture", SecurityOptions: []string{}})
 		return
 	}
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/images/") && strings.HasSuffix(r.URL.Path, "/json") {
+		_ = json.NewEncoder(w).Encode(map[string]any{"Id": "sha256:" + strings.Repeat("c", 64), "Config": map[string]any{"Labels": map[string]string{gatewayimage.BuildLabel: gatewayimage.Fingerprint()}}})
+		return
+	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/containers/") && strings.HasSuffix(r.URL.Path, "/json") {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -252,8 +256,6 @@ func (f *nativeOnlineFixture) command(request nativeOnlineRequest) (nativeOnline
 			return fail()
 		}
 		switch {
-		case strings.Contains(args[3], `"ID"`):
-			return nativeOnlineJSON(map[string]any{"ID": image, "Labels": map[string]string{gatewayimage.BuildLabel: gatewayimage.Fingerprint()}})
 		case args[3] == "{{.Id}}":
 			return nativeOnlineReply{Output: image + "\n"}, nil
 		case strings.Contains(args[3], gatewayimage.BuildLabel):
