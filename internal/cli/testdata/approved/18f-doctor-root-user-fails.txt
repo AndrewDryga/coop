@@ -7,7 +7,7 @@ Protecting secrets
   ✓ Terraform variable files are hidden
   ✓ Private keys are hidden
   ✓ Custom .coopignore paths are hidden
-  ✓ Secret directories are empty
+  ✓ Secret directories cannot be read
   ✓ Links cannot reveal hidden secrets
   ✓ Hidden secret files cannot be written
   ✓ Environment templates stay readable

@@ -420,23 +420,23 @@ Named volumes that belong only to this project need no approval prompt.
 ### Secret files in services
 
 Services get the same secret hiding as the box. A mount of `.env`, `*.key` or a path hidden by
-`.coopignore` gives the service an empty replacement. This prevents an agent-written Compose
+`.coopignore` cannot expose its contents to the service. This prevents an agent-written Compose
 file from passing those secrets to a container the agent controls.
 
 If a service needs a hidden file, such as a generated development TLS key for Keycloak, mount
 that individual file read-only with `:ro` or `read_only: true`. Run `coop up` in a terminal to
 review the eligible files and approve them. Hidden directories and files also reachable through
-writable mounts stay covered by empty replacements. Use read-only mounts for the individual
+writable mounts stay protected. Use read-only mounts for the individual
 secret files and named volumes for data the service needs to change.
 
 The approval is tied to:
 
 - The exact Compose file you reviewed. Coop stores approval outside the repo, so an agent cannot
-  update it by editing the file. After any edit, box launches use empty replacements until you
+  update it by editing the file. After any edit, box launches hide these files until you
   approve again. Coop explains which files are hidden and why.
 - This checkout's private identity. Copying the Compose file or its marker does not transfer
   approval to another checkout. Older approvals based only on file content need to be renewed
-  with `coop up`; automatic starts use empty replacements until then.
+  with `coop up`; automatic starts hide these files until then.
 - The exact files you reviewed. A new secret added under an approved directory mount stays
   hidden until you approve that file too.
 
@@ -542,7 +542,7 @@ The mount source must already exist; Compose cannot create a host directory for 
 session.
 
 When a service mounts the repo or one of its directories, Coop applies the same hiding rules
-as in the box. It covers `.env`, keys and paths hidden by `.coopignore` with empty replacements,
+as in the box. It prevents reads of `.env`, keys and paths hidden by `.coopignore`,
 including when the mount source is itself a hidden file. The file-approval rules above still
 apply. An agent can create `.agent/compose.yml` for you, but its configuration must pass these
 checks before Coop starts it.

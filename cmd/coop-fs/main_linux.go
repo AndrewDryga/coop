@@ -65,6 +65,13 @@ func currentBoot() (string, error) {
 
 func run(args []string) error {
 	const loader = "/usr/local/libexec/coop-fs-kernel"
+	if len(args) == 2 && args[0] == "unicode-table" {
+		data, err := fsfilter.UnicodeData()
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(args[1], data, 0444)
+	}
 	if len(args) == 2 && args[0] == "abandon" && fsfilter.ValidParent(args[1]) {
 		// A helper which never published birth attached nothing. rmdir alone
 		// refuses an unexpected surviving pin; no unknown program is detached.
@@ -163,7 +170,11 @@ func run(args []string) error {
 	if err != nil {
 		return errors.Join(err, os.Remove(parent))
 	}
-	writeErr := fsfilter.WriteKernelPolicies(wire, policy.Roots)
+	unicodeData, readErr := os.ReadFile("/usr/share/coop-fs/unicode.bin")
+	writeErr := readErr
+	if writeErr == nil {
+		writeErr = fsfilter.WriteKernelPolicies(wire, policy.Roots, unicodeData)
+	}
 	closeErr := wire.Close()
 	if writeErr != nil || closeErr != nil {
 		return errors.Join(writeErr, closeErr, os.Remove(wire.Name()), os.Remove(parent))

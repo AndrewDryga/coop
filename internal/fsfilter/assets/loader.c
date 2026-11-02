@@ -179,7 +179,7 @@ static int seed_policy(FILE *in, const uint32_t *header, const char *root_path) 
         if (read_exact(in, entry, sizeof(entry))) return -1;
         if (!entry[0] || entry[0] > header[0] || !entry[1] || entry[1] >= sizeof(path) || !entry[2]) { errno = EINVAL; return -1; }
         uint32_t flags = entry[2];
-        if ((i < header[3] && flags & ~(SECRET|READONLY)) || (i >= header[3] && flags != (GRANTED|READONLY))) { errno = EINVAL; return -1; }
+        if ((i < header[3] && flags & ~(SECRET|READONLY|CUSTODY)) || (i >= header[3] && flags != (GRANTED|READONLY))) { errno = EINVAL; return -1; }
         if (read_exact(in, path, entry[1])) return -1;
         if (memchr(path, 0, entry[1])) { errno = EINVAL; return -1; }
         path[entry[1]] = 0;
@@ -187,12 +187,6 @@ static int seed_policy(FILE *in, const uint32_t *header, const char *root_path) 
         int root = roots[entry[0]-1];
         root_device = root_devices[entry[0]-1];
         if (pin_path(root, path, flags)) return -1;
-        for (;;) {
-            char *last = strrchr(path, '/');
-            if (!last) break;
-            *last = 0;
-            if (pin_path(root, path, CUSTODY)) return -1;
-        }
     }
     if (fgetc(in) != EOF || ferror(in)) { errno = EINVAL; return -1; }
     int frozen[] = {paths, runes, devices, objects, config};
@@ -350,16 +344,22 @@ int main(int argc, char **argv) {
     if (!in) goto fail;
     if (kernel_filesystems()) goto fail;
     char magic[8]; uint32_t header[5];
-    if (read_exact(in, magic, sizeof(magic)) || memcmp(magic, "COOPFS02", 8) || read_exact(in, header, sizeof(header)) || !header[0] || header[0] > 32 || header[1] > LIMIT || header[2] > 20000 || header[3] > LIMIT || header[4] > LIMIT-header[3]) { errno = EINVAL; goto fail; }
-    pins = calloc(LIMIT, sizeof(*pins));
+    if (read_exact(in, magic, sizeof(magic)) || memcmp(magic, "COOPFS03", 8) || read_exact(in, header, sizeof(header)) || !header[0] || header[0] > 32 || header[1] > LIMIT || !header[2] || header[2] > 20000 || header[3] > LIMIT-header[0] || header[4] > LIMIT-header[0]-header[3]) { errno = EINVAL; goto fail; }
+    uint32_t object_capacity = header[0]+header[3]+header[4];
+    pins = calloc(object_capacity, sizeof(*pins));
     if (!pins) goto fail;
     struct bpf_object_open_opts options = {.sz = sizeof(options), .kernel_log_buf = verifier_log, .kernel_log_size = sizeof(verifier_log)};
     object = bpf_object__open_file("/usr/local/libexec/coop-fs/filter.o", &options);
     if (!object) goto fail;
-    struct bpf_map *paths = bpf_object__find_map_by_name(object, "paths");
+    const char *map_names[] = {"paths", "objects", "runes", "config", "devices"};
+    uint32_t capacities[] = {header[1] ? header[1] : 1, object_capacity, header[2], header[0], header[0]};
+    for (unsigned i = 0; i < sizeof(capacities)/sizeof(capacities[0]); i++) {
+        struct bpf_map *map = bpf_object__find_map_by_name(object, map_names[i]);
+        if (!map || bpf_map__set_max_entries(map, capacities[i])) goto fail;
+    }
     stage = "load kernel programs";
     if (validate_hooks()) goto fail;
-    if (!paths || bpf_map__set_max_entries(paths, header[1] ? header[1] : 1) || bpf_object__load(object)) goto fail;
+    if (bpf_object__load(object)) goto fail;
     stage = "seed protected objects";
     if (seed_policy(in, header, argv[1])) goto fail;
     fclose(in); in = NULL;

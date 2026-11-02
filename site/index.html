@@ -16,7 +16,7 @@
   <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, protected secret files, and filtered connections to the AI provider and approved destinations.">
   <meta name="twitter:card" content="summary_large_image">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"co:op","description":"Run Claude Code, Codex, Gemini and Grok in a container with your project mounted inside. Hide secret files and control network access. Free and open source.","url":"https://coop.dryga.com/","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://github.com/AndrewDryga/coop/blob/main/LICENSE","softwareHelp":"https://coop.dryga.com/docs.html","sameAs":["https://github.com/AndrewDryga/coop"],"publisher":{"@type":"Organization","name":"Protectorate","url":"https://github.com/ProtectorateHQ"}}</script>
   <link rel="icon" href="assets/img/favicon.svg?v=contained-entrance" type="image/svg+xml">
@@ -71,8 +71,8 @@
           <p class="evidence"><strong>3 s</strong> <span>to start the box once its image is built, network filter included, <a href="https://github.com/AndrewDryga/coop/blob/main/tools/lifecyclebench/main.go" target="_blank" rel="nofollow noopener">we measured</a>.</span></p>
         </li>
         <li class="step">
-          <h2>Secrets are replaced</h2>
-          <p>Files like .env stay where they are, but inside the box they’re replaced with empty files.</p>
+          <h2>Secrets stay protected</h2>
+          <p>Files like .env stay where they are, and the box cannot read their contents.</p>
           <p><code>coop check-secrets</code> scans file contents for possible secrets.</p>
           <p>Hide more paths with <code>.coopignore</code>.</p>
         </li>

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/fsfilter"
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 )
 
 func captureRememberedFilesystemSnapshot(ctx context.Context, root string, profile fsfilter.Profile, grants []string, exclude string) (snapshot *filesystemSnapshot, err error) {
@@ -79,36 +80,24 @@ type filesystemSnapshot struct {
 	objects   map[string]filesystemObject
 	protected map[fileIdentity]uint32
 	origins   rememberedHidden
-	mounts    []Mount
 }
 
 // captureFilesystemSnapshot uses the existing decider and walks even hidden
 // directories: an already-existing hardlink outside a hidden directory must
 // inherit its protection. A later trusted-host reclassification needs admission.
 func captureFilesystemSnapshot(root string, profile fsfilter.Profile, grants []string, retained map[fileIdentity]uint32, exclude string) (*filesystemSnapshot, error) {
-	mounts, err := computeMounts(root, "/workspace", false)
-	if err != nil {
-		return nil, err
-	}
-	s := &filesystemSnapshot{root: root, policy: fsfilter.Policy{Profile: profile, Grants: slices.Clone(grants)}, objects: map[string]filesystemObject{}, protected: maps.Clone(retained), origins: rememberedHidden{}, mounts: mounts}
+	s := &filesystemSnapshot{root: root, policy: fsfilter.Policy{Profile: profile, Grants: slices.Clone(grants)}, objects: map[string]filesystemObject{}, protected: maps.Clone(retained), origins: rememberedHidden{}}
 	before := loadHiddenFiles(root)
+	decide := shadowpath.NewDecider(root)
 	if s.protected == nil {
 		s.protected = map[fileIdentity]uint32{}
 	}
 	flags := map[string]uint32{}
-	for _, m := range mounts[1:] {
-		rel := strings.TrimPrefix(m.Target, "/workspace/")
-		if exclude != "" && (rel == exclude || strings.HasPrefix(rel, exclude+"/")) {
-			continue
-		}
-		if m.Kind == Policy {
-			flags[rel] |= fsfilter.ReadOnly
-		} else {
-			flags[rel] |= fsfilter.Secret
-		}
-	}
+	// Discovery has the mount walk's pruning semantics, but inventory still
+	// visits hidden descendants and .git to protect their external hardlinks.
+	suppressed := map[string]bool{}
 	var rootDevice uint64
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -129,6 +118,9 @@ func captureFilesystemSnapshot(root string, profile fsfilter.Profile, grants []s
 			return errors.New("filesystem object identity unavailable")
 		}
 		if rel == "." {
+			if !d.IsDir() {
+				return fmt.Errorf("filesystem admission root %s is not a real directory", root)
+			}
 			rootDevice = id.dev
 		}
 		if id.dev != rootDevice {
@@ -142,10 +134,30 @@ func captureFilesystemSnapshot(root string, profile fsfilter.Profile, grants []s
 			// WalkDir visits parents first; inherited directory protection therefore
 			// includes every descendant without reinterpreting an allow pattern.
 			flags[rel] |= flags[path.Dir(rel)] & fsfilter.Secret
+			skip := suppressed[path.Dir(rel)] || d.IsDir() && d.Name() == ".git"
+			origin, remembered := before[id]
+			moved := remembered && origin != rel
+			if !skip {
+				switch {
+				case d.Type().IsRegular() && isCoopignore(p):
+					flags[rel] |= fsfilter.ReadOnly
+				default:
+					hidden, err := decide(rel)
+					if err != nil {
+						return err
+					}
+					if hidden {
+						flags[rel] |= fsfilter.Secret
+					}
+				}
+			}
 			// Mount discovery skips .git and hidden descendants, but a remembered
 			// object remains secret at an existing alias in either location.
-			if origin, remembered := before[id]; remembered && origin != rel {
+			if moved {
 				flags[rel] |= fsfilter.Secret
+			}
+			if d.IsDir() {
+				suppressed[rel] = skip || flags[rel]&fsfilter.Secret != 0
 			}
 		}
 		if f := flags[rel]; f != 0 {

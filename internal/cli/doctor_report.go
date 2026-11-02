@@ -27,6 +27,7 @@ const (
 	doctorProbeFail                       // the probe itself failed; the checks it carried never ran
 	doctorUnrun                           // checks a failed probe never reached
 	doctorNote                            // host hygiene, outside the isolation tally entirely
+	doctorInfo                            // neutral context, also outside the tally
 )
 
 // doctorRow is one line of the report. covers is how many ordinary checks the line accounts for:
@@ -118,7 +119,7 @@ func (r *doctorReport) tally() doctorTally {
 				t.uncompleted += row.covers
 			case doctorUnrun:
 				t.uncompleted += row.covers
-			case doctorNote:
+			case doctorNote, doctorInfo:
 				// Deliberately uncounted: an abandoned container is host hygiene, not a hole in
 				// the isolation doctor attacks, and must not move the verdict either way.
 			}
@@ -147,7 +148,11 @@ func (r *doctorReport) print() int {
 					ui.Fail(row.label, row.reason, row.action)
 					continue
 				}
-				ui.Caution("%s", row.label)
+				if row.outcome == doctorInfo {
+					ui.Note("  %s", row.label)
+				} else {
+					ui.Caution("%s", row.label)
+				}
 				for _, line := range row.details {
 					ui.Note("    %s", line)
 				}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +67,71 @@ func TestFilesystemSnapshotPreservesDeciderAndClosesExistingAliases(t *testing.T
 	write("new.pem", "new secret")
 	if err := s.revalidate(""); err == nil {
 		t.Fatal("new secret did not require admission")
+	}
+}
+
+func TestFilesystemSnapshotInventoriesPrunedDirectoriesWithoutReadingTheirPolicies(t *testing.T) {
+	pinHome(t)
+	repo := fixture(t)
+	for _, dir := range []string{"secrets", ".git"} {
+		// A directory at the policy filename is unreadable as policy content.
+		// The mount walk prunes these subtrees before policy discovery.
+		if err := os.Mkdir(filepath.Join(repo, dir, ".coopignore"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, dir, "private.pem"), []byte("inert"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Link(filepath.Join(repo, "secrets/private.pem"), filepath.Join(repo, "public-name")); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := captureFilesystemSnapshot(repo, fsfilter.Profile{}, nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags := map[string]uint32{}
+	for _, e := range snapshot.policy.Entries {
+		flags[e.Path] = e.Flags
+	}
+	if flags["public-name"]&fsfilter.Secret == 0 || flags["secrets/private.pem"]&fsfilter.Secret == 0 || flags[".git/private.pem"] != 0 {
+		t.Fatal(flags)
+	}
+	if _, ok := snapshot.objects[".git/private.pem"]; !ok {
+		t.Fatal("git identity inventory skipped")
+	}
+	if err := os.Mkdir(filepath.Join(repo, "src/.coopignore"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureFilesystemSnapshot(repo, fsfilter.Profile{}, nil, nil, ""); err == nil {
+		t.Fatal("unreadable public policy accepted")
+	}
+}
+
+func TestFilesystemMovedAliasDoesNotSuppressGoverningPolicyError(t *testing.T) {
+	pinHome(t)
+	repo := t.TempDir()
+	secret := filepath.Join(repo, "key.pem")
+	if err := os.WriteFile(secret, []byte("inert"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureRememberedFilesystemSnapshot(t.Context(), repo, fsfilter.Profile{}, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, "public"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(secret, filepath.Join(repo, "public", "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "public", ".coopignore"), []byte(strings.Repeat("# oversized policy\n", 70000)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := computeMounts(repo, "/workspace", false); err == nil {
+		t.Fatal("fixture did not produce a mount-policy error")
+	}
+	if _, err := captureFilesystemSnapshot(repo, fsfilter.Profile{}, nil, nil, ""); err == nil {
+		t.Fatal("remembered alias suppressed policy error")
 	}
 }
 

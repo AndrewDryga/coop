@@ -43,14 +43,15 @@ type filesystemRecord struct {
 }
 
 type filesystemAdmission struct {
-	docker        *runtime.Docker
-	dir           string
-	record        filesystemRecord
-	snapshots     []*filesystemSnapshot
-	probes        []*filesystemProbe
-	workloadImage string
-	lease         *os.File
-	reused        bool
+	docker            *runtime.Docker
+	dir               string
+	record            filesystemRecord
+	snapshots         []*filesystemSnapshot
+	probes            []*filesystemProbe
+	workloadImage     string
+	workloadExecution *runtime.DockerImageExecution
+	lease             *os.File
+	reused            bool
 }
 
 func filesystemRef(parent, role string) runtime.DockerRef {
@@ -89,16 +90,8 @@ func prepareFilesystemAdmission(ctx context.Context, rt runtime.Runtime, roots [
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if rt.Name != "docker" || len(roots) == 0 || len(roots) > 32 || len(grants) != len(roots) {
+	if rt.Name != "docker" {
 		return nil, errFilesystemUnsupported
-	}
-	if err := nonoverlappingFilesystemRoots(roots); err != nil {
-		return nil, errors.Join(errFilesystemUnsupported, err)
-	}
-	for _, root := range roots {
-		if !filesystemProfileCandidate(root) {
-			return nil, errFilesystemUnsupported
-		}
 	}
 	endpoint, daemon := rt.ComposeBinding()
 	if binding != nil {
@@ -107,6 +100,26 @@ func prepareFilesystemAdmission(ctx context.Context, rt runtime.Runtime, roots [
 	docker, err := runtime.BindDockerForSetup(ctx, rt, endpoint, daemon)
 	if err != nil {
 		return nil, errors.Join(errFilesystemUnsupported, err)
+	}
+	return prepareBoundFilesystemAdmission(ctx, roots, grants, docker, nil)
+}
+
+// Takes ownership of this binding, including on preparation failure. Services
+// retain their independent bindings; only agent selection transfers its own.
+func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants [][]string, docker *runtime.Docker, progress func(string)) (_ *filesystemAdmission, result error) {
+	if len(roots) == 0 || len(roots) > 32 || len(grants) != len(roots) {
+		docker.Close()
+		return nil, errFilesystemUnsupported
+	}
+	if err := nonoverlappingFilesystemRoots(roots); err != nil {
+		docker.Close()
+		return nil, errors.Join(errFilesystemUnsupported, err)
+	}
+	for _, root := range roots {
+		if !filesystemProfileCandidate(root) {
+			docker.Close()
+			return nil, errFilesystemUnsupported
+		}
 	}
 	info := docker.Info()
 	if info.CgroupVersion != "2" || info.CgroupDriver != "cgroupfs" {
@@ -174,12 +187,18 @@ func prepareFilesystemAdmission(ctx context.Context, rt runtime.Runtime, roots [
 	}
 	image, labels, err := docker.Image(ctx, fsimage.Tag())
 	if errors.Is(err, runtime.ErrDockerImageMissing) {
+		if progress != nil {
+			progress("Building the filesystem protection helper")
+		}
 		log, openErr := os.OpenFile(filepath.Join(dir, "build.log"), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 		if openErr != nil {
 			return nil, openErr
 		}
 		image, err = fsimage.Build(ctx, docker, log)
 		err = errors.Join(err, log.Close())
+		if err != nil {
+			err = filesystemBuildError(err, filepath.Join(dir, "build.log"))
+		}
 	} else if err == nil && labels[fsimage.BuildLabel] != fsimage.Fingerprint() {
 		err = errors.New("filesystem helper image has an unexpected build identity")
 	}
@@ -231,7 +250,7 @@ func (a *filesystemAdmission) waitReady(ctx context.Context) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		data, err := a.docker.ContainerLogs(ctx, a.record.Helper, 30, 1<<20)
+		value, data, err := a.docker.ObserveContainerLogs(ctx, a.record.Helper, 30, 1<<20)
 		if err != nil {
 			return err
 		}
@@ -242,9 +261,8 @@ func (a *filesystemAdmission) waitReady(ctx context.Context) error {
 				return a.persist()
 			}
 		}
-		value, present, err := a.docker.InspectContainer(ctx, a.record.Helper)
-		if err != nil || !present || !value.State.Running {
-			return errors.Join(fmt.Errorf("filesystem helper did not become ready: %s", strings.TrimSpace(string(data))), err)
+		if !value.State.Running {
+			return fmt.Errorf("filesystem helper did not become ready: %s", strings.TrimSpace(string(data)))
 		}
 		select {
 		case <-ctx.Done():

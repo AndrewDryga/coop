@@ -32,7 +32,7 @@ The [website](https://coop.dryga.com) shows how it works, and the
 Agents do what they read in code, docs and issues, even when an attacker wrote it. A comment hidden
 in a README can tell your agent to post your SSH key in an issue. In the box there is no key to
 post. A package the agent installs can try to send your `.env` to a stranger's server. In the box
-`.env` is empty, and with filtered networking that server can't be reached.
+`.env` cannot be read, and with filtered networking that server can't be reached.
 
 Sometimes the agent just gets it wrong. An agent cleaning up can run `rm -rf tests/ plan/ ~/`. In
 the box, that `~/` isn't your home folder, and your files aren't there.
@@ -131,7 +131,7 @@ coop run -- npm test                          # any command in the box
 
 - The box mounts one folder: your project. Your home folder, SSH keys, cloud logins and other repos
   aren't in it.
-- Secret files like `.env` stay on your computer, and inside the box they're empty files.
+- Secret files like `.env` stay on your computer, and the box cannot read their contents.
   `coop check-secrets` finds secrets inside your other files, and `.coopignore` hides more paths.
 - With filtered networking, the box reaches your AI provider and the domains you approve. Everything
   else is blocked, so your code can't go anywhere you haven't approved.

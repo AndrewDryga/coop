@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -72,15 +74,26 @@ func (d *Docker) ImageExecution(ctx context.Context, id string) (DockerImageExec
 // ContainerLogs is bounded observation of an exact owned helper, including an
 // exited helper whose admission error must remain available to the caller.
 func (d *Docker) ContainerLogs(ctx context.Context, ref DockerRef, tail, limit int) ([]byte, error) {
-	if ref.ID == "" || tail < 1 || tail > 1000 || limit < 1 || limit > 4<<20 {
-		return nil, errors.New("invalid Docker helper log observation")
-	}
-	_, present, err := d.InspectContainer(ctx, ref)
-	if err != nil || !present {
-		return nil, errors.Join(errors.New("Docker helper is unavailable"), err)
-	}
-	return d.output(ctx, limit, "container", "logs", "--tail", strconv.Itoa(tail), ref.ID)
+	_, data, err := d.ObserveContainerLogs(ctx, ref, tail, limit)
+	return data, err
 }
+
+// ObserveContainerLogs returns the same fresh ownership-checked state used to
+// authorize reading the logs, avoiding a second inspect in readiness polling.
+func (d *Docker) ObserveContainerLogs(ctx context.Context, ref DockerRef, tail, limit int) (DockerContainer, []byte, error) {
+	if ref.ID == "" || tail < 1 || tail > 1000 || limit < 1 || limit > 4<<20 {
+		return DockerContainer{}, nil, errors.New("invalid Docker helper log observation")
+	}
+	value, present, err := d.InspectContainer(ctx, ref)
+	if err != nil || !present {
+		return value, nil, errors.Join(errors.New("Docker helper is unavailable"), err)
+	}
+	data, err := d.output(ctx, limit, "container", "logs", "--tail", strconv.Itoa(tail), ref.ID)
+	return value, data, err
+}
+
+const dockerCgroupFormat = `{"ID":{{json .Id}},"Parent":{{json (index .HostConfig "CgroupParent")}}}`
+const dockerCgroupBatch = 128
 
 // CgroupParentUnused includes stopped containers: Docker can resolve their
 // retained parent again on restart, even while its cgroup currently has no tasks.
@@ -89,22 +102,85 @@ func (d *Docker) CgroupParentUnused(ctx context.Context, parent string) error {
 	if !strings.HasPrefix(parent, "/coop-fs-") || strings.ContainsAny(strings.TrimPrefix(parent, "/"), "/\x00\r\n") {
 		return errors.New("invalid filesystem cgroup parent")
 	}
+	// Other admissions can retire unrelated containers while this inventory is
+	// inspected. One deadline bounds reconciliation, rather than resetting it
+	// on each changed inventory.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	ids, err := d.boundContainerIDs(ctx)
 	if err != nil {
 		return err
 	}
-	for _, id := range ids {
-		data, err := d.output(ctx, 1024, "container", "inspect", "--format", `{{json (index .HostConfig "CgroupParent")}}`, id)
-		if err != nil {
-			return err
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("Docker filesystem consumer inventory did not stabilize: %w", err)
 		}
-		var observed string
-		if json.Unmarshal(data, &observed) != nil {
+		restart := false
+		for start := 0; start < len(ids); start += dockerCgroupBatch {
+			batch := ids[start:min(start+dockerCgroupBatch, len(ids))]
+			args := append([]string{"container", "inspect", "--format", dockerCgroupFormat}, batch...)
+			data, err := d.output(ctx, dockerCgroupBatch*1024, args...)
+			if err != nil {
+				next, observeErr := d.boundContainerIDs(ctx)
+				if observeErr != nil {
+					return errors.Join(fmt.Errorf("inspect Docker filesystem consumers: %w", err), observeErr)
+				}
+				remaining := make(map[string]bool, len(next))
+				for _, id := range next {
+					remaining[id] = true
+				}
+				for _, id := range batch {
+					if !remaining[id] {
+						restart = true
+						break
+					}
+				}
+				if !restart {
+					return fmt.Errorf("inspect Docker filesystem consumers: %w", err)
+				}
+				// Only exact disappearance explains this failed command. Discard
+				// all earlier batches and include every newly listed container.
+				ids = next
+				break
+			}
+			if err := checkCgroupParents(data, batch, parent); err != nil {
+				return err
+			}
+		}
+		if !restart {
+			return d.Verify(ctx)
+		}
+	}
+}
+
+func checkCgroupParents(data []byte, ids []string, parent string) error {
+	wanted := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	if len(wanted) != len(ids) {
+		return errors.New("duplicate Docker cgroup inventory ID")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	for {
+		var row struct {
+			ID     string
+			Parent *string
+		}
+		err := decoder.Decode(&row)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil || !wanted[row.ID] || row.Parent == nil {
 			return errors.New("invalid Docker cgroup-parent observation")
 		}
-		if strings.TrimPrefix(observed, "/") == strings.TrimPrefix(parent, "/") {
+		delete(wanted, row.ID)
+		if strings.TrimPrefix(*row.Parent, "/") == strings.TrimPrefix(parent, "/") {
 			return errors.New("filesystem protection retained for a restartable Docker container")
 		}
 	}
-	return d.Verify(ctx)
+	if len(wanted) != 0 {
+		return errors.New("incomplete Docker cgroup-parent observation")
+	}
+	return nil
 }

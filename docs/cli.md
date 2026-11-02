@@ -1503,7 +1503,7 @@ Repository binds cannot relabel host files or change mount propagation.
 Read-only sessions require each bind source to exist before startup.
 
 If a service asks to read a secret file through a read-only bind, Coop asks
-at a terminal before allowing it. Otherwise it receives an empty file.
+at a terminal before allowing it. Otherwise the file stays hidden.
 Secret directories and writable binds stay hidden. Approval applies to
 this repository's exact Compose file and the service's local Docker image ID.
 If either changes, run coop up at a terminal to review it again; an unchanged

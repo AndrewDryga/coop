@@ -17,7 +17,7 @@
   <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="A project mounted inside the sandbox, secret files shown as empty, and filtered connections to the AI provider and approved destinations.">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, protected secret files, and filtered connections to the AI provider and approved destinations.">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="assets/img/favicon.svg?v=contained-entrance" type="image/svg+xml">
   <link rel="icon" href="assets/img/favicon.ico?v=contained-entrance" sizes="32x32">
@@ -427,21 +427,21 @@ these volumes, even if you approved them before.</li>
 <p>Named volumes that belong only to this project need no approval prompt.</p>
 <h3 id="secret-files-in-services">Secret files in services</h3>
 <p>Services get the same secret hiding as the box. A mount of <code>.env</code>, <code>*.key</code> or a path hidden by
-<code>.coopignore</code> gives the service an empty replacement. This prevents an agent-written Compose
+<code>.coopignore</code> cannot expose its contents to the service. This prevents an agent-written Compose
 file from passing those secrets to a container the agent controls.</p>
 <p>If a service needs a hidden file, such as a generated development TLS key for Keycloak, mount
 that individual file read-only with <code>:ro</code> or <code>read_only: true</code>. Run <code>coop up</code> in a terminal to
 review the eligible files and approve them. Hidden directories and files also reachable through
-writable mounts stay covered by empty replacements. Use read-only mounts for the individual
+writable mounts stay protected. Use read-only mounts for the individual
 secret files and named volumes for data the service needs to change.</p>
 <p>The approval is tied to:</p>
 <ul>
 <li>The exact Compose file you reviewed. Coop stores approval outside the repo, so an agent cannot
-update it by editing the file. After any edit, box launches use empty replacements until you
+update it by editing the file. After any edit, box launches hide these files until you
 approve again. Coop explains which files are hidden and why.</li>
 <li>This checkout&#39;s private identity. Copying the Compose file or its marker does not transfer
 approval to another checkout. Older approvals based only on file content need to be renewed
-with <code>coop up</code>; automatic starts use empty replacements until then.</li>
+with <code>coop up</code>; automatic starts hide these files until then.</li>
 <li>The exact files you reviewed. A new secret added under an approved directory mount stays
 hidden until you approve that file too.</li>
 </ul>
@@ -531,7 +531,7 @@ Every service mount of the repository must also be read-only, using <code>:ro</c
 The mount source must already exist; Compose cannot create a host directory for a read-only
 session.</p>
 <p>When a service mounts the repo or one of its directories, Coop applies the same hiding rules
-as in the box. It covers <code>.env</code>, keys and paths hidden by <code>.coopignore</code> with empty replacements,
+as in the box. It prevents reads of <code>.env</code>, keys and paths hidden by <code>.coopignore</code>,
 including when the mount source is itself a hidden file. The file-approval rules above still
 apply. An agent can create <code>.agent/compose.yml</code> for you, but its configuration must pass these
 checks before Coop starts it.</p>

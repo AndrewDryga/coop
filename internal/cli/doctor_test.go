@@ -231,6 +231,21 @@ func TestDoctorVerdictCountsUnrunChecks(t *testing.T) {
 	}
 }
 
+func TestDoctorBackendContextIsNeutralAndUncounted(t *testing.T) {
+	report := &doctorReport{}
+	s := report.section(sectionSecrets)
+	s.add(doctorRow{outcome: doctorInfo, label: "Filesystem protection: kernel BPF"})
+	s.pass("public read works")
+	out := captureStderr(t, func() {
+		if report.print() != 0 {
+			t.Error("context changed verdict")
+		}
+	})
+	if strings.Contains(out, "⚠") || !strings.Contains(out, "Filesystem protection: kernel BPF") || !strings.Contains(out, "All 1 checks passed") {
+		t.Fatal(out)
+	}
+}
+
 // The ".coopignore paths are hidden" check must fail when .coopignore is missing or ignored. It
 // used config/credentials.yaml, which the built-in list hides anyway, so it passed regardless.
 // Its file is hidden only by the fixture's .coopignore: no built-in pattern matches it, and
@@ -240,7 +255,7 @@ func TestDoctorCoopignoreCheckNeedsCoopignore(t *testing.T) {
 		t.Skip("git not available")
 	}
 	rel := doctorCoopignorePath
-	if !strings.Contains(doctorProbe, "ID=sandbox.coopignore        check empty "+rel+"\n") {
+	if !strings.Contains(doctorProbe, "ID=sandbox.coopignore        check hidden_file "+rel+"\n") {
 		t.Fatalf("the probe's .coopignore check does not read %s:\n%s", rel, doctorProbe)
 	}
 	if shadowpath.MatchesAny(filepath.Base(rel), shadowpath.SecretGlobs) || shadowpath.MatchesAny(rel, shadowpath.SecretGlobs) {
@@ -262,6 +277,66 @@ func TestDoctorCoopignoreCheckNeedsCoopignore(t *testing.T) {
 	}
 	if hidden, err := shadowpath.NewDecider(dir)(rel); hidden || err != nil {
 		t.Errorf("%s stays hidden without .coopignore (%v), so the check cannot fail when .coopignore breaks", rel, err)
+	}
+}
+
+func TestDoctorSecretProbeChecksBytesAndPublicControls(t *testing.T) {
+	for _, mode := range []string{"readable", "empty shadows", "denied", "broken readers"} {
+		t.Run(mode, func(t *testing.T) {
+			dir, err := buildFixture()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(dir)
+			if mode == "empty shadows" {
+				for _, name := range []string{".env", ".envrc", "config/prod.tfvars", "deploy/id_ed25519", doctorCoopignorePath} {
+					if err := os.WriteFile(filepath.Join(dir, name), nil, 0644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.Remove(filepath.Join(dir, "secrets/api-token")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			prefix := ""
+			if mode == "denied" {
+				prefix = `cat() { case "$1" in .env.example|src/app.js) command cat "$@";; *) return 1;; esac; }
+ls() { case "$*" in '-A secrets') return 1;; *) command ls "$@";; esac; }
+`
+			} else if mode == "broken readers" {
+				prefix = "cat() { return 127; }; ls() { return 127; };\n"
+			}
+			script := strings.Replace(doctorProbe, "cd /workspace 2>/dev/null || { echo \"RESULT FAIL sandbox.workspace\"; exit 1; }", prefix, 1)
+			// Only the reader checks are relevant here; write/privilege checks are
+			// exercised by the real container probe.
+			script = strings.Replace(script, "if echo x >> .env 2>/dev/null; then echo \"RESULT FAIL sandbox.readonly_decoy\"; else echo \"RESULT PASS sandbox.readonly_decoy\"; fi", "", 1)
+			script, _, _ = strings.Cut(script, "# No host control plane:")
+			cmd := exec.Command("sh", "-c", script)
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			results := parseProbeResults(string(out))
+			for _, id := range []string{"env", "envrc", "tfvars", "private_key", "coopignore", "secret_directory", "secret_symlink"} {
+				want := "PASS"
+				if mode == "readable" {
+					want = "FAIL"
+				}
+				if results["sandbox."+id] != want {
+					t.Errorf("%s: want %s, got %s", id, want, out)
+				}
+			}
+			for _, id := range []string{"template", "source"} {
+				want := "PASS"
+				if mode == "broken readers" {
+					want = "FAIL"
+				}
+				if results["sandbox."+id] != want {
+					t.Errorf("%s: want %s, got %s", id, want, out)
+				}
+			}
+		})
 	}
 }
 

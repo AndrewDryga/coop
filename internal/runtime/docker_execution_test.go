@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -117,8 +119,8 @@ func TestDockerHelperLogsRemainBoundedAndOwned(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	data, err := d.ContainerLogs(t.Context(), dockerFixtureRef(), 10, 1024)
-	if err != nil || string(data) != "admission refused\n" {
+	state, data, err := d.ObserveContainerLogs(t.Context(), dockerFixtureRef(), 10, 1024)
+	if err != nil || string(data) != "admission refused\n" || state.State.Status != "exited" {
 		t.Fatalf("lost exited helper error: %q %v", data, err)
 	}
 	for _, ref := range []DockerRef{{Name: "wrong", ID: container.ID, Labels: dockerFixtureRef().Labels}, {Name: "coop-test", ID: strings.Repeat("b", 64), Labels: dockerFixtureRef().Labels}, {Name: "coop-test", ID: container.ID, Labels: map[string]string{"coop.network.run": "other"}}} {
@@ -133,5 +135,84 @@ func TestDockerHelperLogsRemainBoundedAndOwned(t *testing.T) {
 	writeDockerFixture(t, file, dockerFixture{})
 	if _, err := d.ContainerLogs(t.Context(), dockerFixtureRef(), 10, 1024); err == nil {
 		t.Fatal("observed absent helper")
+	}
+}
+
+func TestDockerCgroupBatchRequiresCompleteExactInventory(t *testing.T) {
+	ids := []string{strings.Repeat("a", 64), strings.Repeat("b", 64)}
+	parent := "/coop-fs-" + strings.Repeat("c", 32)
+	first := `{"ID":"` + ids[0] + `","Parent":""}`
+	second := `{"ID":"` + ids[1] + `","Parent":"/unrelated"}`
+	if err := checkCgroupParents([]byte(second+"\n"+first), ids, parent); err != nil {
+		t.Fatal(err)
+	}
+	for _, data := range []string{
+		first, first + first, first + `{"ID":"foreign","Parent":""}`,
+		first + `{"ID":"` + ids[1] + `"}`, first + `{"ID":"` + ids[1] + `","Parent":null}`,
+		first + `{"ID":"` + ids[1] + `","Parent":42}`, first + second + "broken",
+		first + `{"ID":"` + ids[1] + `","Parent":"` + parent + `"}`,
+		first + `{"ID":"` + ids[1] + `","Parent":"` + strings.TrimPrefix(parent, "/") + `"}`,
+	} {
+		if err := checkCgroupParents([]byte(data), ids, parent); err == nil {
+			t.Fatalf("accepted uncertain/occupied inventory: %s", data)
+		}
+	}
+}
+
+func TestDockerCgroupInventorySpansBoundedBatches(t *testing.T) {
+	parents := map[string]string{}
+	for i := range dockerCgroupBatch + 1 {
+		parents[fmt.Sprintf("%064x", i+1)] = "/unrelated"
+	}
+	rt, file := fixtureDocker(t, dockerFixture{CgroupParents: parents})
+	d, err := BindDocker(t.Context(), rt, fixtureSock(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	parent := "/coop-fs-" + strings.Repeat("a", 32)
+	if err := d.CgroupParentUnused(t.Context(), parent); err != nil {
+		t.Fatal(err)
+	}
+	// Every ID is inspected, including the member beyond a complete batch.
+	parents[fmt.Sprintf("%064x", dockerCgroupBatch+1)] = parent
+	writeDockerFixture(t, file, dockerFixture{CgroupParents: parents})
+	if err := d.CgroupParentUnused(t.Context(), parent); err == nil {
+		t.Fatal("last-batch consumer lost custody")
+	}
+}
+
+func TestDockerCgroupInventoryReconcilesOnlyProvenDisappearance(t *testing.T) {
+	parent := "/coop-fs-" + strings.Repeat("c", 32)
+	for _, mode := range []string{"cgroup-disappear", "cgroup-new-consumer", "cgroup-add-only", "cgroup-stable-fail", "cgroup-relist-fail", "cgroup-daemon-replaced", "cgroup-churn"} {
+		t.Run(mode, func(t *testing.T) {
+			parents := map[string]string{strings.Repeat("a", 64): "/unrelated", strings.Repeat("b", 64): "/unrelated"}
+			rt, _ := fixtureDocker(t, dockerFixture{CgroupParents: parents, Mode: mode})
+			d, err := BindDocker(t.Context(), rt, fixtureSock(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			ctx := t.Context()
+			if mode == "cgroup-churn" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 300*time.Millisecond)
+				defer cancel()
+			}
+			err = d.CgroupParentUnused(ctx, parent)
+			if mode == "cgroup-new-consumer" && (err == nil || !strings.Contains(err.Error(), "restartable Docker container")) {
+				t.Fatalf("fresh stopped consumer was not inspected: %v", err)
+			}
+			if mode == "cgroup-churn" && ctx.Err() == nil {
+				t.Fatalf("churn did not reach its bounded deadline: %v", err)
+			}
+			if mode == "cgroup-disappear" {
+				if err != nil {
+					t.Fatalf("unrelated disappeared container retained custody: %v", err)
+				}
+			} else if err == nil {
+				t.Fatal("uncertain or occupied parent released")
+			}
+		})
 	}
 }

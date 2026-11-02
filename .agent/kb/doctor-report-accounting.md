@@ -3,7 +3,7 @@ name: doctor-report-accounting
 description: how `coop doctor` counts — the 37 checks, the outcomes a row can have, and why a failed probe adds one failure plus the checks it was carrying
 subsystem: doctor
 sources: [internal/cli/doctor.go, internal/cli/doctor_report.go, internal/cli/doctor_checks.go]
-updated: 2026-10-09
+updated: 2026-11-01
 ---
 
 `coop doctor` is the one command whose point IS the ledger: the person asked coop to perform
@@ -16,7 +16,7 @@ and its two labels (held / did not hold). The probes emit `RESULT PASS|FAIL <id>
 lives only in the table, so a reworded label cannot change what was measured. 37 ordinary checks
 on a real image, a Docker runtime and a readable process cap.
 
-Seven row outcomes (doctor_report.go), because the easy version lies:
+Row outcomes (doctor_report.go), because the easy version lies:
 - `doctorPass` / `doctorFail` — it ran.
 - `doctorSkip` — deliberately not checked HERE (Alpine fallback, an unreadable limit).
 - `doctorNotApplied` / `doctorDisabled` — this runtime does not apply the limit / somebody
@@ -24,8 +24,9 @@ Seven row outcomes (doctor_report.go), because the easy version lies:
 - `doctorProbeFail` — the probe died: ONE failure plus `covers` checks counted as uncompleted, so
   the totals still add to 37 instead of shrinking into something that reads clean.
 - `doctorUnrun` — checks a failure elsewhere prevented; neither performed nor skipped.
-- `doctorNote` — the abandoned-box survey, outside the tally entirely (host hygiene, not a hole in
-  the isolation doctor attacks).
+- `doctorNote` — the abandoned-box survey, outside the tally entirely.
+- `doctorInfo` — neutral backend selection/fallback context, also uncounted; selection is not
+  a successful isolation check and does not earn a warning icon.
 
 `doctorSections` opens the six sections in print order, and both `cmdDoctor` and the approved-report
 fixtures go through it — a check cannot land in one section for a real run and another for the
@@ -39,6 +40,10 @@ It explicitly sets root/subdirectory traversal and seeded-file read modes after 
 `MkdirAll` and `WriteFile` alone inherit the caller's umask and can leave a private-umask
 fixture unreadable inside the box.
 
+Secret checks read actual bytes: denial and empty mount shadows both pass. The directory check
+also reads its known child, so hiding names alone cannot pass. Exact public file reads and a public
+directory listing must succeed; missing tools or blanket read denial cannot produce a clean report.
+
 Credential fixtures start owner-private (0700 directories, 0600 files); the selected provider has
 valid inert OAuth and identity input with distant expiry, imported through fresh host sign-in
 before launch. Ordinary launch projects only a public broker selector. The in-box probe requires readable native
@@ -49,6 +54,9 @@ traverse a foreign-owned private bind. A real image keeps its configured USER so
 detects incompatible image ownership. Docker Desktop has a different host UID mapping.
 
 ## Changelog
+- 2026-11-01 — removed empty-decoy metadata assumptions for BPF denial, retained public/negative
+  controls and the 37-check total, and added uncounted backend/fallback context. The user approved
+  doctor/docs polish; updated the directory label and matching approved transcripts together.
 - 2026-10-09 — reproduced stale legacy fixtures failing native custody checks. Updated fixture,
   broker/grant and Grok isolation checks, offline behavior and approved report totals; retained
   real-image USER and added independent fixture/probe refusal regressions.

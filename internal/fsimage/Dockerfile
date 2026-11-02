@@ -15,6 +15,7 @@ COPY . .
 RUN mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/coop-fs /out/tmp /out/host-cgroup /out/host-bpf /out/state \
  && chmod 1777 /out/tmp \
  && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/usr/local/bin/coop-fs ./cmd/coop-fs \
+ && /out/usr/local/bin/coop-fs unicode-table /out/usr/share/coop-fs/unicode.bin \
  && clang-16 -O2 -g -target bpfel -mcpu=v3 -I/usr/include/"$(gcc -print-multiarch)" -Wall -Werror \
     -c internal/fsfilter/assets/filter.c -o /out/usr/local/libexec/coop-fs/filter.o \
  && gcc -O2 -Wall -Werror internal/fsfilter/assets/loader.c -lbpf -lelf -lz -o /out/usr/local/libexec/coop-fs-kernel \

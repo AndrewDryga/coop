@@ -41,11 +41,28 @@ func filesystemImageVolumesSupported(image runtime.DockerImageExecution) error {
 	return nil
 }
 
-func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *config.Config, spec RunSpec, mounts []Mount, binding *runtime.Docker) (*filesystemAdmission, error) {
+// FilesystemReport describes backend selection, not an isolation check result.
+type FilesystemReport struct{ Backend, Reason string }
+
+func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *config.Config, spec RunSpec, mounts []Mount, binding *runtime.Docker, progress func(string)) (admission *filesystemAdmission, result error) {
+	reason := "This launch uses mount-based filesystem protection"
+	defer func() {
+		if result != nil {
+			return
+		}
+		report := FilesystemReport{Backend: "mounts", Reason: reason}
+		if admission != nil {
+			report = FilesystemReport{Backend: "bpf"}
+		}
+		if spec.OnFilesystemReport != nil {
+			spec.OnFilesystemReport(report)
+		}
+	}()
 	if spec.Login || spec.GradeSnapshot || spec.FormatCorrection || !cfg.NoNewPrivileges && spec.CapturedEgress == nil || rt.Name != "docker" || !filesystemProfileCandidate(spec.Repo) {
 		return nil, nil
 	}
 	if _, err := filteredExtraArgs(cfg.ExtraRunArgs, spec.ExtraArgs); err != nil {
+		reason = "Runtime options require mount-based filesystem protection"
 		return nil, nil
 	}
 	endpoint, daemon := rt.ComposeBinding()
@@ -54,10 +71,17 @@ func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *con
 	}
 	docker, err := runtime.BindDockerForSetup(ctx, rt, endpoint, daemon)
 	if err != nil {
+		reason = "Could not qualify Docker for kernel filesystem protection: " + cleanLaunchText(err.Error())
 		return nil, nil
 	}
-	defer docker.Close()
+	transferred := false
+	defer func() {
+		if !transferred {
+			docker.Close()
+		}
+	}()
 	if docker.Info().CgroupDriver != "cgroupfs" || docker.Info().CgroupVersion != "2" {
+		reason = "Kernel filesystem protection requires Docker cgroupfs with cgroup v2"
 		return nil, nil
 	}
 	image, _, err := docker.Image(ctx, spec.Image)
@@ -68,7 +92,8 @@ func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *con
 	if err != nil {
 		return nil, err
 	}
-	if filesystemImageSupported(execution) != nil {
+	if err := filesystemImageSupported(execution); err != nil {
+		reason = err.Error()
 		return nil, nil
 	}
 	var roots []string
@@ -77,21 +102,33 @@ func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *con
 			roots = append(roots, m.Source)
 		}
 	}
-	a, err := prepareFilesystemAdmission(ctx, rt, roots, make([][]string, len(roots)), docker)
+	transferred = true
+	a, err := prepareBoundFilesystemAdmission(ctx, roots, make([][]string, len(roots)), docker, progress)
 	if errors.Is(err, errFilesystemUnsupported) && !errors.Is(err, errFilesystemCustodyPending) {
+		reason = cleanLaunchText(err.Error())
+		if len(reason) > 4096 {
+			reason = reason[:4096]
+		}
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	a.workloadImage = image
+	a.workloadExecution = &execution
 	return a, nil
 }
 
 func (a *filesystemAdmission) guarded(ctx context.Context, image string, command, options []string) ([]string, []string, error) {
-	execution, err := a.docker.ImageExecution(ctx, image)
-	if err != nil {
-		return nil, nil, err
+	var execution runtime.DockerImageExecution
+	var err error
+	if a.workloadExecution != nil && a.workloadExecution.ID == image {
+		execution = *a.workloadExecution
+	} else {
+		execution, err = a.docker.ImageExecution(ctx, image)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	if err := filesystemImageSupported(execution); err != nil {
 		return nil, nil, err

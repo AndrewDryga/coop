@@ -5,22 +5,24 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"path"
 	"slices"
 )
 
 // WriteKernelPolicy is the private, versioned wire format consumed by the bundled
 // libbpf helper. It contains policy metadata only, never protected file contents.
-func WriteKernelPolicy(w io.Writer, policy Policy) error {
-	return WriteKernelPolicies(w, []Policy{policy})
+func WriteKernelPolicy(w io.Writer, policy Policy, unicodeData []byte) error {
+	return WriteKernelPolicies(w, []Policy{policy}, unicodeData)
 }
 
-func WriteKernelPolicies(w io.Writer, policies []Policy) error {
+func WriteKernelPolicies(w io.Writer, policies []Policy, unicodeData []byte) error {
 	if len(policies) == 0 || len(policies) > 32 {
 		return errors.New("invalid filesystem policy roots")
 	}
 	paths := map[PathKey]uint32{}
 	entries := 0
 	grants := 0
+	plans := make([]map[string]uint32, len(policies))
 	for i, policy := range policies {
 		compiled, err := policy.Compile(uint32(i + 1))
 		if err != nil {
@@ -29,27 +31,40 @@ func WriteKernelPolicies(w io.Writer, policies []Policy) error {
 		for key, flags := range compiled {
 			paths[key] = flags
 		}
-		entries += len(policy.Entries)
+		plan := map[string]uint32{}
+		ancestors := func(name string) {
+			for p := path.Dir(name); p != "."; p = path.Dir(p) {
+				plan[p] |= Custody
+			}
+		}
+		for _, entry := range policy.Entries {
+			plan[entry.Path] |= entry.Flags
+			ancestors(entry.Path)
+		}
 		grants += len(policy.Grants)
 		for _, path := range policy.Grants {
 			if _, err := (Policy{Entries: []Entry{{Path: path, Flags: ReadOnly}}}).Compile(1); err != nil {
 				return err
 			}
+			ancestors(path)
 		}
+		plans[i] = plan
+		entries += len(plan)
 	}
-	if len(paths) > MaxPaths || entries+grants > MaxPaths {
+	if len(paths) > MaxPaths || len(policies)+entries+grants > MaxPaths {
 		return errors.New("filesystem policy exceeds admission bounds")
 	}
-	table, err := UnicodeTable()
-	if err != nil {
-		return err
+	// The bundled image owns this table. Reject truncated or unbounded input
+	// before emitting a header; the loader validates each mapping as it seeds.
+	if len(unicodeData) == 0 || len(unicodeData)%48 != 0 || len(unicodeData)/48 > 20000 {
+		return errors.New("invalid filesystem Unicode table")
 	}
 	out := bufio.NewWriter(w)
-	if _, err := out.WriteString("COOPFS02"); err != nil {
+	if _, err := out.WriteString("COOPFS03"); err != nil {
 		return err
 	}
 	write := func(v any) error { return binary.Write(out, binary.LittleEndian, v) }
-	if err := write([5]uint32{uint32(len(policies)), uint32(len(paths)), uint32(len(table)), uint32(entries), uint32(grants)}); err != nil {
+	if err := write([5]uint32{uint32(len(policies)), uint32(len(paths)), uint32(len(unicodeData) / 48), uint32(entries), uint32(grants)}); err != nil {
 		return err
 	}
 	for i, policy := range policies {
@@ -91,25 +106,20 @@ func WriteKernelPolicies(w io.Writer, policies []Policy) error {
 			return err
 		}
 	}
-	runes := make([]uint32, 0, len(table))
-	for rune := range table {
-		runes = append(runes, rune)
+	if _, err := out.Write(unicodeData); err != nil {
+		return err
 	}
-	slices.Sort(runes)
-	for _, rune := range runes {
-		if err := write(rune); err != nil {
-			return err
+	for i, plan := range plans {
+		names := make([]string, 0, len(plan))
+		for name := range plan {
+			names = append(names, name)
 		}
-		if err := write(table[rune]); err != nil {
-			return err
-		}
-	}
-	for i, policy := range policies {
-		for _, entry := range policy.Entries {
-			if err := write([3]uint32{uint32(i + 1), uint32(len(entry.Path)), entry.Flags}); err != nil {
+		slices.Sort(names)
+		for _, name := range names {
+			if err := write([3]uint32{uint32(i + 1), uint32(len(name)), plan[name]}); err != nil {
 				return err
 			}
-			if _, err := out.WriteString(entry.Path); err != nil {
+			if _, err := out.WriteString(name); err != nil {
 				return err
 			}
 		}

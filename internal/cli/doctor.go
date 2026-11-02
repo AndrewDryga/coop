@@ -28,19 +28,25 @@ import (
 // sentences: the wording belongs to the report (doctor_checks.go), the evidence belongs here.
 const doctorProbe = `#!/bin/sh
 cd /workspace 2>/dev/null || { echo "RESULT FAIL sandbox.workspace"; exit 1; }
-empty() { [ -f "$1" ] && [ ! -s "$1" ]; }
+hidden_file() { [ "$(cat "$1" 2>/dev/null; printf '.')" = '.' ]; }
+hidden_directory() { [ "$(ls -A "$1" 2>/dev/null; printf '.')" = '.' ] && hidden_file "$1/api-token"; }
+public_template() { [ "$(cat .env.example 2>/dev/null && printf '.')" = 'KEY=put-your-key-here
+.' ]; }
+public_source() { [ "$(cat src/app.js 2>/dev/null && printf '.')" = 'console.log(1)
+.' ] && [ "$(ls -A src 2>/dev/null && printf '.')" = 'app.js
+.' ]; }
 check() { if "$@"; then echo "RESULT PASS $ID"; else echo "RESULT FAIL $ID"; fi; }
-ID=sandbox.env               check empty .env
-ID=sandbox.envrc             check empty .envrc
-ID=sandbox.tfvars            check empty config/prod.tfvars
-ID=sandbox.private_key       check empty deploy/id_ed25519
-ID=sandbox.coopignore        check empty config/stripe.live.json
-if [ -d secrets ] && [ -z "$(ls -A secrets 2>/dev/null)" ]; then echo "RESULT PASS sandbox.secret_directory"; else echo "RESULT FAIL sandbox.secret_directory"; fi
-# A symlink must not read around the shadow: notes-link -> .env resolves to the emptied .env.
-if [ -L notes-link ] && [ ! -s notes-link ]; then echo "RESULT PASS sandbox.secret_symlink"; else echo "RESULT FAIL sandbox.secret_symlink"; fi
+ID=sandbox.env               check hidden_file .env
+ID=sandbox.envrc             check hidden_file .envrc
+ID=sandbox.tfvars            check hidden_file config/prod.tfvars
+ID=sandbox.private_key       check hidden_file deploy/id_ed25519
+ID=sandbox.coopignore        check hidden_file config/stripe.live.json
+ID=sandbox.secret_directory  check hidden_directory secrets
+# A symlink must not read around either a mount shadow or kernel denial.
+ID=sandbox.secret_symlink    check hidden_file notes-link
 if echo x >> .env 2>/dev/null; then echo "RESULT FAIL sandbox.readonly_decoy"; else echo "RESULT PASS sandbox.readonly_decoy"; fi
-ID=sandbox.template          check test -s .env.example
-ID=sandbox.source            check test -s src/app.js
+ID=sandbox.template          check public_template
+ID=sandbox.source            check public_source
 if grep -rqs hunter2 . 2>/dev/null; then echo "RESULT FAIL sandbox.secret_value"; else echo "RESULT PASS sandbox.secret_value"; fi
 # No host control plane: the agent must not be able to drive the host. The box ships only coop-entry
 # (the entrypoint), never the orchestration CLI, and coop never mounts the docker socket. The ONE
@@ -127,6 +133,13 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 		Image: img, Repo: fixture, Workdir: "/workspace", Cmd: []string{"sh", "/probe.sh"},
 		Batch: true, Quiet: true, Stdout: &out, Stderr: &errOut,
 		ExtraArgs: []string{"-v", probe + ":/probe.sh:ro"},
+		OnFilesystemReport: func(value box.FilesystemReport) {
+			label := "Filesystem protection: kernel BPF"
+			if value.Backend == "mounts" {
+				label = "Filesystem protection: mounts"
+			}
+			secrets.add(doctorRow{outcome: doctorInfo, label: label, reason: value.Reason})
+		},
 	})
 	results := parseProbeResults(out.String())
 	switch {

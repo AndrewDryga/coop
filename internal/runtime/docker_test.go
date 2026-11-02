@@ -92,6 +92,7 @@ type dockerFixture struct {
 	CopyBody                  string
 	Logs                      string
 	Execution                 *DockerImageExecution
+	CgroupParents             map[string]string
 	SettleAt                  time.Time
 }
 
@@ -268,6 +269,42 @@ func TestDockerFixtureProcess(t *testing.T) {
 			store()
 			fmt.Println(fixture.Container.ID)
 		case "inspect":
+			if fixture.CgroupParents != nil && slices.Contains(args, dockerCgroupFormat) {
+				switch fixture.Mode {
+				case "cgroup-disappear", "cgroup-new-consumer", "cgroup-add-only", "cgroup-churn":
+					mode := fixture.Mode
+					if mode != "cgroup-add-only" {
+						delete(fixture.CgroupParents, args[4])
+					}
+					if mode != "cgroup-churn" {
+						fixture.Mode = ""
+					}
+					if mode != "cgroup-disappear" {
+						fixture.Mutations++
+						fixture.CgroupParents[fmt.Sprintf("%064x", 1000+fixture.Mutations)] = "/coop-fs-" + strings.Repeat("c", 32)
+					}
+					store()
+					os.Exit(1)
+				case "cgroup-stable-fail":
+					os.Exit(1)
+				case "cgroup-relist-fail":
+					fixture.Mode = "list-fail"
+					store()
+					os.Exit(1)
+				case "cgroup-daemon-replaced":
+					fixture.ID = "another-daemon"
+					store()
+					os.Exit(1)
+				}
+				for _, id := range args[4:] {
+					parent, ok := fixture.CgroupParents[id]
+					if !ok {
+						os.Exit(1)
+					}
+					emit(map[string]string{"ID": id, "Parent": parent})
+				}
+				break
+			}
 			if fixture.Mode == "overflow" {
 				fmt.Print(strings.Repeat("x", maxDockerContainerObservation+1))
 				break
@@ -279,8 +316,8 @@ func TestDockerFixtureProcess(t *testing.T) {
 				fixture.Container.State = DockerContainerState{Status: "exited", StartedAt: fixture.Container.State.StartedAt, FinishedAt: time.Now().UTC(), ExitCode: settlingExitCode}
 				store()
 			}
-			if slices.Contains(args, `{{json (index .HostConfig "CgroupParent")}}`) {
-				emit(fixture.Container.CgroupParent)
+			if slices.Contains(args, dockerCgroupFormat) {
+				emit(map[string]string{"ID": fixture.Container.ID, "Parent": fixture.Container.CgroupParent})
 			} else {
 				emit(fixture.Container)
 			}
@@ -292,6 +329,17 @@ func TestDockerFixtureProcess(t *testing.T) {
 		case "ls":
 			if fixture.Mode == "list-fail" {
 				os.Exit(1)
+			}
+			if fixture.CgroupParents != nil {
+				ids := make([]string, 0, len(fixture.CgroupParents))
+				for id := range fixture.CgroupParents {
+					ids = append(ids, id)
+				}
+				slices.Sort(ids)
+				for _, id := range ids {
+					fmt.Println(id)
+				}
+				break
 			}
 			if fixture.Container != nil {
 				if slices.Contains(args, "{{.ID}}") {

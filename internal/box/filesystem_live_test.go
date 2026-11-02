@@ -49,6 +49,33 @@ func TestFilesystemAdmissionRuntime(t *testing.T) {
 	}
 }
 
+func TestFilesystemEmptyPolicyRuntime(t *testing.T) {
+	if os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
+		t.Skip("requires explicit local Docker filesystem qualification")
+	}
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	a, err := prepareFilesystemAdmission(ctx, runtime.Runtime{Name: "docker"}, []string{repo}, [][]string{nil}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := a.close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if len(a.snapshots[0].policy.Entries) != 0 {
+		t.Fatal("empty fixture acquired secret entries")
+	}
+	if err := a.revalidate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFilesystemServiceRuntime(t *testing.T) {
 	image := os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE")
 	if image == "" || os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
@@ -531,7 +558,11 @@ func TestFilesystemCrashOwnerRuntime(t *testing.T) {
 		}
 	}()
 	options := []string{"--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--mount", networkMount("bind", repo, "/workspace", false)}
-	code, err := a.run(t.Context(), os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE"), []string{"sleep", "120"}, options, nil, io.Discard, io.Discard, func() error {
+	image, _, err := a.docker.Image(t.Context(), os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := a.run(t.Context(), image, []string{"sleep", "120"}, options, nil, io.Discard, io.Discard, func() error {
 		return os.WriteFile(os.Getenv("COOP_FILESYSTEM_CRASH_READY"), []byte(a.dir), 0600)
 	})
 	t.Fatalf("crash fixture unexpectedly returned: %d %v", code, err)
@@ -714,7 +745,11 @@ func TestFilesystemBootGuardRuntime(t *testing.T) {
 				t.Fatal(err)
 			}
 			options := []string{"--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--cgroup-parent", "/" + a.record.Parent, "--entrypoint", fsfilter.ControlPath + "/guard", "--mount", networkMount("bind", control, fsfilter.ControlPath, true), "--mount", networkMount("bind", repo, "/workspace", false)}
-			ref.ID, err = a.create(t.Context(), runtime.DockerCreate{Ref: ref, Image: image, Options: options, Command: []string{mode, fsfilter.ControlPath + "/manifest.json"}})
+			imageID, _, err := a.docker.Image(t.Context(), image)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref.ID, err = a.create(t.Context(), runtime.DockerCreate{Ref: ref, Image: imageID, Options: options, Command: []string{mode, fsfilter.ControlPath + "/manifest.json"}})
 			if err != nil {
 				t.Fatal(err)
 			}

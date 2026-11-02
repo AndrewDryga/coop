@@ -377,7 +377,7 @@ var doctorSections = []struct {
 	checks []string
 }{
 	{"Protecting secrets", []string{".env is hidden", ".envrc is hidden", "Terraform variable files are hidden", "Private keys are hidden",
-		"Custom .coopignore paths are hidden", "Secret directories are empty", "Links cannot reveal hidden secrets",
+		"Custom .coopignore paths are hidden", "Secret directories cannot be read", "Links cannot reveal hidden secrets",
 		"Hidden secret files cannot be written", "Environment templates stay readable", "Source files stay readable",
 		"The test secret cannot be read"}},
 	{"Host access and privileges", []string{"The host Coop CLI is absent", "The host Docker socket is absent", "The box runs as a non-root user",

@@ -1,12 +1,39 @@
 package fsfilter
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
+	"slices"
 	"unicode"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
+
+// UnicodeData is generated once when building the release-owned helper image.
+// Admission copies these immutable wire rows instead of scanning all scalars.
+func UnicodeData() ([]byte, error) {
+	table, err := UnicodeTable()
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]uint32, 0, len(table))
+	for key := range table {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	var out bytes.Buffer
+	for _, key := range keys {
+		if err := binary.Write(&out, binary.LittleEndian, key); err != nil {
+			return nil, err
+		}
+		if err := binary.Write(&out, binary.LittleEndian, table[key]); err != nil {
+			return nil, err
+		}
+	}
+	return out.Bytes(), nil
+}
 
 // RuneMapping is shared with the BPF normalizer. Tables contain only nonidentity
 // mappings and nonzero combining classes; absence means the rune is unchanged.

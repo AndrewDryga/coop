@@ -32,15 +32,16 @@ func (spec RunSpec) interactive() bool { return !spec.Batch && !spec.Quiet && !s
 // launchSections is the narration of one interactive launch or batch loop attempt. subject is what
 // the last section starts — the agent's product name, or the command a raw run was given.
 type launchSections struct {
-	on          bool
-	interactive bool
-	loop        bool
-	agent       bool
-	subject     string
-	notice      string
-	opened      bool // a section heading has been printed, so a failure nests under it
-	nested      bool // a nested loop setup section has been printed
-	current     string
+	on            bool
+	interactive   bool
+	loop          bool
+	agent         bool
+	subject       string
+	notice        string
+	opened        bool // a section heading has been printed, so a failure nests under it
+	nested        bool // a nested loop setup section has been printed
+	current       string
+	secretsOpened bool
 }
 
 func newLaunchSections(spec RunSpec) *launchSections {
@@ -143,12 +144,25 @@ func (s *launchSections) secrets(hidden int) {
 	if !s.on {
 		return
 	}
-	s.section("Protecting secrets")
+	s.prepareSecrets()
 	if hidden == 0 {
 		ui.Pass("No secret paths to hide")
 		return
 	}
 	ui.Pass("%s hidden from the box", ui.Count(hidden, "secret path"))
+}
+
+func (s *launchSections) prepareSecrets() {
+	if s.on && !s.secretsOpened {
+		s.section("Protecting secrets")
+		s.secretsOpened = true
+	}
+}
+
+func (s *launchSections) filesystemProgress(message string) {
+	if s.on {
+		ui.Note("  %s", message)
+	}
 }
 
 // coopignoreComments warns about .coopignore entries with a comment after the pattern: such an

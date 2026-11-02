@@ -15,8 +15,9 @@ approval. A failed cleanup is never permission to fall back: unresolved custody 
 The helper image builds solely from sources embedded in the Coop binary; its compiler/libraries
 stay inside Docker. `make filesystem-sources-check` detects stale embedded sources.
 
-The host captures the existing `NewShadowDecider` decisions before expanding spelling mounts.
-It inventories hidden descendants and .git too to close existing hardlink aliases, and persists
+One host walk applies the shared shadow-policy decider and remembered identities. Policy discovery
+prunes hidden descendants and .git as the mount backend does, while identity inventory visits both
+to close existing hardlink aliases. It persists
 semantic origins under the shared hidden-file record lock before runtime setup. A rejected
 admission therefore cannot forget old identities after a host atomic save. Legacy mount
 persistence preserves prior omitted identities at surviving aliases instead of erasing them.
@@ -28,6 +29,11 @@ metadata. Unicode matching uses full case folding and canonical decomposition wi
 class ordering, without inserting normalization stream-safety characters. Hashed path matches
 can only add denial, never grant access. Explicit service-file grants are identity-only read
 access applied after protected entries; policy files and directories cannot be granted.
+
+The helper image generates its immutable Unicode wire table at build time. Admissions compile
+unique exact path/ancestor rows (never normalized hashes as allow authority), followed by all
+grants. Map capacities derive from bounded row counts before loading. Each real guest identity
+still stays pinned until enforcement is detached. Final pre-execution revalidation remains fresh.
 
 ## Trusted-host snapshot contract
 
@@ -60,6 +66,9 @@ Birth is synced before the first attachment. Recovery accepts only the recorded 
 program IDs and link types; unexpected pins retain custody. Removal order is consumers, proof
 that the parent has no remaining Docker references (stopped containers count), owner, kernel
 release, exact inert probes and finally private state. Unknown outcomes retain records.
+Consumer inspection uses bounded batches. If a batch fails and a fresh same-daemon inventory
+proves one of its IDs disappeared, retirement restarts the entire inventory under one deadline.
+Stable failures, malformed observations and newly discovered stopped consumers retain custody.
 
 Service admissions outlive the starting process. Unchanged readonly/no-repo-bind services reuse
 the same helper/consumer; changed service config or protected identities obtain a new admission.
@@ -85,6 +94,10 @@ The ACP live conformance test accepts the same qualification switch to inspect t
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
 ## Changelog
+- 2026-11-01 — consolidated snapshot traversal, build-time Unicode data, unique ancestor pins
+  and policy-sized maps. Selection transfers its owned Docker binding; service bindings retain
+  independent lifetimes. Readiness shares a fresh ownership observation with logs, and retirement
+  batches complete exact-ID cgroup inventories while retaining final daemon verification.
 - 2026-11-01 — documented integrated APFS Docker backend, its explicit snapshot contract,
   identity persistence, service reuse and reviewed crash/partial-attachment cleanup. Earlier
   cached-link-count diagnostic results remain historical evidence in tools/fsprobe/RESULTS.md.

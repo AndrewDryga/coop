@@ -70,3 +70,6 @@ The kernel interfaces are documented in [LSM BPF](https://docs.kernel.org/bpf/pr
 and exercised by the kernel's [cgroup LSM tests](https://github.com/torvalds/linux/blob/master/tools/testing/selftests/bpf/prog_tests/lsm_cgroup.c).
 
 See [measured results](RESULTS.md) for the current qualification outcome.
+
+The integrated runtime has a separate [performance harness and measurements](PERFORMANCE.md)
+covering admission, public file operations, concurrent runs, memory and cleanup.

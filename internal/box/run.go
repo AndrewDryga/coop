@@ -189,6 +189,8 @@ type RunSpec struct {
 	// output (the loop) surfaces the refusals there; a nil hook is the ordinary
 	// run. Host-side only, like the capture it reports on.
 	OnNetworkReport func(NetworkReport) `json:"-"`
+	// Host-only diagnostic; quiet callers such as doctor still receive selection.
+	OnFilesystemReport func(FilesystemReport) `json:"-"`
 	// NetworkClient is the client kind this run launches, so filtered admission
 	// asks each provider for the endpoints that client actually needs. Empty is
 	// the ordinary CLI; an ACP launch sets it explicitly.
@@ -845,7 +847,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		filesystemBinding, _ = filtered.docker.(*runtime.Docker)
 	}
 	if filtered == nil || filesystemBinding != nil {
-		spec.filesystem, err = selectFilesystemAdmission(nativeCtx, rt, cfg, spec, mounts, filesystemBinding)
+		sections.prepareSecrets()
+		spec.filesystem, err = selectFilesystemAdmission(nativeCtx, rt, cfg, spec, mounts, filesystemBinding, sections.filesystemProgress)
 		if err != nil {
 			return -1, err
 		}
