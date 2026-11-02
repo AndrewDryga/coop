@@ -2,8 +2,8 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
-updated: 2026-10-20
+sources: [internal/runtime/docker_objects.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
+updated: 2026-11-02
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -166,6 +166,13 @@ Facts the code cannot say twice, all still true:
   or the 256-range cap is passed. A gone address keeps its denial; an IPv6 address is recorded but
   never rendered (the gateway drops IPv6 wholesale). The message still names the address.
 
+`runtime.Docker.Networks` reads `/networks` through the frozen Docker socket. The list response
+contains local IPAM configuration. Swarm entries get exact-ID inspections because list prefers
+cluster records, which can omit subnets allocated by node-local drivers. Swarm IDs are opaque
+strings, not container-style hex IDs. Every census fences its reads with daemon identity checks,
+rejects incomplete responses, and retains the existing IPv4 subnet/gateway projection. It is not
+cached. Launch-time and ongoing topology reconciliation keep their existing order.
+
 **Observation** joins three unrelated sources in the collector: Envoy's per-flow access log (the
 only place bytes are metered), sampled `/proc/net/tcp` rows, and nftables counters. TLS flows are
 observed; raw grants are only counted, per kernel counter; refused datagrams are a number with no
@@ -300,6 +307,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-02 — network census uses a bounded list read plus exact Swarm inspections instead of CLI processes;
+  verified topology projection, opaque Swarm IDs and node-local Swarm allocations. Other gateway sections were not reverified.
 - 2026-10-20 — the watch's record of a grown envelope no longer shares the run's cancellation: a run
   ended between the kernel update and the record lost the address for good (CI, 2026-10-19;
   `TestFilteredWatchRecordsGrowthWhenTheRunEndsAtThatMoment`).

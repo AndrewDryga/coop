@@ -7,7 +7,9 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"net/http"
 	"net/netip"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -345,43 +347,89 @@ type DockerNetwork struct {
 // reach sibling containers, other sessions' boxes and the daemon's own gateway,
 // none of which any rule may grant.
 //
-// Failed listing or inspection discards partial stdout: an incomplete inventory
-// cannot establish which daemon networks the policy must protect.
+// Local networks include their IPAM configuration in the list response. Swarm
+// summaries can omit node-local allocations, so those need exact-ID inspection.
+// An incomplete response never establishes which networks the policy must protect.
 func (d *Docker) Networks(ctx context.Context) ([]DockerNetwork, error) {
+	if ctx == nil {
+		return nil, errors.Join(errDockerCommandNotStarted, errors.New("invalid bounded Docker operation"))
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	if err := d.Verify(ctx); err != nil {
 		return nil, err
 	}
-	listing, err := d.output(ctx, 64<<10, "network", "ls", "--no-trunc", "-q")
-	if err != nil {
-		return nil, errors.Join(errors.New("the container runtime's networks are unavailable"), err)
+	// Bound all wire data, including optional Swarm inspections, before decoding.
+	remaining := int64(4 << 20)
+	read := func(path string) ([]byte, error) {
+		response, err := d.daemonGet(ctx, path)
+		if err != nil {
+			return nil, errors.Join(errors.New("Docker network inventory unavailable"), ctx.Err())
+		}
+		defer response.Body.Close()
+		data, err := io.ReadAll(io.LimitReader(response.Body, remaining+1))
+		if err != nil {
+			return nil, errors.Join(errors.New("Docker network inventory incomplete"), ctx.Err())
+		}
+		remaining -= int64(len(data))
+		if remaining < 0 {
+			return nil, errors.New("Docker observation exceeded its bound; outcome unknown")
+		}
+		if err := d.Verify(ctx); err != nil {
+			return nil, err
+		}
+		if response.StatusCode != http.StatusOK {
+			return nil, errors.New("Docker network inventory unavailable")
+		}
+		return data, nil
 	}
-	ids := strings.Fields(string(listing))
-	if len(ids) == 0 {
+	data, err := read("/networks")
+	if err != nil {
+		return nil, err
+	}
+	type observation struct {
+		ID, Name, Scope string
+		Internal        bool
+		IPAM            *struct {
+			Config []struct{ Subnet, Gateway string }
+		}
+	}
+	var values []observation
+	if json.Unmarshal(data, &values) != nil {
+		return nil, errors.New("invalid Docker network inventory")
+	}
+	if len(values) == 0 {
 		return nil, errors.New("the container runtime reported no networks at all")
 	}
-	if len(ids) > maxDockerNetworks {
+	if len(values) > maxDockerNetworks {
 		return nil, errors.New("the container runtime has more networks than a filtered run can protect")
 	}
-	args := append([]string{"network", "inspect", "--format", `{"name":{{json .Name}},"internal":{{json .Internal}},"ipam":{{json .IPAM.Config}}}`}, ids...)
-	data, inspectErr := d.output(ctx, 1<<20, args...)
 	var out []DockerNetwork
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		var value struct {
-			Name     string `json:"name"`
-			Internal bool   `json:"internal"`
-			IPAM     []struct {
-				Subnet  string `json:"Subnet"`
-				Gateway string `json:"Gateway"`
-			} `json:"ipam"`
-		}
-		if json.Unmarshal([]byte(line), &value) != nil {
+	seen := map[string]bool{}
+	for _, value := range values {
+		// Swarm IDs are opaque strings, not container-style hex IDs.
+		if !dockerToken(value.ID, 128) || seen[value.ID] || value.Name == "" || value.IPAM == nil {
 			return nil, errors.New("invalid Docker network inventory")
 		}
+		seen[value.ID] = true
+		if value.Scope != "local" && value.Scope != "global" && value.Scope != "swarm" {
+			return nil, errors.New("invalid Docker network scope")
+		}
+		if value.Scope == "swarm" {
+			// List prefers the cluster record; inspect prefers the local record
+			// and includes subnets allocated by node-local drivers such as bridge.
+			data, err := read("/networks/" + url.PathEscape(value.ID))
+			if err != nil {
+				return nil, err
+			}
+			var inspected observation
+			if json.Unmarshal(data, &inspected) != nil || inspected.ID != value.ID || inspected.Name != value.Name || inspected.IPAM == nil {
+				return nil, errors.New("invalid Docker network inspection")
+			}
+			value = inspected
+		}
 		network := DockerNetwork{Name: value.Name, Internal: value.Internal}
-		for _, config := range value.IPAM {
+		for _, config := range value.IPAM.Config {
 			if prefix, err := netip.ParsePrefix(config.Subnet); err == nil && prefix.Addr().Is4() {
 				network.Subnets = append(network.Subnets, prefix.Masked())
 			}
@@ -391,8 +439,8 @@ func (d *Docker) Networks(ctx context.Context) ([]DockerNetwork, error) {
 		}
 		out = append(out, network)
 	}
-	if len(out) == 0 {
-		return nil, errors.Join(errors.New("the container runtime's networks are unavailable"), inspectErr)
+	if projection, err := json.Marshal(out); err != nil || len(projection) > 1<<20 {
+		return nil, errors.New("Docker network inventory exceeded its bound")
 	}
 	return out, nil
 }
