@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up
+  protection before the agent opens. Filesystem and network checks still finish before it starts.
+
 - **Protect Mac secrets without thousands of mounts.** On supported APFS Docker runtimes,
   Coop now uses packaged kernel enforcement for agent and service access, including case and
   Unicode aliases. No extra host packages are needed. Unsupported runtimes retain mount

@@ -2,7 +2,7 @@
 name: identity-fences-compare-the-inode
 description: inode and timestamp reuse is real; durable fork and network roots use private hardlink anchors, while tasks and destructive plans combine logical identity, semantic checks and live pins
 subsystem: security
-sources: [internal/fsidentity/anchor.go, internal/fsidentity/link_unix.go, internal/forkspace/generation.go, internal/networkstate/project_anchor.go, internal/networkstate/authority.go, internal/box/serviceanchor.go, internal/box/authority_mounts.go, internal/tasks/identity.go, internal/tasks/completion.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/device_fence_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_probe.go]
+sources: [internal/fsidentity/anchor.go, internal/fsidentity/link_unix.go, internal/forkspace/generation.go, internal/networkstate/project_anchor.go, internal/networkstate/authority.go, internal/box/serviceanchor.go, internal/box/authority_mounts.go, internal/tasks/identity.go, internal/tasks/completion.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/device_fence_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_probe.go]
 updated: 2026-11-01
 ---
 
@@ -76,6 +76,8 @@ from a malicious process already running as the host user: that actor can alter 
 records directly. The relevant attacker is repository/model code confined to the box.
 
 ## Changelog
+- 2026-11-01 — moved the unchanged live-device boundary into the parallel inventory and updated
+  its exact expression in the fence check; no persisted device comparison was added.
 - 2026-11-01 — filesystem admission compares live devices to reject nested filesystems during
   one inventory. Probe recovery treats the recorded inode only as a replacement warning and
   validates bounded known inert contents through a pinned directory before nonrecursive cleanup;

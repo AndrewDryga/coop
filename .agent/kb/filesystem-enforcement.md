@@ -2,7 +2,7 @@
 name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
-sources: [internal/box/filesystem.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go]
+sources: [internal/box/filesystem.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go]
 updated: 2026-11-01
 ---
 
@@ -34,6 +34,22 @@ The helper image generates its immutable Unicode wire table at build time. Admis
 unique exact path/ancestor rows (never normalized hashes as allow authority), followed by all
 grants. Map capacities derive from bounded row counts before loading. Each real guest identity
 still stays pinned until enforcement is detached. Final pre-execution revalidation remains fresh.
+
+Inventory uses at most eight directory workers, bounded read batches and one million entries.
+Each opened directory must match its discovered identity. No symlink is followed, no hidden or
+`.git` subtree is omitted, and cross-device directories fail. The coordinator owns the resulting
+map and restores WalkDir ordering before policy classification. A complete fresh inventory lets
+the decider skip searches for absent `.coopignore` files; policies that exist still use the safe
+reader. Built-in basename verdicts are memoized only within that decider.
+
+On qualified APFS, final validation lists every name/type and stats every directory plus every
+protected object, grant and ancestor. It reclassifies current names and refuses new protection
+or changed protected identities. Public leaf identities need not be fetched again: the loader
+still holds every initially protected object, so a new public alias inherits its denial. A change
+to remembered identity authority falls back to full inventory. Other filesystems keep full
+revalidation, including Linux leaf mount device checks. Every admission proves the actual share
+by replacing a warmed public pathname with a protected hardlink and checking that pathname
+first, before another alias could refresh guest metadata.
 
 ## Trusted-host snapshot contract
 
@@ -70,6 +86,13 @@ Consumer inspection uses bounded batches. If a batch fails and a fresh same-daem
 proves one of its IDs disappeared, retirement restarts the entire inventory under one deadline.
 Stable failures, malformed observations and newly discovered stopped consumers retain custody.
 
+Filtered launches prepare the trusted filesystem owner and network helpers concurrently. Both
+branches finish before cleanup or workload creation; errors never abandon an in-flight branch.
+After creating the stopped workload, final filesystem validation overlaps final network checks.
+Both must pass before authorization and attach. Native credentials are revoked before filesystem
+retirement. Container inspection uses the frozen Docker socket with daemon checks on both sides;
+an HTTP failure or malformed response is unknown, never absence.
+
 Service admissions outlive the starting process. Unchanged readonly/no-repo-bind services reuse
 the same helper/consumer; changed service config or protected identities obtain a new admission.
 The existing writable-service launch barrier is preserved. A failed start must not stop a reused
@@ -78,7 +101,7 @@ sibling. Resolve private state-root aliases before comparing control mounts (`/v
 scan and lease acquisition; absence means continue, other errors remain errors.
 
 Probe cleanup does not compare persisted device numbers or recursively delete a path. It holds
-the directory, validates at most five known inert leaves, unlinks only those leaves, rechecks the
+the directory, validates at most six known inert leaves, unlinks only those leaves, rechecks the
 current name, and removes only an empty directory. Inode is a replacement warning; semantic
 contents supply deletion authority. Partial cleanup is retryable; foreign contents stay intact.
 
@@ -94,6 +117,9 @@ The ACP live conformance test accepts the same qualification switch to inspect t
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
 ## Changelog
+- 2026-11-01 — bounded parallel inventory, fresh selective APFS final validation, warmed alias
+  qualification, inventory-aware policy lookup and overlapped trusted startup checks. Removed
+  repeated pre-workload inventories while preserving the final stopped-container barrier.
 - 2026-11-01 — consolidated snapshot traversal, build-time Unicode data, unique ancestor pins
   and policy-sized maps. Selection transfers its owned Docker binding; service bindings retain
   independent lifetimes. Readiness shares a fresh ownership observation with logs, and retirement

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -764,4 +765,144 @@ func TestFilesystemBootGuardRuntime(t *testing.T) {
 			t.Log("stale boot refused before executing image code")
 		})
 	}
+}
+
+// A host rename can replace a pathname already warm in the guest cache. Sparse
+// final identity checks are safe only if those fresh opens see the pinned object.
+func TestFilesystemWarmedPublicAliasesRuntime(t *testing.T) {
+	image := os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE")
+	if image == "" || os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
+		t.Skip("requires an explicit installed client image and local Docker")
+	}
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(repo, 0777); err != nil {
+		t.Fatal(err)
+	}
+	var grants []string
+	targets := map[string]string{}
+	for i := range 3 {
+		// Distinct protected inodes keep a successful read from refreshing the
+		// object used by a later write-first or truncate-first check.
+		policyDir := fmt.Sprintf("policy-source-%d", i)
+		if err := os.Mkdir(filepath.Join(repo, policyDir), 0755); err != nil {
+			t.Fatal(err)
+		}
+		grant := fmt.Sprintf(".env.granted-%d", i)
+		grants = append(grants, grant)
+		for role, target := range map[string]string{"secret": fmt.Sprintf(".env.secret-%d", i), "policy": policyDir + "/.coopignore", "grant": grant} {
+			body := map[string]string{"secret": "inert secret", "policy": "# inert policy\n", "grant": "inert grant"}[role]
+			if err := os.WriteFile(filepath.Join(repo, target), []byte(body), 0666); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(repo, target), 0666); err != nil {
+				t.Fatal(err)
+			}
+			targets[fmt.Sprintf("%s-%d", role, i)] = target
+		}
+		for _, role := range []string{"secret", "policy", "grant", "public"} {
+			if err := os.WriteFile(filepath.Join(repo, fmt.Sprintf("%s-%d", role, i)), []byte("public"), 0666); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	a, err := prepareFilesystemAdmission(ctx, runtime.Runtime{Name: "docker"}, []string{repo}, [][]string{grants}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := a.close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	image, _, err = a.docker.Image(ctx, image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := `import errno,os,time
+for i in range(3):
+ for role in ['secret','policy','grant','public']:
+  p=f'{role}-{i}'
+  assert open(p).read()=='public'
+  with open(p,'r+') as f: f.write('public')
+open('warmed','w').close()
+while not os.path.exists('replaced'): time.sleep(.02)
+for i in range(3):
+ for role,want in [('secret',None),('policy','# inert policy\n'),('grant','inert grant'),('public','public')]:
+  p=f'{role}-{i}'
+  def attempt():
+   if i==0: return open(p).read()
+   if i==1:
+    with open(p,'r+') as f: f.write('public')
+   else: os.truncate(p,0)
+  # The host share can briefly report a renamed pathname missing, including
+  # without BPF. Absence is not proof: require the actual permission result.
+  began=time.monotonic(); deadline=began+2; missing=0
+  try:
+   while True:
+    try: data=attempt(); break
+    except FileNotFoundError:
+     missing+=1
+     if time.monotonic()>=deadline: raise
+     time.sleep(.01)
+  except OSError as e:
+   assert (want is None if i==0 else role!='public') and e.errno==errno.EPERM,(p,e)
+  else:
+   if i==0: assert want is not None and data==want,(p,data)
+   else: assert role=='public',p+' writable'
+  if missing: print('rename visibility:',p,missing,'missing attempts',time.monotonic()-began,'seconds')
+print('all warmed aliases enforced')`
+	var output bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		code, err := a.run(ctx, image, []string{"python3", "-c", script}, []string{"--network", "none", "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--workdir", "/workspace", "--mount", networkMount("bind", repo, "/workspace", false)}, nil, &output, &output, nil)
+		if code != 0 && err == nil {
+			err = fmt.Errorf("alias probe exited %d", code)
+		}
+		done <- err
+	}()
+	// Always join the attach before teardown or reading its output.
+	defer func() {
+		cancel()
+		if done != nil {
+			<-done
+		}
+	}()
+	deadline := time.NewTimer(20 * time.Second)
+	defer deadline.Stop()
+	for {
+		if _, err := os.Stat(filepath.Join(repo, "warmed")); err == nil {
+			break
+		}
+		select {
+		case err := <-done:
+			done = nil
+			t.Fatalf("warmup: %v\n%s", err, output.String())
+		case <-deadline.C:
+			t.Fatal("warmup timed out")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	for name, target := range targets {
+		tmp := filepath.Join(repo, "replacement")
+		if err := os.Link(filepath.Join(repo, target), tmp); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(tmp, filepath.Join(repo, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repo, "replaced"), nil, 0666); err != nil {
+		t.Fatal(err)
+	}
+	err = <-done
+	done = nil
+	if err != nil {
+		t.Fatalf("warmed alias enforcement: %v\n%s", err, output.String())
+	}
+	t.Log(output.String())
 }

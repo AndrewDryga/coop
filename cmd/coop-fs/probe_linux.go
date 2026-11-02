@@ -13,12 +13,12 @@ import (
 
 // probeShare touches only inert files made for this admission. It runs in the
 // future workload's cgroup against fresh binds of the actual host shares.
-func probeShare(file string) error {
+func probeShare(file string, warm bool) error {
 	var probe fsfilter.ShareProbe
 	if err := decode(file, &probe); err != nil {
 		return err
 	}
-	if len(probe.Denied) == 0 || len(probe.Readable) == 0 || len(probe.Denied)+len(probe.Readable) > 1024 {
+	if (!warm && len(probe.Denied) == 0) || (warm && len(probe.Denied) != 0) || len(probe.Readable) == 0 || len(probe.Denied)+len(probe.Readable) > 1024 {
 		return errors.New("invalid filesystem qualification")
 	}
 	for _, path := range probe.Denied {

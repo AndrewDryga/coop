@@ -75,18 +75,9 @@ type DockerMount struct {
 // Secret file case covers can require thousands of mounts. Observation must
 // accommodate the mount plans accepted at creation, including their JSON overhead.
 const maxDockerMounts = 8192
-const maxDockerContainerObservation = 4 << 20
 
-const dockerContainerFormat = `{"ID":{{json .Id}},"Name":{{json .Name}},"Image":{{json .Image}},"User":{{json .Config.User}},
-"Labels":{{json .Config.Labels}},"Tty":{{json .Config.Tty}},"OpenStdin":{{json .Config.OpenStdin}},
-"NetworkMode":{{json .HostConfig.NetworkMode}},"PidMode":{{json .HostConfig.PidMode}},"IpcMode":{{json .HostConfig.IpcMode}},
-"UsernsMode":{{json .HostConfig.UsernsMode}},"CgroupnsMode":{{json .HostConfig.CgroupnsMode}},"CgroupParent":{{json (index .HostConfig "CgroupParent")}},
-"Entrypoint":{{json (index .Config "Entrypoint")}},"Cmd":{{json (index .Config "Cmd")}},"Shell":{{json (index .Config "Shell")}},"Healthcheck":{{json (index .Config "Healthcheck")}},
-"CapAdd":{{json .HostConfig.CapAdd}},"CapDrop":{{json .HostConfig.CapDrop}},"SecurityOpt":{{json .HostConfig.SecurityOpt}},
-"Privileged":{{json .HostConfig.Privileged}},"AutoRemove":{{json .HostConfig.AutoRemove}},"ReadonlyRootfs":{{json .HostConfig.ReadonlyRootfs}},
-"RestartPolicy":{{json .HostConfig.RestartPolicy.Name}},"RestartCount":{{json .RestartCount}},"Mounts":{{json .Mounts}},"Tmpfs":{{json (index .HostConfig "Tmpfs")}},
-"State":{"Status":{{json .State.Status}},"Running":{{json .State.Running}},"Paused":{{json .State.Paused}},"OOMKilled":{{json .State.OOMKilled}},
-"ExitCode":{{json .State.ExitCode}},"StartedAt":{{json .State.StartedAt}},"FinishedAt":{{json .State.FinishedAt}}}}`
+// The Engine wire response repeats bind sources in HostConfig and Mounts.
+const maxDockerContainerObservation = 8 << 20
 
 // InspectContainer distinguishes confirmed current absence from unavailable
 // inspection. Absence does not settle a still-in-flight creating intention.
@@ -101,16 +92,11 @@ func (d *Docker) InspectContainer(ctx context.Context, ref DockerRef) (DockerCon
 	if target == "" {
 		target = ref.Name
 	}
-	data, err := d.output(ctx, maxDockerContainerObservation, "container", "inspect", "--format", dockerContainerFormat, target)
-	if err != nil {
-		absent, checkErr := d.containerAbsent(ctx, ref)
-		if checkErr == nil && absent {
-			return DockerContainer{}, false, nil
-		}
-		return DockerContainer{}, false, errors.Join(err, checkErr)
+	value, present, err := d.inspectContainerJSON(ctx, target)
+	if err != nil || !present {
+		return DockerContainer{}, false, err
 	}
-	var value DockerContainer
-	if json.Unmarshal(data, &value) != nil || !dockerHexID(value.ID) || !strings.HasPrefix(value.Name, "/") || len(value.Mounts) > maxDockerMounts || len(value.Tmpfs) > 32 || len(value.Labels) > 256 || value.RestartCount < 0 ||
+	if !dockerHexID(value.ID) || !strings.HasPrefix(value.Name, "/") || len(value.Mounts) > maxDockerMounts || len(value.Tmpfs) > 32 || len(value.Labels) > 256 || value.RestartCount < 0 ||
 		!slices.Contains([]string{"created", "running", "paused", "restarting", "removing", "exited", "dead"}, value.State.Status) {
 		return DockerContainer{}, false, errors.New("invalid Docker container observation")
 	}

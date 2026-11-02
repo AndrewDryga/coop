@@ -129,9 +129,6 @@ func (f *filteredExecution) createContainer(ctx context.Context, role, image str
 	if err := f.verifyContainer(ctx, role, image, options); err != nil {
 		return err
 	}
-	if role == "agent" && f.filesystem != nil {
-		return f.filesystem.verify(ctx, f.ref(role), image)
-	}
 	return nil
 }
 
@@ -275,16 +272,21 @@ func (f *filteredExecution) waitReady(ctx context.Context) error {
 
 // launch never returns with a running observation goroutine. Its caller always
 // performs exact daemon cleanup, including when attachment or setup was canceled.
-func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+// prepareRuntime starts only release-owned network helpers. It can overlap
+// filesystem admission; services and workload execution remain behind both checks.
+func (f *filteredExecution) prepareRuntime(ctx context.Context) error {
+	if f.runtimePrepared {
+		return nil
+	}
 	gateway := f.record.GatewayImage
 	if err := together(ctx,
 		func() error { return f.createVolume(ctx, "ipc") },
 		func() error { return f.createVolume(ctx, "observations") },
 	); err != nil {
-		return -1, err
+		return err
 	}
 	if err := f.createContainer(ctx, "controller", gateway, f.helperOptions("controller"), []string{"controller"}); err != nil {
-		return -1, err
+		return err
 	}
 	// The guard joins the controller's network namespace, which must exist when the guard is created
 	// but run only when the guard starts — so the guard's creation overlaps the controller's start.
@@ -305,12 +307,20 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		},
 		func() error { return f.createContainer(ctx, "guard", gateway, guardOptions, []string{"guard"}) },
 	); err != nil {
-		return -1, err
+		return err
 	}
 	if err := f.startHelper(ctx, "guard"); err != nil {
-		return -1, err
+		return err
 	}
 	if err := f.waitReady(ctx); err != nil {
+		return err
+	}
+	f.runtimePrepared = true
+	return nil
+}
+
+func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	if err := f.prepareRuntime(ctx); err != nil {
 		return -1, err
 	}
 	projectRepo := spec.ActivityRepo
@@ -358,20 +368,26 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		if err != nil {
 			return -1, err
 		}
-		if err := f.filesystem.revalidate(); err != nil {
-			return -1, err
-		}
 	}
 	if err := f.createContainer(ctx, "agent", f.image, options, command); err != nil {
 		return -1, err
 	}
-	if err := f.waitReady(ctx); err != nil {
-		return -1, err
-	}
-	if err := f.reconcileTopology(ctx); err != nil {
-		return -1, err
-	}
-	if err := f.checkBindings(); err != nil {
+	// Both final checks observe the same stopped workload. Join them before
+	// granting execution; neither successful check can start it on its own.
+	if err := together(ctx, func() error {
+		if f.filesystem != nil {
+			return f.filesystem.verify(ctx, f.ref("agent"), f.image)
+		}
+		return nil
+	}, func() error {
+		if err := f.waitReady(ctx); err != nil {
+			return err
+		}
+		if err := f.reconcileTopology(ctx); err != nil {
+			return err
+		}
+		return f.checkBindings()
+	}); err != nil {
 		return -1, err
 	}
 	if err := f.store.AuthorizeLaunch(ctx, f.record.ID, "agent"); err != nil {

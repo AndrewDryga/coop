@@ -2,6 +2,7 @@ package shadowpath
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"math/rand/v2"
 	"os"
@@ -15,6 +16,68 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/safefile"
 )
+
+func TestInventoryDeciderPreservesPolicySemantics(t *testing.T) {
+	for _, kind := range []string{"regular", "case variant", "symlink", "directory", "unreadable"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			repo := filepath.Join(root, "repo")
+			if err := os.MkdirAll(filepath.Join(repo, "nested"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			for name, data := range map[string]string{
+				filepath.Join(root, CoopIgnoreFile): "ancestor.txt\n",
+				filepath.Join(repo, CoopIgnoreFile): "root.txt\n",
+			} {
+				if err := os.WriteFile(name, []byte(data), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			policy := filepath.Join(repo, "nested", CoopIgnoreFile)
+			switch kind {
+			case "directory":
+				if err := os.Mkdir(policy, 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Symlink("../.coopignore", policy); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				if kind == "case variant" {
+					policy = filepath.Join(repo, "nested", ".COOPIGNORE")
+				}
+				if err := os.WriteFile(policy, []byte("nested.txt\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if kind == "unreadable" {
+					if err := os.Chmod(policy, 0000); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			var paths []string
+			if err := filepath.WalkDir(repo, func(p string, _ fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				rel, err := filepath.Rel(repo, p)
+				paths = append(paths, filepath.ToSlash(rel))
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			ordinary, inventoried := NewDecider(repo), NewInventoryDecider(repo, slices.Values(paths))
+			for _, rel := range []string{"public.txt", "root.txt", "ancestor.txt", "nested/nested.txt", "nested/public.txt", "nested/root.txt", "nested/.env", "secrets/data", "nested/deeper/ancestor.txt"} {
+				want, wantErr := ordinary(rel)
+				got, gotErr := inventoried(rel)
+				if got != want || fmt.Sprint(gotErr) != fmt.Sprint(wantErr) {
+					t.Fatalf("%s: inventory=(%t, %v), ordinary=(%t, %v)", rel, got, gotErr, want, wantErr)
+				}
+			}
+		})
+	}
+}
 
 func TestReadRegularClosesNestedDescriptors(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // no .coopignore above the machine's temp folder reaches the repository

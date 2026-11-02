@@ -116,6 +116,23 @@ func (f *nativeOnlineFixture) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(dockersock.Info{ID: "fixture-daemon", OSType: "linux", Architecture: "amd64", ServerVersion: "29.1", KernelVersion: "fixture", SecurityOptions: []string{}})
 		return
 	}
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/containers/") && strings.HasSuffix(r.URL.Path, "/json") {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		target := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/containers/"), "/json")
+		for _, c := range f.containers {
+			if c.ID == target || strings.TrimPrefix(c.Name, "/") == target {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"Id": c.ID, "Name": c.Name, "Image": c.Image, "RestartCount": c.RestartCount, "State": c.State, "Mounts": c.Mounts,
+					"Config":     map[string]any{"User": c.User, "Labels": c.Labels, "Tty": c.Tty, "OpenStdin": c.OpenStdin, "Entrypoint": c.Entrypoint, "Cmd": c.Cmd, "Shell": c.Shell, "Healthcheck": c.Healthcheck},
+					"HostConfig": map[string]any{"NetworkMode": c.NetworkMode, "PidMode": c.PidMode, "IpcMode": c.IpcMode, "UsernsMode": c.UsernsMode, "CgroupnsMode": c.CgroupnsMode, "CgroupParent": c.CgroupParent, "CapAdd": c.CapAdd, "CapDrop": c.CapDrop, "SecurityOpt": c.SecurityOpt, "Privileged": c.Privileged, "AutoRemove": c.AutoRemove, "ReadonlyRootfs": c.ReadonlyRootfs, "RestartPolicy": map[string]string{"Name": c.RestartPolicy}, "Tmpfs": c.Tmpfs},
+				})
+				return
+			}
+		}
+		http.NotFound(w, r)
+		return
+	}
 	if r.Method != http.MethodPost || r.URL.Path != "/command" {
 		http.NotFound(w, r)
 		return

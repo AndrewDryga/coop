@@ -227,9 +227,8 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 	if err := a.qualifyShares(ctx, roots); err != nil {
 		return nil, errors.Join(errFilesystemUnsupported, err)
 	}
-	if err := a.revalidate(); err != nil {
-		return nil, err
-	}
+	// Only release-owned helpers have run. The stopped workload's final
+	// verification rechecks the complete inventory before its first start.
 	for _, probe := range a.probes {
 		if err := probe.close(); err != nil {
 			return nil, err
@@ -284,6 +283,16 @@ func (a *filesystemAdmission) consumer(ref runtime.DockerRef) error {
 }
 
 func (a *filesystemAdmission) qualifyShares(ctx context.Context, roots []string) error {
+	var warm fsfilter.ShareProbe
+	for i, p := range a.probes {
+		warm.Readable = append(warm.Readable, fmt.Sprintf("/sources/%d/%s/warm-alias", i+1, p.relative))
+	}
+	if err := filesystemJSON(filepath.Join(a.dir, "probe-warm.json"), warm); err != nil {
+		return err
+	}
+	if _, err := a.docker.ExecRead(ctx, a.record.Helper, 4096, "/usr/local/bin/coop-fs", "probe-warm", "/state/probe-warm.json"); err != nil {
+		return err
+	}
 	var probe fsfilter.ShareProbe
 	for i, p := range a.probes {
 		if err := p.replace(i, &probe); err != nil {

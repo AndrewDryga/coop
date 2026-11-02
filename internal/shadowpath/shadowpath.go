@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"iter"
 	"os"
 	"os/user"
 	"path"
@@ -527,6 +528,25 @@ func RepoCommentedEntries(repo string) []string {
 // refuses too: a caller that refuses meets it at the first such path, and one that cannot refuse
 // still hides it.
 func NewDecider(repo string) func(string) (bool, error) {
+	return newDecider(repo, nil)
+}
+
+// NewInventoryDecider uses a complete, fresh no-follow inventory to avoid looking
+// for absent policies again. paths must include every slash-relative entry,
+// including hidden entries and nonregular .coopignore names. Rebuild the inventory
+// and decider for each validation; this is not a cache across admissions.
+// Case variants trigger the ordinary read, preserving the host's lookup semantics.
+func NewInventoryDecider(repo string, paths iter.Seq[string]) func(string) (bool, error) {
+	present := map[string]bool{}
+	for rel := range paths {
+		if strings.EqualFold(path.Base(rel), CoopIgnoreFile) {
+			present[parentSlash(rel)] = true
+		}
+	}
+	return newDecider(repo, present)
+}
+
+func newDecider(repo string, present map[string]bool) func(string) (bool, error) {
 	canonical, err := filepath.EvalSymlinks(repo)
 	if err != nil {
 		canonical, _ = filepath.Abs(repo)
@@ -561,7 +581,11 @@ func NewDecider(repo string) func(string) (bool, error) {
 			}
 			c.err = unread
 		}
-		data, err := readRepoPolicy(canonical, dirRel)
+		var data []byte
+		var err error
+		if present == nil || present[dirRel] {
+			data, err = readRepoPolicy(canonical, dirRel)
+		}
 		if c.err == nil {
 			c.err = err
 		}
@@ -573,12 +597,19 @@ func NewDecider(repo string) func(string) (bool, error) {
 	}
 	secret, allow := compileGlobs(SecretGlobs), compileGlobs(AllowGlobs)
 	template, hard := compileGlobs(allowTemplateGlobs), compileGlobs(hardSecretGlobs)
+	// Worktrees and dependencies repeat basenames; built-in rules are path-independent.
+	builtin := map[string]bool{}
 	// here is shadowedHere over the rules coop can read, with the same answers: hidden by the path's
 	// own name or a readable rule on its chain, else not, with the chain's error, if it has one.
 	here := func(relSlash string) (bool, error) {
 		name := relSlash[strings.LastIndexByte(relSlash, '/')+1:]
-		lname := strings.ToLower(name)
-		if secret.matches(lname) && !(allow.matches(lname) || template.matches(lname) && !hard.matches(lname)) {
+		hidden, known := builtin[name]
+		if !known {
+			lname := strings.ToLower(name)
+			hidden = secret.matches(lname) && !(allow.matches(lname) || template.matches(lname) && !hard.matches(lname))
+			builtin[name] = hidden
+		}
+		if hidden {
 			return true, nil
 		}
 		chain, err := policies(parentSlash(relSlash))

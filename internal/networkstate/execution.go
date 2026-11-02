@@ -528,6 +528,16 @@ func summarize(record Execution) ExecutionSummary {
 // It reads the whole directory: retention keeps it small, and a scan cut short
 // would hide runs, cleanup-pending ones included.
 func (e *Evidence) Executions(after string) (ExecutionPage, error) {
+	return e.executions(after, ExecutionPageSize)
+}
+
+// ExecutionInventory validates all retained records with one directory scan.
+// Recovery needs the complete census, including every unreadable record.
+func (e *Evidence) ExecutionInventory() (ExecutionPage, error) {
+	return e.executions("", 0)
+}
+
+func (e *Evidence) executions(after string, limit int) (ExecutionPage, error) {
 	if after != "" && !lowerHex(after, 32) {
 		return ExecutionPage{}, errors.New("invalid network execution cursor")
 	}
@@ -565,8 +575,8 @@ func (e *Evidence) Executions(after string) (ExecutionPage, error) {
 		}
 	}
 	slices.Sort(ids)
-	if len(ids) > ExecutionPageSize {
-		ids, page.Next = ids[:ExecutionPageSize], ids[ExecutionPageSize-1]
+	if limit > 0 && len(ids) > limit {
+		ids, page.Next = ids[:limit], ids[limit-1]
 	}
 	for _, id := range ids {
 		record, err := e.Execution(id)

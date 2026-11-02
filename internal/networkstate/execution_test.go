@@ -305,6 +305,20 @@ func TestExecutionListingHasBoundedSummaryPagesAndContinuation(t *testing.T) {
 	if err != nil || len(second.Executions) != 1 || second.Next != "" || second.Incomplete || second.Executions[0].ID <= first.Next {
 		t.Fatal("summary pagination lost or repeated execution", err)
 	}
+	all, err := evidence.ExecutionInventory()
+	if err != nil || all.Next != "" || all.Incomplete || !reflect.DeepEqual(all.Executions, append(first.Executions, second.Executions...)) {
+		t.Fatalf("complete census differs from pages: %+v, %v", all, err)
+	}
+	for _, name := range []string{"execution-copy.json", "execution-" + strings.Repeat("f", 32) + ".json"} {
+		if err := os.WriteFile(filepath.Join(s.Path(), name), []byte("invalid"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, err = evidence.ExecutionInventory()
+	if err != nil || !all.Incomplete || all.Unreadable != 2 || len(all.UnreadableNames) != 2 || len(all.Executions) != ExecutionPageSize+1 || all.Next != "" {
+		t.Fatalf("complete census lost records or unreadable names: %+v, %v", all, err)
+	}
+
 }
 
 // Every page of the run listing reads the whole folder, so a file no run is named after counts as

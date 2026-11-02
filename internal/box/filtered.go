@@ -75,6 +75,7 @@ type filteredExecution struct {
 	mu                  sync.Mutex                     // host callbacks serialize registry CAS, never runtime I/O
 	record              networkstate.Execution
 	ids                 map[string]string // role → the container ID this supervisor created
+	runtimePrepared     bool              // trusted helpers are ready; no workload has started
 	startAttempted      bool              // monotonic host launch boundary, independent of registry publication
 	mainStarted         bool              // the daemon reported the workload running: teardown may then speak of its main process
 	bindSources         map[string]os.FileInfo

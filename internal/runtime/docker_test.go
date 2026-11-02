@@ -102,7 +102,7 @@ func fixtureDocker(t *testing.T, value dockerFixture) (Runtime, string) {
 	file := filepath.Join(root, "fixture.json")
 	writeDockerFixture(t, file, value)
 	t.Setenv("COOP_DOCKER_FIXTURE", file)
-	t.Setenv("COOP_DOCKER_FIXTURE_ENDPOINT", dockersock.Serve(t, func() (dockersock.Info, error) { return fixtureDaemonInfo(file) }))
+	t.Setenv("COOP_DOCKER_FIXTURE_ENDPOINT", dockersock.ServeHandler(t, fixtureDockerAPI(file)))
 	t.Setenv("COOP_DOCKER_TEST_BINARY", os.Args[0])
 	// Each fixture CLI is this race-instrumented test executable. Remove only
 	// the race runtime's one-second exit sleep; otherwise two completed fake

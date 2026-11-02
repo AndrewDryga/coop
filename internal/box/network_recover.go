@@ -169,42 +169,36 @@ func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.
 	}
 	policies := map[string]bool{}
 	var unreadable []string
-	cursor := ""
-	for {
-		page, err := evidence.Executions(cursor)
-		if err != nil {
-			return networkRunInventory{expired: out.expired}, err
-		}
-		for _, name := range page.UnreadableNames {
-			unreadable = append(unreadable, filepath.Join(evidence.Path(), name))
-		}
-		for _, summary := range page.Executions {
-			policies[summary.PolicyFingerprint] = true
-			if summary.Expired(now) {
-				out.expired = append(out.expired, summary.ID)
-			}
-			if summary.Final && !summary.CleanupPending {
-				continue
-			}
-			record, err := evidence.Execution(summary.ID)
-			if errors.Is(err, networkstate.ErrEvidenceUnavailable) {
-				continue // gone since the page was read; only retention removes a record
-			}
-			if err != nil {
-				unreadable = append(unreadable, filepath.Join(evidence.Path(), "execution-"+summary.ID+".json"))
-				continue
-			}
-			out.pending = append(out.pending, record)
-		}
-		if page.Next == "" {
-			if len(unreadable) > 0 {
-				return out, &UnreadableNetworkRuns{Records: unreadable}
-			}
-			out.policies = policies
-			return out, nil
-		}
-		cursor = page.Next
+	page, err := evidence.ExecutionInventory()
+	if err != nil {
+		return networkRunInventory{expired: out.expired}, err
 	}
+	for _, name := range page.UnreadableNames {
+		unreadable = append(unreadable, filepath.Join(evidence.Path(), name))
+	}
+	for _, summary := range page.Executions {
+		policies[summary.PolicyFingerprint] = true
+		if summary.Expired(now) {
+			out.expired = append(out.expired, summary.ID)
+		}
+		if summary.Final && !summary.CleanupPending {
+			continue
+		}
+		record, err := evidence.Execution(summary.ID)
+		if errors.Is(err, networkstate.ErrEvidenceUnavailable) {
+			continue // gone since the page was read; only retention removes a record
+		}
+		if err != nil {
+			unreadable = append(unreadable, filepath.Join(evidence.Path(), "execution-"+summary.ID+".json"))
+			continue
+		}
+		out.pending = append(out.pending, record)
+	}
+	if len(unreadable) > 0 {
+		return out, &UnreadableNetworkRuns{Records: unreadable}
+	}
+	out.policies = policies
+	return out, nil
 }
 
 // supervisorRecordedHere reports whether supervisor's pid was read where this coop runs, by the

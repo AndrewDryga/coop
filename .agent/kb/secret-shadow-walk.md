@@ -88,6 +88,13 @@ and lstats before the safe read (only "not there" skips it). `shadowed` stays th
 that the `Snapshot` uses, and `TestDeciderMatchesShadowed` pins the two together, including links
 the safe read refuses.
 
+The BPF admission already has a complete fresh name inventory. `NewInventoryDecider` uses that
+inventory to omit absent-policy lookups, including directories with no policy anywhere below
+them. Case variants still cause the canonical safe read; links, directories and unreadable files
+retain the ordinary decider's behavior. This is a per-inventory optimization, never a listing
+cache across launches. Built-in basename decisions are memoized within each decider because they
+do not depend on the containing directory; project policy remains path-dependent.
+
 **The rest was CPU, not disk** (measured 2026-10-06, 40k paths in 6k directories, warm). The walk's
 own directory reads took 0.12 s; deciding took 0.47 s, of which `filepath.Match` against the 64
 secret globs was 0.31 s (7.8 µs a name) and re-walking every ancestor's `.coopignore` level was
@@ -164,6 +171,8 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-11-01 — documented complete-inventory policy discovery and per-decider basename memoization;
+  fresh BPF final validation and bounded parallel metadata traversal live in filesystem-enforcement.
 - 2026-11-01 — distinguished mount discovery from integrated BPF admission and linked its
   complete alias inventory and shared identity persistence.
 - 2026-10-19 — ResolveRepo spells a COOP_REPO override as the disk stores it, so the prefix of a

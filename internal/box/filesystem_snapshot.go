@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -82,85 +83,43 @@ type filesystemSnapshot struct {
 	origins   rememberedHidden
 }
 
+// Count a hidden directory once, as the mount backend does, while including
+// protected aliases outside it. Entries are sorted with parents before children.
+func (s *filesystemSnapshot) secretCount() int {
+	secret := map[string]bool{}
+	count := 0
+	for _, entry := range s.policy.Entries {
+		if entry.Flags&fsfilter.Secret != 0 {
+			secret[entry.Path] = true
+			if !secret[path.Dir(entry.Path)] {
+				count++
+			}
+		}
+	}
+	return count
+}
+
 // captureFilesystemSnapshot uses the existing decider and walks even hidden
 // directories: an already-existing hardlink outside a hidden directory must
 // inherit its protection. A later trusted-host reclassification needs admission.
 func captureFilesystemSnapshot(root string, profile fsfilter.Profile, grants []string, retained map[fileIdentity]uint32, exclude string) (*filesystemSnapshot, error) {
 	s := &filesystemSnapshot{root: root, policy: fsfilter.Policy{Profile: profile, Grants: slices.Clone(grants)}, objects: map[string]filesystemObject{}, protected: maps.Clone(retained), origins: rememberedHidden{}}
 	before := loadHiddenFiles(root)
-	decide := shadowpath.NewDecider(root)
 	if s.protected == nil {
 		s.protected = map[fileIdentity]uint32{}
 	}
-	flags := map[string]uint32{}
-	// Discovery has the mount walk's pruning semantics, but inventory still
-	// visits hidden descendants and .git to protect their external hardlinks.
-	suppressed := map[string]bool{}
-	var rootDevice uint64
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if rel == exclude {
-			return fs.SkipDir
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		id, ok := identityOf(info)
-		if !ok {
-			return errors.New("filesystem object identity unavailable")
-		}
-		if rel == "." {
-			if !d.IsDir() {
-				return fmt.Errorf("filesystem admission root %s is not a real directory", root)
-			}
-			rootDevice = id.dev
-		}
-		if id.dev != rootDevice {
-			return errors.New("filesystem admission cannot cross a mounted filesystem")
-		}
-		if len(s.objects) >= 1_000_000 {
-			return errors.New("filesystem inventory exceeds admission bounds")
-		}
-		s.objects[rel] = filesystemObject{id: id, mode: info.Mode().Type()}
-		if rel != "." {
-			// WalkDir visits parents first; inherited directory protection therefore
-			// includes every descendant without reinterpreting an allow pattern.
-			flags[rel] |= flags[path.Dir(rel)] & fsfilter.Secret
-			skip := suppressed[path.Dir(rel)] || d.IsDir() && d.Name() == ".git"
-			origin, remembered := before[id]
-			moved := remembered && origin != rel
-			if !skip {
-				switch {
-				case d.Type().IsRegular() && isCoopignore(p):
-					flags[rel] |= fsfilter.ReadOnly
-				default:
-					hidden, err := decide(rel)
-					if err != nil {
-						return err
-					}
-					if hidden {
-						flags[rel] |= fsfilter.Secret
-					}
-				}
-			}
-			// Mount discovery skips .git and hidden descendants, but a remembered
-			// object remains secret at an existing alias in either location.
-			if moved {
-				flags[rel] |= fsfilter.Secret
-			}
-			if d.IsDir() {
-				suppressed[rel] = skip || flags[rel]&fsfilter.Secret != 0
-			}
-		}
+	inventory, err := filesystemObjects(root, exclude)
+	if err != nil {
+		return nil, err
+	}
+	s.objects = inventory.objects
+	flags, err := filesystemNamedFlags(root, inventory, before)
+	if err != nil {
+		return nil, err
+	}
+	for _, rel := range inventory.paths {
 		if f := flags[rel]; f != 0 {
+			id := s.objects[rel].id
 			s.protected[id] |= f
 			if f&fsfilter.Secret != 0 && s.origins[id] == "" {
 				s.origins[id] = rel
@@ -169,13 +128,11 @@ func captureFilesystemSnapshot(root string, profile fsfilter.Profile, grants []s
 				}
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
 	for rel, object := range s.objects {
-		flags[rel] |= s.protected[object.id]
+		if f := s.protected[object.id]; f != 0 {
+			flags[rel] |= f
+		}
 	}
 	// Grants are object authority. Policy files and directories cannot acquire it,
 	// including when a requested grant aliases a protected policy file.
@@ -198,10 +155,103 @@ func captureFilesystemSnapshot(root string, profile fsfilter.Profile, grants []s
 	return s, nil
 }
 
+// Classify names in the same order as mount discovery. Identity collection is
+// separate so final validation can reuse the already-pinned object authority.
+func filesystemNamedFlags(root string, inventory *filesystemInventory, before rememberedHidden) (map[string]uint32, error) {
+	flags := map[string]uint32{}
+	suppressed := map[string]bool{}
+	decide := shadowpath.NewInventoryDecider(root, slices.Values(inventory.paths))
+	for _, rel := range inventory.paths {
+		object := inventory.objects[rel]
+		id := object.id
+		directory := object.mode.IsDir()
+		var f uint32
+		if rel != "." {
+			// Lexical order visits parents first; inherited directory protection therefore
+			// includes every descendant without reinterpreting an allow pattern.
+			parent := path.Dir(rel)
+			f = flags[parent] & fsfilter.Secret
+			skip := suppressed[parent] || directory && path.Base(rel) == ".git"
+			origin, remembered := before[id]
+			moved := remembered && origin != rel
+			if !skip {
+				switch {
+				case object.mode.IsRegular() && IsCoopignoreName(path.Base(rel)) && isCoopignore(filepath.Join(root, rel)):
+					f |= fsfilter.ReadOnly
+				default:
+					hidden, err := decide(rel)
+					if err != nil {
+						return nil, err
+					}
+					if hidden {
+						f |= fsfilter.Secret
+					}
+				}
+			}
+			// Mount discovery skips .git and hidden descendants, but a remembered
+			// object remains secret at an existing alias in either location.
+			if moved {
+				f |= fsfilter.Secret
+			}
+			if directory {
+				suppressed[rel] = skip || f&fsfilter.Secret != 0
+			}
+		}
+		if f != 0 {
+			flags[rel] = f
+		}
+	}
+	return flags, nil
+}
+
 // Revalidate before the first workload instruction. Public content edits are
 // irrelevant, but root/ancestor replacement, policy changes, new secrets and
 // changing alias or grant identities require a new admission.
 func (s *filesystemSnapshot) revalidate(exclude string) error {
+	// Only the qualified APFS backend permits this optimization. In particular,
+	// Linux leaf bind mounts need a device check on every leaf.
+	if !filesystemProfileCandidate(s.root) || !maps.Equal(loadHiddenFiles(s.root), s.origins) {
+		return s.revalidateFull(exclude)
+	}
+	inventory, err := inventoryFilesystem(s.root, exclude, false)
+	if err != nil {
+		return err
+	}
+	for _, rel := range s.protectedPaths() {
+		info, err := os.Lstat(filepath.Join(s.root, rel))
+		if err != nil {
+			return err
+		}
+		id, ok := identityOf(info)
+		object := filesystemObject{id: id, mode: info.Mode().Type()}
+		listed, present := inventory.objects[rel]
+		if !ok || !present || object != s.objects[rel] || listed.mode != object.mode {
+			return fmt.Errorf("protected filesystem object %q changed during admission; retry the launch", rel)
+		}
+		inventory.objects[rel] = object
+	}
+	flags, err := filesystemNamedFlags(s.root, inventory, s.origins)
+	if err != nil {
+		return err
+	}
+	expected := make(map[string]uint32, len(s.policy.Entries))
+	for _, entry := range s.policy.Entries {
+		expected[entry.Path] = entry.Flags
+	}
+	for rel, flag := range flags {
+		if flag&^expected[rel] != 0 {
+			return errors.New("protected filesystem paths changed during admission; retry the launch")
+		}
+	}
+	// Another admission can remember a newly classified inode while this walk
+	// runs. Only a full identity census can find its ordinary-looking aliases.
+	if !maps.Equal(loadHiddenFiles(s.root), s.origins) {
+		return s.revalidateFull(exclude)
+	}
+	return nil
+}
+
+func (s *filesystemSnapshot) revalidateFull(exclude string) error {
 	next, err := captureFilesystemSnapshot(s.root, s.policy.Profile, s.policy.Grants, s.protected, exclude)
 	if err != nil {
 		return err

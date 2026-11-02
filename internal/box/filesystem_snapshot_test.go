@@ -321,3 +321,92 @@ func TestFilesystemRuleRemovalRespectsSurvivingAliases(t *testing.T) {
 		})
 	}
 }
+
+func TestFilesystemFinalInventoryPreservesReclassificationChecks(t *testing.T) {
+	for _, mutation := range []string{"public replacement", "new secret", "secret replacement", "grant replacement", "ancestor replacement", "new hidden descendant", "new policy", "unreadable policy", "new remembered identity", "unhidden policy error", "new secret alias", "new policy alias"} {
+		t.Run(mutation, func(t *testing.T) {
+			pinHome(t)
+			repo := t.TempDir()
+			write := func(name, value string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(repo, name), []byte(value), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, dir := range []string{"nested", "secrets", "hidden"} {
+				if err := os.Mkdir(filepath.Join(repo, dir), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write("nested/.env", "inert")
+			write(".env.granted", "grant")
+			write("public", "public")
+			write(".coopignore", "hidden\n")
+			if err := os.Mkdir(filepath.Join(repo, "hidden/.coopignore"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			s, err := captureRememberedFilesystemSnapshot(t.Context(), repo, fsfilter.Profile{}, []string{".env.granted"}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			replace := func(name string) {
+				t.Helper()
+				write("replacement", "replacement")
+				if err := os.Rename(filepath.Join(repo, "replacement"), filepath.Join(repo, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wantOK := false
+			switch mutation {
+			case "public replacement":
+				replace("public")
+				wantOK = true
+			case "new secret":
+				write("new.pem", "inert")
+			case "secret replacement":
+				replace("nested/.env")
+			case "grant replacement":
+				replace(".env.granted")
+			case "ancestor replacement":
+				if err := os.Rename(filepath.Join(repo, "nested"), filepath.Join(repo, "old")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(filepath.Join(repo, "nested"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				write("nested/.env", "inert")
+			case "new hidden descendant":
+				write("secrets/new", "inert")
+			case "new policy":
+				write("nested/.coopignore", "public\n")
+			case "unreadable policy":
+				if err := os.Mkdir(filepath.Join(repo, "nested/.coopignore"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "unhidden policy error":
+				write(".coopignore", "")
+			case "new remembered identity":
+				write(".coopignore", "hidden\npublic\n")
+				if _, err := captureRememberedFilesystemSnapshot(t.Context(), repo, fsfilter.Profile{}, nil, ""); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(filepath.Join(repo, "public"), filepath.Join(repo, "ordinary")); err != nil {
+					t.Fatal(err)
+				}
+				write(".coopignore", "hidden\n")
+			case "new secret alias", "new policy alias":
+				source := "nested/.env"
+				if mutation == "new policy alias" {
+					source = ".coopignore"
+				}
+				if err := os.Link(filepath.Join(repo, source), filepath.Join(repo, "alias")); err != nil {
+					t.Fatal(err)
+				}
+				wantOK = filesystemProfileCandidate(repo)
+			}
+			if err := s.revalidate(""); (err == nil) != wantOK {
+				t.Fatalf("validation = %v, want allowed %t", err, wantOK)
+			}
+		})
+	}
+}

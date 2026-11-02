@@ -722,13 +722,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// from ever being a way to expose a real repository to something that can talk to a model.
 		mounts = []Mount{{Kind: Bind, Source: spec.Repo, Target: workdir}}
 	default:
-		mounts, err = computeMounts(spec.Repo, workdir, false)
-		if err != nil {
-			return -1, err
-		}
-		if err := RememberHiddenFiles(spec.Repo, workdir, mounts); err != nil {
-			return -1, err
-		}
+		// Kernel admission inventories and remembers these roots itself. Build
+		// the spelling-mount plan only if that backend cannot protect this run.
+		mounts = []Mount{{Kind: Bind, Source: spec.Repo, Target: workdir}}
 	}
 	if spec.FormatCorrection {
 		mounts = []Mount{{Kind: DirDecoy, Target: workdir, RO: true}}
@@ -842,56 +838,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, err
 		}
 	}
-	var filesystemBinding *runtime.Docker
-	if filtered != nil {
-		filesystemBinding, _ = filtered.docker.(*runtime.Docker)
+	if spec.Ctx != nil {
+		nativeCtx = spec.Ctx
 	}
-	if filtered == nil || filesystemBinding != nil {
-		sections.prepareSecrets()
-		spec.filesystem, err = selectFilesystemAdmission(nativeCtx, rt, cfg, spec, mounts, filesystemBinding, sections.filesystemProgress)
-		if err != nil {
-			return -1, err
-		}
-	}
-	secretCount := ShadowCount(mounts)
-	filesystemClosed := false
-	if spec.filesystem != nil {
-		defer func() {
-			if !filesystemClosed {
-				result = errors.Join(result, spec.filesystem.close())
-			}
-		}()
-		if filtered == nil {
-			// Use the normalized options admission checked, including --env=value
-			// and --volume=value spellings accepted by ordinary Docker launches.
-			extra, normalizeErr := filteredExtraArgs(cfg.ExtraRunArgs, spec.ExtraArgs)
-			if normalizeErr != nil {
-				return -1, normalizeErr
-			}
-			cfg = cfg.Clone()
-			cfg.ExtraRunArgs = nil
-			spec.ExtraArgs = extra
-		}
-		if filtered != nil {
-			filtered.filesystem = spec.filesystem
-		}
-		mounts = slices.DeleteFunc(mounts, func(m Mount) bool { return m.Kind != Bind })
-	} else if !spec.Login && !spec.GradeSnapshot && !spec.FormatCorrection {
-		mounts, caseExposed, err = launchMounts(cfg, spec.Repo, workdir)
-		if err != nil {
-			return -1, err
-		}
-		if spec.RepoReadOnly && len(mounts) > 0 {
-			mounts[0].RO = true
-		}
-		mounts = append(mounts, companionMounts...)
-	}
-	if sections.on {
-		sections.secrets(secretCount)
-	} else if secretCount > 0 && !spec.Quiet {
-		ui.Note("Hidden secret paths: %d", secretCount)
-	}
-	sections.caseExposed(caseExposed, spec.Quiet)
 	cleanupArtifacts, err := prepareCompositionArtifactParent(&artifacts, cfg, spec)
 	if err != nil {
 		return -1, err
@@ -908,7 +857,85 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err := spec.native.prepare(nativeCtx, artifacts.parent); err != nil {
 		return -1, err
 	}
+	var filesystemBinding *runtime.Docker
+	if filtered != nil {
+		filesystemBinding, _ = filtered.docker.(*runtime.Docker)
+	}
+	var admission *filesystemAdmission
+	filesystemClosed := false
+	// Register before the join: together also waits for peers before rethrowing
+	// a panic, and a successful admission still needs cleanup on that path.
+	defer func() {
+		if admission != nil && !filesystemClosed {
+			result = errors.Join(result, admission.close())
+		}
+	}()
+	// Revoke credentials before filesystem reconciliation can wait on Docker.
 	defer func() { result = errors.Join(result, spec.native.close()) }()
+	sections.prepareSecrets()
+	prepareFilesystem := func() error {
+		if filtered != nil && filesystemBinding == nil {
+			return nil
+		}
+		var admissionErr error
+		admission, admissionErr = selectFilesystemAdmission(nativeCtx, rt, cfg, spec, mounts, filesystemBinding, sections.filesystemProgress)
+		return admissionErr
+	}
+	if filtered != nil {
+		err = together(nativeCtx, prepareFilesystem, func() error { return filtered.prepareRuntime(nativeCtx) })
+	} else {
+		err = prepareFilesystem()
+	}
+	spec.filesystem = admission
+	if filtered != nil {
+		filtered.filesystem = admission
+	}
+	if err != nil {
+		return -1, err
+	}
+	secretCount := 0
+	if spec.filesystem != nil {
+		for _, snapshot := range spec.filesystem.snapshots {
+			secretCount += snapshot.secretCount()
+		}
+		if filtered == nil {
+			// Use the normalized options admission checked, including --env=value
+			// and --volume=value spellings accepted by ordinary Docker launches.
+			extra, normalizeErr := filteredExtraArgs(cfg.ExtraRunArgs, spec.ExtraArgs)
+			if normalizeErr != nil {
+				return -1, normalizeErr
+			}
+			cfg = cfg.Clone()
+			cfg.ExtraRunArgs = nil
+			spec.ExtraArgs = extra
+		}
+		mounts = slices.DeleteFunc(mounts, func(m Mount) bool { return m.Kind != Bind })
+	} else if !spec.Login && !spec.GradeSnapshot && !spec.FormatCorrection {
+		// Remember before spelling expansion can refuse the launch. A failed
+		// attempt must still preserve identities already classified as secret.
+		mounts, err = computeMounts(spec.Repo, workdir, false)
+		if err != nil {
+			return -1, err
+		}
+		if err := RememberHiddenFiles(spec.Repo, workdir, mounts); err != nil {
+			return -1, err
+		}
+		mounts, caseExposed, err = launchMounts(cfg, spec.Repo, workdir)
+		if err != nil {
+			return -1, err
+		}
+		if spec.RepoReadOnly && len(mounts) > 0 {
+			mounts[0].RO = true
+		}
+		mounts = append(mounts, companionMounts...)
+		secretCount = ShadowCount(mounts)
+	}
+	if sections.on {
+		sections.secrets(secretCount)
+	} else if secretCount > 0 && !spec.Quiet {
+		ui.Note("Hidden secret paths: %d", secretCount)
+	}
+	sections.caseExposed(caseExposed, spec.Quiet)
 	var tmpFiles []string
 	var tmpDirs []string
 	defer func() {
@@ -1282,8 +1309,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		gitMounts = append(gitMounts, extraMount{p, cfg.HomeInBox + "/.gitconfig"})
 	}
 
-	// All required host artifacts now exist. Only after the whole set succeeds may the runtime or
-	// first-run defaults have side effects.
+	// All required host artifacts now exist. Workload-side setup and first-run
+	// defaults follow; the trusted protection helpers are already prepared.
 	daemon, err := rt.DaemonID(context.Background())
 	if err != nil {
 		return -1, err
@@ -1391,7 +1418,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err := ctxStep(spec.Ctx, "sibling services"); err != nil {
 		return -1, err
 	}
-	// Publish before any sibling service or runtime side effect. Fork-bound publication takes the
+	// Publish before starting sibling services or the workload. Fork-bound publication takes the
 	// same lifecycle lock as rm/fresh/merge and validates the exact workspace generation, so either
 	// the reservation wins and mutation refuses, or mutation wins and this launch fails closed.
 	reviewServicesAttempted := false

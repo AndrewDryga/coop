@@ -57,11 +57,11 @@ func (p filesystemProbeRecord) close() error {
 	// Device numbers can change across a host reboot; neither one nor an inode
 	// alone authorizes recursive deletion. Retire only our bounded inert fixture
 	// through the pinned directory, preserving unexpected content for review.
-	names, err := dir.Readdirnames(6)
+	allowed := []string{".env", "Cafe\u0301", "public", "object-alias", "warm-alias", "replacement"}
+	names, err := dir.Readdirnames(len(allowed) + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
-	allowed := []string{".env", "Cafe\u0301", "public", "object-alias", "replacement"}
 	if len(names) > len(allowed) {
 		return errors.New("filesystem probe has unexpected entries; retained for review")
 	}
@@ -116,8 +116,11 @@ func newFilesystemProbe(root string, record func(filesystemProbeRecord) error) (
 	if err := os.Chmod(dir, 0755); err != nil {
 		return fail(err)
 	}
-	for _, name := range []string{".env", "Café", "public"} {
+	for _, name := range []string{".env", "Café", "public", "warm-alias"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(fsfilter.ProbeContent), 0644); err != nil {
+			return fail(err)
+		}
+		if err := os.Chmod(filepath.Join(dir, name), 0644); err != nil {
 			return fail(err)
 		}
 	}
@@ -150,20 +153,30 @@ func (p *filesystemProbe) replace(index int, probe *fsfilter.ShareProbe) error {
 	if err := os.Link(filepath.Join(dir, ".env"), filepath.Join(dir, "object-alias")); err != nil {
 		return err
 	}
+	// Replace a pathname already opened in the guest, not just a fresh alias.
+	if err := os.Link(filepath.Join(dir, ".env"), filepath.Join(dir, "replacement")); err != nil {
+		return err
+	}
+	if err := os.Rename(filepath.Join(dir, "replacement"), filepath.Join(dir, "warm-alias")); err != nil {
+		return err
+	}
 	temporary, err := os.OpenFile(filepath.Join(dir, "replacement"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(temporary.Name())
 	_, writeErr := temporary.WriteString(fsfilter.ProbeContent)
-	if err := errors.Join(writeErr, temporary.Close()); err != nil {
+	// Ordinary permissions must allow the probe's read, so only enforcement
+	// can explain its denial after the protected pathname is replaced.
+	if err := errors.Join(writeErr, temporary.Chmod(0644), temporary.Close()); err != nil {
 		return err
 	}
 	if err := os.Rename(temporary.Name(), filepath.Join(dir, ".env")); err != nil {
 		return err
 	}
 	prefix := fmt.Sprintf("/sources/%d/%s/", index+1, p.relative)
-	probe.Denied = append(probe.Denied, prefix+".env", prefix+"object-alias", prefix+"Café")
+	// Check the warmed pathname before another alias can refresh guest metadata.
+	probe.Denied = append(probe.Denied, prefix+"warm-alias", prefix+".env", prefix+"object-alias", prefix+"Café")
 	if p.profile.Fold {
 		probe.Denied = append(probe.Denied, prefix+".ENV", prefix+"CAFÉ")
 	}

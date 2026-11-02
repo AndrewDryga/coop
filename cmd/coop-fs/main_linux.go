@@ -101,8 +101,8 @@ func run(args []string) error {
 		}
 		return syscall.Exec(loader, command, os.Environ())
 	}
-	if len(args) == 2 && args[0] == "probe" {
-		return probeShare(args[1])
+	if len(args) == 2 && (args[0] == "probe" || args[0] == "probe-warm") {
+		return probeShare(args[1], args[0] == "probe-warm")
 	}
 	if len(args) == 2 && (args[0] == "guard" || args[0] == "healthcheck") {
 		if args[1] != fsfilter.ControlPath+"/manifest.json" {
