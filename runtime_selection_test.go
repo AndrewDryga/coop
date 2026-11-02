@@ -15,7 +15,7 @@ import (
 // unnoticed. Each must be run by one: a target whose -tags build its file, which lists its package
 // and whose pattern matches its name; a subprocess helper takes its parent's prefix and skips when
 // run alone. The Makefile and the tagged files are read with live_selection_test.go's helpers.
-var runtimeSuiteTags = []string{"networkruntimee2e", "boxruntimee2e", "reviewwritee2e", "acpe2e"}
+var runtimeSuiteTags = []string{"networkruntimee2e", "boxruntimee2e", "reviewwritee2e", "acpe2e", "filesystemruntimee2e"}
 
 func TestRuntimeTaggedTestsRunUnderTheirTargets(t *testing.T) {
 	problems, err := runtimeSelectionProblems(".")
@@ -32,6 +32,8 @@ func TestRuntimeSelectionProblemsFindATestNoTargetRuns(t *testing.T) {
 	write := fixtureWriter(t, root)
 	write("Makefile", "acp-e2e: ## a\n"+
 		"\t@go test -tags acpe2e -run 'TestACP$$' -count=1 -v ./internal/acp/\n"+
+		"filesystem-runtime-e2e: ## f\n"+
+		"\t@go test -tags filesystemruntimee2e -run '^TestFilesystem' -count=1 -v ./internal/box/\n"+
 		"review-writes-e2e: ## r\n"+
 		"\t@go test -tags reviewwritee2e -run '^TestReviewWrites' -count=1 -v ./internal/box/\n"+
 		"native-roles-e2e: ## x\n"+
@@ -48,6 +50,7 @@ func TestRuntimeSelectionProblemsFindATestNoTargetRuns(t *testing.T) {
 		"\t@go test -tags boxruntimee2e,networkruntimee2e -run '^TestBoth' -count=1 -v ./internal/box/\n"+
 		"vet:\n\t@go vet -tags boxruntimee2e,networkruntimee2e ./...\n"+
 		"compile:\n\t@go test -c -tags boxruntimee2e -o x ./internal/other/\n")
+	write("internal/box/filesystem_e2e_test.go", "//go:build filesystemruntimee2e\n\npackage box\n\nfunc TestFilesystemWorks(t *testing.T) {}\n")
 	write("internal/box/runtime_e2e_test.go", "//go:build boxruntimee2e\n\npackage box\n\n"+
 		"func TestRuntimeInitWorks(t *testing.T)           {}\n"+
 		"func TestRuntimeNativeRoles(t *testing.T)         {}\n"+

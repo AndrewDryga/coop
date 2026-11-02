@@ -58,6 +58,7 @@ type preparedFilteredServices struct {
 	sections       *launchSections
 	addresses      map[string]netip.Addr
 	cleanup        func()
+	allowCases     bool
 }
 
 func (s *preparedFilteredServices) check(ctx context.Context, docker filteredDocker, network, project string) error {
@@ -80,11 +81,12 @@ func (s *preparedFilteredServices) check(ctx context.Context, docker filteredDoc
 	return nil
 }
 
-func (s *preparedFilteredServices) start(ctx context.Context) error {
+func (s *preparedFilteredServices) start(ctx context.Context) (result error) {
 	if s == nil {
 		return nil
 	}
 	ctx = context.WithValue(ctx, isolatedServiceParentKey{}, s.isolatedParent)
+	ctx = context.WithValue(ctx, deferServiceShadowsKey{}, s.runtime.Name == "docker" && filesystemProfileCandidate(s.repo))
 	if err := refuseRunningServiceWriters(ctx, s.runtime, s.repo); err != nil {
 		return err
 	}
@@ -103,18 +105,38 @@ func (s *preparedFilteredServices) start(ctx context.Context) error {
 		args = append(args, "-f", s.override)
 	}
 	var stderr bytes.Buffer
+	filesystem, err := prepareServiceFilesystemStart(ctx, s.runtime, s.repo, s.file, s.data, args, s.selected, s.allowCases, false)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, filesystem.abort()) }()
+	args = filesystem.args
 	// Prep and launch are separated by network setup. Replace the stopped candidates immediately
 	// before starting so no stale daemon mount survives from the earlier preparation phase.
 	create := append(append([]string(nil), args...), "up", "--no-start", "--force-recreate")
 	create = append(create, s.selected...)
-	if err := runCompose(s.runtime, io.Discard, &stderr, "up --no-start", create); err != nil {
-		return composeFailure("prepare filtered services at launch", err, stderr.String())
+	if len(filesystem.admissions) > 0 {
+		if err := filesystem.create(ctx, s.runtime, s.selected, true, io.Discard, &stderr); err != nil {
+			return err
+		}
+	} else {
+		if err := runCompose(s.runtime, io.Discard, &stderr, "up --no-start", create); err != nil {
+			return composeFailure("prepare filtered services at launch", err, stderr.String())
+		}
 	}
 	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait")
 	upArgs = append(upArgs, s.selected...)
 	stderr.Reset()
 	if err := runCompose(s.runtime, io.Discard, &stderr, "up", upArgs); err != nil {
 		return composeFailure("a filtered box needs this project's approved sidecars running, and starting them failed", err, stderr.String())
+	}
+	if err := filesystem.retain(); err != nil {
+		return err
+	}
+	if len(filesystem.admissions) > 0 {
+		if _, err := RecoverFilesystemAdmissions(ctx, s.runtime, s.repo); err != nil {
+			return err
+		}
 	}
 	if s.sections != nil && s.sections.loop {
 		s.sections.services(s.names)
@@ -213,7 +235,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	}
 	if len(hidden) > 0 && noticeHidden {
 		ui.Note("")
-		ui.Warn("Services receive an empty replacement for %s because it looks like a secret. Run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden",
+		ui.Warn("Services cannot read %s because it looks like a secret. Run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden",
 			safeServicePaths(hidden))
 	}
 	keepSnapshot := false
@@ -302,6 +324,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	keepSnapshot = true
 	prepared := &preparedFilteredServices{runtime: rt, repo: spec.Repo, file: composeFile, data: data, owner: owner,
 		isolatedParent: spec.IsolatedParent,
+		allowCases:     spec.allowCaseExposed,
 		readOnly:       spec.RepoReadOnly, override: finalPath, roots: slices.Clone(exposedRoots), selected: selected, names: selected, sections: sections, addresses: addresses,
 		cleanup: func() { cleanupFinal(); cleanupSnapshot() }}
 	return network, bindings, clients, prepared, nil

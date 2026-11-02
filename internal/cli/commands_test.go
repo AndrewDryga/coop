@@ -1723,7 +1723,7 @@ func TestCmdUpWarnsAboutHiddenServiceSecretsWithoutATerminal(t *testing.T) {
 	if code != 0 || runErr != nil {
 		t.Fatalf("cmdUp = (%d, %v), want the services to start with decoys; stderr:\n%s", code, runErr, out)
 	}
-	for _, want := range []string{"⚠ Services will receive empty files", "  certs/tls.key", "To approve access, run coop up at a terminal."} {
+	for _, want := range []string{"⚠ Secret files stay hidden from services", "  certs/tls.key", "To approve access, run coop up at a terminal."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("cmdUp did not explain the hidden file (%q):\n%s", want, out)
 		}

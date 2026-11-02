@@ -197,6 +197,8 @@ type RunSpec struct {
 	// policy before any iteration starts.
 	NetworkAdmission bool `json:"-"`
 	projectEnv       map[string]string
+	filesystem       *filesystemAdmission
+	allowCaseExposed bool
 	// mcpSnapshot is the validated MCP configuration as CONFIGURED, if any: what a filtered run
 	// brokers bearer servers from, and what an offline run reads the token names to scrub from — so
 	// it deliberately keeps the servers an offline run then leaves out (mcpScrubNames). Reassigning
@@ -494,6 +496,7 @@ func runWithNetworkSmoke(cfg *config.Config, rt runtime.Runtime, spec RunSpec, a
 // orchestration files are part of the requested program, so any assembly error must surface before
 // the box and provider start.
 func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifacts compositionArtifactOps) (exitCode int, result error) {
+	spec.allowCaseExposed = cfg.AllowCaseExposedSecrets
 	// Checked before any host work, not just between later phases: an already-canceled Ctx (the
 	// loop's second Ctrl-C landing between iterations) must never begin projecting a box it would
 	// only have to tear down.
@@ -717,7 +720,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// from ever being a way to expose a real repository to something that can talk to a model.
 		mounts = []Mount{{Kind: Bind, Source: spec.Repo, Target: workdir}}
 	default:
-		mounts, caseExposed, err = launchMounts(cfg, spec.Repo, workdir)
+		mounts, err = computeMounts(spec.Repo, workdir, false)
 		if err != nil {
 			return -1, err
 		}
@@ -756,13 +759,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		nudges = StalenessNudges(cfg, spec.Repo, spec.Image)
 	}
 	sections.box(nudges)
-	if n := ShadowCount(mounts); sections.on {
-		sections.secrets(n)
-	} else if n > 0 && !spec.Quiet {
-		ui.Note("Hidden secret paths: %d", n)
-	}
 	sections.coopignoreComments(shadowpath.RepoCommentedEntries(spec.Repo), spec.Quiet)
-	sections.caseExposed(caseExposed, spec.Quiet)
 	// The sibling-services compose file is NOT shadowed: an in-box agent may author it, but coop
 	// validates it host-side before auto-running it (ValidateComposeFile), so
 	// it can only ever declare a repo-scoped, loopback-only container — never host root. That
@@ -843,6 +840,55 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, err
 		}
 	}
+	var filesystemBinding *runtime.Docker
+	if filtered != nil {
+		filesystemBinding, _ = filtered.docker.(*runtime.Docker)
+	}
+	if filtered == nil || filesystemBinding != nil {
+		spec.filesystem, err = selectFilesystemAdmission(nativeCtx, rt, cfg, spec, mounts, filesystemBinding)
+		if err != nil {
+			return -1, err
+		}
+	}
+	secretCount := ShadowCount(mounts)
+	filesystemClosed := false
+	if spec.filesystem != nil {
+		defer func() {
+			if !filesystemClosed {
+				result = errors.Join(result, spec.filesystem.close())
+			}
+		}()
+		if filtered == nil {
+			// Use the normalized options admission checked, including --env=value
+			// and --volume=value spellings accepted by ordinary Docker launches.
+			extra, normalizeErr := filteredExtraArgs(cfg.ExtraRunArgs, spec.ExtraArgs)
+			if normalizeErr != nil {
+				return -1, normalizeErr
+			}
+			cfg = cfg.Clone()
+			cfg.ExtraRunArgs = nil
+			spec.ExtraArgs = extra
+		}
+		if filtered != nil {
+			filtered.filesystem = spec.filesystem
+		}
+		mounts = slices.DeleteFunc(mounts, func(m Mount) bool { return m.Kind != Bind })
+	} else if !spec.Login && !spec.GradeSnapshot && !spec.FormatCorrection {
+		mounts, caseExposed, err = launchMounts(cfg, spec.Repo, workdir)
+		if err != nil {
+			return -1, err
+		}
+		if spec.RepoReadOnly && len(mounts) > 0 {
+			mounts[0].RO = true
+		}
+		mounts = append(mounts, companionMounts...)
+	}
+	if sections.on {
+		sections.secrets(secretCount)
+	} else if secretCount > 0 && !spec.Quiet {
+		ui.Note("Hidden secret paths: %d", secretCount)
+	}
+	sections.caseExposed(caseExposed, spec.Quiet)
 	cleanupArtifacts, err := prepareCompositionArtifactParent(&artifacts, cfg, spec)
 	if err != nil {
 		return -1, err
@@ -1347,6 +1393,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// the reservation wins and mutation refuses, or mutation wins and this launch fails closed.
 	reviewServicesAttempted := false
 	finish := func(code int, runErr error) (int, error) {
+		var filesystemCleanup error
+		if spec.filesystem != nil && filtered == nil && !filesystemClosed {
+			filesystemCleanup = spec.filesystem.close()
+			filesystemClosed = true
+			if filesystemCleanup != nil {
+				retainArtifacts = true
+				runErr = errors.Join(runErr, filesystemCleanup)
+			}
+		}
 		// A review's stack is as disposable as its candidate: containers, network and volumes.
 		if reviewServicesAttempted {
 			cleanupErr := DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard, privateRoots...)
@@ -1354,7 +1409,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		// A filtered run ends its activity only after exact runtime cleanup has
 		// confirmed the workload is gone.
-		if execution.ID != "" && filtered == nil {
+		if execution.ID != "" && filtered == nil && filesystemCleanup == nil {
 			if cleanupErr := forkspace.EndExecution(spec.ActivityRepo, execution); cleanupErr != nil {
 				ui.Warning("Coop could not finish recording this box's activity", cleanupErr.Error(),
 					"Inspect what was recorded with coop tasks watch --json.")
@@ -1461,6 +1516,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				return finish(-1, fmt.Errorf("wait for a safe service launch: %w", lockErr))
 			}
 			serviceCtx = context.WithValue(serviceCtx, isolatedServiceParentKey{}, spec.IsolatedParent)
+			serviceCtx = context.WithValue(serviceCtx, serviceCaseExposureKey{}, cfg.AllowCaseExposedSecrets)
 			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, runServiceLabels(spec, serviceOwner), io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, nil, nil, privateRoots...)
 			unlock()
 			sections.serviceSecrets(started.hidden, cf)
@@ -1560,6 +1616,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	runPlain, runCancelable, removeCanceled := rt.Run, rt.RunInterruptible, rt.RemoveByLabel
 	volumeReader := volumeExposureReader(rt.ExistingNamedVolumeExposure)
+	if spec.filesystem != nil {
+		volumeReader = spec.filesystem.docker.ExistingNamedVolumeExposure
+	}
 	if spec.native != nil && filtered == nil {
 		cfg = cfg.Clone()
 		var ownerOptions, extraOwner []string
@@ -1598,6 +1657,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return finish(-1, startErr)
 		}
 		spec.nativeNamespace = owner.ref.ID
+		if spec.filesystem != nil && (spec.filesystem.docker.Endpoint() != owner.docker.Endpoint() || spec.filesystem.docker.Info().ID != owner.docker.Info().ID) {
+			return finish(-1, errors.New("docker daemon changed after filesystem admission"))
+		}
 		// The box starts on the owner's bound daemon, which need not be the one probed above.
 		recordRunDaemon(artifacts.runDir, owner.docker.Info().ID)
 		runPlain = func(in io.Reader, out, errOut io.Writer, args ...string) (int, error) {
@@ -1661,7 +1723,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return finish(-1, err)
 	}
 	defer unlockMounts()
-	if spec.native == nil {
+	if spec.filesystem != nil {
+		recordRunDaemon(artifacts.runDir, spec.filesystem.docker.Info().ID)
+	} else if spec.native == nil {
 		// A native box starts on its owner's bound daemon, recorded above; this one starts through
 		// the runtime CLI, on whichever daemon the current Docker context selects by now.
 		recordDaemonAtStart(spec.Ctx, rt, artifacts.runDir)
@@ -1673,6 +1737,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		spec.OnRuntimeLaunch()
 	}
 	sections.starting()
+	if spec.filesystem != nil {
+		code, runErr := spec.filesystem.run(spec.Ctx, spec.filesystem.workloadImage, spec.Cmd, finalOptions, stdin, stdout, stderr, func() error { started = true; return nil })
+		return finish(code, runErr)
+	}
 	if spec.Ctx != nil {
 		code, runErr := runCancelable(spec.Ctx, stdin, stdout, stderr, args...)
 		if spec.Ctx.Err() == nil || spec.RunID == "" {

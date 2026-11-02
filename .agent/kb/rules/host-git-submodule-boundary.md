@@ -2,9 +2,9 @@
 name: host-git-submodule-boundary
 description: "host Git never descends under child config; deletion checks children explicitly and dynamic constructors require review"
 scope: security
-sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go]
+sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, internal/runtime/compose.go, tools/releasenotes/main.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go]
 check: "go test ./internal/forkspace -run 'TestHostGit'"
-updated: 2026-10-17
+updated: 2026-11-01
 ---
 
 Host Git on box-written workspaces goes through the shared non-recursive policy and a trusted
@@ -27,6 +27,11 @@ is also covered by TestForkRmKeepsSubmoduleWork and TestForkFreshKeepsSubmoduleW
 requires a real runtime or host socket.
 
 ## Changelog
+- 2026-11-01 — Compose now executes through its already-bound Docker receiver and the reviewed
+  contextCommand constructor, preserving cancellation without exposing an executable parameter.
+  Removed the obsolete raw RunCompose constructor exception. The unchanged alias/closure guard
+  and copied-tree mutation suite continue to reject arbitrary executable forwarding; no callback
+  exemptions were added.
 - 2026-10-17 — second review found an unsafe release-query exception and allowlisted constructor
   aliases. Swept raw constructors and forwarding values: release queries now use private Git
   metadata and an explicit workflow remote; session ACP and lifecyclebench use direct calls with

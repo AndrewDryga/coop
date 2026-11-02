@@ -11,21 +11,55 @@ services](https://coop.dryga.com/docs.html#toolchain).
 co:op hides files and directories whose names look like secrets, including `.env`, `*.tfvars`,
 `*.pem`, `secrets/` and `.ssh`:
 
-- A secret file is covered by a read-only empty file.
-- A secret directory is covered by a read-only empty directory.
+On supported Mac Docker runtimes, Coop enforces access in the Linux VM with eBPF.
+Secret reads and changes return `Operation not permitted`, including accesses through another
+letter case, equivalent Unicode spelling, symlinks and existing hardlinks. Public files remain
+writable, and ordinary public hardlinks work. `.coopignore` stays readable and read-only.
+This avoids adding a mount for every spelling of each secret filename.
 
-On a Mac, a case-insensitive disk can let a box or service read the real `.env` by opening `.ENV`.
-Coop therefore covers every uppercase and lowercase spelling of a hidden filename with up to
-11 letters, including `.env`, `id_rsa` and `database.yml`. It also covers every spelling of
-`.coopignore`. These protections apply in the box and in every service that mounts the repo.
+Coop selects this backend automatically for APFS projects when the Docker VM supports its BPF
+hooks and cgroup configuration. It checks the actual shared folder before starting the workload.
+The helper and its compiler are built inside Docker from sources shipped with Coop; no host
+packages, filesystem changes or kernel settings are needed. The initial supported configuration
+uses cgroup v2 with the `cgroupfs` driver. Other filesystems, unsupported VM kernels and incompatible
+container options keep the existing mount backend. See [filesystem protection](#filesystem-protection-contract)
+for the host-editing contract.
 
-Longer hidden filenames, such as `.env.production` and `credentials.json`, cannot be covered
-this way. Coop refuses to start the box, and `coop up` refuses to start the services. Move the
-file into a hidden folder, which stays hidden under every spelling, or run `coop approve` to
-review and remember access to the listed files. Approval applies to those exact paths, including
-future contents, for new agent and service runs. Newly exposed paths need another approval;
-already running boxes stay unchanged. `.coopignore` policy files cannot receive this approval.
-The one-run override `COOP_ALLOW_CASE_EXPOSED_SECRETS=1` remains available.
+With the mount backend, a secret file is covered by a read-only empty file and a secret directory
+by a read-only empty directory. On a case-insensitive disk, Coop also covers uppercase and lowercase
+spellings of a hidden filename with up to 11 letters, and every spelling of `.coopignore`.
+Longer filenames or a project with too many spellings can exceed the mount limit.
+Coop then refuses the agent or service launch. Move the file into a hidden folder, or run
+`coop approve` to review and remember access to the listed files. Approval applies to those exact
+paths, including future contents, for new agent and service runs. Newly exposed paths need another
+approval; already running boxes stay unchanged. `.coopignore` cannot receive this approval.
+The one-run override `COOP_ALLOW_CASE_EXPOSED_SECRETS=1` remains available. A qualified eBPF run
+protects those paths without either form of exposure approval.
+
+### Filesystem protection contract
+
+The host and its editors are trusted. Each eBPF admission captures the current hiding rules and
+protected objects. Ordinary edits to public files work immediately. Host edits and atomic saves
+to an already protected destination stay protected, including when an ancestor is replaced.
+Existing aliases keep their protection when the original file is replaced.
+
+Restart the affected agent or service after changing `.coopignore`, newly classifying an
+already-public object as secret, or creating an unprotected alias to a secret from the host.
+Running protection does not reload policy or revoke memory mappings that were already readable.
+When saving secret bytes atomically, prepare the temporary file outside the shared tree or inside
+an already hidden folder: a new public temporary pathname is not a protected destination.
+
+Protection applies to object identity. If a remembered secret still has another hardlink in the
+project, removing its hiding rule alone does not make that object public under eBPF. Remove the
+surviving aliases and restart before declassifying the original file. Explicit service-file grants
+allow reads of the admitted object, including its aliases and later in-place host edits; replacing
+that object requires re-admission. The grant does not permit writes.
+
+A separate helper owns the kernel enforcement. The agent receives no BPF privileges. If the helper
+exits, access to the protected share is denied until the workload is retired. Stopped service
+containers retain protection for a later restart. Coop removes kernel state only after all of that
+admission's consumers are gone. After a VM reboot, the launch and healthcheck guards refuse to run
+image code with an old admission; start the service through Coop to obtain fresh protection.
 
 Templates (`*.example`, `*.sample`, `*.template`) stay visible. The defaults are compiled into
 co:op (`internal/shadowpath/shadowpath.go`).
@@ -53,7 +87,8 @@ Coop recognizes the same hidden file or folder even if its path changes. If a bo
 somewhere no rule matches, the next box and Coop's own tools still hide it wherever it appears
 in the project. This includes a file hidden by `config/*.yml` and moved by `mv config cfg`, or a
 folder moved outside a nested `.coopignore`'s scope. At its original path, the current rules decide
-whether it is visible, so removing the rule from `.coopignore` reveals it there.
+whether it is visible. With eBPF, a surviving remembered hardlink also keeps the object hidden,
+as described above.
 
 A `.coopignore` applies below its folder, including to repositories nested inside it, such as
 submodules or worktrees. Coop also reads the `.coopignore` files above the project. It stops

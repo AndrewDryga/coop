@@ -46,6 +46,9 @@ func (r DockerRef) matches(name, id string, labels map[string]string) bool {
 
 type DockerContainer struct {
 	ID, Name, Image, User, NetworkMode, PidMode, IpcMode, UsernsMode, CgroupnsMode string
+	CgroupParent                                                                   string
+	Entrypoint, Cmd, Shell                                                         []string
+	Healthcheck                                                                    *DockerHealthcheck
 	RestartPolicy                                                                  string
 	Labels                                                                         map[string]string
 	CapAdd, CapDrop, SecurityOpt                                                   []string
@@ -77,7 +80,8 @@ const maxDockerContainerObservation = 4 << 20
 const dockerContainerFormat = `{"ID":{{json .Id}},"Name":{{json .Name}},"Image":{{json .Image}},"User":{{json .Config.User}},
 "Labels":{{json .Config.Labels}},"Tty":{{json .Config.Tty}},"OpenStdin":{{json .Config.OpenStdin}},
 "NetworkMode":{{json .HostConfig.NetworkMode}},"PidMode":{{json .HostConfig.PidMode}},"IpcMode":{{json .HostConfig.IpcMode}},
-"UsernsMode":{{json .HostConfig.UsernsMode}},"CgroupnsMode":{{json .HostConfig.CgroupnsMode}},
+"UsernsMode":{{json .HostConfig.UsernsMode}},"CgroupnsMode":{{json .HostConfig.CgroupnsMode}},"CgroupParent":{{json (index .HostConfig "CgroupParent")}},
+"Entrypoint":{{json (index .Config "Entrypoint")}},"Cmd":{{json (index .Config "Cmd")}},"Shell":{{json (index .Config "Shell")}},"Healthcheck":{{json (index .Config "Healthcheck")}},
 "CapAdd":{{json .HostConfig.CapAdd}},"CapDrop":{{json .HostConfig.CapDrop}},"SecurityOpt":{{json .HostConfig.SecurityOpt}},
 "Privileged":{{json .HostConfig.Privileged}},"AutoRemove":{{json .HostConfig.AutoRemove}},"ReadonlyRootfs":{{json .HostConfig.ReadonlyRootfs}},
 "RestartPolicy":{{json .HostConfig.RestartPolicy.Name}},"RestartCount":{{json .RestartCount}},"Mounts":{{json .Mounts}},"Tmpfs":{{json (index .HostConfig "Tmpfs")}},

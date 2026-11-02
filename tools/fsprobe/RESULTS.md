@@ -1,6 +1,13 @@
-# OrbStack qualification, 2026-11-01
+# Historical OrbStack classifier qualification, 2026-11-01
 
-**The strengthened eBPF candidate still does not qualify for production.**
+These are retained results for the earlier cached-link-count diagnostic, not the integrated
+backend in `internal/fsfilter`. The integrated backend uses admitted object identities and
+Unicode path rules under the trusted-host snapshot contract in `docs/box.md`. Its live tests
+are in `internal/box/filesystem_live_test.go`. The diagnostic no longer rejects all public
+hardlinks; link counts remain telemetry. The measurements below describe the candidate as
+executed and are intentionally unchanged.
+
+**The earlier strengthened eBPF candidate did not qualify for production.**
 Repeated tests caught a stale-metadata bypass: after the host added a protected
 hardlink, `file_open` sometimes still saw one link and allowed the ordinary-named
 alias. Earlier runs saw two links and denied it. A passing run cannot establish

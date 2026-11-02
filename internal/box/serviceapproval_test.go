@@ -760,14 +760,14 @@ func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
 	if runErr != nil {
 		t.Fatalf("start = %v", runErr)
 	}
-	if !strings.Contains(seen, "empty replacement for tls.key") {
+	if !strings.Contains(seen, "Services cannot read tls.key") {
 		t.Fatalf("the notice never reached the user:\nstderr: %q\ncompose writer: %q", seen, composeWriter.String())
 	}
-	if strings.Contains(composeWriter.String(), "empty replacement for") {
+	if strings.Contains(composeWriter.String(), "Services cannot read") {
 		t.Fatalf("the notice went to the compose writer, which a box start discards: %q", composeWriter.String())
 	}
 	want := "Configuring network access\n  ⚠ Unrestricted: nothing is blocked\n\n" +
-		"⚠ Services receive an empty replacement for tls.key because it looks like a secret. Run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden\n\n" +
+		"⚠ Services cannot read tls.key because it looks like a secret. Run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden\n\n" +
 		"⚠ Project services could not start\n\n" +
 		"      Container project-db Running\n      Container project-keycloak Waiting\n\n  Run coop up to retry.\n"
 	if seen != want {

@@ -64,6 +64,7 @@ type filteredExecution struct {
 	agentIdentity       agentIdentity
 	store               *networkstate.Store
 	docker              filteredDocker
+	filesystem          *filesystemAdmission
 	policy              egress.Snapshot
 	image               string
 	config              string
@@ -507,6 +508,9 @@ func (f *filteredExecution) createRef(role string) runtime.DockerRef {
 	supervisor := f.record.Supervisor
 	f.mu.Unlock()
 	ref.Labels[LabelNetworkSupervisor] = fmt.Sprintf("%d:%s:%s", supervisor.PID, supervisor.StartToken, supervisor.Host)
+	if role == "agent" && f.filesystem != nil {
+		ref.Labels[filesystemLabel] = f.filesystem.record.Parent
+	}
 	return ref
 }
 

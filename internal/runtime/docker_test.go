@@ -90,6 +90,8 @@ type dockerFixture struct {
 	Layers                    []string
 	Copy                      string
 	CopyBody                  string
+	Logs                      string
+	Execution                 *DockerImageExecution
 	SettleAt                  time.Time
 }
 
@@ -277,7 +279,16 @@ func TestDockerFixtureProcess(t *testing.T) {
 				fixture.Container.State = DockerContainerState{Status: "exited", StartedAt: fixture.Container.State.StartedAt, FinishedAt: time.Now().UTC(), ExitCode: settlingExitCode}
 				store()
 			}
-			emit(fixture.Container)
+			if slices.Contains(args, `{{json (index .HostConfig "CgroupParent")}}`) {
+				emit(fixture.Container.CgroupParent)
+			} else {
+				emit(fixture.Container)
+			}
+		case "logs":
+			if !bound || len(args) != 5 || args[2] != "--tail" || args[4] != dockerFixtureRef().ID {
+				os.Exit(111)
+			}
+			fmt.Print(fixture.Logs)
 		case "ls":
 			if fixture.Mode == "list-fail" {
 				os.Exit(1)
@@ -368,7 +379,15 @@ func TestDockerFixtureProcess(t *testing.T) {
 		if !bound || args[1] != "inspect" {
 			os.Exit(108)
 		}
-		emit(map[string]any{"ID": "sha256:" + strings.Repeat("d", 64), "Labels": map[string]string{}, "Layers": fixture.Layers})
+		if strings.Contains(args[3], "Entrypoint") {
+			if fixture.Mode == "execution-malformed" {
+				fmt.Print("invalid JSON")
+			} else {
+				emit(fixture.Execution)
+			}
+		} else {
+			emit(map[string]any{"ID": "sha256:" + strings.Repeat("d", 64), "Labels": map[string]string{}, "Layers": fixture.Layers})
+		}
 	case "volume":
 		if fixture.Mode == "shared-volume" {
 			if !bound {

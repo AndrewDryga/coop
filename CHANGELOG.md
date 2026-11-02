@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Protect Mac secrets without thousands of mounts.** On supported APFS Docker runtimes,
+  Coop now uses packaged kernel enforcement for agent and service access, including case and
+  Unicode aliases. No extra host packages are needed. Unsupported runtimes retain mount
+  protection and remembered case-exposure approvals. Restart running boxes after changing
+  `.coopignore` or creating new host aliases to secrets.
+
 - **Remember case-exposure approvals on a Mac.** `coop approve` now reviews and remembers
   exact hidden-file paths that remain readable under another letter case. New paths still need
   approval, so ordinary launches no longer require repeating an environment override.

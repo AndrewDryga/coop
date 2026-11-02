@@ -211,17 +211,13 @@ static void literal(const char *name, int yes, int no) {
 }
 // The experimental policy is basename .env, suffix *.pem, and a read-only
 // .coopignore at any depth on the fixture device. Exact Unicode rules remain
-// separate. The multi-link restriction deliberately measures its compatibility
-// cost; it is not an approved production policy.
+// separate. Link counts are telemetry only: stale host-share attributes cannot
+// classify secrets, and public hardlinks must remain usable.
 static void patterns(int deny, int writes_only) {
     int done=label(), parent=label(), names=label(), pem=label(), policy=label();
     emit(LOAD(BPF_DW,1,7,dino)); jump(BPF_JEQ,1,0,parent);
     emit(LOAD(BPF_DW,2,1,sb)); emit(LOAD(BPF_W,2,2,dev));
     jump(BPF_JNE,2,rules[0].dev,done);
-    emit(LOAD(BPF_H,2,1,offset("inode","i_mode")));
-    emit(INS(BPF_ALU64|BPF_AND|BPF_K,2,0,0,S_IFMT));
-    jump(BPF_JNE,2,S_IFREG,names);
-    emit(LOAD(BPF_W,2,1,nlink)); jump(BPF_JGT,2,1,deny);
     jump(BPF_JA,0,0,names);
     mark(parent);
     emit(LOAD(BPF_DW,1,7,dparent)); emit(LOAD(BPF_DW,1,1,dino));

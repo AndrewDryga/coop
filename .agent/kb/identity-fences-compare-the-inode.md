@@ -2,8 +2,8 @@
 name: identity-fences-compare-the-inode
 description: inode and timestamp reuse is real; durable fork and network roots use private hardlink anchors, while tasks and destructive plans combine logical identity, semantic checks and live pins
 subsystem: security
-sources: [internal/fsidentity/anchor.go, internal/fsidentity/link_unix.go, internal/forkspace/generation.go, internal/networkstate/project_anchor.go, internal/networkstate/authority.go, internal/box/serviceanchor.go, internal/box/authority_mounts.go, internal/tasks/identity.go, internal/tasks/completion.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/device_fence_test.go]
-updated: 2026-10-19
+sources: [internal/fsidentity/anchor.go, internal/fsidentity/link_unix.go, internal/forkspace/generation.go, internal/networkstate/project_anchor.go, internal/networkstate/authority.go, internal/box/serviceanchor.go, internal/box/authority_mounts.go, internal/tasks/identity.go, internal/tasks/completion.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/device_fence_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_probe.go]
+updated: 2026-11-01
 ---
 
 Coop often needs to answer “is this still the object I authorized?” Linux overlayfs disproved the
@@ -76,6 +76,10 @@ from a malicious process already running as the host user: that actor can alter 
 records directly. The relevant attacker is repository/model code confined to the box.
 
 ## Changelog
+- 2026-11-01 — filesystem admission compares live devices to reject nested filesystems during
+  one inventory. Probe recovery treats the recorded inode only as a replacement warning and
+  validates bounded known inert contents through a pinned directory before nonrecursive cleanup;
+  it never compares a persisted device number. Both boundaries are covered by the fence test.
 - 2026-10-19 — forkspace's sameDisk (the one-disk check before a fork's hard-linked anchor) compares
   two live devices at once; listed in deviceComparisons as not an identity fence.
 - 2026-09-27 — checked fork generation migration and session startup; removed reserved-session

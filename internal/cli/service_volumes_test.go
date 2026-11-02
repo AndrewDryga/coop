@@ -116,7 +116,7 @@ func TestVolumeApprovalAndSecretDeclineKeepDecoy(t *testing.T) {
 	typedAnswers(t, "y", "n")
 	var code int
 	out := captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
-	if code != 0 || !strings.Contains(out, "[Compose output]") || !strings.Contains(out, "Services will receive empty files") {
+	if code != 0 || !strings.Contains(out, "[Compose output]") || !strings.Contains(out, "Secret files stay hidden from services") {
 		t.Fatalf("volume approved and secret declined = %d:\n%s", code, out)
 	}
 	data, err := os.ReadFile(compose)

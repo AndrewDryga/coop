@@ -21,6 +21,8 @@ const (
 // deviceComparisons are the device comparisons that are not identity fences — one line each, with
 // the reason. An entry is checked in both directions: one that no longer matches the tree fails too.
 var deviceComparisons = map[string]string{
+	"id.dev != rootDevice": "one filesystem admission inventory refuses nested mounted filesystems; " +
+		"both device numbers are captured during the same live walk, not persisted identity authority",
 	"fingerprint.Device != task.Generation.Device": "two fields of one host-written pending-review record, " +
 		"always captured together: a corruption tripwire, not a comparison with the live filesystem",
 	"m.device == h.device": "two lines of one /proc/self/mountinfo read (shadowpath's mountedPaths), compared to find " +

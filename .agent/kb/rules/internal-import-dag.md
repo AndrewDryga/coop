@@ -46,6 +46,10 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-11-01 — added leaf `fsfilter`, release-source package `fsimage -> runtime`,
+  and `box -> fsfilter, fsimage`. Filesystem policy has no host authority; the
+  image package consumes the existing bound Docker builder. Both launch paths
+  share the box admission controller. Checked with `TestInternalImportDAG`.
 - 2026-10-28 — added stdlib-only `gitdiff` for exact NUL-delimited change records and line
   counts. forkctl uses its parsers, while hostsurface and cli exchange typed paths without
   reserializing filenames into ambiguous display text. This keeps Git execution in forkspace,

@@ -255,8 +255,12 @@ func providerResumeLiveCommand(ag agents.Agent, cfg *config.Config, stage, sessi
 			}
 			command = ag.StartSession(cfg, sessionID)
 		} else {
+			home, err := box.NativeHomePath(cfg, ag.Name(), cfg.ActiveProfile(ag.Name()), cfg.RepoOverride, false)
+			if err != nil {
+				return nil, false
+			}
 			var found bool
-			command, found = ag.Resume(cfg, cfg.AgentDir(ag.Name()), box.Workdir(cfg, cfg.RepoOverride), sessionID)
+			command, found = ag.Resume(cfg, home, box.Workdir(cfg, cfg.RepoOverride), sessionID)
 			if !found {
 				return nil, false
 			}
@@ -488,6 +492,21 @@ func TestProviderResumeLiveContract(t *testing.T) {
 		})
 	}
 
+	t.Run("legacy profile transcript is not a scoped session", func(t *testing.T) {
+		cfg := &config.Config{RepoOverride: t.TempDir(), Workdir: "/workspace/live-repo", ConfigDir: t.TempDir()}
+		legacy := filepath.Join(cfg.AgentDir("claude"), "projects", agents.ClaudeProjectKey(box.Workdir(cfg, cfg.RepoOverride)), id+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(legacy), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(legacy, []byte("{}\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		ag, _ := agents.Get("claude")
+		if command, ok := providerResumeLiveCommand(ag, cfg, liveResumeContinue, id, "repeat"); ok {
+			t.Fatalf("legacy-only transcript accepted as scoped history: %q", command)
+		}
+	})
+
 	prior := liveprovider.ProviderResult{Provider: "codex", CLIVersion: "codex-cli 1.2.3", Attempted: true}
 	for _, tc := range []struct {
 		name       string
@@ -541,21 +560,25 @@ func TestProviderResumeLiveContract(t *testing.T) {
 func seedProviderResumeLiveSession(t *testing.T, cfg *config.Config, provider, id string) {
 	t.Helper()
 	ws := box.Workdir(cfg, cfg.RepoOverride)
+	home, err := box.NativeHomePath(cfg, provider, cfg.ActiveProfile(provider), cfg.RepoOverride, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var path, body, markerPath string
 	switch provider {
 	case "claude":
-		path = filepath.Join(cfg.AgentDir(provider), "projects", agents.ClaudeProjectKey(ws), id+".jsonl")
+		path = filepath.Join(home, "projects", agents.ClaudeProjectKey(ws), id+".jsonl")
 		body = "{}\n"
 	case "codex":
 		return
 	case "gemini":
 		projectHash := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
-		bucket := filepath.Join(cfg.AgentDir(provider), "tmp", projectHash)
+		bucket := filepath.Join(home, "tmp", projectHash)
 		markerPath = filepath.Join(bucket, ".project_root")
 		path = filepath.Join(bucket, "chats", "session.jsonl")
 		body = `{"sessionId":"` + id + `","projectHash":"` + projectHash + `"}` + "\n"
 	case "grok":
-		bucket := filepath.Join(cfg.AgentDir(provider), "sessions", "live")
+		bucket := filepath.Join(home, "sessions", "live")
 		if err := os.MkdirAll(bucket, 0o700); err != nil {
 			t.Fatal(err)
 		}

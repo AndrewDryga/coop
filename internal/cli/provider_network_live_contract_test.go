@@ -209,7 +209,11 @@ func TestProviderNetworkLiveContractFixture(t *testing.T) {
 	if path != filepath.Join(layout.State, "provider-network-mcp.json") {
 		t.Fatalf("MCP source config is not the fixed control path: %s", path)
 	}
-	info, err := os.Stat(filepath.Join(profile, "mcpprobe"))
+	nativeHome, err := box.NativeHomePath(&config.Config{ConfigDir: layout.Config}, selection.Provider, selection.Account, layout.Repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(nativeHome, "mcpprobe"))
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("probe executable missing: %v", err)
 	}

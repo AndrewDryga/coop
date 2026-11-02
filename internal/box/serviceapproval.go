@@ -348,10 +348,13 @@ func writeServiceApproval(root, key string, approval ServiceApproval) error {
 // ServiceStartReview freezes one validated Compose file for the terminal review and subsequent
 // start. Volume permission is mandatory; declining secret files instead keeps their decoys.
 type ServiceStartReview struct {
-	Secrets              *ServiceSecretReview
-	Volumes              []ServiceVolumeAccess
-	VolumeApprovalNeeded bool
-	NewVolumes           []string
+	// AllowCaseExposedSecrets is the existing one-launch operator override,
+	// consulted only when qualified kernel protection is unavailable.
+	AllowCaseExposedSecrets bool
+	Secrets                 *ServiceSecretReview
+	Volumes                 []ServiceVolumeAccess
+	VolumeApprovalNeeded    bool
+	NewVolumes              []string
 
 	workspace string
 	file      string

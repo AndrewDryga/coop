@@ -106,7 +106,14 @@ func (f *filteredExecution) createContainer(ctx context.Context, role, image str
 	if err := f.store.AuthorizeLaunch(ctx, f.record.ID, role); err != nil {
 		return err
 	}
-	id, createErr := f.docker.CreateContainer(ctx, runtime.DockerCreate{Ref: f.createRef(role), Image: image, Options: options, Command: command})
+	create := f.docker.CreateContainer
+	if role == "agent" && f.filesystem != nil {
+		if err := f.filesystem.consumer(f.createRef(role)); err != nil {
+			return err
+		}
+		create = f.filesystem.create
+	}
+	id, createErr := create(ctx, runtime.DockerCreate{Ref: f.createRef(role), Image: image, Options: options, Command: command})
 	if id == "" {
 		if errors.Is(createErr, runtime.ErrDockerCreateNotAttempted) {
 			return createErr
@@ -119,7 +126,13 @@ func (f *filteredExecution) createContainer(ctx context.Context, role, image str
 	if createErr != nil {
 		return createErr
 	}
-	return f.verifyContainer(ctx, role, image, options)
+	if err := f.verifyContainer(ctx, role, image, options); err != nil {
+		return err
+	}
+	if role == "agent" && f.filesystem != nil {
+		return f.filesystem.verify(ctx, f.ref(role), image)
+	}
+	return nil
 }
 
 func (f *filteredExecution) verifyContainer(ctx context.Context, role, image string, options []string) error {
@@ -339,7 +352,17 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	options = append(slices.Clone(options), "--user", f.agentIdentity.user(), "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--network", "container:"+f.ref("controller").ID)
 	options = append(options, f.serveEnv...)
-	if err := f.createContainer(ctx, "agent", f.image, options, spec.Cmd); err != nil {
+	command := spec.Cmd
+	if f.filesystem != nil {
+		options, command, err = f.filesystem.guarded(ctx, f.image, command, options)
+		if err != nil {
+			return -1, err
+		}
+		if err := f.filesystem.revalidate(); err != nil {
+			return -1, err
+		}
+	}
+	if err := f.createContainer(ctx, "agent", f.image, options, command); err != nil {
 		return -1, err
 	}
 	if err := f.waitReady(ctx); err != nil {

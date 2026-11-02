@@ -37,6 +37,10 @@ const serviceCoverLimit = 8192
 // letter case, a hidden file or .coopignore inside a folder bind also gets a cover for every other
 // spelling of its name, as a box's does (ComputeMounts); uncovered lists those it could not cover.
 func serviceShadowPlan(repo, composeFile string, data []byte) (decoys map[string][]serviceDecoy, hiddenPaths, uncovered []string, err error) {
+	return serviceShadowPlanWithSpellings(repo, composeFile, data, true)
+}
+
+func serviceShadowPlanWithSpellings(repo, composeFile string, data []byte, expand bool) (decoys map[string][]serviceDecoy, hiddenPaths, uncovered []string, err error) {
 	var doc composeDoc
 	if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&doc); err != nil {
 		return nil, nil, nil, err
@@ -61,7 +65,7 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (decoys map[string
 		// none: Linux keeps one entry per folder, so CONFIG/ lands on config/'s cover.
 		spelled := func(decoy serviceDecoy, p string) {
 			decoys[name] = append(decoys[name], decoy)
-			if !foldsCase(p) {
+			if !expand || !foldsCase(p) {
 				return
 			}
 			spellings, ok := otherSpellings(filepath.Base(p))

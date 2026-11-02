@@ -73,17 +73,7 @@ func (a *app) cmdUp(args []string) (int, error) {
 	if err != nil {
 		return 1, composeRefusal("Could not start services from "+rel, rel, err, "coop up")
 	}
-	exposed, err := review.CaseExposed()
-	if err != nil {
-		return 1, composeRefusal("Could not start services from "+rel, rel, err, "coop up")
-	}
-	if pending := box.UnapprovedCaseExposures(repo, exposed); len(pending) > 0 && !a.cfg.AllowCaseExposedSecrets {
-		headline, reason, fix := uncoveredSpellingsBlock(pending, "your services", "a service")
-		return 1, reported(headline, reason, fix)
-	}
-	if len(exposed) > 0 {
-		ui.Warn("Accepted case exposure: %d hidden files may be read by your services under another letter case.", len(exposed))
-	}
+	review.AllowCaseExposedSecrets = a.cfg.AllowCaseExposedSecrets
 	renewal := review.Renewal()
 	volumePending := review.VolumeApprovalNeeded
 	secretPending := review.Secrets != nil && len(review.Secrets.Files) > 0
@@ -189,6 +179,11 @@ func askServiceVolumes(review *box.ServiceStartReview, rel string, ask *bufio.Sc
 // Compose file (the violation names itself), or TMPDIR resolves somewhere an agent can see. Both
 // name the file that did not run and the command to repeat once it is fixed.
 func composeRefusal(headline, rel string, err error, retry string) error {
+	var uncovered *box.UncoveredSpellings
+	if errors.As(err, &uncovered) {
+		headline, reason, fix := uncoveredSpellingsBlock(uncovered.Paths, "your services", "a service")
+		return reported(headline, reason, fix)
+	}
 	// The .coopignore is what to fix, not the Compose file, and a box can name its folder.
 	if refused := reportUnreadableCoopignore(err, retry, ""); refused != nil {
 		return refused
@@ -206,9 +201,9 @@ func composeRefusal(headline, rel string, err error, retry string) error {
 }
 
 // askServiceSecrets puts the secret-looking files a Compose file binds in front of a human and
-// records their answer. Declining is not cancellation: the services start with empty files, which
-// is what they would have got had nobody asked. Without a terminal nobody can answer, so it says
-// which files stay empty and how to approve them, then starts anyway — the same decision the box
+// records their answer. Declining is not cancellation: the files stay hidden, as
+// they would had nobody asked. Without a terminal nobody can answer, so it says
+// which files stay hidden and how to approve them, then starts anyway — the same decision the box
 // auto-start makes. A non-nil error means the caller must stop.
 func askServiceSecrets(review *box.ServiceSecretReview, rel string, ask *bufio.Scanner, atTerminal, save bool) (int, error) {
 	if review == nil {
@@ -225,7 +220,7 @@ func askServiceSecrets(review *box.ServiceSecretReview, rel string, ask *bufio.S
 			return 1, reported("Services were not started", "A service image changed since its secret-file approval.",
 				"Run coop up at a terminal to review the new image; the previous approval is unchanged.")
 		}
-		emptyFilesNotice(review.Paths(), "  To approve access, run coop up at a terminal.")
+		hiddenServiceFilesNotice(review.Paths(), "  To approve access, run coop up at a terminal.")
 		return 0, nil
 	}
 	ui.Note("Services in %s ask to read %s.", ui.SafeInline(rel), ui.Count(len(review.Files), "secret file"))
@@ -245,7 +240,7 @@ func askServiceSecrets(review *box.ServiceSecretReview, rel string, ask *bufio.S
 	}
 	noteServiceImagePins(review.Images(), review.ImageRefs(), review.PreviousImages())
 	ui.Note("")
-	ui.Note("The services receive empty files unless you approve access.")
+	ui.Note("These files stay hidden unless you approve access.")
 	ui.Note("Approval applies to this Compose file and the image IDs above; changing either requires review.")
 	ui.Note("")
 	answer, _ := askOneOK(ask, "Allow services to read these files? [y/N]: ")
@@ -255,7 +250,7 @@ func askServiceSecrets(review *box.ServiceSecretReview, rel string, ask *bufio.S
 			return 1, reported("Services were not started", "The new service image was not approved for secret-file access.",
 				"The previous approval is unchanged; run coop up to review the new image.")
 		}
-		emptyFilesNotice(review.Paths(), "")
+		hiddenServiceFilesNotice(review.Paths(), "")
 		return 0, nil
 	}
 	if !save {
@@ -302,10 +297,10 @@ func noteServiceImagePins(images, refs, previous map[string]string) {
 	}
 }
 
-// emptyFilesNotice names the files the services will not be able to read, and — when nobody could
+// hiddenServiceFilesNotice names the files the services will not be able to read, and — when nobody could
 // be asked — how to approve them.
-func emptyFilesNotice(paths []string, action string) {
-	ui.Warn("Services will receive empty files")
+func hiddenServiceFilesNotice(paths []string, action string) {
+	ui.Warn("Secret files stay hidden from services")
 	for _, p := range paths {
 		ui.Note("  %s", ui.SafeInline(p))
 	}

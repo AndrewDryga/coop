@@ -9,8 +9,7 @@ updated: 2026-11-01
 `go run ./tools/fsprobe` creates inert fixtures on the explicitly selected share,
 binds a local Docker endpoint/daemon and immutable image, and records raw controls,
 mounts, host identities, and access observations. It is a developer qualification
-tool for a quiescent share, never an admission grant or a startup probe. Existing
-spelling mounts and case-exposure approvals are unchanged.
+tool for a quiescent share, never an admission grant or a startup probe. The integrated backend is documented separately in [[filesystem-enforcement]].
 
 `--bpf` uses raw system calls in a separate privileged loader to attach six LSM
 programs directly to two unprivileged workload cgroups. The cgroups retain the
@@ -38,9 +37,11 @@ disclosure through already-held descriptors/mappings.
 
 `RESULTS.md` records the scope and integration decision. A finite fixture cannot
 authorize removing spelling mounts from arbitrary shares or service binds. The
-command always leaves `Qualified` false; production protection is unchanged.
+command always leaves `Qualified` false; these historical diagnostic results do not grant production admission.
 
 ## Changelog
+- 2026-11-01 — linked the integrated backend; removed the diagnostic blanket multi-link ban,
+  retaining its historical counterexamples and link-count telemetry.
 - 2026-11-01 — strengthened BPF qualification: actual helper support, open-time
   telemetry, guest mutations and handle lifetime; retained repeated stale-link
   failures and public-hardlink compatibility cost, with kernel map cleanup proof.

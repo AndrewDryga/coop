@@ -46,7 +46,7 @@ func safeServicePaths(paths []string) string {
 	return strings.Join(safe, ", ")
 }
 
-func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, owner, network string, labels map[string]string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, review *ServiceStartReview, selected []string, exposedRoots ...string) (startedServices, error) {
+func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, owner, network string, labels map[string]string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, review *ServiceStartReview, selected []string, exposedRoots ...string) (out startedServices, result error) {
 	if file == "" {
 		return startedServices{}, nil
 	}
@@ -68,7 +68,15 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	// (the compose path is no longer shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
-	args, cleanup, hidden, err := snapshotComposeArgsForStart(ctx, rt, workspace, file, owner, repoReadOnly, review, exposedRoots...)
+	ctx = context.WithValue(ctx, deferServiceShadowsKey{}, rt.Name == "docker" && filesystemProfileCandidate(workspace))
+	data, err := readValidatedCompose(file, workspace, repoReadOnly)
+	if err == nil && review != nil {
+		err = review.verify(ctx, rt, workspace, file, data)
+	}
+	if err != nil {
+		return startedServices{}, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
+	}
+	args, cleanup, hidden, err := snapshotComposeArgsForStartPinned(ctx, rt, workspace, file, owner, data, review != nil, exposedRoots...)
 	if err != nil {
 		return startedServices{}, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
 	}
@@ -81,7 +89,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 		// fails in its own way ("missing BEGIN PRIVATE KEY"), and this is the only line that names the
 		// cause and the fix.
 		ui.Note("")
-		ui.Warn("Services receive an empty replacement for %s because it looks like a secret. Run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden",
+		ui.Warn("Services cannot read %s because it looks like a secret. Run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden",
 			safeServicePaths(hidden))
 	}
 	// Publish each `expose`d sidecar port to its stable per-workspace host port via a merged
@@ -112,6 +120,19 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	if len(selected) > 0 {
 		started.names = append([]string(nil), selected...)
 	}
+	allowCases, _ := ctx.Value(serviceCaseExposureKey{}).(bool)
+	if review != nil {
+		allowCases = review.AllowCaseExposedSecrets
+	}
+	filesystem, err := prepareServiceFilesystemStart(ctx, rt, workspace, file, data, args, selected, allowCases, true)
+	if err != nil {
+		return started, &ComposeRefused{Err: err}
+	}
+	defer func() { result = errors.Join(result, filesystem.abort()) }()
+	args = filesystem.args
+	if err := filesystem.create(ctx, rt, selected, false, stdout, stderr); err != nil {
+		return started, err
+	}
 	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait")
 	if len(selected) == 0 {
 		upArgs = append(upArgs, "--remove-orphans")
@@ -121,6 +142,17 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 		observed, observeErr := observedServicePorts(ctx, rt, workspace, file, owner, network, ports)
 		started.ports = observed
 		return started, errors.Join(err, observeErr)
+	}
+	if err := filesystem.retain(); err != nil {
+		return started, err
+	}
+	if len(filesystem.admissions) > 0 {
+		cleanupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		_, cleanupErr := RecoverFilesystemAdmissions(cleanupCtx, rt, workspace)
+		cancel()
+		if cleanupErr != nil {
+			return started, cleanupErr
+		}
 	}
 	started.ports = ports
 	return started, nil
@@ -179,24 +211,12 @@ func snapshotComposeArgsForInspect(workspace, file, owner string, repoReadOnly b
 	return snapshotComposeArgsForStartData(workspace, file, owner, data, true, exposedRoots...)
 }
 
-func snapshotComposeArgsForStart(ctx context.Context, rt runtime.Runtime, workspace, file, owner string, repoReadOnly bool, review *ServiceStartReview, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
-	data, err := readValidatedCompose(file, workspace, repoReadOnly)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if review != nil {
-		if err := review.verify(ctx, rt, workspace, file, data); err != nil {
-			return nil, nil, nil, err
-		}
-	}
-	return snapshotComposeArgsForStartPinned(ctx, rt, workspace, file, owner, data, review != nil, exposedRoots...)
-}
-
 func snapshotComposeArgsForStartPinned(ctx context.Context, rt runtime.Runtime, workspace, file, owner string, data []byte, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
 	if err := validateIsolatedServiceVolumes(ctx, rt, workspace, file, owner, data); err != nil {
 		return nil, nil, nil, err
 	}
-	args, cleanup, hidden, err = snapshotComposeArgsForStartData(workspace, file, owner, data, allowOutsideData, exposedRoots...)
+	deferred, _ := ctx.Value(deferServiceShadowsKey{}).(bool)
+	args, cleanup, hidden, err = snapshotComposeArgsForStartDataMode(workspace, file, owner, data, allowOutsideData, !deferred, exposedRoots...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -210,6 +230,10 @@ func snapshotComposeArgsForStartPinned(ctx context.Context, rt runtime.Runtime, 
 }
 
 func snapshotComposeArgsForStartData(workspace, file, owner string, data []byte, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
+	return snapshotComposeArgsForStartDataMode(workspace, file, owner, data, allowOutsideData, true, exposedRoots...)
+}
+
+func snapshotComposeArgsForStartDataMode(workspace, file, owner string, data []byte, allowOutsideData, shadows bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
 	if !allowOutsideData {
 		volumes, err := outsideServiceVolumes(data)
 		if err != nil {
@@ -235,6 +259,9 @@ func snapshotComposeArgsForStartData(workspace, file, owner string, data []byte,
 	}
 	args = []string{"compose", "-p", ComposeProjectFor(workspace, owner),
 		"--project-directory", filepath.Dir(abs), "--env-file", os.DevNull, "-f", path}
+	if !shadows {
+		return args, cleanup, nil, nil
+	}
 	// The sidecars get the box's secret shadowing too: a decoy over every hidden path a repo bind
 	// would otherwise hand them raw (see serviceShadowOverride) — unless a human approved this
 	// exact file's content on this host, which is the one way a service legitimately reads a
@@ -418,7 +445,8 @@ func DownServicesFile(rt runtime.Runtime, workspace, file string, volumes bool, 
 	ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_, err = RemoveProjectNetworks(ctx, bound, ComposeProject(workspace))
-	return err
+	_, filesystemErr := RecoverFilesystemAdmissions(ctx, bound, workspace)
+	return errors.Join(err, filesystemErr)
 }
 
 // DownServicesFileVolumes stops the Compose project, then deletes exactly the volumes the caller
@@ -539,7 +567,8 @@ func StopServicesForOwner(ctx context.Context, rt runtime.Runtime, workspace, po
 			volumeErr = fmt.Errorf("remove owned volumes: %w", err)
 		}
 	}
-	if err := errors.Join(networkErr, volumeErr); err != nil {
+	_, filesystemErr := RecoverFilesystemAdmissions(ctx, rt, workspace)
+	if err := errors.Join(networkErr, volumeErr, filesystemErr); err != nil {
 		return fmt.Errorf("stop session services: %w", err)
 	}
 	return nil

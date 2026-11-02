@@ -744,6 +744,13 @@ func TestLiveProviderConformance(t *testing.T) {
 	cwd := coopE2ERepo
 	for _, provider := range agents.Names() {
 		t.Run(provider, func(t *testing.T) {
+			if os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") == "1" {
+				fixture := filepath.Join(cwd, ".env")
+				if err := os.WriteFile(fixture, []byte("inert filesystem fixture"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Remove(fixture) })
+			}
 			// Exercise the editor's literal ["acp"] invocation with only this
 			// provider signed in. Explicit targets are covered by the switch matrix.
 			live := startLiveACP(t, "", provider)
@@ -767,6 +774,7 @@ func TestLiveProviderConformance(t *testing.T) {
 			if sessionID == "" {
 				live.fail(t, "session_new_result", nil)
 			}
+			assertLiveFilesystem(t, ctx, live, cwd)
 			options := liveConfigOptions(t, live, response)
 			// A filtered supervisor is scoped to this one brokered provider, so a preset whose ladder
 			// needs ANOTHER provider is unavailable and its sole-"none" selector is hidden. The test
@@ -846,6 +854,7 @@ func TestLiveProviderConformance(t *testing.T) {
 				live.fail(t, "replay_signal", err)
 			}
 			replayOptions := awaitLiveReplay(t, ctx, live, replayMark, sessionID)
+			assertLiveFilesystem(t, ctx, live, cwd)
 			if selectedModel != "" && replayOptions["model"].CurrentValue != selectedModel {
 				live.fail(t, "model_replay", nil)
 			}
@@ -883,6 +892,45 @@ func TestLiveProviderConformance(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The optional filesystem qualification proves the selected backend and actual
+// denial, both before prompts and after the editor's replacement generation.
+func assertLiveFilesystem(t *testing.T, ctx context.Context, live *liveACP, cwd string) {
+	t.Helper()
+	if os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
+		return
+	}
+	docker, err := runtime.BindDocker(ctx, live.runtime, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer docker.Close()
+	list := exec.CommandContext(ctx, docker.Binary(), "--host", docker.Endpoint(), "ps", "--no-trunc",
+		"--filter", "label="+liveprovider.SupervisorLabelKey+"="+live.supervisor, "--filter", "label=coop=box", "--format", "{{.ID}} {{.Names}}")
+	output, err := list.Output()
+	fields := strings.Fields(string(output))
+	if err != nil || len(fields) != 2 {
+		t.Fatalf("filesystem witness needs one live editor box: %v", err)
+	}
+	ref := runtime.DockerRef{ID: fields[0], Name: fields[1], Labels: map[string]string{liveprovider.SupervisorLabelKey: live.supervisor, "coop": "box"}}
+	container, present, err := docker.InspectContainer(ctx, ref)
+	parent := container.Labels["coop.filesystem.parent"]
+	if err != nil || !present || !container.State.Running || !strings.HasPrefix(parent, "coop-fs-") || container.CgroupParent != "/"+parent ||
+		!slices.Equal(container.Entrypoint, []string{"/.coop-fs/guard"}) || !slices.Equal(container.Cmd, []string{"guard", "/.coop-fs/manifest.json"}) {
+		t.Fatalf("editor box lacks an active filesystem guard: %v", err)
+	}
+	_, err = docker.ExecRead(ctx, ref, 1024, "python3", "-c", `import errno,os,sys
+root=sys.argv[1]
+assert open(os.path.join(root,'.agent/presets/frontier/preset.yaml')).read()
+for name in ['.env','.ENV']:
+ try: open(os.path.join(root,name)).read()
+ except OSError as error: assert error.errno==errno.EPERM,(name,error)
+ else: raise AssertionError('secret readable')`, cwd)
+	if err != nil {
+		t.Fatal("editor filesystem denial witness", err)
+	}
+	t.Logf("editor filesystem guard and exact/case denial passed; mounts=%d", len(container.Mounts))
 }
 
 func TestLiveCrossProviderCarry(t *testing.T) {

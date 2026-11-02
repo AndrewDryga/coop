@@ -11,7 +11,7 @@ LDFLAGS := -s -w -X github.com/AndrewDryga/coop/internal/cli.Version=$(VERSION)
 # that module, the scanner at a pin mirrored there (agent_config_test.go holds them equal).
 STATICCHECK_MODFILE := tools/staticcheck.mod
 # VET_TAGS are the build tags vet and staticcheck add, so the tagged suites are linted too.
-VET_TAGS := acpe2e,boxruntimee2e,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e
+VET_TAGS := filesystemruntimee2e,acpe2e,boxruntimee2e,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e
 STATICCHECK_VERSION := $(shell awk '$$1 == "honnef.co/go/tools" {print $$2}' $(STATICCHECK_MODFILE))
 STATICCHECK_XTOOLS_VERSION := $(shell awk '$$1 == "golang.org/x/tools" {print $$2}' $(STATICCHECK_MODFILE))
 GOVULNCHECK_VERSION := v1.8.0
@@ -220,7 +220,7 @@ gate-%: FORCE
 
 FORCE:
 
-check-static: mod-check gateway-sources-check lint shellcheck build-all vuln align docs-check rules-check ## Free source, analyzer, build, docs and tool checks
+check-static: mod-check gateway-sources-check filesystem-sources-check lint shellcheck build-all vuln align docs-check rules-check ## Free source, analyzer, build, docs and tool checks
 check-unit: test-minimal-path ## Free ordinary unit tests, with only the host programs CONTRIBUTING.md requires
 check-process: check-process-loop check-process-rest ## Free scripted-provider and process-control tests
 check-process-loop: provider-scripted-loop-e2e ## The scripted provider suite's loop tests
@@ -231,7 +231,7 @@ check-race: race ## Free race-detector tests
 # includes tagged/test/root/tool consumers; shared foundations/build inputs still need check.
 # LOCAL_* package lists are guarded by TestLocalCheckScopesCoverReverseConsumers.
 LOCAL_agent := . ./cmd/coop-net ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/agent ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/consult ./internal/forkctl ./internal/ladder ./internal/loop ./internal/loopcfg ./internal/networkgateway ./internal/preset ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/lifecyclebench
-LOCAL_runtime := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/gatewayimage ./internal/loop ./internal/runtime ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./internal/testutil/nativedocker ./tools/gendocs ./tools/gennetimage ./tools/lifecyclebench ./tools/fsprobe
+LOCAL_runtime := . ./internal ./internal/fsfilter ./internal/fsimage ./tools/genfsimage ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/gatewayimage ./internal/loop ./internal/runtime ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./internal/testutil/nativedocker ./tools/gendocs ./tools/gennetimage ./tools/lifecyclebench ./tools/fsprobe
 LOCAL_sessions := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/session ./internal/sessionsvc ./internal/workerconnector ./internal/workerproto ./tools/gendocs ./internal/box/testdata/mcpprobe
 LOCAL_tasks := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/loop ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/lifecyclebench
 LOCAL_connector := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/sessionsvc ./internal/workerconnector ./tools/gendocs ./internal/box/testdata/mcpprobe
@@ -331,7 +331,7 @@ acp-scripted-e2e: ## Deterministic ACP process e2e (no runtime or provider crede
 	@go test -run '^TestScriptedACP' -count=1 -v ./internal/acpproxy/
 
 # This target and the runtime ones below pick their acpe2e, reviewwritee2e, boxruntimee2e and
-# networkruntimee2e tests by -run pattern. runtime_selection_test.go fails on such a test none of
+# networkruntimee2e/filesystemruntimee2e tests by -run pattern. runtime_selection_test.go fails on such a test none of
 # them runs (its file built by the target's -tags, its package listed, its name matched).
 acp-e2e: ## Real ACP adapter e2e (isolated binary; needs a configured runtime, built box, and credentials)
 	@COOP_ACP_LIVE_REQUIRE_ALL=1 go test -timeout 30m -tags acpe2e -run 'Test(LiveProviderConformance|LiveCrossProviderCarry|ForeignSessionLoadRejectsUnknownID|PresetOwnsSelectorState|CodexTargetRolloutTruth|FrontierStoredTargetTruth)$$' -count=1 -v ./internal/acpproxy/
@@ -352,6 +352,10 @@ mcp-e2e: ## Offline shared MCP handshake for Codex/Gemini/Grok; Claude is live-o
 box-runtime-e2e: ## Init/reaping, signal, and entrypoint descendant-supervision contracts (set COOP_RUNTIME=docker)
 	@test -n "$$COOP_RUNTIME" || { echo 'COOP_RUNTIME is required (for example: COOP_RUNTIME=docker make box-runtime-e2e)'; exit 2; }
 	@go test -tags boxruntimee2e -run '^TestRuntime(Init|Entrypoint|Compose)' -count=1 -v ./internal/box/
+
+filesystem-runtime-e2e: ## Filesystem enforcement and crash recovery on a supported APFS Docker runtime (needs a local client image)
+	@test -n "$$COOP_FILESYSTEM_CLIENT_IMAGE" || { echo 'COOP_FILESYSTEM_CLIENT_IMAGE must name a locally built client image'; exit 2; }
+	@COOP_FILESYSTEM_RUNTIME_TEST=1 go test -tags filesystemruntimee2e -run '^TestFilesystem' -count=1 -timeout 15m -v ./internal/box/
 
 task-channel-e2e: ## The in-box task channel: a real box completes its own task and is refused a held one (needs the coop-box image)
 	@go test -tags boxruntimee2e -run '^TestTaskChannelLiveInARealBox$$' -count=1 -v ./internal/box/
@@ -380,3 +384,7 @@ help: ## List targets
 .PHONY: require-git-lfs
 .PHONY: mod-check
 .PHONY: gateway-sources-check
+
+.PHONY: filesystem-sources-check filesystem-runtime-e2e
+filesystem-sources-check: ## Verify embedded filesystem helper sources match the checkout
+	@go test ./internal/fsimage -run '^TestEmbeddedFilesystemSourcesExactlyMatchCheckout$$' -count=1

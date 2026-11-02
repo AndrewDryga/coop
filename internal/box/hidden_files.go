@@ -1,6 +1,7 @@
 package box
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -8,11 +9,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
+	"golang.org/x/sys/unix"
 )
 
 // A launch hides files by their paths, and a box can move a hidden file, or the folder holding
@@ -159,10 +162,38 @@ func NewShadowDecider(repo string) func(relSlash string) (bool, error) {
 // the path it was first hidden at; one no longer hidden, back at its path under rules that no
 // longer name it, or gone, is forgotten.
 func RememberHiddenFiles(repo, workdir string, mounts []Mount) error {
+	return withHiddenFilesLock(context.Background(), repo, func() error {
+		return rememberHiddenFiles(repo, workdir, mounts)
+	})
+}
+
+// Capture and persistence share this lock: concurrent launches must see each
+// other's remembered identities before deciding which existing aliases hide.
+func withHiddenFilesLock(ctx context.Context, repo string, apply func() error) error {
 	path, err := hiddenFilesPath(repo)
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path+".lock", os.O_RDWR|os.O_CREATE|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.Join(errors.New("hidden-file identity lock is not a regular file"), err)
+	}
+	if err := flockWait(ctx, file, unix.LOCK_EX); err != nil {
+		return err
+	}
+	defer unix.Flock(int(file.Fd()), unix.LOCK_UN)
+	return apply()
+}
+
+func rememberHiddenFiles(repo, workdir string, mounts []Mount) error {
 	before := loadHiddenFiles(repo)
 	record := hiddenFilesRecord{Version: hiddenFilesVersion}
 	seen := map[fileIdentity]bool{}
@@ -191,6 +222,70 @@ func RememberHiddenFiles(repo, workdir string, mounts []Mount) error {
 	}
 	if len(record.Files) == 0 && len(before) == 0 {
 		return nil
+	}
+	if err := preserveHiddenAliases(repo, before, seen, &record); err != nil {
+		return err
+	}
+	return writeHiddenFiles(repo, record)
+}
+
+// The mount backend skips hidden descendants and .git. It must not discard an
+// identity a complete filesystem admission recorded there, or a subsequent host
+// atomic save can leave its old alias exposed. Ordinary unchanged records need
+// no additional walk; deliberate declassification at the original path remains.
+func preserveHiddenAliases(repo string, before rememberedHidden, seen map[fileIdentity]bool, record *hiddenFilesRecord) error {
+	missing := rememberedHidden{}
+	for id, origin := range before {
+		if !seen[id] {
+			missing[id] = origin
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	visited := 0
+	err := filepath.WalkDir(repo, func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		visited++
+		if visited > 1_000_000 {
+			return errors.New("hidden-file alias inventory exceeds admission bounds")
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		id, ok := identityOf(info)
+		origin, missingID := missing[id]
+		if !ok || !missingID {
+			return nil
+		}
+		rel, err := filepath.Rel(repo, name)
+		if err != nil {
+			return err
+		}
+		if filepath.ToSlash(rel) == origin {
+			return nil
+		}
+		if len(record.Files) >= maxHiddenFiles {
+			return errors.New("hidden-file alias record exceeds admission bounds")
+		}
+		record.Files = append(record.Files, hiddenFile{Dev: id.dev, Ino: id.ino, Path: origin})
+		delete(missing, id)
+		if len(missing) == 0 {
+			return fs.SkipAll
+		}
+		return nil
+	})
+	slices.SortFunc(record.Files, func(a, b hiddenFile) int { return strings.Compare(a.Path, b.Path) })
+	return err
+}
+
+func writeHiddenFiles(repo string, record hiddenFilesRecord) error {
+	path, err := hiddenFilesPath(repo)
+	if err != nil {
+		return err
 	}
 	data, err := json.Marshal(record)
 	if err != nil {

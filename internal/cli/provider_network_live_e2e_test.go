@@ -170,7 +170,11 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 	}
 	// Stage three is mandatory, independent of the operator's personal MCP configuration. Only
 	// this launch's witness counts; the earlier prompts may have connected without calling a tool.
-	witness := filepath.Join(cfg.AgentProfileDir(target.Provider, account), ".coop-network-mcp.log")
+	nativeHome, err := box.NativeHomePath(cfg, target.Provider, account, cfg.RepoOverride, false)
+	if err != nil {
+		return harnessFail("native_home")
+	}
+	witness := filepath.Join(nativeHome, ".coop-network-mcp.log")
 	command = ag.Headless(cfg, "Call exactly the coop_probe_tool MCP tool once; wait for its result, then respond with exactly "+
 		marker+" and no other text. Do not answer without calling the tool.")
 	command = providerNetworkLiveMCPCommand(strings.TrimRight(cfg.HomeInBox, "/")+"/."+target.Provider+"/.coop-network-mcp.log", command)
@@ -365,9 +369,14 @@ func prepareProviderNetworkLiveMCP(layout procharness.Layout, selection liveprov
 	if !ok || system != "linux" || (arch != "amd64" && arch != "arm64") || !filepath.IsAbs(home) {
 		return "", errors.New("unsupported MCP fixture platform or home")
 	}
-	profile := filepath.Join(layout.Config, selection.Provider, "profiles", selection.Account)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	// The isolated credential projection contains no legacy history to import.
+	// Publish the same repository home box.Run will mount before adding its tool.
+	profile, err := box.PrepareNativeHome(ctx, &config.Config{ConfigDir: layout.Config, HomeInBox: home}, runtime.Runtime{}, selection.Provider, selection.Account, layout.Repo, false)
+	if err != nil {
+		return "", err
+	}
 	build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", filepath.Join(profile, "mcpprobe"), "../box/testdata/mcpprobe")
 	build.Env = append(os.Environ(), "GOOS="+system, "GOARCH="+arch, "CGO_ENABLED=0")
 	if err := build.Run(); err != nil {

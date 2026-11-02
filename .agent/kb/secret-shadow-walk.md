@@ -3,10 +3,11 @@ name: secret-shadow-walk
 description: every launch walks the whole checkout from a real-folder root (a linked root and a link to home are refused, though a box that writes the root's parent can still swap it), gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs; the .coopignore files above the repository, short of home, apply too
 subsystem: box
 sources: [internal/box/mounts.go, internal/box/hidden_files.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, internal/forkctl/merge.go, internal/sessionsvc/review_scan.go, tools/lifecyclebench]
-updated: 2026-10-19
+updated: 2026-11-01
 ---
 
-`box.ComputeMounts` runs on every launch (`run.go`). It walks the whole repository, skipping only
+The mount backend uses `box.ComputeMounts`; qualified eBPF launches capture the same semantic
+decisions before spelling expansion (see [[filesystem-enforcement]]). It walks the whole repository, skipping only
 `.git` and directories it hides, and asks `shadowpath.NewDecider` about each path. Everything in
 the checkout is visible in the box, gitignored working state included, so `.agent/tasks`
 (artifacts, `tmp/` worktrees and clones) is walked too and can't be skipped. A secret in a task's
@@ -163,6 +164,8 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-11-01 — distinguished mount discovery from integrated BPF admission and linked its
+  complete alias inventory and shared identity persistence.
 - 2026-10-19 — ResolveRepo spells a COOP_REPO override as the disk stores it, so the prefix of a
   case-mismatched override matches folder rules from above (task
   2026-10-19-key-the-task-lease-registry-by-the-project-s-sto).

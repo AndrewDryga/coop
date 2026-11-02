@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -83,22 +82,34 @@ func (r Runtime) PullComposeImage(image string) error {
 // but never the host's proxy injection rules. It pins a frozen operation to its
 // inspected local daemon. Other runtime dialects retain their existing runner.
 func (r Runtime) RunCompose(stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
+	return r.RunComposeContext(context.Background(), stdin, stdout, stderr, args...)
+}
+
+// RunComposeContext keeps the same frozen daemon and private registry config
+// while allowing admission and cleanup observations to honor their deadline.
+func (r Runtime) RunComposeContext(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
 	if r.kind() != runtimeDocker {
-		return r.Run(stdin, stdout, stderr, args...)
+		return r.RunInterruptible(ctx, stdin, stdout, stderr, args...)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	bindCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var docker *Docker
 	var err error
 	if r.composeEndpoint == "" {
-		docker, err = InspectDocker(ctx, r)
+		docker, err = InspectDocker(bindCtx, r)
 	} else {
-		docker, err = bindDocker(ctx, r, r.composeEndpoint, r.composeDaemon, false)
+		docker, err = bindDocker(bindCtx, r, r.composeEndpoint, r.composeDaemon, false)
 	}
 	if err != nil {
 		return -1, err
 	}
 	defer docker.Close()
+	return docker.runCompose(ctx, stdin, stdout, stderr, args...)
+}
+
+// Execute through the bound client: the caller supplies Compose arguments, never
+// an executable. Keep registry configuration private for this operation.
+func (docker *Docker) runCompose(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
 	config, cleanup, err := privateComposeClientConfig()
 	if err != nil {
 		return -1, err
@@ -109,13 +120,14 @@ func (r Runtime) RunCompose(stdin io.Reader, stdout, stderr io.Writer, args ...s
 		return -1, err
 	}
 	argv := append([]string{"--config", config, "--host", docker.Endpoint()}, args...)
-	cmd := exec.Command(docker.Binary(), argv...)
+	cmd := contextCommand(ctx, docker.Binary(), argv...)
 	cmd.Env = docker.env
 	if authEnv != "" {
 		cmd.Env = append(cmd.Env, authEnv)
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	return exitCode(docker.Binary(), cmd.Run())
+	code, err := exitCode(docker.Binary(), cmd.Run())
+	return code, errors.Join(err, ctx.Err())
 }
 
 // Docker's environment-only registry auth takes precedence over config.json and credential

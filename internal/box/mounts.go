@@ -65,6 +65,12 @@ type Mount struct {
 // name too long to cover that way comes back in an UncoveredSpellings error together with the
 // mounts, for the launch to refuse unless its owner accepted the risk.
 func ComputeMounts(repo, workdir string) ([]Mount, error) {
+	return computeMounts(repo, workdir, true)
+}
+
+// computeMounts keeps one visibility decision for both protection backends.
+// Kernel admission consumes the decisions before generating spelling mounts.
+func computeMounts(repo, workdir string, expandSpellings bool) ([]Mount, error) {
 	shadowed := NewShadowDecider(repo)
 	mounts := []Mount{{Kind: Bind, Source: repo, Target: workdir}}
 	var budget spellingBudget
@@ -72,6 +78,9 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 	// spelled covers the other spellings of the file at p. A folder needs none: Linux keeps one
 	// entry per folder, so CONFIG/ lands on config/'s cover.
 	spelled := func(m Mount, p, relSlash string) Mount {
+		if !expandSpellings {
+			return m
+		}
 		spellings, ok := budget.covers(p, m.Target)
 		if !ok {
 			uncovered = append(uncovered, relSlash)

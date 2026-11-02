@@ -2,15 +2,80 @@ package runtime
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	coopconfig "github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 )
+
+func TestComposeContextCancellationPreservesCauseAndCleansPrivateConfig(t *testing.T) {
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	t.Setenv("DOCKER_AUTH_CONFIG", "")
+	t.Setenv("DOCKER_HOST", composeFixtureDaemon(t))
+	root := t.TempDir()
+	ready := filepath.Join(root, "ready")
+	t.Setenv("COOP_COMPOSE_TEST_READY", ready)
+	binary := filepath.Join(root, "docker")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s' \"$2\" > \"$COOP_COMPOSE_TEST_READY\"\nexec sleep 60\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := (Runtime{Name: binary}).RunComposeContext(ctx, nil, io.Discard, io.Discard, "compose", "up")
+		done <- err
+	}()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	var configPath string
+started:
+	for {
+		select {
+		case err := <-done:
+			t.Fatalf("Compose returned before cancellation: %v", err)
+		case <-deadline.C:
+			t.Fatal("Compose never started")
+		case <-ticker.C:
+			if data, err := os.ReadFile(ready); err == nil && len(data) > 0 {
+				configPath = string(data)
+				break started
+			}
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("lost cancellation cause: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Compose ignored cancellation")
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("retained registry config: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "coop-compose-client-") || strings.HasPrefix(entry.Name(), "coop-docker-client-") {
+			t.Fatalf("retained private client directory %s", entry.Name())
+		}
+	}
+}
 
 func TestComposeRegistryConfigStaysUnderProtectedCoopHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
