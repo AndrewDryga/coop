@@ -2,7 +2,7 @@
 name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
-sources: [internal/box/filesystem.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
+sources: [internal/box/filesystem.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, cmd/coop-fs/probe_linux.go, cmd/coop-fs/probe_linux_test.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
 updated: 2026-11-02
 ---
 
@@ -63,7 +63,12 @@ still holds every initially protected object, so a new public alias inherits its
 to remembered identity authority falls back to full inventory. Other filesystems keep full
 revalidation, including Linux leaf mount device checks. Every admission proves the actual share
 by replacing a warmed public pathname with a protected hardlink and checking that pathname
-first, before another alias could refresh guest metadata.
+first, before another alias could refresh guest metadata. A completed host rename can briefly
+appear missing in the guest, including without BPF. The probe retries only that same open on
+ENOENT, with one two-second deadline across all denied paths. Absence never proves enforcement:
+actual EPERM/EACCES is mandatory, a successful open or any other error fails immediately, and
+public-content checks remain required. The probe records how many missing observations occurred;
+it never refreshes another alias or restarts the qualification to make a failure disappear.
 
 ## Trusted-host snapshot contract
 
@@ -133,6 +138,9 @@ The ACP live conformance test accepts the same qualification switch to inspect t
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
 ## Changelog
+- 2026-11-02 — synchronized denied probe opens with bounded host-rename visibility, requiring
+  actual permission denial and retaining missing-observation counts. Verified the probe and
+  warmed-alias test against plain-Docker controls; other enforcement sections were not reverified.
 - 2026-11-02 — retained the bounded selection reason when mount fallback also refuses, without
   hiding joined cleanup failures or adding warnings to a successful fallback.
 - 2026-11-02 — overlapped owner/probe creation with capture, including joined panic cleanup;
