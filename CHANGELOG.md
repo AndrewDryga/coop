@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up
