@@ -73,3 +73,6 @@ See [measured results](RESULTS.md) for the current qualification outcome.
 
 The integrated runtime has a separate [performance harness and measurements](PERFORMANCE.md)
 covering admission, public file operations, concurrent runs, memory and cleanup.
+
+The [shared-hook and bulk-scan experiments](SHARED-HOOKS.md) record a bounded
+shared-policy lifecycle proof and a bulk reader rejected on platform-support grounds.
