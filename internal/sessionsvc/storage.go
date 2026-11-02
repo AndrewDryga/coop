@@ -216,9 +216,11 @@ type StorageReport struct {
 
 // StorageReclaim is one bounded reclamation pass.
 type StorageReclaim struct {
-	StagedPurged  int      `json:"staged_purged"`
-	SourcesPruned int      `json:"sources_pruned"`
-	Problems      []string `json:"problems"`
+	StagedPurged          int      `json:"staged_purged"`
+	SourcesPruned         int      `json:"sources_pruned"`
+	CompanionsReclaimed   int      `json:"companions_reclaimed"`
+	CompanionStagesPurged int      `json:"companion_stages_purged"`
+	Problems              []string `json:"problems"`
 }
 
 // StoragePressureError refuses one NEW fork and names the limit that refused it, so a controller
@@ -293,15 +295,18 @@ func (p *storagePressure) evaluate(limits StorageLimits, capacity, free, protect
 // storageAccountant is the service's storage state: the configured policy, the sticky pressure
 // decision, the last measurement, and the admissions currently in flight.
 type storageAccountant struct {
-	mu            sync.Mutex
-	measureMu     sync.Mutex
-	reclaimMu     sync.Mutex
-	configured    *StorageLimits
-	pressure      storagePressure
-	report        *StorageReport
-	measuredAt    time.Time
-	inflight      int
-	meanForkBytes int64
+	mu                   sync.Mutex
+	measureMu            sync.Mutex
+	reclaimMu            sync.Mutex
+	companionCursor      int
+	companionStageCursor int
+	companionStageFirst  bool
+	configured           *StorageLimits
+	pressure             storagePressure
+	report               *StorageReport
+	measuredAt           time.Time
+	inflight             int
+	meanForkBytes        int64
 }
 
 // setStorageLimits replaces the policy and drops the cached measurement, so the next report is
@@ -769,9 +774,12 @@ func (s *Service) measurePrivateState(scan *forkspace.UsageScan, report *Storage
 		report.Roots = append(report.Roots, root)
 	}
 	for name, into := range map[string]*int64{
-		"acp":                   &report.Totals.PrivateStateBytes,
-		"output":                &report.Totals.PrivateStateBytes,
-		"repositories":          &report.Totals.CompanionBytes,
+		"acp":          &report.Totals.PrivateStateBytes,
+		"output":       &report.Totals.PrivateStateBytes,
+		"repositories": &report.Totals.CompanionBytes,
+		// Stages may contain unknown or replaced trees. Until GC proves their
+		// receipt, conservatively retain their bytes as companion storage.
+		companionDiscardRoot:    &report.Totals.CompanionBytes,
 		"workspace-checkpoints": &report.Totals.CheckpointBytes,
 		"review-artifacts":      &report.Totals.ReviewArtifactBytes,
 		"review-candidates":     &report.Totals.ReviewArtifactBytes,
@@ -780,6 +788,25 @@ func (s *Service) measurePrivateState(scan *forkspace.UsageScan, report *Storage
 		*into += usage.ExclusiveBytes()
 		report.Totals.BaselineSharedBytes += usage.SharedBytes
 	}
+}
+
+// Reclaim at the low watermark, while reserve is still available. This runs
+// before taking any fork allocation lock; invoking GC inside admitNewFork
+// would invert the session/fork lock order against closed-session cleanup.
+func (s *Service) reclaimBeforeAllocation(ctx context.Context) {
+	volume, err := forkspace.MeasureFilesystem(s.stateRoot)
+	if err != nil {
+		return
+	}
+	limits := s.storageLimitsFor(volume.CapacityBytes)
+	used := volume.CapacityBytes - volume.FreeBytes
+	reservePressure := volume.FreeBytes <= limits.ReserveBytes || volume.FreeBytes-limits.ReserveBytes <= limits.ReserveBytes
+	if used < limits.LowWatermarkBytes && !reservePressure {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, companionReclaimTimeout)
+	defer cancel()
+	s.reclaimStorageOnce(ctx)
 }
 
 // admitNewFork is the atomic pre-allocation pressure check. It re-reads free space under the
@@ -840,7 +867,15 @@ func (s *Service) ReclaimStorage(ctx context.Context) (StorageReclaim, error) {
 	}
 	limits := s.storageLimitsSnapshot()
 	result := StorageReclaim{}
+	defer func() {
+		if result.CompanionsReclaimed > 0 || result.CompanionStagesPurged > 0 || result.StagedPurged > 0 || result.SourcesPruned > 0 {
+			s.storage.mu.Lock()
+			s.storage.report = nil
+			s.storage.mu.Unlock()
+		}
+	}()
 	s.reclaimReviewStages(ctx, limits, &result)
+	s.reclaimClosedCompanions(ctx, sessions, &result)
 	repositories, err := s.storageRepositories(sessions)
 	if err != nil {
 		return result, err
@@ -874,6 +909,9 @@ func (s *Service) reclaimStorageOnce(ctx context.Context) {
 	}
 	if result.StagedPurged > 0 {
 		s.log.Info("finished staged fork discards", "staged_purged", result.StagedPurged)
+	}
+	if result.CompanionsReclaimed > 0 || result.CompanionStagesPurged > 0 {
+		s.log.Info("reclaimed closed-session companions", "companions_reclaimed", result.CompanionsReclaimed, "staged_purged", result.CompanionStagesPurged)
 	}
 	if result.SourcesPruned > 0 {
 		s.log.Info("removed staged job sources no session can still use", "sources_pruned", result.SourcesPruned)

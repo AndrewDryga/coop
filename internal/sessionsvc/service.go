@@ -367,12 +367,13 @@ type Service struct {
 	quarantined    map[string]struct{}
 	wg             sync.WaitGroup
 
-	operationMu         sync.Mutex
-	operationLocks      map[string]*sessionOperationLock
-	backgroundActive    map[string]bool
-	backgroundSlots     chan struct{}
-	testBeforeCreatePin func() error
-	testAfterTurnLease  func(session.Turn)
+	operationMu              sync.Mutex
+	operationLocks           map[string]*sessionOperationLock
+	backgroundActive         map[string]bool
+	backgroundSlots          chan struct{}
+	testBeforeCreatePin      func() error
+	testBeforeCompanionPurge func(string)
+	testAfterTurnLease       func(session.Turn)
 	// testAdmitNetwork replaces create-time network admission. Real admission needs an owner
 	// key, an approval and a Docker qualification; a test that only cares what the create path
 	// does with the answer injects one. nil in production.
@@ -1825,6 +1826,9 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 	if job.Source != nil {
 		selected, base = job.Source.Binding.SelectedCommit, job.Source.Binding.BaseCommit
 		createReq.Source = session.CloneSourceBinding(&job.Source.Binding)
+	}
+	if !sessionExisted {
+		s.reclaimBeforeAllocation(ctx)
 	}
 	started := time.Now()
 	workspace, err = ensureSessionWorkspaceContext(ctx, s, execution.Repository, intent.ForkName, selected, intent.OwnerStoreID, intent.SessionID)

@@ -3,7 +3,7 @@ name: worker-storage-accounting
 description: the worker measures allocated blocks and charges a hardlinked baseline once, stages a discard by renaming before deleting, and closes allocation on used-byte watermarks with a free-byte reserve underneath
 subsystem: worker
 sources: [internal/forkspace/usage.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/checkpoint_storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
-updated: 2026-09-27
+updated: 2026-11-02
 ---
 
 A worker accounts for its own disk so a control plane can bound workspace growth. Four things about
@@ -61,3 +61,18 @@ authorized discard; it does not infer ownership from absence in this store.
 - 2026-09-11 — `docs/worker.md` folded into `docs/session-api.md` with the `coop sessions connect`
   consolidation; the workspace-storage section lives there now.
 - 2026-09-11 — created with the worker-side byte accounting, pressure check and owned-orphan scan.
+
+**Closed sessions release clean companion copies independently of the primary.** A retained dirty
+or unmerged primary no longer pins every reproducible companion history. Maintenance examines a
+bounded, rotating number of companions under the session runtime lock, requiring the exact closed
+owner, pinned job binding, original directory identity, independent Git metadata and clean pinned
+contents. Open, running, queued, quarantined and incompletely cleaned runtimes keep their copies.
+It writes a versioned store-bound receipt, atomically renames into private `companion-discards`,
+and durably marks that rename before removal. Recovery pins that staging directory and inode;
+it never readopts the original path after deletion began. Unknown or replaced stages stay protected
+and their bytes are conservatively counted as companion storage. Session history and bindings stay.
+
+The same bounded maintenance pass runs before a new allocation at the low watermark or within
+twice the reserve, outside allocation locks. It invalidates measured totals after any successful
+reclamation, including when a later inventory fails. Git checks honor a 30-second context; removing
+one already-proven tree uses filesystem removal and cannot itself be interrupted mid-call.

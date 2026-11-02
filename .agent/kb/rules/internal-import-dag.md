@@ -426,3 +426,7 @@ this one has it.
   asserted: a table edge the code lacks, a production import of `ui` from `config`, one of `cli`
   from `project`, and a brand-new package — each failed with the offending edge and both files to
   update.
+
+- 2026-11-02 — added `sessionsvc -> safefile`: closed companion GC reads its private
+  staging receipt and payload through a pinned, non-symlink directory descriptor.
+  Reusing the leaf keeps deletion authority anchored while a path can be replaced.
