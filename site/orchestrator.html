@@ -23,12 +23,12 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=45b519fc5f">
-  <link rel="stylesheet" href="assets/css/orchestrator.css?v=45b519fc5f">
+  <link rel="stylesheet" href="assets/css/site.css?v=d6e401f3ae">
+  <link rel="stylesheet" href="assets/css/orchestrator.css?v=d6e401f3ae">
   <script>{ const root = document.documentElement, mode = !("IntersectionObserver" in window) ? "" : matchMedia("(min-width: 1024px)").matches ? "night-story" : matchMedia("(min-height: 500px)").matches ? "night-deck" : ""; if (mode) { root.classList.add(mode); setTimeout(() => root.classList.contains("night-ready") || root.classList.remove(mode), 3000); } }</script>
-  <script src="assets/js/site.js?v=45b519fc5f" defer></script>
-  <script src="assets/js/orchestrator.js?v=45b519fc5f" defer></script>
-  <script src="assets/js/analytics.js?v=45b519fc5f" defer></script>
+  <script src="assets/js/site.js?v=d6e401f3ae" defer></script>
+  <script src="assets/js/orchestrator.js?v=d6e401f3ae" defer></script>
+  <script src="assets/js/analytics.js?v=d6e401f3ae" defer></script>
   <noscript><style>.copy, .agents { display: none; }</style></noscript>
 </head>
 <body>
@@ -182,6 +182,56 @@
         </div>
       </div>
       <p class="more"><a href="overnight-guide.html">Prepare your first overnight run<span class="go" aria-hidden="true">→</span></a></p>
+    </section>
+
+    <section class="wrap section products" aria-labelledby="ryker-title">
+      <p class="product-kicker">From the same team</p>
+      <div class="product-card">
+        <div class="product-copy">
+          <img class="product-logo" src="assets/img/ryker-logo.svg" width="950" height="330" alt="Ryker">
+          <h2 id="ryker-title">An AI teammate in Slack and GitHub.</h2>
+          <p>Work with Ryker like another teammate in Slack and GitHub. It’s on 24/7—investigating alerts as they come in, finding root causes, proposing fixes, and taking on the coding tasks you give it.</p>
+          <a class="button product-link" href="https://ryker.emisar.dev" target="_blank" rel="nofollow noopener">Explore Ryker<span class="go" aria-hidden="true">→</span></a>
+        </div>
+        <figure class="product-visual slack-preview" aria-label="Example Slack alert thread in on-call">
+          <div class="thread-example">
+            <div class="thread-header"><span class="thread-channel"># on-call</span><span>Thread</span></div>
+            <div class="thread-messages">
+              <div class="thread-message">
+                <span class="thread-avatar thread-alert" aria-hidden="true">M</span>
+                <div>
+                  <p class="thread-author">Monitoring <span class="thread-app">APP</span><time datetime="02:14">2:14 AM</time></p>
+                  <p>Checkout timeouts are rising. 8% of requests failed in the last five minutes.</p>
+                </div>
+              </div>
+              <p class="thread-replies">2 replies</p>
+              <div class="thread-message">
+                <span class="thread-avatar thread-ryker" aria-hidden="true"><img src="assets/img/ryker-mark.svg" width="780" height="680" alt=""></span>
+                <div>
+                  <p class="thread-author">Ryker <span class="thread-app">APP</span><time datetime="02:16">2:16 AM</time></p>
+                  <p>The last deploy cut the database connection pool from 20 to 2. Requests are waiting for a free connection. I’m restoring the limit and adding a regression test.</p>
+                </div>
+              </div>
+              <div class="thread-message">
+                <span class="thread-avatar thread-ryker" aria-hidden="true"><img src="assets/img/ryker-mark.svg" width="780" height="680" alt=""></span>
+                <div>
+                  <p class="thread-author">Ryker <span class="thread-app">APP</span><time datetime="02:24">2:24 AM</time></p>
+                  <p>I’ve opened a draft PR with the fix and a regression test. Checks pass. It’s ready for review.</p>
+                  <div class="thread-pr" role="group" aria-label="Example GitHub draft pull request">
+                    <p class="thread-pr-source">GitHub <span>your-team/checkout</span></p>
+                    <p class="thread-pr-title">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="4" cy="3" r="1.75"/><circle cx="4" cy="13" r="1.75"/><circle cx="12" cy="13" r="1.75"/><path d="M4 4.75v6.5M12 11.25V7a4 4 0 0 0-4-4H7m2-2-2 2 2 2"/></svg>
+                      <span>Restore checkout connection pool</span>
+                    </p>
+                    <p class="thread-pr-description">Restores the pool limit to 20 and adds a regression test.</p>
+                    <div class="thread-pr-meta"><span class="thread-pr-draft">Draft</span><span class="thread-pr-checks">✓ Checks passed</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </figure>
+      </div>
     </section>
   </main>
 

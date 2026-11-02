@@ -397,6 +397,83 @@ main:focus { outline: none; }
 .section-head .more, .more { margin-top: 32px; font-size: 1.125rem; font-weight: 600; }
 .more a { text-decoration: none; }
 
+/* Related products follow installation, with quieter links than the primary action. */
+.product-kicker { margin-bottom: 24px; color: var(--muted); font-size: 1rem; font-weight: 500; }
+.product-card { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); }
+.product-copy { display: flex; flex-direction: column; align-items: start; padding: 48px; }
+.product-logo { display: block; width: 160px; height: auto; max-width: 100%; margin-bottom: 32px; }
+.product-copy h2 { max-width: 19ch; font-size: clamp(1.75rem, 1.2rem + 1.5vw, 2.5rem); line-height: 1.12; }
+.product-copy > p { max-width: 44ch; margin-top: 24px; font-size: 1.125rem; }
+.product-link { margin-top: 32px; box-shadow: inset 0 0 0 1px var(--line); }
+.product-visual { display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: 40px; border-left: 1px solid var(--edge); background: var(--inset); }
+.product-example-label { margin-bottom: 32px; color: var(--muted); font-size: 0.875rem; }
+.policy-preview .product-example-label { margin-bottom: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.policy-summary { font-size: 1rem; }
+.policy-summary strong { color: var(--text); font-weight: 500; }
+.policy-preview dl, .policy-preview dd { margin: 0; }
+.policy-preview dd { font-variant-numeric: tabular-nums; }
+.policy-preview .policy-outcomes { display: grid; gap: 20px; margin-top: 28px; }
+.policy-outcome { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 4px 16px; }
+.policy-outcome dt { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 1.125rem; }
+.policy-outcome dt::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--policy-tone); }
+.policy-allowed { --policy-tone: var(--success); }
+.policy-approval { --policy-tone: var(--warning); }
+.policy-denied { --policy-tone: var(--danger); }
+.policy-count { color: var(--text); font-size: 1.25rem; font-weight: 600; }
+.policy-detail { grid-column: 1 / -1; padding-left: 18px; color: var(--muted); font-size: 0.875rem; }
+.policy-risks { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); }
+.policy-risks h3 { margin-bottom: 16px; color: var(--muted); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.policy-risks dl { display: grid; gap: 10px; }
+.policy-risks dl > div { display: grid; grid-template-columns: 100px minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; color: var(--muted); }
+.policy-risks dt { justify-self: start; min-width: 100px; padding: 2px 12px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); border-radius: 6px; background: color-mix(in srgb, currentColor 6%, transparent); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em; text-align: center; text-transform: uppercase; }
+.policy-critical, .policy-high { color: var(--danger); }
+.policy-medium { color: var(--warning); }
+.policy-risks dd { font-size: 0.875rem; }
+.policy-risks .policy-risk-examples { font-size: 0.75rem; line-height: 1.6; }
+.policy-risk-examples code { overflow-wrap: anywhere; }
+.policy-risk-count { justify-self: end; }
+.slack-preview { padding: 32px; }
+.thread-example { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 0.875rem; line-height: 1.5; }
+.thread-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 0.75rem; }
+.thread-channel { color: var(--text); font-size: 0.9375rem; font-weight: 600; }
+.thread-messages { padding: 20px 18px; }
+.thread-message { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; margin-top: 20px; }
+.thread-message:first-child { margin-top: 0; }
+.thread-avatar { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 5px; background: var(--raised); color: var(--text); font-size: 0.875rem; font-weight: 600; }
+.thread-ryker { background: var(--inset); }
+.thread-alert { color: var(--warning); }
+.thread-avatar img { width: 26px; height: auto; }
+.thread-author { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 3px; color: var(--text); font-weight: 600; }
+.thread-author time { color: var(--muted); font-size: 0.6875rem; font-weight: 400; white-space: nowrap; }
+.thread-app { padding: 1px 4px; border-radius: 3px; background: var(--raised); color: var(--muted); font-size: 0.5625rem; font-weight: 600; line-height: 1.3; }
+.thread-replies { display: flex; align-items: center; gap: 12px; margin-top: 20px; color: var(--muted); font-size: 0.6875rem; }
+.thread-replies::after { content: ""; height: 1px; flex: 1; background: var(--line); }
+.thread-pr { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: 6px; background: var(--inset); }
+.thread-pr-source { display: flex; flex-wrap: wrap; gap: 4px 8px; color: var(--text); font-size: 0.6875rem; font-weight: 600; }
+.thread-pr-source span { color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+.thread-pr-title { display: flex; align-items: start; gap: 8px; margin-top: 10px; color: var(--text); font-weight: 600; }
+.thread-pr-title svg { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--muted); }
+.thread-pr-title span { min-width: 0; overflow-wrap: anywhere; }
+.thread-pr-description { margin-top: 8px; color: var(--muted); font-size: 0.75rem; }
+.thread-pr-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-top: 12px; font-size: 0.6875rem; }
+.thread-pr-draft { padding: 1px 8px; border: 1px solid var(--line); border-radius: 20px; color: var(--muted); }
+.thread-pr-checks { color: var(--success); }
+@media (max-width: 1199px) {
+  .policy-risks dl > div { grid-template-columns: minmax(0, 1fr) auto; }
+  .policy-risk-examples { grid-column: 1 / -1; grid-row: 2; }
+  .policy-risk-count { grid-column: 2; grid-row: 1; }
+}
+@media (max-width: 900px) {
+  .product-card { grid-template-columns: minmax(0, 1fr); }
+  .product-visual { border-top: 1px solid var(--edge); border-left: 0; }
+}
+@media (max-width: 767px) {
+  .product-copy, .product-visual { padding: 28px; }
+  .slack-preview { padding: 20px; }
+  .product-logo { margin-bottom: 24px; }
+  .product-example-label { margin-bottom: 24px; }
+}
+
 /* A command you copy: its label sits above it in the supporting size, and the Copy button is level
    with the command itself */
 .command { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 16px; color: var(--text); font: 400 1rem/1.7 var(--mono); }

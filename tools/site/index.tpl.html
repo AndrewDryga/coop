@@ -258,6 +258,60 @@
       </div>
       <p class="more"><a href="sandbox-guide.html">Set up your first sandbox<span class="go" aria-hidden="true">→</span></a></p>
     </section>
+
+    <section class="wrap section products" aria-labelledby="emisar-title">
+      <p class="product-kicker">From the same team</p>
+      <div class="product-card">
+        <div class="product-copy">
+          <img class="product-logo" src="assets/img/emisar-logo.svg" width="1320" height="390" alt="Emisar">
+          <h2 id="emisar-title">Your agents need to see production, too.</h2>
+          <p>A sandbox lets agents work unattended on your code. Emisar lets them investigate incidents, check real environments, and test hypotheses with access you control. Decide what runs automatically, what needs approval, and what stays off-limits.</p>
+          <a class="button product-link" href="https://emisar.dev">Explore Emisar<span class="go" aria-hidden="true">→</span></a>
+        </div>
+        <figure class="product-visual policy-preview" aria-labelledby="emisar-example">
+          <figcaption class="product-example-label" id="emisar-example">Example policy preview</figcaption>
+          <p class="policy-summary">How your rules would handle <strong>319 actions.</strong></p>
+          <dl class="policy-outcomes">
+            <div class="policy-outcome policy-allowed">
+              <dt>Allowed</dt><dd class="policy-count">312</dd>
+              <dd class="policy-detail">Read logs, check metrics, inspect services</dd>
+            </div>
+            <div class="policy-outcome policy-approval">
+              <dt>Needs approval</dt><dd class="policy-count">7</dd>
+              <dd class="policy-detail">Restart services, run maintenance</dd>
+            </div>
+            <div class="policy-outcome policy-denied">
+              <dt>Denied</dt><dd class="policy-count">0</dd>
+            </div>
+          </dl>
+          <div class="policy-risks">
+            <h3>Actions by risk</h3>
+            <dl>
+              <div>
+                <dt class="policy-critical">Critical</dt>
+                <dd class="policy-risk-examples"><code>shell.run_script, ec2.terminate_instance, ..</code></dd>
+                <dd class="policy-risk-count">6</dd>
+              </div>
+              <div>
+                <dt class="policy-high">High</dt>
+                <dd class="policy-risk-examples"><code>docker.restart, linux.systemctl_stop, ..</code></dd>
+                <dd class="policy-risk-count">63</dd>
+              </div>
+              <div>
+                <dt class="policy-medium">Medium</dt>
+                <dd class="policy-risk-examples"><code>docker.logs, linux.journalctl, ..</code></dd>
+                <dd class="policy-risk-count">44</dd>
+              </div>
+              <div>
+                <dt>Low</dt>
+                <dd class="policy-risk-examples"><code>docker.ps, debugging.disk_free, ..</code></dd>
+                <dd class="policy-risk-count">206</dd>
+              </div>
+            </dl>
+          </div>
+        </figure>
+      </div>
+    </section>
   </main>
 
   <footer class="wrap footer">
