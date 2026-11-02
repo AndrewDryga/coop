@@ -12,6 +12,10 @@ Agent and final service launch share the filesystem admission. Automatic selecti
 requires host APFS, Docker cgroup v2 with cgroupfs, the expected BTF hook signatures and an
 actual-share probe. Unsupported runtimes keep spelling mounts and existing case-exposure
 approval. A failed cleanup is never permission to fall back: unresolved custody stops the launch.
+If mount preparation also fails, `FilesystemFallbackError` retains the bounded backend-selection
+reason beside that refusal. The CLI preserves the mount remedy; joined cleanup failures use the
+complete generic error instead. Successful fallback stays quiet, and `FilesystemReport` still
+reports the selected backend to diagnostics.
 The helper image builds solely from sources embedded in the Coop binary; its compiler/libraries
 stay inside Docker. `make filesystem-sources-check` detects stale embedded sources.
 
@@ -129,6 +133,8 @@ The ACP live conformance test accepts the same qualification switch to inspect t
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
 ## Changelog
+- 2026-11-02 — retained the bounded selection reason when mount fallback also refuses, without
+  hiding joined cleanup failures or adding warnings to a successful fallback.
 - 2026-11-02 — overlapped owner/probe creation with capture, including joined panic cleanup;
   image observations now use the frozen socket with fresh identity fences and separate bounds.
 - 2026-11-02 — fresh-helper program loading overlaps the host census; complete policy and EOF

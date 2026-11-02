@@ -449,6 +449,12 @@ func (s *launchSections) stopping() func() {
 // section in progress and returns the error marked reported, so the dispatcher adds nothing on
 // top. A cancellation is not explained: the person who pressed Ctrl-C knows why it stopped.
 func (s *launchSections) failed(err error) error {
+	var fallback *FilesystemFallbackError
+	if errors.As(err, &fallback) {
+		// The CLI combines the selection reason with the mount refusal's remedy.
+		// Printing here would duplicate it and expand every hidden path first.
+		return err
+	}
 	if !s.on || !s.opened || err == nil || errors.Is(err, context.Canceled) || errors.Is(err, ui.ErrReported) {
 		// Before any section has opened there is nothing to nest under: a refusal by name reads
 		// as the dispatcher's own plain ✗ line, exactly like a usage error.

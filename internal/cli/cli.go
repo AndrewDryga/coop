@@ -258,6 +258,20 @@ func refusalExit(err error) int {
 // where the problem is, what is wrong, what to change — and the terminal's owner draws them in the
 // one shape every refusal uses. Anything that already is a ui.UsageError passes through unchanged.
 func asUsage(err error) *ui.UsageError {
+	var fallback *box.FilesystemFallbackError
+	if errors.As(err, &fallback) {
+		// Cleanup can add a separate failure after mount preparation refuses.
+		// Generic rendering retains every cause instead of selecting just one.
+		if !singleErrorChain(err) {
+			return nil
+		}
+		if usage := asUsage(fallback.Err); usage != nil {
+			copy := *usage
+			copy.Cause = fallback.Explanation() + "\n" + usage.Cause
+			return &copy
+		}
+		return nil
+	}
 	var usage *ui.UsageError
 	if errors.As(err, &usage) {
 		return usage
@@ -295,6 +309,21 @@ func asUsage(err error) *ui.UsageError {
 		return ui.CommandFailed(headline, reason, [2]string{"", fix})
 	}
 	return nil
+}
+
+func singleErrorChain(err error) bool {
+	for err != nil {
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			children := joined.Unwrap()
+			if len(children) != 1 {
+				return false
+			}
+			err = children[0]
+		} else {
+			err = errors.Unwrap(err)
+		}
+	}
+	return true
 }
 
 // uncoveredSpellingsBlock is a launch refusing hidden files the box or a service (who: "the box",

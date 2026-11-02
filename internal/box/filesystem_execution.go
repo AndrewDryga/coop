@@ -42,15 +42,51 @@ func filesystemImageVolumesSupported(image runtime.DockerImageExecution) error {
 }
 
 // FilesystemReport describes backend selection, not an isolation check result.
-type FilesystemReport struct{ Backend, Reason string }
+type FilesystemReport struct {
+	Backend, Reason string
+	kernelCandidate bool
+}
+
+// FilesystemFallbackError retains why kernel protection was not selected when
+// the mount backend also refuses. Successful fallback needs no extra warning.
+type FilesystemFallbackError struct {
+	Reason string
+	Err    error
+}
+
+func (e *FilesystemFallbackError) Unwrap() error { return e.Err }
+
+func (e *FilesystemFallbackError) Explanation() string {
+	return "Filesystem protection: " + filesystemReason(e.Reason)
+}
+
+func filesystemReason(reason string) string {
+	reason = cleanLaunchText(reason)
+	if len(reason) > 4096 {
+		reason = strings.ToValidUTF8(reason[:4096], "") + "…"
+	}
+	return reason
+}
+
+func (e *FilesystemFallbackError) Error() string {
+	return e.Explanation() + "\n" + e.Err.Error()
+}
+
+func (r FilesystemReport) fallbackError(err error) error {
+	if !r.kernelCandidate || r.Reason == "" {
+		return err
+	}
+	return &FilesystemFallbackError{Reason: r.Reason, Err: err}
+}
 
 func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *config.Config, spec RunSpec, mounts []Mount, binding *runtime.Docker, progress func(string)) (admission *filesystemAdmission, result error) {
 	reason := "This launch uses mount-based filesystem protection"
+	kernelCandidate := false
 	defer func() {
 		if result != nil {
 			return
 		}
-		report := FilesystemReport{Backend: "mounts", Reason: reason}
+		report := FilesystemReport{Backend: "mounts", Reason: filesystemReason(reason), kernelCandidate: kernelCandidate}
 		if admission != nil {
 			report = FilesystemReport{Backend: "bpf"}
 		}
@@ -61,6 +97,7 @@ func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *con
 	if spec.Login || spec.GradeSnapshot || spec.FormatCorrection || !cfg.NoNewPrivileges && spec.CapturedEgress == nil || rt.Name != "docker" || !filesystemProfileCandidate(spec.Repo) {
 		return nil, nil
 	}
+	kernelCandidate = true
 	if _, err := filteredExtraArgs(cfg.ExtraRunArgs, spec.ExtraArgs); err != nil {
 		reason = "Runtime options require mount-based filesystem protection"
 		return nil, nil
@@ -105,10 +142,7 @@ func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *con
 	transferred = true
 	a, err := prepareBoundFilesystemAdmission(ctx, roots, make([][]string, len(roots)), docker, progress)
 	if errors.Is(err, errFilesystemUnsupported) && !errors.Is(err, errFilesystemCustodyPending) {
-		reason = cleanLaunchText(err.Error())
-		if len(reason) > 4096 {
-			reason = reason[:4096]
-		}
+		reason = err.Error()
 		return nil, nil
 	}
 	if err != nil {

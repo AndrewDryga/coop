@@ -873,12 +873,20 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// Revoke credentials before filesystem reconciliation can wait on Docker.
 	defer func() { result = errors.Join(result, spec.native.close()) }()
 	sections.prepareSecrets()
+	var filesystemReport FilesystemReport
 	prepareFilesystem := func() error {
 		if filtered != nil && filesystemBinding == nil {
 			return nil
 		}
+		filesystemSpec := spec
+		filesystemSpec.OnFilesystemReport = func(report FilesystemReport) {
+			filesystemReport = report
+			if spec.OnFilesystemReport != nil {
+				spec.OnFilesystemReport(report)
+			}
+		}
 		var admissionErr error
-		admission, admissionErr = selectFilesystemAdmission(nativeCtx, rt, cfg, spec, mounts, filesystemBinding, sections.filesystemProgress)
+		admission, admissionErr = selectFilesystemAdmission(nativeCtx, rt, cfg, filesystemSpec, mounts, filesystemBinding, sections.filesystemProgress)
 		return admissionErr
 	}
 	if filtered != nil {
@@ -915,14 +923,14 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// attempt must still preserve identities already classified as secret.
 		mounts, err = computeMounts(spec.Repo, workdir, false)
 		if err != nil {
-			return -1, err
+			return -1, filesystemReport.fallbackError(err)
 		}
 		if err := RememberHiddenFiles(spec.Repo, workdir, mounts); err != nil {
-			return -1, err
+			return -1, filesystemReport.fallbackError(err)
 		}
 		mounts, caseExposed, err = launchMounts(cfg, spec.Repo, workdir)
 		if err != nil {
-			return -1, err
+			return -1, filesystemReport.fallbackError(err)
 		}
 		if spec.RepoReadOnly && len(mounts) > 0 {
 			mounts[0].RO = true
