@@ -120,6 +120,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [align-trailing-comments](align-trailing-comments.md) — trailing `#` comments in an example line up in one column
 - [docs-bold-sparingly](docs-bold-sparingly.md) — bold marks structure, never mid-sentence emphasis, never inline code
 - [site-external-links-nofollow](site-external-links-nofollow.md) — every link off coop.dryga.com opens in a new tab with rel="nofollow noopener"; the site generator (tools/gendocs) adds both, never the page by hand
+- [site-ryker-product-link](site-ryker-product-link.md) — website Ryker links point to https://ryker.emisar.dev
 - [case-figures-outside-case-blocks](case-figures-outside-case-blocks.md) — a homepage figure sits above or below its case's block, never inside it; a chapter gives every case a figure or none
 - [coop-logo-stays-minimal](coop-logo-stays-minimal.md) — preserve the approved Contained entrance geometry and Coop amber/cyan palette across brand surfaces
 - [site-stories-use-mobile-cards](site-stories-use-mobile-cards.md) — mobile landing stories pair their pinned animation with readable sticky cards
