@@ -517,6 +517,10 @@ main:focus { outline: none; }
 .guide .docs-side a { display: grid; grid-template-columns: 2ch minmax(0, 1fr); gap: 12px; min-height: 44px; padding: 10px 12px; font-size: 0.9375rem; }
 .guide .docs-side a > span { color: var(--muted); font: 400 0.8125rem/1.75 var(--mono); }
 .guide .docs-side a[aria-current] { background: var(--surface); }
+.guide-toc-group { margin-top: 24px; }
+.guide-toc-group > h2 { color: var(--text); font-size: 0.9375rem; font-weight: 600; line-height: 1.5; letter-spacing: 0; }
+.guide-toc-feature > h3 { margin-top: 16px; color: var(--muted); font-size: 0.8125rem; font-weight: 500; line-height: 1.5; letter-spacing: 0; }
+.guide .docs-side .guide-toc-group ol { margin-top: 8px; }
 .guide .docs-main { padding-top: 0; }
 .guide-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .guide-section h2 { display: flex; align-items: baseline; gap: 16px; }

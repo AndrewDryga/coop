@@ -23,9 +23,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=25cdfa0036">
-  <script src="assets/js/site.js?v=25cdfa0036" defer></script>
-  <script src="assets/js/analytics.js?v=25cdfa0036" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=45b519fc5f">
+  <script src="assets/js/site.js?v=45b519fc5f" defer></script>
+  <script src="assets/js/analytics.js?v=45b519fc5f" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -48,12 +48,46 @@
 
   <main id="main" class="wrap guide" tabindex="-1">
 <header class="guide-hero"><div class="guide-intro"><p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Claude Code</p><h1>Run Claude Code in a sandbox.</h1><p class="guide-lead">Run Claude Code on your project with secrets hidden and network access under your control. This walkthrough takes you from setup to a working sandbox, with checks to see how it protects your files and connections.</p></div></header>
-<div class="docs guide-body"><details class="docs-side" open><summary>In this walkthrough</summary><nav aria-label="On this page"><ol role="list"><li><a href="#before-you-start"><span aria-hidden="true">00</span>Before you start</a></li><li><a href="#boundary"><span aria-hidden="true">01</span>Why use a sandbox?</a></li><li><a href="#setup"><span aria-hidden="true">02</span>Install and sign in</a></li><li><a href="#project"><span aria-hidden="true">03</span>Create the demo</a></li><li><a href="#network"><span aria-hidden="true">04</span>See what the agent can connect to</a></li><li><a href="#run"><span aria-hidden="true">05</span>Start the agent</a></li><li><a href="#shadow-secret"><span aria-hidden="true">06</span>Verify secret protection</a></li><li><a href="#provider-token"><span aria-hidden="true">07</span>Verify credential protection</a></li><li><a href="#blocked-website"><span aria-hidden="true">08</span>Block a website</a></li><li><a href="#allow-website"><span aria-hidden="true">09</span>Allow one website</a></li><li><a href="#network-receipt"><span aria-hidden="true">10</span>Read the network receipt</a></li><li><a href="#review"><span aria-hidden="true">11</span>Review and troubleshoot</a></li></ol></nav></details><article class="docs-main" aria-label="Step-by-step instructions">
+<div class="docs guide-body"><details class="docs-side" open><summary>In this walkthrough</summary><nav aria-label="On this page">
+<div class="guide-toc-group"><h2>Get started</h2>
+<ol role="list" start="0">
+<li><a href="#before-you-start"><span aria-hidden="true">00</span>Before you start</a></li>
+<li><a href="#boundary"><span aria-hidden="true">01</span>Why use a sandbox?</a></li>
+<li><a href="#setup"><span aria-hidden="true">02</span>Install and sign in</a></li>
+<li><a href="#project"><span aria-hidden="true">03</span>Create the demo</a></li>
+<li><a href="#run"><span aria-hidden="true">04</span>Start the agent</a></li>
+</ol>
+</div>
+<div class="guide-toc-group"><h2>Explore the protections</h2>
+<div class="guide-toc-feature"><h3>Secrets</h3>
+<ol role="list" start="5">
+<li><a href="#shadow-secret"><span aria-hidden="true">05</span>Verify secret protection</a></li>
+</ol>
+</div>
+<div class="guide-toc-feature"><h3>Credentials</h3>
+<ol role="list" start="6">
+<li><a href="#provider-token"><span aria-hidden="true">06</span>Verify credential protection</a></li>
+</ol>
+</div>
+<div class="guide-toc-feature"><h3>Network access</h3>
+<ol role="list" start="7">
+<li><a href="#network"><span aria-hidden="true">07</span>See what the agent can connect to</a></li>
+<li><a href="#blocked-website"><span aria-hidden="true">08</span>Block a website</a></li>
+<li><a href="#allow-website"><span aria-hidden="true">09</span>Allow one website</a></li>
+<li><a href="#network-receipt"><span aria-hidden="true">10</span>Read the network receipt</a></li>
+</ol>
+</div>
+</div>
+<div class="guide-toc-group"><h2>Troubleshoot</h2>
+<ol role="list" start="11">
+<li><a href="#review"><span aria-hidden="true">11</span>Review and troubleshoot</a></li>
+</ol>
+</div>
+</nav></details><article class="docs-main" aria-label="Step-by-step instructions">
 <section class="doc-section guide-section" id="before-you-start"><h2><span class="guide-step" aria-hidden="true">00</span>Before you start</h2>
 <p>You’ll need:</p>
 <ul><li>A Mac or Linux computer with Git installed and Docker running</li><li>A Claude account with Claude Code access</li></ul>
 </section>
-
 <section class="doc-section guide-section" id="boundary"><h2><span class="guide-step" aria-hidden="true">01</span>Why use a sandbox?</h2>
 <p>Coding agents run commands, install packages, and change files. A mistake can affect more than the project you’re working on. An attacker can also hide instructions in content the agent reads, tricking it into running harmful commands. This is called prompt injection.</p>
 <p>A sandbox limits what the agent can access and how much damage it can do if something goes wrong. You can give it room to work without giving it access to everything.</p>
@@ -105,20 +139,7 @@ wc -c &lt; .env.coop-demo</code></li></ul>
 
 
 </section>
-<section class="doc-section guide-section" id="network"><h2><span class="guide-step" aria-hidden="true">04</span>See what the agent can connect to</h2>
-<div class="terminal-example">
-<ul class="cmds" role="list"><li><code data-copy-source>coop net</code></li></ul>
-<ul class="cmds" role="list"><li><code data-copy-source>coop net check https://example.com</code></li></ul>
-<pre class="code"><samp>✗ example.com:443 is blocked — no approved rule allows it.</samp></pre>
-</div>
-
-<p><code>coop net check</code> checks the rules without visiting the website. In this new project, <code>example.com</code> should be blocked. If it is allowed, check that you’re in the demo folder.</p>
-<p>By default, restricted networking lets Claude reach Anthropic’s services to sign in and use your account. You can allow more websites later.</p>
-<p>MCP servers connected through Claude.ai remain available to Claude Code. To add local MCP servers, follow the <a href="integrations.html#mcp-servers">MCP setup guide</a>.</p>
-
-
-</section>
-<section class="doc-section guide-section" id="run"><h2><span class="guide-step" aria-hidden="true">05</span>Start Claude Code</h2>
+<section class="doc-section guide-section" id="run"><h2><span class="guide-step" aria-hidden="true">04</span>Start Claude Code</h2>
 <p>Run this command to check your setup:</p>
 <div class="terminal-example">
 <ul class="cmds" role="list"><li><code data-copy-source>coop doctor</code></li></ul>
@@ -139,7 +160,7 @@ coop claude --egress filtered</code></li></ul>
 <details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>Can I use another container runtime?</summary><div><p>This sign-in setup requires Docker with filtered networking. Host networking and Apple’s <code>container</code> runtime are not supported.</p></div></details>
 <details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>Why the agent runs without approval prompts</summary><div><p>Claude Code has a <a href="https://code.claude.com/docs/en/sandboxing" target="_blank" rel="nofollow noopener">built-in sandbox for its Bash tool</a>. Here, co:op’s Docker container limits its file and network access.</p><p>co:op starts Claude with <code>--dangerously-skip-permissions</code> inside the container. Claude can work without asking permission for every command, within the file and network access you allow.</p><p>The agent can also read or change this project’s saved history and settings.</p></div></details>
 </section>
-<section class="doc-section guide-section" id="shadow-secret"><h2><span class="guide-step" aria-hidden="true">06</span>Verify how co:op hides secrets</h2>
+<section class="doc-section guide-section" id="shadow-secret"><h2><span class="guide-step" aria-hidden="true">05</span>Verify how co:op hides secrets</h2>
 <p>Ask Claude to run:</p>
 <div class="terminal-example">
 <ul class="cmds" role="list"><li><code data-copy-source>wc -c README.md .env.coop-demo</code></li></ul>
@@ -168,7 +189,7 @@ wc: .env.coop-demo: Operation not permitted
   Checked project files, including Git-ignored files the box can read.</samp></pre>
 </div>
 </section>
-<section class="doc-section guide-section" id="provider-token"><h2><span class="guide-step" aria-hidden="true">07</span>Verify that Claude can’t read your login credentials</h2>
+<section class="doc-section guide-section" id="provider-token"><h2><span class="guide-step" aria-hidden="true">06</span>Verify that Claude can’t read your login credentials</h2>
 <p>To keep Claude from reading or leaking your login credentials, co:op gives it placeholders and adds the real credentials outside the sandbox when forwarding requests to Anthropic. Ask Claude to run this script to check what it received:</p>
 <div class="terminal-example">
 <ul class="cmds" role="list"><li><code data-copy-source data-copy-kind="command" data-copy-label="Claude Code credential check">node &lt;&lt;&#x27;JS&#x27;
@@ -196,8 +217,22 @@ JS</code></li></ul>
 
 <p>If the check fails, investigate without printing credentials or pasting them into a prompt. Commands such as <code>env</code>, <code>printenv</code> and <code>cat</code> can expose them.</p>
 </section>
+<section class="doc-section guide-section" id="network"><h2><span class="guide-step" aria-hidden="true">07</span>See what the agent can connect to</h2>
+<p>Leave the agent running. In another terminal, open the demo project folder and run:</p>
+<div class="terminal-example">
+<ul class="cmds" role="list"><li><code data-copy-source>coop net</code></li></ul>
+<ul class="cmds" role="list"><li><code data-copy-source>coop net check https://example.com</code></li></ul>
+<pre class="code"><samp>✗ example.com:443 is blocked — no approved rule allows it.</samp></pre>
+</div>
+
+<p><code>coop net check</code> checks the rules without visiting the website. In this new project, <code>example.com</code> should be blocked. If it is allowed, check that you’re in the demo folder.</p>
+<p>By default, restricted networking lets Claude reach Anthropic’s services to sign in and use your account. You can allow more websites later.</p>
+<p>MCP servers connected through Claude.ai remain available to Claude Code. To add local MCP servers, follow the <a href="integrations.html#mcp-servers">MCP setup guide</a>.</p>
+
+
+</section>
 <section class="doc-section guide-section" id="blocked-website"><h2><span class="guide-step" aria-hidden="true">08</span>Watch a website get blocked</h2>
-<p>Ask the agent to visit <code>example.com</code>:</p>
+<p>Back in the agent session, ask it to visit <code>example.com</code>:</p>
 <div class="terminal-example">
 <ul class="cmds" role="list"><li><code data-copy-source data-copy-kind="command" data-copy-label="website request">curl --noproxy &#x27;*&#x27; --fail --silent --show-error \
   --connect-timeout 5 --max-time 15 \
@@ -245,7 +280,7 @@ The record has no connection type or port to use in a rule.</samp></pre>
 
 <p>Approve only the new rule for <code>example.com</code> on TLS port 443. It allows this website, not its subdomains or other ports. The check should now say it is allowed.</p>
 <ul class="cmds" role="list"><li><code data-copy-source>coop claude --egress filtered</code></li></ul>
-<p>The new Claude Code session uses the updated rules; a session already running would keep the old ones. Ask the agent to try the request again:</p>
+<p>The new Claude Code session uses the updated rules. A session already running would keep the old ones. Ask the agent to try the request again:</p>
 <div class="terminal-example">
 <ul class="cmds" role="list"><li><code data-copy-source data-copy-kind="command" data-copy-label="website request">curl --noproxy &#x27;*&#x27; --fail --silent --show-error \
   --connect-timeout 5 --max-time 15 \
@@ -290,7 +325,7 @@ The record has no connection type or port to use in a rule.</samp></pre>
   }
 }</samp></pre>
 </div>
-<p>The values shown above mean the run ended, its network record is complete, and cleanup finished. Follow up on any warnings. <code>UNKNOWN</code> means co:op could not measure something; it does not mean zero.</p>
+<p>The values shown above mean the run ended, its network record is complete, and cleanup finished. Follow up on any warnings. <code>UNKNOWN</code> means co:op could not measure something. It does not mean zero.</p>
 <p>To export the receipt:</p>
 <div class="terminal-example">
 <ul class="cmds" role="list"><li><code data-copy-source>coop net export baf22d50</code></li></ul>
@@ -300,7 +335,7 @@ The record has no connection type or port to use in a rule.</samp></pre>
 
 </section>
 <section class="doc-section guide-section" id="review"><h2><span class="guide-step" aria-hidden="true">11</span>Review changes and fix problems</h2>
-<p>Back in the same terminal, review what the agent changed:</p>
+<p>Back in the original terminal where you started the agent, review what the agent changed:</p>
 <ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="review changes">git status --short &amp;&amp;
 git log --oneline &quot;$coop_review_base&quot;..HEAD &amp;&amp;
 git diff &quot;$coop_review_base&quot;</code></li></ul>
@@ -309,12 +344,12 @@ git diff &quot;$coop_review_base&quot;</code></li></ul>
 <pre class="code"><samp>Diff check passed</samp></pre>
 </div>
 
-<p>This compares the project with the commit saved before the agent started, including changes it staged or committed. Open any untracked files separately; Git does not include their contents in the diff.</p>
-<details class="guide-detail"><summary>Claude sign-in expired or the account is wrong</summary><div><p>Exit Claude, run <code>coop login claude</code> and sign in with the right account. Then start a new session. Use co:op’s login command rather than Claude’s login or logout commands inside the container.</p><p>If you use API billing instead, co:op supports <code>ANTHROPIC_API_KEY</code>. Follow the <a href="agents.html#api-keys">API-key setup</a>; <code>ANTHROPIC_AUTH_TOKEN</code> and <code>CLAUDE_CODE_OAUTH_TOKEN</code> are not supported.</p></div></details><details class="guide-detail"><summary>A dependency or documentation request is blocked</summary><div><p>Run <code>coop net blocked &lt;host&gt;</code> in your terminal, replacing <code>&lt;host&gt;</code> with the blocked hostname. Add the access you need to <code>.agent/project.yaml</code>, then run <code>coop approve</code>. Restart the agent to use the new rules.</p>
+<p>This compares the project with the commit saved before the agent started, including changes it staged or committed. Open any untracked files separately. Git does not include their contents in the diff.</p>
+<details class="guide-detail"><summary>Claude sign-in expired or the account is wrong</summary><div><p>Exit Claude, run <code>coop login claude</code> and sign in with the right account. Then start a new session. Use co:op’s login command rather than Claude’s login or logout commands inside the container.</p><p>If you use API billing instead, co:op supports <code>ANTHROPIC_API_KEY</code>. Follow the <a href="agents.html#api-keys">API-key setup</a>. <code>ANTHROPIC_AUTH_TOKEN</code> and <code>CLAUDE_CODE_OAUTH_TOKEN</code> are not supported.</p></div></details><details class="guide-detail"><summary>A dependency or documentation request is blocked</summary><div><p>Run <code>coop net blocked &lt;host&gt;</code> in your terminal, replacing <code>&lt;host&gt;</code> with the blocked hostname. Add the access you need to <code>.agent/project.yaml</code>, then run <code>coop approve</code>. Restart the agent to use the new rules.</p>
 <p>The <a href="networking.html">networking guide</a> explains the rules. If Docker or a sandbox check fails, fix the reported problem before trying again with filtered networking.</p>
 </div></details>
 <p>Ready to use your own project? Follow the <a href="sandbox-guide.html">general sandbox walkthrough</a> to protect its secrets, set up its tools and approve its network access. Each project needs its own approval. Review and test the agent’s changes before keeping them.</p>
-<p>For longer jobs, the <a href="overnight-guide.html">overnight walkthrough</a> shows how to run a task queue. You can delete the test project at <code>$coop_demo_dir</code> when you’re finished; this does not sign you out.</p>
+<p>For longer jobs, the <a href="overnight-guide.html">overnight walkthrough</a> shows how to run a task queue. You can delete the test project at <code>$coop_demo_dir</code> when you’re finished. This does not sign you out.</p>
 
 <h3>Using another coding agent?</h3><ul class="reference-list" role="list"><li><a href="codex-sandbox.html">Run Codex CLI in a sandbox</a><p>ChatGPT device sign-in, API accounts and Codex settings.</p></li><li><a href="gemini-cli-sandbox.html">Run Gemini CLI in a sandbox</a><p>AI Studio keys, Google routes and supported authentication.</p></li><li><a href="grok-cli-sandbox.html">Run Grok CLI in a sandbox</a><p>Grok device sign-in, account access and network rules.</p></li></ul></section>
 </article></div></main>

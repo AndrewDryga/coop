@@ -26,6 +26,9 @@ not establish publication quality.
   permission flags and implementation detail beside the relevant step or in a disclosure.
 - Review cognitive load and reading order, not just overflow and component legibility. The
   reader should find one obvious route from title to preparation to the first action.
+- Group provider walkthrough contents into setup, feature demonstrations and troubleshooting.
+  Keep each feature’s related steps together, with matching article order and numbering.
+  When moving a step, preserve its host/agent context and any shell state used later.
 - Carry one worked path through preparation, execution, recovery and review. Never switch
   silently from a fork to the parent checkout or lose queue scope on resume.
 - Show the results of consequential steps and explain failures inline. Do not add repeated
@@ -118,3 +121,8 @@ not establish publication quality.
 - 2026-11-02 — owner rejected repeated “What to look for” callouts as patronizing. Removed
   provider-guide checkpoint frames and redundant progress summaries; kept unique failure
   conditions, credential scope and recovery as ordinary prose beside the relevant command.
+
+- 2026-11-02 — owner grouped the contents by setup, protection feature and troubleshooting.
+  Swept all four provider variants; grouped their static contents, moved network inspection
+  beside its demonstrations and made the second-terminal/original-shell transitions explicit.
+  The two general guides have different workflows and remain unchanged.
