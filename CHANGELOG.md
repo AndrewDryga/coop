@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Rejected input exits 2 everywhere.** A task or idea ID that matches nothing, `coop fork merge`
+  without a terminal or `--yes`, and an unknown eval suite or a preset given to an agent-only suite
+  now exit 2 like other bad input (they exited 1). Their messages use the same refusal block as the
+  rest of Coop: what went wrong, why, and the command to run next.
+
 - **Launches leave your project alone.** With eBPF file protection, every launch used to create a
   `.coop-fs-probe-…` folder in the project root and run a test container before the agent
   started. Editors showed the folder as changes, and the test added time to every start. Launches

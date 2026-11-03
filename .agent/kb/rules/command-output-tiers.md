@@ -70,10 +70,27 @@ updated: 2026-11-03
 as needed rather than introducing another styling layer. Keep raw command output, ACP, JSON,
 completion scripts, and supervised bounded logs on their existing streams. An in-app task design
 is not proof the live helpers conform; regression tests must exercise all output tiers.
+TestRefusalsUseTheSharedBlock (`go test ./internal`) counts the ad-hoc refusals each file still
+has (an error opening with a lowercase "coop …", `return 2` with a hand-written error, a lowercase
+`ui.Error`): a new one fails, and a fixed one fails until its count is lowered.
 
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-11-03 — a manual test listed refusals still printed as one lowercase `✗` line. Moved into
+  the shared block: task IDs that match no task or several (now exit 2, with the family's listing
+  or the matches), `tasks add` structured flags, `--project`, `--tasks`/COOP_TASKS outside the
+  repository, the umbrella queue choice, `tasks rm` arguments, `tasks watch` options, every piped
+  deletion without --yes (`ui.ConfirmationRequired` for tasks, backlog and fork), `coop context`
+  options and paths, the `fork rm` uncommitted/unmerged guard, `fork merge` without a terminal
+  (exit 2, as other unconfirmed deletions), `sessions quiescence` on a missing store (names the
+  file, not `lstat`), the sessions parsers, `sessions connect` without `--controller` or with a
+  non-https address (now exit 2, refused before a service starts, the address not echoed), and
+  `coop eval run` with an unknown suite or a preset in an agent suite (now exit 2). Added
+  TestRefusalsUseTheSharedBlock: swept internal/ and recorded 62 left in 16 files (the claim,
+  block, decisions and lease parsers, most of `coop fork`, net check). check stays none: it
+  catches three shapes, not every ad-hoc sentence. `coop net runs` outside a project is still a
+  one-line refusal, left for the net owner.
 - 2026-11-03 — a manual test found `coop eval run core nosuchagent` saying "No preset named" and
   exiting 1. A who-runs word that names neither an agent nor a preset is now `unknownWhoErr`
   ("Unknown agent or preset … for <command>", exit 2), drawn by `loadRunPreset` for loop, acp,
