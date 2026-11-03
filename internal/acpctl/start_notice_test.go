@@ -117,13 +117,13 @@ func TestStartNoticeText(t *testing.T) {
 		},
 		{
 			name:    "a short network list is named",
-			network: &NetworkLimit{Vendors: []string{"Anthropic"}, Sites: []string{"proxy.golang.org", "sum.golang.org"}, Servers: []string{"emisar_admin"}},
-			want:    "**Internet is filtered.** Allowed: Anthropic, proxy\\.golang\\.org, sum\\.golang\\.org, the emisar\\_admin MCP server.\n\n" + limits,
+			network: &NetworkLimit{Sites: []string{"proxy.golang.org", "sum.golang.org"}, Servers: []string{"emisar_admin"}},
+			want:    "**Internet is filtered.** Allowed: the agent's provider, proxy\\.golang\\.org, sum\\.golang\\.org, the emisar\\_admin MCP server.\n\n" + limits,
 		},
 		{
 			name:    "a long network list is counted",
-			network: &NetworkLimit{Vendors: []string{"Anthropic"}, Sites: []string{"a.example", "b.example", "c.example", "d.example", "e.example"}, Servers: []string{"docs"}, Other: 1},
-			want:    "**Internet is filtered.** Allowed: Anthropic, 5 approved network rules, 1 MCP server, 1 other destination. `coop net` lists them.\n\n" + limits,
+			network: &NetworkLimit{Sites: []string{"a.example", "b.example", "c.example", "d.example", "e.example"}, Servers: []string{"docs"}, Other: 1},
+			want:    "**Internet is filtered.** Allowed: the agent's provider, 5 approved network rules, 1 MCP server, 1 other destination. `coop net` lists them.\n\n" + limits,
 		},
 		{
 			name:     "a problem with its fix",
@@ -135,11 +135,12 @@ func TestStartNoticeText(t *testing.T) {
 			name:     "everything, in order",
 			ports:    []ServePort{{Box: 4000, Host: 43659}},
 			services: []ServiceLink{{Name: "db", Scheme: "postgresql", Host: 31372}},
-			network:  &NetworkLimit{Vendors: []string{"Anthropic"}},
+			// Nothing approved: the provider is still reachable, never "nothing is allowed".
+			network:  &NetworkLimit{},
 			problems: []Problem{grok},
 			want: "**Open the box's port in your browser**\n\n- Port 4000 → [localhost:43659](http://localhost:43659)\n\n" +
 				"**Project services**\n\n- db → `postgresql://localhost:31372`\n\n" +
-				"**Internet is filtered.** Allowed: Anthropic.\n\n" + limits + "\n\n" +
+				"**Internet is filtered.** Allowed: the agent's provider.\n\n" + limits + "\n\n" +
 				"⚠ **Grok isn't available:** its saved sign-in no longer works. Run `coop login grok@default`.",
 		},
 	} {

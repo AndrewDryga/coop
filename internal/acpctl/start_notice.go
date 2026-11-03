@@ -23,10 +23,11 @@ type ServiceLink struct {
 	Host         int
 }
 
-// NetworkLimit is what a filtered session's boxes may reach, grouped like box.NetworkAllowed.
+// NetworkLimit is what a filtered session's boxes may reach besides the agent's provider, grouped
+// like box.NetworkAllowed: approved destinations, MCP servers and a count of anything else.
 type NetworkLimit struct {
-	Vendors, Sites, Servers []string
-	Other                   int
+	Sites, Servers []string
+	Other          int
 }
 
 // Problem is something the person should fix that would otherwise reach only the editor's log.
@@ -152,10 +153,12 @@ func serviceAddress(s ServiceLink) string {
 }
 
 // networkText says what a filtered session may reach, in the terminal's grouping
-// (box.NetworkAllowed). A short list is named in full; a longer one is counted, with the command
+// (box.NetworkAllowed). The agent's provider always leads, however it is reached: through Coop's
+// credential broker the policy holds no grant for it, so naming vendors from the policy alone said
+// nothing was allowed. A short list is named in full; a longer one is counted, with the command
 // that lists it.
 func networkText(n NetworkLimit) string {
-	allowed := slices.Clone(n.Vendors)
+	allowed := []string{"the agent's provider"}
 	named := len(n.Sites)+len(n.Servers) <= maxNamedAllowances
 	if named {
 		allowed = append(allowed, n.Sites...)
@@ -177,9 +180,6 @@ func networkText(n NetworkLimit) string {
 		allowed[i] = markdownText(allowed[i])
 	}
 	line := "**Internet is filtered.** Allowed: " + strings.Join(allowed, ", ") + "."
-	if len(allowed) == 0 {
-		line = "**Internet is filtered.** Nothing outside the box is allowed."
-	}
 	if !named {
 		line += " " + codeSpan("coop net") + " lists them."
 	}

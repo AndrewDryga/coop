@@ -104,7 +104,7 @@ func editorNetworkLimit(capture *box.CapturedEgress) (acpctl.NetworkLimit, error
 			sites = append(sites, site)
 		}
 	}
-	return acpctl.NetworkLimit{Vendors: allowed.Vendors, Sites: sites, Servers: allowed.Servers, Other: allowed.Other}, nil
+	return acpctl.NetworkLimit{Sites: sites, Servers: allowed.Servers, Other: allowed.Other}, nil
 }
 
 // editorStartProblems lists what an editor session finds wrong before its first thread opens:
