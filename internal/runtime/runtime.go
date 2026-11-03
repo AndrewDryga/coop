@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -789,6 +790,7 @@ func (r Runtime) appleContainerIDsContext(ctx context.Context, all bool, filters
 type Container struct {
 	ID     string
 	Labels map[string]string
+	Image  string // the immutable image ID; only RunningContainerImages reads it
 }
 
 // ContainerLabels lists every running or stopped container labeled key=value — or carrying key with
@@ -861,6 +863,58 @@ func (r Runtime) ContainersByLabel(ctx context.Context, key, value string) ([]Co
 			return nil, fmt.Errorf("decode labels for container %s: %w", id, err)
 		}
 		containers = append(containers, Container{ID: id, Labels: labels})
+	}
+	return containers, nil
+}
+
+// RunningContainerImages lists the running containers labeled key=value, each with its full id,
+// the immutable ID of the image it runs and the values of the named labels. A listing shows the
+// image name a container started from, and a rebuild moves that name to another image; only the
+// ID says which image the container really runs. A container that stops between the listing and
+// its inspection is skipped, but only once the same listing, run again, no longer shows it.
+func (r Runtime) RunningContainerImages(ctx context.Context, key, value string, names ...string) ([]Container, error) {
+	if r.kind() == runtimeAppleContainer {
+		return nil, errors.New("image inspection is unsupported by Apple container")
+	}
+	filter := "label=" + key + "=" + value
+	ids, err := r.containerIDsContext(ctx, false, filter)
+	if err != nil {
+		return nil, fmt.Errorf("list matching containers: %w", err)
+	}
+	fields := []string{"{{json .Id}}", "{{json .Image}}"}
+	for _, name := range names {
+		fields = append(fields, `{{json (index .Config.Labels "`+name+`")}}`)
+	}
+	format := "[" + strings.Join(fields, ",") + "]"
+	containers := make([]Container, 0, len(ids))
+	for _, id := range ids {
+		args := []string{"container", "inspect", "--format", format, id}
+		out, err := contextCommand(ctx, r.Name, args...).Output()
+		if err != nil {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			} else {
+				// The inspect's wording proves nothing (Docker 29 changed it); see MountSourcesByLabel.
+				remaining, listErr := r.containerIDsContext(ctx, false, filter)
+				if listErr == nil && !slices.Contains(remaining, id) {
+					continue
+				}
+				err = errors.Join(err, listErr)
+			}
+			return nil, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, nil))
+		}
+		var values []string
+		if err := json.Unmarshal(bytes.TrimSpace(out), &values); err != nil || len(values) != len(names)+2 ||
+			values[0] == "" || values[1] == "" {
+			return nil, fmt.Errorf("unreadable inspection of container %s from %s", id, r.Name)
+		}
+		labels := make(map[string]string, len(names))
+		for i, name := range names {
+			if values[i+2] != "" {
+				labels[name] = values[i+2]
+			}
+		}
+		containers = append(containers, Container{ID: values[0], Image: values[1], Labels: labels})
 	}
 	return containers, nil
 }

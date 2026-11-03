@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -93,6 +94,41 @@ func TestApprovedBuild(t *testing.T) {
 			t.Errorf("a failed build exited %d, want 1", code)
 		}
 		assertApprovedOutput(t, "31f-build-failed", normalizeImage(cfg, out))
+	})
+
+	// A rebuild restarts the editor sessions on the image it replaced, in every project that runs
+	// it, and counts the loop that will pick it up next time. The project on its own image keeps
+	// both of its boxes: the build did not change what they run.
+	t.Run("31e-build-session-effects", func(t *testing.T) {
+		cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box:5db4c3f8c69555471772326ae9c3e960"}
+		rt, trace := boxesShim{before: sharedBaseBefore, after: sharedBaseAfter, boxes: sessionsInTwoProjects}.build(t)
+		a := &app{cfg: cfg, rt: rt, rtSet: true}
+		var code int
+		out := captureTerminal(t, func() { code, _ = a.cmdBuild(nil) })
+		if code != 0 {
+			t.Fatalf("cmdBuild = %d:\n%s", code, out)
+		}
+		assertApprovedOutput(t, "31e-build-session-effects", out)
+		if removed := removedBoxes(t, trace); !slices.Equal(removed, []string{"atlas-editor", "harbor-editor"}) {
+			t.Errorf("removed %q, want only the editor sessions on the replaced image", removed)
+		}
+	})
+
+	// A build that leaves the image as it was (a cache hit) has replaced nothing, so no session
+	// anywhere restarts, and the result says so.
+	t.Run("31j-build-unchanged", func(t *testing.T) {
+		cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box:5db4c3f8c69555471772326ae9c3e960"}
+		rt, trace := boxesShim{before: sharedBaseBefore, after: sharedBaseBefore, boxes: sessionsInTwoProjects}.build(t)
+		a := &app{cfg: cfg, rt: rt, rtSet: true}
+		var code int
+		out := captureTerminal(t, func() { code, _ = a.cmdBuild(nil) })
+		if code != 0 {
+			t.Fatalf("cmdBuild = %d:\n%s", code, out)
+		}
+		assertApprovedOutput(t, "31j-build-unchanged", out)
+		if removed := removedBoxes(t, trace); len(removed) != 0 {
+			t.Errorf("an unchanged image restarted %q", removed)
+		}
 	})
 
 	// No runtime means nothing was built and nothing was said about an image.

@@ -1,0 +1,8 @@
+Building the Coop box
+  Image:      coop-box:5db4c3f8c69555471772326ae9c3e960
+
+[Build output]
+
+✓ Box image built
+  2 supervised editor sessions will reconnect with the new image.
+  1 other running box will use the new image on its next start.

@@ -546,6 +546,16 @@ type BuildPlan struct {
 // its own.
 func (p BuildPlan) CarriesQualifiedClients() bool { return !p.Project || p.usesBase }
 
+// ImageChange is what a build did to one image tag: the image ID the tag named before the build
+// and the one it names after. Either is empty where there was none, or the runtime could not say.
+type ImageChange struct{ Before, After string }
+
+// Replaced reports whether the build moved the tag off an image a running box may still use.
+func (c ImageChange) Replaced() bool { return c.Before != "" && c.After != "" && c.Before != c.After }
+
+// Unchanged reports whether the tag still names the image it named before the build.
+func (c ImageChange) Unchanged() bool { return c.Before != "" && c.Before == c.After }
+
 // PlanBuild resolves what a build would do, without building anything. It loads project.yaml (so
 // a malformed one fails loudly here rather than halfway through) and requires the runtime, since
 // whether the shared base already exists is part of the answer.

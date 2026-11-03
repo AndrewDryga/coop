@@ -2,8 +2,8 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/cli/acp_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go]
-updated: 2026-10-17
+sources: [internal/cli/acp_cmd.go, internal/cli/build_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go]
+updated: 2026-11-03
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
 CLIENT's promise, no Go `defer` runs, and no PID 1 inside the box can help (that limit, and why a
@@ -93,7 +93,8 @@ services that another host supervises, which no sweep will ever remove, with `Ot
 for their volumes. Doctor (`reportOrphanSurvey`, which the approved transcripts 18n and 18o render
 through) lists them with the exact `rm -f` and `volume rm` commands, and `HostError` under "Box
 cleanup". It runs from `app.sweepOrphanBoxes` (memoized once per repo per process) at the entry
-points that already reap: loop start, fork start, and `coop build`/`update`'s recycle. Failure there
+points that already reap: loop start, fork start, and `coop build`/`update`'s recycle (which runs
+only when the build replaced an image, so an unchanged build sweeps nothing). Failure there
 is deliberately silent — the
 command's own box work reports a broken runtime loudly, and Apple's `container` CLI has no label
 inspection at all, so it would otherwise print on every start. `coop doctor` is the reporting
@@ -240,6 +241,8 @@ Traps:
   point at a fresh temp root.
 
 ## Changelog
+- 2026-11-03 — a build's recycle (and the sweep it starts) runs only for an image the build
+  replaced, and restarts only the supervised boxes running it (`recycleBoxes` in build_cmd.go).
 - 2026-10-18 — a session-service run's boxes and brokers are judged from any workspace (task
   2026-10-16-remove-a-dead-session-service-run-s-containers-b).
 - 2026-10-17 — the read-only and bare launches are gone: `runBox` and `collectOrphanBoxes` are the

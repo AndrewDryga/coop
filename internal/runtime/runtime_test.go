@@ -774,6 +774,56 @@ fi
 	}
 }
 
+// A rebuild restarts a box by the image it really runs, which only an inspect says: a listing names
+// the image a box started from, and the rebuild has just moved that name. A box that stops between
+// the listing and its inspect is skipped once the same listing no longer shows it; a box still
+// listed, or a re-listing that fails, keeps the inspect's error.
+func TestRunningContainerImagesSkipsOnlyABoxProvablyGone(t *testing.T) {
+	for _, tc := range []struct {
+		name, relist, detail string
+		skipped              bool
+	}{
+		{name: "provably gone", relist: "echo live", skipped: true},
+		{name: "re-listing failed", relist: "echo 'daemon query broke' >&2; exit 42", detail: "daemon query broke"},
+		{name: "still listed", relist: "printf 'live\\ngone\\n'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cli := filepath.Join(dir, "docker")
+			script := `#!/bin/sh
+for last; do :; done
+case "$*" in
+"ps -q --filter label=coop=box")
+	if [ -e "$COOP_TEST_LISTED" ]; then eval "$COOP_TEST_RELIST"; else : > "$COOP_TEST_LISTED"; printf 'live\ngone\n'; fi ;;
+"container inspect --format "*)
+	case "$last" in
+	live) printf '%s\n' '["live-full-id","sha256:live-image","1"]' ;;
+	*) echo "Error response from daemon: No such container: $last" >&2; exit 1 ;;
+	esac ;;
+*) exit 99 ;;
+esac
+`
+			if err := os.WriteFile(cli, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("COOP_TEST_LISTED", filepath.Join(dir, "listed"))
+			t.Setenv("COOP_TEST_RELIST", tc.relist)
+
+			containers, err := (Runtime{Name: cli}).RunningContainerImages(context.Background(), "coop", "box", "coop.supervised")
+			if tc.skipped {
+				if err != nil || len(containers) != 1 || containers[0].ID != "live-full-id" ||
+					containers[0].Image != "sha256:live-image" || containers[0].Labels["coop.supervised"] != "1" {
+					t.Fatalf("running images = %+v, %v; want the live box's image and the vanished box skipped", containers, err)
+				}
+				return
+			}
+			if err == nil || containers != nil || !strings.Contains(err.Error(), "No such container") || !strings.Contains(err.Error(), tc.detail) {
+				t.Fatalf("an unproven disappearance = %+v, %v; want the inspect failure and no listing", containers, err)
+			}
+		})
+	}
+}
+
 func TestRemoveByLabelPreservesRuntimeDiagnostics(t *testing.T) {
 	for _, tc := range []struct {
 		name, failure, command, detail string

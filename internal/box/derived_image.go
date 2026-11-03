@@ -131,31 +131,33 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.C
 // BuildFilteredProject is the host-only construction path behind `coop build --egress filtered`.
 // Network setup builds only embedded Coop sources; project instructions run only in this explicit
 // action. A build approval is separate from project network permissions and cannot grant access.
-func BuildFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, out, errOut io.Writer) error {
+// The change it reports is to the project's own filtered image: without a project Dockerfile there
+// is none, since the locked client image is tagged by its definition and never replaced in place.
+func BuildFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, out, errOut io.Writer) (ImageChange, error) {
 	return buildFilteredProjectWith(ctx, rt, cfg, repo, out, errOut, nil)
 }
 
-func buildFilteredProjectWith(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, out, errOut io.Writer, prepared *PreparedProjectBuild) error {
+func buildFilteredProjectWith(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, out, errOut io.Writer, prepared *PreparedProjectBuild) (ImageChange, error) {
 	if err := checkFilteredRuntime(rt); err != nil {
-		return err
+		return ImageChange{}, err
 	}
 	rt, err := rt.FreezeCompose(ctx)
 	if err != nil {
-		return err
+		return ImageChange{}, err
 	}
 	canonical, _, root, exposed, _, err := networkProjectInputs(cfg, repo)
 	if err != nil {
-		return err
+		return ImageChange{}, err
 	}
 	store, err := networkstate.Open(root, exposed)
 	if err != nil {
-		return err
+		return ImageChange{}, err
 	}
 	defer store.Close()
 	endpoint, daemon := rt.ComposeBinding()
 	docker, err := runtime.BindDockerForSetup(ctx, rt, endpoint, daemon)
 	if err != nil {
-		return err
+		return ImageChange{}, err
 	}
 	defer docker.Close()
 	qualification, err := ensureNetworkQualification(ctx, func() (*networkstate.Qualification, error) {
@@ -165,55 +167,53 @@ func buildFilteredProjectWith(ctx context.Context, rt runtime.Runtime, cfg *conf
 		return err
 	})
 	if err != nil {
-		return err
+		return ImageChange{}, err
 	}
 	if prepared != nil {
 		if prepared.repo != canonical {
-			return errors.New("the reviewed build belongs to a different project")
+			return ImageChange{}, errors.New("the reviewed build belongs to a different project")
 		}
-		_, _, err = buildPreparedFilteredProject(ctx, rt, cfg, docker, store, prepared, qualification.Candidate, errOut)
-		return err
+		return buildPreparedFilteredProject(ctx, rt, cfg, docker, store, prepared, qualification.Candidate, errOut)
 	}
 	if filteredProjectDockerfile(canonical) == "" {
-		return nil // setup prepared the locked image; there are no project instructions
+		return ImageChange{}, nil // setup prepared the locked image; there are no project instructions
 	}
-	_, _, err = buildFilteredProject(ctx, rt, cfg, docker, store, canonical, qualification.Candidate, errOut)
-	return err
+	return buildFilteredProject(ctx, rt, cfg, docker, store, canonical, qualification.Candidate, errOut)
 }
 
-func buildFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *config.Config, docker filteredDocker, store *networkstate.Store, repo string, candidate networkstate.CandidateSpec, errOut io.Writer) (image, imageTag string, err error) {
+func buildFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *config.Config, docker filteredDocker, store *networkstate.Store, repo string, candidate networkstate.CandidateSpec, errOut io.Writer) (ImageChange, error) {
 	dfRel := filteredProjectDockerfile(repo)
 	entries, err := buildContextSelection(ctx, repo)
 	if err != nil {
-		return "", "", &StageError{Err: err}
+		return ImageChange{}, &StageError{Err: err}
 	}
 	dir, digest, cleanup, err := stageContextEntries(ctx, repo, entries)
 	if err != nil {
-		return "", "", &StageError{Err: err}
+		return ImageChange{}, &StageError{Err: err}
 	}
 	defer cleanup()
 	prepared := &PreparedProjectBuild{repo: repo, dockerfile: dfRel, dir: dir, digest: digest, entries: entries, settings: projectBuildSettings()}
 	return buildPreparedFilteredProject(ctx, rt, cfg, docker, store, prepared, candidate, errOut)
 }
 
-func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *config.Config, docker filteredDocker, store *networkstate.Store, prepared *PreparedProjectBuild, candidate networkstate.CandidateSpec, errOut io.Writer) (image, imageTag string, err error) {
+func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *config.Config, docker filteredDocker, store *networkstate.Store, prepared *PreparedProjectBuild, candidate networkstate.CandidateSpec, errOut io.Writer) (ImageChange, error) {
 	if err := prepared.verifySnapshot(ctx); err != nil {
-		return "", "", err
+		return ImageChange{}, err
 	}
 	if errOut == nil {
 		errOut = io.Discard
 	}
 	if prepared.settings != projectBuildSettings() {
-		return "", "", errors.New("project build settings changed after review — run it again")
+		return ImageChange{}, errors.New("project build settings changed after review — run it again")
 	}
 	dfRel := prepared.dockerfile
 	definition, _, closure, err := lockedImageDefinition(agents.ClientPlatform{
 		OS: candidate.Runtime.OS, Architecture: candidate.Runtime.Architecture, Libc: candidate.Libc})
 	if err != nil {
-		return "", "", err
+		return ImageChange{}, err
 	}
 	if id, _, err := docker.Image(ctx, definition.Tag); err != nil || id != candidate.ClientImage {
-		return "", "", errors.New("the locked client image changed — run 'coop net setup', then 'coop build --egress filtered' again")
+		return ImageChange{}, errors.New("the locked client image changed — run 'coop net setup', then 'coop build --egress filtered' again")
 	}
 	tag := filteredProjectTag(prepared.repo, candidate.ClientImage)
 	// What the tag names now, which this build untags when the project's Dockerfile changed. The tag
@@ -227,30 +227,32 @@ func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *
 	}
 	built, err := buildStagedProjectOnBase(ctx, rt, prepared.dir, prepared.entries, dfRel, tag, definition.Tag, prepared.lease, errOut)
 	if err != nil {
-		return "", "", fmt.Errorf("this project's %s did not build on coop's client image: %w", dfRel, err)
+		return ImageChange{}, fmt.Errorf("this project's %s did not build on coop's client image: %w", dfRel, err)
 	}
 	if id, _, err := docker.Image(ctx, built); err != nil || id != built {
-		return "", "", fmt.Errorf("the image %s built from this project's %s cannot be read back — run it again", tag, dfRel)
+		return ImageChange{}, fmt.Errorf("the image %s built from this project's %s cannot be read back — run it again", tag, dfRel)
 	}
 	if err := proveDerivedImage(ctx, docker, store, candidate.ClientImage, built, closure, dfRel); err != nil {
-		return "", "", err
+		return ImageChange{}, err
 	}
 	if prepared.settings != projectBuildSettings() {
-		return "", "", errors.New("project build settings changed during the build — run it again")
+		return ImageChange{}, errors.New("project build settings changed during the build — run it again")
 	}
 	if err := prepared.verifySnapshot(ctx); err != nil {
-		return "", "", err
+		return ImageChange{}, err
 	}
 	// Bind what was actually staged, not a later read of a concurrently edited checkout.
 	if err := store.ApproveProjectBuild(tag, projectBuildInputs(prepared.digest, candidate, closure, definition.Tag, tag, dfRel), built); err != nil {
-		return "", "", fmt.Errorf("project image built, but its approval could not be saved: %w; fix host state permissions and run 'coop build --egress filtered' again", err)
+		return ImageChange{}, fmt.Errorf("project image built, but its approval could not be saved: %w; fix host state permissions and run 'coop build --egress filtered' again", err)
 	}
 	// This project's own images are tagged by the client image they were built on, so a Coop
 	// upgrade leaves the last one tagged behind. Only an explicit build reclaims predecessors.
 	reclaimAfterBuild(ctx, rt, cfg, tag, previous, nil, func(line string) {
 		fmt.Fprintln(errOut, line)
 	})
-	return built, tag, nil
+	// A filtered box runs only an approved build, which carries Coop's mark, so the unmarked image
+	// `previous` leaves out is not one a filtered box could be running.
+	return ImageChange{Before: previous, After: built}, nil
 }
 
 // FilteredImageIdentity identifies the prepared image for an editor warm pool. It grants no

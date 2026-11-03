@@ -232,7 +232,8 @@ func (b *PreparedProjectBuild) Build(ctx context.Context, rt runtime.Runtime, cf
 	if b.settings != projectBuildSettings() {
 		return errors.New("project build settings changed while awaiting confirmation — run it again")
 	}
-	return buildFilteredProjectWith(ctx, rt, cfg, b.repo, out, errOut, b)
+	_, err := buildFilteredProjectWith(ctx, rt, cfg, b.repo, out, errOut, b)
+	return err
 }
 
 func projectBuildSettings() string {

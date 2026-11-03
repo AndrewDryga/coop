@@ -563,8 +563,14 @@ func TestDerivedRebuildRemovesOnlyCoopsReplacedImage(t *testing.T) {
 			if err := os.Chmod(script, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := buildFilteredProject(t.Context(), frozenProjectRuntime(t, script), &config.Config{BoxHome: t.TempDir()}, d, f.store, repo, fixtureCandidate(), io.Discard); err != nil {
+			change, err := buildFilteredProject(t.Context(), frozenProjectRuntime(t, script), &config.Config{BoxHome: t.TempDir()}, d, f.store, repo, fixtureCandidate(), io.Discard)
+			if err != nil {
 				t.Fatal(err)
+			}
+			// The same mark decides what `coop build` restarts: only Coop's own image can be one a
+			// filtered box runs.
+			if change.After != fixtureBuiltImage || change.Replaced() != coops {
+				t.Errorf("build reported %+v, want the built image and replaced=%v", change, coops)
 			}
 			recorded := string(mustReadFile(t, calls))
 			if got := strings.Contains(recorded, "image rm "+old+"\n"); got != coops {

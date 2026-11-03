@@ -166,7 +166,7 @@ func TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate := fixtureCandidate()
-	if _, _, err := buildPreparedFilteredProject(t.Context(), frozenProjectRuntime(t, script), &config.Config{}, d, f.store, prepared, candidate, io.Discard); err != nil {
+	if _, err := buildPreparedFilteredProject(t.Context(), frozenProjectRuntime(t, script), &config.Config{}, d, f.store, prepared, candidate, io.Discard); err != nil {
 		t.Fatalf("reviewed snapshot was not the build source: %v", err)
 	}
 	_, _, err = filteredProjectImage(t.Context(), runtime.Runtime{}, &config.Config{}, d, f.store, RunSpec{Repo: repo, Quiet: true}, candidate)

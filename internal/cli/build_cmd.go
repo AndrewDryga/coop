@@ -18,10 +18,11 @@ import (
 )
 
 // `coop build` and `coop update`: the two commands that change the image every later run uses.
-// Both recycle the supervised editor boxes the global supervisor label selects — which is every
-// supervised box on this host, not just this project's — and neither claims a session reconnected,
-// only that it will. A loop or an ordinary interactive box is never touched: killing one would
-// lose work, and it picks up the new image the next time it starts.
+// Both restart the supervised editor boxes that run an image the build replaced, in any project
+// (every project without a Dockerfile of its own shares the base), and neither claims a session
+// reconnected, only that it will. A build that replaced nothing restarts nothing. A loop or an
+// ordinary interactive box is never touched: killing one would lose work, and it picks up the new
+// image the next time it starts.
 
 func (a *app) cmdBuild(args []string) (int, error) {
 	mode, err := parseBuildMode(args)
@@ -51,27 +52,29 @@ func (a *app) cmdBuild(args []string) (int, error) {
 			return 1, buildFailure("Could not build the filtered box image", err, a.rt.Name, "coop build --egress filtered")
 		}
 		warnUntrackedBuild(plan)
-		if err := a.buildFilteredBox(repo, plan, "Preparing the filtered box image"); err != nil {
+		changes, err := a.buildFilteredBox(repo, plan, "Preparing the filtered box image")
+		if err != nil {
 			return 1, buildFailure("Could not build the filtered box image", err, a.rt.Name, "coop build --egress filtered")
 		}
 		ui.OK("Filtered box image ready")
-		return a.reportRecycle(repo, "Box image built", "coop build --egress filtered")
+		return a.reportRecycle(repo, "Box image built", changes)
 	}
 	plan, err := box.PlanBuild(a.rt, a.cfg, repo, false)
 	if err != nil {
 		return 1, buildFailure("Could not build the box image", err, a.rt.Name, retry)
 	}
 	announceBuild(plan, "Building the Coop box", "Building the project box")
-	if err := box.BuildPlanned(a.rt, a.cfg, repo, plan, false, resolveVersion(), os.Stdin, os.Stdout); err != nil {
+	changes, err := a.buildPlanned(repo, plan, false)
+	if err != nil {
 		ui.Note("")
 		return 1, buildFailure("Could not build the box image", err, a.rt.Name, retry)
 	}
 	ui.Note("")
 	ui.OK("Box image built")
-	return a.reportRecycle(repo, "Box image built", retry)
+	return a.reportRecycle(repo, "Box image built", changes)
 }
 
-func (a *app) buildFilteredBox(repo string, plan box.BuildPlan, title string) error {
+func (a *app) buildFilteredBox(repo string, plan box.BuildPlan, title string) ([]box.ImageChange, error) {
 	ui.Note("%s", title)
 	if plan.Project {
 		ui.Note("  Dockerfile: %s", plan.Dockerfile)
@@ -82,7 +85,30 @@ func (a *app) buildFilteredBox(repo string, plan box.BuildPlan, title string) er
 	// foreground probes still receive terminal signals.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return box.BuildFilteredProject(ctx, a.rt, a.cfg, repo, os.Stdout, os.Stderr)
+	change, err := box.BuildFilteredProject(ctx, a.rt, a.cfg, repo, os.Stdout, os.Stderr)
+	return []box.ImageChange{change}, err
+}
+
+// buildPlanned runs an ordinary build and reports what it did to every tag it builds: the plan's
+// image and, when the plan rebuilds it first, the shared base that boxes of every project without
+// a Dockerfile of its own run. Comparing the image IDs before and after is how the build knows
+// which running boxes it actually left on an old image.
+func (a *app) buildPlanned(repo string, plan box.BuildPlan, fresh bool) ([]box.ImageChange, error) {
+	tags := []string{plan.Image}
+	if plan.BaseFirst {
+		tags = append(tags, a.cfg.BaseImage)
+	}
+	changes := make([]box.ImageChange, len(tags))
+	for i, tag := range tags {
+		changes[i].Before = a.rt.ImageID(tag)
+	}
+	if err := box.BuildPlanned(a.rt, a.cfg, repo, plan, fresh, resolveVersion(), os.Stdin, os.Stdout); err != nil {
+		return nil, err
+	}
+	for i, tag := range tags {
+		changes[i].After = a.rt.ImageID(tag)
+	}
+	return changes, nil
 }
 
 // --egress chooses the image a later run needs; it is not a build-time network sandbox.
@@ -159,15 +185,34 @@ func buildFailure(headline string, err error, runtimeName, retry string) error {
 	}
 }
 
-// reportRecycle restarts the supervised editor boxes onto the new image and reports the effect on
-// running work. The counts come from the runtime's own answer, and the sentence says sessions
-// WILL reconnect: coop removed their boxes, it did not watch an editor come back.
-func (a *app) reportRecycle(repo, built, retry string) (int, error) {
-	supervised, others, err := a.recycleBoxes(repo)
+// reportRecycle restarts the supervised editor boxes running an image the build replaced and
+// reports the effect on running work. The counts come from the runtime's own answer, and the
+// sentence says sessions WILL reconnect: coop removed their boxes, it did not watch an editor come
+// back. A build whose images all stayed the same says so and touches nothing. One that only
+// created an image, or ran where image IDs cannot be read, has no old image to report.
+func (a *app) reportRecycle(repo, built string, changes []box.ImageChange) (int, error) {
+	var replaced []string
+	unchanged := len(changes) > 0
+	for _, change := range changes {
+		if change.Replaced() {
+			replaced = append(replaced, change.Before)
+		}
+		unchanged = unchanged && change.Unchanged()
+	}
+	if unchanged {
+		ui.Note("  The image did not change, so no editor session restarts.")
+		return 0, nil
+	}
+	if len(replaced) == 0 {
+		return 0, nil
+	}
+	supervised, others, err := a.recycleBoxes(repo, replaced)
 	if err != nil {
+		// Running the build again would not help: it finds the image already current and leaves
+		// a session on the old one alone. Reconnecting starts that session on the new image.
 		ui.Note("")
 		return 1, reported("Could not restart all supervised editor sessions", sentence(firstLine(err)),
-			fmt.Sprintf("Check %s, then run %s again.", runtimeTitle(a.rt.Name), retry),
+			fmt.Sprintf("Check %s, then reconnect your editor to use the new image.", runtimeTitle(a.rt.Name)),
 			"New runs can use the "+strings.ToLower(strings.TrimPrefix(built, "Box image "))+" image.")
 	}
 	if supervised > 0 {
@@ -179,17 +224,18 @@ func (a *app) reportRecycle(repo, built, retry string) (int, error) {
 	return 0, nil
 }
 
-// recycleBoxes restarts supervised boxes after a rebuild so they reconnect on the new
-// image — a coop acp supervisor replays the ACP handshake, so the editor doesn't
-// notice. New runs use the fresh image anyway (containers are anonymous). Other
-// running boxes (loops, forks, an un-supervised session) are left alone; SIGKILLing
-// them would lose work, and they pick up the new image when they next start.
+// recycleBoxes restarts the supervised boxes running one of the replaced images so they reconnect
+// on the new one — a coop acp supervisor replays the ACP handshake, so the editor doesn't notice.
+// A box on any other image is untouched: the build did not change it, and a restart would bring
+// it back on the same image. Other running boxes on a replaced image (loops, forks, an
+// un-supervised session) are only counted; SIGKILLing them would lose work, and they pick up the
+// new image when they next start. New runs use the fresh image anyway (containers are anonymous).
 // It reaps repo's orphans first, so a box nobody supervises is never counted (or reported to the
 // user) as work still running on the old image. Every authoritative query and removal shares one
 // deadline; the preceding image build has already succeeded if an error is returned.
 const recycleBoxesTimeout = 10 * time.Second
 
-func (a *app) recycleBoxes(repo string) (supervised, others int, err error) {
+func (a *app) recycleBoxes(repo string, replaced []string) (supervised, others int, err error) {
 	a.sweepOrphanBoxes(repo)
 	ctx, cancel := context.WithTimeout(context.Background(), recycleBoxesTimeout)
 	defer cancel()
@@ -197,19 +243,25 @@ func (a *app) recycleBoxes(repo string) (supervised, others int, err error) {
 	// failed: the step is what the reader acts on, the diagnostic is what they paste into a
 	// search when the step alone is not enough.
 	runtime := runtimeTitle(a.rt.Name)
-	running, err := a.rt.RunningContainerIDsByLabel(ctx, box.LabelKey, box.LabelBox)
+	running, err := a.rt.RunningContainerImages(ctx, box.LabelKey, box.LabelBox, box.LabelSupervised)
 	if err != nil {
 		return 0, 0, fmt.Errorf("%s did not respond while listing running boxes: %w", runtime, err)
 	}
-	live, err := a.rt.RunningContainerIDsByLabel(ctx, box.LabelSupervised, box.LabelOn)
-	if err != nil {
-		return 0, 0, fmt.Errorf("%s did not respond while listing supervised boxes: %w", runtime, err)
+	removed := 0
+	for _, container := range running {
+		if !slices.Contains(replaced, container.Image) {
+			continue
+		}
+		if container.Labels[box.LabelSupervised] != box.LabelOn {
+			others++
+			continue
+		}
+		if err := a.rt.RemoveContainerContext(ctx, container.ID); err != nil {
+			return 0, 0, fmt.Errorf("%s could not remove an old supervised box, %d removed before failure: %w", runtime, removed, err)
+		}
+		removed++
 	}
-	n, err := a.rt.RemoveByLabel(ctx, box.LabelSupervised, box.LabelOn)
-	if err != nil {
-		return 0, 0, fmt.Errorf("%s could not remove an old supervised box, %d removed before failure: %w", runtime, n, err)
-	}
-	return n, len(running) - len(live), nil
+	return removed, others, nil
 }
 
 // cmdUpdate installs the latest binary and prepares the effective project image. Filtered
@@ -280,15 +332,16 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	if err != nil {
 		return 1, updateBoxFailure(err, a.rt.Name, selfFailed)
 	}
+	var changes []box.ImageChange
 	if filtered {
 		warnUntrackedBuild(plan)
-		err = a.buildFilteredBox(repo, plan, "Updating the filtered box image")
+		changes, err = a.buildFilteredBox(repo, plan, "Updating the filtered box image")
 	} else {
 		ui.Note("Updating the Coop box")
 		ui.Note("  Fetching newer base-image components. Agent clients stay at the versions tested with this Coop release.")
 		ui.Note("  Image:      %s", plan.Image)
 		ui.Note("")
-		err = box.BuildPlanned(a.rt, a.cfg, repo, plan, true, resolveVersion(), os.Stdin, os.Stdout)
+		changes, err = a.buildPlanned(repo, plan, true)
 	}
 	if err != nil {
 		ui.Note("")
@@ -300,7 +353,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	} else {
 		ui.OK("Box image updated")
 	}
-	if code, err := a.reportRecycle(repo, "Box image updated", "coop update --box-only"); err != nil {
+	if code, err := a.reportRecycle(repo, "Box image updated", changes); err != nil {
 		return code, err
 	}
 	ui.Note("")

@@ -1903,8 +1903,9 @@ Run after changing the box Dockerfile or .tool-versions.
 Builds use the configured versions and available cache.
 Use coop update --box-only to prepare this project's effective image.
 
-New runs use the rebuilt image. Supervised editor sessions restart and
-reconnect. Other running boxes use the old image until their next start.
+New runs use the rebuilt image. Supervised editor sessions that run the
+replaced image restart and reconnect. Other running boxes use the old
+image until their next start. An unchanged image restarts nothing.
 Requires a running container runtime.
 
 ==============================================================================
@@ -1934,8 +1935,9 @@ Development builds and binaries newer than the latest release are kept.
 A binary that cannot be replaced is an error; update it with the tool
 that installed it. The box rebuild can still finish independently.
 
-New runs use the rebuilt image. Supervised editor sessions restart and
-reconnect. Other running boxes use the old image until their next start.
+New runs use the rebuilt image. Supervised editor sessions that run the
+replaced image restart and reconnect. Other running boxes use the old
+image until their next start. An unchanged image restarts nothing.
 
 Coop checks for new releases once a day during terminal use.
 Set COOP_NO_UPDATE_CHECK=1 to turn off those notices.

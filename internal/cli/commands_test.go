@@ -201,85 +201,148 @@ func composeUpRuntime(t *testing.T, services []string, serviceExit int) runtime.
 	return runtime.Runtime{Name: shim}
 }
 
-func recycleRuntime(t *testing.T, mode string) (runtime.Runtime, string) {
+// Image IDs as Docker writes them, for the images the build and recycle tests run boxes on.
+var (
+	sharedBaseBefore = "sha256:" + strings.Repeat("a", 64) // the shared base before a rebuild
+	sharedBaseAfter  = "sha256:" + strings.Repeat("b", 64) // the same tag after it
+	ownProjectImage  = "sha256:" + strings.Repeat("c", 64) // a project's own image, untouched by it
+)
+
+// runningBox is one box the boxesShim reports as running, with the image it really runs.
+type runningBox struct {
+	id, image  string
+	supervised bool
+}
+
+// boxesShim answers like Docker on a host where boxes are running in several projects. The tag a
+// build produces names before until the shim runs a build and after from then on; each running box
+// reports the image it really runs. Every call is traced. queryFails breaks the box listing, and
+// removing the box named rmFails fails.
+type boxesShim struct {
+	before, after string
+	boxes         []runningBox
+	queryFails    bool
+	rmFails       string
+}
+
+func (s boxesShim) build(t *testing.T) (runtime.Runtime, string) {
 	t.Helper()
 	dir := t.TempDir()
-	shim := filepath.Join(dir, "runtime")
-	trace := filepath.Join(dir, "trace")
-	if err := os.WriteFile(shim, []byte(`#!/bin/sh
-printf '%s\n' "$*" >> "$COOP_TEST_RUNTIME_TRACE"
-if [ "$1" = ps ]; then
-	if [ "$COOP_TEST_RECYCLE_MODE" = query-failure ]; then
-		echo 'daemon query broke' >&2
-		exit 42
-	fi
-	case "$*" in
-		*" -a "*)
-			case "$COOP_TEST_RECYCLE_MODE" in success|partial) printf 'supervised-a\nsupervised-b\n' ;; esac
-			;;
-		*"label=coop.supervised=1"*)
-			case "$COOP_TEST_RECYCLE_MODE" in success|partial) printf 'supervised-a\nsupervised-b\n' ;; esac
-			;;
-		*"label=coop=box"*)
-			case "$COOP_TEST_RECYCLE_MODE" in success|partial) printf 'supervised-a\nsupervised-b\nother\n' ;; esac
-			;;
-	esac
-fi
-if [ "$1" = rm ] && [ "$COOP_TEST_RECYCLE_MODE" = partial ] && [ "$3" = supervised-b ]; then
-	echo 'container remove broke' >&2
-	exit 43
-fi
-`), 0o755); err != nil {
+	trace, built := filepath.Join(dir, "trace"), filepath.Join(dir, "built")
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(trace) + "\nfor last; do :; done\ncase \"$*\" in\n")
+	script.WriteString("  'info --format'*) echo linux/aarch64 ;;\n")
+	script.WriteString("  build*) echo '[Build output]'; : > " + strconv.Quote(built) + " ;;\n")
+	script.WriteString("  'image inspect --format {{.Id}} '*)\n")
+	script.WriteString("    if [ -e " + strconv.Quote(built) + " ]; then id='" + s.after + "'; else id='" + s.before + "'; fi\n")
+	script.WriteString("    [ -n \"$id\" ] || exit 1\n    echo \"$id\" ;;\n")
+	script.WriteString("  'image inspect --format {{len .RepoTags}} '*) echo 1 ;;\n")
+	script.WriteString("  'ps -q --filter label=coop=box')\n")
+	if s.queryFails {
+		script.WriteString("    echo 'daemon query broke' >&2; exit 42 ;;\n")
+	} else {
+		for _, b := range s.boxes {
+			script.WriteString("    echo '" + b.id + "'\n")
+		}
+		script.WriteString("    ;;\n")
+	}
+	// Docker answers a supervised-label query too, so a recycle that selects by that label alone
+	// shows up here as the removal of a box on some other image.
+	script.WriteString("  'ps -q --filter label=coop.supervised=1'|'ps -q -a --filter label=coop.supervised=1')\n")
+	for _, b := range s.boxes {
+		if b.supervised {
+			script.WriteString("    echo '" + b.id + "'\n")
+		}
+	}
+	script.WriteString("    ;;\n")
+	script.WriteString("  'container inspect '*)\n    case \"$last\" in\n")
+	for _, b := range s.boxes {
+		supervised := ""
+		if b.supervised {
+			supervised = box.LabelOn
+		}
+		script.WriteString("      '" + b.id + "') echo '[\"" + b.id + "\",\"" + b.image + "\",\"" + supervised + "\"]' ;;\n")
+	}
+	script.WriteString("      *) exit 1 ;;\n    esac ;;\n")
+	script.WriteString("  'rm -f '*) [ \"$last\" != '" + s.rmFails + "' ] || { echo 'container remove broke' >&2; exit 43; } ;;\n")
+	script.WriteString("esac\nexit 0\n")
+	shim := filepath.Join(dir, "docker")
+	if err := os.WriteFile(shim, []byte(script.String()), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("COOP_TEST_RUNTIME_TRACE", trace)
-	t.Setenv("COOP_TEST_RECYCLE_MODE", mode)
 	return runtime.Runtime{Name: shim}, trace
 }
 
+// removedBoxes lists the containers the traced runtime was asked to remove, in order.
+func removedBoxes(t *testing.T, trace string) []string {
+	t.Helper()
+	data, err := os.ReadFile(trace)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	var removed []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if id, ok := strings.CutPrefix(line, "rm -f "); ok {
+			removed = append(removed, id)
+		}
+	}
+	return removed
+}
+
+// sessionsInTwoProjects is a host where the shared base runs an editor session and a loop in this
+// project and an editor session in another project without a Dockerfile, while a third project
+// runs its own image.
+var sessionsInTwoProjects = []runningBox{
+	{id: "atlas-editor", image: sharedBaseBefore, supervised: true},
+	{id: "atlas-loop", image: sharedBaseBefore},
+	{id: "harbor-editor", image: sharedBaseBefore, supervised: true},
+	{id: "kiln-editor", image: ownProjectImage, supervised: true},
+	{id: "kiln-loop", image: ownProjectImage},
+}
+
 func TestRecycleBoxesDistinguishesNoMatchFromFailure(t *testing.T) {
+	replaced := []string{sharedBaseBefore}
 	t.Run("no match", func(t *testing.T) {
-		rt, _ := recycleRuntime(t, "no-match")
+		rt, trace := boxesShim{}.build(t)
 		a := &app{rt: rt, rtSet: true}
-		supervised, others, recycleErr := a.recycleBoxes("")
-		if recycleErr != nil || supervised != 0 || others != 0 {
+		supervised, others, recycleErr := a.recycleBoxes("", replaced)
+		if recycleErr != nil || supervised != 0 || others != 0 || len(removedBoxes(t, trace)) != 0 {
 			t.Fatalf("empty recycle = (%d, %d, %v), want a quiet zero", supervised, others, recycleErr)
 		}
 	})
 
-	t.Run("success counts both effects", func(t *testing.T) {
-		rt, _ := recycleRuntime(t, "success")
+	t.Run("only boxes on a replaced image", func(t *testing.T) {
+		rt, trace := boxesShim{boxes: sessionsInTwoProjects}.build(t)
 		a := &app{rt: rt, rtSet: true}
-		supervised, others, recycleErr := a.recycleBoxes("")
+		supervised, others, recycleErr := a.recycleBoxes("", replaced)
 		if recycleErr != nil {
 			t.Fatal(recycleErr)
 		}
 		if supervised != 2 || others != 1 {
 			t.Errorf("recycle = (%d supervised, %d other), want (2, 1)", supervised, others)
 		}
+		if removed := removedBoxes(t, trace); !slices.Equal(removed, []string{"atlas-editor", "harbor-editor"}) {
+			t.Errorf("removed %q, want only the editor sessions on the replaced image", removed)
+		}
 	})
 
 	t.Run("query failure happens before removal", func(t *testing.T) {
-		rt, trace := recycleRuntime(t, "query-failure")
+		rt, trace := boxesShim{boxes: sessionsInTwoProjects, queryFails: true}.build(t)
 		a := &app{rt: rt, rtSet: true}
-		_, _, recycleErr := a.recycleBoxes("")
+		_, _, recycleErr := a.recycleBoxes("", replaced)
 		if recycleErr == nil || !strings.Contains(recycleErr.Error(), "daemon query broke") ||
 			!strings.Contains(recycleErr.Error(), "did not respond while listing") {
 			t.Fatalf("query failure error = %v; want the step and the runtime diagnostic", recycleErr)
 		}
-		calls, err := os.ReadFile(trace)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(calls), "rm -f") {
-			t.Fatalf("query failure mutated containers:\n%s", calls)
+		if removed := removedBoxes(t, trace); len(removed) != 0 {
+			t.Fatalf("query failure removed %q", removed)
 		}
 	})
 
 	t.Run("partial removal reports progress", func(t *testing.T) {
-		rt, _ := recycleRuntime(t, "partial")
+		rt, _ := boxesShim{boxes: sessionsInTwoProjects, rmFails: "harbor-editor"}.build(t)
 		a := &app{rt: rt, rtSet: true}
-		supervised, _, recycleErr := a.recycleBoxes("")
+		supervised, _, recycleErr := a.recycleBoxes("", replaced)
 		if recycleErr == nil || !strings.Contains(recycleErr.Error(), "1 removed before failure") ||
 			!strings.Contains(recycleErr.Error(), "container remove broke") {
 			t.Fatalf("partial removal error = %v, want count and runtime diagnostic", recycleErr)
@@ -288,6 +351,35 @@ func TestRecycleBoxesDistinguishesNoMatchFromFailure(t *testing.T) {
 			t.Fatalf("partial removal reported %d restarted sessions; a failed removal counts none", supervised)
 		}
 	})
+
+	// Building again would find the image current and restart nothing, so the advice after a
+	// failed restart must be the step that does move a session: reconnecting it.
+	t.Run("failure points at a reconnect", func(t *testing.T) {
+		rt, _ := boxesShim{boxes: sessionsInTwoProjects, queryFails: true}.build(t)
+		a := &app{rt: rt, rtSet: true}
+		var code int
+		out := captureTerminal(t, func() {
+			code, _ = a.reportRecycle("", "Box image built", []box.ImageChange{{Before: sharedBaseBefore, After: sharedBaseAfter}})
+		})
+		if code != 1 || !strings.Contains(out, "reconnect your editor to use the new image") || strings.Contains(out, "coop build again") {
+			t.Fatalf("restart failure = %d:\n%s", code, out)
+		}
+	})
+}
+
+func TestUpdateRestartsOnlySessionsOnTheReplacedImage(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	rt, trace := boxesShim{before: sharedBaseBefore, after: sharedBaseAfter, boxes: sessionsInTwoProjects}.build(t)
+	cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box:5db4c3f8c69555471772326ae9c3e960"}
+	a := &app{cfg: cfg, rt: rt, rtSet: true}
+	var code int
+	out := captureTerminal(t, func() { code, _ = a.cmdUpdate([]string{"--box-only"}) })
+	if code != 0 || !strings.Contains(out, "2 supervised editor sessions will reconnect") {
+		t.Fatalf("update = %d:\n%s", code, out)
+	}
+	if removed := removedBoxes(t, trace); !slices.Equal(removed, []string{"atlas-editor", "harbor-editor"}) {
+		t.Errorf("update removed %q, want only the editor sessions on the replaced base", removed)
+	}
 }
 
 func TestCmdUpReportsResolvedServiceNames(t *testing.T) {
