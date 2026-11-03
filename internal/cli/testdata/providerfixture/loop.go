@@ -15,6 +15,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -221,7 +222,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		}
 		if attempt.Result == "complete-host-reopen-archive" {
 			archiveID := plan.TaskID + "-archive"
-			if err := hostClaimLoopTask(root, archiveID); err != nil {
+			if err := hostReopenLoopTask(root, archiveID); err != nil {
 				return 1, "", err
 			}
 		}
@@ -733,35 +734,24 @@ func hostCompleteLoopTask(root, taskID string) error {
 	return nil
 }
 
-func hostClaimLoopTask(root, taskID string) error {
+func hostReopenLoopTask(root, taskID string) error {
 	repo, err := loopRepo(root)
 	if err != nil {
 		return err
 	}
-	conf := filepath.Join(root, "config", "coop.conf")
-	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+	queue, err := loopTaskQueue(root, repo, taskID)
+	if err != nil {
 		return err
 	}
-	cmd := exec.Command("coop", "tasks", "claim", taskID)
-	cmd.Dir = repo
-	cmd.Env = []string{
-		"HOME=" + filepath.Join(root, "home"),
-		"PATH=" + os.Getenv("PATH"),
-		"TMPDIR=" + filepath.Join(root, "tmp"),
-		"XDG_CACHE_HOME=" + filepath.Join(root, "xdg", "cache"),
-		"XDG_CONFIG_HOME=" + filepath.Join(root, "xdg", "config"),
-		"XDG_STATE_HOME=" + filepath.Join(root, "xdg", "state"),
-		"GIT_CONFIG_GLOBAL=" + filepath.Join(root, "state", "gitconfig"),
-		"GIT_CONFIG_NOSYSTEM=1",
-		"COOP_CONF=" + conf,
-		"COOP_CONFIG_DIR=" + filepath.Join(root, "config"),
-		"COOP_REPO=" + repo,
-		"COOP_NO_UPDATE_CHECK=1",
+	task, err := tasks.FindTask(queue, taskID)
+	if err != nil {
+		return err
 	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("coop tasks claim %s: %w: %s", taskID, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	// Claim refuses archived work. Simulate the same trusted host move that
+	// review uses, including its departure receipt for the active work window.
+	return tasks.MoveTrustedTasksFromDoneWith([]tasks.TrustedTaskMove{{
+		Root: queue, Task: task, NewState: tasks.StateInProgress,
+	}})
 }
 
 func waitLoopRelease(root, taskID string) error {

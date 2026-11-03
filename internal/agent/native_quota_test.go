@@ -67,8 +67,6 @@ func TestNativeQuotaUsesCanonicalAuthority(t *testing.T) {
 				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})
 			t.Cleanup(func() { http.DefaultTransport = original })
-			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-			defer cancel()
 			currentCalls := 0
 			input := UsageQuotaInput{ProfileDir: t.TempDir(), Current: func(ctx context.Context, deadline time.Time) (NativeCredentialState, map[string][]byte, error) {
 				currentCalls++
@@ -77,6 +75,9 @@ func TestNativeQuotaUsesCanonicalAuthority(t *testing.T) {
 				}
 				return state, files, nil
 			}}
+			// Filesystem setup must not consume the quota request's deadline.
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
 			if _, err := ag.Usage().Quota(ctx, input); err != nil || currentCalls != 1 || requests == 0 {
 				t.Fatalf("canonical quota = %v; authority calls %d, requests %d", err, currentCalls, requests)
 			}

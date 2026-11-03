@@ -33,7 +33,7 @@ func servicesNeedRules(spec RunSpec, composeFile string) error {
 	name := networkLaunchName(spec)
 	if composeFile == "" {
 		return fmt.Errorf("%s cannot start because a filtered box does not join the network COOP_SERVICES_NET names\n\n"+
-			"  Unset COOP_SERVICES_NET, or set box.network: false in %s.", name, project.File)
+			"  Unset COOP_SERVICES_NET, or set box.network: false in %s", name, project.File)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s cannot start because filtered boxes reach project services only through approved network rules\n\n", name)

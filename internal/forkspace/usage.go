@@ -154,7 +154,7 @@ func entryStat(entry fs.DirEntry) (*syscall.Stat_t, bool) {
 }
 
 // MeasureFilesystem reports the volume behind path. It is the cheap half of storage accounting —
-// one statfs, no walk — which is why the pre-allocation pressure check can afford to re-read it
+// statfs and any kernel quota counters, no walk — so pre-allocation checks can re-read it
 // every time instead of trusting a cached tree scan.
 func MeasureFilesystem(path string) (Filesystem, error) {
 	var stat syscall.Statfs_t
@@ -173,5 +173,5 @@ func MeasureFilesystem(path string) (Filesystem, error) {
 	if free > capacity {
 		free = capacity
 	}
-	return Filesystem{CapacityBytes: capacity, FreeBytes: free}, nil
+	return filesystemWithQuota(path, &stat, Filesystem{CapacityBytes: capacity, FreeBytes: free})
 }
