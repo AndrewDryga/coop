@@ -172,6 +172,16 @@ the directory, validates at most six known inert leaves, unlinks only those leav
 current name, and removes only an empty directory. Inode is a replacement warning; semantic
 contents supply deletion authority. Partial cleanup is retryable; foreign contents stay intact.
 
+Parallel launches in one project (an editor's warm boxes start together) each put a probe at the
+root, so a walk can meet another admission's probe and then lose it at that admission's
+qualification. Before 2026-11-03 the walk classified its `.env` and the final check failed with
+`lstat <repo>/.coop-fs-probe-…: no such file or directory`. The inventory (`inventoryFilesystem`)
+now defers what it cannot read under a probe-named root entry and, after the walk,
+`leaveOutProbes` drops a probe that a not-provably-dead admission recorded with the same
+identity, or that vanished under a recorded name. Any other probe-named entry, a dead admission's
+included, stays project content and its read errors still fail the walk. Identity is reliable here
+because admission runs only on APFS, which does not reuse inode numbers.
+
 ## Verification
 
 The opt-in `filesystemruntimee2e` box suite exercises actual Docker admission, normal commands,
@@ -189,6 +199,9 @@ and prove .env/.ENV denial before prompts and after replay. Live provider calls 
 ## Changelog
 - 2026-11-03 — checked approval dispatch and agent/service mount fallback. Made exposure review
   explicit; existing saved permissions and runtime backend selection remain unchanged.
+- 2026-11-03 — walks leave out other live admissions' recorded probes and defer read errors under
+  probe-named root entries; reproduced the `lstat` failure with two recorded probes and pinned it
+  in `TestFilesystemSnapshotLeavesOutAnotherAdmissionsProbe` and three mutations.
 - 2026-11-02 — recorded the failed FSEvents freshness experiment and Watchman limitation;
   rechecked inventory and final-validation ownership in the snapshot/walk sources. No scan
   was replaced with persistent observer state. Other enforcement sections were not reverified.

@@ -589,3 +589,19 @@ type interruptedRun struct{}
 func (interruptedRun) Error() string { return "interrupted" }
 
 func (interruptedRun) Unwrap() error { return context.Canceled }
+
+// Interrupted reports whether err says only that a run stopped because its context was cancelled:
+// the run's own interruption or a setup step the cancellation cut short, alone or joined only with
+// each other. Anything else that went wrong, a cleanup on the way out included, makes it false.
+func Interrupted(err error) bool {
+	switch err := err.(type) {
+	case interruptedRun:
+		return true
+	case setupCanceled:
+		return errors.Is(err.cause, context.Canceled)
+	case interface{ Unwrap() []error }:
+		parts := err.Unwrap()
+		return len(parts) > 0 && !slices.ContainsFunc(parts, func(part error) bool { return !Interrupted(part) })
+	}
+	return false
+}

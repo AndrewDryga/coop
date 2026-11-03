@@ -14,6 +14,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// filesystemProbePrefix starts the name of every probe directory an admission makes at a root.
+const filesystemProbePrefix = ".coop-fs-probe-"
+
 type filesystemProbe struct {
 	root, relative string
 	profile        fsfilter.Profile
@@ -26,7 +29,7 @@ type filesystemProbeRecord struct {
 }
 
 func (p filesystemProbeRecord) valid() bool {
-	return filepath.IsAbs(p.Root) && filepath.Base(p.Leaf) == p.Leaf && strings.HasPrefix(p.Leaf, ".coop-fs-probe-") && p.Dev != 0 && p.Ino != 0
+	return filepath.IsAbs(p.Root) && filepath.Base(p.Leaf) == p.Leaf && strings.HasPrefix(p.Leaf, filesystemProbePrefix) && p.Dev != 0 && p.Ino != 0
 }
 
 func (p filesystemProbeRecord) close() error {
@@ -95,7 +98,7 @@ func (p filesystemProbeRecord) close() error {
 }
 
 func newFilesystemProbe(root string, record func(filesystemProbeRecord) error) (*filesystemProbe, error) {
-	dir, err := os.MkdirTemp(root, ".coop-fs-probe-")
+	dir, err := os.MkdirTemp(root, filesystemProbePrefix)
 	if err != nil {
 		return nil, err
 	}

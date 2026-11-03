@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	boxruntime "github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -94,5 +97,40 @@ func TestACPAutomaticStartupPreservesExplicitTarget(t *testing.T) {
 	}
 	if code, err := a.cmdACP([]string{"codex:chosen-model/high@missing"}); code != 2 || err == nil {
 		t.Fatalf("invalid explicit account fell back: (%d, %v)", code, err)
+	}
+}
+
+// An editor child its supervisor stopped stays quiet: a clean disconnect printed one bare
+// "✗ interrupted" per parked box. The exit status still reports the stop, and a failure on the way
+// out, or one while the child was running, still prints.
+func TestEditorChildStoppedBySupervisorIsQuiet(t *testing.T) {
+	signalled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, stopped := box.Run(&config.Config{}, boxruntime.Runtime{}, box.RunSpec{Ctx: signalled})
+	if !box.Interrupted(stopped) {
+		t.Fatalf("a launch whose context was cancelled returned %v", stopped)
+	}
+	cleanup := errors.New("filesystem custody retained at /state/coop-fs-1: permission denied")
+	for _, tc := range []struct {
+		name  string
+		ctx   context.Context
+		err   error
+		quiet bool
+	}{
+		{"stopped by its supervisor", signalled, stopped, true},
+		{"stopped while its cleanup failed", signalled, errors.Join(stopped, cleanup), false},
+		{"a failure while it ran", context.Background(), cleanup, false},
+		{"a child with no stop signal", nil, stopped, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var code int
+			out := captureStderr(t, func() { code = reportExit(stoppedQuietly(tc.ctx, 143, tc.err)) })
+			if code != 143 {
+				t.Errorf("exit = %d, want the run's 143", code)
+			}
+			if quiet := out == ""; quiet != tc.quiet {
+				t.Errorf("output %q, want quiet: %v", out, tc.quiet)
+			}
+		})
 	}
 }

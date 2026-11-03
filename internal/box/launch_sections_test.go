@@ -443,6 +443,44 @@ func TestLaunchFailureIsRenderedOnceAndMarkedReported(t *testing.T) {
 	}
 }
 
+// Interrupted is the whole error being a stop request: the run's interruption or a canceled setup
+// step, alone or joined only with each other. A cleanup failure joined to it, a message that wraps
+// it, a deadline or a bare error are something else, and an editor child still prints those.
+func TestInterruptedIsOnlyAStopRequest(t *testing.T) {
+	canceled := ctxStep(canceledContext(), "sibling services")
+	expired, cancel := context.WithDeadline(context.Background(), time.Unix(1, 0))
+	defer cancel()
+	cleanup := errors.New("filesystem custody retained at /state/coop-fs-1: remove helper: permission denied")
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"the run's interruption", interruptedRun{}, true},
+		{"the interruption after a clean teardown", errors.Join(interruptedRun{}, nil), true},
+		{"a setup step the stop cut short", canceled, true},
+		{"both", errors.Join(canceled, interruptedRun{}), true},
+		{"the interruption and a failed cleanup", errors.Join(interruptedRun{}, cleanup), false},
+		{"a message wrapping the interruption", fmt.Errorf("stop native broker: %w", interruptedRun{}), false},
+		{"a setup step past its deadline", ctxStep(expired, "argument assembly"), false},
+		{"a bare cancellation", context.Canceled, false},
+		{"no error", nil, false},
+	} {
+		if got := Interrupted(tc.err); got != tc.want {
+			t.Errorf("%s: Interrupted(%v) = %v, want %v", tc.name, tc.err, got, tc.want)
+		}
+	}
+	if canceled.Error() != "box setup canceled before sibling services: context canceled" || !errors.Is(canceled, context.Canceled) {
+		t.Errorf("setup cancellation reads %q", canceled)
+	}
+}
+
+func canceledContext() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}
+
 // The stop line is truthful: a signal is named only when one arrived, and an exit status is
 // reported as the number it was — 130 is not evidence of Ctrl-C.
 func TestStopReasonNeverInfersASignalFromAnExitStatus(t *testing.T) {

@@ -495,7 +495,7 @@ func ctxStep(ctx context.Context, step string) error {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("box setup canceled before %s: %w", step, err)
+		return setupCanceled{step: step, cause: err}
 	}
 	return nil
 }
@@ -509,6 +509,17 @@ type LaunchRefused struct{ Err error }
 
 func (e *LaunchRefused) Error() string { return e.Err.Error() }
 func (e *LaunchRefused) Unwrap() error { return e.Err }
+
+// setupCanceled is ctxStep's refusal: the phase it would have started, and why it did not.
+type setupCanceled struct {
+	step  string
+	cause error
+}
+
+func (e setupCanceled) Error() string {
+	return "box setup canceled before " + e.step + ": " + e.cause.Error()
+}
+func (e setupCanceled) Unwrap() error { return e.cause }
 
 // Run assembles and executes one container run, shadowing secrets and wiring up
 // agent homes + MCP. It returns the container's exit code (with a nil error when

@@ -399,7 +399,20 @@ func (a *app) cmdACP(args []string) (int, error) {
 		defer stop()
 		spec.Ctx = ctx
 	}
-	return a.runBox(spec)
+	code, err := a.runBox(spec)
+	return stoppedQuietly(spec.Ctx, code, err)
+}
+
+// stoppedQuietly keeps an editor child's run quiet when its supervisor stopped it. The supervisor
+// ends a parked, replaced or retiring child with a signal, which cancels ctx, and that is the end
+// of the child's job, not a failure: a bare "✗ interrupted" per parked box ended every clean editor
+// disconnect. The exit status and errors.Is still see the cancellation, and anything else that went
+// wrong, a cleanup on the way out included, still prints.
+func stoppedQuietly(ctx context.Context, code int, err error) (int, error) {
+	if ctx != nil && ctx.Err() != nil && box.Interrupted(err) {
+		return code, ui.Reported(err)
+	}
+	return code, err
 }
 
 // ensureACPImage builds the box image when it is missing, so a pruned or never-built image is a
