@@ -210,7 +210,7 @@ Traps:
   allowlist and inspected RW equality remain mandatory; do not relax parsing or repository RO.
 - A filtered run's box is the LOCKED client image, or that image plus the project's own layers.
   A project `.agent/Dockerfile` is explicitly built on the host with `COOP_BASE_IMAGE` set to the locked image,
-  through the ordinary project build path, under its own tag `coop-<repo>-filtered:<hash of the
+  through the ordinary project build path, under its own tag `coop-<repo>-<path hash>-filtered:<hash of the
   client image>` (`box/derived_image.go:BuildFilteredProject`) — so an ordinary and a filtered build never collide and
   a new client image forces a rebuild. TWO proofs, both read from the BUILT image and never from the
   Dockerfile text, gate it (`box/derived_image.go:proveDerivedImage`): the locked image's `RootFS.Layers` must be a
@@ -235,19 +235,23 @@ Traps:
   separate process group; the build can fill a constrained host after the CLI is gone. Runtime
   process-group cleanup occurs only when the setup context is cancelled. A failed setup never
   publishes host qualification; leftover Docker cache may still need operator cleanup.
-- Project builds are explicit under restricted networking: `coop build --egress filtered` prepares
-  the filtered image; plain `coop build` follows the effective project posture. The build itself
-  still has ordinary Docker networking, so review the Dockerfile and copied files first.
-  `filteredProjectImage` consumes only a version-2 host approval, never building on a miss. Legacy
-  version-1 automatic-build memos are not authority. An open editor connection may build a
-  missing project image; ordinary launches do not rebuild changed project inputs. `BuildWith`
-  refuses automatic project builds for filtered/offline modes.
+- Only a person approves new project build files under restricted networking: `coop build --egress
+  filtered` prepares the filtered image; plain `coop build` follows the effective project posture.
+  The build itself still has ordinary Docker networking, so review the Dockerfile and copied files
+  first. It records a per-project review digest (`projectBuildReview`: staged tree, Dockerfile path,
+  daemon, build settings; no client identity). `AdmitNetwork` rebuilds with no prompt only when that
+  digest still matches, which covers a new client image and a lost image, and decides again on the
+  snapshot's digest in `buildPreparedFilteredProject` under the project's build lock. A rebuild never
+  writes the review, so it cannot add files. `filteredProjectImage` consumes only a version-2
+  approval, never building on a miss. Legacy version-1 automatic-build memos are not authority. An
+  open editor connection may build a missing project image; ordinary launches do not rebuild changed
+  project inputs. `BuildWith` refuses automatic project builds for filtered/offline modes.
 - Approval binds the exact sanitized, Docker-filtered context (kind, path, mode/link target, bytes), daemon, locked
-  image, client closure, tags, Dockerfile path and build environment. Only an explicit build writes
+  image, client closure, tags, Dockerfile path and build environment. Only a build writes
   it, after both image proofs, for the digest produced WHILE staging and the ID from `--iidfile`.
   Publication failure fails the command. A launch requires matching inputs, a present immutable ID
   and both proofs. The old cache-purity Dockerfile parser is gone: external inputs are fetched only
-  during the explicit build. Linked Dockerfiles/ignore files are refused BEFORE building, not just
+  while building, explicitly or as a rebuild of approved files. Linked Dockerfiles/ignore files are refused BEFORE building, not just
   excluded from cache reuse. Staging preserves source modes and excludes shadowed secrets/Git.
   The configured Dockerfile's `.dockerignore` takes precedence over root `.dockerignore`, including
   an empty specific file. Both staging and readiness omit Docker-excluded source; the Dockerfile,

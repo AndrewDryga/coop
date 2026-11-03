@@ -269,7 +269,7 @@ func TestFilteredProjectTagIsolatesTheOrdinaryImage(t *testing.T) {
 	repo := t.TempDir()
 	ordinary := ImageForRepo(repo, "coop-box", "")
 	tag := filteredProjectTag(repo, fixtureLockedImage)
-	if tag == ordinary || strings.HasPrefix(tag, ordinary+":") || !strings.HasPrefix(tag, ServicesProject(repo)+"-filtered:") {
+	if tag == ordinary || strings.HasPrefix(tag, ordinary+":") || !strings.HasPrefix(tag, ComposeProject(repo)+"-filtered:") {
 		t.Fatal("filtered build collides with the ordinary project image", tag, ordinary)
 	}
 	if again := filteredProjectTag(repo, fixtureLockedImage); again != tag {

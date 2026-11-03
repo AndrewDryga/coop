@@ -8,20 +8,26 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// ProjectBuildRequired is a preparation miss, not permission to run repository instructions.
-// Only an explicitly eligible host caller may offer a build; other callers return the remedy.
+// ProjectBuildRequired is a preparation miss, not permission to run repository instructions. Approved
+// says these exact files already have a person's approval, so rebuilding them runs nothing new; a
+// final check on the staged snapshot still decides (buildPreparedFilteredProject). For any other miss
+// only an explicitly eligible host caller may offer a build; other callers return the remedy.
 type ProjectBuildRequired struct {
 	Dockerfile string
 	Reason     string
+	Approved   bool
 }
 
 func (e *ProjectBuildRequired) Error() string {
@@ -42,7 +48,23 @@ func checkFilteredProjectReadiness(ctx context.Context, docker filteredDocker, s
 	if dfRel == "" {
 		return nil
 	}
-	required := func(reason string) error { return &ProjectBuildRequired{Dockerfile: dfRel, Reason: reason} }
+	repo := projectPolicyRepo(spec)
+	entries, err := buildContextSelection(ctx, repo)
+	if err != nil {
+		return err
+	}
+	tree, err := contextDigest(ctx, repo, entries, nil)
+	if err != nil {
+		return err
+	}
+	canonical, err := canonicalProjectDir(repo)
+	if err != nil {
+		return err
+	}
+	approved := store.ProjectBuildReviewed(canonical, projectBuildReview(tree, binding.DaemonID, dfRel))
+	required := func(reason string) error {
+		return &ProjectBuildRequired{Dockerfile: dfRel, Reason: reason, Approved: approved}
+	}
 	definition, _, closure, err := lockedImageDefinition(agents.ClientPlatform{OS: binding.OS, Architecture: binding.Architecture, Libc: "glibc"})
 	if err != nil {
 		return err
@@ -55,15 +77,6 @@ func checkFilteredProjectReadiness(ctx context.Context, docker filteredDocker, s
 		if errors.Is(err, runtime.ErrDockerImageMissing) {
 			return required("Coop's current client image has not been prepared")
 		}
-		return err
-	}
-	repo := projectPolicyRepo(spec)
-	entries, err := buildContextSelection(ctx, repo)
-	if err != nil {
-		return err
-	}
-	tree, err := contextDigest(ctx, repo, entries, nil)
-	if err != nil {
 		return err
 	}
 	tag := filteredProjectTag(repo, client)
@@ -85,11 +98,15 @@ func checkFilteredProjectReadiness(ctx context.Context, docker filteredDocker, s
 }
 
 // PreparedProjectBuild owns one inert, sanitized snapshot under the owner-private network root,
-// outside every mount. It is short-lived, non-concurrent and consumed at most once after consent.
+// outside every mount. It is short-lived, non-concurrent and consumed at most once after consent, or
+// after its digest proves a person already approved these files (automatic).
 type PreparedProjectBuild struct {
 	repo, dockerfile, dir, digest, settings string
 	entries                                 []contextEntry
 	consumed                                bool
+	automatic                               bool   // no person started this build, so it builds only approved files
+	starting                                func() // called once it has decided to run the builder
+	built                                   bool   // the builder ran and its image proved good
 	lease                                   *os.File
 	cleanupDir                              string
 }
@@ -232,8 +249,65 @@ func (b *PreparedProjectBuild) Build(ctx context.Context, rt runtime.Runtime, cf
 	if b.settings != projectBuildSettings() {
 		return errors.New("project build settings changed while awaiting confirmation — run it again")
 	}
-	_, err := buildFilteredProjectWith(ctx, rt, cfg, b.repo, out, errOut, b)
+	change, err := buildFilteredProjectWith(ctx, rt, cfg, b.repo, out, errOut, b)
+	b.built = change.After != ""
 	return err
+}
+
+// RebuildApprovedProject rebuilds files a person already approved, with no prompt. It decides on the
+// snapshot, not on the check that sent it here: buildPreparedFilteredProject compares the snapshot's
+// digest with the approval, so an edit that lands in between builds nothing and returns
+// *ProjectBuildRequired. Builds run in their own process group, so a launch that is interrupted has to
+// cancel its build explicitly.
+func RebuildApprovedProject(cfg *config.Config, rt runtime.Runtime, spec RunSpec, dfRel string) error {
+	ctx, stop := signal.NotifyContext(networkAdmissionContext(spec), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	prepared, err := prepareApprovedRebuild(ctx, cfg, spec)
+	if err != nil {
+		return err
+	}
+	defer prepared.Close()
+	if !spec.Quiet {
+		prepared.starting = func() {
+			ui.Section("Project box")
+			ui.Note("  Rebuilding %s from the files you approved: Coop's image changed or the last one is gone.", ui.SafeInline(dfRel))
+		}
+	}
+	stderr := networkLaunchStderr(spec)
+	if err := prepared.Build(ctx, rt, cfg, stderr, stderr); err != nil {
+		return err
+	}
+	if !spec.Quiet && prepared.built {
+		ui.Pass("Project box built")
+		ui.Note("")
+	}
+	return nil
+}
+
+// UpdateApprovedProject is what `coop update` does for a filtered project. An update is not a review:
+// the person asked for a new Coop, and may not know an agent edited the Dockerfile. So it prepares the
+// host and rebuilds approved files, and any other files return *ProjectBuildRequired for `coop build`.
+func UpdateApprovedProject(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, out, errOut io.Writer) (ImageChange, error) {
+	if filteredProjectDockerfile(repo) == "" {
+		return BuildFilteredProject(ctx, rt, cfg, repo, out, errOut) // Coop's own images only
+	}
+	prepared, err := prepareApprovedRebuild(ctx, cfg, RunSpec{Repo: repo})
+	if err != nil {
+		return ImageChange{}, err
+	}
+	defer prepared.Close()
+	return buildFilteredProjectWith(ctx, rt, cfg, prepared.repo, out, errOut, prepared)
+}
+
+// prepareApprovedRebuild snapshots the checkout for a build no person started: the only way to mark
+// one automatic, which is what makes the build refuse unless the snapshot is what a person approved.
+func prepareApprovedRebuild(ctx context.Context, cfg *config.Config, spec RunSpec) (*PreparedProjectBuild, error) {
+	prepared, err := PrepareFilteredProjectBuild(ctx, cfg, spec)
+	if err != nil {
+		return nil, err
+	}
+	prepared.automatic = true
+	return prepared, nil
 }
 
 func projectBuildSettings() string {

@@ -14,7 +14,10 @@ those destinations.
   services automatically, need open networking. Run with `--egress open`, or build the tools into
   `.agent/Dockerfile` and start services with `coop up`.
 - A project with its own `.agent/Dockerfile` and no `box.egress` needs `coop build` once more:
-  plain `coop build` now prepares the filtered image.
+  plain `coop build` now prepares the filtered image. After that one build, co:op rebuilds those
+  same files by itself when its client image changes.
+- Filtered project images have new names, with a hash of the project's path, so an existing
+  filtered project needs `coop build` once too. `coop update` no longer builds new or changed files.
 - Filtered networking needs Docker. On Apple's `container`, choose `--egress open` or
   `--egress offline` (or set `COOP_EGRESS`) for runs that did not choose a mode.
 - The first filtered run on a host prepares the network images and checks this host first, as

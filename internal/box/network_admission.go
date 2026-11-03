@@ -44,9 +44,24 @@ type NetworkAdmission struct {
 	RulesFile string
 	// ExistingQualification refuses, naming `coop net setup`, when no current
 	// host proof covers the policy, instead of setting the host up. A running
-	// editor session re-admitting between turns must not wait on host setup.
+	// editor session re-admitting between turns must not wait on host setup. It
+	// never rebuilds a project image either.
 	ExistingQualification bool
+	// ProjectBuild is what this launch does when its project image is not ready.
+	ProjectBuild ProjectBuildMiss
 }
+
+// ProjectBuildMiss says what an admission does about a project image that is not ready. Whatever it
+// says, files no person approved never build here: they refuse, naming `coop build`.
+type ProjectBuildMiss int
+
+const (
+	// RefuseProjectBuild refuses every miss. A caller gets a build that can take many minutes only by
+	// asking for it, so one that only needs an answer, like a model catalog refresh, cannot start one.
+	RefuseProjectBuild ProjectBuildMiss = iota
+	// RebuildApproved rebuilds files a person already approved, then admits.
+	RebuildApproved
+)
 
 // AdmitNetwork resolves this launch's network posture and, for filtered mode,
 // captures the frozen policy the gateway will enforce. Filtered is also the
@@ -59,6 +74,39 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if cfg == nil {
 		return nil, errors.New("restricted networking needs host configuration")
 	}
+	// Admission marks the posture it resolved on the configuration it is given, so a second one has to
+	// start from the first's starting point to resolve the same way, and to see an edit made meanwhile.
+	unmarked, first := cfg.Clone(), true
+	return admitRebuildingApproved(options, func() (*CapturedEgress, error) {
+		if first {
+			first = false
+			return admitNetwork(cfg, rt, spec, options)
+		}
+		again := unmarked.Clone()
+		capture, err := admitNetwork(again, rt, spec, options)
+		if err == nil {
+			cfg.SetEgress(again.Egress)
+		}
+		return capture, err
+	}, func(dfRel string) error { return RebuildApprovedProject(cfg, rt, spec, dfRel) })
+}
+
+// admitRebuildingApproved admits, and when the only thing missing is a project image a person already
+// approved, rebuilds it and admits again: once, not a rebuild loop. A change after this point is a new
+// miss, and the final launch proofs remain the last authority before execution.
+func admitRebuildingApproved(options NetworkAdmission, admit func() (*CapturedEgress, error), rebuild func(dfRel string) error) (*CapturedEgress, error) {
+	capture, err := admit()
+	var required *ProjectBuildRequired
+	if !errors.As(err, &required) || !required.Approved || options.ExistingQualification || options.ProjectBuild != RebuildApproved {
+		return capture, err
+	}
+	if err := rebuild(required.Dockerfile); err != nil {
+		return nil, err
+	}
+	return admit()
+}
+
+func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options NetworkAdmission) (*CapturedEgress, error) {
 	policyRepo := projectPolicyRepo(spec)
 	canonical, err := canonicalProjectDir(policyRepo)
 	if err != nil {

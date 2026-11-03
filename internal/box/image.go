@@ -635,7 +635,7 @@ func (e *StageError) Unwrap() error { return e.Err }
 
 // The staged context may have been reviewed before a host confirmation. Never reread the
 // checkout here: that would execute instructions the confirmation did not cover.
-func buildStagedProjectOnBase(ctx context.Context, rt runtime.Runtime, dir string, entries []contextEntry, dfRel, tag, base string, lease *os.File, stderr io.Writer) (image string, err error) {
+func buildStagedProjectOnBase(ctx context.Context, rt runtime.Runtime, dir string, entries []contextEntry, dfRel, tag, base string, automatic bool, lease *os.File, stderr io.Writer) (image string, err error) {
 	if err := validateProjectBuildFiles(dir, entries, dfRel); err != nil {
 		return "", &StageError{Err: err}
 	}
@@ -652,6 +652,9 @@ func buildStagedProjectOnBase(ctx context.Context, rt runtime.Runtime, dir strin
 		labels = append(labels, derivedImageLabel+"="+project)
 	}
 	args := projectBuildArgs(dir, dfRel, tag, base, true, false, labels...)
+	if automatic {
+		rt = rt.ForApprovedBuild()
+	}
 	code, runErr := rt.RunProjectBuild(ctx, lease, nil, stderr, append([]string{"build", "--iidfile", idFile.Name()}, args[1:]...)...)
 	if runErr != nil {
 		return "", runErr
@@ -934,8 +937,14 @@ func stageContextEntriesUnder(ctx context.Context, repo string, entries []contex
 		return "", "", func() {}, err
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		cleanup()
+		return "", "", func() {}, err
+	}
+	defer root.Close()
 	digest, err := contextDigest(ctx, repo, entries, func(entry contextEntry, content io.Reader) error {
-		return stageEntry(dir, entry, content)
+		return stageEntry(root, entry, content)
 	})
 	if err != nil {
 		cleanup()
@@ -946,19 +955,20 @@ func stageContextEntriesUnder(ctx context.Context, repo string, entries []contex
 
 // stageEntry writes one entry into the staged context. Modes are set, not left to the umask: a file
 // created under a `umask 077` shell would carry a mode the repository does not, and the image would
-// inherit it.
-func stageEntry(dir string, entry contextEntry, content io.Reader) error {
-	dst := filepath.Join(dir, entry.rel)
+// inherit it. Every write goes through the root, and a file must be new: an agent chooses these names,
+// and on a volume that folds case a planted link `A` is also the path to `a/x`. Nothing it stages may
+// land outside the snapshot, and a name that collides fails instead of overwriting.
+func stageEntry(root *os.Root, entry contextEntry, content io.Reader) error {
 	switch {
 	case entry.mode.IsDir():
-		if err := os.MkdirAll(dst, 0o755); err != nil {
+		if err := root.MkdirAll(entry.rel, 0o755); err != nil {
 			return err
 		}
-		return os.Chmod(dst, 0o755)
+		return root.Chmod(entry.rel, 0o755)
 	case entry.mode&fs.ModeSymlink != 0:
-		return os.Symlink(entry.target, dst)
+		return root.Symlink(entry.target, entry.rel)
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, entry.mode.Perm())
+	out, err := root.OpenFile(entry.rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, entry.mode.Perm())
 	if err != nil {
 		return err
 	}

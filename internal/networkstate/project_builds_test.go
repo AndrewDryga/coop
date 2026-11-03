@@ -1,7 +1,9 @@
 package networkstate
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -100,5 +102,117 @@ func TestProjectBuildTreatsADamagedRecordAsAMiss(t *testing.T) {
 		if err := s.ApproveProjectBuild(record[0], record[1], record[2]); err == nil {
 			t.Errorf("%s: a record that names no build was written", name)
 		}
+	}
+}
+
+// A review answers for one project and exactly one digest. Anything else is a miss, and a miss waits
+// for a person.
+func TestProjectBuildReviewAnswersForOneProjectAndOneDigest(t *testing.T) {
+	s := openStore(t)
+	project, review, newer := "/work/app", strings.Repeat("a", 64), strings.Repeat("b", 64)
+	if s.ProjectBuildReviewed(project, review) {
+		t.Fatal("nothing was recorded yet")
+	}
+	if err := s.RecordProjectBuildReview(project, review); err != nil {
+		t.Fatal(err)
+	}
+	if !s.ProjectBuildReviewed(project, review) {
+		t.Fatal("the recorded review did not answer")
+	}
+	if s.ProjectBuildReviewed(project, newer) || s.ProjectBuildReviewed("/work/other", review) {
+		t.Fatal("a review answered for other files or another project")
+	}
+	if err := s.RecordProjectBuildReview(project, newer); err != nil {
+		t.Fatal(err)
+	}
+	if s.ProjectBuildReviewed(project, review) || !s.ProjectBuildReviewed(project, newer) {
+		t.Fatal("a later review did not replace the earlier one")
+	}
+	for name, record := range map[string][2]string{
+		"a relative project": {"work/app", review},
+		"a short digest":     {project, "short"},
+		"an uppercase one":   {project, strings.Repeat("A", 64)},
+	} {
+		if err := s.RecordProjectBuildReview(record[0], record[1]); err == nil {
+			t.Errorf("%s: recorded", name)
+		}
+		if s.ProjectBuildReviewed(record[0], record[1]) {
+			t.Errorf("%s: answered", name)
+		}
+	}
+	id := projectBuildReviewID(project)
+	for name, damage := range map[string]string{
+		"not json":        "{",
+		"another project": `{"version":1,"id":"` + id + `","project":"/work/other","review":"` + newer + `"}`,
+		"another version": `{"version":2,"id":"` + id + `","project":"/work/app","review":"` + newer + `"}`,
+		"another id":      `{"version":1,"id":"00","project":"/work/app","review":"` + newer + `"}`,
+	} {
+		if err := s.publish(projectBuildReviewName(id), []byte(damage), true); err != nil {
+			t.Fatal(err)
+		}
+		if s.ProjectBuildReviewed(project, newer) {
+			t.Errorf("%s: a damaged record answered", name)
+		}
+	}
+}
+
+func TestLockProjectBuildRunsOneBuildAtATime(t *testing.T) {
+	s := openStore(t)
+	const project = "/work/app"
+	holding, release, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		finished <- s.LockProjectBuild(t.Context(), project, nil, func() error {
+			close(holding)
+			<-release
+			return nil
+		})
+	}()
+	<-holding
+
+	// Another project does not wait.
+	ran := false
+	if err := s.LockProjectBuild(t.Context(), "/work/other", func() { t.Error("another project waited") }, func() error {
+		ran = true
+		return nil
+	}); err != nil || !ran {
+		t.Fatalf("another project: ran=%v, %v", ran, err)
+	}
+
+	// The same project says it is waiting, and stops waiting when cancelled.
+	ctx, cancel := context.WithCancel(t.Context())
+	said := make(chan struct{})
+	err := s.LockProjectBuild(ctx, project, func() { close(said); cancel() }, func() error {
+		t.Error("ran while another build held the lock")
+		return nil
+	})
+	<-said
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled wait = %v", err)
+	}
+
+	// A waiter runs once the holder finishes, and says so exactly once.
+	saidOnce, ranAfter := 0, false
+	done := make(chan error, 1)
+	go func() {
+		done <- s.LockProjectBuild(t.Context(), project, func() { saidOnce++; close(release) }, func() error {
+			ranAfter = true
+			return nil
+		})
+	}()
+	if err := <-done; err != nil || !ranAfter || saidOnce != 1 {
+		t.Fatalf("a waiter: ran=%v, said %d times, %v", ranAfter, saidOnce, err)
+	}
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+
+	// A build's own deadline is its failure, not a reason to take the lock again and run it twice.
+	runs := 0
+	err = s.LockProjectBuild(t.Context(), project, nil, func() error {
+		runs++
+		return context.DeadlineExceeded
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || runs != 1 {
+		t.Fatalf("a build that timed out: %v after %d runs", err, runs)
 	}
 }

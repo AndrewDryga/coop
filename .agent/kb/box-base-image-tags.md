@@ -25,8 +25,8 @@ unpacking it). The filtered client image renders the same template, so a templat
 `coop-clients` a new definition, and `verifyNetworkCandidate` stops accepting the old network setup
 record: the next filtered launch sets the host up again, or, where a launch may not
 (`ExistingQualification`), asks for `coop net setup`. A filtered project image is keyed on the client
-image too (`filteredProjectTag`), so a project with its own box Dockerfile needs
-`coop build --egress filtered` again. Both images build in one stage on the pinned Node image;
+image too (`filteredProjectTag`), so a project with its own box Dockerfile rebuilds on its next launch
+when its files still match what a person approved, and otherwise needs `coop build --egress filtered`. Both images build in one stage on the pinned Node image;
 coop's own gate analyzers are not in them, so bumping those moves neither tag.
 
 Why: with one shared `coop-box:latest`, two installed Coop versions (a checkout's and a deployment's)

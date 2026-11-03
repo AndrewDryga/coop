@@ -79,7 +79,7 @@ func extractNetworkFlags(command string, args []string) (networkFlags, []string,
 }
 
 func (f networkFlags) admission() box.NetworkAdmission {
-	return box.NetworkAdmission{InvocationMode: f.Mode, Domains: f.Domains, RulesFile: f.RulesFile}
+	return box.NetworkAdmission{InvocationMode: f.Mode, Domains: f.Domains, RulesFile: f.RulesFile, ProjectBuild: box.RebuildApproved}
 }
 
 // args re-renders the flags in the exact spelling a re-executed worker parses, so

@@ -180,7 +180,7 @@ func TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot(t *testing.T) {
 		image, _, err = filteredProjectImage(t.Context(), runtime.Runtime{}, &config.Config{}, d, f.store, RunSpec{Repo: repo}, candidate)
 		newLaunchSections(RunSpec{Agent: "claude"}).secrets(53)
 	})
-	if !strings.Contains(output, "Unchanged since its explicit build\n\nProtecting secrets\n") {
+	if !strings.Contains(output, "Unchanged since it was built\n\nProtecting secrets\n") {
 		t.Fatalf("project summary runs into secret protection: %q", output)
 	}
 	if err != nil || image != fixtureBuiltImage {
@@ -293,5 +293,448 @@ func TestReviewedProjectBuildRejectsEditedSavedFiles(t *testing.T) {
 	}
 	if err := prepared.verifySnapshot(t.Context()); err == nil {
 		t.Fatal("edited saved bytes retained the old approval digest")
+	}
+}
+
+// approvedRebuildFixture is a project with a working builder and a daemon that can move to a new
+// client image, the way a Coop upgrade does. Each build reports the next image and is counted.
+type approvedRebuildFixture struct {
+	t         *testing.T
+	f         *filteredExecution
+	d         *filteredDaemonFixture
+	repo      string
+	write     func(string, string)
+	rt        runtime.Runtime
+	cfg       *config.Config
+	candidate networkstate.CandidateSpec
+	tag       string // the locked image's pinned tag
+	produced  string
+	counter   string
+}
+
+func newApprovedRebuildFixture(t *testing.T) *approvedRebuildFixture {
+	t.Helper()
+	pinHome(t)
+	f, d, repo, write := projectPreparationFixture(t)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	definition, _, _, err := lockedImageDefinition(agents.ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := t.TempDir()
+	x := &approvedRebuildFixture{t: t, f: f, d: d, repo: repo, write: write, candidate: fixtureCandidate(), tag: definition.Tag,
+		cfg: &config.Config{BoxHome: t.TempDir(), ConfigDir: t.TempDir()}, produced: filepath.Join(scratch, "produced"), counter: filepath.Join(scratch, "builds")}
+	x.candidate.Runtime.DaemonID = "fixture-daemon"
+	x.nextImage(fixtureBuiltImage)
+	script := filepath.Join(scratch, "docker")
+	body := "#!/bin/sh\ncase \"$1 $2\" in \"image ls\") exit 0 ;; esac\nprintf 'build\\n' >> '" + x.counter + "'\n" +
+		"while [ $# -gt 0 ]; do\n  if [ \"$1\" = --iidfile ]; then cat '" + x.produced + "' > \"$2\"; fi\n  shift\ndone\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	x.rt = frozenProjectRuntime(t, script)
+	return x
+}
+
+func (x *approvedRebuildFixture) nextImage(image string) {
+	x.t.Helper()
+	if err := os.WriteFile(x.produced, []byte(image+"\n"), 0o600); err != nil {
+		x.t.Fatal(err)
+	}
+}
+
+func (x *approvedRebuildFixture) builds() int {
+	data, _ := os.ReadFile(x.counter)
+	return strings.Count(string(data), "build\n")
+}
+
+// explicitBuild is what `coop build` does: a person asked, so these files become the approved ones.
+func (x *approvedRebuildFixture) explicitBuild() {
+	x.t.Helper()
+	if _, err := buildFilteredProject(x.t.Context(), x.rt, x.cfg, x.d, x.f.store, x.repo, x.candidate, io.Discard); err != nil {
+		x.t.Fatal(err)
+	}
+}
+
+// upgradeClient moves the daemon to a new locked client image, and gets ready for a build on it.
+func (x *approvedRebuildFixture) upgradeClient(client, built string) {
+	x.t.Helper()
+	x.d.mu.Lock()
+	defer x.d.mu.Unlock()
+	locked := x.d.images[fixtureLockedImage]
+	locked.id = client
+	x.d.images[client], x.d.images[x.tag] = locked, locked
+	image := x.d.images[fixtureBuiltImage]
+	image.id = built
+	x.d.images[built] = image
+	x.candidate.ClientImage = client
+	x.nextImage(built)
+}
+
+func (x *approvedRebuildFixture) readiness() error {
+	x.t.Helper()
+	return checkFilteredProjectReadiness(x.t.Context(), x.d, x.f.store, RunSpec{Repo: x.repo}, x.candidate.Runtime)
+}
+
+func (x *approvedRebuildFixture) miss() *ProjectBuildRequired {
+	x.t.Helper()
+	var required *ProjectBuildRequired
+	if err := x.readiness(); !errors.As(err, &required) {
+		x.t.Fatalf("readiness = %v, want a project build miss", err)
+	}
+	return required
+}
+
+// automaticBuild snapshots the checkout as it is now, and builds it the way a launch does on its own.
+func (x *approvedRebuildFixture) automaticBuild() error {
+	x.t.Helper()
+	prepared, err := prepareApprovedRebuild(x.t.Context(), x.cfg, RunSpec{Repo: x.repo})
+	if err != nil {
+		x.t.Fatal(err)
+	}
+	defer prepared.Close()
+	_, err = buildPreparedFilteredProject(x.t.Context(), x.rt, x.cfg, x.d, x.f.store, prepared, x.candidate, io.Discard)
+	return err
+}
+
+// The whole point: a Coop upgrade or a lost image runs nothing a person has not approved, so it needs
+// no person. The files stay approved across as many client images as there are.
+func TestApprovedProjectFilesRebuildByThemselvesWhenOnlyCoopChanged(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	if x.miss().Approved {
+		t.Fatal("a project with no explicit build counted as approved")
+	}
+	x.explicitBuild()
+	if err := x.readiness(); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, step := range []struct{ client, built string }{
+		{"sha256:" + strings.Repeat("4", 64), "sha256:" + strings.Repeat("5", 64)},
+		{"sha256:" + strings.Repeat("6", 64), "sha256:" + strings.Repeat("7", 64)},
+	} {
+		x.upgradeClient(step.client, step.built)
+		if required := x.miss(); !required.Approved || !strings.Contains(required.Reason, "no explicit project build") {
+			t.Fatalf("client image %d: %+v", i, required)
+		}
+		before := x.builds()
+		if err := x.automaticBuild(); err != nil {
+			t.Fatalf("client image %d: %v", i, err)
+		}
+		if x.builds() != before+1 {
+			t.Fatalf("client image %d: %d builds, want %d", i, x.builds(), before+1)
+		}
+		if err := x.readiness(); err != nil {
+			t.Fatalf("client image %d: the rebuilt image is not ready: %v", i, err)
+		}
+	}
+
+	// The image goes missing, with nothing else changed.
+	x.d.mu.Lock()
+	built := x.d.images["sha256:"+strings.Repeat("7", 64)]
+	delete(x.d.images, built.id)
+	x.d.mu.Unlock()
+	if required := x.miss(); !required.Approved || !strings.Contains(required.Reason, "image is missing") {
+		t.Fatalf("a lost image: %+v", required)
+	}
+	x.d.mu.Lock()
+	x.d.images[built.id] = built
+	x.d.mu.Unlock()
+
+	// Coop's own image has not been prepared yet: the files can still be recognized without it.
+	x.d.mu.Lock()
+	delete(x.d.images, x.tag)
+	x.d.mu.Unlock()
+	if required := x.miss(); !required.Approved || !strings.Contains(required.Reason, "client image has not been prepared") {
+		t.Fatalf("an unprepared client image: %+v", required)
+	}
+}
+
+// A person confirming the terminal's Build and continue approves files as much as `coop build` does.
+func TestConfirmedProjectBuildCountsAsApproved(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	prepared, err := PrepareFilteredProjectBuild(t.Context(), x.cfg, RunSpec{Repo: x.repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close()
+	if _, err := buildPreparedFilteredProject(t.Context(), x.rt, x.cfg, x.d, x.f.store, prepared, x.candidate, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
+	if !x.miss().Approved {
+		t.Fatal("confirmed files did not count as approved")
+	}
+}
+
+// Anything but the exact files a person approved, on the daemon and settings they approved them for,
+// waits. This is the sandbox boundary: an agent can edit all of these files, and a project build runs
+// them with ordinary networking.
+func TestOnlyTheApprovedFilesRebuildByThemselves(t *testing.T) {
+	const alternate = ".agent/Alt.Dockerfile"
+	for name, test := range map[string]struct {
+		prepare func(*approvedRebuildFixture)
+		change  func(*approvedRebuildFixture)
+	}{
+		"a copied file": {change: func(x *approvedRebuildFixture) { x.write("main.go", "package main // edited by an agent\n") }},
+		"the Dockerfile": {change: func(x *approvedRebuildFixture) {
+			x.write(".agent/Dockerfile", reusableDockerfile+"RUN curl https://example.com\n")
+		}},
+		"a new file in the context": {change: func(x *approvedRebuildFixture) { x.write("planted.sh", "curl https://example.com\n") }},
+		"a file's mode": {change: func(x *approvedRebuildFixture) {
+			if err := os.Chmod(filepath.Join(x.repo, "main.go"), 0o755); err != nil {
+				x.t.Fatal(err)
+			}
+		}},
+		"an ignore file that lets more in": {
+			prepare: func(x *approvedRebuildFixture) {
+				x.write("docs/planted.sh", "curl https://example.com\n")
+				x.write(".dockerignore", "docs/\n")
+			},
+			change: func(x *approvedRebuildFixture) { x.write(".dockerignore", "other/\n") },
+		},
+		// Every byte in the context is unchanged, so only the Dockerfile path can catch this one.
+		"which Dockerfile builds": {
+			prepare: func(x *approvedRebuildFixture) {
+				x.write(alternate, reusableDockerfile+"RUN curl https://example.com\n")
+				x.write(".dockerignore", ".agent/project.yaml\n")
+			},
+			change: func(x *approvedRebuildFixture) {
+				before := projectContextDigest(x.t, x.repo)
+				x.write(".agent/project.yaml", "box:\n  dockerfile: "+alternate+"\n")
+				if projectContextDigest(x.t, x.repo) != before {
+					x.t.Fatal("the fixture changed the context, so it proves nothing about the Dockerfile path")
+				}
+			},
+		},
+		"a build setting":      {change: func(x *approvedRebuildFixture) { x.t.Setenv("SOURCE_DATE_EPOCH", "1") }},
+		"the daemon":           {change: func(x *approvedRebuildFixture) { x.candidate.Runtime.DaemonID = "another-daemon" }},
+		"the first build ever": {}, // no person has approved anything for this project yet
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newApprovedRebuildFixture(t)
+			if test.prepare != nil {
+				test.prepare(x)
+			}
+			if test.change != nil {
+				x.explicitBuild()
+				test.change(x)
+			}
+			x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
+			before := x.builds()
+			if x.miss().Approved {
+				t.Fatal("readiness offered to rebuild files nobody approved")
+			}
+			var required *ProjectBuildRequired
+			if err := x.automaticBuild(); !errors.As(err, &required) {
+				t.Fatalf("automatic build = %v, want a refusal", err)
+			}
+			if x.builds() != before {
+				t.Fatalf("the builder ran for files nobody approved: %d builds, want %d", x.builds(), before)
+			}
+		})
+	}
+}
+
+// Readiness saw approved files, then an agent edited them before the snapshot. The decision is made
+// on the snapshot's bytes, so the edit builds nothing.
+func TestAgentEditAfterTheCheckBuildsNothing(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	x.explicitBuild()
+	x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
+	if !x.miss().Approved {
+		t.Fatal("the unchanged files should be approved")
+	}
+	before := x.builds()
+	x.write(".agent/Dockerfile", reusableDockerfile+"RUN curl https://example.com\n")
+	var required *ProjectBuildRequired
+	if err := x.automaticBuild(); !errors.As(err, &required) || x.builds() != before {
+		t.Fatalf("an edit between the check and the build: %v after %d builds, want a refusal after %d", err, x.builds(), before)
+	}
+}
+
+// An edit after the snapshot cannot reach the build, and does not inherit its approval.
+func TestAgentEditAfterTheSnapshotIsNotBuiltOrApproved(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	x.explicitBuild()
+	x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
+	prepared, err := prepareApprovedRebuild(t.Context(), x.cfg, RunSpec{Repo: x.repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close()
+	x.write(".agent/Dockerfile", reusableDockerfile+"RUN curl https://example.com\n")
+	// The builder reads the context it was given: it fails on the edit, so a pass means it never saw it.
+	script := filepath.Join(t.TempDir(), "docker")
+	body := "#!/bin/sh\ncase \"$1 $2\" in \"image ls\") exit 0 ;; esac\nfor arg do staged=$arg; done\n" +
+		"if grep -q curl \"$staged/.agent/Dockerfile\"; then exit 92; fi\n" +
+		"while [ $# -gt 0 ]; do\n  if [ \"$1\" = --iidfile ]; then cat '" + x.produced + "' > \"$2\"; fi\n  shift\ndone\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildPreparedFilteredProject(t.Context(), frozenProjectRuntime(t, script), x.cfg, x.d, x.f.store, prepared, x.candidate, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if required := x.miss(); required.Approved {
+		t.Fatalf("the edit inherited the approval: %+v", required)
+	}
+}
+
+// A person approves one set of files at a time, so an older set is not a way back in.
+func TestALaterApprovalReplacesTheEarlierOne(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	x.explicitBuild()
+	x.write("main.go", "package main // edited, then built by a person\n")
+	x.explicitBuild()
+	x.write("main.go", "package main\n")
+	x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
+	if x.miss().Approved {
+		t.Fatal("files a later build replaced stayed approved")
+	}
+}
+
+// Two launches find the same image missing. The second waits for the project's lock, then finds the
+// first one's image and builds nothing.
+func TestSecondAutomaticBuildReusesTheFirst(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	x.explicitBuild()
+	x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
+	waiting, err := PrepareFilteredProjectBuild(t.Context(), x.cfg, RunSpec{Repo: x.repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer waiting.Close()
+	waiting.automatic = true
+	if err := x.automaticBuild(); err != nil {
+		t.Fatal(err)
+	}
+	before := x.builds()
+	change, err := buildPreparedFilteredProject(t.Context(), x.rt, x.cfg, x.d, x.f.store, waiting, x.candidate, io.Discard)
+	if err != nil || x.builds() != before || change != (ImageChange{}) {
+		t.Fatalf("the second launch: %+v, %v after %d builds, want none after %d", change, err, x.builds(), before)
+	}
+}
+
+func TestAdmissionRebuildsOnlyApprovedFilesAndOnlyWhenAllowed(t *testing.T) {
+	approved := &ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: "stale", Approved: true}
+	waits := &ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: "changed"}
+	rebuild := NetworkAdmission{ProjectBuild: RebuildApproved}
+	for name, test := range map[string]struct {
+		options  NetworkAdmission
+		first    error
+		rebuild  error
+		rebuilds int
+		admits   int
+		want     error
+	}{
+		"ready":                     {options: rebuild, admits: 1},
+		"approved files":            {options: rebuild, first: approved, rebuilds: 1, admits: 2},
+		"other files":               {options: rebuild, first: waits, admits: 1, want: waits},
+		"any other failure":         {options: rebuild, first: io.ErrUnexpectedEOF, admits: 1, want: io.ErrUnexpectedEOF},
+		"a caller that did not ask": {first: approved, admits: 1, want: approved},
+		"a caller that refuses":     {options: NetworkAdmission{ProjectBuild: RefuseProjectBuild}, first: approved, admits: 1, want: approved},
+		"an editor re-admitting":    {options: NetworkAdmission{ExistingQualification: true, ProjectBuild: RebuildApproved}, first: approved, admits: 1, want: approved},
+		"a failed rebuild":          {options: rebuild, first: approved, rebuild: io.ErrClosedPipe, rebuilds: 1, admits: 1, want: io.ErrClosedPipe},
+	} {
+		t.Run(name, func(t *testing.T) {
+			admits, rebuilds := 0, 0
+			_, err := admitRebuildingApproved(test.options, func() (*CapturedEgress, error) {
+				admits++
+				if admits == 1 {
+					return nil, test.first
+				}
+				return nil, nil
+			}, func(dfRel string) error {
+				rebuilds++
+				if dfRel != ".agent/Dockerfile" {
+					t.Errorf("rebuild of %q", dfRel)
+				}
+				return test.rebuild
+			})
+			if !errors.Is(err, test.want) || admits != test.admits || rebuilds != test.rebuilds {
+				t.Fatalf("err %v, %d admits, %d rebuilds; want %v, %d, %d", err, admits, rebuilds, test.want, test.admits, test.rebuilds)
+			}
+		})
+	}
+}
+
+// Buildx reads file-backed controls from its environment. A person who starts a build answers for
+// theirs; a rebuild nobody started must not follow one to a file an agent can edit.
+func TestAutomaticRebuildGetsAFiniteEnvironment(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	seen := filepath.Join(t.TempDir(), "environment")
+	script := filepath.Join(t.TempDir(), "docker")
+	body := "#!/bin/sh\ncase \"$1 $2\" in \"image ls\") exit 0 ;; esac\nenv > '" + seen + "'\n" +
+		"while [ $# -gt 0 ]; do\n  if [ \"$1\" = --iidfile ]; then cat '" + x.produced + "' > \"$2\"; fi\n  shift\ndone\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	x.rt = frozenProjectRuntime(t, script)
+	t.Setenv("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY", filepath.Join(x.repo, "policy.json"))
+	t.Setenv("SOURCE_DATE_EPOCH", "1700000000")
+	x.explicitBuild()
+	if explicit := string(mustReadFile(t, seen)); !strings.Contains(explicit, "EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=") {
+		t.Fatalf("a person's own build lost their environment: %s", explicit)
+	}
+	x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
+	if err := x.automaticBuild(); err != nil {
+		t.Fatal(err)
+	}
+	automatic := string(mustReadFile(t, seen))
+	if strings.Contains(automatic, "EXPERIMENTAL_BUILDKIT_SOURCE_POLICY") {
+		t.Fatalf("an automatic rebuild followed a file-backed control: %s", automatic)
+	}
+	if !strings.Contains(automatic, "SOURCE_DATE_EPOCH=1700000000") || !strings.Contains(automatic, "PATH=") {
+		t.Fatalf("an automatic rebuild lost what its approval covers or what it needs to run: %s", automatic)
+	}
+}
+
+// An agent chooses every name staged. On a volume that folds case, its link A is also the path to a/x,
+// so staging must never follow a link out of the snapshot, nor overwrite what it already wrote.
+func TestStagingStaysInsideTheSnapshot(t *testing.T) {
+	outside := t.TempDir()
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := stageEntry(root, contextEntry{rel: "link", mode: fs.ModeSymlink | 0o777, target: outside}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageEntry(root, contextEntry{rel: "link/planted", mode: 0o644}, strings.NewReader("planted")); err == nil {
+		t.Error("staging wrote through a link")
+	}
+	if err := stageEntry(root, contextEntry{rel: "link/sub", mode: fs.ModeDir | 0o755}, nil); err == nil {
+		t.Error("staging made a directory through a link")
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Fatalf("staging reached outside the snapshot: %v, %v", entries, err)
+	}
+	if err := stageEntry(root, contextEntry{rel: "file", mode: 0o644}, strings.NewReader("first")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageEntry(root, contextEntry{rel: "file", mode: 0o644}, strings.NewReader("second")); err == nil {
+		t.Error("a colliding name overwrote a staged file")
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "file")); err != nil || string(data) != "first" {
+		t.Fatalf("staged file = %q, %v", data, err)
+	}
+}
+
+// Two checkouts with one folder name are two projects: each keeps its own image and approval.
+func TestSameNamedProjectsGetTheirOwnTags(t *testing.T) {
+	first, second := filepath.Join(t.TempDir(), "app"), filepath.Join(t.TempDir(), "app")
+	for _, repo := range []string{first, second} {
+		if err := os.MkdirAll(repo, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if filteredProjectTag(first, fixtureLockedImage) == filteredProjectTag(second, fixtureLockedImage) {
+		t.Fatal("two checkouts share a tag, so they would take turns rebuilding over each other")
+	}
+	tag := filteredProjectTag(first, fixtureLockedImage)
+	if derivedImageProject(tag) == "" {
+		t.Fatalf("reclaim no longer recognizes %q as a project image", tag)
 	}
 }

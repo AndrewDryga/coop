@@ -26,7 +26,7 @@ import (
 // runtime dialect, while restricted launches cannot follow a changed context.
 type Docker struct {
 	binary, endpoint, clientConfig string
-	pluginConfig                   string // captured path, read only during explicit image builds
+	pluginConfig                   string // captured path, read only during project and setup image builds
 	env                            []string
 	info                           DockerInfo
 	launchAllowed                  bool

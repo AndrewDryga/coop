@@ -432,7 +432,7 @@ func TestDerivedImagesCarryTheLabelTheReclaimAsksFor(t *testing.T) {
 	defer cleanup()
 	projectBuildEndpoint(t)
 	if _, err := buildStagedProjectOnBase(context.Background(), frozenProjectRuntime(t, script), dir, entries,
-		".agent/Dockerfile", tag, "coop-clients:"+strings.Repeat("f", 32), nil, nil); err != nil {
+		".agent/Dockerfile", tag, "coop-clients:"+strings.Repeat("f", 32), false, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if built := string(mustReadFile(t, calls)); !strings.Contains(built, "--label coop.derived="+project+" -t "+tag) {

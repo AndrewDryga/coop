@@ -9,6 +9,16 @@
   `upstream_reset`. A loop now says "4 packets were blocked, and Coop did not record where they were
   going" instead of "raw network packets". `--json` keeps the codes.
 
+- **Filtered projects rebuild approved files by themselves.** After you run `coop build`, a Coop
+  update that changes the client image, or a project image that went missing, no longer stops the
+  next launch: it rebuilds the same files with no prompt. New or changed build files still wait for
+  you, because an agent can edit them and a project build has ordinary networking. Run `coop build`
+  once in each filtered project to start this.
+
+- **`coop update` no longer builds changed files in a filtered project.** It rebuilds what you
+  approved with `coop build`. An update is not a review, so new or changed build files now wait for
+  that command, and the update says so.
+
 - **Rejected input exits 2 everywhere.** A task or idea ID that matches nothing, `coop fork merge`
   without a terminal or `--yes`, a missing `coop fork --tasks` folder, and an unknown eval suite or
   a preset given to an agent-only suite now exit 2 like other bad input (they exited 1). Their

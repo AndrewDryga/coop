@@ -15,13 +15,31 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 )
 
-// projectBuildInputs binds an explicit host build to its staged context, runtime, locked client
-// set and build settings. A launch consumes that immutable result; it never repeats instructions
-// that could fetch different external inputs. Version 1 digests belonged to automatic builds.
+// projectBuildInputs binds a project build to its staged context, runtime, locked client set and
+// build settings. A launch consumes that immutable result while all of them still match. Version 1
+// digests belonged to automatic builds.
 func projectBuildInputs(tree string, candidate networkstate.CandidateSpec, closure agents.ClientClosure, base, tag, dfRel string) string {
+	return projectBuildDigest(append(append([]string{"project-build-v2", candidate.Runtime.DaemonID, candidate.ClientImage, closure.Digest, base, tag, dfRel},
+		projectBuildEnvironment()...), tree))
+}
+
+// projectBuildReview names what a person approves with an explicit host build: the staged files, which
+// Dockerfile, the daemon and the build settings. It leaves out only what Coop changes by itself: the
+// client image, its closure and the tags derived from them. A match proves a rebuild runs nothing a
+// person has not approved, even on a client image that did not exist then. An agent can reach none of
+// this without changing the digest, so it cannot obtain a build's ordinary networking this way.
+func projectBuildReview(tree, daemonID, dfRel string) string {
+	id := boxAgentIdentity() // the build args a Dockerfile can branch on
+	return projectBuildDigest(append(append([]string{"project-build-review-v1", daemonID, dfRel, fmt.Sprint(id.uid), fmt.Sprint(id.gid)}, projectBuildEnvironment()...), tree))
+}
+
+func projectBuildEnvironment() []string {
+	return []string{os.Getenv("DOCKER_DEFAULT_PLATFORM"), os.Getenv("DOCKER_BUILDKIT"), os.Getenv("BUILDX_BUILDER"), os.Getenv("SOURCE_DATE_EPOCH")}
+}
+
+func projectBuildDigest(fields []string) string {
 	sum := sha256.New()
-	for _, field := range []string{"project-build-v2", candidate.Runtime.DaemonID, candidate.ClientImage, closure.Digest, base, tag, dfRel,
-		os.Getenv("DOCKER_DEFAULT_PLATFORM"), os.Getenv("DOCKER_BUILDKIT"), os.Getenv("BUILDX_BUILDER"), os.Getenv("SOURCE_DATE_EPOCH"), tree} {
+	for _, field := range fields {
 		sum.Write([]byte(field + "\x00"))
 	}
 	return hex.EncodeToString(sum.Sum(nil))

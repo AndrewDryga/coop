@@ -449,12 +449,14 @@ Only traffic leaving the box passes through the gateway. The exception is Docker
 <p>You can use your own project image in filtered mode if its <code>.agent/Dockerfile</code> starts with
 <code>ARG COOP_BASE_IMAGE</code> / <code>FROM ${COOP_BASE_IMAGE}</code>. Build it on the host with
 <code>coop build --egress filtered</code>. co:op uses its locked client image as the base and tags the
-result <code>coop-&lt;repo&gt;-filtered:&lt;hash&gt;</code>. The hash is the first 16 hex characters of the sha256
-of the client image reference. Plain <code>coop build</code> selects this image too when the project&#39;s
+result <code>coop-&lt;repo&gt;-&lt;path hash&gt;-filtered:&lt;hash&gt;</code>. The path hash keeps two checkouts with one folder
+name apart. The last hash is the first 16 hex characters of the sha256 of the client image reference. Plain <code>coop build</code> selects this image too when the project&#39;s
 effective network mode is filtered.</p>
-<p>A filtered launch uses only a project image you built explicitly. If the image is missing,
-the clients changed, or the sanitized build inputs changed, co:op asks you to review and rebuild.
-Build inputs include copied scripts and file modes.</p>
+<p>A filtered launch uses only a project image built from files you approved by running <code>coop build</code>.
+If the image is missing or the clients changed, co:op rebuilds those same files by itself, on a
+private snapshot it compares with your approval first. If the sanitized build inputs changed,
+co:op asks you to review and rebuild, and <code>coop update</code> leaves them for you too. Build inputs
+include copied scripts and file modes.</p>
 <p>To keep unrelated edits from requiring a rebuild, list the files this image does not build from
 in <code>.agent/Dockerfile.dockerignore</code>, or in an ignore file named after your configured Dockerfile.
 Its rules take precedence over the root <code>.dockerignore</code>.</p>
@@ -494,8 +496,9 @@ before building: the build executes project instructions with ordinary Docker ne
 <p>co:op stages the build without shadowed secrets or Git metadata, checks the resulting image,
 and saves approval for those exact inputs outside the agent&#39;s mounts. If saving approval fails,
 the command fails even if Docker finished the build.</p>
-<p>Filtered launches never build the project image automatically. An editor connection with open
-networking may build a missing image. Ordinary runs warn when inputs have changed and require
+<p>Filtered launches build the project image automatically only from files you already approved, so
+an agent&#39;s edit cannot reach a build&#39;s ordinary networking. Such a rebuild fetches again whatever
+the approved Dockerfile fetches. An editor connection with open networking may build a missing image. Ordinary runs warn when inputs have changed and require
 <code>coop build --egress open</code> to rebuild. Offline launches do not build project images automatically.
 co:op may still prepare its own embedded base, gateway and client images; those builds do not
 execute instructions from your repository.</p>

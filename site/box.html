@@ -294,12 +294,16 @@ for service containers. Set the paths relative to the repository in <code>.agent
 filtered image unless the project or <code>COOP_EGRESS</code> chooses open or offline.
 <code>coop build --egress filtered</code> asks for it explicitly. This builds on co:op&#39;s fixed client image
 and uses a separate image tag.</p>
-<p>A filtered launch uses the exact image you explicitly built and approved. Build it again if its
-inputs change, co:op upgrades the client base or the image is missing.</p>
-<p>When that build is due, an interactive provider launch in a host terminal can offer
+<p>A filtered launch uses an image built from files you approved. Running <code>coop build</code> approves the
+Dockerfile and the files it copies, for this project, Docker daemon and build settings. If only
+co:op&#39;s client base changed or the image is missing, the next launch rebuilds those same files by
+itself. If the files changed, they wait for you: an agent can edit them, and a project build runs
+them with ordinary networking.</p>
+<p>When a build of changed files is due, an interactive provider launch in a host terminal can offer
 <code>Build and continue?</code>, defaulting to No. The prompt shows a saved snapshot of the build files;
 review it, because only those saved files are approved for that build. Headless commands, editor
-connections and unattended runs never ask. They stop and name the build to run.</p>
+connections and unattended runs never ask. They stop and name the build to run. <code>coop update</code>
+rebuilds approved files and leaves changed ones for <code>coop build</code>, because an update is not a review.</p>
 <p>An editor connection with open networking can build a missing project image automatically.
 Ordinary runs do not rebuild an image after its inputs change; they warn, and you run
 <code>coop build --egress open</code> yourself. Offline launches never run project build instructions

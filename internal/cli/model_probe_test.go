@@ -77,6 +77,23 @@ func TestModelProbeAdmissionPreservesPolicyAndIsolation(t *testing.T) {
 	}
 }
 
+// A catalog refresh only needs an answer, so it must not start a project build that can take many
+// minutes, even of files a person approved.
+func TestModelProbeRefusesToBuildAProject(t *testing.T) {
+	var got box.NetworkAdmission
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: "must-not-execute"}, rtSet: true,
+		admitNetwork: func(_ *config.Config, _ runtime.Runtime, _ box.RunSpec, options box.NetworkAdmission) (*box.CapturedEgress, error) {
+			got = options
+			return nil, nil
+		}}
+	if _, _, err := a.admitModelProbe(t.Context(), "claude", t.TempDir(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got.ProjectBuild != box.RefuseProjectBuild {
+		t.Fatalf("a model probe admitted with %+v", got)
+	}
+}
+
 // claudeWork is the account the probes below run on.
 var claudeWork = agents.Target{Provider: "claude", Accounts: []string{"work"}}
 

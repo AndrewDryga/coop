@@ -36,9 +36,9 @@ storage automatic, except that a service receiving approved secret files or outs
 keeps the exact reviewed image ID; see [[filtered-services-share-network-restrictions]]. Unused
 services stay stopped without triggering approval. Preserve the
 explicit restricted project-build boundary in [[restricted-project-builds-are-explicit]]:
-runtime source edits remain live, but a filtered/offline launch cannot automatically execute a
-new Docker build. The linked rule's single host-terminal snapshot confirmation is an explicit
-build decision, not a reusable project permission. Offline and unattended paths still refuse.
+runtime source edits remain live, but a filtered/offline launch cannot automatically build files
+a person has not approved. The linked rule's single host-terminal snapshot confirmation is an
+explicit build decision for those bytes, not a reusable project permission. Offline and unattended paths still refuse.
 Preserve prohibitions and destructive-command confirmations; do not convert them to reusable
 permission grants.
 Tests must prove refusal before execution/mounts, same-snapshot publication/startup, and real runtime

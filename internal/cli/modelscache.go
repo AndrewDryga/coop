@@ -275,15 +275,17 @@ func (a *app) cleanupModelProbe(repo, superID string, filtered bool) error {
 // Each catalog has its own account, config and capture: admission mutates the resolved posture,
 // and catalogs refresh concurrently. Unlike an editor, a probe never admits toolbar alternatives.
 func (a *app) admitModelProbe(ctx context.Context, agent, repo string, stderr io.Writer) (*app, agents.Target, error) {
-	probe := &app{cfg: a.cfg.Clone(), rt: a.rt, rtSet: true, network: a.network}
+	probe := &app{cfg: a.cfg.Clone(), rt: a.rt, rtSet: true, network: a.network, admitNetwork: a.admitNetwork}
 	target := agents.Target{Provider: agent, Accounts: []string{probe.cfg.ActiveProfile(agent)}}
 	probe.acpNetworkTargets = []agents.Target{target}
+	options := probe.network.admission()
+	options.ProjectBuild = box.RefuseProjectBuild // a catalog refresh must not start a project build
 	var err error
-	probe.acpCapture, err = box.AdmitNetwork(probe.cfg, probe.rt, box.RunSpec{
+	probe.acpCapture, err = probe.admitACPNetwork(probe.cfg, box.RunSpec{
 		Ctx: ctx, Repo: repo, Workdir: repo, Agent: agent, Peers: probe.acpNetworkTargets,
 		NetworkClient: egress.ClientACP, Homes: probe.cfg.Homes, Network: probe.cfg.Network,
 		Cache: probe.cfg.Cache, Stderr: &modelSetupOutput{Writer: stderr, agent: agent},
-	}, probe.network.admission())
+	}, options)
 	return probe, target, err
 }
 

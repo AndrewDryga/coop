@@ -16,14 +16,14 @@ of its sign-in stage and mounts none, and doctor (`doctorProject`) falls back to
 and skips the box survey, saying why. That string feeds two kinds of key.
 
 **Resolved before use**, so a different spelling of the same folder keeps them: Compose project and
-network names and sidecar port scopes (`ComposeProject`, `canonicalWorkspace` in repo.go), native
+network names and sidecar port scopes, filtered project image tags (`ComposeProject`, `canonicalWorkspace` in repo.go), native
 agent homes and their history key (`HistoryKey`), task leases and queue identity
 (`LeaseAuthorityKey`, `canonicalTaskRoot`), the loop checkout lock (loop/lock.go), network
 approvals (networkstate/authority.go, matched by inode) and git views.
 
 **Taken as spelled**, so a different spelling moves them: the fork home `<repo>-forks` and all fork
 state in it (`forkspace.Home`); project image names, built from the folder's base name
-(`ServicesProject`, used by `ImageForRepo` and `filteredProjectTag`); `serve.ports` host ports
+(`ServicesProject`, used by `ImageForRepo`); `serve.ports` host ports
 (`project.HostPort`); the box workdir, which is the agent's cwd and so the key of each agent's own
 conversation history (`Workdir` in run.go), and the folder-trust entries written for it; and the
 interactive session lock (`lockSessionProducer`).

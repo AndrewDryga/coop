@@ -2053,10 +2053,11 @@ OPTIONS
   --egress <mode>  prepare the image for filtered, open or offline networking
                    default: this project's network mode
 
-  Filtered launches use only an image built with this command, so build again
-  after its inputs change. The build itself uses ordinary networking in every
-  mode: review the Dockerfile and the files it copies first. New runs use the
-  rebuilt image, and editor sessions on the replaced image restart.
+  Running this approves the build files for filtered launches. If only Coop's
+  image changed, those same files rebuild by themselves; if you change them,
+  build again. The build itself uses ordinary networking in every mode: review
+  the Dockerfile and the files it copies first. New runs use the rebuilt image,
+  and editor sessions on the replaced image restart.
 
 Fresh rebuild: coop update --box-only
 Guide:         https://coop.dryga.com/box.html#builds-and-network-modes`,
@@ -2068,11 +2069,11 @@ Usage:
 
   Updates the Coop binary when a newer release is available, then prepares
   the image for this project's effective network mode using the installed
-  version's image definitions. Filtered projects use the pinned client base
-  and record their explicit project build. Open and offline images refresh
-  base-image components. Agent CLIs and editor adapters remain pinned.
-  Downloaded releases are checked before replacing the binary. Project
-  builds use ordinary networking; review the Dockerfile and copied files.
+  version's image definitions. Filtered projects rebuild the files you
+  approved with coop build; new or changed build files wait for coop build.
+  Open and offline images refresh base-image components. Agent CLIs and
+  editor adapters remain pinned. Downloaded releases are checked before
+  replacing the binary. Project builds use ordinary networking.
 
 OPTIONS
   --self-only  update only the Coop binary; no container runtime needed

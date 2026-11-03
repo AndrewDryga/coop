@@ -390,7 +390,7 @@ func (c *Control) runGateBoundary(gateRepo, treeDir, img string, review bool, is
 		Homes:     c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
 		ActivityRepo: gateRepo, ActivityKind: activityKind,
 	}
-	capture, err := box.AdmitNetwork(c.cfg, c.rt, spec, box.NetworkAdmission{})
+	capture, err := box.AdmitNetwork(c.cfg, c.rt, spec, box.NetworkAdmission{ProjectBuild: box.RebuildApproved})
 	if err != nil {
 		return false, err
 	}

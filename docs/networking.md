@@ -332,13 +332,15 @@ Only traffic leaving the box passes through the gateway. The exception is Docker
 You can use your own project image in filtered mode if its `.agent/Dockerfile` starts with
 `ARG COOP_BASE_IMAGE` / `FROM ${COOP_BASE_IMAGE}`. Build it on the host with
 `coop build --egress filtered`. co:op uses its locked client image as the base and tags the
-result `coop-<repo>-filtered:<hash>`. The hash is the first 16 hex characters of the sha256
-of the client image reference. Plain `coop build` selects this image too when the project's
+result `coop-<repo>-<path hash>-filtered:<hash>`. The path hash keeps two checkouts with one folder
+name apart. The last hash is the first 16 hex characters of the sha256 of the client image reference. Plain `coop build` selects this image too when the project's
 effective network mode is filtered.
 
-A filtered launch uses only a project image you built explicitly. If the image is missing,
-the clients changed, or the sanitized build inputs changed, co:op asks you to review and rebuild.
-Build inputs include copied scripts and file modes.
+A filtered launch uses only a project image built from files you approved by running `coop build`.
+If the image is missing or the clients changed, co:op rebuilds those same files by itself, on a
+private snapshot it compares with your approval first. If the sanitized build inputs changed,
+co:op asks you to review and rebuild, and `coop update` leaves them for you too. Build inputs
+include copied scripts and file modes.
 
 To keep unrelated edits from requiring a rebuild, list the files this image does not build from
 in `.agent/Dockerfile.dockerignore`, or in an ignore file named after your configured Dockerfile.
@@ -384,8 +386,9 @@ co:op stages the build without shadowed secrets or Git metadata, checks the resu
 and saves approval for those exact inputs outside the agent's mounts. If saving approval fails,
 the command fails even if Docker finished the build.
 
-Filtered launches never build the project image automatically. An editor connection with open
-networking may build a missing image. Ordinary runs warn when inputs have changed and require
+Filtered launches build the project image automatically only from files you already approved, so
+an agent's edit cannot reach a build's ordinary networking. Such a rebuild fetches again whatever
+the approved Dockerfile fetches. An editor connection with open networking may build a missing image. Ordinary runs warn when inputs have changed and require
 `coop build --egress open` to rebuild. Offline launches do not build project images automatically.
 co:op may still prepare its own embedded base, gateway and client images; those builds do not
 execute instructions from your repository.

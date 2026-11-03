@@ -16,7 +16,7 @@ failure when the binary is installed but image preparation fails.
 
 Check project build readiness before costly network qualification and mount/secret scanning.
 When eligible, offer the explicit host next action under [[restricted-project-builds-are-explicit]];
-never turn a readiness miss into automatic ordinary-network execution.
+never turn a readiness miss into automatic ordinary-network execution of files no person approved.
 
 **Why:** the owner reported a seven-minute successful update followed by network qualification
 and secret scanning, only to be told to run another build: "why ... have user do obvious next step?"

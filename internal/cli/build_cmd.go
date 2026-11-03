@@ -89,6 +89,20 @@ func (a *app) buildFilteredBox(repo string, plan box.BuildPlan, title string) ([
 	return []box.ImageChange{change}, err
 }
 
+// updateFilteredBox is what an update does to a filtered project: rebuild what a person approved. The
+// one command that approves new build files is `coop build`.
+func (a *app) updateFilteredBox(repo string, plan box.BuildPlan) ([]box.ImageChange, error) {
+	ui.Note("Updating the filtered box image")
+	if plan.Project {
+		ui.Note("  Dockerfile: %s", plan.Dockerfile)
+		ui.Note("  Project builds use ordinary networking, so only files you approved with coop build rebuild here.")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	change, err := box.UpdateApprovedProject(ctx, a.rt, a.cfg, repo, os.Stdout, os.Stderr)
+	return []box.ImageChange{change}, err
+}
+
 // buildPlanned runs an ordinary build and reports what it did to every tag it builds: the plan's
 // image and, when the plan rebuilds it first, the shared base that boxes of every project without
 // a Dockerfile of its own run. Comparing the image IDs before and after is how the build knows
@@ -338,8 +352,17 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	}
 	var changes []box.ImageChange
 	if filtered {
-		warnUntrackedBuild(plan)
-		changes, err = a.buildFilteredBox(repo, plan, "Updating the filtered box image")
+		var waiting *box.ProjectBuildRequired
+		changes, err = a.updateFilteredBox(repo, plan)
+		if errors.As(err, &waiting) {
+			// Nothing went wrong, and only the person can settle this. An update is not a review.
+			ui.Note("")
+			warnBlock("The box image was not updated", "You have not approved this project's build files as they are now. Review the Dockerfile and the files it copies, then run coop build --egress filtered.")
+			if selfFailed {
+				return 1, nil
+			}
+			return 0, nil
+		}
 	} else {
 		ui.Note("Updating the Coop box")
 		ui.Note("  Fetching newer base-image components. Agent clients stay at the versions tested with this Coop release.")

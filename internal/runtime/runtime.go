@@ -31,6 +31,7 @@ const leaderReapTimeout = time.Second
 type Runtime struct {
 	Name                           string
 	composeEndpoint, composeDaemon string // frozen local Docker target for one service operation
+	approvedBuild                  bool   // ForApprovedBuild: a project build no person started
 }
 
 type runtimeKind int

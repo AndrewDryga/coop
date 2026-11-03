@@ -242,13 +242,17 @@ filtered image unless the project or `COOP_EGRESS` chooses open or offline.
 `coop build --egress filtered` asks for it explicitly. This builds on co:op's fixed client image
 and uses a separate image tag.
 
-A filtered launch uses the exact image you explicitly built and approved. Build it again if its
-inputs change, co:op upgrades the client base or the image is missing.
+A filtered launch uses an image built from files you approved. Running `coop build` approves the
+Dockerfile and the files it copies, for this project, Docker daemon and build settings. If only
+co:op's client base changed or the image is missing, the next launch rebuilds those same files by
+itself. If the files changed, they wait for you: an agent can edit them, and a project build runs
+them with ordinary networking.
 
-When that build is due, an interactive provider launch in a host terminal can offer
+When a build of changed files is due, an interactive provider launch in a host terminal can offer
 `Build and continue?`, defaulting to No. The prompt shows a saved snapshot of the build files;
 review it, because only those saved files are approved for that build. Headless commands, editor
-connections and unattended runs never ask. They stop and name the build to run.
+connections and unattended runs never ask. They stop and name the build to run. `coop update`
+rebuilds approved files and leaves changed ones for `coop build`, because an update is not a review.
 
 An editor connection with open networking can build a missing project image automatically.
 Ordinary runs do not rebuild an image after its inputs change; they warn, and you run
