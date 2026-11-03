@@ -1590,9 +1590,9 @@ func TestACPControlPresetSuppressesLimitChunk(t *testing.T) {
 	}
 }
 
-// TestACPServeNotice: the published ports are announced once, on a session/new result (which carries
-// sessionId + configOptions) — as one framed agent message in that session, not on a
-// ConfigOptionUpdate, not twice, and not without ports.
+// TestACPServeNotice: the published ports are announced once, on a session/new result (anything
+// carrying a sessionId, with or without configOptions) — as one framed agent message in that session,
+// not on a ConfigOptionUpdate or a session/load answer, not twice, and not without ports.
 func TestACPServeNotice(t *testing.T) {
 	c := newTestControl(t)
 	c.serve = []ServePort{{Box: 5173, Host: 24187}}
@@ -1629,10 +1629,20 @@ func TestACPServeNotice(t *testing.T) {
 		t.Errorf("the serve notice must be one-shot per session, got %s", n2)
 	}
 
-	// A ConfigOptionUpdate (configOptions in params, not result) is not a session establishment.
+	// Gemini and Grok answer session/new with models and no configOptions; their threads announce too.
+	modelsOnly := []byte(`{"jsonrpc":"2.0","id":3,"result":{"sessionId":"G","models":{"currentModelId":"auto","availableModels":[]}}}` + "\n")
+	if n := c.serveNoticeFor(modelsOnly); n == nil || !strings.Contains(string(n), `"sessionId":"G"`) {
+		t.Errorf("a session/new result without configOptions must announce, got %s", n)
+	}
+
+	// A ConfigOptionUpdate (configOptions in params, not result) is not a session establishment, and
+	// neither is a session/load answer, which carries no sessionId.
 	upd := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S2","update":{"sessionUpdate":"config_option_update","configOptions":[]}}}` + "\n")
 	if n := c.serveNoticeFor(upd); n != nil {
 		t.Errorf("only a session/new result announces, got %s", n)
+	}
+	if n := c.serveNoticeFor([]byte(`{"jsonrpc":"2.0","id":4,"result":{"configOptions":[{"id":"model"}]}}` + "\n")); n != nil {
+		t.Errorf("a result without a sessionId must not announce, got %s", n)
 	}
 
 	c.serve = nil

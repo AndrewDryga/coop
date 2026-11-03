@@ -68,9 +68,9 @@ func acpCommand(cfg *config.Config, tool string) []string {
 }
 
 // editorServePorts lists the .agent/project.yaml serve ports an editor session's boxes publish, for
-// the editor to announce once per thread. Host ports are deterministic (project.HostPort), so they
-// match what box.Run binds. Open and filtered boxes both publish (a filtered one on its gateway); a
-// box with networking off publishes nothing, so there is nothing to announce.
+// the editor to announce once per thread. Host ports are deterministic (project.HostPort): the same
+// numbers box.Run publishes, whenever the host port is still free. Open and filtered boxes both
+// publish (a filtered one on its gateway); a box with networking off publishes nothing.
 func editorServePorts(mode egress.Mode, repo string, ports []int) []acpctl.ServePort {
 	if mode != egress.Open && mode != egress.Filtered {
 		return nil

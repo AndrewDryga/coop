@@ -944,21 +944,21 @@ func (c *Control) childReset() {
 	c.mu.Unlock()
 }
 
-// serveNoticeFor returns a one-shot-per-session message listing the published ports when line is a
-// session/new result (which carries both a sessionId and configOptions), or nil. The host ports are
-// stable, so once per session is enough; a box restart's session/load result is swallowed by replay
-// and never reaches here, so it won't re-announce.
+// serveNoticeFor returns a one-shot-per-session message listing the published ports when line is the
+// result that established an editor session (it carries a sessionId, as session/new does), or nil.
+// The sessionId alone decides: Gemini and Grok answer session/new with models but no configOptions.
+// Only answers to the editor's own requests reach here (the proxy swallows coop's injected requests
+// and a box restart's replay), and the host ports are stable, so once per session is enough.
 func (c *Control) serveNoticeFor(line []byte) []byte {
 	if len(c.serve) == 0 {
 		return nil
 	}
 	var m struct {
 		Result *struct {
-			SessionID     string          `json:"sessionId"`
-			ConfigOptions json.RawMessage `json:"configOptions"`
+			SessionID string `json:"sessionId"`
 		} `json:"result"`
 	}
-	if json.Unmarshal(line, &m) != nil || m.Result == nil || m.Result.SessionID == "" || len(m.Result.ConfigOptions) == 0 {
+	if json.Unmarshal(line, &m) != nil || m.Result == nil || m.Result.SessionID == "" {
 		return nil
 	}
 	sid := m.Result.SessionID

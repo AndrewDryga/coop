@@ -8,6 +8,10 @@
   expose hidden files that eBPF protects. Mount fallback still refuses unapproved exposure;
   use `coop approve --case-exposure` to review and remember those exact paths.
 
+- **Open dev servers from the editor thread.** When a thread starts, Coop now lists each
+  `serve.ports` entry as a clickable localhost link under one short title. Filtered sessions
+  and Gemini and Grok threads get the links too.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up
