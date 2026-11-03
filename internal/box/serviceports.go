@@ -35,6 +35,13 @@ type ServicePort struct {
 // `expose` (not `ports`) is the opt-in marker: it publishes nothing on its own, so coop's override
 // adds the only host mapping (no double-publish).
 func ServicePorts(rt runtime.Runtime, workspacePath, composeFile string, exposedRoots ...string) []ServicePort {
+	return SessionServicePorts(rt, workspacePath, composeFile, "", exposedRoots...)
+}
+
+// SessionServicePorts is ServicePorts for the services one owner starts as its own Compose project
+// (runServiceOwner: a coop acp session's boxes use the supervisor's id), whose host ports are keyed
+// by that owner as well as the workspace (servicePortScope). The empty owner is the workspace's own.
+func SessionServicePorts(rt runtime.Runtime, workspacePath, composeFile, owner string, exposedRoots ...string) []ServicePort {
 	if composeFile == "" {
 		return nil
 	}
@@ -43,7 +50,7 @@ func ServicePorts(rt runtime.Runtime, workspacePath, composeFile string, exposed
 		return nil
 	}
 	defer cleanup()
-	return servicePortsWithArgs(rt, workspacePath, args)
+	return servicePortsWithArgs(rt, servicePortScope(workspacePath, owner), args)
 }
 
 func servicePortsWithArgs(rt runtime.Runtime, workspacePath string, args []string) []ServicePort {

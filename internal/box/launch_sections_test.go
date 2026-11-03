@@ -22,6 +22,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkreport"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -153,6 +154,76 @@ func TestLaunchAccountsComeFromTheRunsOwnScope(t *testing.T) {
 	}
 	if rows := launchAccounts(cfg, RunSpec{Cmd: []string{"sh"}, Homes: true}, nil); len(rows) != 0 {
 		t.Fatalf("a raw run connected accounts: %+v", rows)
+	}
+}
+
+// An editor names what a filtered session may reach, so the grouping keeps each approved rule's
+// destination, once and in policy order, beside the vendor, MCP server and other counts the
+// terminal prints.
+func TestNetworkAllowedByNamesWhatEachApprovalReaches(t *testing.T) {
+	policy := egress.Snapshot{
+		Dependencies: []egress.Dependency{{Provider: "claude"}},
+		Grants: []egress.Grant{
+			grant("g1", "proxy.golang.org", egress.Origin{Kind: "project"}),
+			grant("g2", "api.anthropic.com", egress.Origin{Kind: "provider", Provider: "claude"}),
+			grant("g3", "sum.golang.org", egress.Origin{Kind: "operator"}, egress.Origin{Kind: "project"}),
+			grant("g4", "docs.example", egress.Origin{Kind: "mcp", Name: "docs"}),
+			grant("g5", "x.example", egress.Origin{Kind: "session"}),
+			{ID: "g6", Rule: egress.Rule{To: egress.Destination{Service: "db"}}, Origins: []egress.Origin{{Kind: "project"}}},
+		},
+	}
+	got := fmt.Sprintf("%+v", NetworkAllowedBy(policy, "emisar"))
+	want := fmt.Sprintf("%+v", NetworkAllowed{Vendors: []string{"Anthropic"}, Approved: []string{"proxy.golang.org", "sum.golang.org", "the db service"},
+		Servers: []string{"docs", "emisar"}, Other: 1})
+	if got != want {
+		t.Fatalf("allowed = %s, want %s", got, want)
+	}
+}
+
+// An editor lists sidecar links only for a session whose box starts the services itself, decided
+// as box.Run decides it: open, joined to the services network, auto_up on, on a runtime that runs
+// Compose, with the project's own box: section applied first.
+func TestEditorStartsServicesOnlyWhereTheBoxDoes(t *testing.T) {
+	docker, apple := runtime.Runtime{Name: "docker"}, runtime.Runtime{Name: "container"}
+	open, plain := &config.Config{AutoUp: true, Network: true, Egress: "open"}, &project.Project{}
+	if !EditorStartsServices(open, docker, plain) {
+		t.Fatal("an open session with auto_up starts its services")
+	}
+	for name, cfg := range map[string]*config.Config{
+		"filtered":    {AutoUp: true, Network: true, Egress: "filtered"},
+		"offline":     {AutoUp: true, Network: true, Egress: "none"},
+		"auto_up off": {AutoUp: false, Network: true, Egress: "open"},
+		"no network":  {AutoUp: true, Network: false, Egress: "open"},
+	} {
+		if EditorStartsServices(cfg, docker, plain) {
+			t.Errorf("%s: the box starts no services, so nothing may be listed", name)
+		}
+	}
+	if EditorStartsServices(open, apple, plain) {
+		t.Error("Apple container runs no Compose, so nothing may be listed")
+	}
+	off := false
+	for name, p := range map[string]*project.Project{
+		"project auto_up: false": {Box: project.Box{AutoUp: &off}},
+		"project network: false": {Box: project.Box{Network: &off}},
+	} {
+		if EditorStartsServices(open, docker, p) {
+			t.Errorf("%s: the box starts no services, so nothing may be listed", name)
+		}
+	}
+}
+
+// A coop acp session's services run as its own Compose project, so their host ports are keyed by
+// the session as well as the workspace; the workspace's own project keeps the plain key.
+func TestSessionServicePortsAreKeyedByTheOwner(t *testing.T) {
+	workspace := t.TempDir()
+	if got, want := servicePortScope(workspace, ""), canonicalWorkspace(workspace); got != want {
+		t.Fatalf("the workspace's own scope = %q, want %q", got, want)
+	}
+	owned := servicePortScope(workspace, "sup1")
+	if !strings.HasSuffix(owned, "#coop-service-owner:sup1") ||
+		project.HostPortFor(owned, "db:5432") == project.HostPortFor(canonicalWorkspace(workspace), "db:5432") {
+		t.Fatalf("a session's services must not share the workspace's host ports: scope %q", owned)
 	}
 }
 

@@ -47,6 +47,18 @@ func (c *CapturedEgress) Close() error {
 	return c.Store.Close()
 }
 
+// Policy reads the frozen rules this capture admitted, the same snapshot prepareFilteredExecution
+// loads for each box, so what a supervisor reports is what its boxes enforce.
+func (c *CapturedEgress) Policy() (egress.Snapshot, error) {
+	if c == nil || c.Store == nil {
+		return egress.Snapshot{}, errors.New("no network capture")
+	}
+	if c.JobDigest != "" {
+		return c.Store.LoadJobSnapshot(networkstate.JobSnapshotRef{JobDigest: c.JobDigest, SessionID: c.SessionID}, c.Fingerprint)
+	}
+	return c.Store.LoadSnapshot(c.Project, c.Fingerprint)
+}
+
 // capturedSessionWorkspace reports whether this run's checkout is exactly the
 // fork workspace the captured project would give this run's fork name. Only a
 // remote session's capture carries a session identity, and only the fork the

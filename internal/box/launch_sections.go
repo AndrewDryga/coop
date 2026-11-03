@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
 	"path"
@@ -303,23 +304,31 @@ func (s *launchSections) brokerImage() {
 	}
 }
 
-// networkAllowances lists what a filtered box may reach, one row per kind of allowance, in the
-// order a person checks them: each selected provider's endpoints, the network rules a human
-// approved (the project's rules and this run's --allow-domain/--egress-rules), the MCP servers
-// coop configured. Every grant lands in one of these rows — or in the catch-all last one — so
-// the closing "Everything else blocked" is never claimed over an omitted allowance.
-func networkAllowances(policy egress.Snapshot, brokeredMCP ...string) []string {
-	var vendors []string
+// NetworkAllowed is what a filtered policy lets a box reach, grouped in the order a person checks
+// it: each selected provider's vendor, the network rules a human approved (the project's rules and
+// a run's --allow-domain/--egress-rules), the MCP servers coop configured, and a count of anything
+// else. Every grant lands in one group, so "everything else is blocked" never hides an allowance.
+type NetworkAllowed struct {
+	Vendors  []string
+	Approved []string // one per approved rule, in policy order: what it reaches
+	Servers  []string // sorted
+	Other    int
+}
+
+// NetworkAllowedBy groups policy's grants. brokeredMCP names the MCP servers a run reaches through
+// its credential broker: allowed like the rest, though the policy holds no grant for them.
+func NetworkAllowedBy(policy egress.Snapshot, brokeredMCP ...string) NetworkAllowed {
+	var allowed NetworkAllowed
 	provider := func(name string) {
 		if ag, ok := agents.Get(name); ok {
 			name = ag.Vendor()
 		}
-		if name != "" && !slices.Contains(vendors, name) {
-			vendors = append(vendors, name)
+		if name != "" && !slices.Contains(allowed.Vendors, name) {
+			allowed.Vendors = append(allowed.Vendors, name)
 		}
 	}
 	// The selected bundles come first, lead before peers; a grant with a provider origin the
-	// dependency list somehow lacks still gets its row rather than vanishing.
+	// dependency list somehow lacks still gets its vendor rather than vanishing.
 	for _, dependency := range policy.Dependencies {
 		provider(dependency.Provider)
 	}
@@ -327,7 +336,6 @@ func networkAllowances(policy egress.Snapshot, brokeredMCP ...string) []string {
 	for _, name := range brokeredMCP {
 		servers[name] = true
 	}
-	other := 0
 	for _, grant := range policy.Grants {
 		represented := false
 		for _, origin := range grant.Origins {
@@ -335,7 +343,10 @@ func networkAllowances(policy egress.Snapshot, brokeredMCP ...string) []string {
 			case "provider":
 				provider(origin.Provider)
 			case "project", "operator":
-				approved[grant.ID] = true
+				if !approved[grant.ID] {
+					approved[grant.ID] = true
+					allowed.Approved = append(allowed.Approved, destinationName(grant.Rule.To))
+				}
 			case "mcp":
 				servers[origin.Name] = true
 			default:
@@ -344,23 +355,51 @@ func networkAllowances(policy egress.Snapshot, brokeredMCP ...string) []string {
 			represented = true
 		}
 		if !represented {
-			other++
+			allowed.Other++
 		}
 	}
+	allowed.Servers = slices.Sorted(maps.Keys(servers))
+	return allowed
+}
+
+// destinationName is what an approved rule reaches, in the words its YAML used.
+func destinationName(to egress.Destination) string {
+	switch {
+	case to.Domain != "":
+		return to.Domain
+	case to.Service != "":
+		return "the " + to.Service + " service"
+	case to.IP != "":
+		return to.IP
+	case to.CIDR != "":
+		return to.CIDR
+	case to.Provider != "":
+		if ag, ok := agents.Get(to.Provider); ok {
+			return ag.Vendor() + " endpoints"
+		}
+		return to.Provider + " endpoints"
+	}
+	return "another destination"
+}
+
+// networkAllowances lists what a filtered box may reach, one row per kind of allowance, so the
+// closing "Everything else blocked" is never claimed over an omitted allowance.
+func networkAllowances(policy egress.Snapshot, brokeredMCP ...string) []string {
+	allowed := NetworkAllowedBy(policy, brokeredMCP...)
 	var rows []string
-	for _, vendor := range vendors {
+	for _, vendor := range allowed.Vendors {
 		rows = append(rows, vendor+" endpoints allowed")
 	}
-	if n := len(approved); n > 0 {
+	if n := len(allowed.Approved); n > 0 {
 		// The count is of normalized approved network rules — not of expanded
 		// addresses, and not of distinct sites a rule might cover.
 		rows = append(rows, "Applied "+ui.Count(n, "approved network rule"))
 	}
-	if n := len(servers); n > 0 {
+	if n := len(allowed.Servers); n > 0 {
 		rows = append(rows, ui.Count(n, "configured MCP service")+" allowed")
 	}
-	if other > 0 {
-		rows = append(rows, ui.Count(other, "other destination")+" allowed")
+	if allowed.Other > 0 {
+		rows = append(rows, ui.Count(allowed.Other, "other destination")+" allowed")
 	}
 	return rows
 }

@@ -513,7 +513,10 @@ Coop stores approval outside the repository, so editing or deleting the file can
 access. Nothing inside the box can approve its own request. New runs use the approved rules;
 a box that is already running keeps the rules it started with.
 
-A running editor session (`coop acp`) can pick up a new approval without reconnecting. Once
+In a filtered editor session (`coop acp`), each new thread starts with a note naming what the
+agent can reach and how to allow more.
+
+A running editor session can pick up a new approval without reconnecting. Once
 no prompt is running, co:op starts a box with the new rules, then stops the old box. Any
 processes left in the old box stop too, and the editor shows a line explaining this. A box
 started for another reason, such as a crash or provider switch, also gets the new rules.

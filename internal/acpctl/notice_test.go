@@ -7,13 +7,14 @@ import (
 	"testing"
 )
 
-// A queued notice reaches the editor exactly once, with the next session update, ahead of it and
-// in that update's session — never on a response without a session — and a newer notice replaces
-// one nobody saw yet.
+// Queued notices reach the editor exactly once, with the next session update, ahead of it and in
+// that update's session — never on a response without a session — in the order they last
+// happened: a text queued again shows once, at the end.
 func TestACPNotifyRidesTheNextSessionUpdateOnce(t *testing.T) {
 	c := newTestControl(t)
 	c.Notify("an older notice")
 	c.Notify("Coop could not apply the newly approved network rules.")
+	c.Notify("an older notice")
 	if out := toEd(c, []byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}`+"\n")); bytes.Contains(out, []byte("Coop could not")) {
 		t.Fatalf("a notice rode a line that names no session: %s", out)
 	}
@@ -39,8 +40,8 @@ func TestACPNotifyRidesTheNextSessionUpdateOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	if notice.Method != "session/update" || notice.Params.SessionID != "S" || notice.Params.Update.SessionUpdate != "agent_message_chunk" ||
-		notice.Params.Update.Content.Text != "Coop could not apply the newly approved network rules." {
-		t.Fatalf("the notice is not the newest text in the update's session: %s", lines[0])
+		notice.Params.Update.Content.Text != "Coop could not apply the newly approved network rules.\n\nan older notice" {
+		t.Fatalf("the notices are not each queued text once, in the order they last happened, in the update's session: %s", lines[0])
 	}
 	if again := toEd(c, chunk); bytes.Count(again, []byte("\n")) != 1 || bytes.Contains(again, []byte("Coop could not")) {
 		t.Fatalf("a notice was shown twice: %s", again)

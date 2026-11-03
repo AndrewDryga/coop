@@ -27,7 +27,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
-	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -36,11 +35,11 @@ import (
 // a different-provider preset is a provider switch, which the proxy now survives (the session is
 // re-created and the conversation carried best-effort as a text preamble; see spawnTarget). A
 // preset that does not load is left out, and skipped says why, for the session start to report.
-func (a *app) acpPresetNames(repo string) (names []string, skipped []error) {
+func (a *app) acpPresetNames(repo string) (names []string, skipped []presetSkip) {
 	globalDir := a.cfg.GlobalPresetsDir()
 	for _, name := range preset.List(repo, globalDir) {
 		if _, err := preset.Load(repo, globalDir, name); err != nil {
-			skipped = append(skipped, err)
+			skipped = append(skipped, presetSkip{name: name, err: err})
 		} else {
 			names = append(names, name)
 		}
@@ -65,21 +64,6 @@ func acpCommand(cfg *config.Config, tool string) []string {
 		return ag.ACP(cfg)
 	}
 	return nil
-}
-
-// editorServePorts lists the .agent/project.yaml serve ports an editor session's boxes publish, for
-// the editor to announce once per thread. Host ports are deterministic (project.HostPort): the same
-// numbers box.Run publishes, whenever the host port is still free. Open and filtered boxes both
-// publish (a filtered one on its gateway); a box with networking off publishes nothing.
-func editorServePorts(mode egress.Mode, repo string, ports []int) []acpctl.ServePort {
-	if mode != egress.Open && mode != egress.Filtered {
-		return nil
-	}
-	var serve []acpctl.ServePort
-	for _, port := range ports {
-		serve = append(serve, acpctl.ServePort{Box: port, Host: project.HostPort(repo, port)})
-	}
-	return serve
 }
 
 // firstSignedInAgent is the provider an editor session starts when nothing names one: the first
@@ -293,9 +277,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 			sel.Provider = tool
 		}
 		presets, skipped := a.acpPresetNames(repo)
-		for _, err := range skipped {
+		for _, s := range skipped {
 			// The error quotes the preset's folder name, which a box can choose. stderr: stdout carries ACP.
-			ui.Warn("%s — left out of the editor's preset list", ui.SafeInline(err.Error()))
+			ui.Warn("%s — left out of the editor's preset list", ui.SafeInline(s.err.Error()))
 		}
 		// Admission above settled a.cfg.Egress to this session's network mode.
 		serve := editorServePorts(egress.Mode(a.cfg.Egress), repo, pj.Serve.Ports)
@@ -303,6 +287,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if a.acpCapture != nil {
 			ctrl.LimitNetworkTargets(scope)
 		}
+		a.startEditorNotice(ctrl, skipped)
 		if a.acpSupervise != nil {
 			return a.acpSupervise(inner, ctrl)
 		}
@@ -644,6 +629,9 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	if err != nil {
 		return 1, err
 	}
+	// This session's boxes start its project services as superID's own Compose project.
+	waitServices := a.listEditorServices(ctrl, repo, superID)
+	defer waitServices()
 	bindingsDir, err := box.ImportACPThreadBindings(ctx, a.cfg, repo, agents.NativeHistoryPlan{})
 	if err != nil {
 		return 1, err

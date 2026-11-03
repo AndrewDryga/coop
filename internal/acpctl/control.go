@@ -68,10 +68,6 @@ func normalizeACPSelection(sel Selection) Selection {
 	return sel
 }
 
-// ServePort is one project port the box publishes: Box is what the dev server listens on inside the
-// box, Host the stable localhost port a browser on this machine opens it at.
-type ServePort struct{ Box, Host int }
-
 // Control is coop's control layer over one ACP editor session. It rewrites the toolbar the editor
 // sees (force yolo, default the model to coop's, drop mode/subagent, prepend coop's selectors) and
 // handles their changes by restarting the box on the selected identity. The conversation survives
@@ -125,9 +121,16 @@ type Control struct {
 	heldChunk     map[string][]byte // editor sessionId -> buffered limit/auth notice awaiting the turn's outcome
 	waits         map[string]int    // editor sessionId -> CONSECUTIVE all-limited waits (see maxACPLimitWaits)
 
-	serve    []ServePort     // published ports to announce to the editor
-	reported map[string]bool // editor sessionId -> the published ports were already announced in this session
-	notice   string          // one queued Notify text, shown with the next session update
+	// What each new thread is told when it starts (start_notice.go), and the texts queued for the
+	// next session update.
+	serve        []ServePort
+	services     []ServiceLink
+	network      *NetworkLimit
+	problems     []Problem       // found before the first thread opened; told once, to that thread
+	problemsTold bool            // the first thread's start message went out
+	told         map[string]bool // problem texts already shown or queued, so none repeats
+	reported     map[string]bool // editor sessionId -> its start message went out
+	notices      []string        // queued Notify texts, shown with the next session update
 
 	// Best-effort conversation carry across a session re-create (a provider switch, or a lost
 	// transcript): coop retains a budgeted plain-text history per session — it already sees both
@@ -209,6 +212,7 @@ func New(cfg *config.Config, lead, model, effort, repo string, sel Selection, pr
 		heldChunk:      map[string][]byte{},
 		waits:          map[string]int{},
 		serve:          serve,
+		told:           map[string]bool{},
 		reported:       map[string]bool{},
 		carryBytes:     cfg.ACPCarryBytes(),
 		history:        map[string]*sessHistory{},
@@ -595,8 +599,8 @@ func (c *Control) toEditor(line []byte) (out []byte, restart bool) {
 	if notice := c.noticeFor(line); notice != nil {
 		out = append(notice, out...)
 	}
-	// Announce this repo's published ports once, when a session is established (its session/new result).
-	if notice := c.serveNoticeFor(line); notice != nil {
+	// A new thread hears where to open the box, how its network is limited and what needs fixing.
+	if notice := c.startNoticeFor(line); notice != nil {
 		out = append(out, notice...)
 	}
 	return out, false
@@ -944,66 +948,6 @@ func (c *Control) childReset() {
 	c.mu.Unlock()
 }
 
-// serveNoticeFor returns a one-shot-per-session message listing the published ports when line is the
-// result that established an editor session (it carries a sessionId, as session/new does), or nil.
-// The sessionId alone decides: Gemini and Grok answer session/new with models but no configOptions.
-// Only answers to the editor's own requests reach here (the proxy swallows coop's injected requests
-// and a box restart's replay), and the host ports are stable, so once per session is enough.
-func (c *Control) serveNoticeFor(line []byte) []byte {
-	if len(c.serve) == 0 {
-		return nil
-	}
-	var m struct {
-		Result *struct {
-			SessionID string `json:"sessionId"`
-		} `json:"result"`
-	}
-	if json.Unmarshal(line, &m) != nil || m.Result == nil || m.Result.SessionID == "" {
-		return nil
-	}
-	sid := m.Result.SessionID
-	c.mu.Lock()
-	if c.reported[sid] {
-		c.mu.Unlock()
-		return nil
-	}
-	c.reported[sid] = true
-	c.nextID++
-	n := c.nextID
-	c.mu.Unlock()
-	text := serveNoticeText(c.serve)
-	upd := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "session/update",
-		"params": map[string]any{
-			"sessionId": sid,
-			"update": map[string]any{
-				"sessionUpdate": "agent_message_chunk",
-				"content":       map[string]any{"type": "text", "text": text},
-				"messageId":     fmt.Sprintf("coop-serve-%d", n),
-			},
-		},
-	}
-	b, _ := json.Marshal(upd)
-	return append(b, '\n')
-}
-
-// serveNoticeText is the published-port message: a short title, then one line per port pairing the
-// port the dev server uses in the box with the link that opens it here. Editors render agent text as
-// Markdown, so each port gets its own list item (bare newlines would fold into one paragraph) and
-// each address is a real link instead of text the editor may not detect as one.
-func serveNoticeText(ports []ServePort) string {
-	title := "Open the box's ports in your browser"
-	if len(ports) == 1 {
-		title = "Open the box's port in your browser"
-	}
-	lines := []string{"🌐 **" + title + "**", ""}
-	for _, p := range ports {
-		lines = append(lines, fmt.Sprintf("- Port %d → [localhost:%d](http://localhost:%d)", p.Box, p.Host, p.Host))
-	}
-	return strings.Join(lines, "\n")
-}
-
 // rewriteToEditor applies coop's toolbar rewrite: on any object carrying configOptions/modes (a
 // session/new|load|resume result or a config_option_update) it drops the mode+subagent dropdowns and the
 // modes mirror, defaults the model to coop's, and prepends coop's selector. On a session result that
@@ -1329,7 +1273,7 @@ func (c *Control) statusMessage(session, text string) []byte {
 			"update": map[string]any{
 				"sessionUpdate": "agent_message_chunk",
 				"content":       map[string]any{"type": "text", "text": text},
-				"messageId":     fmt.Sprintf("coop-wait-%d", n),
+				"messageId":     fmt.Sprintf("coop-notice-%d", n),
 			},
 		},
 	}
@@ -3144,19 +3088,22 @@ func (c *Control) OnInitialized(fn func()) { c.onInitialized = fn }
 // lock, so it must return at once (a non-blocking send). Set it before serving.
 func (c *Control) OnTurnEnd(fn func()) { c.onTurnEnd = fn }
 
-// Notify shows text to the editor once. The control writes only through hook output, so the notice
-// rides the next session update the agent sends — usually the start of the next turn — in that
-// session, and a newer notice replaces one not yet shown.
+// Notify shows text to the editor once. The control writes only through hook output, so queued
+// texts ride the next session update the agent sends — usually the start of the next turn — in
+// that session, in the order they last happened: a text queued again is shown once, at the end.
 func (c *Control) Notify(text string) {
+	if text == "" {
+		return
+	}
 	c.mu.Lock()
-	c.notice = text
+	c.notices = append(slices.DeleteFunc(c.notices, func(queued string) bool { return queued == text }), text)
 	c.mu.Unlock()
 }
 
-// noticeFor takes the queued notice when line is a session update, addressed to its session.
+// noticeFor takes the queued notices when line is a session update, addressed to its session.
 func (c *Control) noticeFor(line []byte) []byte {
 	c.mu.Lock()
-	pending := c.notice != ""
+	pending := len(c.notices) > 0
 	c.mu.Unlock()
 	if !pending {
 		return nil
@@ -3171,8 +3118,8 @@ func (c *Control) noticeFor(line []byte) []byte {
 		return nil
 	}
 	c.mu.Lock()
-	text := c.notice
-	c.notice = ""
+	text := strings.Join(c.notices, "\n\n")
+	c.notices = nil
 	c.mu.Unlock()
 	if text == "" {
 		return nil

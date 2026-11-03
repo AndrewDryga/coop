@@ -46,6 +46,11 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-11-03 — acpctl imports the safetext leaf: an editor thread's start message repeats names
+  Coop did not write (accounts, presets, services, approved domains) and shows the characters that
+  would hide or reorder them escaped, judged by the same `safetext.Hidden` the terminal uses,
+  instead of a second copy of that security-sensitive list. It keeps rendering Markdown for the
+  editor and does not import `ui`. safetext has no internal dependencies, so no cycle forms.
 - 2026-11-03 — tasks imports scaffold: the first `coop tasks add` or `coop backlog add` in a project
   nobody ran coop init in sets the new queue up with `scaffold.InitQueue` (README.md, state folders,
   .gitignore lines) instead of a second copy of init's queue template and ignore rules. scaffold

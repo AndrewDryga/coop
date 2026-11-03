@@ -45,6 +45,7 @@ type refreshHarness struct {
 	drains     int
 	reports    []error
 	notices    []string
+	networks   []string // the policies new threads were told about
 	clock      time.Time
 }
 
@@ -77,6 +78,7 @@ func newRefreshHarness(t *testing.T) *refreshHarness {
 		drain:   func() { h.drains++ },
 		log:     func(err error) { h.reports = append(h.reports, err) },
 		notify:  func(text string) { h.notices = append(h.notices, text) },
+		network: func(capture *box.CapturedEgress) { h.networks = append(h.networks, capture.Fingerprint) },
 		now:     func() time.Time { return h.clock },
 		startup: startup, capture: startup, seen: 4,
 	}
@@ -167,6 +169,10 @@ func TestACPRefreshReplacesTheIdleBoxAfterItsReplacementStarted(t *testing.T) {
 	}
 	if !slices.Equal(h.notices, []string{acpRefreshMoved}) {
 		t.Fatalf("the editor was told %q, want the move once", h.notices)
+	}
+	// Only once the box under the new rules is live do new threads hear those rules.
+	if !slices.Equal(h.networks, []string{"new-policy"}) {
+		t.Fatalf("new threads were told about %q, want the new policy once, when its box went live", h.networks)
 	}
 }
 

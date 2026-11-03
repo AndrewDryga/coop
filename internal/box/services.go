@@ -674,3 +674,11 @@ func autoUpServices(cfg *config.Config, spec RunSpec, rt runtime.Runtime) bool {
 	return cfg.AutoUp && spec.Network && cfg.Egress == "open" && rt.SupportsCompose() && !spec.ReuseServices && !spec.Review &&
 		spec.ActivityRole != forkspace.ExecutionRoleProbe
 }
+
+// EditorStartsServices reports whether a coop acp session's box starts the project's sibling
+// services itself, decided as box.Run decides it: the project's box: section first
+// (applyProjectPolicy), then autoUpServices. The editor lists their links only then.
+func EditorStartsServices(cfg *config.Config, rt runtime.Runtime, p *project.Project) bool {
+	spec := RunSpec{Network: cfg.Network}
+	return autoUpServices(applyProjectPolicy(cfg, p, &spec), spec, rt)
+}

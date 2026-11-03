@@ -121,6 +121,7 @@ type acpNetworkRefresh struct {
 	drain      func()                                  // stop parked boxes of a replaced policy, then refill
 	log        func(error)                             // the agent log gets the whole reason
 	notify     func(string)                            // the editor gets fixed sentences
+	network    func(*box.CapturedEgress)               // new threads hear what the live box's rules allow
 	now        func() time.Time                        // the clock; tests set it
 	stop       context.CancelFunc                      // ends admit's and spawn's context
 	stopped    <-chan struct{}                         // closed by stop: the loop ends
@@ -174,6 +175,7 @@ func (a *app) newACPNetworkRefresh(ctrl *acpctl.Control, restarter *acpproxy.Res
 		drain:   drain,
 		log:     func(err error) { ui.Warn("kept this session's network rules: %v", err) },
 		notify:  ctrl.Notify,
+		network: func(capture *box.CapturedEgress) { setEditorNetwork(ctrl, capture) },
 		now:     time.Now,
 		stop:    stop,
 		stopped: ctx.Done(),
@@ -456,8 +458,16 @@ func (r *acpNetworkRefresh) started(child *acpproxy.Child) {
 		r.shown = ""
 	}
 	r.running = child.Policy
+	var live *box.CapturedEgress
+	if moved {
+		live = r.captureLocked(child.Policy)
+	}
 	r.mu.Unlock()
 	if moved {
+		// Threads opened from now on run on this box, so their start message names its rules.
+		if live != nil && r.network != nil {
+			r.network(live)
+		}
 		r.notify(acpRefreshMoved)
 	}
 }

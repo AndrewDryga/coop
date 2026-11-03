@@ -8,9 +8,12 @@
   expose hidden files that eBPF protects. Mount fallback still refuses unapproved exposure;
   use `coop approve --case-exposure` to review and remember those exact paths.
 
-- **Open dev servers from the editor thread.** When a thread starts, Coop now lists each
-  `serve.ports` entry as a clickable localhost link under one short title. Filtered sessions
-  and Gemini and Grok threads get the links too.
+- **A useful first message in editor threads.** When a thread starts, Coop now lists each
+  `serve.ports` entry and each project service it starts as a clickable localhost link. A
+  filtered session also says what the agent can reach and how to allow more. Problems found
+  while starting, such as a saved sign-in that no longer works or a preset that does not load,
+  appear in the thread instead of only in the editor's log. Gemini and Grok threads get the
+  message too.
 
 - **One sign-in status for every account.** When a provider refuses an account's saved sign-in,
   Coop remembers it. `coop credentials` marks that account `Sign in again` with its exact

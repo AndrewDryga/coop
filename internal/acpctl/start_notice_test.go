@@ -1,0 +1,224 @@
+package acpctl
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+)
+
+type agentMessage struct {
+	Method string `json:"method"`
+	Params struct {
+		SessionID string `json:"sessionId"`
+		Update    struct {
+			SessionUpdate string `json:"sessionUpdate"`
+			Content       struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+			MessageID string `json:"messageId"`
+		} `json:"update"`
+	} `json:"params"`
+}
+
+func sessionResult(id string) []byte {
+	return []byte(`{"jsonrpc":"2.0","id":1,"result":{"sessionId":"` + id + `","configOptions":[{"id":"model"}]}}` + "\n")
+}
+
+// startText is the text of a thread's start message, or "" when there is none.
+func startText(t *testing.T, c *Control, session string) string {
+	t.Helper()
+	line := c.startNoticeFor(sessionResult(session))
+	if line == nil {
+		return ""
+	}
+	var msg agentMessage
+	if err := json.Unmarshal(line, &msg); err != nil {
+		t.Fatalf("start message is not JSON: %v: %s", err, line)
+	}
+	return msg.Params.Update.Content.Text
+}
+
+// A thread's start message goes out once, on the result that established its session (anything
+// carrying a sessionId, with or without configOptions), as one framed agent message in that
+// session — not on a ConfigOptionUpdate or a session/load answer, not twice, and not when there
+// is nothing to say.
+func TestACPStartNotice(t *testing.T) {
+	c := newTestControl(t)
+	c.serve = []ServePort{{Box: 5173, Host: 24187}}
+
+	line := c.startNoticeFor(sessionResult("S"))
+	var msg agentMessage
+	if err := json.Unmarshal(line, &msg); err != nil || msg.Method != "session/update" || msg.Params.SessionID != "S" ||
+		msg.Params.Update.SessionUpdate != "agent_message_chunk" || msg.Params.Update.Content.Type != "text" ||
+		!strings.HasPrefix(msg.Params.Update.MessageID, "coop-notice-") {
+		t.Fatalf("expected a start message for the new session, got %s (decode error: %v)", line, err)
+	}
+	if !bytes.HasSuffix(line, []byte("\n")) {
+		t.Errorf("the message must end its line, or the editor waits for the rest of it: %q", line)
+	}
+	want := "**Open the box's port in your browser**\n\n- Port 5173 → [localhost:24187](http://localhost:24187)"
+	if got := msg.Params.Update.Content.Text; got != want {
+		t.Errorf("start message:\n got %q\nwant %q", got, want)
+	}
+	if again := c.startNoticeFor(sessionResult("S")); again != nil {
+		t.Errorf("the start message must go out once per session, got %s", again)
+	}
+
+	// Gemini and Grok answer session/new with models and no configOptions; their threads hear it too.
+	modelsOnly := []byte(`{"jsonrpc":"2.0","id":3,"result":{"sessionId":"G","models":{"currentModelId":"auto","availableModels":[]}}}` + "\n")
+	if n := c.startNoticeFor(modelsOnly); n == nil || !bytes.Contains(n, []byte(`"sessionId":"G"`)) {
+		t.Errorf("a session/new result without configOptions must get the message, got %s", n)
+	}
+	// A ConfigOptionUpdate (configOptions in params, not result) establishes no session, and neither
+	// does a session/load answer, which carries no sessionId.
+	upd := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S2","update":{"sessionUpdate":"config_option_update","configOptions":[]}}}` + "\n")
+	if n := c.startNoticeFor(upd); n != nil {
+		t.Errorf("only a session/new result gets the message, got %s", n)
+	}
+	if n := c.startNoticeFor([]byte(`{"jsonrpc":"2.0","id":4,"result":{"configOptions":[{"id":"model"}]}}` + "\n")); n != nil {
+		t.Errorf("a result without a sessionId must not get the message, got %s", n)
+	}
+
+	if text := startText(t, newTestControl(t), "S3"); text != "" {
+		t.Errorf("nothing to say → no message, got %q", text)
+	}
+}
+
+// Each block appears only when it has something to say, in order: the box's ports, the project's
+// services, a filtered session's limits, problems.
+func TestStartNoticeText(t *testing.T) {
+	limits := "To allow another site, add it to `.agent/project.yaml` and run `coop approve`. Open threads pick it up on their own."
+	grok := Problem{Title: "Grok isn't available", Detail: "its saved sign-in no longer works.", Command: "coop login grok@default"}
+	for _, tc := range []struct {
+		name     string
+		ports    []ServePort
+		services []ServiceLink
+		network  *NetworkLimit
+		problems []Problem
+		want     string
+	}{
+		{name: "nothing"},
+		{
+			name:  "ports",
+			ports: []ServePort{{Box: 4000, Host: 43659}, {Box: 9091, Host: 28617}},
+			want: "**Open the box's ports in your browser**\n\n" +
+				"- Port 4000 → [localhost:43659](http://localhost:43659)\n- Port 9091 → [localhost:28617](http://localhost:28617)",
+		},
+		{
+			// Browser schemes are links; a database address is code a client can take.
+			name:     "services",
+			services: []ServiceLink{{Name: "keycloak", Scheme: "https", Host: 30344}, {Name: "db", Scheme: "postgresql", Host: 31372}},
+			want:     "**Project services**\n\n- keycloak → [localhost:30344](https://localhost:30344)\n- db → `postgresql://localhost:31372`",
+		},
+		{
+			name:    "a short network list is named",
+			network: &NetworkLimit{Vendors: []string{"Anthropic"}, Sites: []string{"proxy.golang.org", "sum.golang.org"}, Servers: []string{"emisar_admin"}},
+			want:    "**Internet is filtered.** Allowed: Anthropic, proxy\\.golang\\.org, sum\\.golang\\.org, the emisar\\_admin MCP server.\n\n" + limits,
+		},
+		{
+			name:    "a long network list is counted",
+			network: &NetworkLimit{Vendors: []string{"Anthropic"}, Sites: []string{"a.example", "b.example", "c.example", "d.example", "e.example"}, Servers: []string{"docs"}, Other: 1},
+			want:    "**Internet is filtered.** Allowed: Anthropic, 5 approved network rules, 1 MCP server, 1 other destination. `coop net` lists them.\n\n" + limits,
+		},
+		{
+			name:     "a problem with its fix",
+			problems: []Problem{grok, {Title: `The "review" preset is missing from the toolbar`, Detail: "it could not be loaded.", Command: "coop presets", Purpose: "to see why"}},
+			want: "⚠ **Grok isn't available:** its saved sign-in no longer works. Run `coop login grok@default`.\n\n" +
+				"⚠ **The \"review\" preset is missing from the toolbar:** it could not be loaded. Run `coop presets` to see why.",
+		},
+		{
+			name:     "everything, in order",
+			ports:    []ServePort{{Box: 4000, Host: 43659}},
+			services: []ServiceLink{{Name: "db", Scheme: "postgresql", Host: 31372}},
+			network:  &NetworkLimit{Vendors: []string{"Anthropic"}},
+			problems: []Problem{grok},
+			want: "**Open the box's port in your browser**\n\n- Port 4000 → [localhost:43659](http://localhost:43659)\n\n" +
+				"**Project services**\n\n- db → `postgresql://localhost:31372`\n\n" +
+				"**Internet is filtered.** Allowed: Anthropic.\n\n" + limits + "\n\n" +
+				"⚠ **Grok isn't available:** its saved sign-in no longer works. Run `coop login grok@default`.",
+		},
+	} {
+		if got := startNoticeText(tc.ports, tc.services, tc.network, tc.problems); got != tc.want {
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Text Coop did not write — a preset, account, service or MCP server name, an approved domain, a
+// command built from them — reaches the editor literally: rendered as Markdown it makes no link,
+// image, emphasis, heading or HTML, and it cannot leave its line.
+func TestStartNoticeKeepsForeignTextLiteral(t *testing.T) {
+	hostile := "[click](https://evil.example) x](y) ![i](https://evil.example/i.png) *b* _e_ <b>h</b> &lt; www.evil.example me@evil.example https://evil.example/x ev\u202eil\n# heading"
+	text := startNoticeText(nil,
+		[]ServiceLink{{Name: hostile, Scheme: "postgresql", Host: 1}},
+		&NetworkLimit{Sites: []string{hostile}},
+		[]Problem{{Title: hostile, Detail: hostile, Command: "coop presets `" + hostile + "`", Purpose: "to see why"}})
+	var html bytes.Buffer
+	if err := goldmark.New(goldmark.WithExtensions(extension.GFM)).Convert([]byte(text), &html); err != nil {
+		t.Fatal(err)
+	}
+	rendered := html.String()
+	for _, forbidden := range []string{"evil.example\"", "<img", "<em>", "<h1>", "<b>"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Errorf("foreign text rendered as %s:\n%s", forbidden, rendered)
+		}
+	}
+	// The only links are the ones Coop builds; the hostile text adds none.
+	if links := strings.Count(rendered, "<a href="); links != 0 {
+		t.Errorf("foreign text made %d links:\n%s", links, rendered)
+	}
+	if strings.Count(text, "\n# ") != 0 {
+		t.Errorf("foreign text started its own line:\n%s", text)
+	}
+	if strings.ContainsRune(rendered, '\u202e') || !strings.Contains(rendered, `\u202E`) {
+		t.Errorf("a character that turns text around must show escaped, as in the terminal:\n%s", rendered)
+	}
+}
+
+// Problems found while the session started go to the first thread alone, and the same problem is
+// never told twice. One added after the first thread opened still reaches the editor, with the
+// next session update.
+func TestACPProblemsAreToldOnce(t *testing.T) {
+	c := newTestControl(t)
+	grok := Problem{Title: "Grok isn't available", Detail: "its saved sign-in no longer works.", Command: "coop login grok@default"}
+	c.AddStartProblems(grok, grok)
+	if first := startText(t, c, "S1"); strings.Count(first, "Grok isn't available") != 1 {
+		t.Fatalf("the first thread must hear the start problems once, got %q", first)
+	}
+	if second := startText(t, c, "S2"); second != "" {
+		t.Fatalf("a later thread must not hear them again, got %q", second)
+	}
+	chunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S2","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}` + "\n")
+	c.AddStartProblems(grok)
+	if out := toEd(c, chunk); bytes.Contains(out, []byte("Grok")) {
+		t.Fatalf("a problem the editor already heard was repeated: %s", out)
+	}
+	late := Problem{Title: "Late", Detail: "found after the first thread opened."}
+	c.AddStartProblems(late)
+	out := toEd(c, chunk)
+	if bytes.Count(out, []byte("found after the first thread opened")) != 1 || !bytes.HasSuffix(bytes.TrimSuffix(out, []byte("\n")), []byte(`"text":"hello"}}}}`)) {
+		t.Fatalf("want the late problem once, ahead of the agent's own update, got:\n%s", out)
+	}
+	if again := toEd(c, chunk); bytes.Contains(again, []byte("Late")) {
+		t.Fatalf("a late problem was shown twice: %s", again)
+	}
+}
+
+// Listing project services asks the container runtime, so it may finish after the first thread
+// opened: the next thread's start message carries them.
+func TestACPServicesReachLaterThreads(t *testing.T) {
+	c := newTestControl(t)
+	c.serve = []ServePort{{Box: 4000, Host: 43659}}
+	if first := startText(t, c, "S1"); strings.Contains(first, "Project services") {
+		t.Fatalf("no services were listed yet, got %q", first)
+	}
+	c.SetServices([]ServiceLink{{Name: "db", Scheme: "postgresql", Host: 31372}})
+	if second := startText(t, c, "S2"); !strings.Contains(second, "- db → `postgresql://localhost:31372`") {
+		t.Fatalf("a later thread must list the services, got %q", second)
+	}
+}

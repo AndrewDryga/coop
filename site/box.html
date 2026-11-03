@@ -565,7 +565,9 @@ dev server listens on in <code>.agent/project.yaml</code>:</p>
 <p>Each box for the repo (<code>coop acp</code>, <code>coop run</code>) maps these ports to stable host ports based on
 the repo&#39;s path. The URL stays the same between launches and differs between projects, so one
 Zed agent definition can serve all of them. When an ACP thread starts, co:op posts a browser link
-for each port. Terminal runs print the same links on stderr.</p>
+for each port and for the <a href="#project-services">project services</a> it starts. It also names problems
+it found while starting, such as a saved sign-in that no longer works. Terminal runs print the
+port links on stderr.</p>
 <ul>
 <li>The dev server must bind <code>0.0.0.0</code> inside the box (<code>vite --host</code>, <code>next dev -H 0.0.0.0</code> and so
 on). A server on the container&#39;s localhost isn&#39;t reachable through the mapping.</li>
