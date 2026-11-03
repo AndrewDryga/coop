@@ -379,7 +379,7 @@ func TestHelpForAgentIsGeneratedPerAdapter(t *testing.T) {
 	codex := agentHelp("codex")
 	for _, want := range []string{
 		"coop codex: run Codex in the box",
-		"coop codex[:<model>][/<effort>][@<account>] [options] [-- <codex-args>...]",
+		"coop codex[:<model>][/<effort>][@<account>] [<options>] [-- <codex-args>...]",
 		"coop codex:gpt-6-astra",
 		"pass all remaining arguments directly to Codex",
 		"coop models codex       list Codex models",

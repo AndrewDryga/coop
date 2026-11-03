@@ -25,6 +25,13 @@
   one screen with what to run and its main options, and ends with a link to the guide that holds
   the details it used to list.
 
+- **Help names each value one way.** A target is an agent with an optional model, effort and
+  account; pages say `<target|preset>` where a preset also works, and `--peer <target>` takes no
+  `@account`. Every launch page describes `--egress`, `--allow-domain` and `--egress-rules` with
+  the same rows, and `coop usage` takes `<agent>[@<account>]`. `coop help acp` now says Gemini
+  works with filtered networking through a Google sign-in or a Gemini API key, not Vertex AI,
+  and the menu points at `coop help --all` for the full reference.
+
 - **Only approve file exposure deliberately.** Ordinary `coop approve` no longer asks to
   expose hidden files that eBPF protects. Mount fallback still refuses unapproved exposure;
   use `coop approve --case-exposure` to review and remember those exact paths.

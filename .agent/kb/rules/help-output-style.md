@@ -49,6 +49,10 @@ updated: 2026-11-03
   move to the docs page its closing `Guide:` line links, never deleted; a security fact keeps a
   one-line summary on the page. Upgrade notes belong in MIGRATING.md, not in help or in a
   generated template.
+- A flag several commands share reads the same everywhere: the network flags and `--peer` render
+  from one definition in help.go (`networkOptionRows`, `peerOptionRow`), never re-worded per page.
+  `-f` stays `--follow` on `coop fork logs`, as in `docker logs -f`, though it is `--force` on
+  `fork rm` and `fork merge`; each page names its own meaning.
 
 **Why:** consistent structure lets new users scan without learning a different style for each
 page. Help needs to explain what to do, not expose the implementation. Complete examples prevent
@@ -60,13 +64,19 @@ the full manual must be assembled from the same pages, not a second command regi
 `make docs-check` pins every page's bytes through the generated `docs/cli.md`: review a page's
 wording in that diff, and do not copy the page into a fixture under `testdata/approved`. A page
 never ends in a newline (TestManualPagesEndWithoutANewline): `coop help` adds the one it prints.
-TestHelpPagesFitTheTerminal, TestHelpColumnsAlign and TestHelpPagesShareOneLayout read every
-manual page and the reference menu for the width, table and page-shape bullets above;
+TestHelpPagesFitTheTerminal, TestHelpColumnsAlign, TestHelpPagesShareOneLayout and
+TestSharedOptionRowsReadTheSameEverywhere read every manual page and the reference menu for the
+width, table, page-shape and shared-flag bullets above;
 TestHelpRowsAlign, TestHelpTextAligned, TestAllHelpAvoidsMiddleDots and TestCLIConformance
 cover older parts. The editorial bullets (practical prose, grouping by job, discoverability)
 still ride on review, so `check: none` stays.
 
 ## Changelog
+- 2026-11-03 — the network flags read three ways ("load network rules", `--allow-domain <name>`,
+  "add this file's network rules for the run") and `--peer` four. Added the shared-flag bullet:
+  run, shell, the four agent pages, acp, fork, fork acp and loop now embed the same rows, and
+  TestSharedOptionRowsReadTheSameEverywhere fails on any page that re-words them. Kept `-f` as
+  `--follow` on fork logs (the lead's call, matching Docker).
 - 2026-11-03 — the owner called usage, up, build, eval run and sessions quiescence walls of
   caveats a user cannot act on, and the up page and the project.yaml template carried upgrade
   notes. Added the one-screen bullet. Cut those five pages to 21–40 lines; each fact moved to

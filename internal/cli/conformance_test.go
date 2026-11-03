@@ -108,15 +108,9 @@ func TestCLIConformance(t *testing.T) {
 				surface = strings.Replace(surface, "\n  coop <claude|codex|gemini|grok>   start Claude, Codex, Gemini, or Grok\n", "\n", 1)
 			}
 			for _, retired := range []string{
-				"--peer <agent>", "--peer <peer>", "[<agent>[:model]", "[target|preset]",
+				"--peer <agent>", "--peer <peer>", "[<agent>[:model]", "[target|preset]", "<agent|preset>",
 				"<" + strings.Join(agents.Names(), "|") + ">",
 			} {
-				// The approved ACP page names every selectable value <agent>: the whole page is
-				// about which agent runs an editor session, and its own examples put a full
-				// target in that slot. See usage-placeholder-style's same-kind-of-thing clause.
-				if name == "ACP help" && retired == "--peer <agent>" {
-					continue
-				}
 				if strings.Contains(surface, retired) {
 					t.Errorf("%s uses noncanonical target placeholder %q", name, retired)
 				}
@@ -125,7 +119,7 @@ func TestCLIConformance(t *testing.T) {
 		for name, want := range map[string]string{
 			"top-level help":       "coop <target> --peer <target>...",
 			"agent help":           "coop claude[:<model>][/<effort>][@<account>]",
-			"ACP help":             "coop acp [<agent|preset>] [options]",
+			"ACP help":             "coop acp [<target|preset>] [<options>]",
 			"ACP usage error":      "coop acp [<target|preset>] [--peer <target>...]",
 			"loop help":            "coop loop [<target|preset>]",
 			"fork help":            "coop fork <name> [<target|preset>]",
@@ -159,6 +153,7 @@ func TestCLIConformance(t *testing.T) {
 		_, presetInitErr := a.presetsInit(t.TempDir(), []string{"frontier", "extra"})
 		_, loginErr := a.cmdLogin(nil)
 		surfaces := map[string]string{
+			"manual":            RenderManual(a.cfg),
 			"top-level help":    renderHelp(a.cfg, true),
 			"agent help":        agentHelp("claude"),
 			"credentials help":  commandHelp["credentials"],
@@ -173,7 +168,7 @@ func TestCLIConformance(t *testing.T) {
 		for name, surface := range surfaces {
 			for _, bare := range []string{
 				" [args]", " [agent]", " [credential", " [name]", "[paths...]", "[@account]",
-				"[coop flags]", "<agent args>",
+				"[coop flags]", "<agent args>", " [options]", "[@credential]", "<provider>",
 			} {
 				if strings.Contains(surface, bare) {
 					t.Errorf("%s uses bare metavariable form %q", name, bare)
@@ -182,7 +177,7 @@ func TestCLIConformance(t *testing.T) {
 		}
 		for name, want := range map[string]string{
 			"top-level help":   "Usage: coop <command> [<args>...]",
-			"agent help":       "[options] [-- <claude-args>...]",
+			"agent help":       "[<options>] [-- <claude-args>...]",
 			"credentials help": "coop credentials <agent> <account> rm       remove it",
 			"login help":       "coop login <agent>[@<account>]",
 			// The agents are a CLOSED set of literal tokens, so the models page lists them as

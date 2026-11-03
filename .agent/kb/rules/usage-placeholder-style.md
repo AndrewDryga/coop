@@ -2,9 +2,9 @@
 name: usage-placeholder-style
 description: "usage metavariables use angle brackets and stable names; optionality stays outside the placeholder"
 scope: cli-grammar
-sources: [internal/ui/usage.go, internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/loop_cmd.go, internal/cli/models.go, internal/cli/profiles.go, internal/cli/completion.go, internal/cli/session_connect.go, internal/tasks/cmd.go, internal/tasks/backlog.go, internal/forkctl/rm.go, internal/forkctl/review.go, internal/forkctl/merge.go, internal/forkctl/supervise.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/cli/conformance_test.go]
+sources: [internal/ui/usage.go, internal/cli/help.go, internal/cli/usage.go, internal/cli/target.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/loop_cmd.go, internal/cli/models.go, internal/cli/profiles.go, internal/cli/completion.go, internal/cli/session_connect.go, internal/tasks/cmd.go, internal/tasks/backlog.go, internal/forkctl/rm.go, internal/forkctl/review.go, internal/forkctl/merge.go, internal/forkctl/supervise.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/cli/conformance_test.go]
 check: none
-updated: 2026-09-11
+updated: 2026-11-03
 ---
 
 # Put usage metavariables in angle brackets and name them consistently
@@ -24,11 +24,17 @@ Use these established names:
 | stored credential | `<credential>` |
 | model, target, preset | `<model>`, `<target>`, `<preset>`, `<target|preset>` |
 | fork or other resource name | `<name>` |
+| hostname | `<host>` (`--allow-domain <host>`, `coop net blocked <host>`) |
 | filesystem path | `<path>` or `<absolute-path>` when absoluteness is required |
 | task/ref/count/shell | `<task-id>` in a usage error, `<id>` inside a task page, `<ref>`, `<n>`, `<bash|zsh>` |
 | an option group too long to spell out | `[<options>]` |
 | structured task fields | `<title>`, `<project>`, `<context>`, `<acceptance>`, `<approach>`, `<subtask>` |
 | prompt text | `<prompt>` |
+
+A target is `<agent>[:<model>][/<effort>][@<account>]`. A preset is never a target, so a slot that
+takes either says `<target|preset>` on every page, the menu and ACP included. `--peer <target>`
+takes no `@account`: peers share the run's accounts. An account is `<account>`, never
+`<credential>` inside a target, and an agent is `<agent>`, never `<provider>`.
 
 Provider literals may replace `<agent>` when listing the closed accepted set, for example
 `<claude|codex|gemini|grok>`. A usage error that interpolates an actual chosen value may print that
@@ -59,6 +65,15 @@ legitimately need paths, refs, task fields, and argument groups that the old tab
 Related: [[help-output-style]].
 
 ## Changelog
+- 2026-11-03 — the owner's manual test found one value spelled several ways: the menu defined a
+  target as "an agent, a preset, or a model" beside `<target|preset>` rows, the menu and ACP said
+  `<agent|preset>`, ACP said `--peer <agent>`, usage said `<provider>[@credential]`, and six pages
+  wrote `[options]`. Added the target/peer/account definitions above and `<host>`, and retired
+  the 2026-09-11 ACP exception below: ACP now says `[<target|preset>]` and `--peer <target>`. Swept
+  the whole manual plus the usage and peer errors: the menu note, menu rows, ACP, models, eval
+  run, usage (page and `usageSyntax`), the invalid-peer hint in target.go and the six
+  `[options]` pages now agree. TestCLIConformance checks the full manual for `[options]`,
+  `[@credential]`, `<provider>` and `<agent|preset>`.
 - 2026-09-11 — the approved ACP page names every selectable value `<agent>` (`coop acp
   <agent|preset> [options]`, `--peer <agent>`): the whole page is about which agent runs an editor
   session, and its own examples put a full target in that slot — the same-kind-of-thing clause

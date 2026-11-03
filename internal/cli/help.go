@@ -115,15 +115,16 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	row("coop <"+strings.Join(agents.Names(), "|")+">", "start "+ui.List(providers, "or"))
 	row("coop <preset>", "run agents together using a preset")
 	row("coop <target> --peer <target>...", "start with read-only peer agents")
-	// A newcomer meets the word "target" here, in three rows that all use it. Saying what it can be
-	// once, with one example of the longest form, is shorter than three rows that each explain it.
-	note("A target names an agent, a preset, or a model: codex:gpt-6-astra/xhigh")
+	// A newcomer meets the word "target" here, in rows that all use it. Saying what it is once, with
+	// one example of the longest form, is shorter than rows that each explain it. A preset is not a
+	// target: a row that takes either says <target|preset>.
+	note("A target is an agent, optionally with a model, effort and account:\n  codex:gpt-6-astra/xhigh@work")
 
 	group("ACCOUNTS, MODELS & PRESETS", "choose the accounts and models your agents use")
 	row("coop login <agent>", "sign in to an agent")
 	row("coop credentials [<agent>]", "show your signed-in accounts")
 	row("coop models [<agent>]", "show available models")
-	row("coop usage [<provider>]", "show limits and a 30-day API estimate")
+	row("coop usage [<agent>]", "show limits and a 30-day API estimate")
 	row("coop presets [<name>]", "show your presets")
 
 	group("TASKS", "each task is a folder in .agent/tasks/")
@@ -135,13 +136,13 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	row("coop context [<path>...]", "show instructions and docs for your files")
 
 	group("LOOPS", "work through tasks automatically; configure the steps in .agent/loop.yaml")
-	row("coop loop [<agent|preset>]", "work through the project's task queue")
+	row("coop loop [<target|preset>]", "work through the project's task queue")
 
 	group("EVALUATIONS", "check whether a model, preset or loop change helped")
 	row("coop eval", "run repeatable checks and compare results")
 
 	group("FORKS", "work in separate project copies, then review and merge the changes")
-	row("coop fork <name> <agent|preset>", "work in a separate copy of this project")
+	row("coop fork <name> <target|preset>", "work in a separate copy of this project")
 	row("coop fork ls", "show this project's forks")
 	row("coop fork review <name>", "review a fork's changes")
 	row("coop fork merge <name>", "merge a fork's changes into this branch")
@@ -190,7 +191,7 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	row("coop help completion", "enable tab completion in Bash or Zsh")
 
 	// The closing actions belong to no section, so they start at column zero.
-	fmt.Fprint(&b, "\nHelp and examples: coop help <command>\nDocumentation:     https://coop.dryga.com\n")
+	fmt.Fprint(&b, "\nHelp and examples: coop help <command>\nFull reference:    coop help --all\nDocumentation:     https://coop.dryga.com\n")
 	return b.String()
 }
 
@@ -293,19 +294,33 @@ func RenderManual(cfg *config.Config) string {
 	return b.String()
 }
 
+// networkOptionRows is the one description of the network flags every launch takes: run, shell,
+// each agent, acp, fork, fork acp and loop. A page embeds it rather than re-wording it. Its
+// description column is 25, the width these rows need; a row sharing their block pads to it.
+// --egress-rules adds the file's rules to what the run already has, so it never says "load".
+const networkOptionRows = `  --egress <mode>        network access: filtered (default), open or offline
+  --allow-domain <host>  allow TLS to this exact host on port 443; repeatable
+  --egress-rules <path>  add the network rules in this file`
+
+// peerOptionRow is the one description of --peer, in the network rows' column. A peer is a target
+// without @account (resolvePeerTargets refuses one): peers share the run's accounts.
+const peerOptionRow = `  --peer <target>        start a read-only peer agent (no @account); repeatable`
+
+// networkModeRows explains the --egress values on the pages that start a plain box.
+const networkModeRows = `  filtered  allow traffic permitted by approved network rules (default)
+  open      allow unrestricted internet access
+  offline   block internet access`
+
 // runHelp is `coop run`'s page. It's deliberately NOT in commandHelp: the dispatch's help check
 // is `--`-blind, so `coop run -- --help` (which must run --help in the box) would otherwise print
 // this instead. cmdRun (which honors --) and helpForCommand print it directly.
 const runHelp = `coop run: run a command in the box
 
 Usage:
-  coop run [options] -- <command> [<args>...]
+  coop run [<options>] -- <command> [<args>...]
 
 OPTIONS
-  --egress <mode>        choose filtered, open, or offline
-  --allow-domain <host>  allow TLS access to this host on port 443
-                         repeat to allow more hosts
-  --egress-rules <path>  add the network rules in a file
+` + networkOptionRows + `
 
   Put Coop options before --. Everything after it belongs to your command.
 
@@ -315,9 +330,7 @@ EXAMPLES
   coop run --egress offline -- git status
 
 NETWORK ACCESS
-  filtered  allow traffic permitted by approved network rules (default)
-  open      allow unrestricted internet access
-  offline   block internet access
+` + networkModeRows + `
 
   Without --egress, the box is filtered unless the project's network
   setting or COOP_EGRESS chooses another mode. With --egress open or
@@ -362,20 +375,11 @@ func agentHelp(name string) string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "coop %s: run %s in the box\n\n", name, title)
-	fmt.Fprintf(&b, "Usage:\n  coop %s[@<account>] [options] [-- <%s-args>...]\n\n", target, name)
+	fmt.Fprintf(&b, "Usage:\n  coop %s[@<account>] [<options>] [-- <%s-args>...]\n\n", target, name)
 
-	b.WriteString("OPTIONS\n")
-	b.WriteString(helpRows([][2]string{
-		{"--peer <target>", "start with a read-only peer agent; repeat to add more"},
-		{"--", "pass all remaining arguments directly to " + title},
-	}, 2))
-
-	b.WriteString("\nNETWORK OPTIONS\n")
-	b.WriteString(helpRows([][2]string{
-		{"--egress <mode>", "internet access: filtered (default), open or offline"},
-		{"--allow-domain <name>", "allow TLS to this exact domain on port 443; repeatable"},
-		{"--egress-rules <file>", "add this file's network rules for the run"},
-	}, 2))
+	b.WriteString("OPTIONS\n" + peerOptionRow + "\n")
+	b.WriteString(helpRowsAt([][2]string{{"--", "pass all remaining arguments directly to " + title}}, 25))
+	b.WriteString("\nNETWORK OPTIONS\n" + networkOptionRows + "\n")
 
 	fmt.Fprintf(&b, "\nEXAMPLES\n  coop %s\n  coop %s\n  coop %s\n  coop %s -- --help\n", name, example, account, name)
 
@@ -450,7 +454,7 @@ Command options: coop help sessions <command>`,
 
 	"sessions connect": `coop sessions connect: run a worker for a remote controller
 
-Usage: coop sessions connect --controller <https-url> [options]
+Usage: coop sessions connect --controller <https-url> [<options>]
 
 OPTIONS
   --controller <https-url>  controller to trust and connect to
@@ -474,7 +478,7 @@ RUNNING
 	"sessions doctor": `coop sessions doctor: check the local session service
 
 Usage:
-  coop sessions doctor [options]
+  coop sessions doctor [<options>]
 
   The command succeeds when the service responds and is ready for sessions.
 
@@ -608,13 +612,10 @@ SHELL PROMPTS
 	"shell": `coop shell: open a shell in the box
 
 Usage:
-  coop shell [options]
+  coop shell [<options>]
 
 OPTIONS
-  --egress <mode>        choose filtered, open, or offline
-  --allow-domain <host>  allow TLS access to this host on port 443
-                         repeat to allow more hosts
-  --egress-rules <path>  add the network rules in a file
+` + networkOptionRows + `
 
 EXAMPLES
   coop shell
@@ -626,9 +627,7 @@ USING THE SHELL
   Type exit or press Ctrl-D to return to your host.
 
 NETWORK ACCESS
-  filtered  allow traffic permitted by approved network rules (default)
-  open      allow unrestricted internet access
-  offline   block internet access
+` + networkModeRows + `
 
   Without --egress, the box is filtered unless the project's network
   setting or COOP_EGRESS chooses another mode. With --egress open or
@@ -657,7 +656,7 @@ Start an agent: coop claude`,
 
 	"usage": `coop usage: show limits and a 30-day API estimate
 
-Usage: coop usage [<provider>[@credential]]
+Usage: coop usage [<agent>[@<account>]]
 
   Shows your accounts' limits, then a 30-day estimate (≈$.../30d) of what your
   recorded activity would cost at standard API prices, subscription use
@@ -746,7 +745,7 @@ LIST MODELS
   coop models claude --refresh  refresh Claude models list now
 
 USE A MODEL
-  Put :model after the agent name. This works anywhere Coop accepts an agent.
+  Put :model after the agent name. This works anywhere Coop accepts a target.
 
   coop claude:opus
   coop loop claude:haiku
@@ -765,13 +764,16 @@ SET REASONING EFFORT
   A thinking setting you pin on one model in your Gemini settings still wins.
 
 CHOOSE AN ACCOUNT
-  Add @account after the model.
+  Add @account after the model. A --peer target takes no @account: peers use
+  the run's accounts.
 
   coop claude:opus@work
   coop credentials
 
 FULL SYNTAX
-  coop <provider>:<model>/<effort>@<account>
+  A target is an agent, optionally with a model, effort and account:
+
+  coop <agent>:<model>/<effort>@<account>
   coop codex:gpt-6-astra/high@personal
 
 SET A DEFAULT MODEL
@@ -792,7 +794,7 @@ For more details see:
 	"acp": `coop acp: connect your editor to an agent running in a Coop box
 
 Usage:
-  coop acp [<agent|preset>] [options]
+  coop acp [<target|preset>] [<options>]
 
 EDITOR SETUP
   Set the editor's agent command to coop and its arguments to:
@@ -810,13 +812,9 @@ EDITOR SETUP
   No providers signed in? Run coop login <agent>, then reconnect your editor.
 
 OPTIONS
-  --peer <agent>         start a peer provider for read-only advice
-                         repeat to add more peers
+` + peerOptionRow + `
 
-  --egress <mode>        choose filtered (default), open, or offline
-  --allow-domain <host>  allow TLS access to this host on port 443
-                         repeat to allow more hosts
-  --egress-rules <path>  add the network rules in a file
+` + networkOptionRows + `
 
 SWITCHING AGENTS
   Use the editor's Provider and Account controls to change who runs the session.
@@ -827,8 +825,9 @@ SWITCHING AGENTS
   Account changes keep the conversation with the same provider.
 
   With filtered networking, only compatible providers and presets are offered.
-  Claude, Codex and Grok support it; Gemini needs an API key to use it.
-  Switching never changes this session's network rules.
+  Claude, Codex, Gemini and Grok support it. Gemini needs a Google sign-in or
+  a Gemini API key, not Vertex AI. Switching never changes this session's
+  network rules.
 
 TROUBLESHOOTING
   Set COOP_ACP_TRACE=1 in your editor's agent environment to record a trace.
@@ -1008,7 +1007,8 @@ EXAMPLES
 Usage: coop tasks add "<title>" [<options>]
 
 OPTIONS
-  --project <name>     choose a subproject, or root; inside a subproject's
+  --project <name>     choose root or a subproject, as listed in project.yaml
+                       or by its last folder name; inside a subproject's
                        folder, add uses that subproject
   --tasks <path>       choose one task queue
   --context <text>     explain the problem and why it matters
@@ -1090,7 +1090,7 @@ EXAMPLES
 
 	"tasks block": `coop tasks block: pause a task that needs a decision
 
-Usage: coop tasks block <id> [--tasks <path>]... [options]
+Usage: coop tasks block <id> [--tasks <path>]... [<options>]
 
 OPTIONS
   --question <text>        ask the question that needs an answer, on one line
@@ -1310,10 +1310,8 @@ EXAMPLES
 Usage: coop fork <name> acp [<target>] [<options>]
 
 OPTIONS
-  --peer <target>        start with read-only peer agents; repeatable
-  --egress <mode>        internet access: filtered (default), open or offline
-  --allow-domain <name>  allow exact TLS access on port 443; repeatable
-  --egress-rules <file>  add this file's network rules for the session
+` + peerOptionRow + `
+` + networkOptionRows + `
 
   Without a target, Coop starts the fork's agent with its default model and
   account; choose another model or effort in your editor.
@@ -1519,7 +1517,7 @@ HOW IT WORKS
 
 OPTIONS
   --tasks <path>         choose a task queue; repeat for more queues
-  --peer <target>        start with read-only peer agents; repeat for more peers
+` + peerOptionRow + `
   --review-task <id>     add a completed task with a valid completion record
                          to the final review; repeat to add more
   --max-tasks <n>        pause after N tasks finish or become blocked
@@ -1528,9 +1526,7 @@ OPTIONS
   --no-preflight         skip that preparation
   --no-mcp               run without configured MCP servers
   --debug-on-fail        open a box shell after a failure; retry when you exit
-  --egress <mode>        internet access: filtered (default), open or offline
-  --allow-domain <name>  allow TLS to this exact domain on port 443; repeatable
-  --egress-rules <file>  add this file's network rules for the run
+` + networkOptionRows + `
 
   --max-tasks pauses before the final review. The limit must be positive.
   --debug-on-fail opens a shell only when running in a terminal.
@@ -1690,10 +1686,9 @@ Guide: https://coop.dryga.com/docs.html#evals`,
 
 Usage: coop eval run <suite> <target|preset>... --timeout <duration> [<options>]
 
-  Each target or preset is a separate configuration, not a fallback. Targets
-  use provider[:model][/effort][@account]. Presets need a loop suite such as
-  queue. A real run uses your accounts and may spend credits. A dry run spends
-  nothing.
+  Each target (<agent>[:<model>][/<effort>][@<account>]) or preset is a
+  separate configuration, not a fallback. Presets need a loop suite such as
+  queue. Real runs use your accounts and may spend credits. Dry runs are free.
 
 OPTIONS
   --timeout <duration>  time limit for the whole run; required for a real run
@@ -1903,15 +1898,15 @@ OPTIONS
   Without --run, checks this project's approved access for a new run.
   Hostnames use TLS. IP addresses require a recorded run and connection type.
 
+EXAMPLES
+  coop net check https://example.com
+  coop net check example.com --run e644f07a
+
 EXIT STATUS
   0  the rules allow the connection
   1  the check could not finish
   2  invalid arguments
-  3  the rules block the connection, or new runs need approval first
-
-EXAMPLES
-  coop net check https://example.com
-  coop net check example.com --run e644f07a`,
+  3  the rules block the connection, or new runs need approval first`,
 
 	"net blocked": `coop net blocked: find blocked connections and how to allow them
 
@@ -1995,7 +1990,7 @@ Usage: coop net forget [--project <path>]
   Run this command in your terminal.
 
 OPTIONS
-  --project <path>  choose another project, including a folder that was deleted
+  --project <path>  choose another project by its folder, even a deleted one
 
 Restore approval:
   coop approve`,

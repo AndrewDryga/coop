@@ -252,6 +252,27 @@ func TestHelpPagesShareOneLayout(t *testing.T) {
 	}
 }
 
+// The network flags and --peer mean the same on every page that takes them: run, shell, each
+// agent, acp, fork, fork acp and loop. Each page renders the one shared definition, so a page can
+// never describe them its own way again ("load network rules", --peer <agent>).
+func TestSharedOptionRowsReadTheSameEverywhere(t *testing.T) {
+	for name, page := range referenceHelpPages() {
+		if strings.Contains(page, "--allow-domain") && !strings.Contains(page, networkOptionRows) {
+			t.Errorf("coop help %s describes the network flags in its own words; embed networkOptionRows:\n%s", name, page)
+		}
+		for _, line := range strings.Split(page, "\n") {
+			if strings.HasPrefix(line, "  --peer ") && line != peerOptionRow {
+				t.Errorf("coop help %s describes --peer in its own words; embed peerOptionRow:\n%s", name, line)
+			}
+		}
+	}
+	for _, name := range []string{"run", "shell", "claude", "acp", "fork", "fork acp", "loop"} {
+		if !strings.Contains(manualPage(name), networkOptionRows) {
+			t.Errorf("coop help %s lost the network flag rows", name)
+		}
+	}
+}
+
 // helpPointer is a labeled next step, "Start again: coop up": a capitalized label, a colon, then
 // the command or link it names. Group 2 is where that command starts.
 var helpPointer = regexp.MustCompile(`^( *)[A-Z][^:]*: +(coop |https://)`)
@@ -668,7 +689,7 @@ func TestRunHelpShowsAMinimalRulesFile(t *testing.T) {
 		}
 	}
 	for name, page := range map[string]string{"run": runHelp, "shell": manualPage("shell"), "acp": manualPage("acp")} {
-		if strings.Contains(page, "load network rules") || !strings.Contains(page, "--egress-rules <path>  add the network rules in a file") {
+		if strings.Contains(page, "load network rules") || !strings.Contains(page, "--egress-rules <path>  add the network rules in this file") {
 			t.Errorf("coop help %s does not say --egress-rules adds rules", name)
 		}
 	}

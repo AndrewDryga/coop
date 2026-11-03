@@ -163,13 +163,14 @@ RUN AGENTS: work with a coding agent or a team of agents
   coop &lt;preset&gt;                     run agents together using a preset
   coop &lt;target&gt; --peer &lt;target&gt;...  start with read-only peer agents
 
-  A target names an agent, a preset, or a model: codex:gpt-6-astra/xhigh
+  A target is an agent, optionally with a model, effort and account:
+  codex:gpt-6-astra/xhigh@work
 
 ACCOUNTS, MODELS &amp; PRESETS: choose the accounts and models your agents use
   coop login &lt;agent&gt;                sign in to an agent
   coop credentials [&lt;agent&gt;]        show your signed-in accounts
   coop models [&lt;agent&gt;]             show available models
-  coop usage [&lt;provider&gt;]           show limits and a 30-day API estimate
+  coop usage [&lt;agent&gt;]              show limits and a 30-day API estimate
   coop presets [&lt;name&gt;]             show your presets
 
 TASKS: each task is a folder in .agent/tasks/
@@ -181,13 +182,13 @@ TASKS: each task is a folder in .agent/tasks/
   coop context [&lt;path&gt;...]          show instructions and docs for your files
 
 LOOPS: work through tasks automatically; configure the steps in .agent/loop.yaml
-  coop loop [&lt;agent|preset&gt;]        work through the project&#39;s task queue
+  coop loop [&lt;target|preset&gt;]       work through the project&#39;s task queue
 
 EVALUATIONS: check whether a model, preset or loop change helped
   coop eval                         run repeatable checks and compare results
 
 FORKS: work in separate project copies, then review and merge the changes
-  coop fork &lt;name&gt; &lt;agent|preset&gt;   work in a separate copy of this project
+  coop fork &lt;name&gt; &lt;target|preset&gt;  work in a separate copy of this project
   coop fork ls                      show this project&#39;s forks
   coop fork review &lt;name&gt;           review a fork&#39;s changes
   coop fork merge &lt;name&gt;            merge a fork&#39;s changes into this branch
@@ -223,14 +224,14 @@ INTEGRATIONS: use Coop with other tools and your shell
   coop help completion              enable tab completion in Bash or Zsh
 
 Help and examples: coop help &lt;command&gt;
+Full reference:    coop help --all
 Documentation:     https://coop.dryga.com</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-run-run-a-command-in-the-box"><h2>coop run: run a command in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop run: run a command in the box code example" tabindex="0"><code>Usage:
-  coop run [options] -- &lt;command&gt; [&lt;args&gt;...]
+  coop run [&lt;options&gt;] -- &lt;command&gt; [&lt;args&gt;...]
 
 OPTIONS
-  --egress &lt;mode&gt;        choose filtered, open, or offline
-  --allow-domain &lt;host&gt;  allow TLS access to this host on port 443
-                         repeat to allow more hosts
-  --egress-rules &lt;path&gt;  add the network rules in a file
+  --egress &lt;mode&gt;        network access: filtered (default), open or offline
+  --allow-domain &lt;host&gt;  allow TLS to this exact host on port 443; repeatable
+  --egress-rules &lt;path&gt;  add the network rules in this file
 
   Put Coop options before --. Everything after it belongs to your command.
 
@@ -263,13 +264,12 @@ RULES FILE
 
 For more details see:
   coop help net</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-shell-open-a-shell-in-the-box"><h2>coop shell: open a shell in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop shell: open a shell in the box code example" tabindex="0"><code>Usage:
-  coop shell [options]
+  coop shell [&lt;options&gt;]
 
 OPTIONS
-  --egress &lt;mode&gt;        choose filtered, open, or offline
-  --allow-domain &lt;host&gt;  allow TLS access to this host on port 443
-                         repeat to allow more hosts
-  --egress-rules &lt;path&gt;  add the network rules in a file
+  --egress &lt;mode&gt;        network access: filtered (default), open or offline
+  --allow-domain &lt;host&gt;  allow TLS to this exact host on port 443; repeatable
+  --egress-rules &lt;path&gt;  add the network rules in this file
 
 EXAMPLES
   coop shell
@@ -291,16 +291,16 @@ NETWORK ACCESS
 
 For more details see:
   coop help net</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-claude-run-claude-in-the-box"><h2>coop claude: run Claude in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop claude: run Claude in the box code example" tabindex="0"><code>Usage:
-  coop claude[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [options] [-- &lt;claude-args&gt;...]
+  coop claude[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [&lt;options&gt;] [-- &lt;claude-args&gt;...]
 
 OPTIONS
-  --peer &lt;target&gt;  start with a read-only peer agent; repeat to add more
-  --               pass all remaining arguments directly to Claude
+  --peer &lt;target&gt;        start a read-only peer agent (no @account); repeatable
+  --                     pass all remaining arguments directly to Claude
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
-  --allow-domain &lt;name&gt;  allow TLS to this exact domain on port 443; repeatable
-  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+  --egress &lt;mode&gt;        network access: filtered (default), open or offline
+  --allow-domain &lt;host&gt;  allow TLS to this exact host on port 443; repeatable
+  --egress-rules &lt;path&gt;  add the network rules in this file
 
 EXAMPLES
   coop claude
@@ -315,16 +315,16 @@ MODELS AND ACCOUNTS
 
 For a guide to using multiple models and providers together:
   coop help presets</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-codex-run-codex-in-the-box"><h2>coop codex: run Codex in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop codex: run Codex in the box code example" tabindex="0"><code>Usage:
-  coop codex[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [options] [-- &lt;codex-args&gt;...]
+  coop codex[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [&lt;options&gt;] [-- &lt;codex-args&gt;...]
 
 OPTIONS
-  --peer &lt;target&gt;  start with a read-only peer agent; repeat to add more
-  --               pass all remaining arguments directly to Codex
+  --peer &lt;target&gt;        start a read-only peer agent (no @account); repeatable
+  --                     pass all remaining arguments directly to Codex
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
-  --allow-domain &lt;name&gt;  allow TLS to this exact domain on port 443; repeatable
-  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+  --egress &lt;mode&gt;        network access: filtered (default), open or offline
+  --allow-domain &lt;host&gt;  allow TLS to this exact host on port 443; repeatable
+  --egress-rules &lt;path&gt;  add the network rules in this file
 
 EXAMPLES
   coop codex
@@ -339,16 +339,16 @@ MODELS AND ACCOUNTS
 
 For a guide to using multiple models and providers together:
   coop help presets</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-gemini-run-gemini-in-the-box"><h2>coop gemini: run Gemini in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop gemini: run Gemini in the box code example" tabindex="0"><code>Usage:
-  coop gemini[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [options] [-- &lt;gemini-args&gt;...]
+  coop gemini[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [&lt;options&gt;] [-- &lt;gemini-args&gt;...]
 
 OPTIONS
-  --peer &lt;target&gt;  start with a read-only peer agent; repeat to add more
-  --               pass all remaining arguments directly to Gemini
+  --peer &lt;target&gt;        start a read-only peer agent (no @account); repeatable
+  --                     pass all remaining arguments directly to Gemini
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
-  --allow-domain &lt;name&gt;  allow TLS to this exact domain on port 443; repeatable
-  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+  --egress &lt;mode&gt;        network access: filtered (default), open or offline
+  --allow-domain &lt;host&gt;  allow TLS to this exact host on port 443; repeatable
+  --egress-rules &lt;path&gt;  add the network rules in this file
 
 EXAMPLES
   coop gemini
@@ -363,16 +363,16 @@ MODELS AND ACCOUNTS
 
 For a guide to using multiple models and providers together:
   coop help presets</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-grok-run-grok-in-the-box"><h2>coop grok: run Grok in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop grok: run Grok in the box code example" tabindex="0"><code>Usage:
-  coop grok[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [options] [-- &lt;grok-args&gt;...]
+  coop grok[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;] [&lt;options&gt;] [-- &lt;grok-args&gt;...]
 
 OPTIONS
-  --peer &lt;target&gt;  start with a read-only peer agent; repeat to add more
-  --               pass all remaining arguments directly to Grok
+  --peer &lt;target&gt;        start a read-only peer agent (no @account); repeatable
+  --                     pass all remaining arguments directly to Grok
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
-  --allow-domain &lt;name&gt;  allow TLS to this exact domain on port 443; repeatable
-  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+  --egress &lt;mode&gt;        network access: filtered (default), open or offline
+  --allow-domain &lt;host&gt;  allow TLS to this exact host on port 443; repeatable
+  --egress-rules &lt;path&gt;  add the network rules in this file
 
 EXAMPLES
   coop grok
@@ -446,7 +446,7 @@ LIST MODELS
   coop models claude --refresh  refresh Claude models list now
 
 USE A MODEL
-  Put :model after the agent name. This works anywhere Coop accepts an agent.
+  Put :model after the agent name. This works anywhere Coop accepts a target.
 
   coop claude:opus
   coop loop claude:haiku
@@ -465,13 +465,16 @@ SET REASONING EFFORT
   A thinking setting you pin on one model in your Gemini settings still wins.
 
 CHOOSE AN ACCOUNT
-  Add @account after the model.
+  Add @account after the model. A --peer target takes no @account: peers use
+  the run&#39;s accounts.
 
   coop claude:opus@work
   coop credentials
 
 FULL SYNTAX
-  coop &lt;provider&gt;:&lt;model&gt;/&lt;effort&gt;@&lt;account&gt;
+  A target is an agent, optionally with a model, effort and account:
+
+  coop &lt;agent&gt;:&lt;model&gt;/&lt;effort&gt;@&lt;account&gt;
   coop codex:gpt-6-astra/high@personal
 
 SET A DEFAULT MODEL
@@ -487,7 +490,7 @@ AUTOMATIC ROTATION
 
 For more details see:
   coop help presets
-  coop help loop</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-usage-show-limits-and-a-30-day-api-estimate"><h2>coop usage: show limits and a 30-day API estimate</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop usage: show limits and a 30-day API estimate code example" tabindex="0"><code>Usage: coop usage [&lt;provider&gt;[@credential]]
+  coop help loop</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-usage-show-limits-and-a-30-day-api-estimate"><h2>coop usage: show limits and a 30-day API estimate</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop usage: show limits and a 30-day API estimate code example" tabindex="0"><code>Usage: coop usage [&lt;agent&gt;[@&lt;account&gt;]]
 
   Shows your accounts&#39; limits, then a 30-day estimate (≈$.../30d) of what your
   recorded activity would cost at standard API prices, subscription use
@@ -655,7 +658,8 @@ EXAMPLES
   coop tasks ls --tasks web/.agent/tasks</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-add-create-a-task-for-you-or-an-agent"><h2>coop tasks add: create a task for you or an agent</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks add: create a task for you or an agent code example" tabindex="0"><code>Usage: coop tasks add &#34;&lt;title&gt;&#34; [&lt;options&gt;]
 
 OPTIONS
-  --project &lt;name&gt;     choose a subproject, or root; inside a subproject&#39;s
+  --project &lt;name&gt;     choose root or a subproject, as listed in project.yaml
+                       or by its last folder name; inside a subproject&#39;s
                        folder, add uses that subproject
   --tasks &lt;path&gt;       choose one task queue
   --context &lt;text&gt;     explain the problem and why it matters
@@ -721,7 +725,7 @@ OPTIONS
 
 EXAMPLES
   coop tasks lease login-retries -- make check
-  coop tasks lease login-retries --as codex --pid 812</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-block-pause-a-task-that-needs-a-decision"><h2>coop tasks block: pause a task that needs a decision</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks block: pause a task that needs a decision code example" tabindex="0"><code>Usage: coop tasks block &lt;id&gt; [--tasks &lt;path&gt;]... [options]
+  coop tasks lease login-retries --as codex --pid 812</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-block-pause-a-task-that-needs-a-decision"><h2>coop tasks block: pause a task that needs a decision</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks block: pause a task that needs a decision code example" tabindex="0"><code>Usage: coop tasks block &lt;id&gt; [--tasks &lt;path&gt;]... [&lt;options&gt;]
 
 OPTIONS
   --question &lt;text&gt;        ask the question that needs an answer, on one line
@@ -912,7 +916,7 @@ HOW IT WORKS
 
 OPTIONS
   --tasks &lt;path&gt;         choose a task queue; repeat for more queues
-  --peer &lt;target&gt;        start with read-only peer agents; repeat for more peers
+  --peer &lt;target&gt;        start a read-only peer agent (no @account); repeatable
   --review-task &lt;id&gt;     add a completed task with a valid completion record
                          to the final review; repeat to add more
   --max-tasks &lt;n&gt;        pause after N tasks finish or become blocked
@@ -921,9 +925,9 @@ OPTIONS
   --no-preflight         skip that preparation
   --no-mcp               run without configured MCP servers
   --debug-on-fail        open a box shell after a failure; retry when you exit
-  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
-  --allow-domain &lt;name&gt;  allow TLS to this exact domain on port 443; repeatable
-  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+  --egress &lt;mode&gt;        network access: filtered (default), open or offline
+  --allow-domain &lt;host&gt;  allow TLS to this exact host on port 443; repeatable
+  --egress-rules &lt;path&gt;  add the network rules in this file
 
   --max-tasks pauses before the final review. The limit must be positive.
   --debug-on-fail opens a shell only when running in a terminal.
@@ -1008,10 +1012,9 @@ For options and prerequisites see:
   coop help eval run
 Guide: https://coop.dryga.com/docs.html#evals</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-eval-run-preview-or-run-a-repeatable-evaluation"><h2>coop eval run: preview or run a repeatable evaluation</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop eval run: preview or run a repeatable evaluation code example" tabindex="0"><code>Usage: coop eval run &lt;suite&gt; &lt;target|preset&gt;... --timeout &lt;duration&gt; [&lt;options&gt;]
 
-  Each target or preset is a separate configuration, not a fallback. Targets
-  use provider[:model][/effort][@account]. Presets need a loop suite such as
-  queue. A real run uses your accounts and may spend credits. A dry run spends
-  nothing.
+  Each target (&lt;agent&gt;[:&lt;model&gt;][/&lt;effort&gt;][@&lt;account&gt;]) or preset is a
+  separate configuration, not a fallback. Presets need a loop suite such as
+  queue. Real runs use your accounts and may spend credits. Dry runs are free.
 
 OPTIONS
   --timeout &lt;duration&gt;  time limit for the whole run; required for a real run
@@ -1152,15 +1155,15 @@ SESSION OPTIONS
   Review isolated work with coop fork review; --force cannot bypass its policy.
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
-  --allow-domain &lt;name&gt;  allow TLS to this exact domain on port 443; repeatable
-  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
+  --egress &lt;mode&gt;        network access: filtered (default), open or offline
+  --allow-domain &lt;host&gt;  allow TLS to this exact host on port 443; repeatable
+  --egress-rules &lt;path&gt;  add the network rules in this file
 
 LOOP OPTIONS
-  --loop              work through the project&#39;s task queue
-  -d, --detach        run the loop in the background (implies --loop)
-  -t, --tasks &lt;path&gt;  select one project task queue
-  --peer &lt;target&gt;     start with read-only peer agents; repeatable
+  --loop                 work through the project&#39;s task queue
+  -d, --detach           run the loop in the background (implies --loop)
+  -t, --tasks &lt;path&gt;     select one project task queue
+  --peer &lt;target&gt;        start a read-only peer agent (no @account); repeatable
 
   Task and peer options above apply to fork loops.
   Each fork receives one project task at a time. Its task is completed in the
@@ -1174,10 +1177,10 @@ Model and account syntax: coop help models
 Command options:          coop help fork &lt;command&gt;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-fork-name-acp-use-an-existing-fork-from-an-acp-editor"><h2>coop fork &lt;name&gt; acp: use an existing fork from an ACP editor</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork &lt;name&gt; acp: use an existing fork from an ACP editor code example" tabindex="0"><code>Usage: coop fork &lt;name&gt; acp [&lt;target&gt;] [&lt;options&gt;]
 
 OPTIONS
-  --peer &lt;target&gt;        start with read-only peer agents; repeatable
-  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
-  --allow-domain &lt;name&gt;  allow exact TLS access on port 443; repeatable
-  --egress-rules &lt;file&gt;  add this file&#39;s network rules for the session
+  --peer &lt;target&gt;        start a read-only peer agent (no @account); repeatable
+  --egress &lt;mode&gt;        network access: filtered (default), open or offline
+  --allow-domain &lt;host&gt;  allow TLS to this exact host on port 443; repeatable
+  --egress-rules &lt;path&gt;  add the network rules in this file
 
   Without a target, Coop starts the fork&#39;s agent with its default model and
   account; choose another model or effort in your editor.
@@ -1425,15 +1428,15 @@ OPTIONS
   Without --run, checks this project&#39;s approved access for a new run.
   Hostnames use TLS. IP addresses require a recorded run and connection type.
 
+EXAMPLES
+  coop net check https://example.com
+  coop net check example.com --run e644f07a
+
 EXIT STATUS
   0  the rules allow the connection
   1  the check could not finish
   2  invalid arguments
-  3  the rules block the connection, or new runs need approval first
-
-EXAMPLES
-  coop net check https://example.com
-  coop net check example.com --run e644f07a</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-blocked-find-blocked-connections-and-how-to-allow-them"><h2>coop net blocked: find blocked connections and how to allow them</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net blocked: find blocked connections and how to allow them code example" tabindex="0"><code>Usage: coop net blocked &lt;host&gt; [--run &lt;run&gt;] [--json]
+  3  the rules block the connection, or new runs need approval first</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-blocked-find-blocked-connections-and-how-to-allow-them"><h2>coop net blocked: find blocked connections and how to allow them</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net blocked: find blocked connections and how to allow them code example" tabindex="0"><code>Usage: coop net blocked &lt;host&gt; [--run &lt;run&gt;] [--json]
 
 OPTIONS
   --run &lt;run&gt;  look only in this run
@@ -1477,7 +1480,7 @@ EXAMPLES
   Run this command in your terminal.
 
 OPTIONS
-  --project &lt;path&gt;  choose another project, including a folder that was deleted
+  --project &lt;path&gt;  choose another project by its folder, even a deleted one
 
 Restore approval:
   coop approve</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-setup-prepare-this-host-for-filtered-networking"><h2>coop net setup: prepare this host for filtered networking</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net setup: prepare this host for filtered networking code example" tabindex="0"><code>Usage: coop net setup
@@ -1615,7 +1618,7 @@ HOW IT WORKS
 ALIASES
   coop -v
   coop --version</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-acp-connect-your-editor-to-an-agent-running-in-a-coop-box"><h2>coop acp: connect your editor to an agent running in a Coop box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop acp: connect your editor to an agent running in a Coop box code example" tabindex="0"><code>Usage:
-  coop acp [&lt;agent|preset&gt;] [options]
+  coop acp [&lt;target|preset&gt;] [&lt;options&gt;]
 
 EDITOR SETUP
   Set the editor&#39;s agent command to coop and its arguments to:
@@ -1633,13 +1636,11 @@ EDITOR SETUP
   No providers signed in? Run coop login &lt;agent&gt;, then reconnect your editor.
 
 OPTIONS
-  --peer &lt;agent&gt;         start a peer provider for read-only advice
-                         repeat to add more peers
+  --peer &lt;target&gt;        start a read-only peer agent (no @account); repeatable
 
-  --egress &lt;mode&gt;        choose filtered (default), open, or offline
-  --allow-domain &lt;host&gt;  allow TLS access to this host on port 443
-                         repeat to allow more hosts
-  --egress-rules &lt;path&gt;  add the network rules in a file
+  --egress &lt;mode&gt;        network access: filtered (default), open or offline
+  --allow-domain &lt;host&gt;  allow TLS to this exact host on port 443; repeatable
+  --egress-rules &lt;path&gt;  add the network rules in this file
 
 SWITCHING AGENTS
   Use the editor&#39;s Provider and Account controls to change who runs the session.
@@ -1650,8 +1651,9 @@ SWITCHING AGENTS
   Account changes keep the conversation with the same provider.
 
   With filtered networking, only compatible providers and presets are offered.
-  Claude, Codex and Grok support it; Gemini needs an API key to use it.
-  Switching never changes this session&#39;s network rules.
+  Claude, Codex, Gemini and Grok support it. Gemini needs a Google sign-in or
+  a Gemini API key, not Vertex AI. Switching never changes this session&#39;s
+  network rules.
 
 TROUBLESHOOTING
   Set COOP_ACP_TRACE=1 in your editor&#39;s agent environment to record a trace.
@@ -1684,7 +1686,7 @@ CONNECT THIS MACHINE
   Leave this command running; it starts the local service automatically.
 
 Command options: coop help sessions &lt;command&gt;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-doctor-check-the-local-session-service"><h2>coop sessions doctor: check the local session service</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions doctor: check the local session service code example" tabindex="0"><code>Usage:
-  coop sessions doctor [options]
+  coop sessions doctor [&lt;options&gt;]
 
   The command succeeds when the service responds and is ready for sessions.
 
@@ -1756,7 +1758,7 @@ BEFORE RUNNING
   The backup contains private session data. Keep it protected.
 
 DEFAULT SESSION DATA
-  ~/.local/state/coop/sessions</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-connect-run-a-worker-for-a-remote-controller"><h2>coop sessions connect: run a worker for a remote controller</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions connect: run a worker for a remote controller code example" tabindex="0"><code>Usage: coop sessions connect --controller &lt;https-url&gt; [options]
+  ~/.local/state/coop/sessions</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-sessions-connect-run-a-worker-for-a-remote-controller"><h2>coop sessions connect: run a worker for a remote controller</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions connect: run a worker for a remote controller code example" tabindex="0"><code>Usage: coop sessions connect --controller &lt;https-url&gt; [&lt;options&gt;]
 
 OPTIONS
   --controller &lt;https-url&gt;  controller to trust and connect to

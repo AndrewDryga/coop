@@ -101,15 +101,13 @@ SESSION OPTIONS
   Review isolated work with coop fork review; --force cannot bypass its policy.
 
 NETWORK OPTIONS
-  --egress <mode>        internet access: filtered (default), open or offline
-  --allow-domain <name>  allow TLS to this exact domain on port 443; repeatable
-  --egress-rules <file>  add this file's network rules for the run
+` + networkOptionRows + `
 
 LOOP OPTIONS
-  --loop              work through the project's task queue
-  -d, --detach        run the loop in the background (implies --loop)
-  -t, --tasks <path>  select one project task queue
-  --peer <target>     start with read-only peer agents; repeatable
+  --loop                 work through the project's task queue
+  -d, --detach           run the loop in the background (implies --loop)
+  -t, --tasks <path>     select one project task queue
+` + peerOptionRow + `
 
   Task and peer options above apply to fork loops.
   Each fork receives one project task at a time. Its task is completed in the

@@ -25,7 +25,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-const usageSyntax = "coop usage [<provider>[@credential]]"
+const usageSyntax = "coop usage [<agent>[@<account>]]"
 
 type usageCredential struct {
 	provider, account string
@@ -55,7 +55,7 @@ func usageSelector(args []string) (agents.Target, error) {
 		return target, targetUsage(err, "coop usage", usageSyntax)
 	}
 	if target.Model != "" || target.Effort != "" || len(target.Accounts) > 1 {
-		return target, &ui.UsageError{Headline: "Usage takes a provider and at most one credential", Rows: [][2]string{{"Usage:", usageSyntax}}}
+		return target, &ui.UsageError{Headline: "Usage takes an agent and at most one account", Rows: [][2]string{{"Usage:", usageSyntax}}}
 	}
 	return target, nil
 }

@@ -593,8 +593,8 @@ These messages do not appear when the project has no pending request.
 
 ### Access for one run
 
-For one run, use `--allow-domain <name>` to allow an exact name over TLS on port 443, or pass
-`--egress-rules <file>` to add the rules in a file. Both add to the project's approved rules for
+For one run, use `--allow-domain <host>` to allow an exact name over TLS on port 443, or pass
+`--egress-rules <path>` to add the rules in a file. Both add to the project's approved rules for
 that run only. A rules file lists its rules under one top-level `egress_rules` key, the way
 `.agent/project.yaml` lists them under `box.egress_rules`:
 

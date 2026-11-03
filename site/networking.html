@@ -735,8 +735,8 @@ an interactive fork, fork ACP, and a fork review or merge gate.</li>
 </ul>
 <p>These messages do not appear when the project has no pending request.</p>
 <h3 id="access-for-one-run">Access for one run</h3>
-<p>For one run, use <code>--allow-domain &lt;name&gt;</code> to allow an exact name over TLS on port 443, or pass
-<code>--egress-rules &lt;file&gt;</code> to add the rules in a file. Both add to the project&#39;s approved rules for
+<p>For one run, use <code>--allow-domain &lt;host&gt;</code> to allow an exact name over TLS on port 443, or pass
+<code>--egress-rules &lt;path&gt;</code> to add the rules in a file. Both add to the project&#39;s approved rules for
 that run only. A rules file lists its rules under one top-level <code>egress_rules</code> key, the way
 <code>.agent/project.yaml</code> lists them under <code>box.egress_rules</code>:</p>
 <div class="reference-code-frame"><pre class="code" role="region" aria-label="Access for one run code example" tabindex="0"><code>egress_rules:

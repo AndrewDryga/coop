@@ -15,13 +15,14 @@ RUN AGENTS: work with a coding agent or a team of agents
   coop <preset>                     run agents together using a preset
   coop <target> --peer <target>...  start with read-only peer agents
 
-  A target names an agent, a preset, or a model: codex:gpt-6-astra/xhigh
+  A target is an agent, optionally with a model, effort and account:
+  codex:gpt-6-astra/xhigh@work
 
 ACCOUNTS, MODELS & PRESETS: choose the accounts and models your agents use
   coop login <agent>                sign in to an agent
   coop credentials [<agent>]        show your signed-in accounts
   coop models [<agent>]             show available models
-  coop usage [<provider>]           show limits and a 30-day API estimate
+  coop usage [<agent>]              show limits and a 30-day API estimate
   coop presets [<name>]             show your presets
 
 TASKS: each task is a folder in .agent/tasks/
@@ -33,13 +34,13 @@ TASKS: each task is a folder in .agent/tasks/
   coop context [<path>...]          show instructions and docs for your files
 
 LOOPS: work through tasks automatically; configure the steps in .agent/loop.yaml
-  coop loop [<agent|preset>]        work through the project's task queue
+  coop loop [<target|preset>]       work through the project's task queue
 
 EVALUATIONS: check whether a model, preset or loop change helped
   coop eval                         run repeatable checks and compare results
 
 FORKS: work in separate project copies, then review and merge the changes
-  coop fork <name> <agent|preset>   work in a separate copy of this project
+  coop fork <name> <target|preset>  work in a separate copy of this project
   coop fork ls                      show this project's forks
   coop fork review <name>           review a fork's changes
   coop fork merge <name>            merge a fork's changes into this branch
@@ -75,4 +76,5 @@ INTEGRATIONS: use Coop with other tools and your shell
   coop help completion              enable tab completion in Bash or Zsh
 
 Help and examples: coop help <command>
+Full reference:    coop help --all
 Documentation:     https://coop.dryga.com

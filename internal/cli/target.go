@@ -194,7 +194,7 @@ func resolvePeerTargets(command string, vals, authed []string) ([]agents.Target,
 	for _, v := range vals {
 		t, err := agents.ParseTarget(v)
 		if err != nil {
-			return nil, targetUsage(err, command, command+" --peer <agent>[:<model>]")
+			return nil, targetUsage(err, command, command+" --peer <target>")
 		}
 		if len(t.Accounts) > 0 {
 			return nil, &ui.UsageError{
