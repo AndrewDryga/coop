@@ -2,7 +2,7 @@
 name: acp-warm-pool-identity
 description: coop acp parks one box per signed-in provider the session is not using and lends it to a switch only on an identical identity — plain target at the default model/effort, same account, box image and network policy; prove a hit from the trace, never from timing
 subsystem: acp
-sources: [internal/acpctl/warm.go, internal/box/filtered_launch.go, internal/cli/acp_refresh.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, internal/box/derived_image.go, tools/lifecyclebench/acp.go]
+sources: [internal/acpctl/warm.go, internal/box/filtered_launch.go, internal/cli/acp_refresh.go, internal/cli/fork_cmd.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, internal/box/derived_image.go, tools/lifecyclebench/acp.go]
 updated: 2026-11-03
 ---
 `coop acp` keeps a parked box (`acpctl.WarmPool`) for each signed-in provider the session is not
@@ -66,9 +66,14 @@ and reaps the pool, whose parked boxes stop concurrently — beside the active b
 deferred reap waits for that same teardown. Measured on a filtered project with two parked boxes:
 editor close → everything gone in ~1.4 s. A filtered child is stopped with SIGTERM (open and
 offline ones with SIGKILL), and one whose run ends with nothing but that stop (`box.Interrupted`)
-exits without a `✗ interrupted` line (`stoppedQuietly`); a cleanup failure still prints.
+exits without a `✗ interrupted` line (`stoppedQuietly`); a cleanup failure still prints. A
+`coop fork <name> acp` child ends the same way (`forkACPChildEnded` in fork_cmd.go), but only an
+editor session's (`COOP_ACP_INNER`, no session run ID): a session daemon's child shares that path
+and still reports the stop.
 
 ## Changelog
+- 2026-11-03 — `coop fork <name> acp` children stopped by their editor session exit quietly too;
+  session daemon children keep reporting (`TestForkACPEditorChildStoppedBySupervisorIsQuiet`).
 - 2026-11-03 — a child its supervisor stopped exits quietly; verified with
   `TestEditorChildStoppedBySupervisorIsQuiet` and a scripted none-mode editor disconnect.
 - 2026-10-16 — the bench that parses the trace lines is Go now (tools/lifecyclebench/acp.go); its

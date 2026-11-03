@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +13,9 @@ import (
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	boxruntime "github.com/AndrewDryga/coop/internal/runtime"
 )
 
 func TestForkACPMapsOnlyItsProjectAndForkCwd(t *testing.T) {
@@ -215,5 +219,43 @@ func TestForkACPFixedHooksRetainGeminiNativeModel(t *testing.T) {
 	if !strings.Contains(settings, `"method":"session/set_model"`) ||
 		!strings.Contains(settings, `"modelId":"chosen-model"`) || strings.Contains(settings, "rejected-model") {
 		t.Fatalf("restarted Gemini fork lost or poisoned native model: %s", settings)
+	}
+}
+
+// A clean editor disconnect from coop fork <name> acp printed "✗ interrupted" per child: its
+// children end through the fork ACP path, which session daemon children share, and only coop acp's
+// own children were kept quiet. An editor session's child its supervisor stopped now stays quiet;
+// a failure on the way out still prints, and a session daemon's child still reports the stop.
+func TestForkACPEditorChildStoppedBySupervisorIsQuiet(t *testing.T) {
+	signalled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, stopped := box.Run(&config.Config{}, boxruntime.Runtime{}, box.RunSpec{Ctx: signalled})
+	if !box.Interrupted(stopped) {
+		t.Fatalf("a launch whose context was cancelled returned %v", stopped)
+	}
+	cleanup := errors.New("filesystem custody retained at /state/coop-fs-1: permission denied")
+	session := "session-" + strings.Repeat("ab", 12)
+	for _, tc := range []struct {
+		name, inner, sessionRun string
+		err                     error
+		quiet                   bool
+	}{
+		{name: "an editor session's child its supervisor stopped", inner: "1", err: stopped, quiet: true},
+		{name: "an editor session's child whose cleanup failed", inner: "1", err: errors.Join(stopped, cleanup)},
+		{name: "a session daemon's child", sessionRun: session, err: stopped},
+		{name: "a session daemon's child carrying the editor mark", inner: "1", sessionRun: session, err: stopped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("COOP_ACP_INNER", tc.inner)
+			t.Setenv("COOP_SESSION_RUN_ID", tc.sessionRun)
+			var code int
+			out := captureStderr(t, func() { code = reportExit(forkACPChildEnded(signalled, 143, tc.err)) })
+			if code != 143 {
+				t.Errorf("exit = %d, want the run's 143", code)
+			}
+			if quiet := out == ""; quiet != tc.quiet {
+				t.Errorf("output %q, want quiet: %v", out, tc.quiet)
+			}
+		})
 	}
 }

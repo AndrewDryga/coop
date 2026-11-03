@@ -1137,6 +1137,18 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if code >= 0 { // the box ran, so an agent has now worked in this fork (see forkctl.NoteForkStart)
 		_ = forkctl.ClearForkStartError(ws)
 	}
+	return forkACPChildEnded(spec.Ctx, code, err)
+}
+
+// forkACPChildEnded is how a fork ACP child's run ends. An editor session's child (superviseForkACP
+// starts it with COOP_ACP_INNER) is stopped with a signal when the editor disconnects or the session
+// parks or replaces it, which is the end of its job, so it stays quiet as coop acp's own children do
+// (stoppedQuietly). A session daemon's child runs this same path and keeps reporting the stop: the
+// daemon ends a turn's child the same way, and a turn cut short is news to whoever started it.
+func forkACPChildEnded(ctx context.Context, code int, err error) (int, error) {
+	if os.Getenv("COOP_ACP_INNER") != "" && sessionsvc.RunIDFromEnv() == "" {
+		return stoppedQuietly(ctx, code, err)
+	}
 	return code, err
 }
 
