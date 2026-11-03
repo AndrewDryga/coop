@@ -82,6 +82,34 @@ func TestLaunchSectionsNarrateAFilteredInteractiveLaunch(t *testing.T) {
 	}
 }
 
+// A run nothing chose a mode for is filtered by default, so its network section opens by saying
+// so and how to leave it. A chosen filtered run, from a flag, COOP_EGRESS, the project or an
+// approval, keeps its usual rows. A raw run allowed nothing is told everything is blocked.
+func TestDefaultFilteredRunSaysSoFirst(t *testing.T) {
+	policy := egress.Snapshot{Mode: egress.Filtered,
+		Dependencies: []egress.Dependency{{Provider: "codex"}},
+		Grants:       []egress.Grant{grant("g1", "api.openai.com", egress.Origin{Kind: "provider", Provider: "codex"})}}
+	cfg := &config.Config{Egress: "filtered"}
+	for _, c := range []struct {
+		name   string
+		spec   RunSpec
+		policy egress.Snapshot
+		want   string
+	}{
+		{"default agent", RunSpec{Agent: "codex", CapturedEgress: &CapturedEgress{Default: true}}, policy,
+			"  Filtered by default. Use --egress open for unrestricted access.\n  ✓ OpenAI endpoints allowed\n  ✓ Everything else blocked\n"},
+		{"chosen agent", RunSpec{Agent: "codex", CapturedEgress: &CapturedEgress{}}, policy,
+			"  ✓ OpenAI endpoints allowed\n  ✓ Everything else blocked\n"},
+		{"default raw run", RunSpec{Cmd: []string{"true"}, CapturedEgress: &CapturedEgress{Default: true}}, egress.Snapshot{Mode: egress.Filtered},
+			"  Filtered by default. Use --egress open for unrestricted access.\n  ✓ Everything blocked\n"},
+	} {
+		got := captureStderr(t, func() { newLaunchSections(c.spec).internet(cfg, c.spec, &c.policy) })
+		if want := "Configuring network access\n" + c.want; got != want {
+			t.Errorf("%s: rendered %q, want %q", c.name, got, want)
+		}
+	}
+}
+
 // Every mode shares the heading; open and offline replace the green rows with one warning, and
 // a raw run — no agent — is told what offline means for it without inventing a provider.
 func TestInternetSectionIsOneHeadingInEveryMode(t *testing.T) {

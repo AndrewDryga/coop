@@ -27,23 +27,25 @@ any other value.
 | `COOP_NO_NEW_PRIVILEGES` | `1` | Runs the box with `--security-opt no-new-privileges`. |
 | `COOP_ALLOW_CASE_EXPOSED_SECRETS` | off | One-run override on a Mac when mount protection cannot hide every letter-case spelling of a long filename. Use `coop approve --case-exposure` to remember access to reviewed file paths with mount protection. The box or service could then read a secret through a name such as `.ENV.PRODUCTION`. Qualified eBPF runs protect these files without an override or approval. See [hiding secrets](box.md#hiding-secrets). |
 | `COOP_HOMES` | `1` | Mounts each selected agent's repository home into the box. `0` keeps those homes out and disables preset and consult runs, which need them to route work to their agents. |
-| `COOP_EGRESS` | `open` | Chooses how the box can use the network. See the choices below and [networking](networking.md). |
+| `COOP_EGRESS` | `filtered` | Chooses how the box can use the network. See the choices below and [networking](networking.md). |
 | `COOP_NO_ASDF` | off | Skips runtime `.tool-versions` provisioning. Stale Node shim repair still runs. The box reads it, so set it in `agents/env` (forwarded into the box), not your host shell. |
 | `COOP_NETWORK` | `1` | Joins the services network. |
 | `COOP_CACHE` | `1` | Mounts the cache volume. |
-| `COOP_AUTO_UP` | `1` | Runs `compose up` for working boxes when `.agent/compose.yml` exists and egress is `open`. A project created by `coop init` requests filtered networking, so start its services with `coop up`. Loop runs reuse their own service stack; reviewers rely on the worker's reported checks. Set `0` to manage development services yourself with `coop up` and `coop down`. |
+| `COOP_AUTO_UP` | `1` | Runs `compose up` for working boxes when `.agent/compose.yml` exists and egress is `open`. Networking is filtered by default, so start a filtered project's services with `coop up`. Loop runs reuse their own service stack; reviewers rely on the worker's reported checks. Set `0` to manage development services yourself with `coop up` and `coop down`. |
 | `COOP_SERVICES_NET` | auto | The services network to join, so parallel forks can share one db. |
 
 Choose one of these values for `COOP_EGRESS`:
 
-- `open` allows full outbound traffic. This is the default.
-- `filtered` allows the AI provider and domains you have approved.
+- `filtered` allows the AI provider and domains you have approved. This is the default, inside
+  or outside a co:op project. It needs Docker.
+- `open` allows full outbound traffic.
 - `offline` disables the box's network (`--network none`). The box cannot send the repo, secrets
   or credentials over the network. Installs and model API calls stop working too, so you must
   choose this setting explicitly.
 
 An `--egress` flag overrides `COOP_EGRESS`. A project's saved `coop approve` decision also
-overrides it. `COOP_EGRESS` itself overrides `box.egress` in `.agent/project.yaml`.
+overrides it. `COOP_EGRESS` itself overrides `box.egress` in `.agent/project.yaml`. When none of
+these chooses a mode, the box is filtered.
 
 The resource and privilege limits (`COOP_PIDS`, `COOP_MEMORY`, `COOP_CPUS` and
 `COOP_NO_NEW_PRIVILEGES`) apply on Docker. co:op currently skips them with Apple's `container`

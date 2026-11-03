@@ -94,7 +94,7 @@ did), REPAIR (what coop normally does itself). Its verbs differ in what they rea
 | bare `coop net` | this project's mode and its cause, the approved project rules, and — only when the file and the approval differ — the same access change `approve` would show; creates no owner key. Setup health and history cost no line: a launch sets the host up itself |
 | `approve` (top-level `coop approve` since 2026-09-13; `coop net approve` only points there) | TTY only; the exact snapshot of `.agent/project.yaml` (mode, rules, service digests) diffed against the remembered approval, digest-fenced. Nothing pending → `No approval needed: …`, nothing written. Only explicit `--case-exposure` also reviews mount-fallback file access; ordinary network approval never computes or saves that permission. |
 | `check <url-or-host>` | with no `--run`, the approved project rules plus each agent's provider bundle (`cli/net_diagnostic.go`, `netCurrentCheck`); with `--run`, that run's captured policy evaluated hypothetically. Never sends a packet |
-| `forget` | one of three mutating verbs: writes a withdrawal marker, THEN removes one project's approval (`networkstate/approval_withdrawal.go`). While the marker stands every ordinary launch of that project is pending — the open default cannot be regained — and only `approve` clears it |
+| `forget` | one of three mutating verbs: writes a withdrawal marker, THEN removes one project's approval (`networkstate/approval_withdrawal.go`). While the marker stands every ordinary launch of that project but an offline one is pending — the built-in default cannot reopen it — and only `approve` clears it |
 | `runs` · `inspect` · `watch` · `export` | the keyless `Evidence` handle over retained execution records — no runtime, no DNS, no key. Any unique prefix of a run id resolves (`netResolveRun`); an ambiguous one is refused with the prefixes that settle it |
 | `blocked <host>` | the newest RETAINED denial of that host in this project's runs (or in `--run`), grouped by boundary/reason/port; the exact event id still works with `--run`. A DNS-only refusal drafts no rule, because it cannot prove TLS/443 |
 | `setup` | mutating: builds the image pair and records the host qualification — the same work a filtered launch performs itself when this host has no current proof, so it is a prepare-ahead/recheck verb, not a prerequisite |
@@ -188,6 +188,9 @@ number — never Ctrl-C inferred from 130.
 ## Changelog
 - 2026-11-03 — rechecked approval dispatch and file review: ordinary network approval does not
   calculate or grant mount exposure; explicit `--case-exposure` retains that reviewed decision.
+- 2026-11-03 — the built-in default is filtered (task
+  2026-11-03-choose-the-default-network-for-boxes-outside-a-c); the forget row now says what the
+  barrier leaves running (offline launches only) instead of naming an open default.
 - 2026-11-02 — bounded parallel execution-record reads preserve the complete census, deterministic
   summaries and unreadable reports; verified fresh recovery and locked retention reads.
 - 2026-10-28 — distinguished unavailable/incomplete evidence from absence in certification and remote reads; checked real malformed retained records, session ownership, and disclosure fixtures.

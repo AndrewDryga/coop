@@ -16,11 +16,24 @@ import (
 
 func admissionMode(mode egress.Mode) *egress.Mode { return &mode }
 
+// previewLaunchMode is the launch's reading of a preview (box.AdmitNetwork): a pending request
+// is the refusal, returned as the *PendingApproval itself.
+func previewLaunchMode(path, project string, exposed []string, input Admission) (egress.Mode, error) {
+	preview, err := PreviewAdmission(path, project, exposed, input)
+	if err != nil {
+		return "", err
+	}
+	if preview.Pending != nil {
+		return "", preview.Pending
+	}
+	return preview.Mode, nil
+}
+
 func TestAdmissionPreviewChecksEnvelopeWithoutReadingFeatureBundles(t *testing.T) {
 	root, project := filepath.Join(t.TempDir(), "network"), t.TempDir()
 	request := egress.Rule{To: egress.Destination{Provider: "model", Features: []string{"cloud-mcp"}}}
 	input := Admission{Requests: []egress.Rule{request}}
-	if _, err := PreviewAdmissionMode(root, project, nil, input); err == nil || !strings.Contains(err.Error(), "has not been approved") {
+	if _, err := previewLaunchMode(root, project, nil, input); err == nil || !strings.Contains(err.Error(), "has not been approved") {
 		t.Fatal("unapproved preview proceeded", err)
 	}
 	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
@@ -35,11 +48,11 @@ func TestAdmissionPreviewChecksEnvelopeWithoutReadingFeatureBundles(t *testing.T
 	if err := approve(s, project, egress.Filtered, input.Requests, []egress.Bundle{bundle}); err != nil {
 		t.Fatal(err)
 	}
-	if mode, err := PreviewAdmissionMode(root, project, nil, input); err != nil || mode != egress.Filtered {
+	if mode, err := previewLaunchMode(root, project, nil, input); err != nil || mode != egress.Filtered {
 		t.Fatal("approved feature needs no bundle for preliminary envelope check", mode, err)
 	}
 	input.Requests = []egress.Rule{rule("outside.example.com")}
-	if _, err := PreviewAdmissionMode(root, project, nil, input); err == nil || !strings.Contains(err.Error(), "has not been approved") {
+	if _, err := previewLaunchMode(root, project, nil, input); err == nil || !strings.Contains(err.Error(), "has not been approved") {
 		t.Fatal("changed envelope proceeded", err)
 	}
 }
@@ -47,7 +60,7 @@ func TestAdmissionPreviewChecksEnvelopeWithoutReadingFeatureBundles(t *testing.T
 func TestAdmissionPreviewDoesNotCreateOrRepairAuthority(t *testing.T) {
 	root, project := filepath.Join(t.TempDir(), "network"), t.TempDir()
 	input := Admission{ProjectMode: admissionMode(egress.Filtered)}
-	mode, err := PreviewAdmissionMode(root, project, nil, input)
+	mode, err := previewLaunchMode(root, project, nil, input)
 	if err != nil || mode != egress.Filtered {
 		t.Fatal(mode, err)
 	}
@@ -64,18 +77,18 @@ func TestAdmissionPreviewDoesNotCreateOrRepairAuthority(t *testing.T) {
 	defer store.Close()
 	// A project that names no mode keeps the remembered one; one that names a
 	// different mode than the human approved is a pending review, not a posture.
-	mode, err = PreviewAdmissionMode(root, project, nil, Admission{})
+	mode, err = previewLaunchMode(root, project, nil, Admission{})
 	if err != nil || mode != egress.None {
 		t.Fatal("preview ignored remembered posture", mode, err)
 	}
 	var pending *PendingApproval
-	if _, err := PreviewAdmissionMode(root, project, nil, input); !errors.As(err, &pending) || !strings.Contains(pending.Reason, "has not been approved") {
+	if _, err := previewLaunchMode(root, project, nil, input); !errors.As(err, &pending) || !strings.Contains(pending.Reason, "has not been approved") {
 		t.Fatal("a file asking for a mode the human did not approve was not pending", err)
 	}
 	if err := os.Remove(filepath.Join(root, "owner.key")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PreviewAdmissionMode(root, project, nil, Admission{}); err == nil {
+	if _, err := previewLaunchMode(root, project, nil, Admission{}); err == nil {
 		t.Fatal("preview reset lost key over existing approval")
 	}
 	if _, err := os.Stat(filepath.Join(root, "owner.key")); !errors.Is(err, os.ErrNotExist) {
@@ -102,7 +115,7 @@ func TestMovedCheckoutWithEmptyPolicyKeepsNetworkReviewBarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 	var pending *PendingApproval
-	if _, err := PreviewAdmissionMode(root, newPath, nil, Admission{}); !errors.As(err, &pending) ||
+	if _, err := previewLaunchMode(root, newPath, nil, Admission{}); !errors.As(err, &pending) ||
 		!strings.Contains(pending.Reason, "moved") {
 		t.Fatalf("moved empty-policy preview = %v, want review barrier", err)
 	}
@@ -116,7 +129,7 @@ func TestMovedCheckoutWithEmptyPolicyKeepsNetworkReviewBarrier(t *testing.T) {
 	if err := store.Approve(t.Context(), newPath, egress.None, nil, nil, nil, review.Digest); err != nil {
 		t.Fatal(err)
 	}
-	if mode, err := PreviewAdmissionMode(root, newPath, nil, Admission{}); err != nil || mode != egress.None {
+	if mode, err := previewLaunchMode(root, newPath, nil, Admission{}); err != nil || mode != egress.None {
 		t.Fatalf("reviewed moved checkout = %s, %v", mode, err)
 	}
 }
@@ -131,7 +144,7 @@ func TestAdmissionDirectPresenceMatrix(t *testing.T) {
 					if remembered != nil {
 						approval = &Approval{Posture: *remembered}
 					}
-					want := egress.Open
+					want := egress.Filtered // the built-in default when nothing chose
 					for _, value := range []*egress.Mode{project, preference, remembered, invocation} {
 						if value != nil {
 							want = *value
@@ -145,6 +158,43 @@ func TestAdmissionDirectPresenceMatrix(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// When nothing chose a mode — no flag, remembered approval, COOP_EGRESS, project mode or rule —
+// the built-in default decides, and it is filtered. The preview says it was the default so a
+// launch can tell the person; a choice of filtered is not the default.
+func TestNothingChosenIsFilteredByDefault(t *testing.T) {
+	root, project := filepath.Join(t.TempDir(), "network"), t.TempDir()
+	preview, err := PreviewAdmission(root, project, nil, Admission{})
+	if err != nil || preview.Mode != egress.Filtered || !preview.Default || preview.Pending != nil {
+		t.Fatalf("an unconfigured project previewed %+v, %v; want filtered by default", preview, err)
+	}
+	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the preview created authority", err)
+	}
+	operator := []egress.Input{{Rules: []egress.Rule{rule("docs.example.com")}, Origin: egress.Origin{Kind: "operator", Name: "allow-domain"}}}
+	for name, input := range map[string]Admission{
+		"invocation":      {InvocationMode: admissionMode(egress.Filtered)},
+		"host preference": {HostPreference: admissionMode(egress.Filtered)},
+		"project mode":    {ProjectMode: admissionMode(egress.Filtered)},
+		"operator rule":   {Operator: operator},
+	} {
+		preview, err := PreviewAdmission(root, project, nil, input)
+		if err != nil || preview.Mode != egress.Filtered || preview.Default {
+			t.Errorf("%s: previewed %+v, %v; a chosen mode is not the default", name, preview, err)
+		}
+	}
+	s, err := Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := approve(s, project, egress.Filtered, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if preview, err := PreviewAdmission(root, project, nil, Admission{}); err != nil || preview.Mode != egress.Filtered || preview.Default {
+		t.Errorf("an approved project previewed %+v, %v; the remembered approval chose the mode", preview, err)
 	}
 }
 

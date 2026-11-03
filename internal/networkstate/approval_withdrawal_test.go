@@ -38,7 +38,7 @@ func pendingAfter(t *testing.T, s *Store, project string, input Admission) *Pend
 
 // The withdrawal barrier exists because removing an approval is NOT enough to
 // fail closed: with the project's YAML gone too, mode resolution falls through
-// to coop's built-in default, which is open. This is the matrix the design
+// to coop's built-in default, access nobody re-approved. This is the matrix the design
 // named — YAML removed, no rules, each requested mode, a repeat, a deleted
 // checkout, unreadable state, and the approval that lifts it.
 func TestWithdrawalBarrierRefusesTheDefaultAfterAForget(t *testing.T) {
@@ -50,7 +50,7 @@ func TestWithdrawalBarrierRefusesTheDefaultAfterAForget(t *testing.T) {
 		barrier bool // refused BY the withdrawal, not by the request itself
 	}{
 		// The dangerous one: the YAML is gone, so nothing selects a mode and the
-		// default would be unrestricted access nobody approved.
+		// default would be access nobody approved again.
 		{"yaml removed", Admission{}, true, true},
 		{"filtered with no rules", Admission{ProjectMode: &filtered}, true, true},
 		// These two were already pending on their own request; the barrier is
@@ -142,7 +142,7 @@ func TestWithdrawalBarrierOutlivesADeletedCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	if pendingAfter(t, s, project, Admission{}) == nil {
-		t.Fatal("a recreated checkout inherited the open default after a withdrawal")
+		t.Fatal("a recreated checkout inherited the built-in default after a withdrawal")
 	}
 }
 

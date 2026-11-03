@@ -16,7 +16,7 @@ import (
 func TestACPSameProviderPeerUsesSelectedAccount(t *testing.T) {
 	for _, presetLaunch := range []bool{false, true} {
 		t.Run(map[bool]string{false: "target", true: "preset"}[presetLaunch], func(t *testing.T) {
-			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+			cfg := openNetwork(&config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()})
 			signInCred(t, cfg, "claude", "personal")
 			who := "claude:opus@personal"
 			if presetLaunch {

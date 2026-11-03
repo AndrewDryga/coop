@@ -196,7 +196,7 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 	script := "#!/bin/sh\n{ echo \"ARGS=$*\"; echo \"PWD=$PWD\"; " +
 		"echo \"COOP_REPO=$COOP_REPO\"; echo \"COOP_TASKS=[$COOP_TASKS]\"; echo \"COOP_IMAGE=$COOP_IMAGE\"; " +
 		"echo \"COOP_MCP_FILE=[$COOP_MCP_FILE]\"; echo \"COOP_RUN_ARGS=[$COOP_RUN_ARGS]\"; echo \"COOP_CACHE=$COOP_CACHE\"; " +
-		"echo \"COOP_EVAL_DISABLE_WEB_TOOLS=$COOP_EVAL_DISABLE_WEB_TOOLS\"; " +
+		"echo \"COOP_EVAL_DISABLE_WEB_TOOLS=$COOP_EVAL_DISABLE_WEB_TOOLS\"; echo \"COOP_EGRESS=$COOP_EGRESS\"; " +
 		"echo \"COOP_EVAL_LOOP_STARTED_FILE=$COOP_EVAL_LOOP_STARTED_FILE\"; } > " + dump + "\n" +
 		": > \"$COOP_EVAL_LOOP_STARTED_FILE\"\nexit 0\n" // a loop that launched a box
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
@@ -232,6 +232,8 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 		"COOP_RUN_ARGS=[]", // no ambient runtime binds inside a trial
 		"COOP_CACHE=0",
 		"COOP_EVAL_DISABLE_WEB_TOOLS=1",
+		// The network agent trials get, not the filtered default, which refuses COOP_IMAGE.
+		"COOP_EGRESS=open\n",
 		// The start record sits beside the workspace, outside anything a box mounts.
 		"COOP_EVAL_LOOP_STARTED_FILE=" + filepath.Join(filepath.Dir(ws), "loop-started") + "\n",
 	} {

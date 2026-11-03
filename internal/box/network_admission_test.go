@@ -92,7 +92,7 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 		domains     []string
 		want        string
 	}{
-		"built-in default":             {want: "open"},
+		"built-in default":             {want: "filtered"},
 		"project request":              {projectYAML: "box:\n  egress: offline\n", want: "none"},
 		"host preference over repo":    {explicitEnv: "offline", projectYAML: "box:\n  egress: open\n", want: "none"},
 		"remembered over host":         {remembered: true, explicitEnv: "open", want: "filtered"},
@@ -230,25 +230,32 @@ func TestAdmitNetworkRefusesAnImageOverrideButNotAProjectDockerfile(t *testing.T
 // A runtime that cannot serve a filtered box is refused by name, with the feature and the runtime
 // that does work — and the refusal lands before the authority store exists, so asking for something
 // this host cannot do never leaves state behind for the next launch to inherit.
+//
+// The built-in default is filtered too, so a run that chose nothing is refused the same way, with
+// every choice that would let it start — never quietly run open instead.
 func TestAdmitNetworkRefusesARuntimeThatCannotServeFiltered(t *testing.T) {
-	cfg, repo, root := admissionFixture(t)
 	filtered := egress.Filtered
-	capture, err := AdmitNetwork(cfg, runtime.Runtime{Name: "container"},
-		RunSpec{Repo: repo}, NetworkAdmission{InvocationMode: &filtered})
-	if capture != nil {
-		_ = capture.Close()
-		t.Fatal("a runtime without the gateway produced a capture")
-	}
-	if err == nil {
-		t.Fatal("a runtime without the gateway was admitted")
-	}
-	for _, want := range []string{"needs docker", "container", "--egress open or offline", "COOP_RUNTIME=docker"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("refusal %q does not name %q", err, want)
-		}
-	}
-	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		t.Fatal("a refused runtime created authority state", err)
+	for name, invocation := range map[string]*egress.Mode{"explicit": &filtered, "default": nil} {
+		t.Run(name, func(t *testing.T) {
+			cfg, repo, root := admissionFixture(t)
+			capture, err := AdmitNetwork(cfg, runtime.Runtime{Name: "container"},
+				RunSpec{Repo: repo}, NetworkAdmission{InvocationMode: invocation})
+			if capture != nil {
+				_ = capture.Close()
+				t.Fatal("a runtime without the gateway produced a capture")
+			}
+			if err == nil {
+				t.Fatalf("a runtime without the gateway was admitted, as %q", cfg.Egress)
+			}
+			for _, want := range []string{"needs docker", "container", "--egress open or --egress offline", "COOP_EGRESS", "COOP_RUNTIME=docker"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal %q does not name %q", err, want)
+				}
+			}
+			if _, err := os.Stat(root); !os.IsNotExist(err) {
+				t.Fatal("a refused runtime created authority state", err)
+			}
+		})
 	}
 }
 

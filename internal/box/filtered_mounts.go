@@ -49,7 +49,7 @@ func limitedExtraArgs(configured, spec []string, isolated bool) ([]string, error
 			if isolated {
 				return nil, fmt.Errorf("an isolated fork takes only mounts, KEY=VALUE environment and labels in runtime extras; %q is not supported — drop it, or use an ordinary fork", name)
 			}
-			return nil, fmt.Errorf("a filtered box takes only bind mounts, KEY=VALUE environment and labels in COOP_RUN_ARGS; %q is none of those — drop it, or run without --egress filtered", name)
+			return nil, fmt.Errorf("a filtered box takes only bind mounts, KEY=VALUE environment and labels in COOP_RUN_ARGS; %q is none of those — drop it, or run with --egress open", name)
 		}
 		value := inline
 		if !hasInline {

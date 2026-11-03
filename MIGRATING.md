@@ -1,5 +1,25 @@
 # Migrating
 
+## Unreleased: boxes use filtered networking by default
+
+A box whose network mode nobody chose is now filtered instead of open. This applies outside a
+co:op project and in a project whose `.agent/project.yaml` sets no `box.egress`. An agent reaches
+its provider and the destinations you approved. A plain `coop run` or `coop shell` reaches only
+those destinations.
+
+- For unrestricted access, add `--egress open` to the command (for an editor, to its agent
+  arguments), set `COOP_EGRESS=open` in your environment or `coop.conf`, or set
+  `box.egress: open` in the project and approve it with `coop approve`.
+- Installing `.tool-versions` tools when the box starts, and starting `.agent/compose.yml`
+  services automatically, need open networking. Run with `--egress open`, or build the tools into
+  `.agent/Dockerfile` and start services with `coop up`.
+- A project with its own `.agent/Dockerfile` and no `box.egress` needs `coop build` once more:
+  plain `coop build` now prepares the filtered image.
+- Filtered networking needs Docker. On Apple's `container`, choose `--egress open` or
+  `--egress offline` (or set `COOP_EGRESS`) for runs that did not choose a mode.
+- The first filtered run on a host prepares the network images and checks this host first, as
+  `coop net setup` does.
+
 ## Unreleased: the no-network mode is called offline
 
 The command line and `COOP_EGRESS` now say `offline`, as `.agent/project.yaml` already did.

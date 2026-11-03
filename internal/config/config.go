@@ -98,7 +98,7 @@ type Config struct {
 // Explicit reports whether the user explicitly set key (env var or conf file) — false when the
 // loaded value is just the built-in default. The .agent/project.yaml box: overlay (box.Run) uses
 // it so a committed repo policy fills only the slots the user left unset: an explicit setting
-// always wins, and — since the built-in egress default is the loosest — a repo can only tighten.
+// always wins, and a repo's request for open egress still needs a human's coop approve.
 func (c *Config) Explicit(key string) bool { return c.explicit[key] }
 
 // SetEgress records the posture the host resolved for this launch (network
@@ -241,7 +241,9 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, configValueError("COOP_PIDS", err)
 	}
-	egress, err := parseEgress(get("COOP_EGRESS", "open"))
+	// Unset means filtered, the same built-in default network admission resolves to; it stays
+	// non-explicit so a project's box.egress can still decide.
+	egress, err := parseEgress(get("COOP_EGRESS", "filtered"))
 	if err != nil {
 		return nil, configValueError("COOP_EGRESS", err)
 	}

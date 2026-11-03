@@ -90,8 +90,8 @@
       </details>
       <article class="docs-main reference-content" aria-label="Reference">
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
-<p><code>coop &lt;agent&gt; --egress filtered</code> runs the box behind a per-run gateway. The box can reach its
-selected providers and the destinations you approved. Other connections are blocked.</p>
+<p>Boxes run behind a per-run gateway by default. The box can reach its selected providers and the
+destinations you approved. Other connections are blocked.</p>
 <p>Filtering works on the network itself, not through a proxy setting. The same network rules apply
 to every tool in the box: the provider CLI, <code>curl</code>, an SDK or a subprocess. Changing proxy settings
 cannot bypass these rules. The <a href="#provider-credentials-stay-outside-the-box">credential broker</a>
@@ -99,12 +99,23 @@ handles API-key and subscription accounts behind the packet filter; it does not 
 <p><code>coop net</code> shows what a new run in this project can reach, and why. <code>coop net runs</code> lists
 recorded runs. <code>coop net --help</code> lists the commands.</p>
 </section><section class="doc-section reference-section" id="network-modes"><h2>Network modes</h2>
-<p>New projects use filtered networking. <code>coop init</code> sets <code>box.egress: filtered</code> in
-<code>.agent/project.yaml</code>. You can also choose <code>offline</code> to disable networking, or <code>open</code> to allow
-all network traffic. The command line, <code>COOP_EGRESS</code> and the project file use the same three
-words.
-Switching to <code>open</code> needs your approval on the host. Running <code>coop init</code> again leaves an
-existing project file unchanged.</p>
+<p>Boxes use filtered networking unless you or the project choose another mode. That includes a box
+started outside a co:op project, and one in a project whose <code>.agent/project.yaml</code> sets no
+<code>box.egress</code>. An agent reaches its provider and the destinations you approved. A plain
+<code>coop run</code> or <code>coop shell</code> reaches only the destinations you approved. <code>coop init</code> writes
+<code>box.egress: filtered</code> into new projects.</p>
+<p>There are two other modes. <code>open</code> allows all network traffic, and <code>offline</code> turns networking off.
+Choose one for a single run with <code>--egress open</code> or <code>--egress offline</code>. Set <code>COOP_EGRESS</code> to
+change the mode for all your runs, or <code>box.egress</code> to change it for one project. The command
+line, <code>COOP_EGRESS</code> and the project file use the same three words. A project&#39;s request for
+<code>open</code> needs your approval on the host. Running <code>coop init</code> again leaves an existing project
+file unchanged.</p>
+<p>When no setting chose the mode, the run&#39;s network section starts with
+<code>Filtered by default. Use --egress open for unrestricted access.</code></p>
+<p>Filtered networking needs Docker. On another runtime, such as Apple&#39;s <code>container</code>, co:op refuses a
+run that has not chosen a mode. Run it with <code>--egress open</code> or <code>--egress offline</code>, set
+<code>COOP_EGRESS</code>, or switch to Docker with <code>COOP_RUNTIME=docker</code>. co:op never switches to open
+networking on its own.</p>
 </section><section class="doc-section reference-section" id="setting-up-a-host"><h2>Setting up a host</h2>
 <p>Before your first filtered session, co:op runs five checks to make sure Docker can enforce the
 network rules. It shows you the results, then starts your session if all five pass. If Docker
@@ -538,8 +549,8 @@ execute instructions from your repository.</p>
 <td><code>a filtered box runs coop&#39;s own image — unset COOP_IMAGE to start one</code></td>
 </tr>
 <tr>
-<td>a runtime other than Docker</td>
-<td><code>restricted networking needs docker; &lt;runtime&gt; cannot serve the qualified gateway — run this with --egress open or offline, or set COOP_RUNTIME=docker</code></td>
+<td>a runtime other than Docker, including a run that chose no mode</td>
+<td><code>restricted networking needs docker; &lt;runtime&gt; cannot serve the qualified gateway — run this with --egress open or --egress offline, set COOP_EGRESS, or set COOP_RUNTIME=docker</code></td>
 </tr>
 <tr>
 <td><code>box.network: true</code> with no <code>service:</code> grant</td>
@@ -740,7 +751,7 @@ keep it outside the checkout and name its path explicitly so co:op can inspect i
 <p><code>coop net forget</code> removes a project&#39;s approval. It shows the saved access, asks you to confirm
 in the terminal, then removes only that approval record. Run it in the project, or pass
 <code>--project &lt;path&gt;</code> if the checkout is already gone. Run records, their receipts and this host&#39;s
-setup results stay. The next filtered run needs approval again.</p>
+setup results stay. Until you approve again, only offline runs of that project start.</p>
 <p>If the approved path was a symlink, the approval belongs to the directory it pointed to.
 Once both the symlink and directory are gone, co:op cannot find the approval from that path.
 <code>coop net forget</code> explains this and leaves other projects&#39; approvals alone.</p>

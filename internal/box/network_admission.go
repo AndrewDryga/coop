@@ -48,12 +48,12 @@ type NetworkAdmission struct {
 }
 
 // AdmitNetwork resolves this launch's network posture and, for filtered mode,
-// captures the frozen policy the gateway will enforce.
+// captures the frozen policy the gateway will enforce. Filtered is also the
+// built-in default, inside a project or not.
 //
-// It returns nil for open and offline runs: they proceed exactly as they do
-// today, with cfg.Egress set to the resolved mode. A run that neither requests
-// filtered mode nor has any remembered posture writes NO host state at all, so
-// an ordinary `coop claude` never creates an approval store as a side effect.
+// It returns nil for open and offline runs: they proceed with cfg.Egress set
+// to the resolved mode and write NO host state at all, so an explicitly open
+// or offline run never creates an approval store as a side effect.
 func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options NetworkAdmission) (*CapturedEgress, error) {
 	if cfg == nil {
 		return nil, errors.New("restricted networking needs host configuration")
@@ -96,18 +96,20 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	// every launch. It still proves the authority root is outside every mount.
 	// A pending request fails closed HERE, before any box or main process, with
 	// the one review command that settles it.
-	mode, err := networkstate.PreviewAdmissionMode(root, canonical, exposed, input)
+	preview, err := networkstate.PreviewAdmission(root, canonical, exposed, input)
 	if err != nil {
-		var pending *networkstate.PendingApproval
-		if errors.As(err, &pending) {
-			return nil, fmt.Errorf("%s cannot start because %w\n\n  Review it: coop approve", networkLaunchName(spec), pending)
-		}
 		return nil, err
 	}
+	if preview.Pending != nil {
+		return nil, fmt.Errorf("%s cannot start because %w\n\n  Review it: coop approve", networkLaunchName(spec), preview.Pending)
+	}
+	mode := preview.Mode
 	cfg.SetEgress(string(mode))
 	if mode != egress.Filtered {
 		return nil, nil
 	}
+	// A runtime without the gateway is refused here even when the default chose filtered: a run
+	// nobody chose open for never quietly becomes one.
 	if err := checkFilteredRuntime(rt); err != nil {
 		return nil, err
 	}
@@ -142,6 +144,7 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		_ = store.Close()
 		return nil, err
 	}
+	capture.Default = preview.Default
 	return capture, nil
 }
 
@@ -179,8 +182,8 @@ func canonicalProjectDir(repo string) (string, error) {
 }
 
 // networkAdmissionInput separates presence from default and authority from
-// request. The built-in "open" is not an explicit widening, so an unset
-// COOP_EGRESS contributes no host preference at all.
+// request. The built-in default is nobody's choice, so an unset COOP_EGRESS
+// contributes no host preference at all.
 func networkAdmissionInput(cfg *config.Config, p *project.Project, options NetworkAdmission, exposed []string) (networkstate.Admission, error) {
 	input := networkstate.Admission{InvocationMode: options.InvocationMode, Requests: p.Box.EgressRules}
 	if cfg.Explicit("COOP_EGRESS") {
@@ -225,12 +228,13 @@ func networkAdmissionInput(cfg *config.Config, p *project.Project, options Netwo
 // qualification, so the refusal names the feature and Docker and leaves no authority state behind
 // — instead of surfacing much later as a gateway bind failure. It is the FIRST filtered gate:
 // unsetting COOP_IMAGE gets a person on another runtime nowhere. Only launches ask it; resolving
-// what a policy means does not.
+// what a policy means does not. Filtered is the built-in default, so the refusal names every way
+// to choose another mode as well as the runtime that works.
 func checkFilteredRuntime(rt runtime.Runtime) error {
 	if rt.SupportsFilteredNetwork() {
 		return nil
 	}
-	return fmt.Errorf("restricted networking needs docker; %s cannot serve the qualified gateway — run this with --egress open or offline, or set COOP_RUNTIME=docker", filepath.Base(rt.Name))
+	return fmt.Errorf("restricted networking needs docker; %s cannot serve the qualified gateway — run this with --egress open or --egress offline, set COOP_EGRESS, or set COOP_RUNTIME=docker", filepath.Base(rt.Name))
 }
 
 // checkFilteredSupport refuses a combination this release cannot enforce, before

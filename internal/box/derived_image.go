@@ -315,7 +315,7 @@ func proveDerivedImage(ctx context.Context, docker filteredDocker, store *networ
 // proveDerivedLayers reads both layer chains from the runtime. A derived image
 // carries its base's layers, in order, before its own.
 func proveDerivedLayers(ctx context.Context, docker filteredDocker, locked, built, dfRel string) error {
-	unreadable := fmt.Errorf("coop could not check the image this project's %s built against its own client image — run it again, or run without --egress filtered", dfRel)
+	unreadable := fmt.Errorf("coop could not check the image this project's %s built against its own client image — run it again, or run with --egress open", dfRel)
 	lockedID, base, err := docker.ImageLayers(ctx, locked)
 	if err != nil || lockedID != locked {
 		return unreadable
@@ -336,7 +336,7 @@ func proveDerivedLayers(ctx context.Context, docker filteredDocker, locked, buil
 }
 
 func notDerived(dfRel string) error {
-	return fmt.Errorf("this project's %s did not build on coop's client image — start it with `ARG COOP_BASE_IMAGE` and `FROM ${COOP_BASE_IMAGE}`, or run without --egress filtered", dfRel)
+	return fmt.Errorf("this project's %s did not build on coop's client image — start it with `ARG COOP_BASE_IMAGE` and `FROM ${COOP_BASE_IMAGE}`, or run with --egress open", dfRel)
 }
 
 // pinnedFile is one path a filtered launch will not accept a change to, and the

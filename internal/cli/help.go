@@ -303,7 +303,7 @@ Usage:
 
 EXAMPLES
   coop run -- npm test
-  coop run -- curl https://example.com
+  coop run --egress open -- curl https://example.com
   coop run --egress offline -- git status
 
 OPTIONS
@@ -315,9 +315,12 @@ OPTIONS
   Put Coop options before --. Everything after it belongs to your command.
 
 NETWORK ACCESS
-  filtered  allow traffic permitted by approved network rules
+  filtered  allow traffic permitted by approved network rules (default)
   open      allow unrestricted internet access
   offline   block internet access
+
+  Without --egress, the box is filtered unless the project's network
+  setting or COOP_EGRESS chooses another mode.
 
 For more details see:
   coop help net`
@@ -356,7 +359,7 @@ func agentHelp(name string) string {
 
 	b.WriteString("\nNETWORK OPTIONS\n")
 	b.WriteString(helpRows([][2]string{
-		{"--egress <mode>", "internet access: filtered, open or offline"},
+		{"--egress <mode>", "internet access: filtered (default), open or offline"},
 		{"--allow-domain <name>", "allow this exact domain over TLS on port 443; repeat to add more"},
 		{"--egress-rules <file>", "add this file's network rules for the run"},
 	}, 2))
@@ -602,6 +605,7 @@ Usage:
 
 EXAMPLES
   coop shell
+  coop shell --egress open
   coop shell --egress offline
 
 OPTIONS
@@ -615,9 +619,12 @@ USING THE SHELL
   Type exit or press Ctrl-D to return to your host.
 
 NETWORK ACCESS
-  filtered  allow traffic permitted by approved network rules
+  filtered  allow traffic permitted by approved network rules (default)
   open      allow unrestricted internet access
   offline   block internet access
+
+  Without --egress, the box is filtered unless the project's network
+  setting or COOP_EGRESS chooses another mode.
 
 For more details see:
   coop help net`,
@@ -849,7 +856,7 @@ OPTIONS
   --peer <agent>         start a peer provider for read-only advice
                          repeat to add more peers
 
-  --egress <mode>        choose filtered, open, or offline
+  --egress <mode>        choose filtered (default), open, or offline
   --allow-domain <host>  allow TLS access to this host on port 443
                          repeat to allow more hosts
   --egress-rules <path>  load network rules from a file
@@ -1346,7 +1353,7 @@ Usage: coop fork <name> acp [<target>] [<options>]
 
 OPTIONS
   --peer <target>        start with read-only peer agents; repeatable
-  --egress <mode>        internet access: filtered, open or offline
+  --egress <mode>        internet access: filtered (default), open or offline
   --allow-domain <name>  allow exact TLS access on port 443; repeatable
   --egress-rules <file>  add this file's network rules for the session
 
@@ -1567,7 +1574,7 @@ OPTIONS
   --no-preflight         skip that preparation
   --no-mcp               run without configured MCP servers
   --debug-on-fail        open a box shell after a failure, then retry when you exit
-  --egress <mode>        internet access: filtered, open or offline
+  --egress <mode>        internet access: filtered (default), open or offline
   --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
   --egress-rules <file>  add this file's network rules for the run
 

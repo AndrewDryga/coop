@@ -43,7 +43,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 			if scenario == "unfinished checklist" {
 				writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [ ] required verification is still pending\n")
 			}
-			cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
+			cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
 			rt := runtime.Runtime{Name: "true"}
 			var checkCleanup func(string)
 			if scenario == "explicit no change" || scenario == "abnormal exit" {
@@ -292,7 +292,7 @@ func TestLoopWarnsAboutBulkInACompletedTask(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
+			cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
 			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
 			attempts := 0
 			var reply string

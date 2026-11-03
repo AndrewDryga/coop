@@ -36,6 +36,10 @@ type CapturedEgress struct {
 	// approval was: a later change advances past it. Zero when it could not be read, which a
 	// supervisor treats as "check again".
 	ApprovalGeneration uint64
+	// Default records that nothing chose filtered for this launch — no flag, COOP_EGRESS, project
+	// setting, rule or approval — so the built-in default did, and the launch says so. It is
+	// presentation only and grants nothing; a child proving a reference never carries it.
+	Default bool
 }
 
 // Close releases the authority handle a capture holds. A nil capture closes
@@ -165,7 +169,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		return nil, errors.New("a filtered launch needs the rules admission froze for it")
 	}
 	if cfg.Egress != "open" && cfg.Egress != "filtered" {
-		return nil, errors.New("this box was started with networking off, so filtered egress cannot apply — turn networking on, or drop --egress filtered")
+		return nil, errors.New("this box was started with networking off, so filtered egress cannot apply — turn networking on, or run with --egress offline")
 	}
 	runRepo, err := filepath.Abs(projectPolicyRepo(spec))
 	if err == nil {
@@ -336,7 +340,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	}
 	f.protected = protected
 	if len(servePorts) != 0 && !ingress.IsValid() {
-		return f, errors.New("this Docker has no bridge gateway address, so a published serve port could not be limited to your host — drop serve.ports, or run without --egress filtered")
+		return f, errors.New("this Docker has no bridge gateway address, so a published serve port could not be limited to your host — drop serve.ports, or run with --egress open")
 	}
 	// The record stays bound to the QUALIFIED client image; a project image the
 	// two proofs accepted is recorded beside it as what the workload actually

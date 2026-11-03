@@ -22,6 +22,20 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
+// Doctor's probes skip launch admission and check the ordinary image, so they keep open networking
+// unless COOP_EGRESS chose a mode: the filtered default would refuse them before any check ran.
+func TestDoctorProbesKeepOpenNetworkingUnlessChosen(t *testing.T) {
+	unset := &config.Config{Egress: "filtered"}
+	if got := doctorConfig(unset); got.Egress != "open" || !got.Explicit("COOP_EGRESS") || unset.Egress != "filtered" {
+		t.Fatalf("probe config = %q (explicit %v), operator config now %q", got.Egress, got.Explicit("COOP_EGRESS"), unset.Egress)
+	}
+	chosen := &config.Config{}
+	chosen.SetEgress("none")
+	if got := doctorConfig(chosen); got.Egress != "none" {
+		t.Fatalf("doctor replaced the operator's COOP_EGRESS with %q", got.Egress)
+	}
+}
+
 func TestDoctorDefaultMatchesCredentialFixture(t *testing.T) {
 	ag, ok := agents.Get(agents.Default())
 	if !ok {

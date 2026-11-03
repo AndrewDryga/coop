@@ -14,6 +14,14 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
+// openNetwork is cfg with COOP_EGRESS=open, as an operator who chose open has it. Tests that drive
+// launches or image reports on fake runtimes use it: the filtered default needs Docker and the
+// gateway, and these tests are about something else.
+func openNetwork(cfg *config.Config) *config.Config {
+	cfg.SetEgress("open")
+	return cfg
+}
+
 // signInCred writes a minimal adapter-valid credential so rotation sees a runnable account, not
 // merely a marker file. Keep every registered shape here because this helper is shared by the CLI's
 // cross-provider credential matrix.

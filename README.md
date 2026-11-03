@@ -32,7 +32,7 @@ The [website](https://coop.dryga.com) shows how it works, and the
 Agents do what they read in code, docs and issues, even when an attacker wrote it. A comment hidden
 in a README can tell your agent to post your SSH key in an issue. In the box there is no key to
 post. A package the agent installs can try to send your `.env` to a stranger's server. In the box
-`.env` cannot be read, and with filtered networking that server can't be reached.
+`.env` cannot be read, and with filtered networking, the default, that server can't be reached.
 
 Sometimes the agent just gets it wrong. An agent cleaning up can run `rm -rf tests/ plan/ ~/`. In
 the box, that `~/` isn't your home folder, and your files aren't there.
@@ -53,8 +53,9 @@ coop build --egress open && coop doctor
 
 co:op runs on macOS and Linux with Docker. Online provider runs use Docker's private network
 namespace to keep credentials outside the box. Apple's
-[`container`](https://github.com/apple/container) remains available for raw open-network workloads,
-not provider-brokered or filtered runs. co:op prefers Docker when both are present. The `coop` binary is static.
+[`container`](https://github.com/apple/container) remains available for raw workloads run with
+`--egress open` or `--egress offline`, not provider-brokered or filtered runs. co:op prefers Docker
+when both are present. The `coop` binary is static.
 
 `coop update` updates the binary, then uses the installed version to prepare the image for this
 project's network mode. Filtered projects build on the pinned client base; open and offline
@@ -133,8 +134,8 @@ coop run -- npm test                          # any command in the box
   aren't in it.
 - Secret files like `.env` stay on your computer, and the box cannot read their contents.
   `coop check-secrets` finds secrets inside your other files, and `.coopignore` hides more paths.
-- With filtered networking, the box reaches your AI provider and the domains you approve. Everything
-  else is blocked, so your code can't go anywhere you haven't approved.
+- Networking is filtered by default: the box reaches your AI provider and the domains you approve.
+  Everything else is blocked, so your code can't go anywhere you haven't approved.
 - Native history and settings belong to the current repository; other projects' conversations stay
   outside its provider homes. Provider credentials stay in host-only storage and a run-local broker.
 - There are no Git credentials inside. The agent commits in your name, and you decide what leaves

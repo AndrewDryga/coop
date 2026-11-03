@@ -12,8 +12,9 @@
 //
 // SECURITY: this file is committed and read on the HOST from a repo you may not fully trust, so it
 // must never be able to LOOSEN the user's posture. The precedence (explicit env/conf > this file >
-// built-in default) makes egress tighten-only by construction — its built-in default is already the
-// loosest value ("open") — and no_new_privileges is deliberately NOT a key here (its default is on;
+// the built-in filtered default) lets egress tighten freely, while the file's "open" is only a
+// request a human grants with coop approve (networkstate's pendingApproval) — and
+// no_new_privileges is deliberately NOT a key here (its default is on;
 // a committed switch could only turn it off). box.env reaches only the container, rejects Coop's
 // reserved COOP_ namespace, and stays below the user's agents/env and runtime-generated values.
 package project

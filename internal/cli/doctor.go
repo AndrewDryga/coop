@@ -79,6 +79,19 @@ func doctorImage(repo string, cfg *config.Config, exists func(string) bool) (img
 	return "alpine", false
 }
 
+// doctorConfig is cfg for doctor's probe boxes: open networking unless COOP_EGRESS chose a mode.
+// The probes check the ordinary image, which a filtered run never uses (it runs the locked client
+// image, checked when it starts), and they skip launch admission, so the filtered default would
+// refuse every one of them.
+func doctorConfig(cfg *config.Config) *config.Config {
+	if cfg.Explicit("COOP_EGRESS") {
+		return cfg
+	}
+	probe := cfg.Clone()
+	probe.SetEgress("open")
+	return probe
+}
+
 // cmdDoctor proves isolation by attacking it: it builds a fixture repo full of secrets and runs
 // the box against it, checking that secrets are shadowed inside the sandbox, the box has no path to
 // the host control plane (no coop CLI, no docker socket), the box is locked down (non-root,
@@ -88,6 +101,9 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	if err := rejectArgs("doctor", args); err != nil {
 		return 2, err
 	}
+	original := a.cfg
+	a.cfg = doctorConfig(a.cfg)
+	defer func() { a.cfg = original }()
 	if err := a.rt.EnsureDaemon(); err != nil {
 		return 1, reported("Could not check the Coop box",
 			fmt.Sprintf("%s is unavailable.", runtimeTitle(a.rt.Name)),

@@ -44,11 +44,14 @@ func (s buildShim) build(t *testing.T) runtime.Runtime {
 	return runtime.Runtime{Name: path}
 }
 
+// These are the ordinary image's transcripts, which a plain `coop build` produces for an open
+// project; each fixture says so, since the built-in default is filtered.
 func TestApprovedBuild(t *testing.T) {
 	// A repo with no box Dockerfile builds the shared image: no path worth printing, only its tag,
 	// which names the box definition so a reader can tell which Coop's base it is.
 	t.Run("31a-build-shared-base", func(t *testing.T) {
 		cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box:5db4c3f8c69555471772326ae9c3e960"}
+		cfg.SetEgress("open")
 		a := &app{cfg: cfg, rt: buildShim{daemonUp: true}.build(t), rtSet: true}
 		var code int
 		out := captureTerminal(t, func() { code, _ = a.cmdBuild(nil) })
@@ -62,6 +65,7 @@ func TestApprovedBuild(t *testing.T) {
 	// produces are named.
 	t.Run("31b-build-project", func(t *testing.T) {
 		cfg := projectBoxConfig(t, true)
+		cfg.SetEgress("open")
 		a := &app{cfg: cfg, rt: buildShim{daemonUp: true}.build(t), rtSet: true}
 		var code int
 		out := captureTerminal(t, func() { code, _ = a.cmdBuild(nil) })
@@ -75,6 +79,7 @@ func TestApprovedBuild(t *testing.T) {
 	// explicit human action — but the notice comes first, and it is about USING the result.
 	t.Run("31d-build-untracked-dockerfile", func(t *testing.T) {
 		cfg := projectBoxConfig(t, false)
+		cfg.SetEgress("open")
 		a := &app{cfg: cfg, rt: buildShim{daemonUp: true}.build(t), rtSet: true}
 		var code int
 		out := captureTerminal(t, func() { code, _ = a.cmdBuild(nil) })
@@ -87,6 +92,7 @@ func TestApprovedBuild(t *testing.T) {
 	// A build that ran and failed keeps the runtime's output and says what to fix.
 	t.Run("31f-build-failed", func(t *testing.T) {
 		cfg := projectBoxConfig(t, true)
+		cfg.SetEgress("open")
 		a := &app{cfg: cfg, rt: buildShim{daemonUp: true, buildExit: 1}.build(t), rtSet: true}
 		var code int
 		out := captureTerminal(t, func() { code, _ = a.cmdBuild(nil) })
@@ -101,6 +107,7 @@ func TestApprovedBuild(t *testing.T) {
 	// both of its boxes: the build did not change what they run.
 	t.Run("31e-build-session-effects", func(t *testing.T) {
 		cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box:5db4c3f8c69555471772326ae9c3e960"}
+		cfg.SetEgress("open")
 		rt, trace := boxesShim{before: sharedBaseBefore, after: sharedBaseAfter, boxes: sessionsInTwoProjects}.build(t)
 		a := &app{cfg: cfg, rt: rt, rtSet: true}
 		var code int
@@ -118,6 +125,7 @@ func TestApprovedBuild(t *testing.T) {
 	// anywhere restarts, and the result says so.
 	t.Run("31j-build-unchanged", func(t *testing.T) {
 		cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box:5db4c3f8c69555471772326ae9c3e960"}
+		cfg.SetEgress("open")
 		rt, trace := boxesShim{before: sharedBaseBefore, after: sharedBaseBefore, boxes: sessionsInTwoProjects}.build(t)
 		a := &app{cfg: cfg, rt: rt, rtSet: true}
 		var code int
@@ -134,6 +142,7 @@ func TestApprovedBuild(t *testing.T) {
 	// No runtime means nothing was built and nothing was said about an image.
 	t.Run("31g-build-runtime-unavailable", func(t *testing.T) {
 		cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box"}
+		cfg.SetEgress("open")
 		a := &app{cfg: cfg, rt: buildShim{}.build(t), rtSet: true}
 		var code int
 		out := captureTerminal(t, func() { code, _ = a.cmdBuild(nil) })

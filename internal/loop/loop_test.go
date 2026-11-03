@@ -175,6 +175,13 @@ func TestLoopRejectsActionableDuplicateIDsAcrossQueues(t *testing.T) {
 	}
 }
 
+// openConfig is cfg with COOP_EGRESS=open, as an operator who chose open has it. These tests drive
+// the loop engine on fake runtimes, which cannot serve the filtered default.
+func openConfig(cfg *config.Config) *config.Config {
+	cfg.SetEgress("open")
+	return cfg
+}
+
 func TestCandidateReviewDoesNotReconcileTaskLifecycleBeforeLaunch(t *testing.T) {
 	repo := t.TempDir()
 	authorityRoot := t.TempDir()
@@ -190,7 +197,7 @@ func TestCandidateReviewDoesNotReconcileTaskLifecycleBeforeLaunch(t *testing.T) 
 	}
 	writeTaskFile(t, filepath.Join(authorityRoot, key+".json"),
 		"{\"version\":1,\"heartbeat_at\":\"2026-08-25T00:00:00Z\"}\n")
-	c := New(&config.Config{RepoOverride: repo}, runtime.Runtime{Name: "false"}, "test", Host{})
+	c := New(openConfig(&config.Config{RepoOverride: repo}), runtime.Runtime{Name: "false"}, "test", Host{})
 	code, err := c.Run(RunSpec{
 		Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
 		CandidateReview: &CandidateReviewSpec{
@@ -213,7 +220,7 @@ func TestCandidateReviewDoesNotReconcileTaskLifecycleBeforeLaunch(t *testing.T) 
 func TestLoopAcceptsFolderQueue(t *testing.T) {
 	repo := t.TempDir()
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
-	c := New(&config.Config{RepoOverride: repo}, runtime.Runtime{Name: "false"}, "test", Host{})
+	c := New(openConfig(&config.Config{RepoOverride: repo}), runtime.Runtime{Name: "false"}, "test", Host{})
 
 	code, err := c.Run(RunSpec{Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard})
 	if err == nil {
@@ -236,7 +243,7 @@ func TestLoopExitsOneWhenAnotherAgentHoldsTheRemainingWork(t *testing.T) {
 	if code, err := tasks.CmdTasksFolder(repo, filepath.Join(repo, tasksRoot), []string{"claim", "2026-01-01-x"}); code != 0 || err != nil {
 		t.Fatalf("claim = (%d, %v)", code, err)
 	}
-	cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
+	cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
 	writeTaskFile(t, filepath.Join(cfg.AgentProfileDir("claude", "default"), ".credentials.json"),
 		`{"claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference"]}}`)
 	c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
@@ -351,7 +358,7 @@ func TestLoopBlamesTheDaemonNotTheImage(t *testing.T) {
 	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c := New(&config.Config{RepoOverride: repo}, runtime.Runtime{Name: shim}, "test", Host{})
+	c := New(openConfig(&config.Config{RepoOverride: repo}), runtime.Runtime{Name: shim}, "test", Host{})
 
 	_, err := c.Run(RunSpec{Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard})
 	if err == nil {
@@ -370,7 +377,7 @@ func TestLoopCustomPreflightRunsTheActiveRung(t *testing.T) {
 	repo := t.TempDir() // deliberately not a git repo: the run stops at the HEAD read, before iteration 1
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
 	writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), "preflight:\n  enabled: true\n  prompt: tidy the queue\n")
-	cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
+	cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
 	rt, checkCleanup := recordLoopServiceCleanup(t, repo)
 	c := New(cfg, rt, "test", Host{})
 	var launched []box.RunSpec

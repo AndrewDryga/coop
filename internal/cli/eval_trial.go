@@ -13,6 +13,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/eval"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
@@ -295,7 +296,19 @@ func evalTrialConfig(base *config.Config) *config.Config {
 	cfg.MCPFile = ""
 	cfg.ExtraRunArgs = nil
 	cfg.EvalDisableWebTools = true
+	cfg.SetEgress(evalCandidateEgress(base))
 	return cfg
+}
+
+// evalCandidateEgress is the network a candidate runs with: COOP_EGRESS when the operator chose a
+// mode, otherwise open, as trials always ran. An ordinary trial runs the plain box image and skips
+// launch admission, so the filtered default would refuse it; a filtered candidate comes from a
+// runtime profile, which admits its own capture. A loop trial's child gets the same choice.
+func evalCandidateEgress(cfg *config.Config) string {
+	if cfg.Explicit("COOP_EGRESS") {
+		return cfg.Egress
+	}
+	return string(egress.Open)
 }
 
 // applyEvalConfiguration selects on cfg exactly what the configuration names, and returns the agent

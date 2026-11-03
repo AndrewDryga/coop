@@ -226,7 +226,7 @@ Documentation: https://coop.dryga.com</code></pre><p class="reference-scroll-hin
 
 EXAMPLES
   coop run -- npm test
-  coop run -- curl https://example.com
+  coop run --egress open -- curl https://example.com
   coop run --egress offline -- git status
 
 OPTIONS
@@ -238,9 +238,12 @@ OPTIONS
   Put Coop options before --. Everything after it belongs to your command.
 
 NETWORK ACCESS
-  filtered  allow traffic permitted by approved network rules
+  filtered  allow traffic permitted by approved network rules (default)
   open      allow unrestricted internet access
   offline   block internet access
+
+  Without --egress, the box is filtered unless the project&#39;s network
+  setting or COOP_EGRESS chooses another mode.
 
 For more details see:
   coop help net</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-shell-open-a-shell-in-the-box"><h2>coop shell: open a shell in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop shell: open a shell in the box code example" tabindex="0"><code>Usage:
@@ -248,6 +251,7 @@ For more details see:
 
 EXAMPLES
   coop shell
+  coop shell --egress open
   coop shell --egress offline
 
 OPTIONS
@@ -261,9 +265,12 @@ USING THE SHELL
   Type exit or press Ctrl-D to return to your host.
 
 NETWORK ACCESS
-  filtered  allow traffic permitted by approved network rules
+  filtered  allow traffic permitted by approved network rules (default)
   open      allow unrestricted internet access
   offline   block internet access
+
+  Without --egress, the box is filtered unless the project&#39;s network
+  setting or COOP_EGRESS chooses another mode.
 
 For more details see:
   coop help net</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-claude-run-claude-in-the-box"><h2>coop claude: run Claude in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop claude: run Claude in the box code example" tabindex="0"><code>Usage:
@@ -280,7 +287,7 @@ OPTIONS
   --               pass all remaining arguments directly to Claude
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered, open or offline
+  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -304,7 +311,7 @@ OPTIONS
   --               pass all remaining arguments directly to Codex
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered, open or offline
+  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -328,7 +335,7 @@ OPTIONS
   --               pass all remaining arguments directly to Gemini
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered, open or offline
+  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -352,7 +359,7 @@ OPTIONS
   --               pass all remaining arguments directly to Grok
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered, open or offline
+  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -950,7 +957,7 @@ OPTIONS
   --no-preflight         skip that preparation
   --no-mcp               run without configured MCP servers
   --debug-on-fail        open a box shell after a failure, then retry when you exit
-  --egress &lt;mode&gt;        internet access: filtered, open or offline
+  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeatable
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -1184,7 +1191,7 @@ SESSION OPTIONS
   Review isolated work with coop fork review; --force cannot bypass its policy.
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered, open or offline
+  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeatable
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -1207,7 +1214,7 @@ EDITOR INTEGRATION
 
 OPTIONS
   --peer &lt;target&gt;        start with read-only peer agents; repeatable
-  --egress &lt;mode&gt;        internet access: filtered, open or offline
+  --egress &lt;mode&gt;        internet access: filtered (default), open or offline
   --allow-domain &lt;name&gt;  allow exact TLS access on port 443; repeatable
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the session
 
@@ -1689,7 +1696,7 @@ OPTIONS
   --peer &lt;agent&gt;         start a peer provider for read-only advice
                          repeat to add more peers
 
-  --egress &lt;mode&gt;        choose filtered, open, or offline
+  --egress &lt;mode&gt;        choose filtered (default), open, or offline
   --allow-domain &lt;host&gt;  allow TLS access to this host on port 443
                          repeat to allow more hosts
   --egress-rules &lt;path&gt;  load network rules from a file

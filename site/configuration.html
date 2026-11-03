@@ -157,7 +157,7 @@ any other value.</p>
 </tr>
 <tr>
 <td><code>COOP_EGRESS</code></td>
-<td><code>open</code></td>
+<td><code>filtered</code></td>
 <td>Chooses how the box can use the network. See the choices below and <a href="networking.html">networking</a>.</td>
 </tr>
 <tr>
@@ -178,7 +178,7 @@ any other value.</p>
 <tr>
 <td><code>COOP_AUTO_UP</code></td>
 <td><code>1</code></td>
-<td>Runs <code>compose up</code> for working boxes when <code>.agent/compose.yml</code> exists and egress is <code>open</code>. A project created by <code>coop init</code> requests filtered networking, so start its services with <code>coop up</code>. Loop runs reuse their own service stack; reviewers rely on the worker&#39;s reported checks. Set <code>0</code> to manage development services yourself with <code>coop up</code> and <code>coop down</code>.</td>
+<td>Runs <code>compose up</code> for working boxes when <code>.agent/compose.yml</code> exists and egress is <code>open</code>. Networking is filtered by default, so start a filtered project&#39;s services with <code>coop up</code>. Loop runs reuse their own service stack; reviewers rely on the worker&#39;s reported checks. Set <code>0</code> to manage development services yourself with <code>coop up</code> and <code>coop down</code>.</td>
 </tr>
 <tr>
 <td><code>COOP_SERVICES_NET</code></td>
@@ -189,14 +189,16 @@ any other value.</p>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
 <p>Choose one of these values for <code>COOP_EGRESS</code>:</p>
 <ul>
-<li><code>open</code> allows full outbound traffic. This is the default.</li>
-<li><code>filtered</code> allows the AI provider and domains you have approved.</li>
+<li><code>filtered</code> allows the AI provider and domains you have approved. This is the default, inside
+or outside a co:op project. It needs Docker.</li>
+<li><code>open</code> allows full outbound traffic.</li>
 <li><code>offline</code> disables the box&#39;s network (<code>--network none</code>). The box cannot send the repo, secrets
 or credentials over the network. Installs and model API calls stop working too, so you must
 choose this setting explicitly.</li>
 </ul>
 <p>An <code>--egress</code> flag overrides <code>COOP_EGRESS</code>. A project&#39;s saved <code>coop approve</code> decision also
-overrides it. <code>COOP_EGRESS</code> itself overrides <code>box.egress</code> in <code>.agent/project.yaml</code>.</p>
+overrides it. <code>COOP_EGRESS</code> itself overrides <code>box.egress</code> in <code>.agent/project.yaml</code>. When none of
+these chooses a mode, the box is filtered.</p>
 <p>The resource and privilege limits (<code>COOP_PIDS</code>, <code>COOP_MEMORY</code>, <code>COOP_CPUS</code> and
 <code>COOP_NO_NEW_PRIVILEGES</code>) apply on Docker. co:op currently skips them with Apple&#39;s <code>container</code>
 CLI because that runtime works differently.</p>

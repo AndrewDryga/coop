@@ -45,6 +45,9 @@ func (p checkProject) config(t *testing.T) *config.Config {
 	t.Helper()
 	repo := t.TempDir()
 	cfg := &config.Config{BoxHome: t.TempDir(), RepoOverride: repo, BaseImage: "coop-box"}
+	// These transcripts report the ordinary image's build record, which an open project uses;
+	// the filtered default would answer with the filtered image instead.
+	cfg.SetEgress("open")
 	if p.dockerfile != "" {
 		if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 			t.Fatal(err)

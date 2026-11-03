@@ -49,7 +49,7 @@ func TestCustomWorkerFailuresKeepLoopExitContract(t *testing.T) {
 			const id = "worker-failure"
 			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Worker failure\n- [ ] Implement and verify the result\n")
 			writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), "mcp: false\nwork:\n  command: [make, loop-iter]\n")
-			c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, runtime.Runtime{Name: "true"}, "test", Host{})
+			c := New(openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}), runtime.Runtime{Name: "true"}, "test", Host{})
 			attempts := 0
 			var code int
 			var runErr error
@@ -132,7 +132,7 @@ func TestFailedTaskAttemptsNameTheirCause(t *testing.T) {
 			if tc.loopYAML != "" {
 				writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), tc.loopYAML)
 			}
-			c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, runtime.Runtime{Name: "true"}, "test", Host{})
+			c := New(openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}), runtime.Runtime{Name: "true"}, "test", Host{})
 			attempts := 0
 			var code int
 			var runErr error
@@ -194,7 +194,7 @@ func TestALaunchRefusalStopsTheRunAtItsFirstAttempt(t *testing.T) {
 	const id = "create-hello"
 	root := filepath.Join(repo, tasksRoot)
 	writeTaskFile(t, filepath.Join(root, stateTodo, id, "task.md"), "# Create hello.txt\n- [ ] Write it\n")
-	c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, runtime.Runtime{Name: "true"}, "test", Host{})
+	c := New(openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}), runtime.Runtime{Name: "true"}, "test", Host{})
 	refusal := &box.LaunchRefused{Err: errors.New("legacy writer mount cannot be resolved")}
 	attempts := 0
 	c.boxRun = func(box.RunSpec) (int, error) {
@@ -277,7 +277,7 @@ func TestRecoveryLimitsKeepLoopExitContract(t *testing.T) {
 			}
 			// One second of start silence instead of ten minutes: virtual time is free, but the task
 			// lease writes a heartbeat every ten seconds of it.
-			cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), ProviderTimeouts: "start=1s"}
+			cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), ProviderTimeouts: "start=1s"})
 			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
 			attempts := 0
 			var code int

@@ -2,12 +2,12 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/legacy_records.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile, internal/egress/policy.go, internal/cli/network_flags.go, internal/sessionsvc/network.go]
+sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/legacy_records.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile, internal/egress/policy.go, internal/cli/network_flags.go, internal/sessionsvc/network.go, internal/config/config.go, internal/cli/doctor.go, internal/cli/eval_trial.go, internal/cli/eval_loop.go]
 updated: 2026-11-03
 ---
 
-`coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
-between that flag and `docker run`:
+A filtered box — the built-in default, or `coop <agent> --egress filtered` — runs behind a per-run
+gateway. Five boring layers stand between that mode and `docker run`:
 
 1. **Policy** — `internal/egress`: rule grammar, normalization, exact/wildcard matching, provider
    bundles, `Compile` → an owner-keyed `Snapshot` with a fingerprint (egress/snapshot.go). It
@@ -69,9 +69,9 @@ LEXICALLY (`Store.ApprovalAt`), which is the only way to name the record a delet
 behind. An approval made through a symlink is filed under its target, so once the link is gone its
 path locates nothing, and forget says so instead of removing another project's. Observed traffic is
 evidence, never a grant. Admission marks the resolved posture explicit through `cfg.SetEgress` (in
-`AdmitNetwork`), so the project overlay cannot decide the mode a second time. A run that neither
-asks for filtered nor has a remembered posture writes NO host state — the preview creates no owner
-key (`networkstate.PreviewAdmission`).
+`AdmitNetwork`), so the project overlay cannot decide the mode a second time. An open or offline
+run writes NO host state — the preview creates no owner key (`networkstate.PreviewAdmission`);
+only a filtered one, the default, opens the store.
 
 Approval review has a two-phase concurrency rule. An exact existing marker/private-anchor pair may
 be reviewed read-only without pausing running boxes. Any missing, replaced, or moved binding is a
@@ -113,13 +113,26 @@ Startup has a separate 60-second limit and cancellation still owns exact setup c
 catalogs do not launch a box. Exporting a mode alone grants no filtered authority.
 
 A withdrawal marker (`networkstate/approval_withdrawal.go`, written before the grant is cleared)
-outranks the ladder below for an ordinary launch: with no approval it makes the project pending
-rather than letting the built-in default reopen it, and only `coop approve` removes it.
+outranks the ladder below for an ordinary launch: with no approval it makes every launch but an
+offline one pending rather than letting the built-in default reopen it, and only `coop approve`
+removes it.
 
 The precedence ladder, one line: invocation `--egress` → remembered approval posture → explicit
-`COOP_EGRESS` → project `box.egress` → any rule present ⇒ filtered → open
-(`networkstate/admission.go`, `resolveMode`). There is no hard ceiling: nothing ever produced one,
-so the field and its clamp were deleted. Controller-authored jobs use `CaptureJob` instead of
+`COOP_EGRESS` → project `box.egress` → filtered (`networkstate/admission.go`, `resolveMode`). Rules
+need filtered, so a rule with any other resolved mode is a conflict. The built-in default was
+open until 2026-11-03 (owner's call, task
+2026-11-03-choose-the-default-network-for-boxes-outside-a-c); `config.Load`'s unset COOP_EGRESS
+says filtered too. When nothing chose the mode, `AdmissionPreview.Default` marks the capture
+(`CapturedEgress.Default`, display only) and the launch's network section opens with
+`Filtered by default. Use --egress open for unrestricted access.` On a runtime without the gateway
+that default is refused by `checkFilteredRuntime`, never downgraded to open. Coop's own boxes that
+run the ordinary image keep open networking unless `COOP_EGRESS` chose a mode: `coop doctor`'s
+probes and an ordinary `coop eval` trial skip admission (`doctorConfig`, `evalTrialConfig`), and a
+loop trial's child is handed the same choice as `COOP_EGRESS` (`evalCandidateEgress`, all in
+`internal/cli`). Sign-in goes through admission and gets the default like any launch. In
+`box.Run`, a project file can only tighten a launch that skipped admission
+(`applyProjectPolicy`): its `open` never replaces the filtered default. There is no hard ceiling:
+nothing ever produced one, so the field and its clamp were deleted. Controller-authored jobs use `CaptureJob` instead of
 this local approval ladder; they do not consult or clear local withdrawal markers, and ordinary
 admission stays barred. A person spells no-network access `offline` everywhere — `--egress`,
 `COOP_EGRESS` and `box.egress` — and `none` is refused, never an alias. `egress.ParseWord` (the
@@ -344,6 +357,12 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-03 — the built-in default is filtered, not open (owner's call, task
+  2026-11-03-choose-the-default-network-for-boxes-outside-a-c). Swept every caller that launched
+  without admission or relied on the open default: `coop doctor` and `coop eval` candidates keep
+  open unless COOP_EGRESS chose; sign-in, run, shell, agents, loop, fork, ACP, model probes and fork
+  gates take the default through admission. Messages that said "run without --egress filtered" now
+  say "run with --egress open".
 - 2026-11-03 — the no-network mode is `offline` on the flag and in `COOP_EGRESS` too (owner's
   call, task 2026-11-03-use-one-word-for-the-no-network-mode); `none` is refused there as it
   already was in the project file. Swept every `COOP_EGRESS`/`--egress` writer for a child process

@@ -1757,6 +1757,13 @@ func TestMergeNeutralizesForkDrivers(t *testing.T) {
 
 // `image inspect` fails the same way for a missing image and a dead daemon, so a merge gate blocked
 // by a stopped runtime used to demand a build that would not have helped. Name the daemon instead.
+// openConfig is cfg with COOP_EGRESS=open. These gates use the ordinary image an open project
+// runs; under the filtered default a gate uses the separately approved filtered image instead.
+func openConfig(cfg *config.Config) *config.Config {
+	cfg.SetEgress("open")
+	return cfg
+}
+
 func TestMergeGateBlamesTheDaemonNotTheImage(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	for _, tc := range []struct {
@@ -1778,7 +1785,7 @@ func TestMergeGateBlamesTheDaemonNotTheImage(t *testing.T) {
 				t.Fatal(err)
 			}
 			c := &Control{
-				cfg: &config.Config{Gate: []string{"true"}, BaseImage: "coop-box"},
+				cfg: openConfig(&config.Config{Gate: []string{"true"}, BaseImage: "coop-box"}),
 				rt:  runtime.Runtime{Name: shim},
 			}
 			_, err := c.MergeGate(t.TempDir())
@@ -1807,11 +1814,11 @@ func TestMergeGateBuildsCoopsBaseAfterAnUpgrade(t *testing.T) {
 	calls := 0
 	host := Host{EnsureBaseImage: func(io.Writer) error { calls++; return os.WriteFile(built, nil, 0o644) }}
 	base := "coop-box:0123456789abcdef0123456789abcdef"
-	c := New(&config.Config{Gate: []string{"true"}, BaseImage: base}, runtime.Runtime{Name: shim}, host)
+	c := New(openConfig(&config.Config{Gate: []string{"true"}, BaseImage: base}), runtime.Runtime{Name: shim}, host)
 	if img, err := c.MergeGate(t.TempDir()); err != nil || img != base || calls != 1 {
 		t.Fatalf("MergeGate = %q, %v after %d base builds; want Coop's base, built once", img, err, calls)
 	}
-	operator := New(&config.Config{Gate: []string{"true"}, BaseImage: base, ImageOverride: "mine:1"}, runtime.Runtime{Name: shim}, host)
+	operator := New(openConfig(&config.Config{Gate: []string{"true"}, BaseImage: base, ImageOverride: "mine:1"}), runtime.Runtime{Name: shim}, host)
 	if _, err := operator.MergeGate(t.TempDir()); calls != 1 {
 		t.Fatalf("an operator's image made the host build Coop's base (%v)", err)
 	}
@@ -1834,7 +1841,7 @@ func TestJobReviewGateRunsInTheJobImage(t *testing.T) {
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{Gate: []string{"true"}, BaseImage: "worker-box"}
+	cfg := openConfig(&config.Config{Gate: []string{"true"}, BaseImage: "worker-box"})
 	c := New(cfg, runtime.Runtime{Name: shim}, Host{})
 	request := sessionsvc.ReviewGateRequest{Repository: repo, Candidate: t.TempDir(), NetworkMode: "none",
 		Command: []string{"true"}, Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256}}

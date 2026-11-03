@@ -91,7 +91,7 @@ func ProjectNetworkAccess(ctx context.Context, cfg *config.Config, repo string) 
 
 // postureSource names the input that decided the mode. It mirrors
 // Admission.resolveMode's order exactly; a remembered approval outranks the
-// repo precisely so deleting YAML cannot restore the open default.
+// repo precisely so deleting YAML cannot change what a human approved.
 func postureSource(input networkstate.Admission, approval *networkstate.Approval) string {
 	switch {
 	case approval != nil:

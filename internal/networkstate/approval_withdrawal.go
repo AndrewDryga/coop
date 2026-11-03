@@ -42,8 +42,8 @@ type Withdrawal struct {
 // An unreadable or malformed marker is an ERROR, never a quiet false: a barrier
 // coop cannot read is not a barrier it may ignore. A withdrawal an older build
 // filed under the project's keyed id moves to its id the first time it is looked
-// up: a withdrawn project must never fall back to the open default because its
-// records were renamed.
+// up: a withdrawn project must never fall back to the built-in default because
+// its records were renamed.
 func (s *Store) withdrawn(id, canonical string) (bool, error) {
 	found, err := s.readWithdrawal(id, withdrawalVersion)
 	if found || err != nil {
@@ -117,8 +117,7 @@ func (s *Store) removeWithdrawal(id string) error { return s.removeRecord(withdr
 // withdrawalBarrier is the pending review a withdrawal leaves behind. It
 // applies only where access could be REGAINED: an offline run has nothing to
 // widen, and a project that has been approved again has no barrier left.
-// Everything else — including the built-in open default that made the
-// withdrawal necessary — waits for a human.
+// Everything else — the built-in filtered default included — waits for a human.
 func withdrawalBarrier(withdrawn bool, mode egress.Mode) *PendingApproval {
 	if !withdrawn || mode == egress.None {
 		return nil

@@ -1,7 +1,10 @@
 # The box
 
 The box is the container your agent runs in. co:op mounts your project at its real path, but
-leaves your home folder and SSH keys unmounted. For an overview, see
+leaves your home folder and SSH keys unmounted. Its networking is filtered by default, inside or
+outside a co:op project: the box reaches the agent's provider and the destinations you approved.
+Add `--egress open` for unrestricted access or `--egress offline` for none. See [restricted
+networking](networking.md#network-modes). For an overview, see
 [the sandbox](https://coop.dryga.com/docs.html#sandbox), [hiding
 secrets](https://coop.dryga.com/docs.html#secrets) and [toolchain and
 services](https://coop.dryga.com/docs.html#toolchain).
@@ -164,8 +167,8 @@ upwards, then falls back to `~/.tool-versions`. A repo with `.tool-versions` nee
 `.agent/Dockerfile` or other setup for this:
 
 ```bash
-cd ~/code/phoenix-app   # has a .tool-versions
-coop claude             # provisions elixir/erlang/node/… from it, then runs the agent
+cd ~/code/phoenix-app       # has a .tool-versions
+coop claude --egress open   # provisions elixir/erlang/node/… from it, then runs the agent
 ```
 
 The first install of a new toolchain can be slow (Erlang compiles, for example). After that it is
@@ -175,10 +178,10 @@ Set `COOP_NO_ASDF=1` in `agents/env` to skip installing tools from `.tool-versio
 repairs an outdated cached Node shim, the command wrapper that selects Node, when needed to keep
 the agent CLIs running.
 
-Installing tools at startup works only with open networking. A filtered run, the default after
-`coop init`, uses an image with fixed client versions. The image includes asdf itself but puts
-no asdf command wrappers on `PATH` and installs nothing when the box starts. Build your toolchain
-into an `.agent/Dockerfile` instead:
+Installing tools at startup works only with open networking. A filtered run, the default, uses
+an image with fixed client versions. The image includes asdf itself but puts no asdf command
+wrappers on `PATH` and installs nothing when the box starts. Build your toolchain into an
+`.agent/Dockerfile` instead:
 
 - `coop init` writes one when it finds a `.tool-versions`.
 - `coop init --stack asdf` writes one later.
@@ -222,10 +225,11 @@ for service containers. Set the paths relative to the repository in `.agent/proj
 
 ### Builds and network modes
 
-With `--egress filtered`, review the Dockerfile and the files it copies, then run
-`coop build --egress filtered` on the host. Plain `coop build` chooses the same mode when the
-project uses filtered networking. This builds on co:op's fixed client image and uses a separate
-image tag.
+With filtered networking, the default, review the Dockerfile and the files it copies, then run
+`coop build` on the host. Plain `coop build` follows the project's network mode, so it builds the
+filtered image unless the project or `COOP_EGRESS` chooses open or offline.
+`coop build --egress filtered` asks for it explicitly. This builds on co:op's fixed client image
+and uses a separate image tag.
 
 A filtered launch uses the exact image you explicitly built and approved. Build it again if its
 inputs change, co:op upgrades the client base or the image is missing.
@@ -592,8 +596,8 @@ port links on stderr.
 - The dev server must bind `0.0.0.0` inside the box (`vite --host`, `next dev -H 0.0.0.0` and so
   on). A server on the container's localhost isn't reachable through the mapping.
 - Ports bind to your localhost only, never the LAN.
-- Publishing needs networking: `COOP_EGRESS=open` (the default without another network setting)
-  or `filtered`, which publishes the port on the run's gateway. See [restricted networking](networking.md).
+- Publishing needs networking: `filtered` (the default), which publishes the port on the run's
+  gateway, or `open`. See [restricted networking](networking.md).
 - A host port already in use is skipped with a note. `COOP_SERVE_URL_<port>` still carries the
   workspace's assigned URL for configuration and discovery.
 - A box restart (a credential switch, a rebuild) takes the dev server down with the old box. The URL

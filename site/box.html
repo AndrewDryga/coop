@@ -87,7 +87,10 @@
       <article class="docs-main reference-content" aria-label="Reference">
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
 <p>The box is the container your agent runs in. co:op mounts your project at its real path, but
-leaves your home folder and SSH keys unmounted. For an overview, see
+leaves your home folder and SSH keys unmounted. Its networking is filtered by default, inside or
+outside a co:op project: the box reaches the agent&#39;s provider and the destinations you approved.
+Add <code>--egress open</code> for unrestricted access or <code>--egress offline</code> for none. See <a href="networking.html#network-modes">restricted
+networking</a>. For an overview, see
 <a href="https://coop.dryga.com/docs.html#sandbox">the sandbox</a>, <a href="https://coop.dryga.com/docs.html#secrets">hiding
 secrets</a> and <a href="https://coop.dryga.com/docs.html#toolchain">toolchain and
 services</a>.</p>
@@ -216,18 +219,18 @@ container is removed. Define the tools and services once using Dev Containers an
 using asdf and caches them in a shared volume. It looks for the file from the working directory
 upwards, then falls back to <code>~/.tool-versions</code>. A repo with <code>.tool-versions</code> needs no
 <code>.agent/Dockerfile</code> or other setup for this:</p>
-<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Toolchain: .tool-versions code example" tabindex="0"><code class="language-bash">cd ~/code/phoenix-app   # has a .tool-versions
-coop claude             # provisions elixir/erlang/node/… from it, then runs the agent
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Toolchain: .tool-versions code example" tabindex="0"><code class="language-bash">cd ~/code/phoenix-app       # has a .tool-versions
+coop claude --egress open   # provisions elixir/erlang/node/… from it, then runs the agent
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
 <p>The first install of a new toolchain can be slow (Erlang compiles, for example). After that it is
 reused across runs and repos.</p>
 <p>Set <code>COOP_NO_ASDF=1</code> in <code>agents/env</code> to skip installing tools from <code>.tool-versions</code>. co:op still
 repairs an outdated cached Node shim, the command wrapper that selects Node, when needed to keep
 the agent CLIs running.</p>
-<p>Installing tools at startup works only with open networking. A filtered run, the default after
-<code>coop init</code>, uses an image with fixed client versions. The image includes asdf itself but puts
-no asdf command wrappers on <code>PATH</code> and installs nothing when the box starts. Build your toolchain
-into an <code>.agent/Dockerfile</code> instead:</p>
+<p>Installing tools at startup works only with open networking. A filtered run, the default, uses
+an image with fixed client versions. The image includes asdf itself but puts no asdf command
+wrappers on <code>PATH</code> and installs nothing when the box starts. Build your toolchain into an
+<code>.agent/Dockerfile</code> instead:</p>
 <ul>
 <li><code>coop init</code> writes one when it finds a <code>.tool-versions</code>.</li>
 <li><code>coop init --stack asdf</code> writes one later.</li>
@@ -273,10 +276,11 @@ for service containers. Set the paths relative to the repository in <code>.agent
 </tbody>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
 <h3 id="builds-and-network-modes">Builds and network modes</h3>
-<p>With <code>--egress filtered</code>, review the Dockerfile and the files it copies, then run
-<code>coop build --egress filtered</code> on the host. Plain <code>coop build</code> chooses the same mode when the
-project uses filtered networking. This builds on co:op&#39;s fixed client image and uses a separate
-image tag.</p>
+<p>With filtered networking, the default, review the Dockerfile and the files it copies, then run
+<code>coop build</code> on the host. Plain <code>coop build</code> follows the project&#39;s network mode, so it builds the
+filtered image unless the project or <code>COOP_EGRESS</code> chooses open or offline.
+<code>coop build --egress filtered</code> asks for it explicitly. This builds on co:op&#39;s fixed client image
+and uses a separate image tag.</p>
 <p>A filtered launch uses the exact image you explicitly built and approved. Build it again if its
 inputs change, co:op upgrades the client base or the image is missing.</p>
 <p>An editor connection with open networking can build a missing project image automatically.
@@ -572,8 +576,8 @@ port links on stderr.</p>
 <li>The dev server must bind <code>0.0.0.0</code> inside the box (<code>vite --host</code>, <code>next dev -H 0.0.0.0</code> and so
 on). A server on the container&#39;s localhost isn&#39;t reachable through the mapping.</li>
 <li>Ports bind to your localhost only, never the LAN.</li>
-<li>Publishing needs networking: <code>COOP_EGRESS=open</code> (the default without another network setting)
-or <code>filtered</code>, which publishes the port on the run&#39;s gateway. See <a href="networking.html">restricted networking</a>.</li>
+<li>Publishing needs networking: <code>filtered</code> (the default), which publishes the port on the run&#39;s
+gateway, or <code>open</code>. See <a href="networking.html">restricted networking</a>.</li>
 <li>A host port already in use is skipped with a note. <code>COOP_SERVE_URL_&lt;port&gt;</code> still carries the
 workspace&#39;s assigned URL for configuration and discovery.</li>
 <li>A box restart (a credential switch, a rebuild) takes the dev server down with the old box. The URL

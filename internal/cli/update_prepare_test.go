@@ -122,6 +122,7 @@ func TestUpdateNamesAMissingReleaseSourceAndContinues(t *testing.T) {
 	mustWrite(t, exe, "installed coop")
 	t.Cleanup(stub(&executablePath, func() (string, error) { return exe, nil }))
 	cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box"}
+	cfg.SetEgress("open")
 	a := &app{cfg: cfg, rt: buildShim{daemonUp: true}.build(t), rtSet: true}
 	var code int
 	out := captureTerminal(t, func() { code, _ = a.cmdUpdate(nil) })

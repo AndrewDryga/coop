@@ -23,11 +23,13 @@ import (
 
 func TestModelProbeAdmissionPreservesPolicyAndIsolation(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	for _, tc := range []struct{ name, policy, wantMode, wantError string }{
-		{"implicit open", "", "open", ""},
-		{"project offline", "box:\n  egress: offline\n", "none", ""},
-		{"project filtered", "box:\n  egress: filtered\n", "filtered", "restricted networking needs docker"},
-		{"pending grant", "box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: example.com}\n      protocol: tls\n      ports: [443]\n", "open", "coop approve"},
+	for _, tc := range []struct{ name, host, policy, wantMode, wantError string }{
+		// Nothing chose a mode, so the probe gets the filtered default; this runtime cannot serve it.
+		{"implicit filtered", "", "", "filtered", "restricted networking needs docker"},
+		{"explicit open", "open", "", "open", ""},
+		{"project offline", "", "box:\n  egress: offline\n", "none", ""},
+		{"project filtered", "", "box:\n  egress: filtered\n", "filtered", "restricted networking needs docker"},
+		{"pending grant", "", "box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: example.com}\n      protocol: tls\n      ports: [443]\n", "filtered", "coop approve"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := t.TempDir()
@@ -37,7 +39,11 @@ func TestModelProbeAdmissionPreservesPolicyAndIsolation(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(tc.policy), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			cfg := &config.Config{ConfigDir: t.TempDir(), Egress: "open"}
+			cfg := &config.Config{ConfigDir: t.TempDir(), Egress: "filtered"} // config.Load's unset value
+			if tc.host != "" {
+				cfg.SetEgress(tc.host) // the operator's COOP_EGRESS
+			}
+			hostMode, hostChose := cfg.Egress, cfg.Explicit("COOP_EGRESS")
 			cfg.SetActiveProfile("claude", "selected")
 			a := &app{cfg: cfg, rt: runtime.Runtime{Name: "must-not-execute"}, rtSet: true,
 				acpPeers: []agents.Target{{Provider: "gemini"}}, acpCapture: &box.CapturedEgress{Fingerprint: "must-not-borrow"}}
@@ -64,7 +70,7 @@ func TestModelProbeAdmissionPreservesPolicyAndIsolation(t *testing.T) {
 				})
 			}
 			wg.Wait()
-			if cfg.Egress != "open" || cfg.Explicit("COOP_EGRESS") || cfg.ActiveProfile("claude") != "selected" {
+			if cfg.Egress != hostMode || cfg.Explicit("COOP_EGRESS") != hostChose || cfg.ActiveProfile("claude") != "selected" {
 				t.Fatal("admission mutated shared parent config")
 			}
 		})

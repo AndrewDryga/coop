@@ -4074,6 +4074,14 @@ func TestApplyProjectPolicy(t *testing.T) {
 		t.Errorf("the shared Config must NOT be mutated, got %+v", cfg)
 	}
 
+	// Under the filtered default the file's open would widen, and only coop approve grants that
+	// (network admission): the overlay leaves the default in place, which fails closed without a
+	// capture.
+	widened := applyProjectPolicy(&config.Config{Egress: "filtered"}, &project.Project{Box: project.Box{Egress: "open"}}, &RunSpec{})
+	if widened.Egress != "filtered" {
+		t.Errorf("box.egress:open widened an unadmitted launch to %q", widened.Egress)
+	}
+
 	// An EXPLICIT env setting beats the file — the repo can't override the user's own choice.
 	conf := filepath.Join(t.TempDir(), "coop.conf")
 	if err := os.WriteFile(conf, nil, 0o600); err != nil {

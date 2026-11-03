@@ -91,7 +91,7 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 			name = approvalRecord(record.legacyID)
 		}
 		// The barrier goes down FIRST. Removing the grant is what
-		// makes this project's mode fall back to coop's open default, so the
+		// makes this project's mode fall back to coop's built-in default, so the
 		// order is the guarantee: after this line no ordinary launch of this
 		// project starts until a human approves again.
 		if err := s.recordWithdrawal(record.ID); err != nil {

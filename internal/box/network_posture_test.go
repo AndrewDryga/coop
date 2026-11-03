@@ -234,8 +234,8 @@ func TestPostureOnAFreshHostCreatesNoAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProjectNetworkAccess: %v", err)
 	}
-	if access.Mode != egress.Open || access.Source != AccessFromDefault {
-		t.Errorf("access = %q from %q, want the built-in open default", access.Mode, access.Source)
+	if access.Mode != egress.Filtered || access.Source != AccessFromDefault {
+		t.Errorf("access = %q from %q, want the built-in filtered default", access.Mode, access.Source)
 	}
 	if access.Approval != nil || access.Pending != nil {
 		t.Errorf("a fresh host reported approval=%v pending=%v", access.Approval, access.Pending)

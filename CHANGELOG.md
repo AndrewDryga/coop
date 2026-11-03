@@ -49,6 +49,14 @@
   closes a task whose checklist is unfinished, without editing it. The task's log notes what was
   open. It refuses to run without a terminal, which keeps agents from using it.
 
+- **Boxes use filtered networking by default.** A box started outside a co:op project, or in a
+  project whose `.agent/project.yaml` sets no `box.egress`, now reaches only its agent's provider
+  and the destinations you approved. Its network section starts with
+  `Filtered by default. Use --egress open for unrestricted access.` Add `--egress open` to get
+  the old behavior for one run, or set `COOP_EGRESS=open`. Filtered networking needs Docker. On
+  Apple's `container`, such a run is refused until you choose `--egress open` or
+  `--egress offline`. See MIGRATING.md.
+
 - **The no-network mode is called offline everywhere.** `--egress offline` and
   `COOP_EGRESS=offline` now match `box.egress: offline` in `.agent/project.yaml`, and help,
   messages and completion use the same word. The old `none` is refused with a message that names

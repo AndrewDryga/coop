@@ -815,6 +815,17 @@ func TestParseEgress(t *testing.T) {
 	}
 }
 
+// With COOP_EGRESS unset the box is filtered, the built-in default network admission resolves to
+// as well, and the value is nobody's choice: a project file may still decide it.
+func TestUnsetEgressIsTheFilteredDefault(t *testing.T) {
+	clearAgentEnv(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	c := mustLoad(t)
+	if c.Egress != "filtered" || c.Explicit("COOP_EGRESS") {
+		t.Fatalf("unset COOP_EGRESS = %q (explicit %v), want the filtered default", c.Egress, c.Explicit("COOP_EGRESS"))
+	}
+}
+
 func TestLoadRejectsInvalidEgress(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

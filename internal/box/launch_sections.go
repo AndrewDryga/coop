@@ -235,7 +235,8 @@ func (s *launchSections) accounts(rows []accountRow) {
 
 // internet is the one stable section every mode shares. A filtered run lists what the frozen
 // policy allows and only then claims the rest is blocked; an open run and an offline run get a
-// warning under the same heading, never a green row.
+// warning under the same heading, never a green row. A filtered run nothing chose a mode for
+// first says that the default applies and how to leave it.
 // brokeredMCP names the MCP servers the run reaches through its credential broker: allowed like the
 // rest, though the agent's own policy holds no grant for them.
 func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egress.Snapshot, brokeredMCP ...string) {
@@ -247,10 +248,18 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 	s.section("Configuring network access")
 	switch {
 	case policy != nil:
-		for _, row := range networkAllowances(*policy, brokeredMCP...) {
+		if spec.CapturedEgress != nil && spec.CapturedEgress.Default {
+			ui.Note("  Filtered by default. Use --egress open for unrestricted access.")
+		}
+		rows := networkAllowances(*policy, brokeredMCP...)
+		for _, row := range rows {
 			ui.Pass("%s", row)
 		}
-		ui.Pass("Everything else blocked")
+		if len(rows) == 0 {
+			ui.Pass("Everything blocked") // nothing above to be "else" to: a raw run with no rules
+		} else {
+			ui.Pass("Everything else blocked")
+		}
 	case cfg.Egress == "open":
 		ui.Caution("Unrestricted: nothing is blocked")
 	default:

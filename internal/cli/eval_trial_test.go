@@ -75,6 +75,20 @@ func newTrialRunner(t *testing.T, suite *eval.Suite, run boxRunner) *trialRunner
 
 // The happy path, end to end without a container runtime: the workspace is materialized, the
 // candidate "works" in it, the snapshot is graded, and the size shows up beside the verdict.
+// A candidate runs the plain box image without launch admission, so it keeps open networking
+// unless COOP_EGRESS chose a mode; the filtered default would refuse every ordinary trial.
+func TestEvalCandidatesKeepOpenNetworkingUnlessChosen(t *testing.T) {
+	unset := &config.Config{Egress: "filtered"}
+	if got := evalTrialConfig(unset); got.Egress != "open" || !got.Explicit("COOP_EGRESS") || unset.Egress != "filtered" {
+		t.Fatalf("trial config = %q (explicit %v), operator config now %q", got.Egress, got.Explicit("COOP_EGRESS"), unset.Egress)
+	}
+	chosen := &config.Config{}
+	chosen.SetEgress("none")
+	if got := evalTrialConfig(chosen); got.Egress != "none" {
+		t.Fatalf("a trial replaced the operator's COOP_EGRESS with %q", got.Egress)
+	}
+}
+
 func TestTrialRunnerPassesAndReportsSizeBesideTheVerdict(t *testing.T) {
 	suite := trialSuite(t)
 	r := newTrialRunner(t, suite, func(spec box.RunSpec) (int, error) {

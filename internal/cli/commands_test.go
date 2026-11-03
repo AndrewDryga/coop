@@ -474,6 +474,7 @@ func TestUpdateRestartsOnlySessionsOnTheReplacedImage(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	rt, trace := boxesShim{before: sharedBaseBefore, after: sharedBaseAfter, boxes: sessionsInTwoProjects}.build(t)
 	cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box:5db4c3f8c69555471772326ae9c3e960"}
+	cfg.SetEgress("open")
 	a := &app{cfg: cfg, rt: rt, rtSet: true}
 	var code int
 	out := captureTerminal(t, func() { code, _ = a.cmdUpdate([]string{"--box-only"}) })
@@ -689,7 +690,7 @@ roles:
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: repo}
+	cfg := openNetwork(&config.Config{ConfigDir: t.TempDir(), RepoOverride: repo})
 	signInCred(t, cfg, "claude", "default")
 	signInCred(t, cfg, "codex", "work")
 
@@ -1721,7 +1722,7 @@ func TestLoginRunsFromAHomeFolderRepositoryWithoutMountingIt(t *testing.T) {
 	loginInputIsTerminal = func() bool { return true }
 	defer func() { loginInputIsTerminal = oldTTY }()
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
-	cfg := &config.Config{ConfigDir: filepath.Join(t.TempDir(), "coop"), BaseImage: "coop-box", BoxHome: t.TempDir(), Homes: true}
+	cfg := openNetwork(&config.Config{ConfigDir: filepath.Join(t.TempDir(), "coop"), BaseImage: "coop-box", BoxHome: t.TempDir(), Homes: true})
 	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
 	var err error
 	captureStderr(t, func() { _, err = a.loginTo("claude", config.DefaultProfile) })
@@ -2135,7 +2136,8 @@ func TestCmdRunDelimiterForwardsLeadingOptions(t *testing.T) {
 	for _, command := range []string{"--help", "--bare"} {
 		t.Run(command, func(t *testing.T) {
 			recorder := filepath.Join(t.TempDir(), "calls")
-			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(), BaseImage: "test-base", ImageOverride: "test-image", Egress: "none"}
+			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(), BaseImage: "test-base", ImageOverride: "test-image"}
+			cfg.SetEgress("none") // offline, as COOP_EGRESS=offline: this fake runtime has no gateway
 			a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
 			if code, err := a.cmdRun([]string{"--", command}); code != 0 || err != nil {
 				t.Fatalf("run: %d %v", code, err)
@@ -2183,7 +2185,8 @@ func TestRawCommandsReadPipedStdin(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(),
-				BaseImage: "test-base", ImageOverride: "test-image", Egress: "none", Shell: "bash"}
+				BaseImage: "test-base", ImageOverride: "test-image", Shell: "bash"}
+			cfg.SetEgress("none")
 			a := &app{cfg: cfg, rt: runtime.Runtime{Name: shim}, rtSet: true}
 			var code int
 			var err error

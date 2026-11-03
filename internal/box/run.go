@@ -3026,19 +3026,21 @@ func decideTTY(spec RunSpec, stdin stdinKind) ttyMode {
 
 // applyProjectPolicy returns cfg overlaid with the repo's committed .agent/project.yaml box: policy,
 // and adjusts spec.Network to match. Each field applies ONLY where the user did not explicitly set
-// its COOP_* (env or conf) — an explicit setting always wins. Because egress's built-in default is
-// the loosest value ("open"), a committed policy can only ever TIGHTEN it (never widen an explicit
-// "none" back to "open"). Works on a COPY of cfg, so the caller's shared Config — including the
-// per-run model maps the loop mutates — is never touched (the maps are shared read-through; only the
-// scalar box knobs are overwritten on the copy).
+// its COOP_* (env or conf) — an explicit setting always wins. Egress is decided by network admission
+// before this runs (AdmitNetwork marks it explicit), where a project's request for open needs a
+// human's coop approve. Here the file can only TIGHTEN a launch that skipped admission: its open
+// never replaces the filtered default, which then fails closed without a capture. Works on a COPY
+// of cfg, so the caller's shared Config — including the per-run model maps the loop mutates — is
+// never touched (the maps are shared read-through; only the scalar box knobs are overwritten on
+// the copy).
 func applyProjectPolicy(cfg *config.Config, p *project.Project, spec *RunSpec) *config.Config {
 	b := p.Box
 	if boxPolicyEmpty(b) {
 		return cfg // no box: section — nothing to overlay (gate: is resolved by fork_merge, not here)
 	}
 	c := *cfg
-	if b.Egress != "" && !cfg.Explicit("COOP_EGRESS") {
-		c.Egress = b.Egress // validated open|filtered|none by project.Load; AdmitNetwork marks its resolved posture explicit
+	if b.Egress != "" && b.Egress != "open" && !cfg.Explicit("COOP_EGRESS") {
+		c.Egress = b.Egress // validated filtered|none by project.Load; AdmitNetwork marks its resolved posture explicit
 	}
 	if b.AutoUp != nil && !cfg.Explicit("COOP_AUTO_UP") {
 		c.AutoUp = *b.AutoUp

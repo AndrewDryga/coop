@@ -500,9 +500,25 @@ func TestHelpSpellsTheNoNetworkModeOffline(t *testing.T) {
 			}
 		}
 	}
-	for _, example := range []string{"coop run --egress offline", "coop shell --egress offline", "filtered, open or offline"} {
+	for _, example := range []string{"coop run --egress offline", "coop shell --egress offline", "open or offline"} {
 		if !strings.Contains(surfaces["CLI manual"], example) {
 			t.Errorf("the CLI manual lost %q", example)
+		}
+	}
+}
+
+// A box nothing chose a mode for is filtered, inside a project or not, so the pages people read
+// before a run say so, and how to get unrestricted access back.
+func TestRunAndShellHelpStateTheFilteredDefault(t *testing.T) {
+	for name, page := range map[string]string{"run": runHelp, "shell": manualPage("shell")} {
+		for _, want := range []string{
+			"filtered  allow traffic permitted by approved network rules (default)",
+			"Without --egress, the box is filtered unless the project's network",
+			"coop " + name + " --egress open",
+		} {
+			if !strings.Contains(page, want) {
+				t.Errorf("coop help %s lost %q:\n%s", name, want, page)
+			}
 		}
 	}
 }

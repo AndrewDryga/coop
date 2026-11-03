@@ -26,7 +26,7 @@ func TestACPAutomaticStartup(t *testing.T) {
 		{name: "marked default account", providers: []string{"codex"}, account: "work", want: "codex@work"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+			cfg := openNetwork(&config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()})
 			for _, provider := range tc.providers {
 				account := "default"
 				if tc.account != "" {
@@ -81,7 +81,7 @@ func TestACPAutomaticStartupRequiresSignIn(t *testing.T) {
 }
 
 func TestACPAutomaticStartupPreservesExplicitTarget(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+	cfg := openNetwork(&config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()})
 	signInCred(t, cfg, "claude", "default")
 	signInCred(t, cfg, "codex", "work")
 	const want = "codex:chosen-model/high@work"

@@ -28,7 +28,7 @@ func (s *Store) legacyProjectKey(canonical string) string {
 
 // legacyApprovalPending refuses a project an older build approved and nobody approved since. The
 // box can delete the checkout's marker and the project's settings, never this record, so the
-// project's remembered posture cannot fall through to the open default.
+// project's remembered posture cannot fall through to the built-in default.
 func (s *Store) legacyApprovalPending(canonical string) *PendingApproval {
 	legacy := s.legacyProjectKey(canonical)
 	if legacy == "" {

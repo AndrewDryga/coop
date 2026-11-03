@@ -38,6 +38,10 @@ type Admission struct {
 // describe the project would hide the one fact the operator came for.
 type AdmissionPreview struct {
 	Mode egress.Mode
+	// Default is true when no input chose Mode — no flag, remembered approval,
+	// COOP_EGRESS, project mode or rule — so the built-in filtered default did.
+	// A launch tells the person so; it grants nothing.
+	Default bool
 	// Pending is non-nil when the request needs review before a launch. It is
 	// never a reason to widen anything: Admit fails on the same condition.
 	Pending *PendingApproval
@@ -185,20 +189,6 @@ func refuseOrphanedProjectMarker(project string) error {
 	return errors.New("this project has a network approval marker but Coop's private authority store is missing — recover or reset the network approval before launching")
 }
 
-// PreviewAdmissionMode is the launch caller's form: a pending request is a
-// failure there, because admission is about to happen. The error is the
-// *PendingApproval itself, so a caller can tell it from every other refusal.
-func PreviewAdmissionMode(path, project string, exposed []string, input Admission) (egress.Mode, error) {
-	preview, err := PreviewAdmission(path, project, exposed, input)
-	if err != nil {
-		return "", err
-	}
-	if preview.Pending != nil {
-		return "", preview.Pending
-	}
-	return preview.Mode, nil
-}
-
 // admissionPreview is preparation only: it lets the host resolve posture before
 // deriving any filtered dependency. Admit rereads approval and performs the
 // actual authorization once those dependencies exist.
@@ -242,7 +232,7 @@ func (a Admission) preview(approval *Approval, withdrawn bool) (AdmissionPreview
 	if pending == nil {
 		pending = withdrawalBarrier(withdrawn, mode)
 	}
-	return AdmissionPreview{Mode: mode, Pending: pending}, nil
+	return AdmissionPreview{Mode: mode, Default: a.defaulted(approval), Pending: pending}, nil
 }
 
 // Admit is the shared new-run authority boundary. A concurrent approval change
@@ -295,7 +285,7 @@ func (s *Store) authorized(project string, input Admission) (string, egress.Mode
 	}
 	// The withdrawal barrier is enforced HERE too, not only in the preview: a
 	// caller that admits without previewing must not be the one path that walks
-	// through a withdrawal back into the open default.
+	// through a withdrawal back into the built-in default.
 	withdrawn, err := s.withdrawn(id, canonical)
 	if err != nil {
 		return "", "", nil, err
@@ -334,21 +324,25 @@ func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {
 		}
 		remembered = &approval.Posture
 	}
-	mode := egress.Open
-	selected := false
+	// Nothing chose: the built-in default is filtered, so a box reaches its providers and what a
+	// human approved, inside a project or not. Rules need filtered, which the default already is.
+	mode := egress.Filtered
 	for _, value := range []*egress.Mode{a.InvocationMode, remembered, a.HostPreference, a.ProjectMode} {
 		if value != nil {
-			mode, selected = *value, true
+			mode = *value
 			break
 		}
-	}
-	if !selected && a.hasRules() {
-		mode = egress.Filtered
 	}
 	if mode != egress.Filtered && a.hasRules() {
 		return "", errors.New("egress rules only apply in filtered mode — run with --egress filtered, or drop the rules (network_policy_conflict)")
 	}
 	return mode, nil
+}
+
+// defaulted reports that resolveMode's built-in default decided: no input chose a mode, and no
+// rule asked for filtered either.
+func (a Admission) defaulted(approval *Approval) bool {
+	return a.InvocationMode == nil && approval == nil && a.HostPreference == nil && a.ProjectMode == nil && !a.hasRules()
 }
 
 func (a Admission) hasRules() bool {

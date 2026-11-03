@@ -45,7 +45,7 @@ func TestNoChangeCompletionKeepsFirstAttemptEvidence(t *testing.T) {
 				writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "next", "task.md"), "# Next\n- [x] Required checks passed\n")
 				writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "next", "state.md"), "# State — Next\n\n**Status:** in progress\n**Done so far:** verified\n**Next action:** complete\n**Traps:** none\n")
 			}
-			cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
+			cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
 			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
 			attempts := 0
 			c.boxRun = func(spec box.RunSpec) (int, error) {
@@ -229,7 +229,7 @@ func TestAnUnreadableCoopignoreStopsTheRunAtItsFirstLaunch(t *testing.T) {
 			if stage == "pre-flight" {
 				writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), "preflight:\n  enabled: true\n  prompt: tidy the queue\n")
 			}
-			cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
+			cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
 			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
 			refusal := box.UnreadableCoopignore{File: "src/.coopignore", Reason: "is a folder"}
 			attempts := 0

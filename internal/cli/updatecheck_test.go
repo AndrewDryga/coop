@@ -129,7 +129,7 @@ func TestCmdUpdateCheck(t *testing.T) {
 	defer stub(&Version, "2.9.0")()
 
 	repo := t.TempDir()
-	cfg := &config.Config{BoxHome: t.TempDir(), RepoOverride: repo, BaseImage: "coop-box"}
+	cfg := openNetwork(&config.Config{BoxHome: t.TempDir(), RepoOverride: repo, BaseImage: "coop-box"})
 	// Stamp the base image as built long ago by an older definition → age + skew lines.
 	box.StampImageMeta(cfg, "coop-box", "v2.0.0")
 	metaPath := filepath.Join(cfg.BoxHome, "image-meta", "coop-box")
@@ -182,7 +182,7 @@ func TestCmdUpdateCheckNamesAnUnbuiltImage(t *testing.T) {
 	ui.SetLiveSink(func(s string) { lines = append(lines, s) })
 	defer ui.SetLiveSink(nil)
 
-	a := &app{cfg: &config.Config{BoxHome: t.TempDir(), RepoOverride: t.TempDir(), BaseImage: "coop-box"}}
+	a := &app{cfg: openNetwork(&config.Config{BoxHome: t.TempDir(), RepoOverride: t.TempDir(), BaseImage: "coop-box"})}
 	code, err := a.cmdUpdateCheck()
 	if code != 0 || err != nil {
 		t.Fatalf("cmdUpdateCheck: code=%d err=%v", code, err)

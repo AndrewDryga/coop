@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/eval"
 	"github.com/AndrewDryga/coop/internal/loop"
 )
@@ -121,7 +122,10 @@ func (r *trialRunner) runLoopTrial(ctx context.Context, t eval.Trial, workspace 
 	// that matters most: `coop loop` resolves its repository from config, not from the working
 	// directory, so an operator who has COOP_REPO set would have the trial run the loop against
 	// THEIR OWN CHECKOUT with their credentials — real commits in a real repo — and then grade the
-	// untouched trial workspace. Every knob that could redirect the loop is set explicitly here.
+	// untouched trial workspace. Every knob that could redirect the loop is set explicitly here,
+	// the network included: the candidate network an agent trial gets, since the filtered default
+	// would refuse COOP_IMAGE.
+	network := egress.Mode(evalCandidateEgress(r.app.cfg)).Word()
 	cmd.Env = append(os.Environ(),
 		"COOP_REPO="+workspace, // the trial's repository, never the operator's
 		"COOP_TASKS=",          // the queue we materialized, not a configured one
@@ -132,6 +136,7 @@ func (r *trialRunner) runLoopTrial(ctx context.Context, t eval.Trial, workspace 
 		"COOP_NO_UPDATE_CHECK=1",
 		"COOP_EVAL_DISABLE_WEB_TOOLS=1",
 		"COOP_EVAL_LOOP_STARTED_FILE="+started,
+		"COOP_EGRESS="+network,
 	)
 
 	if err := ctx.Err(); err != nil {
