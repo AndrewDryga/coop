@@ -33,6 +33,12 @@ the revision and ends it; `coop credentials … rm` deletes it. A refusal is lea
 something renews (a launch, a warm box, `coop usage`), so a login that died since its last use still
 lists as healthy until then: `coop credentials` never asks a provider.
 
+A held lock is not a broken sign-in. A readiness read waits one second for the account's lock, and
+a renewal asking its provider (or a sign-in or removal) can hold it longer. `nativeAccountReady` then
+reads the account as ready (`accountBusy`: the lock wait gave up, nothing else did), so every
+command calls it signed in; a launch waits for the lock and judges what that process left. A damaged
+or refused record still reads `Sign in again` once it can be read.
+
 The provider adapter owns this distinction through `StoredCredentialStatus`. Claude, Codex, and
 Grok validate their native OAuth records; Gemini retains opaque presence behavior. Env-only
 credentials also remain presence-based because there is no native marker to inspect. Runnable
@@ -49,6 +55,9 @@ A healthy row's `refreshed <age>` reads the marker mtime through `box.ProfileTok
 behind provider expiries.
 
 ## Changelog
+- 2026-11-03 — a listing taken while a renewal held an account's lock showed `Sign in again` for a
+  healthy account; a busy lock now reads as signed in, and `ProfileTokenMtime` dates the record
+  without waiting 30 seconds for that lock.
 - 2026-11-03 — one expired Grok login read four ways (healthy in the listing, three different
   sign-in sentences in models, usage and an ACP warm box). Added the refusal record and
   `box.ProfileSignIn`/`agents.SignIn` (replacing `profileIssue`, `signInLabel`, `signInToRefresh`);

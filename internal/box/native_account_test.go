@@ -14,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
+	"golang.org/x/sys/unix"
 )
 
 func TestNativeAccountSignInRenewalReadinessAndRemoval(t *testing.T) {
@@ -123,6 +124,46 @@ func TestRefusedGrantNeedsANewSignInUntilOneIsMade(t *testing.T) {
 	}
 	if got := ProfileSignIn(cfg, "grok", "ghost", time.Now()); got != agents.NotSignedIn {
 		t.Fatalf("an account with nothing saved reads as %v, want NotSignedIn", got)
+	}
+}
+
+// holdAccountLock takes an account's custody lock the way another Coop process does while it renews,
+// signs in or removes the account, until the returned release runs.
+func holdAccountLock(t *testing.T, cfg *config.Config, provider, account string) (release func()) {
+	t.Helper()
+	lock, err := os.OpenFile(filepath.Join(cfg.ConfigDir, provider, "credentials", account, ".authority.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	return func() { _ = lock.Close() }
+}
+
+// Another process holding an account's lock past a status check's wait, as a renewal does while its
+// provider answers, says nothing against the sign-in: every readiness answer reads it as signed in,
+// never "Sign in again", and its age still shows. A damaged record still needs a new sign-in.
+func TestAccountAnotherProcessHoldsReadsAsSignedIn(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	seedCanonicalFixture(t, cfg, "grok", "default")
+	release := holdAccountLock(t, cfg, "grok", "default")
+	if got := ProfileSignIn(cfg, "grok", "default", time.Now()); got != agents.SignedIn {
+		t.Fatalf("an account another process holds reads as %v, want SignedIn", got)
+	}
+	if !ProfileAuthed(cfg, "grok", "default") || !ProfileMarkerPresent(cfg, "grok", "default") {
+		t.Fatal("an account another process holds reads as signed out")
+	}
+	if _, ok := ProfileTokenMtime(cfg, "grok", "default"); !ok {
+		t.Fatal("an account another process holds lost its age")
+	}
+	release()
+
+	if err := os.WriteFile(filepath.Join(cfg.ConfigDir, "grok", "credentials", "default", "authority.json"), []byte("{damaged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ProfileSignIn(cfg, "grok", "default", time.Now()); got != agents.SignInAgain {
+		t.Fatalf("a damaged account reads as %v, want SignInAgain", got)
 	}
 }
 

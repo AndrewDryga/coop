@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -495,6 +496,29 @@ func TestSignInStateReadsTheSameInEveryCommand(t *testing.T) {
 	}
 	if a.rtSet {
 		t.Error("a sign-in check initialized the container runtime")
+	}
+}
+
+// A renewal holds an account's lock while its provider answers. A listing taken meanwhile cannot read
+// the account, which says nothing against it: the row reads as signed in with its age, never "Sign in
+// again", and the listing does not wait the renewal out.
+func TestCredentialsListingDuringARenewalShowsTheAccountSignedIn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("NO_COLOR", "1")
+	cfg := freshConfig(t)
+	cfg.RuntimeName = "must-not-run"
+	seedNativeFixture(t, cfg, "grok", "default")
+	lock, err := os.OpenFile(filepath.Join(cfg.ConfigDir, "grok", "credentials", "default", ".authority.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	listing := captureStdout(t, func() { _, _ = (&app{cfg: cfg}).cmdCredentials([]string{"grok"}) })
+	if strings.Contains(listing, "Sign in") || !strings.Contains(listing, "  default   refreshed ") {
+		t.Errorf("credentials during a renewal:\n%s", listing)
 	}
 }
 

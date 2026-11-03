@@ -118,6 +118,12 @@ func nativeAccountReady(cfg *config.Config, ag agents.Agent, account string, now
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	record, exists, err := readNativeAccount(ctx, cfg, ag, account)
+	if exists && accountBusy(err) {
+		// Another process held the account longer than a status check waits: a renewal asking its
+		// provider, a sign-in or a removal. That says nothing against the sign-in, so it reads as
+		// ready; a launch waits for the lock and judges what that process left.
+		return true, true
+	}
 	// A grant the provider refused still inspects as renewable, so its refusal is checked first.
 	if !exists || err != nil || record.Revoked ||
 		refusedIn(filepath.Join(cfg.NativeAuthorityConfig().ConfigDir, ag.Name(), "credentials", account), record) {
@@ -125,6 +131,12 @@ func nativeAccountReady(cfg *config.Config, ag agents.Agent, account string, now
 	}
 	state, err := ag.NativeCredentials().Inspect(record.Artifacts, now)
 	return err == nil && state.Ready, true
+}
+
+// accountBusy reports a read that found the account's lock held by another process for as long as
+// the reader would wait. Only the lock wait gives up this way; a damaged or unsafe record does not.
+func accountBusy(err error) bool {
+	return errors.Is(err, errAccountAuthorityBusy) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // ImportNativeSignIn publishes only declared credential artifacts from a

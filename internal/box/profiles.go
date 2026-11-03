@@ -99,7 +99,8 @@ func ProfileCredentialReady(cfg *config.Config, agent, profile string, now time.
 // is the one answer coop credentials, the model menu, coop usage and a launch all give. A saved
 // sign-in that cannot run needs a new one: a native record that is damaged, can no longer renew,
 // or whose grant the provider refused at its last renewal, and a marker its adapter says needs
-// another login. An account with nothing saved needs its first.
+// another login. An account with nothing saved needs its first. One whose lock another process
+// holds, as a renewal does while its provider answers, reads as signed in (nativeAccountReady).
 func ProfileSignIn(cfg *config.Config, agent, profile string, now time.Time) agents.SignIn {
 	if ProfileCredentialReady(cfg, agent, profile, now) {
 		return agents.SignedIn
@@ -203,8 +204,12 @@ func ProfileTokenMtime(cfg *config.Config, agent, profile string) (time.Time, bo
 	if !ok {
 		return time.Time{}, false
 	}
-	if _, exists, err := readNativeAccount(context.Background(), cfg, ag, profile); exists {
-		if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, exists, err := readNativeAccount(ctx, cfg, ag, profile); exists {
+		// A record another process holds, as a renewal does while its provider answers, is still
+		// dated by its file, which publication replaces whole: a listing need not wait it out.
+		if err != nil && !accountBusy(err) {
 			return time.Time{}, false
 		}
 		info, err := os.Lstat(filepath.Join(cfg.NativeAuthorityConfig().ConfigDir, agent, "credentials", profile, "authority.json"))
