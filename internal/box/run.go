@@ -136,6 +136,7 @@ type RunSpec struct {
 	Login bool
 
 	ForceNoTTY      bool               // ACP: attach stdin (-i) but never allocate a tty
+	ForwardStdin    bool               // coop run/shell: attach a piped or redirected stdin (-i) for the command to read
 	Serve           bool               // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
 	servePorts      []int              // validated project policy carried into argument assembly by Run
 	servePlan       []servePublication // each serve port's outcome, decided once by Run for the note and the publish args
@@ -304,10 +305,35 @@ type companionRepositoryEnvironment struct {
 type ttyMode int
 
 const (
-	ttyNone        ttyMode = iota // no -i/-t; stdin not attached (batch, piped)
+	ttyNone        ttyMode = iota // no -i/-t; stdin not attached (batch, agent sessions, /dev/null)
 	ttyInteractive                // -it; an interactive terminal
-	ttyStdinOnly                  // -i; stdin attached without a tty (ACP)
+	ttyStdinOnly                  // -i; stdin attached without a tty (ACP, input piped into coop run/shell)
 )
+
+// stdinKind is what the launching process was handed as stdin.
+type stdinKind int
+
+const (
+	stdinEmpty    stdinKind = iota // /dev/null or a closed descriptor: nothing to read
+	stdinTerminal                  // an interactive terminal
+	stdinInput                     // anything else: a pipe, a redirected file, a socket
+)
+
+// classifyStdin reports what f carries. /dev/null counts as empty, so a script or harness that
+// gives coop no input keeps the plain runtime argv instead of attaching a stream nobody writes.
+func classifyStdin(f *os.File) stdinKind {
+	if ui.IsTerminal(f) {
+		return stdinTerminal
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return stdinEmpty
+	}
+	if null, err := os.Stat(os.DevNull); err == nil && os.SameFile(info, null) {
+		return stdinEmpty
+	}
+	return stdinInput
+}
 
 // extraMount is a generated host file mounted read-only at a box path.
 type extraMount struct{ host, box string }
@@ -1096,7 +1122,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	defer os.RemoveAll(decoyDir)
 
-	mode := decideTTY(spec, ui.IsTerminal(os.Stdin))
+	mode := decideTTY(spec, classifyStdin(os.Stdin))
 	var stdin io.Reader
 	if mode == ttyInteractive || mode == ttyStdinOnly {
 		stdin = os.Stdin
@@ -2944,17 +2970,19 @@ func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, pee
 	return consult.LeadInstructions(base, peers), file, len(peers) > 0, true, nil
 }
 
-// decideTTY chooses the stdin/tty wiring. Stdin is attached only for an
-// interactive terminal (-it) or ACP (-i); batch and piped runs get neither,
-// matching the original tool's behavior.
-func decideTTY(spec RunSpec, stdinIsTTY bool) ttyMode {
+// decideTTY chooses the stdin/tty wiring. A terminal gets -it and ACP gets -i. Input piped or
+// redirected into a raw command (coop run/shell) gets -i too, so the command reads it as it would
+// on the host. Batch runs and agent sessions never read stdin.
+func decideTTY(spec RunSpec, stdin stdinKind) ttyMode {
 	switch {
 	case spec.ForceNoTTY:
 		return ttyStdinOnly
 	case spec.Batch:
 		return ttyNone
-	case stdinIsTTY:
+	case stdin == stdinTerminal:
 		return ttyInteractive
+	case stdin == stdinInput && spec.ForwardStdin:
+		return ttyStdinOnly
 	default:
 		return ttyNone
 	}

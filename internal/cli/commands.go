@@ -90,7 +90,7 @@ func (a *app) requireLaunchImage(img string) error {
 // being driven so its credentials are mounted and, with named peers,
 // it gets the second-opinion directive plus exactly those peers' credentials. Pass
 // "" for raw commands (coop run/shell) that aren't an agent session — they mount no
-// agent credentials.
+// agent credentials, and read a piped or redirected stdin as they would on the host.
 func (a *app) runInBox(cmd []string, agent string, peers []agents.Target) (int, error) {
 	return a.runInBoxMode(cmd, agent, peers, false)
 }
@@ -195,6 +195,7 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, ConsultLead: lead, Peers: peers, Preset: a.preset,
 		ActivityRepo: activityRepo, ActivityKind: forkspace.ExecutionInteractive,
 		AgentCommand: agent != "",
+		ForwardStdin: agent == "", // an agent session never reads piped input
 		Homes:        a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
 		CompanionRepositories: companionRepositories,
 		StartingNotice:        a.loginStartingNotice(agent),

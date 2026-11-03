@@ -2086,3 +2086,113 @@ func TestCmdRunDelimiterForwardsLeadingOptions(t *testing.T) {
 		t.Fatalf("unknown option: %d %v", code, err)
 	}
 }
+
+// coop run and coop shell hand piped or redirected input to the command, which reads it as it would
+// on the host: the box gets -i without a tty. /dev/null attaches nothing, and an agent session
+// never reads stdin.
+func TestRawCommandsReadPipedStdin(t *testing.T) {
+	run := func(a *app) (int, error) { return a.cmdRun([]string{"--", "wc", "-l"}) }
+	for _, tc := range []struct {
+		name   string
+		stdin  func(t *testing.T) *os.File
+		launch func(a *app) (int, error)
+		input  string // what the runtime client must receive; "" means stdin stays detached
+	}{
+		{"run from a pipe", pipedStdin("a\nb\n"), run, "a\nb\n"},
+		{"run from a file", fileStdin("a\nb\n"), run, "a\nb\n"},
+		{"run from dev null", nullStdin, run, ""},
+		{"shell from a pipe", pipedStdin("echo hi; exit 7\n"), func(a *app) (int, error) { return a.dispatch([]string{"shell"}) }, "echo hi; exit 7\n"},
+		{"agent session", pipedStdin("a\nb\n"), func(a *app) (int, error) { return a.runInBox([]string{"claude"}, "claude", nil) }, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stdin := tc.stdin(t)
+			saved := os.Stdin
+			os.Stdin = stdin
+			t.Cleanup(func() { os.Stdin = saved })
+			dir := t.TempDir()
+			calls, input := filepath.Join(dir, "calls"), filepath.Join(dir, "input")
+			shim := filepath.Join(dir, "runtime")
+			script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(calls) + "\n" +
+				"if [ \"$1\" = run ]; then cat > " + strconv.Quote(input) + "; fi\n"
+			if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(),
+				BaseImage: "test-base", ImageOverride: "test-image", Egress: "none", Shell: "bash"}
+			a := &app{cfg: cfg, rt: runtime.Runtime{Name: shim}, rtSet: true}
+			var code int
+			var err error
+			out := captureStderr(t, func() { code, err = tc.launch(a) })
+			if code != 0 || err != nil {
+				t.Fatalf("launch = (%d, %v)\n%s", code, err, out)
+			}
+			raw, err := os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var argv []string
+			for _, line := range strings.Split(string(raw), "\n") {
+				if strings.HasPrefix(line, "run ") {
+					if argv != nil {
+						t.Fatalf("more than one box run:\n%s", raw)
+					}
+					argv = strings.Fields(line)
+				}
+			}
+			got, err := os.ReadFile(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if attached := slices.Contains(argv, "-i"); attached != (tc.input != "") || slices.Contains(argv, "-it") {
+				t.Errorf("box stdin wiring: -i %v, want %v; argv %q", attached, tc.input != "", argv)
+			}
+			if string(got) != tc.input {
+				t.Errorf("runtime client read %q, want %q", got, tc.input)
+			}
+		})
+	}
+}
+
+// pipedStdin is a pipe that already holds data and is closed for writing, as `printf … |` hands it over.
+func pipedStdin(data string) func(t *testing.T) *os.File {
+	return func(t *testing.T) *os.File {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { r.Close() })
+		if _, err := w.WriteString(data); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+}
+
+// fileStdin is a regular file opened for reading, as `< file` hands it over.
+func fileStdin(data string) func(t *testing.T) *os.File {
+	return func(t *testing.T) *os.File {
+		path := filepath.Join(t.TempDir(), "input")
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { f.Close() })
+		return f
+	}
+}
+
+// nullStdin is /dev/null, as a script or test harness hands over no input.
+func nullStdin(t *testing.T) *os.File {
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	return f
+}

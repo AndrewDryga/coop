@@ -6,6 +6,9 @@ leaves your home folder and SSH keys unmounted. For an overview, see
 secrets](https://coop.dryga.com/docs.html#secrets) and [toolchain and
 services](https://coop.dryga.com/docs.html#toolchain).
 
+`coop run` and `coop shell` pass piped or redirected input to the command, just as on your host:
+`printf 'a\nb\n' | coop run -- wc -l` prints 2.
+
 ## Hiding secrets
 
 co:op hides files and directories whose names look like secrets, including `.env`, `*.tfvars`,

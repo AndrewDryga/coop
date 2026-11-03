@@ -29,19 +29,72 @@ import (
 
 func TestDecideTTY(t *testing.T) {
 	cases := []struct {
-		spec     RunSpec
-		stdinTTY bool
-		want     ttyMode
+		spec  RunSpec
+		stdin stdinKind
+		want  ttyMode
 	}{
-		{RunSpec{ForceNoTTY: true}, true, ttyStdinOnly},               // ACP wins even on a tty
-		{RunSpec{Batch: true}, true, ttyNone},                         // batch never gets a tty
-		{RunSpec{}, true, ttyInteractive},                             // interactive terminal
-		{RunSpec{}, false, ttyNone},                                   // piped/non-tty
-		{RunSpec{ForceNoTTY: true, Batch: true}, false, ttyStdinOnly}, // ACP precedence
+		{RunSpec{ForceNoTTY: true}, stdinTerminal, ttyStdinOnly},           // ACP wins even on a tty
+		{RunSpec{Batch: true}, stdinTerminal, ttyNone},                     // batch never gets a tty
+		{RunSpec{}, stdinTerminal, ttyInteractive},                         // interactive terminal
+		{RunSpec{}, stdinInput, ttyNone},                                   // an agent session ignores piped input
+		{RunSpec{ForceNoTTY: true, Batch: true}, stdinEmpty, ttyStdinOnly}, // ACP precedence
+		{RunSpec{ForwardStdin: true}, stdinInput, ttyStdinOnly},            // coop run/shell read piped input
+		{RunSpec{ForwardStdin: true}, stdinTerminal, ttyInteractive},       // ...and stay interactive on a tty
+		{RunSpec{ForwardStdin: true}, stdinEmpty, ttyNone},                 // /dev/null attaches nothing
+		{RunSpec{ForwardStdin: true, Batch: true}, stdinInput, ttyNone},    // batch never reads stdin
 	}
 	for i, c := range cases {
-		if got := decideTTY(c.spec, c.stdinTTY); got != c.want {
+		if got := decideTTY(c.spec, c.stdin); got != c.want {
 			t.Errorf("case %d: decideTTY = %d, want %d", i, got, c.want)
+		}
+	}
+}
+
+// A pipe, a redirected file and a socket are input for the command; /dev/null and a descriptor
+// that is not open are not, so they keep the plain argv and never hold a stream open.
+func TestClassifyStdin(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	file, err := os.Create(filepath.Join(t.TempDir(), "input"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer null.Close()
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket, peer := os.NewFile(uintptr(fds[0]), "socket"), os.NewFile(uintptr(fds[1]), "peer")
+	defer socket.Close()
+	defer peer.Close()
+	closed, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed.Close()
+	for _, c := range []struct {
+		name string
+		f    *os.File
+		want stdinKind
+	}{
+		{"pipe", r, stdinInput},
+		{"file", file, stdinInput},
+		{"socket", socket, stdinInput},
+		{"dev null", null, stdinEmpty},
+		{"closed", closed, stdinEmpty},
+		{"nil", nil, stdinEmpty},
+	} {
+		if got := classifyStdin(c.f); got != c.want {
+			t.Errorf("%s: classifyStdin = %d, want %d", c.name, got, c.want)
 		}
 	}
 }
@@ -1226,6 +1279,16 @@ func TestAssembleArgsInteractiveTTY(t *testing.T) {
 	}
 	if !containsSeq(got, []string{"-e", "TERM"}) {
 		t.Errorf("interactive run should propagate TERM for color: %v", got)
+	}
+}
+
+// Piped input attaches stdin without a tty: a tty would mangle the bytes and refuse a non-terminal.
+func TestAssembleArgsStdinOnly(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+	got := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r", Cmd: []string{"wc", "-l"}}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, nil, nil, nil, nil, "", "")
+	if !slices.Contains(got, "-i") || slices.Contains(got, "-it") || slices.Contains(got, "-t") || slices.Contains(got, "TERM") {
+		t.Errorf("stdin-only run should pass -i alone: %v", got)
 	}
 }
 
