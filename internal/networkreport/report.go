@@ -636,6 +636,8 @@ func refusalReasonText(reason string) string {
 		return "encrypted ClientHello is not supported"
 	case "tls_name_missing", "tls_name_invalid":
 		return "the connection carried no usable name"
+	case "dns_type_unsupported":
+		return "a lookup for something other than an address"
 	case "tls_direct_dial_refused":
 		return "dialed straight at the gateway"
 	case "upstream_unreachable", "upstream_connection_failed":
@@ -688,7 +690,8 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 	// "Traffic" is the subject, so the verb never changes with the count.
 	out := &warning{headline: "Traffic to " + ui.Count(len(destinations), "remote address", "remote addresses") + " was blocked"}
 	if len(groups) == 0 {
-		out.headline = Plural(packets, "raw packet") + " " + was(int(min(packets, 2))) + " blocked with no remote address recorded"
+		out.headline = unrecordedPackets(packets, "packet")
+		out.rows = append(out.rows, "Coop only counts such packets. If a program failed because of this, check its own error for the address it wanted.")
 	}
 	for _, group := range groups {
 		out.rows = append(out.rows, times(group.Label, group.Count))
@@ -700,7 +703,7 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 		// is a total: calling it packets with no address recorded would contradict the row above.
 		out.rows = append(out.rows, Plural(packets, "packet")+" "+was(int(min(packets, 2)))+" dropped in all, direct connections included")
 	default:
-		out.rows = append(out.rows, Plural(packets, "raw packet")+" "+was(int(min(packets, 2)))+" blocked with no remote address recorded")
+		out.rows = append(out.rows, unrecordedPackets(packets, "other packet"))
 	}
 	// The action names the thing a human recognizes. Approval guidance is
 	// offered only when the evidence itself proves a rule that would have
@@ -721,6 +724,16 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 		out.footer = append(out.footer, p.Dim("To allow it: add the rule shown by `coop net blocked`, then run `coop approve` on the host"))
 	}
 	return out
+}
+
+// unrecordedPackets says what a run's packet tally means: the filter drops these without recording
+// where they were going, so no report can say more about them.
+func unrecordedPackets(packets uint64, noun string) string {
+	where := "where they were going"
+	if packets == 1 {
+		where = "where it was going"
+	}
+	return Plural(packets, noun) + " " + was(int(min(packets, 2))) + " blocked, and Coop did not record " + where
 }
 
 // gatewayRefusalWarning is the local half of blockedWarning: what a client in the

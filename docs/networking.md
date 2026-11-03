@@ -486,12 +486,12 @@ and the configured MCP servers, then `✓ Everything else blocked` and `Starting
   appear under `Raw traffic` in `coop net inspect`, each row named by its rule, such as
   `10.42.8.0/24:5432 · TCP`, and as `address_grants` in `--json`. Individual hosts within a CIDR
   are not recorded or shown.
-- For blocked raw packets, the filter counts how many it drops without recording their
+- For other blocked packets, the filter counts how many it drops without recording their
   destinations. The report therefore shows a count
-  (`N raw packets were blocked with no remote address recorded`). There is no destination
-  record for `coop net blocked` to open. When the report also lists a direct connection, whose
-  packets are part of that count, it reads `N packets were dropped in all, direct connections
-  included`.
+  (`N packets were blocked, and Coop did not record where they were going`). There is no
+  destination record for `coop net blocked` to open, so check the program's own error for the
+  address it wanted. When the report also lists a direct connection, whose packets are part of
+  that count, it reads `N packets were dropped in all, direct connections included`.
 - An unmeasured metric appears as UNKNOWN, never zero. A total is also UNKNOWN if any part of
   it was not measured.
 - Only traffic co:op can identify as coming from the workload appears as `Allowed`. co:op's

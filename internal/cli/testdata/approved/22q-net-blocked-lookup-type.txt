@@ -1,0 +1,4 @@
+example.com was blocked
+  Run cb375d22 · today at 16:03
+
+This lookup asked for something other than an address. Filtered networking answers only address lookups, so a rule cannot allow it.

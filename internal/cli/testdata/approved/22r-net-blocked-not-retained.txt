@@ -1,0 +1,6 @@
+
+✗ Network run e644f07a has no record of that refusal
+
+      A run keeps only its newest refusals, so this one may be too old, or the ID may be from another run.
+
+  What it kept: coop net inspect e644f07a

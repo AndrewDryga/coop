@@ -721,7 +721,7 @@ func netRunOutcome(inspection networkstate.Inspection) string {
 		return allowed + " · " + strconv.Itoa(blocked) + " blocked"
 	}
 	if counters := observed.Counters; counters != nil && counters.DeniedPackets != nil && *counters.DeniedPackets != 0 {
-		return allowed + " · " + networkreport.Plural(uint64(*counters.DeniedPackets), "raw packet") + " blocked"
+		return allowed + " · " + networkreport.Plural(uint64(*counters.DeniedPackets), "packet") + " blocked"
 	}
 	if gateway != 0 {
 		// Nowhere to go and nothing to allow: say what it was, not "blocked".

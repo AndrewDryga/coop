@@ -649,11 +649,12 @@ finds it. An address that two looked-up names share stays an address.</li>
 appear under <code>Raw traffic</code> in <code>coop net inspect</code>, each row named by its rule, such as
 <code>10.42.8.0/24:5432 · TCP</code>, and as <code>address_grants</code> in <code>--json</code>. Individual hosts within a CIDR
 are not recorded or shown.</li>
-<li>For blocked raw packets, the filter counts how many it drops without recording their
+<li>For other blocked packets, the filter counts how many it drops without recording their
 destinations. The report therefore shows a count
-(<code>N raw packets were blocked with no remote address recorded</code>). There is no destination
-record for <code>coop net blocked</code> to open. When the report also lists a direct connection, whose
-packets are part of that count, it reads <code>N packets were dropped in all, direct connections included</code>.</li>
+(<code>N packets were blocked, and Coop did not record where they were going</code>). There is no
+destination record for <code>coop net blocked</code> to open, so check the program&#39;s own error for the
+address it wanted. When the report also lists a direct connection, whose packets are part of
+that count, it reads <code>N packets were dropped in all, direct connections included</code>.</li>
 <li>An unmeasured metric appears as UNKNOWN, never zero. A total is also UNKNOWN if any part of
 it was not measured.</li>
 <li>Only traffic co:op can identify as coming from the workload appears as <code>Allowed</code>. co:op&#39;s

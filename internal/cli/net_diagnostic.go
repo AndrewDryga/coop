@@ -539,6 +539,15 @@ type netExplainCause struct {
 	Explanation networkstate.EventExplanation `json:"explanation"`
 }
 
+// netEventNotRetained is a refusal ID its run does not have. A run keeps only its newest refusals, so
+// absence does not say whether this one aged out or never happened there, and the block says both.
+func netEventNotRetained(runID string) error {
+	short := networkreport.ShortID(runID)
+	return ui.CommandFailed("Network run "+short+" has no record of that refusal",
+		"A run keeps only its newest refusals, so this one may be too old, or the ID may be from another run.",
+		[2]string{"What it kept:", "coop net inspect " + short})
+}
+
 func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.ExecutionPage, opts netDiagnosticOptions) (int, error) {
 	p := ui.For(os.Stdout)
 	if netEvidenceID(opts.query) {
@@ -549,7 +558,7 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 		result, err := evidence.Explain(runID, opts.query, true)
 		if err != nil {
 			if errors.Is(err, networkstate.ErrEventNotRetained) {
-				return 1, err // the message already names the run and the way to list what is kept
+				return 1, netEventNotRetained(runID)
 			}
 			return 1, netRunErr(runID, err)
 		}
@@ -795,8 +804,10 @@ func netBlockedVerb(reason string) string {
 	case "tls_ech_unsupported", "tls_malformed", "tls_hello_too_large", "tls_inspection_timeout",
 		"tls_inspection_unavailable", "upstream_unreachable", "unsupported_capability",
 		"gateway_connection_capacity", "gateway_lease_capacity", "gateway_lease_refused", "gateway_unavailable",
-		"enforcement_unavailable", "clock_unavailable", "dns_unavailable", "dns_no_address",
-		"dns_ttl_expired", "dns_capacity_exceeded", "dns_upstream_invalid":
+		"enforcement_unavailable", "clock_unavailable", "clock_deadline_invalid", "dns_unavailable", "dns_no_address",
+		"dns_ttl_expired", "dns_capacity_exceeded", "dns_upstream_invalid",
+		"gateway_admission_invalid", "gateway_destination_unknown",
+		"controller_message_invalid", "controller_socket_unavailable", "controller_stopped":
 		return "could not be reached"
 	}
 	return "was blocked"
@@ -867,7 +878,7 @@ func netNoDraftReason(event networkview.Denial) string {
 		return ""
 	}
 	switch event.Reason {
-	case "protected_destination", "unsafe_dns_answer", "tls_name_missing", "tls_name_invalid":
+	case "protected_destination", "unsafe_dns_answer", "tls_name_missing", "tls_name_invalid", "dns_type_unsupported":
 		return ""
 	}
 	return "The record has no connection type or port to use in a rule."

@@ -482,6 +482,57 @@ func TestOriginTextNamesWhereAGrantCameFrom(t *testing.T) {
 	}
 }
 
+// A lookup for anything but an address is refused whatever the rules say. Its explanation said only
+// that this Coop could not explain the code, and it drew a remark about a rule nobody could write.
+func TestBlockedExplainsALookupNoRuleCanAllow(t *testing.T) {
+	store := netHostFixture(t)
+	project := netFixtureProject(t)
+	netSealRun(t, store, netRecordRun(t, store, project),
+		netDenial("e1", 1, "dns_denied", "dns_type_unsupported", "example.com", time.Date(2026, 9, 10, 16, 3, 0, 0, time.UTC)))
+	a := &app{cfg: &config.Config{RepoOverride: project}}
+	got := captureStdout(t, func() {
+		if code, err := a.netDiagnostic("blocked", []string{"example.com"}); code != 0 || err != nil {
+			t.Fatalf("coop net blocked example.com = (%d, %v)", code, err)
+		}
+	})
+	if want := "\nThis lookup asked for something other than an address. Filtered networking answers only address lookups, so a rule cannot allow it.\n"; !strings.Contains(got, want) {
+		t.Errorf("missing %q in:\n%s", want, got)
+	}
+	for _, unwanted := range []string{"cannot explain", "dns_type_unsupported", "no connection type"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("printed %q in:\n%s", unwanted, got)
+		}
+	}
+}
+
+// A refusal ID its run does not have fails as a command: it says what happened in words and names
+// the one command that lists what the run kept. The machine code stays out of the person's view.
+func TestBlockedByAnIDTheRunDoesNotHaveSaysSoInWords(t *testing.T) {
+	store := netHostFixture(t)
+	project := netFixtureProject(t)
+	record := netSealRun(t, store, netRecordRun(t, store, project),
+		netDenial("e1", 1, "dns_denied", "unapproved_name", "example.com", time.Date(2026, 9, 10, 16, 3, 0, 0, time.UTC)))
+	a := &app{cfg: &config.Config{RepoOverride: project}}
+	code, err := a.netDiagnostic("blocked", []string{strings.Repeat("ab", 16), "--run", record.ID})
+	if code != 1 || err == nil {
+		t.Fatalf("coop net blocked <unknown id> = (%d, %v)", code, err)
+	}
+	usage := asUsage(err)
+	if usage == nil {
+		t.Fatalf("the refusal is not the shared block: %#v", err)
+	}
+	got := usage.Render(ui.Palette{})
+	for _, want := range []string{"✗ Network run " + networkreport.ShortID(record.ID) + " has no record of that refusal\n",
+		"coop net inspect " + networkreport.ShortID(record.ID) + "\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "event_not_retained") {
+		t.Errorf("the machine code reached a person:\n%s", got)
+	}
+}
+
 func TestDiagnosticRejectsExplicitEmptyOptions(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: "/nonexistent-quality-test-repository", ConfigDir: t.TempDir()}}
 	for _, verb := range []string{"check", "blocked"} {

@@ -453,8 +453,26 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 	// Refused raw packets alone are still the boundary being hit.
 	inspection.Observed.Denials = nil
 	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
-	if !strings.Contains(got, "\n⚠ 3 raw packets were blocked with no remote address recorded\n") || strings.Contains(got, "coop net blocked") {
-		t.Errorf("raw-only refusals:\n%s", got)
+	if !strings.Contains(got, "\n⚠ 3 packets were blocked, and Coop did not record where they were going\n"+
+		"  Coop only counts such packets. If a program failed because of this, check its own error for the address it wanted.\n") || strings.Contains(got, "coop net blocked") {
+		t.Errorf("packet-only refusals:\n%s", got)
+	}
+	inspection.Observed.Counters.DeniedPackets = networkview.Value(1)
+	if got = renderNetRun(networkreport.View{ID: netTestRun}, inspection); !strings.Contains(got, "\n⚠ 1 packet was blocked, and Coop did not record where it was going\n") {
+		t.Errorf("one packet:\n%s", got)
+	}
+	// Beside a listed remote address the count is a row of its own, and says these are other packets.
+	inspection.Observed.Counters.DeniedPackets = networkview.Value(3)
+	inspection.Observed.Denials = []networkview.Denial{{ID: "d1", Source: "guard", Kind: "dns_denied", Reason: "dns_type_unsupported", Name: "example.com"}}
+	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
+	for _, want := range []string{"⚠ Traffic to 1 remote address was blocked\n", "  example.com · DNS — a lookup for something other than an address\n",
+		"  3 other packets were blocked, and Coop did not record where they were going\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "raw packet") || strings.Contains(got, "dns_type_unsupported") {
+		t.Errorf("the report kept internal wording:\n%s", got)
 	}
 }
 
@@ -515,7 +533,7 @@ func TestInspectSeparatesRefusalsAtCoopsOwnListeners(t *testing.T) {
 		t.Errorf("refusals at Coop's own listeners read as blocked traffic:\n%s", got)
 	}
 	for _, want := range []string{
-		"⚠ 2 raw packets were blocked with no remote address recorded\n",
+		"⚠ 2 packets were blocked, and Coop did not record where they were going\n",
 		"⚠ Coop's own gateway refused 5 requests from inside the box\n",
 	} {
 		if !strings.Contains(got, want) {
@@ -1394,7 +1412,7 @@ func TestRunOutcomeSaysWhatHappenedInWords(t *testing.T) {
 	}
 	raw := observed(0, 0)
 	raw.Observed.Counters.DeniedPackets = networkview.Value(5)
-	if got := netRunOutcome(raw); got != "no external connections · 5 raw packets blocked" {
+	if got := netRunOutcome(raw); got != "no external connections · 5 packets blocked" {
 		t.Errorf("raw-only outcome = %q", got)
 	}
 }

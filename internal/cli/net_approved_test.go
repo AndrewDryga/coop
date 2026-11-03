@@ -321,6 +321,8 @@ func TestApprovedNetBlocked(t *testing.T) {
 			Causes: []netExplainCause{netBlockedFixture("example.com", "tls_denied", "upstream_unreachable", &p443, 1, nil)}},
 		"22o-net-blocked-observation": {RunID: netTestRunTwo, Host: "example.com",
 			Causes: []netExplainCause{netBlockedFixture("example.com", "tls_denied", "observation_unavailable", &p443, 1, nil)}},
+		"22q-net-blocked-lookup-type": {RunID: netTestRunTwo, Host: "example.com",
+			Causes: []netExplainCause{netBlockedFixture("example.com", "dns_denied", "dns_type_unsupported", nil, 1, nil)}},
 		"22p-net-blocked-mixed": {RunID: netTestRunTwo, Host: "registry.example.com", Causes: []netExplainCause{
 			netBlockedFixture("registry.example.com", "dns_denied", "unapproved_name", nil, 2, nil),
 			netBlockedFixture("registry.example.com", "tls_denied", "unapproved_name", &p443, 1, candidate)}},
@@ -336,6 +338,9 @@ func TestApprovedNetBlocked(t *testing.T) {
 		var b bytes.Buffer
 		writeNetNoBlock(&b, ui.Palette{}, "example.com", "in this project's runs", true)
 		assertApprovedOutput(t, "22j-net-blocked-none", b.String())
+	})
+	t.Run("22r-net-blocked-not-retained", func(t *testing.T) {
+		assertApprovedOutput(t, "22r-net-blocked-not-retained", usageBlock(t, netEventNotRetained(netTestRun)))
 	})
 }
 
@@ -365,10 +370,13 @@ func TestEveryRetainedReasonHasItsOwnSentence(t *testing.T) {
 		"open", "rule_allowed", "unapproved_name", "protected_destination", "unsafe_dns_answer",
 		"protocol_not_allowed", "port_not_allowed", "fixed_egress_policy", "tls_name_missing", "tls_name_invalid",
 		"tls_ech_unsupported", "tls_malformed", "tls_hello_too_large", "tls_inspection_timeout", "tls_inspection_unavailable",
-		"dns_name_invalid", "dns_query_invalid", "dns_answer_invalid", "dns_cname_limit", "dns_answer_limit",
+		"tls_direct_dial_refused", "tls_name_mismatch", "tls_proxy_request_invalid",
+		"dns_name_invalid", "dns_query_invalid", "dns_type_unsupported", "dns_answer_invalid", "dns_cname_limit", "dns_answer_limit",
 		"dns_upstream_invalid", "dns_unavailable", "dns_no_address", "dns_ttl_expired", "dns_capacity_exceeded",
 		"gateway_connection_capacity", "gateway_lease_capacity", "gateway_lease_refused", "gateway_unavailable",
-		"enforcement_unavailable", "clock_unavailable", "observation_unavailable", "upstream_unreachable", "unsupported_capability",
+		"gateway_admission_invalid", "gateway_destination_unknown", "service_proxy_client_unrecognized",
+		"controller_message_invalid", "controller_socket_unavailable", "controller_stopped",
+		"enforcement_unavailable", "clock_unavailable", "clock_deadline_invalid", "observation_unavailable", "upstream_unreachable", "unsupported_capability",
 	} {
 		message := networkstate.DiagnosticReason(reason)
 		if message == "" || !strings.HasSuffix(message, ".") || strings.Contains(message, reason) {
