@@ -124,6 +124,8 @@ Every official completion path also requires a nonempty, fully checked current c
 Assigned MCP rereads it after binding validation; the host finalizer checks again after exit.
 An empty/open checklist refuses without clearing existing completion authority or scratch;
 the refusal names up to five open items (`tasks.IncompleteChecklistError`).
+No task tool can force completion. The host's `coop tasks done --force` needs a terminal, and
+it leaves a log.md note.
 Fork identity validation still permits an unfinished done projection so crash recovery can
 reopen it; captured completion acceptance, publication, and landing enforce the prerequisite.
 This checks task structure, not whether the agent actually ran a claimed verification.
@@ -168,6 +170,8 @@ chose daily over every push, since the image takes minutes and many downloads to
 ## Changelog
 - 2026-11-03 — `tasks_complete` refuses a blocked task (it had moved one to done past its open
   decision); `coop tasks claim` refuses blocked and done tasks the same way.
+- 2026-11-03 — `coop tasks done --force` is host-only; `tasks_complete` stays strict (task
+  2026-11-03-let-a-person-force-close-a-task-with-open-checkl).
 - 2026-11-03 — checklist refusals name the open items; the labels travel with `tasks.Item` (task
   2026-11-03-name-the-open-checklist-items-when-coop-tasks-do).
 - 2026-10-18 — a daily CI job runs `make task-channel-e2e` in a freshly built box image (task

@@ -43,7 +43,7 @@ var taskArgSpecs = map[string]taskArgSpec{
 	"ls":      {lsFlags, 0, "coop tasks ls [<options>...]"},
 	"lint":    {nil, 0, "coop tasks lint"},
 	"release": {nil, 1, "coop tasks release <task-id>"}, "path": {nil, 1, "coop tasks path <task-id>"},
-	"done": {nil, 1, "coop tasks done <task-id>"},
+	"done": {[]string{"--force"}, 1, "coop tasks done <task-id>"},
 }
 
 // lsFlags are the flags `coop tasks ls` accepts: --all (uncap the done archive) plus a per-state
@@ -145,9 +145,15 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "park":
 		return tasksFolderPark(root, args)
 	case "done":
-		return tasksFolderMoveWith(root, args, StateDone, "done", "done", claimOptions{
-			actor:   captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{}),
-			project: repo,
+		id := slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "--force" })
+		forceClose, interactive := len(id) != len(args), stdinIsTerminal()
+		if forceClose && !interactive {
+			return 2, errForceCloseNeedsTerminal
+		}
+		return tasksFolderMoveWith(root, id, StateDone, "done", "done", claimOptions{
+			actor:      captureClaimActor(realClaimActorProbe, os.Getppid(), interactive, ClaimActor{}),
+			forceClose: forceClose,
+			project:    repo,
 		})
 	case "path":
 		return tasksFolderPath(root, args)
@@ -609,9 +615,20 @@ func taskOwnerIdentity() (user, host string) {
 // may be taken over. Done takes the same actor, plus the project folder whose history the audit
 // of a reopened task reads.
 type claimOptions struct {
-	actor   ClaimActor
-	force   bool
-	project string
+	actor      ClaimActor
+	force      bool // claim --force: take over a live competing claim
+	forceClose bool // done --force: a person closes a task whose checklist is unfinished
+	project    string
+}
+
+// stdinIsTerminal is the one terminal check done --force makes; tests replace it.
+var stdinIsTerminal = func() bool { return ui.IsTerminal(os.Stdin) }
+
+// errForceCloseNeedsTerminal keeps `coop tasks done --force` a person's tool. An agent's shell
+// has no terminal, so an unattended run gets this instead of a way past the checklist.
+var errForceCloseNeedsTerminal = &ui.UsageError{
+	Headline: "coop tasks done --force needs a person at a terminal",
+	Cause:    "It closes a task whose checklist is unfinished.\nAn agent leaves unfinished items open, or blocks the task.",
 }
 
 var errTaskClaimedByOther = errors.New("task is claimed by another live process")
@@ -773,13 +790,16 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 			return 1, err
 		}
 	}
+	completion := completionOptions{force: opts.forceClose, actor: opts.actor}
+	var forced *IncompleteChecklistError // what a forced close left open, from the close itself
 	if t.State == newState {
 		switch newState {
 		case StateDone:
-			if err := CompleteTrustedTask(opts.project, root, t); err != nil {
-				return -1, trustedCompletionError(err, t)
+			if forced, err = completeTrustedTask(opts.project, root, t, completion); err != nil {
+				return -1, trustedCompletionError(err, t, opts.forceClose)
 			}
 			ui.Note("%s is already done.", t.Title)
+			noteForcedClose(forced)
 			WarnTaskBulk(root, t.Dir)
 		case StateInProgress:
 			// Re-claiming a task already in progress (yours, or one the loop currently holds) is a
@@ -806,14 +826,14 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 	if newState == StateDone {
 		// Refuse known unfinished work before stopping this caller's lease
 		// holder; trusted completion rechecks current metadata under authority.
-		if err := RequireCompletedChecklist(t); err != nil {
-			return -1, trustedCompletionError(err, t)
+		if err := RequireCompletedChecklist(t); err != nil && !opts.forceClose {
+			return -1, trustedCompletionError(err, t, false)
 		}
 		if _, err := stopOwnLeaseHolder(root, t, opts.actor); err != nil {
 			return -1, err
 		}
-		if err := CompleteTrustedTask(opts.project, root, t); err != nil {
-			return -1, trustedCompletionError(err, t)
+		if forced, err = completeTrustedTask(opts.project, root, t, completion); err != nil {
+			return -1, trustedCompletionError(err, t, opts.forceClose)
 		}
 	} else {
 		// A human claim must protect the task from the INSTANT it starts, not from whenever the
@@ -844,6 +864,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		dir := filepath.Join(root, StateDone, t.ID)
 		ui.OK("Completed task: %s", t.Title)
 		ui.Note("\n  %s", displayPath(dir))
+		noteForcedClose(forced)
 		WarnTaskBulk(root, dir)
 	default:
 		ui.OK("%s %s", pastVerb, t.ID)
@@ -1012,21 +1033,40 @@ func ReleaseTrustedTask(root string, t Item, actor ClaimActor) error {
 	return errors.Join(ownerLock.Close(), unlockLeaseFile(authority))
 }
 
-func trustedCompletionError(err error, t Item) error {
+// trustedCompletionError draws a refused completion. A forced call's retry keeps --force; the
+// plain refusal never suggests it.
+func trustedCompletionError(err error, t Item, forceClose bool) error {
 	var recovery auditCompletionRecoveryError
 	if errors.As(err, &recovery) {
 		return err
 	}
+	retry := "coop tasks done " + ui.SafeInline(t.ID)
+	if forceClose {
+		retry += " --force"
+	}
 	var commits *PendingReviewCommitsError
 	if errors.As(err, &commits) {
-		return ui.CommandFailed("Could not complete "+t.ID, commits.Cause(),
-			[2]string{"", commits.Remedy() + ", then retry: coop tasks done " + t.ID})
+		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID), commits.Cause(),
+			[2]string{"", commits.Remedy() + ", then retry: " + retry})
 	}
 	var checklist *IncompleteChecklistError
 	if errors.As(err, &checklist) {
 		return &checklistRefusalError{usage: checklistUsage(checklist, t), checklist: checklist}
 	}
-	return fmt.Errorf("%w — fix the obstruction, then retry: coop tasks done %s", err, t.ID)
+	return fmt.Errorf("%w — fix the obstruction, then retry: %s", err, retry)
+}
+
+// noteForcedClose tells the person what a forced close left in the task's log.
+func noteForcedClose(e *IncompleteChecklistError) {
+	switch {
+	case e == nil:
+	case e.Total == 0:
+		ui.Note("  Closed with --force. Its log.md notes that it had no checklist.")
+	case e.Total-e.Done == 1:
+		ui.Note("  Closed with --force. Its log.md names the checklist item still open.")
+	default:
+		ui.Note("  Closed with --force. Its log.md names the %d checklist items still open.", e.Total-e.Done)
+	}
 }
 
 // checklistRefusalError is the drawn refusal that still matches ErrIncompleteChecklist, so a
@@ -1045,6 +1085,9 @@ func checklistUsage(e *IncompleteChecklistError, t Item) *ui.UsageError {
 	// A folder name can come from a box, so the id and path are escaped like any other refusal.
 	id, file := ui.SafeInline(t.ID), ui.SafeInline(displayPath(filepath.Join(t.Dir, "task.md")))
 	headline, again := "Could not complete "+id, [2]string{"Then run:", "coop tasks done " + id}
+	if t.State == StateDone {
+		headline = id + " is already done, but its checklist is unfinished"
+	}
 	if e.Total == 0 {
 		return ui.CommandFailed(headline,
 			"It has no checklist.\nList its work as checklist items and tick only what is finished.",
@@ -1822,6 +1865,12 @@ func finalizeCompletedTask(id, taskDir string) error {
 	if err := requireCurrentCompletedChecklist(taskDir); err != nil {
 		return err
 	}
+	return finishCompletedTask(id, taskDir)
+}
+
+// finishCompletedTask normalizes a done task's state.md and removes its tmp/. Only a person's
+// forced close reaches it without the checklist check above.
+func finishCompletedTask(id, taskDir string) error {
 	if err := normalizeCompletedTaskState(id, taskDir); err != nil {
 		return fmt.Errorf("task %s reached done, but its state finalization failed: %w", id, err)
 	}

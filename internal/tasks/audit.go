@@ -309,14 +309,27 @@ func auditHistory(project string) (repo, head string) {
 	return forkspace.GitOut(project, "rev-parse", "--show-toplevel"), forkspace.GitOut(project, "rev-parse", "--verify", "HEAD^{commit}")
 }
 
-// completeTrustedTask is the host equivalent of the provider completion boundary. It holds the
+// CompleteTrustedTask is the host equivalent of the provider completion boundary. It holds the
 // task authority lock across move, finalization, and receipt creation so a concurrent loop can
 // observe either the old state or an accepted done inode, never a transient. project is the
-// project folder whose history a reopened task's audit reads.
-func CompleteTrustedTask(project, root string, task Item) (retErr error) {
+// project folder whose history a reopened task's audit reads. It always requires a finished
+// checklist; only a person's `coop tasks done --force` waives that, through completeTrustedTask.
+func CompleteTrustedTask(project, root string, task Item) error {
+	_, err := completeTrustedTask(project, root, task, completionOptions{})
+	return err
+}
+
+// completionOptions are a person's choices at `coop tasks done`. The zero value is the strict
+// completion every agent path uses.
+type completionOptions struct {
+	force bool       // close even though the checklist is empty or still open
+	actor ClaimActor // who ran it, named in the log note a forced close leaves
+}
+
+func completeTrustedTask(project, root string, task Item, opts completionOptions) (_ *IncompleteChecklistError, retErr error) {
 	windows, err := BeginCompletionWindows([]string{root})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCompletionWindowSetup, err)
+		return nil, fmt.Errorf("%w: %v", ErrCompletionWindowSetup, err)
 	}
 	accepted := false
 	var acceptedTask QueuedTask
@@ -330,35 +343,44 @@ func CompleteTrustedTask(project, root string, task Item) (retErr error) {
 	authority, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return fmt.Errorf("task %s is %w", task.ID, ErrTaskLeased)
+			return nil, fmt.Errorf("task %s is %w", task.ID, ErrTaskLeased)
 		}
-		return err
+		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, unlockLeaseFile(authority)) }()
 	// A projected completion is only candidate-ready. Ordinary host completion must
 	// refuse it before moving or normalizing the canonical folder; exact fork landing owns that
 	// transition through its generation-bound journal.
 	if err := refuseForkTaskOwner(root, task.ID, "complete"); err != nil {
-		return err
+		return nil, err
 	}
 	current, ok, err := CurrentTask(root, task.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !ok || current.Dir != task.Dir || current.State != task.State {
-		return errLeaseCandidateGone
+		return nil, errLeaseCandidateGone
 	}
-	if err := RequireCompletedChecklist(current); err != nil {
-		return err
+	// --force waives this one check, for a person only. Every refusal above and below still applies,
+	// and without --force an accepted task whose checklist reopened still refuses, receipt intact.
+	var waived *IncompleteChecklistError
+	if err := RequireCompletedChecklist(current); err != nil && (!opts.force || !errors.As(err, &waived)) {
+		return nil, err
+	}
+	// A done folder that already holds its receipt was closed before; forcing it again finishes it
+	// without recording a second forced close.
+	alreadyAccepted := false
+	if current.State == StateDone {
+		_, alreadyAccepted = readLeaseCompletionReceipt(authority, current.Dir)
 	}
 	reopen, reopened, err := ReadAuditReopenRecord(root, task.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if reopened {
 		repo, head := auditHistory(project)
 		if reopen.UnblockPending {
-			return &auditCompletionStateError{message: fmt.Sprintf(
+			return nil, &auditCompletionStateError{message: fmt.Sprintf(
 				"task %s has non-authorizing pending audit authority from an interrupted unblock; "+
 					"run `coop tasks unblock %s` to activate it, then retry completion",
 				task.ID, task.ID,
@@ -376,7 +398,7 @@ func CompleteTrustedTask(project, root string, task Item) (retErr error) {
 					task.ID, recovery,
 				)
 			}
-			return &auditCompletionStateError{message: fmt.Sprintf(
+			return nil, &auditCompletionStateError{message: fmt.Sprintf(
 				"task %s complete-history audit authority no longer matches current HEAD; "+
 					"its exact recorded baseline is %s: %v — %s before completion",
 				task.ID, reopen.BaselineHead, matchErr, recovery,
@@ -384,17 +406,21 @@ func CompleteTrustedTask(project, root string, task Item) (retErr error) {
 		}
 	}
 	if err := clearLeaseCompletionReceipt(authority); err != nil {
-		return err
+		return nil, err
 	}
 	if current.State != StateDone {
 		if err := MoveTaskDir(root, current, StateDone); err != nil {
-			return err
+			return nil, err
 		}
 		current.State = StateDone
 		current.Dir = filepath.Join(root, StateDone, current.ID)
 	}
-	if err := finalizeCompletedTask(current.ID, current.Dir); err != nil {
-		return err
+	finish := finalizeCompletedTask
+	if waived != nil {
+		finish = finishCompletedTask // accepted as its checklist stands
+	}
+	if err := finish(current.ID, current.Dir); err != nil {
+		return nil, err
 	}
 	generation := ""
 	if reopened {
@@ -405,11 +431,11 @@ func CompleteTrustedTask(project, root string, task Item) (retErr error) {
 		lease.Reopen = &reopen
 	}
 	if err := lease.MarkCompleted(current.Dir); err != nil {
-		return err
+		return nil, err
 	}
 	if reopened {
 		if err := removeAuditReopenRecordIfMatches(root, task.ID, generation); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	// done ends a human claim same as block/unblock/release — a task in 99_done/ is never a loop
@@ -417,11 +443,18 @@ func CompleteTrustedTask(project, root string, task Item) (retErr error) {
 	// here (not just in tasksFolderMove) covers the interactive verb and a re-run of `done` on
 	// an already-done task. Fork landing finalizes its exact candidate through its durable journal.
 	if err := removeTaskOwnerRecord(root, task.ID); err != nil {
-		return err
+		return nil, err
 	}
 	acceptedTask = QueuedTask{Root: root, Item: current}
 	accepted = true
-	return nil
+	if waived == nil || alreadyAccepted {
+		return nil, nil
+	}
+	// Last, so the note never outlives a close that failed; a retry finds the receipt instead.
+	if err := AppendTaskLogStrict(current.Dir, forcedCompletionNote(waived, opts.actor)); err != nil {
+		return waived, fmt.Errorf("task %s is done, but its log.md could not record the forced close: %w", current.ID, err)
+	}
+	return waived, nil
 }
 
 // moveTrustedTaskFromDone invalidates completion evidence under the same task authority lock before

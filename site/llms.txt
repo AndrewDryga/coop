@@ -786,13 +786,20 @@ EXAMPLE
 
 coop tasks done: move completed work to the archive
 
-Usage: coop tasks done <id> [--tasks <path>]...
+Usage: coop tasks done <id> [--tasks <path>]... [<options>]
+
+OPTIONS
+  --force  close it even though its checklist is unfinished
 
   Finish the checks and commit the task's work first.
   The task must have at least one checklist item, with every item checked.
   Leave required checks open if they failed, could not run, or have not run.
   Coop moves the task to done and removes its temporary files.
   The task's instructions, progress and saved evidence stay in the archive.
+
+  --force is for a person at a terminal who has checked the work. Coop leaves
+  the checklist as it is and notes what was open in the task's log.
+  Agents never use it.
 
 EXAMPLE
   coop tasks done login-retries

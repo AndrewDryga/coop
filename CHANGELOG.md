@@ -36,6 +36,10 @@
   the open items and the `task.md` to tick them in, then the command to run again. Agents get the
   same list.
 
+- **Close a task you checked yourself.** Run from your terminal, `coop tasks done --force`
+  closes a task whose checklist is unfinished, without editing it. The task's log notes what was
+  open. It refuses to run without a terminal, which keeps agents from using it.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up

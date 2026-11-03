@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"strconv"
@@ -34,17 +35,25 @@ func (e *IncompleteChecklistError) Error() string {
 	if e.Total == 0 {
 		return msg + "; record a nonempty, truthful checklist before completing"
 	}
-	if shown, more := e.shownOpen(); len(shown) > 0 {
-		quoted := make([]string, len(shown))
-		for i, label := range shown {
-			quoted[i] = strconv.Quote(label)
-		}
-		msg += "; open: " + strings.Join(quoted, ", ")
-		if more > 0 {
-			msg += fmt.Sprintf(" and %d more", more)
-		}
+	if open := e.openSummary(); open != "" {
+		msg += "; open: " + open
 	}
 	return msg + "; finish the remaining work and required checks, and keep a check open if it failed, could not run or has not run"
+}
+
+// openSummary lists the open items on one line, quoted and capped: `"Run the gate" and 2 more`.
+// It is empty when the labels are unknown.
+func (e *IncompleteChecklistError) openSummary() string {
+	shown, more := e.shownOpen()
+	quoted := make([]string, len(shown))
+	for i, label := range shown {
+		quoted[i] = strconv.Quote(label)
+	}
+	summary := strings.Join(quoted, ", ")
+	if summary != "" && more > 0 {
+		summary += fmt.Sprintf(" and %d more", more)
+	}
+	return summary
 }
 
 // shownOpen returns the open items a refusal names, shortened, and how many more it leaves out.
@@ -80,4 +89,26 @@ func requireCurrentCompletedChecklist(taskDir string) error {
 		return fmt.Errorf("completion needs a readable task.md in %s", taskDir)
 	}
 	return RequireCompletedChecklist(task)
+}
+
+// forcedCompletionNote is the log line a person's `coop tasks done --force` leaves, so the archive
+// never reads as verified: the override, who ran it when Coop knows the process, and what was
+// still open. The checklist itself stays as the person left it.
+func forcedCompletionNote(e *IncompleteChecklistError, actor ClaimActor) string {
+	note := "Closed with coop tasks done --force"
+	if actor.PID != 0 {
+		note += fmt.Sprintf(" by %s (PID %d)", cmp.Or(actor.Label, "a process"), actor.PID)
+	}
+	if e.Total == 0 {
+		return note + " without a checklist."
+	}
+	open, verb := e.Total-e.Done, "were"
+	if open == 1 {
+		verb = "was"
+	}
+	note += fmt.Sprintf(" while %d of %d checklist items %s open", open, e.Total, verb)
+	if summary := e.openSummary(); summary != "" {
+		note += ": " + summary
+	}
+	return note + "."
 }

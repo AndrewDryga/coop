@@ -2,8 +2,8 @@
 name: loop-completion-refusals-keep-work-moving
 description: ordinary completion mistakes get immediate feedback and bounded safe repair without weakening task acceptance
 scope: loop
-sources: [internal/loop/loop.go, internal/loop/completion.go, internal/loop/prompts.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_checklist.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/pending_review.go, internal/tasks/pending_review_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go]
-check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding|TestPendingReviewKeepsEarlierDebtAcrossLaterTaskRework|TestCarryReopenedReviewsAcrossSiblingRework|TestPendingReviewResumesInterruptedReworkForItsSiblings|TestIncompleteChecklistNamesOpenItems|TestDoneRefusalShowsOpenItemsAndWhereToTickThem'"
+sources: [internal/loop/loop.go, internal/loop/completion.go, internal/loop/prompts.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_checklist.go, internal/tasks/cmd.go, internal/tasks/audit.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/pending_review.go, internal/tasks/pending_review_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go]
+check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding|TestPendingReviewKeepsEarlierDebtAcrossLaterTaskRework|TestCarryReopenedReviewsAcrossSiblingRework|TestPendingReviewResumesInterruptedReworkForItsSiblings|TestIncompleteChecklistNamesOpenItems|TestDoneRefusalShowsOpenItemsAndWhereToTickThem|TestDoneForceClosesAnUnfinishedChecklistAndRecordsIt|TestDoneForceNeedsATerminal|TestDoneForceKeepsEveryOtherRefusal|TestForcedCloseNoteWaitsForTheReceipt'"
 updated: 2026-11-03
 ---
 
@@ -20,6 +20,14 @@ unavailable, and never-attempted required checks remain open. Recording pending 
 not equivalent to passing it, including in proposed task acceptance. Checked boxes are a
 structural prerequisite, not independent evidence that verification ran. A refusal names the open
 items, and the host CLI also names the task.md that holds them, so the repair is obvious.
+The one override is a person's `coop tasks done --force` at a terminal. It waives only the
+checklist (a lease, fork ownership and audit authority still refuse), leaves the boxes as they
+are, and appends a log.md note naming who forced it and what was open, after the receipt so the
+note never outlives a failed close. Forcing an already-accepted task again adds no second note;
+a plain repeat still refuses its open checklist and leaves the receipt alone. Without a terminal,
+which is how agents run commands, --force is refused, and MCP and the loop use the strict
+`CompleteTrustedTask`. An agent with a terminal tool is held only by its instructions, which
+forbid the flag.
 
 If a successful attempt ends after an ordinary no-commit completion refusal, allow one fresh
 repair only when HEAD and the checkout/index content fingerprint match the first leased attempt
@@ -60,6 +68,13 @@ code. The check above pins the conservative recovery boundary; the tagged script
 also runs in `make check` and proves continuation and both terminal modes.
 
 ## Changelog
+- 2026-11-03 — the owner asked for a person's override: `coop tasks done --force` (task
+  2026-11-03-let-a-person-force-close-a-task-with-open-checkl). Swept the completion boundaries:
+  only the host CLI passes force (`completeTrustedTask` options), and only with a terminal; MCP
+  `tasks_complete`, queued finalization, fork acceptance and landing keep the strict check. An
+  independent review found the first draft let any host agent pass the flag and could leave or
+  repeat the note around a failed close; both fixed and pinned by tests. AGENTS.md and the
+  scaffold tell agents never to pass it, and the plain refusal does not mention it.
 - 2026-11-03 — refusals say what is open, not only how much: `IncompleteChecklistError` carries the
   open labels, parsed beside `Item.Subtasks` (fork projections included), and the host CLI draws
   them with the task.md path and the retry command (task

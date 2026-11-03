@@ -306,3 +306,219 @@ func TestDoneRefusalEscapesTheTaskFolderName(t *testing.T) {
 		t.Fatalf("refusal printed a raw control sequence or lost its item:\n%q", got)
 	}
 }
+
+// forceAtTerminal makes done --force see a person at a terminal for one test.
+func forceAtTerminal(t *testing.T) {
+	t.Helper()
+	old := stdinIsTerminal
+	stdinIsTerminal = func() bool { return true }
+	t.Cleanup(func() { stdinIsTerminal = old })
+}
+
+// A person's --force closes a task whose checklist is open or empty: the flag before or after the
+// id, from todo, in progress, blocked or a folder already in done. The checklist stays as it was,
+// the log says what was open, and state.md, tmp/ and the completion receipt finish as usual.
+// Forcing it again finds it done and leaves no second note; a plain done still refuses its open
+// checklist, saying the task is already done, and leaves the receipt as it was.
+func TestDoneForceClosesAnUnfinishedChecklistAndRecordsIt(t *testing.T) {
+	for name, tc := range map[string]struct {
+		state, checklist string
+		forceFirst       bool
+		note, notice     string
+	}{
+		"open, in progress": {StateInProgress, "- [x] Write the fix\n- [ ] Run the gate\n", false,
+			` while 1 of 2 checklist items was open: "Run the gate".`, "Its log.md names the checklist item still open."},
+		"open, blocked, flag first": {StateBlocked, "- [ ] Run the gate\n- [ ] Review it\n", true,
+			` while 2 of 2 checklist items were open: "Run the gate", "Review it".`, "Its log.md names the 2 checklist items still open."},
+		"empty, todo": {StateTodo, "", false, " without a checklist.", "Its log.md notes that it had no checklist."},
+		"already done": {StateDone, "- [ ] Run the gate\n", false,
+			` while 1 of 1 checklist items was open: "Run the gate".`, "Its log.md names the checklist item still open."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+			forceAtTerminal(t)
+			root := t.TempDir()
+			id := "fix-login-retries"
+			dir := filepath.Join(root, tc.state, id)
+			body := "# Fix login retries\n\n## Subtasks\n" + tc.checklist
+			writeTaskFile(t, filepath.Join(dir, "task.md"), body)
+			if tc.state == StateBlocked {
+				writeTaskFile(t, filepath.Join(dir, "decision.md"), "# Decision: Ship it?\n")
+			}
+			writeTaskFile(t, filepath.Join(dir, "tmp", "scratch"), "scratch\n")
+			args := []string{"done", id, "--force"}
+			if tc.forceFirst {
+				args = []string{"done", "--force", id}
+			}
+			out := captureStderr(t, func() {
+				if code, err := CmdTasksFolder("", root, args); code != 0 || err != nil {
+					t.Fatalf("done --force = %d, %v", code, err)
+				}
+			})
+			if !strings.Contains(out, "Closed with --force. "+tc.notice) {
+				t.Errorf("output does not say what the forced close recorded:\n%s", out)
+			}
+			done := filepath.Join(root, StateDone, id)
+			if got := readFileString(filepath.Join(done, "task.md")); got != body {
+				t.Fatalf("task.md changed:\n%s", got)
+			}
+			if log := readFileString(filepath.Join(done, "log.md")); !strings.Contains(log, "- Closed with coop tasks done --force") || !strings.Contains(log, tc.note) {
+				t.Fatalf("log.md = %q\nwant the forced close ending %q", log, tc.note)
+			}
+			if pathExists(filepath.Join(done, "tmp")) {
+				t.Fatal("tmp/ kept after a forced close")
+			}
+			if state := readFileString(filepath.Join(done, "state.md")); !strings.Contains(state, "complete") {
+				t.Fatalf("state.md not finalized: %q", state)
+			}
+			current, ok := mustCurrentTask(t, root, id)
+			if !ok || current.State != StateDone || !taskCompletionRecorded(root, current) {
+				t.Fatal("forced close did not receive trusted completion")
+			}
+			out = captureStderr(t, func() {
+				if code, err := CmdTasksFolder("", root, []string{"done", id, "--force"}); code != 0 || err != nil {
+					t.Fatalf("done --force again = %d, %v; want it already done", code, err)
+				}
+			})
+			if !strings.Contains(out, "is already done.") || strings.Contains(out, "Closed with --force") {
+				t.Errorf("done --force again said:\n%s", out)
+			}
+			if n := strings.Count(readFileString(filepath.Join(done, "log.md")), "Closed with coop tasks done --force"); n != 1 {
+				t.Fatalf("log.md has %d forced-close notes, want 1", n)
+			}
+			current, _ = mustCurrentTask(t, root, id)
+			before, _ := taskCompletionReceipt(root, current)
+			code, err := CmdTasksFolder("", root, []string{"done", id})
+			var usage *ui.UsageError
+			if code == 0 || !errors.Is(err, ErrIncompleteChecklist) || !errors.As(err, &usage) || !strings.Contains(usage.Headline, "is already done") {
+				t.Fatalf("plain done on a forced close = %d, %v; want the already-done checklist refusal", code, err)
+			}
+			if after, ok := taskCompletionReceipt(root, current); !ok || after != before {
+				t.Fatal("the plain refusal changed the forced close's receipt")
+			}
+		})
+	}
+}
+
+// --force is a person's tool. Without a terminal, which is how agents run commands, it is
+// refused before anything is read or moved.
+func TestDoneForceNeedsATerminal(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	old := stdinIsTerminal
+	stdinIsTerminal = func() bool { return false }
+	t.Cleanup(func() { stdinIsTerminal = old })
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateInProgress, "unfinished", "task.md"), "# Unfinished\n\n## Subtasks\n- [ ] Run the gate\n")
+	code, err := CmdTasksFolder("", root, []string{"done", "unfinished", "--force"})
+	if code != 2 || !errors.Is(err, errForceCloseNeedsTerminal) {
+		t.Fatalf("done --force without a terminal = %d, %v; want the terminal refusal", code, err)
+	}
+	if !pathExists(filepath.Join(root, StateInProgress, "unfinished")) || pathExists(filepath.Join(root, StateInProgress, "unfinished", "log.md")) {
+		t.Fatal("a refused forced close moved the task or left a note")
+	}
+}
+
+// --force overrides nothing when nothing is open: a finished checklist completes as usual and
+// leaves no forced-close note.
+func TestDoneForceWithAFinishedChecklistLeavesNoNote(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	forceAtTerminal(t)
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateInProgress, "finished", "task.md"), "# Finished\n\n## Subtasks\n- [x] Run the gate\n")
+	out := captureStderr(t, func() {
+		if code, err := CmdTasksFolder("", root, []string{"done", "finished", "--force"}); code != 0 || err != nil {
+			t.Fatalf("done --force = %d, %v", code, err)
+		}
+	})
+	if strings.Contains(out, "--force") || strings.Contains(readFileString(filepath.Join(root, StateDone, "finished", "log.md")), "--force") {
+		t.Fatalf("a finished checklist was reported as forced:\n%s", out)
+	}
+}
+
+// --force waives only the checklist: a lease another controller holds, a fork's assigned task and
+// audit-reopen authority all still refuse, leaving the task where it was and writing no note.
+func TestDoneForceKeepsEveryOtherRefusal(t *testing.T) {
+	refusedInPlace := func(t *testing.T, root, id, state string) {
+		t.Helper()
+		current, ok := mustCurrentTask(t, root, id)
+		if !ok || current.State != state || strings.Contains(readFileString(filepath.Join(current.Dir, "log.md")), "--force") {
+			t.Fatal("a refused forced close moved the task or left a note")
+		}
+	}
+	t.Run("leased", func(t *testing.T) {
+		t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+		forceAtTerminal(t)
+		root := filepath.Join(t.TempDir(), "tasks")
+		item := taskForLease(t, root, StateInProgress, "leased")
+		lease, _, err := TryTaskLease(root, item, testLeaseOwner())
+		if err != nil || lease == nil {
+			t.Fatalf("lease fixture: %v, %v", lease, err)
+		}
+		defer func() { _ = lease.Release() }()
+		code, err := CmdTasksFolder("", root, []string{"done", "leased", "--force"})
+		if code == 0 || !errors.Is(err, ErrTaskLeased) || !strings.Contains(err.Error(), "then retry: coop tasks done leased --force") {
+			t.Fatalf("done --force on a leased task = %d, %v; want the lease refusal with a forced retry", code, err)
+		}
+		refusedInPlace(t, root, "leased", StateInProgress)
+	})
+	t.Run("fork owned", func(t *testing.T) {
+		repo, root, _ := proposalAssignment(t, "forced")
+		assigned, _ := mustCurrentTask(t, root, "assigned")
+		if _, err := completeTrustedTask(repo, root, assigned, completionOptions{force: true}); err == nil {
+			t.Fatal("a forced close of a fork's assigned task was accepted")
+		}
+		refusedInPlace(t, root, "assigned", assigned.State)
+	})
+	t.Run("audit authority", func(t *testing.T) {
+		t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+		root := t.TempDir()
+		item := taskForLease(t, root, StateInProgress, "audited")
+		if err := WriteAuditReopenRecord(root, testAuditReopenRecord("audited", "generation-1")); err != nil {
+			t.Fatal(err)
+		}
+		var audit *auditCompletionStateError
+		if _, err := completeTrustedTask("", root, item, completionOptions{force: true}); !errors.As(err, &audit) {
+			t.Fatalf("forced close with audit authority = %v, want the audit refusal", err)
+		}
+		refusedInPlace(t, root, "audited", StateInProgress)
+	})
+}
+
+// The note waits for the receipt: a forced close that fails partway leaves neither, and the retry
+// that succeeds leaves exactly one note.
+func TestForcedCloseNoteWaitsForTheReceipt(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateInProgress, "flaky", "task.md"), "# Flaky\n\n## Subtasks\n- [ ] Run the gate\n")
+	item, _ := mustCurrentTask(t, root, "flaky")
+	old := taskTmpCleaner
+	t.Cleanup(func() { taskTmpCleaner = old })
+	taskTmpCleaner = func(string) error { return errors.New("injected cleanup failure") }
+	if _, err := completeTrustedTask("", root, item, completionOptions{force: true}); err == nil {
+		t.Fatal("the injected failure did not fail the close")
+	}
+	taskTmpCleaner = old
+	current, _ := mustCurrentTask(t, root, "flaky")
+	if strings.Contains(readFileString(filepath.Join(current.Dir, "log.md")), "--force") || taskCompletionRecorded(root, current) {
+		t.Fatal("a failed close left a note or a receipt")
+	}
+	if forced, err := completeTrustedTask("", root, current, completionOptions{force: true}); err != nil || forced == nil {
+		t.Fatalf("retry = %v, %v; want a forced close", forced, err)
+	}
+	done, _ := mustCurrentTask(t, root, "flaky")
+	if n := strings.Count(readFileString(filepath.Join(done.Dir, "log.md")), "Closed with coop tasks done --force"); n != 1 || !taskCompletionRecorded(root, done) {
+		t.Fatalf("the retry left %d notes and receipt %v; want one of each", n, taskCompletionRecorded(root, done))
+	}
+}
+
+// The note names the override, the process that ran it when Coop knows one, and what was open.
+func TestForcedCompletionNote(t *testing.T) {
+	open := &IncompleteChecklistError{ID: "t", Done: 1, Total: 3, Open: []string{"Run the gate", "Review it"}}
+	if got, want := forcedCompletionNote(open, ClaimActor{Label: "claude", PID: 4242}),
+		`Closed with coop tasks done --force by claude (PID 4242) while 2 of 3 checklist items were open: "Run the gate", "Review it".`; got != want {
+		t.Errorf("note = %q\nwant %q", got, want)
+	}
+	if got, want := forcedCompletionNote(&IncompleteChecklistError{ID: "t"}, ClaimActor{}), "Closed with coop tasks done --force without a checklist."; got != want {
+		t.Errorf("note = %q\nwant %q", got, want)
+	}
+}
