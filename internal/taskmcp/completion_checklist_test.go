@@ -18,11 +18,14 @@ func finishChecklist(t *testing.T, root, id string) {
 
 func TestCompleteRequiresChecklistAndAllowsSameSessionRepair(t *testing.T) {
 	for _, assigned := range []string{"t1", ""} {
-		for _, checklist := range []string{"- [x] implementation\n- [ ] required host verification\n", "```markdown\n- [x] example only\n```\n"} {
-			t.Run(assigned+"/"+checklist, func(t *testing.T) {
+		for _, tc := range []struct{ checklist, names string }{
+			{"- [x] implementation\n- [ ] required host verification\n", `open: "required host verification";`},
+			{"```markdown\n- [x] example only\n```\n", "has 0/0 subtasks done; record a nonempty, truthful checklist"},
+		} {
+			t.Run(assigned+"/"+tc.checklist, func(t *testing.T) {
 				root := queue(t, map[string]string{"t1": tasks.StateInProgress})
 				dir := filepath.Join(root, tasks.StateInProgress, "t1")
-				if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte("# Task\n\n## Subtasks\n"+checklist), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte("# Task\n\n## Subtasks\n"+tc.checklist), 0o644); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Mkdir(filepath.Join(dir, "tmp"), 0o755); err != nil {
@@ -37,8 +40,8 @@ func TestCompleteRequiresChecklistAndAllowsSameSessionRepair(t *testing.T) {
 				}
 				sess := newSession(t, newServer(t, root, assigned))
 				text := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1"})
-				if !strings.Contains(text, "task checklist is unfinished") {
-					t.Fatalf("refusal = %s", text)
+				if !strings.Contains(text, "task checklist is unfinished") || !strings.Contains(text, tc.names) {
+					t.Fatalf("refusal = %s; want it to contain %q", text, tc.names)
 				}
 				after, err := os.ReadFile(filepath.Join(dir, "state.md"))
 				if err != nil || string(after) != string(before) {

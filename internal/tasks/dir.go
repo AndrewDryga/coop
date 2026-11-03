@@ -47,12 +47,13 @@ var TaskStates = taskstate.All
 
 // taskItem is one parsed task folder.
 type Item struct {
-	ID          string // = folder name; the stable handle (constant across moves)
-	Title       string // frontmatter `title:`, else the body H1, else the ID
-	State       string // one of taskStates — the parent directory
-	Dir         string // absolute path to the task folder
-	Subtasks    []bool // one per body checkbox; true = checked/done
-	HasDecision bool   // a decision.md is present (must hold iff State == blocked)
+	ID            string   // = folder name; the stable handle (constant across moves)
+	Title         string   // frontmatter `title:`, else the body H1, else the ID
+	State         string   // one of taskStates — the parent directory
+	Dir           string   // absolute path to the task folder
+	Subtasks      []bool   // one per body checkbox; true = checked/done
+	SubtaskLabels []string // SubtaskLabels[i] is the text of Subtasks[i]; empty for an Item built in memory
+	HasDecision   bool     // a decision.md is present (must hold iff State == blocked)
 }
 
 // doneSubtasks returns how many of the task's subtask checkboxes are checked.
@@ -64,6 +65,21 @@ func (t Item) doneSubtasks() int {
 		}
 	}
 	return n
+}
+
+// openSubtaskLabels returns the text of each unchecked item in task order, or nil when the item
+// carries no labels to match its checkboxes.
+func (t Item) openSubtaskLabels() []string {
+	if len(t.SubtaskLabels) != len(t.Subtasks) {
+		return nil
+	}
+	var open []string
+	for i, done := range t.Subtasks {
+		if !done {
+			open = append(open, t.SubtaskLabels[i])
+		}
+	}
+	return open
 }
 
 func taskQueueExists(path string) (bool, error) {
@@ -215,15 +231,18 @@ func firstH1(body string) string {
 	return ""
 }
 
-// scanSubtasks returns the body's subtask checkboxes (outside code fences) as a slice of
-// done-flags. A marker of x/X counts as done; anything else (space, w, /, …) is not done.
-func scanSubtasks(body string) []bool {
+// scanSubtasks returns the body's subtask checkboxes (outside code fences) as done-flags and
+// their labels, index for index. A marker of x/X counts as done; anything else (space, w, /, …)
+// is not done.
+func scanSubtasks(body string) (done []bool, labels []string) {
 	items := ScanChecklist(body)
-	subs := make([]bool, 0, len(items))
+	done = make([]bool, 0, len(items))
+	labels = make([]string, 0, len(items))
 	for _, item := range items {
-		subs = append(subs, item.Checked)
+		done = append(done, item.Checked)
+		labels = append(labels, item.Label)
 	}
-	return subs
+	return done, labels
 }
 
 // ChecklistItem is one subtask checkbox with the label that follows its marker.
@@ -294,13 +313,15 @@ func parseTaskFolder(dir, state string) (Item, bool, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Item{}, false, fmt.Errorf("inspect decision.md: %w", err)
 	}
+	subtasks, labels := scanSubtasks(body)
 	return Item{
-		ID:          id,
-		Title:       title,
-		State:       state,
-		Dir:         dir,
-		Subtasks:    scanSubtasks(body),
-		HasDecision: hasDecision,
+		ID:            id,
+		Title:         title,
+		State:         state,
+		Dir:           dir,
+		Subtasks:      subtasks,
+		SubtaskLabels: labels,
+		HasDecision:   hasDecision,
 	}, true, nil
 }
 

@@ -6,7 +6,86 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
+
+// A refusal names what is left, not only how much: each open item's own text in task order,
+// never a checked item or a fenced example, a long list capped with a count, an overlong label
+// cut short, and an empty checklist told apart from an unfinished one.
+func TestIncompleteChecklistNamesOpenItems(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	for name, tc := range map[string]struct {
+		checklist string
+		want      string
+		absent    []string
+	}{
+		"one open":     {"- [x] Write the fix\n- [ ] Run the gate\n", `has 1/2 subtasks done; open: "Run the gate"; finish`, []string{"Write the fix"}},
+		"several open": {"- [ ] Run the gate\n- [x] Write the fix\n- [ ] Review it\n```\n- [ ] fenced example\n```\n", `has 1/3 subtasks done; open: "Run the gate", "Review it"; finish`, []string{"Write the fix", "fenced example"}},
+		"capped":       {"- [ ] a1\n- [ ] a2\n- [ ] a3\n- [ ] a4\n- [ ] a5\n- [ ] a6\n- [ ] a7\n", `open: "a1", "a2", "a3", "a4", "a5" and 2 more; finish`, []string{`"a6"`}},
+		"long label":   {"- [ ] " + long + "\n", `open: "` + strings.Repeat("x", maxShownLabel-1) + `…"; finish`, []string{long}},
+		"empty":        {"Nothing to tick yet.\n", "has 0/0 subtasks done; record a nonempty, truthful checklist before completing", []string{"open:"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), StateInProgress, "task")
+			writeTaskFile(t, filepath.Join(dir, "task.md"), "# Task\n\n## Subtasks\n"+tc.checklist)
+			item, ok, err := parseTaskFolder(dir, StateInProgress)
+			if err != nil || !ok {
+				t.Fatalf("parse = %v, %v", ok, err)
+			}
+			err = RequireCompletedChecklist(item)
+			if !errors.Is(err, ErrIncompleteChecklist) {
+				t.Fatalf("refusal = %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("refusal = %q\nwant it to contain %q", err, tc.want)
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(err.Error(), absent) {
+					t.Errorf("refusal = %q\nnames %q", err, absent)
+				}
+			}
+		})
+	}
+}
+
+// A person at the host sees what is still open, the task.md to tick it in and the command to run
+// again. The drawn refusal still matches ErrIncompleteChecklist, and the task does not move.
+func TestDoneRefusalShowsOpenItemsAndWhereToTickThem(t *testing.T) {
+	for name, tc := range map[string]struct{ checklist, cause, tick string }{
+		"one open": {"- [x] Write the fix\n- [ ] Run the gate\n",
+			"      1 of 2 checklist items is still open:\n      [ ] Run the gate\n",
+			"  Finish it, then tick it in:"},
+		"two open": {"- [ ] Run the gate\n- [ ] Review it\n",
+			"      2 of 2 checklist items are still open:\n      [ ] Run the gate\n      [ ] Review it\n",
+			"  Finish them, then tick them in:"},
+		"empty": {"",
+			"      It has no checklist.\n      List its work as checklist items and tick only what is finished.\n",
+			"  Add them to:"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+			root := t.TempDir()
+			dir := filepath.Join(root, StateInProgress, "fix-login-retries")
+			writeTaskFile(t, filepath.Join(dir, "task.md"), "# Fix login retries\n\n## Subtasks\n"+tc.checklist)
+			code, err := tasksFolderMoveWith(root, []string{"fix-login-retries"}, StateDone, "done", "done", claimOptions{})
+			var usage *ui.UsageError
+			if code == 0 || !errors.As(err, &usage) || !errors.Is(err, ErrIncompleteChecklist) {
+				t.Fatalf("done = %d, %v; want the drawn checklist refusal", code, err)
+			}
+			pad := strings.Repeat(" ", len(tc.tick)-len("  Then run:"))
+			want := "\n✗ Could not complete fix-login-retries\n\n" + tc.cause + "\n" +
+				tc.tick + " " + displayPath(filepath.Join(dir, "task.md")) + "\n" +
+				"  Then run:" + pad + " coop tasks done fix-login-retries\n"
+			if got := usage.Render(ui.Palette{}); got != want {
+				t.Fatalf("refusal:\n%s\nwant:\n%s", got, want)
+			}
+			if current, ok := mustCurrentTask(t, root, "fix-login-retries"); !ok || current.State != StateInProgress {
+				t.Fatal("refused task moved")
+			}
+		})
+	}
+}
 
 // Authority and cleanup tests need otherwise-completable tasks; legacy and
 // unfinished checklist tests keep taskForLease or write their own metadata.
@@ -214,5 +293,16 @@ func TestForkChecklistCheckedAgainAtPublicationAndLanding(t *testing.T) {
 				t.Fatal("refusal synced task or created receipt")
 			}
 		})
+	}
+}
+
+// A task folder can be named from a box, so the drawn refusal escapes its id and path instead of
+// printing a control sequence to the person's terminal.
+func TestDoneRefusalEscapesTheTaskFolderName(t *testing.T) {
+	id := "fix\x1b[2Jlogin"
+	refusal := checklistUsage(&IncompleteChecklistError{ID: id, Done: 0, Total: 1, Open: []string{"Run the gate"}},
+		Item{ID: id, Dir: filepath.Join(t.TempDir(), StateInProgress, id)})
+	if got := refusal.Render(ui.Palette{}); strings.Contains(got, "\x1b") || !strings.Contains(got, "Run the gate") {
+		t.Fatalf("refusal printed a raw control sequence or lost its item:\n%q", got)
 	}
 }

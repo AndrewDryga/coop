@@ -32,6 +32,10 @@
   task's `state` is now `todo`, `in_progress`, `blocked` or `done` instead of its folder name,
   such as `10_in_progress`. Update scripts that matched the folder names.
 
+- **See what still blocks `coop tasks done`.** When a checklist is unfinished, the refusal lists
+  the open items and the `task.md` to tick them in, then the command to run again. Agents get the
+  same list.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up

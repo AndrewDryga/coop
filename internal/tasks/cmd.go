@@ -777,7 +777,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		switch newState {
 		case StateDone:
 			if err := CompleteTrustedTask(opts.project, root, t); err != nil {
-				return -1, trustedCompletionError(err, t.ID)
+				return -1, trustedCompletionError(err, t)
 			}
 			ui.Note("%s is already done.", t.Title)
 			WarnTaskBulk(root, t.Dir)
@@ -807,13 +807,13 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		// Refuse known unfinished work before stopping this caller's lease
 		// holder; trusted completion rechecks current metadata under authority.
 		if err := RequireCompletedChecklist(t); err != nil {
-			return -1, trustedCompletionError(err, t.ID)
+			return -1, trustedCompletionError(err, t)
 		}
 		if _, err := stopOwnLeaseHolder(root, t, opts.actor); err != nil {
 			return -1, err
 		}
 		if err := CompleteTrustedTask(opts.project, root, t); err != nil {
-			return -1, trustedCompletionError(err, t.ID)
+			return -1, trustedCompletionError(err, t)
 		}
 	} else {
 		// A human claim must protect the task from the INSTANT it starts, not from whenever the
@@ -1012,17 +1012,64 @@ func ReleaseTrustedTask(root string, t Item, actor ClaimActor) error {
 	return errors.Join(ownerLock.Close(), unlockLeaseFile(authority))
 }
 
-func trustedCompletionError(err error, id string) error {
+func trustedCompletionError(err error, t Item) error {
 	var recovery auditCompletionRecoveryError
 	if errors.As(err, &recovery) {
 		return err
 	}
 	var commits *PendingReviewCommitsError
 	if errors.As(err, &commits) {
-		return ui.CommandFailed("Could not complete "+id, commits.Cause(),
-			[2]string{"", commits.Remedy() + ", then retry: coop tasks done " + id})
+		return ui.CommandFailed("Could not complete "+t.ID, commits.Cause(),
+			[2]string{"", commits.Remedy() + ", then retry: coop tasks done " + t.ID})
 	}
-	return fmt.Errorf("%w — fix the obstruction, then retry: coop tasks done %s", err, id)
+	var checklist *IncompleteChecklistError
+	if errors.As(err, &checklist) {
+		return &checklistRefusalError{usage: checklistUsage(checklist, t), checklist: checklist}
+	}
+	return fmt.Errorf("%w — fix the obstruction, then retry: coop tasks done %s", err, t.ID)
+}
+
+// checklistRefusalError is the drawn refusal that still matches ErrIncompleteChecklist, so a
+// caller can tell unfinished work from any other failure.
+type checklistRefusalError struct {
+	usage     *ui.UsageError
+	checklist *IncompleteChecklistError
+}
+
+func (e *checklistRefusalError) Error() string   { return e.usage.Error() }
+func (e *checklistRefusalError) Unwrap() []error { return []error{e.usage, e.checklist} }
+
+// checklistUsage is the person's view of an unfinished checklist: what is still open, the task.md
+// that holds it, and the command to run once it is ticked.
+func checklistUsage(e *IncompleteChecklistError, t Item) *ui.UsageError {
+	// A folder name can come from a box, so the id and path are escaped like any other refusal.
+	id, file := ui.SafeInline(t.ID), ui.SafeInline(displayPath(filepath.Join(t.Dir, "task.md")))
+	headline, again := "Could not complete "+id, [2]string{"Then run:", "coop tasks done " + id}
+	if e.Total == 0 {
+		return ui.CommandFailed(headline,
+			"It has no checklist.\nList its work as checklist items and tick only what is finished.",
+			[2]string{"Add them to:", file}, again)
+	}
+	open := e.Total - e.Done
+	cause := fmt.Sprintf("%d of %d checklist items are still open", open, e.Total)
+	tick := "Finish them, then tick them in:"
+	if open == 1 {
+		cause = fmt.Sprintf("1 of %d checklist items is still open", e.Total)
+		tick = "Finish it, then tick it in:"
+	}
+	shown, more := e.shownOpen()
+	if len(shown) == 0 {
+		cause += "."
+	} else {
+		cause += ":"
+		for _, label := range shown {
+			cause += "\n[ ] " + label
+		}
+		if more > 0 {
+			cause += fmt.Sprintf("\n…and %d more", more)
+		}
+	}
+	return ui.CommandFailed(headline, cause, [2]string{tick, file}, again)
 }
 
 // tasksFolderPath prints a task's resolved folder — the id-command companion to `coop fork path`,

@@ -702,7 +702,7 @@ func validateForkProjectionOpened(canonicalRoot, id string, owner ForkTaskOwner,
 		return ProjectionResult{}, fmt.Errorf("read projected task.md: %w", err)
 	}
 	_, body := SplitFrontmatter(string(data))
-	item.Subtasks = scanSubtasks(body)
+	item.Subtasks, item.SubtaskLabels = scanSubtasks(body)
 	return ProjectionResult{Item: item, State: foundState, Digest: digest}, nil
 }
 

@@ -3,8 +3,8 @@ name: loop-completion-refusals-keep-work-moving
 description: ordinary completion mistakes get immediate feedback and bounded safe repair without weakening task acceptance
 scope: loop
 sources: [internal/loop/loop.go, internal/loop/completion.go, internal/loop/prompts.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_checklist.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/pending_review.go, internal/tasks/pending_review_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go]
-check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding|TestPendingReviewKeepsEarlierDebtAcrossLaterTaskRework|TestCarryReopenedReviewsAcrossSiblingRework|TestPendingReviewResumesInterruptedReworkForItsSiblings'"
-updated: 2026-10-16
+check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding|TestPendingReviewKeepsEarlierDebtAcrossLaterTaskRework|TestCarryReopenedReviewsAcrossSiblingRework|TestPendingReviewResumesInterruptedReworkForItsSiblings|TestIncompleteChecklistNamesOpenItems|TestDoneRefusalShowsOpenItemsAndWhereToTickThem'"
+updated: 2026-11-03
 ---
 
 # Recover ordinary completion mistakes without losing work or acceptance
@@ -18,7 +18,8 @@ completion mutations, including captured fork acceptance and candidate landing; 
 guard on raw recovery moves or prevent an unfinished projection from resuming. Failed,
 unavailable, and never-attempted required checks remain open. Recording pending verification is
 not equivalent to passing it, including in proposed task acceptance. Checked boxes are a
-structural prerequisite, not independent evidence that verification ran.
+structural prerequisite, not independent evidence that verification ran. A refusal names the open
+items, and the host CLI also names the task.md that holds them, so the repair is obvious.
 
 If a successful attempt ends after an ordinary no-commit completion refusal, allow one fresh
 repair only when HEAD and the checkout/index content fingerprint match the first leased attempt
@@ -59,6 +60,12 @@ code. The check above pins the conservative recovery boundary; the tagged script
 also runs in `make check` and proves continuation and both terminal modes.
 
 ## Changelog
+- 2026-11-03 — refusals say what is open, not only how much: `IncompleteChecklistError` carries the
+  open labels, parsed beside `Item.Subtasks` (fork projections included), and the host CLI draws
+  them with the task.md path and the retry command (task
+  2026-11-03-name-the-open-checklist-items-when-coop-tasks-do). Swept every
+  `RequireCompletedChecklist` caller: assigned and host MCP, host CLI, trusted and queued
+  finalization, fork acceptance and landing, the loop safe stop. All get the labels from one parse.
 - 2026-10-16 — pending review finds commits by trailer and keeps no commit IDs (task
   2026-10-15-find-a-task-s-commits-by-its-coop-task-trailer-i), so the sibling-debt half holds by
   construction; the audit-authority half moved to `tasks.CarryReopenedReviews`, which also runs when

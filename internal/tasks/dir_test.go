@@ -65,7 +65,7 @@ func TestUnquoteScalar(t *testing.T) {
 
 func TestScanSubtasksSkipsFences(t *testing.T) {
 	body := "## Subtasks\n- [ ] one\n- [x] two\n  - [X] nested done\n```\n- [ ] fenced, not a subtask\n```\n- [w] in progress\n"
-	subs := scanSubtasks(body)
+	subs, _ := scanSubtasks(body)
 	if len(subs) != 4 {
 		t.Fatalf("want 4 subtasks (fenced one excluded), got %d: %v", len(subs), subs)
 	}
@@ -86,14 +86,14 @@ func TestScanSubtasksSkipsFences(t *testing.T) {
 func TestScanChecklistKeepsLabelsAlignedWithSubtasks(t *testing.T) {
 	body := "## Subtasks\n- [ ] one\n- [x] two\x1b[0m bright\n  - [X] nested done\n```\n- [ ] fenced\n```\n- [w] in progress\n"
 	items := ScanChecklist(body)
-	subs := scanSubtasks(body)
-	if len(items) != len(subs) {
-		t.Fatalf("checklist has %d items, subtasks %d", len(items), len(subs))
+	subs, labels := scanSubtasks(body)
+	if len(items) != len(subs) || len(labels) != len(subs) {
+		t.Fatalf("checklist has %d items, subtasks %d, labels %d", len(items), len(subs), len(labels))
 	}
 	want := []ChecklistItem{{"one", false}, {"two[0m bright", true}, {"nested done", true}, {"in progress", false}}
 	for i, item := range items {
-		if item != want[i] || item.Checked != subs[i] {
-			t.Errorf("item %d = %+v, want %+v (subtask %v)", i, item, want[i], subs[i])
+		if item != want[i] || item.Checked != subs[i] || item.Label != labels[i] {
+			t.Errorf("item %d = %+v, want %+v (subtask %v, label %q)", i, item, want[i], subs[i], labels[i])
 		}
 	}
 }

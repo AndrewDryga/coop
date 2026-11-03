@@ -122,7 +122,8 @@ provider input choose a validation policy.
 
 Every official completion path also requires a nonempty, fully checked current checklist.
 Assigned MCP rereads it after binding validation; the host finalizer checks again after exit.
-An empty/open checklist refuses without clearing existing completion authority or scratch.
+An empty/open checklist refuses without clearing existing completion authority or scratch;
+the refusal names up to five open items (`tasks.IncompleteChecklistError`).
 Fork identity validation still permits an unfinished done projection so crash recovery can
 reopen it; captured completion acceptance, publication, and landing enforce the prerequisite.
 This checks task structure, not whether the agent actually ran a claimed verification.
@@ -167,6 +168,8 @@ chose daily over every push, since the image takes minutes and many downloads to
 ## Changelog
 - 2026-11-03 — `tasks_complete` refuses a blocked task (it had moved one to done past its open
   decision); `coop tasks claim` refuses blocked and done tasks the same way.
+- 2026-11-03 — checklist refusals name the open items; the labels travel with `tasks.Item` (task
+  2026-11-03-name-the-open-checklist-items-when-coop-tasks-do).
 - 2026-10-18 — a daily CI job runs `make task-channel-e2e` in a freshly built box image (task
   2026-10-17-exercise-the-task-channel-in-a-real-box-in-ci).
 - 2026-10-18 — each tool call pins its workspace and queues and every read and write goes through

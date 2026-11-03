@@ -3,11 +3,63 @@ package tasks
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 // ErrIncompleteChecklist distinguishes unfinished work from a failed metadata
 // write or cleanup. A checked item is still not independent verification evidence.
 var ErrIncompleteChecklist = errors.New("task checklist is unfinished")
+
+// A refusal names at most maxShownOpen open items, each cut to maxShownLabel runes: task.md is
+// agent-authored, so the message stays readable however long the checklist grows.
+const (
+	maxShownOpen  = 5
+	maxShownLabel = 120
+)
+
+// IncompleteChecklistError refuses completion of a task whose checklist is empty or still open.
+// It matches ErrIncompleteChecklist and names the open items, so every refusal (the host CLI, the
+// in-box task tools and the loop's safe stop) says what is left, not only how much.
+type IncompleteChecklistError struct {
+	ID          string
+	Done, Total int
+	Open        []string // the open items' labels in task order; empty when they are unknown
+}
+
+func (e *IncompleteChecklistError) Is(target error) bool { return target == ErrIncompleteChecklist }
+
+func (e *IncompleteChecklistError) Error() string {
+	msg := fmt.Sprintf("%v: %s has %d/%d subtasks done", ErrIncompleteChecklist, e.ID, e.Done, e.Total)
+	if e.Total == 0 {
+		return msg + "; record a nonempty, truthful checklist before completing"
+	}
+	if shown, more := e.shownOpen(); len(shown) > 0 {
+		quoted := make([]string, len(shown))
+		for i, label := range shown {
+			quoted[i] = strconv.Quote(label)
+		}
+		msg += "; open: " + strings.Join(quoted, ", ")
+		if more > 0 {
+			msg += fmt.Sprintf(" and %d more", more)
+		}
+	}
+	return msg + "; finish the remaining work and required checks, and keep a check open if it failed, could not run or has not run"
+}
+
+// shownOpen returns the open items a refusal names, shortened, and how many more it leaves out.
+func (e *IncompleteChecklistError) shownOpen() (shown []string, more int) {
+	for i, label := range e.Open {
+		if i == maxShownOpen {
+			return shown, len(e.Open) - maxShownOpen
+		}
+		if label == "" {
+			label = "(unlabeled)"
+		}
+		shown = append(shown, truncate(label, maxShownLabel))
+	}
+	return shown, 0
+}
 
 // RequireCompletedChecklist enforces the structural completion contract using
 // the same parsed checkboxes as task progress, including its code-fence rules.
@@ -16,11 +68,7 @@ func RequireCompletedChecklist(task Item) error {
 	if total > 0 && done == total {
 		return nil
 	}
-	action := "finish the remaining work and required checks; pending verification is not complete"
-	if total == 0 {
-		action = "record a nonempty, truthful checklist before completing"
-	}
-	return fmt.Errorf("%w: %s has %d/%d subtasks done; %s", ErrIncompleteChecklist, task.ID, done, total, action)
+	return &IncompleteChecklistError{ID: task.ID, Done: done, Total: total, Open: task.openSubtaskLabels()}
 }
 
 func requireCurrentCompletedChecklist(taskDir string) error {
