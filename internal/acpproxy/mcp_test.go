@@ -21,7 +21,8 @@ func TestProjectSessionMCP(t *testing.T) {
 		{"empty", `[]`, "", 1},
 		{"distinct-editor-server", `[{"name":"editor","command":"other"}]`, "", 2},
 		{"identical-dedup", `[{"args":["fixture"],"command":"node","name":"shared"}]`, "", 1},
-		{"conflicting-name", `[{"name":"shared","command":"other"}]`, "conflicting", 0},
+		{"shared-authority", `[{"name":"shared","command":"other"}]`, "", 1},
+		{"conflicting-editor-names", `[{"name":"editor","command":"one"},{"name":"editor","command":"two"}]`, "conflicting", 0},
 		{"missing-name", `[{"command":"other"}]`, "no name", 0},
 		{"invalid-shape", `{}`, "must be an array", 0},
 	} {
@@ -84,7 +85,7 @@ func TestProxySessionMCPStoresOnlyEditorParams(t *testing.T) {
 		t.Fatal("shared projection absent from wire or leaked into stored editor params")
 	}
 	before := input.Len()
-	p.forwardClient([]byte(`{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"mcpServers":[{"name":"shared","command":"other"}]}}`+"\n"), originEditor)
+	p.forwardClient([]byte(`{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"mcpServers":[{"name":"editor","command":"one"},{"name":"editor","command":"two"}]}}`+"\n"), originEditor)
 	if input.Len() != before || p.pending["2"] || parse(output.Bytes()).Error == nil {
 		t.Fatal("conflicting setup reached child, became pending, or failed without a response")
 	}
@@ -100,8 +101,8 @@ func TestProxyReplayMCPUsesReplacementProjection(t *testing.T) {
 	h := newProxyHarnessChildren(t, []*fakeChild{first, second}, nil, RunOpts{})
 	clientW := h.clientIn
 	h.initialize(0)
-	writeLine(t, clientW, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/work","mcpServers":[{"name":"editor","command":"other"}]}}`)
-	if line := readLine(t, h.childIn[0]); !bytes.Contains(line, []byte("old-standin")) {
+	writeLine(t, clientW, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/work","mcpServers":[{"name":"editor","command":"other"},{"name":"shared","command":"host-only","env":[{"name":"TOKEN","value":"host-private"}]}]}}`)
+	if line := readLine(t, h.childIn[0]); !bytes.Contains(line, []byte("old-standin")) || bytes.Contains(line, []byte("host-private")) {
 		t.Fatalf("initial projection absent: %s", line)
 	}
 	writeLine(t, first.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1"}}`)
@@ -117,7 +118,7 @@ func TestProxyReplayMCPUsesReplacementProjection(t *testing.T) {
 		if fr.Method != method {
 			t.Fatalf("replay method = %s, want %s", fr.Method, method)
 		}
-		if method != "initialize" && (bytes.Contains(line, []byte("old-standin")) || !bytes.Contains(line, []byte("new-standin")) || !bytes.Contains(line, []byte(`"editor"`))) {
+		if method != "initialize" && (bytes.Contains(line, []byte("old-standin")) || bytes.Contains(line, []byte("host-private")) || !bytes.Contains(line, []byte("new-standin")) || !bytes.Contains(line, []byte(`"editor"`))) {
 			t.Fatalf("replay kept old tools or lost editor/replacement tools: %s", line)
 		}
 		if method == "session/load" {
@@ -179,5 +180,49 @@ func TestProxyReplayMCPTimeoutReleasesStalledWriter(t *testing.T) {
 				t.Fatal("replay timeout left a setup writer blocked")
 			}
 		})
+	}
+}
+
+// Zed forwards host stdio definitions even when Coop already owns the same logical tool.
+// The brokered shared definition must win without leaking the editor's credential or losing
+// distinct tools; malformed/conflicting definitions within either source still refuse setup.
+func TestProxySessionMCPSharedAuthority(t *testing.T) {
+	input := &recordingWriteCloser{}
+	var output, warnings bytes.Buffer
+	old := warnOut
+	warnOut = &warnings
+	defer func() { warnOut = old }()
+	shared := map[string]any{"name": "emisar", "type": "http", "url": "http://broker/mcp", "headers": []any{map[string]any{"name": "Authorization", "value": "Bearer stand-in"}}}
+	child := &Child{In: input, Provider: "claude", MCPServers: func() ([]map[string]any, error) { return []map[string]any{shared}, nil }}
+	p := &proxy{child: child, out: &output, pending: map[string]bool{}, sessions: map[string]*sess{}}
+	original := []byte(`{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/work","mcpServers":[{"name":"emisar","command":"/usr/local/bin/emisar-mcp","args":[],"env":[{"name":"EMISAR_API_KEY","value":"editor-private-token"}]},{"name":"other","command":"node","args":[],"env":[]}]}}` + "\n")
+	p.forwardClient(original, originEditor)
+	if output.Len() != 0 || !p.pending["1"] || !bytes.HasSuffix(input.Bytes(), []byte("\n")) {
+		t.Fatalf("session did not reach child with newline framing: response=%s pending=%v", output.Bytes(), p.pending)
+	}
+	var params struct{ MCPServers []map[string]any }
+	if err := json.Unmarshal(parse(input.Bytes()).Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if len(params.MCPServers) != 2 || params.MCPServers[0]["name"] != "emisar" || params.MCPServers[0]["url"] != shared["url"] || params.MCPServers[1]["name"] != "other" {
+		t.Fatalf("shared authority or distinct editor tool lost: %s", input.Bytes())
+	}
+	wantShared, _ := json.Marshal(shared)
+	gotShared, _ := json.Marshal(params.MCPServers[0])
+	if !bytes.Equal(gotShared, wantShared) {
+		t.Fatalf("forwarded shared definition differs from broker handoff: %s", gotShared)
+	}
+	if bytes.Contains(input.Bytes(), []byte("editor-private-token")) || !bytes.Contains(p.sessionReqs["1"].params, []byte("editor-private-token")) {
+		t.Fatal("editor credential forwarded or saved editor parameters overwritten")
+	}
+	if !strings.Contains(warnings.String(), `emisar`) || strings.Contains(warnings.String(), "editor-private-token") || strings.Contains(warnings.String(), "Bearer") {
+		t.Fatalf("replacement warning missing or exposes credentials: %s", warnings.String())
+	}
+	// An invalid shared handoff cannot silently pick whichever duplicate came last.
+	child.MCPServers = func() ([]map[string]any, error) {
+		return []map[string]any{shared, {"name": "emisar", "command": "conflicting"}}, nil
+	}
+	if _, err := projectSessionMCP(child, original); err == nil {
+		t.Fatal("conflicting shared definitions accepted")
 	}
 }

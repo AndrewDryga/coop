@@ -3,7 +3,7 @@ name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
 sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go]
-updated: 2026-10-28
+updated: 2026-11-03
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -21,8 +21,10 @@ so service ownership does not change. Never use system TMPDIR for this handoff: 
 already have a broad bind of it.
 The proxy adds its child's final list only to wire-bound new/load/resume and replay/recreate requests;
 saved parameters remain the editor's originals. Replacement children therefore render new broker
-endpoints/stand-ins. Distinct editor servers survive, identical names deduplicate and conflicting
-definitions refuse setup. Missing/invalid/foreign handoffs fail visibly; catalog-only probes request
+endpoints/stand-ins. Distinct editor servers survive. A shared server takes precedence over an editor server with the
+same name, retaining the child's brokered endpoint and stand-ins; a server-name-only warning explains
+the replacement. Identical definitions deduplicate. Conflicting duplicates within either source
+still refuse setup. Missing/invalid/foreign handoffs fail visibly; catalog-only probes request
 no tool handoff. An outer supervisor must never render the list from raw host credentials.
 
 ACP SDK 1.5.1's v1 wire schema requires stdio `args`/`env` and remote `headers` arrays, including
@@ -201,6 +203,9 @@ including `${...}` syntax; Codex does not run a second expansion after the share
 Native Codex TOML still owns its distinct exact-reference restriction.
 
 ## Changelog
+- 2026-11-03 — reproduced Zed Emisar startup refusal from editor stdio/shared HTTP name collision;
+  shared authority now wins across sources, with same-source conflict refusal, safe warning, saved
+  editor params and fresh replay projection preserved. Verified proxy regression and live handshake.
 - 2026-10-28 — removed stale Codex ACP expansion and made generic substitutions simultaneous; outgoing headers preserve reference-like secret bytes.
 - 2026-10-17 — the Responder binding was renamed: `BindResponderState`/`responder-state` are
   `BindControllerTools`/`controller-tools` since 0e7c5c45; verified against internal/mcp/mcp.go and

@@ -36,6 +36,7 @@ func projectSessionMCP(child *Child, line []byte) ([]byte, error) {
 			return nil, errors.New("session mcpServers must be an array")
 		}
 	}
+	editorCount := len(servers)
 	for _, server := range shared {
 		raw, err := json.Marshal(server)
 		if err != nil {
@@ -44,8 +45,10 @@ func projectSessionMCP(child *Child, line []byte) ([]byte, error) {
 		servers = append(servers, raw)
 	}
 	seen := map[string][]byte{}
+	positions := map[string]int{}
+	sharedNames := map[string]bool{}
 	merged := make([]json.RawMessage, 0, len(servers))
-	for _, raw := range servers {
+	for i, raw := range servers {
 		var server map[string]any
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.UseNumber()
@@ -60,13 +63,25 @@ func projectSessionMCP(child *Child, line []byte) ([]byte, error) {
 		if err != nil {
 			return nil, errors.New("a session MCP server is invalid")
 		}
+		isShared := i >= editorCount
 		if prior, ok := seen[name]; ok {
 			if !bytes.Equal(prior, canonical) {
-				return nil, fmt.Errorf("MCP server %q has conflicting definitions; use unique names in editor and Coop shared configuration, then reconnect", name)
+				if !isShared || sharedNames[name] {
+					return nil, fmt.Errorf("MCP server %q has conflicting definitions; use unique names in editor and Coop shared configuration, then reconnect", name)
+				}
+				// Shared tools carry the child's broker endpoints and credential stand-ins.
+				// An editor's host command must not replace that authority or block startup.
+				merged[positions[name]] = raw
+				seen[name] = canonical
+				fmt.Fprintf(warnOut, "Coop is using its shared MCP server %q instead of the editor's definition.\n", name)
+				Trace("shared MCP server %q replaces the editor definition", name)
 			}
+			sharedNames[name] = sharedNames[name] || isShared
 			continue
 		}
 		seen[name] = canonical
+		positions[name] = len(merged)
+		sharedNames[name] = isShared
 		merged = append(merged, raw)
 	}
 	params["mcpServers"], err = json.Marshal(merged)
