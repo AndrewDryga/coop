@@ -1379,14 +1379,17 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 					return 1, fmt.Errorf("record candidate review: %w", err)
 				}
 			}
-			if _, published, err := tasks.PublishForkCandidate(repo, identity, head, tree); err != nil {
+			_, published, err := tasks.PublishForkCandidate(repo, identity, head, tree)
+			if err != nil {
 				return 1, err
-			} else if published {
+			}
+			if published {
 				ui.Note("")
 				ui.OK("Fork %s is ready to merge", name)
 				ui.Note("")
 				ui.Note("  Review: coop fork review %s", name)
 				ui.Note("  Merge:  coop fork merge %s", name)
+				return 0, nil // what comes next is above; the generic steps would only repeat it
 			}
 			if !detached {
 				forkctl.ForkNextSteps(name)
