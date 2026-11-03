@@ -339,7 +339,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 	}
 	a.reportUnfilteredRuntime(repo)
 	reportDockerSetup(repo)
-	for _, g := range initActions(a.cfg, repo, services, agentDirs, !already) {
+	for _, g := range initActions(a.cfg, repo, langs, services, agentDirs, !already) {
 		g.print()
 	}
 	a.netPendingNotice(repo) // only when this project asks for network access nobody approved
@@ -611,10 +611,10 @@ func (g initAction) print() {
 }
 
 // initActions is what this project actually needs next, derived from real state — no Git repo, no
-// signed-in agent, a box image to build, services to start — followed on a first run by the two
-// jobs every new project has: prove the sandbox, then start working. A repo that needs none of the
-// first four prints only those two.
-func initActions(cfg *config.Config, repo string, services, agentDirs []string, fresh bool) []initAction {
+// signed-in agent, a box image to build or a toolchain the box lacks, services to start — followed
+// on a first run by the two jobs every new project has: prove the sandbox, then start working. A
+// repo that needs none of the first five prints only those two.
+func initActions(cfg *config.Config, repo string, langs, services, agentDirs []string, fresh bool) []initAction {
 	var out []initAction
 	// coop runs forks and the loop on top of git (worktrees, rebase-merge), and the commit gate
 	// needs core.hooksPath — which only the re-init after `git init` can set. Lead with both.
@@ -633,6 +633,10 @@ func initActions(cfg *config.Config, repo string, services, agentDirs []string, 
 	// box.dockerfile comes from project.yaml, which a box can write.
 	if dfRel := project.DockerfilePath(repo); fileExists(filepath.Join(repo, dfRel)) {
 		out = append(out, initAction{title: "Build the box", note: "Review " + ui.SafeInline(dfRel) + ", then run:", actions: []string{"coop build"}})
+	} else if missing := scaffold.Toolchains(repo, langs); len(missing) > 0 {
+		// The default box carries none of the languages the commit check formats, so without this
+		// agents cannot build the project and every commit skips its format check.
+		out = append(out, toolchainAction(missing))
 	}
 	if len(services) > 0 {
 		out = append(out, initAction{title: "Start " + joinAnd(services), actions: []string{"coop up"}})
@@ -647,6 +651,29 @@ func initActions(cfg *config.Config, repo string, services, agentDirs []string, 
 		)
 	}
 	return out
+}
+
+// toolchainAction is the setup a language the default box lacks needs: the exact commands that pin
+// it in .tool-versions and build the asdf box from that file, with the version where the
+// repository names one.
+func toolchainAction(missing []scaffold.Toolchain) initAction {
+	names := make([]string, 0, len(missing))
+	var actions []string
+	for _, tc := range missing {
+		names = append(names, tc.Name)
+		for _, pin := range tc.Pins {
+			actions = append(actions, fmt.Sprintf("echo %q >> .tool-versions", pin))
+		}
+	}
+	pronoun := "it"
+	if len(missing) > 1 {
+		pronoun = "them"
+	}
+	return initAction{
+		title:   "Add " + joinAnd(names) + " to the box",
+		note:    fmt.Sprintf("The default box has no %s toolchain. Pin %s, then build this project's box:", ui.List(names, "or"), pronoun),
+		actions: append(actions, "coop init --stack asdf", "coop build"),
+	}
 }
 
 // plural agrees a noun with a count that is not itself printed — the list under the headline is

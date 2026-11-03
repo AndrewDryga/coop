@@ -233,6 +233,10 @@ into an <code>.agent/Dockerfile</code> instead:</p>
 <li><code>coop init --stack asdf</code> writes one later.</li>
 <li><code>coop build</code> builds it.</li>
 </ul>
+<p>The default box has no Go, Terraform, Elixir or Rust. When <code>coop init</code> finds one of these
+languages in a project that has no <code>.agent/Dockerfile</code>, for example Go from a <code>go.mod</code>, it prints
+the commands that pin it in <code>.tool-versions</code> and build the project&#39;s box. Until then the commit
+check cannot format that language&#39;s files, so it skips them and prints a warning.</p>
 </section><section class="doc-section reference-section" id="your-own-image-agentdockerfile"><h2>Your own image: .agent/Dockerfile</h2>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Your own image: .agent/Dockerfile code example" tabindex="0"><code class="language-bash">coop init --stack asdf # writes an asdf .agent/Dockerfile (from .tool-versions)
 coop build             # builds the image for this project&#39;s network mode

@@ -36,6 +36,12 @@ Network access is filtered.
 Codex can reach OpenAI.
 Other network traffic is blocked until you approve rules allowing it.
 
+Add Rust to the box
+  The default box has no Rust toolchain. Pin it, then build this project's box:
+  → echo "rust <version>" >> .tool-versions
+  → coop init --stack asdf
+  → coop build
+
 Verify the sandbox
   → coop doctor
 

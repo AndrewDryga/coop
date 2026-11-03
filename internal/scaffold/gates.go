@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -14,17 +17,94 @@ var GateLangs = []string{"go", "terraform", "elixir", "rust"}
 
 // knownStacks pairs each gate language with the signals that detect it: marker files in the
 // repo and tool names in .tool-versions. Terraform is matched by any *.tf file too (handled
-// in stackPresent), since it has no single marker file.
+// in DetectStacks), since it has no single marker file. Coop's default box carries none of these
+// toolchains, so each also names the asdf tools that install it.
 var knownStacks = []struct {
 	lang    string
-	markers []string // files at the repo root that imply this stack
-	tools   []string // .tool-versions tool names (lowercased)
+	name    string                   // the language as coop init names it
+	markers []string                 // files at the repo root that imply this stack
+	tools   []string                 // .tool-versions tool names (lowercased)
+	pins    []string                 // the asdf tools that install it, in install order
+	version func(repo string) string // the version the repository names for its one pin, or ""
 }{
-	{"go", []string{"go.mod"}, []string{"go", "golang"}},
-	{"terraform", nil, []string{"terraform", "opentofu", "tofu"}},
-	{"elixir", []string{"mix.exs"}, []string{"elixir"}},
-	{"rust", []string{"Cargo.toml"}, []string{"rust"}},
+	{"go", "Go", []string{"go.mod"}, []string{"go", "golang"}, []string{"golang"}, goVersion},
+	{"terraform", "Terraform", nil, []string{"terraform", "opentofu", "tofu"}, []string{"terraform"}, nil},
+	{"elixir", "Elixir", []string{"mix.exs"}, []string{"elixir"}, []string{"erlang", "elixir"}, nil},
+	{"rust", "Rust", []string{"Cargo.toml"}, []string{"rust"}, []string{"rust"}, nil},
 }
+
+// Toolchain is a language the project's box cannot run yet, with the .tool-versions lines that
+// would pin it for the asdf box `coop init --stack asdf` writes.
+type Toolchain struct {
+	Name string   // "Go"
+	Pins []string // "golang 1.26.5", or "<version>" where the repository names none
+}
+
+// Toolchains are the toolchains langs need that Coop's default box lacks and .tool-versions does
+// not pin, in GateLangs order. On that box agents cannot build those languages, and the commit
+// format check skips them.
+func Toolchains(repo string, langs []string) []Toolchain {
+	// An unreadable .tool-versions pins nothing; init refuses it before getting here.
+	pinned, _ := toolVersions(repo)
+	var out []Toolchain
+	for _, st := range knownStacks {
+		if !slices.Contains(langs, st.lang) || slices.ContainsFunc(st.tools, func(t string) bool { return pinned[t] }) {
+			continue
+		}
+		tc := Toolchain{Name: st.name}
+		for _, tool := range st.pins {
+			version := ""
+			if st.version != nil && len(st.pins) == 1 {
+				version = st.version(repo)
+			}
+			if version == "" {
+				version = "<version>"
+			}
+			tc.Pins = append(tc.Pins, tool+" "+version)
+		}
+		out = append(out, tc)
+	}
+	return out
+}
+
+// goVersion is the Go release go.mod names, the way asdf installs it: its toolchain line, else
+// its go line. Go 1.21 and later number every release x.y.z, so a bare "go 1.26" there means
+// 1.26.0. A box can write go.mod, so anything but plain digits and dots names nothing.
+func goVersion(repo string) string {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return ""
+	}
+	defer root.Close()
+	data, err := readRegular(root, "go.mod", "go.mod")
+	if err != nil {
+		return ""
+	}
+	var goLine, toolchain string
+	for _, line := range strings.Split(string(data), "\n") {
+		switch f := strings.Fields(line); {
+		case len(f) == 2 && f[0] == "go":
+			goLine = f[1]
+		case len(f) == 2 && f[0] == "toolchain":
+			toolchain = strings.TrimPrefix(f[1], "go")
+		}
+	}
+	if goRelease.MatchString(toolchain) {
+		return toolchain
+	}
+	if !goRelease.MatchString(goLine) {
+		return ""
+	}
+	if parts := strings.Split(goLine, "."); len(parts) == 2 {
+		if minor, err := strconv.Atoi(parts[1]); err == nil && parts[0] == "1" && minor >= 21 {
+			return goLine + ".0"
+		}
+	}
+	return goLine
+}
+
+// goRelease is a Go release number as go.mod and asdf write it: 1.26 or 1.26.5.
+var goRelease = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
 
 // DetectStacks reports which gate languages the repo uses, by marker file, *.tf presence, or
 // .tool-versions — in GateLangs order, so the generated gate is deterministic.
@@ -100,15 +180,18 @@ func hasTerraformFiles(repo string) bool {
 	return false
 }
 
-// gateSnippets is the per-language format check, command-v guarded so it runs in the box
-// (toolchain provisioned) and skips on a host that lacks the tool. @EXIT@ is the exit code
+// gateSnippets is the per-language format check, command-v guarded so it runs where the
+// toolchain is installed and, where it is not, skips with a warning rather than in silence: a box
+// without the toolchain would otherwise pass every commit unchecked. @EXIT@ is the exit code
 // to block with (1 for the git hook, 2 for the Claude hook). Every snippet is list-based —
 // it names exactly the files that need formatting — so a tool error (crash, bad syntax, a
 // missing config) fails open instead of blocking on a broken toolchain; only a real diff blocks.
 var gateSnippets = map[string]string{
 	"go": `# Go: block the commit if any staged .go file isn't gofmt-clean.
 go_files=$(echo "$staged" | grep '\.go$' || true)
-if [ -n "$go_files" ] && command -v gofmt >/dev/null 2>&1; then
+if [ -n "$go_files" ] && ! command -v gofmt >/dev/null 2>&1; then
+  echo "pre-commit: gofmt is not installed here, so the Go format check was skipped" >&2
+elif [ -n "$go_files" ]; then
   # shellcheck disable=SC2086  # intentional: split the file list into separate gofmt args
   bad=$(gofmt -l $go_files 2>/dev/null || true)
   if [ -n "$bad" ]; then
@@ -118,7 +201,9 @@ if [ -n "$go_files" ] && command -v gofmt >/dev/null 2>&1; then
 fi`,
 	"terraform": `# Terraform: block the commit if any staged .tf file isn't terraform-fmt clean.
 tf_files=$(echo "$staged" | grep '\.tf$' || true)
-if [ -n "$tf_files" ] && command -v terraform >/dev/null 2>&1; then
+if [ -n "$tf_files" ] && ! command -v terraform >/dev/null 2>&1; then
+  echo "pre-commit: terraform is not installed here, so the Terraform format check was skipped" >&2
+elif [ -n "$tf_files" ]; then
   bad=""
   for f in $tf_files; do [ -n "$(terraform fmt -check -list=true "$f" 2>/dev/null)" ] && bad="$bad $f"; done
   if [ -n "$bad" ]; then
@@ -130,7 +215,9 @@ fi`,
 # flag to list many files at once, so check one at a time and match its stable
 # "--check-formatted" failure text — any other failure (crash, syntax error) fails open.
 ex_files=$(echo "$staged" | grep -E '\.exs?$' || true)
-if [ -n "$ex_files" ] && command -v mix >/dev/null 2>&1; then
+if [ -n "$ex_files" ] && ! command -v mix >/dev/null 2>&1; then
+  echo "pre-commit: mix is not installed here, so the Elixir format check was skipped" >&2
+elif [ -n "$ex_files" ]; then
   bad=""
   for f in $ex_files; do
     out=$(mix format --check-formatted "$f" 2>&1 >/dev/null)
@@ -146,7 +233,9 @@ fi`,
 # crate's real edition off Cargo.toml first. -l lists exactly the files that need formatting;
 # any other failure (crash, syntax error) fails open.
 rs_files=$(echo "$staged" | grep '\.rs$' || true)
-if [ -n "$rs_files" ] && command -v rustfmt >/dev/null 2>&1; then
+if [ -n "$rs_files" ] && ! command -v rustfmt >/dev/null 2>&1; then
+  echo "pre-commit: rustfmt is not installed here, so the Rust format check was skipped" >&2
+elif [ -n "$rs_files" ]; then
   edition_line=$(grep -m1 '^edition' Cargo.toml 2>/dev/null)
   edition=${edition_line#*\"}; edition=${edition%%\"*}
   edflag=""; [ -n "$edition" ] && edflag="--edition=$edition"

@@ -17,6 +17,12 @@ Network access is filtered.
 Codex can reach OpenAI.
 Other network traffic is blocked until you approve rules allowing it.
 
+Add Go to the box
+  The default box has no Go toolchain. Pin it, then build this project's box:
+  → echo "golang 1.26.5" >> .tool-versions
+  → coop init --stack asdf
+  → coop build
+
 Start postgres and redis
   → coop up
 

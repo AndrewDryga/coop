@@ -184,6 +184,11 @@ into an `.agent/Dockerfile` instead:
 - `coop init --stack asdf` writes one later.
 - `coop build` builds it.
 
+The default box has no Go, Terraform, Elixir or Rust. When `coop init` finds one of these
+languages in a project that has no `.agent/Dockerfile`, for example Go from a `go.mod`, it prints
+the commands that pin it in `.tool-versions` and build the project's box. Until then the commit
+check cannot format that language's files, so it skips them and prints a warning.
+
 ## Your own image: .agent/Dockerfile
 
 ```bash

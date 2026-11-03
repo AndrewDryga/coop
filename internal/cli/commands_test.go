@@ -1193,7 +1193,7 @@ func TestInitActions(t *testing.T) {
 		}
 		return out
 	}
-	got := initActions(cfg, repo, nil, []string{"codex"}, true)
+	got := initActions(cfg, repo, nil, nil, []string{"codex"}, true)
 	if len(got) != 3 || !strings.HasPrefix(titles(got)[0], "Sign in") {
 		t.Fatalf("ready repo actions = %v", titles(got))
 	}
@@ -1206,7 +1206,7 @@ func TestInitActions(t *testing.T) {
 		t.Errorf("sign-in should name the same agent the loop hint does: %+v", got[0])
 	}
 	// A re-init keeps only the actions real state still needs — no first-run advice.
-	if got := initActions(cfg, repo, nil, []string{"codex"}, false); len(got) != 1 || !strings.HasPrefix(got[0].title, "Sign in") {
+	if got := initActions(cfg, repo, nil, nil, []string{"codex"}, false); len(got) != 1 || !strings.HasPrefix(got[0].title, "Sign in") {
 		t.Errorf("re-init actions = %v, want only the sign-in job", titles(got))
 	}
 	// A scaffolded .agent/Dockerfile + services → build, then start them (named), before the
@@ -1217,7 +1217,7 @@ func TestInitActions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got = initActions(cfg, repo, []string{"postgres", "redis"}, []string{"codex"}, true)
+	got = initActions(cfg, repo, nil, []string{"postgres", "redis"}, []string{"codex"}, true)
 	if want := []string{"Sign in to an agent", "Build the box", "Start postgres and redis", "Verify the sandbox", "Start working"}; !slices.Equal(titles(got), want) {
 		t.Errorf("actions = %v, want %v", titles(got), want)
 	}
@@ -1226,9 +1226,34 @@ func TestInitActions(t *testing.T) {
 	}
 	// Outside a git repo the first job is the one that finishes setup — the exact two commands,
 	// in order, because only the re-init can set core.hooksPath.
-	got = initActions(cfg, t.TempDir(), nil, []string{"codex"}, true)
+	got = initActions(cfg, t.TempDir(), nil, nil, []string{"codex"}, true)
 	if len(got) == 0 || !strings.HasPrefix(got[0].title, "Finish setup") || !slices.Equal(got[0].actions, []string{"git init", "coop init"}) {
 		t.Errorf("non-git repo should lead with git init then coop init, got %+v", got)
+	}
+	// A Go project on the default box gets the exact commands that put Go in its box, with the
+	// release go.mod names; once a project Dockerfile exists, building it is the job instead.
+	goRepo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(goRepo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goRepo, "go.mod"), []byte("module atlas\n\ngo 1.26.5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got = initActions(cfg, goRepo, []string{"go"}, nil, []string{"codex"}, false)
+	want := initAction{title: "Add Go to the box",
+		note:    "The default box has no Go toolchain. Pin it, then build this project's box:",
+		actions: []string{`echo "golang 1.26.5" >> .tool-versions`, "coop init --stack asdf", "coop build"}}
+	if len(got) != 2 || got[1].title != want.title || got[1].note != want.note || !slices.Equal(got[1].actions, want.actions) {
+		t.Errorf("Go on the default box: actions = %+v, want sign-in then %+v", got, want)
+	}
+	if err := os.MkdirAll(filepath.Join(goRepo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goRepo, ".agent", "Dockerfile"), []byte("FROM x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := initActions(cfg, goRepo, []string{"go"}, nil, []string{"codex"}, false); !slices.Equal(titles(got), []string{"Sign in to an agent", "Build the box"}) {
+		t.Errorf("Go with a project Dockerfile: actions = %v, want the build instead", titles(got))
 	}
 }
 

@@ -4,7 +4,7 @@ description: "`coop init` generates for the detected stack and stays neutral whe
 scope: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go, internal/scaffold/projectfile.go]
 check: "none"
-updated: 2026-10-17
+updated: 2026-11-03
 ---
 
 # coop init scaffolds what the repo uses — it never imposes a stack
@@ -18,7 +18,11 @@ Go check is dead weight and the language actually in use gets no gate at all. An
 `.claude/hooks/commit-gate.sh`) are generated per stack — detected from marker files
 (go.mod, `*.tf`, mix.exs, Cargo.toml) and `.tool-versions` — into `command -v`-guarded
 format checks (gofmt / terraform fmt / mix format / rustfmt). The guard means a check
-runs in the box (toolchain provisioned) and silently skips on a host that lacks the tool.
+runs where the toolchain is installed and, where it is not, skips with a warning naming the
+missing tool, never in silence: Coop's default box carries none of these toolchains, so a
+silent skip passed every commit in a box unchecked. A detected language the project's box
+lacks (no project Dockerfile, not pinned in `.tool-versions`) gets init's exact next step:
+the `.tool-versions` pin and `coop init --stack asdf` (`scaffold.Toolchains`).
 
 **Preserve Git hook composition.** A repo-local `core.hooksPath` overrides the box's global path,
 so the tracked hook directory also carries `.githooks/prepare-commit-msg`: a no-op-on-host shim that
@@ -56,6 +60,12 @@ blocks. Guessing wrong is worse than doing nothing.
   exception: preserve it and print chaining guidance.
 
 ## Changelog
+- 2026-11-03 — the guard no longer skips silently: a missing formatter prints "pre-commit: <tool>
+  is not installed here, so the <Language> format check was skipped" and the commit proceeds
+  (TestGateWarnsWhenTheFormatterIsMissing). A Go repo's default box had no gofmt, so its promised
+  check never ran. init names the toolchain the box lacks with the pin and build commands, the Go
+  release read from go.mod (TestToolchains, TestInitActions). Swept the four snippets: all four
+  guarded silently; all four warn now.
 - 2026-10-17 — the 2026-08-09 entries name `installGitHooks` and the `gateSnippets` entries instead
   of scaffold.go/gates.go/commands.go line numbers.
 - 2026-10-16 — pass-through for the skills-link handle: a link that already resolves to a

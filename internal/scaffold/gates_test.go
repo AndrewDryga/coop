@@ -226,3 +226,90 @@ esac
 		})
 	})
 }
+
+// A box without the language's toolchain used to pass every commit with no format check and no
+// word about it. The commit still goes through, since a missing tool is no formatting diff, but the
+// committer now reads why nothing was checked; a commit without that language's files says nothing.
+func TestGateWarnsWhenTheFormatterIsMissing(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	grep, err := exec.LookPath("grep")
+	if err != nil {
+		t.Skip("grep not available")
+	}
+	// PATH holds grep alone, so no formatter is found even on a host that has one.
+	bin := t.TempDir()
+	if err := os.Symlink(grep, filepath.Join(bin, "grep")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ lang, file, want string }{
+		{"go", "main.go", "pre-commit: gofmt is not installed here, so the Go format check was skipped\n"},
+		{"terraform", "infra/main.tf", "pre-commit: terraform is not installed here, so the Terraform format check was skipped\n"},
+		{"elixir", "lib/app.ex", "pre-commit: mix is not installed here, so the Elixir format check was skipped\n"},
+		{"rust", "src/main.rs", "pre-commit: rustfmt is not installed here, so the Rust format check was skipped\n"},
+	} {
+		t.Run(tc.lang, func(t *testing.T) {
+			for staged, want := range map[string]string{tc.file: tc.want, "README.md": ""} {
+				script := "set -f\nIFS=$'\\n'\nstaged=\"$STAGED\"\n" + gateSnippet(tc.lang, "9") + "\nexit 0\n"
+				cmd := exec.Command(bash, "-c", script)
+				cmd.Dir = t.TempDir()
+				cmd.Env = []string{"PATH=" + bin, "STAGED=" + staged}
+				var stderr strings.Builder
+				cmd.Stderr = &stderr
+				if err := cmd.Run(); err != nil {
+					t.Errorf("staged %s: the commit was blocked (%v); stderr %q", staged, err, stderr.String())
+				}
+				if stderr.String() != want {
+					t.Errorf("staged %s: stderr = %q, want %q", staged, stderr.String(), want)
+				}
+			}
+		})
+	}
+}
+
+// A detected language the project does not pin comes back as the .tool-versions lines that would
+// pin it: Go with the release its go.mod names, the others with a version the person fills in.
+func TestToolchains(t *testing.T) {
+	repo := func(files map[string]string) string {
+		dir := t.TempDir()
+		for name, body := range files {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	all := []string{"go", "terraform", "elixir", "rust"}
+	got := Toolchains(repo(map[string]string{"go.mod": "module x\n\ngo 1.26\n"}), all)
+	want := []Toolchain{
+		{"Go", []string{"golang 1.26.0"}},
+		{"Terraform", []string{"terraform <version>"}},
+		{"Elixir", []string{"erlang <version>", "elixir <version>"}},
+		{"Rust", []string{"rust <version>"}},
+	}
+	if !slices.EqualFunc(got, want, func(a, b Toolchain) bool { return a.Name == b.Name && slices.Equal(a.Pins, b.Pins) }) {
+		t.Errorf("Toolchains = %+v, want %+v", got, want)
+	}
+	// A pinned tool is already the box's; only the rest are missing.
+	if got := Toolchains(repo(map[string]string{".tool-versions": "golang 1.26.5\nrust 1.90.0\n"}), all); len(got) != 2 || got[0].Name != "Terraform" || got[1].Name != "Elixir" {
+		t.Errorf("Toolchains with go and rust pinned = %+v, want Terraform and Elixir", got)
+	}
+	if got := Toolchains(repo(nil), nil); got != nil {
+		t.Errorf("Toolchains with no language = %+v, want none", got)
+	}
+	for goMod, version := range map[string]string{
+		"module x\ngo 1.26.5\n":                   "1.26.5",
+		"module x\ngo 1.26\ntoolchain go1.27.1\n": "1.27.1",
+		"module x\ngo 1.20\n":                     "1.20",
+		"module x\ngo 1.26\ntoolchain default\n":  "1.26.0",
+		"module x\n":                              "",
+		"module x\ngo 1.26.5\x1b[31m\n":           "",
+		"module x\ngo 1.27rc1\ntoolchain local\n": "",
+	} {
+		if got := goVersion(repo(map[string]string{"go.mod": goMod})); got != version {
+			t.Errorf("goVersion(%q) = %q, want %q", goMod, got, version)
+		}
+	}
+}

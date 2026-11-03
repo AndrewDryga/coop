@@ -103,7 +103,7 @@ func TestApprovedFirstRun(t *testing.T) {
 	}{
 		// Go is detected and Git is there, so the only question left is which services to run.
 		{fixture: "13a-init-go-services", git: true,
-			files:   map[string]string{"go.mod": "module atlas\n"},
+			files:   map[string]string{"go.mod": "module atlas\n\ngo 1.26.5\n"},
 			answers: typed("postgres redis")},
 		// Nothing is detected: Git is offered and accepted, an unknown language is named and the
 		// question repeats, and Enter at the services prompt means none.
