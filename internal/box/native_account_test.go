@@ -70,6 +70,62 @@ func TestNativeAccountSignInRenewalReadinessAndRemoval(t *testing.T) {
 	}
 }
 
+// A grant the provider refused stays refused: the account reads as needing a new sign-in in every
+// command, with no provider asked, and no renewal sends the grant again. A failure that may pass
+// marks nothing, a new sign-in ends the refusal, and removal deletes it with the rest of the account.
+func TestRefusedGrantNeedsANewSignInUntilOneIsMade(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	ag, _ := agents.Get("grok")
+	seedCanonicalFixture(t, cfg, "grok", "default")
+	asked := 0
+	renew := func(answer error) error {
+		_, _, err := renewAccountAuthority(t.Context(), cfg, nativeAccountSpec(ag), "default", nil,
+			func(*accountAuthority, func([]byte) error) (*accountAuthority, error) {
+				asked++
+				return nil, answer
+			})
+		return err
+	}
+	signIn := func() agents.SignIn { return ProfileSignIn(cfg, "grok", "default", time.Now()) }
+
+	if err := renew(agents.ErrRenewalUnavailable); !errors.Is(err, agents.ErrRenewalUnavailable) || signIn() != agents.SignedIn {
+		t.Fatalf("an outage = (%v, %v), want the account still signed in", err, signIn())
+	}
+	if err := renew(agents.ErrRenewalRefused); !errors.Is(err, agents.ErrRenewalRefused) {
+		t.Fatalf("refusal = %v", err)
+	}
+	if signIn() != agents.SignInAgain || ProfileCredentialReady(cfg, "grok", "default", time.Now()) || ProfileAuthed(cfg, "grok", "default") {
+		t.Fatalf("a refused grant reads as %v, want SignInAgain and not ready", signIn())
+	}
+	asked = 0
+	if err := renew(nil); !errors.Is(err, agents.ErrRenewalRefused) || asked != 0 {
+		t.Fatalf("renewing a refused grant = %v after %d provider calls, want the refusal and none", err, asked)
+	}
+	// A launch (an editor's warm box included) refuses with the remedy coop credentials shows.
+	var signInErr *agents.SignInError
+	_, err := planNativeAccounts(t.Context(), cfg, runtime.Runtime{}, RunSpec{Agent: "grok", AgentCommand: true, Homes: true}, false)
+	if !errors.As(err, &signInErr) || err.Error() != "Sign in again: coop login grok@default" || !errors.Is(err, agents.ErrRenewalRefused) {
+		t.Fatalf("launching a refused account = %v, want the shared sign-in remedy", err)
+	}
+
+	seedCanonicalFixture(t, cfg, "grok", "default")
+	if signIn() != agents.SignedIn {
+		t.Fatalf("after a new sign-in the account reads as %v, want SignedIn", signIn())
+	}
+	if err := renew(agents.ErrRenewalRefused); !errors.Is(err, agents.ErrRenewalRefused) {
+		t.Fatal(err)
+	}
+	if err := RemoveNativeAccount(t.Context(), cfg, "grok", "default"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ConfigDir, "grok", "credentials", "default", accountRefusalName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removal kept the refusal: %v", err)
+	}
+	if got := ProfileSignIn(cfg, "grok", "ghost", time.Now()); got != agents.NotSignedIn {
+		t.Fatalf("an account with nothing saved reads as %v, want NotSignedIn", got)
+	}
+}
+
 func TestNativeAccountUnsafeAuthorityCannotFallback(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	ag, _ := agents.Get("codex")

@@ -434,8 +434,9 @@ func (a *app) nudgeIfUnauthed(tool string) {
 	if !ui.IsTerminal(os.Stdin) {
 		return
 	}
-	if !box.ProfileAuthed(a.cfg, tool, a.cfg.ActiveProfile(tool)) {
-		warnRows(titleName(tool)+" is not signed in", [2]string{"Sign in:", "coop login " + tool})
+	account := a.cfg.ActiveProfile(tool)
+	if need := box.ProfileSignIn(a.cfg, tool, account, time.Now()); need != agents.SignedIn {
+		warnSignIn(titleName(tool), need, tool+"@"+account)
 	}
 }
 
@@ -452,9 +453,8 @@ func (a *app) selectRunProfile(tool, profile string) error {
 	if err := a.requireProfile(tool, profile); err != nil {
 		return err
 	}
-	if !box.ProfileAuthed(a.cfg, tool, profile) {
-		warnRows(fmt.Sprintf("%s is not signed in", profile),
-			[2]string{"Sign in:", agents.LoginCommand(tool + "@" + profile)})
+	if need := box.ProfileSignIn(a.cfg, tool, profile, time.Now()); need != agents.SignedIn {
+		warnSignIn(profile, need, tool+"@"+profile)
 	}
 	a.cfg.SetActiveProfile(tool, profile)
 	return nil

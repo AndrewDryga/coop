@@ -2,8 +2,8 @@
 name: credential-presence-is-adapter-declared
 description: adapters own credential presence, selected env authority, and inspectable stored readiness
 subsystem: credentials
-sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/cli/target.go, internal/cli/cli.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/fork_cmd.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/loop/loop.go, internal/loop/review.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-10-17
+sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/cli/target.go, internal/cli/cli.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/fork_cmd.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/loop/loop.go, internal/loop/review.go, internal/testutil/liveprovider/credentials.go, internal/box/account_renewal.go, internal/box/native_account.go]
+updated: 2026-11-03
 ---
 
 Adapters own six credential facts: `AuthMarker` names their login file and canonical primary env
@@ -45,7 +45,10 @@ that exact profile has a marker. Claude, Codex, and Grok distinguish usable or r
 from malformed, stripped, and nonrenewable records; Gemini returns unknown and preserves
 presence-based behavior. `coop credentials`, runnable ladder expansion, and the ACP Account selector
 use this same refinement, so a native login already labeled `Sign in again` is neither attempted
-during failover nor offered as a normal editor switch. An env-only default likewise remains ready
+during failover nor offered as a normal editor switch. A canonical record whose grant the provider
+refused at its last renewal counts as not ready too (its recorded refusal, see
+[[sign-in-again-is-actionable]]), and `ProfileSignIn` turns presence and readiness into the one
+sign-in state every command prints. An env-only default likewise remains ready
 because there is no native marker to inspect. `ProfileAuthed` stays the broad presence predicate for
 callers that cannot require proven readiness, and opaque markers stay eligible because an adapter
 cannot safely declare them dead. `ProfileTokenMtime` remains the separate marker-age refinement and
@@ -94,6 +97,9 @@ and the default MCP file are `0600`. Coop does not recursively chmod provider tr
 the private ancestors protect those descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-11-03 - a provider-refused grant is recorded and reads as not ready; `ProfileSignIn` is the
+  shared sign-in state over presence and readiness; verified against internal/box/profiles.go,
+  account_renewal.go and native_account.go
 - 2026-10-17 — the expired-login label is `Sign in again` since 9f5b033c, not `re-login required`.
 - 2026-10-17 - a fork loop now checks each peer's login before `--fresh`, image or clone work, not
   after the clone; verified against internal/cli/fork_cmd.go

@@ -138,7 +138,7 @@ func TestUsageCommandOutsideRepositoryAndExactSelector(t *testing.T) {
 			t.Errorf("usage=(%d,%v)", code, err)
 		}
 	})
-	for _, wanted := range []string{"Claude", "work", "30-day API estimate", "≈$", "sign-in required", "coop login claude@work"} {
+	for _, wanted := range []string{"Claude", "work", "30-day API estimate", "≈$", "Sign in: coop login claude@work"} {
 		if !strings.Contains(out, wanted) {
 			t.Fatalf("missing %q in %s", wanted, out)
 		}
@@ -197,7 +197,7 @@ func TestUsageRenderingIndependentFailuresAndReset(t *testing.T) {
 	used := 100.0
 	rows := []usageCredential{
 		{provider: "codex", account: "work", value: agents.UsageValue{Available: true, USD: 12.345, Priced: 1, Unpriced: 2, Partial: true}, quota: agents.UsageQuota{Plan: "Pro", Buckets: []agents.UsageBucket{{Name: "5-hour", Used: &used, Reset: now.Add(38 * time.Minute)}}}},
-		{provider: "codex", account: "personal", quotaErr: agents.ErrUsageSignIn},
+		{provider: "codex", account: "personal", quotaErr: &agents.SignInError{Need: agents.SignInAgain, Target: "codex@personal"}},
 	}
 	var wide, narrow bytes.Buffer
 	renderUsage(&wide, ui.Palette{}, 120, now, []string{"codex"}, rows, usageUnlisted{}, true)
@@ -232,7 +232,7 @@ func TestUsageAlignsEveryFactAndQuietsTheTotal(t *testing.T) {
 				{Name: "gpt-reserve · Weekly", Used: &zero},
 				{Name: "Credits", Remaining: "62500"},
 			}}},
-		{provider: "codex", account: "work", quotaErr: agents.ErrUsageSignIn},
+		{provider: "codex", account: "work", quotaErr: &agents.SignInError{Need: agents.SignInAgain, Target: "codex@work"}},
 		{provider: "codex", account: "Unattributed ACP", shared: true,
 			value: agents.UsageValue{Available: true, Priced: 1, USD: 0.82}},
 		{provider: "gemini", account: "blitz_ai_studio", quota: agents.UsageQuota{Auth: "API key"},
@@ -257,8 +257,8 @@ func TestUsageAlignsEveryFactAndQuietsTheTotal(t *testing.T) {
 		"    Weekly                ██████████  100% used\n",
 		"    gpt-reserve · Weekly  ░░░░░░░░░░    0% used",
 		"    Credits" + at(value-11, "62,500 remaining"),
-		"    Limits" + at(value-10, "unavailable · sign-in required"),
-		at(value, "Run: coop login codex@work"),
+		"    Limits" + at(value-10, "unavailable"),
+		at(value, "Sign in again: coop login codex@work"),
 		at(value, "Σ≈$54.82/30d"),
 		"  Unassigned editor usage" + at(value-25, "Σ≈$0.82/30d"),
 		// Accounts with nothing but a total are one line each, stacked, with no explanation.
@@ -309,7 +309,7 @@ func TestUsageAlignsEveryFactAndQuietsTheTotal(t *testing.T) {
 	// A fact too wide for its columns stacks under its label instead of spilling past the edge.
 	out.Reset()
 	renderUsage(&out, ui.Palette{}, 40, now, []string{"codex"}, rows[:2], usageUnlisted{}, false)
-	if !strings.Contains(out.String(), "    Limits\n      unavailable · sign-in required\n") {
+	if !strings.Contains(out.String(), "    Limits\n      unavailable\n      Sign in again: coop login") {
 		t.Fatalf("narrow limits fact did not stack:\n%s", out.String())
 	}
 	for _, line := range strings.Split(out.String(), "\n") {

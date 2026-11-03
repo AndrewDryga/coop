@@ -178,18 +178,13 @@ func (a *app) fetchModelCatalog(agent string) ([]agents.Model, error) {
 	if a.acpModels != nil {
 		return a.acpModels(agent)
 	}
-	// An ACP catalog comes from a session the provider has to authorize, so a signed-out account
-	// can only fail — say so instead of paying for a container that will.
-	if !box.ProfileAuthed(a.cfg, agent, a.cfg.ActiveProfile(agent)) {
-		return nil, modelFetchError{cause: signInToRefresh(agent)}
+	// An ACP catalog comes from a session the provider has to authorize, so an account that needs a
+	// sign-in can only fail — say so, as coop credentials does, instead of paying for a container.
+	account := a.cfg.ActiveProfile(agent)
+	if need := box.ProfileSignIn(a.cfg, agent, account, time.Now()); need != agents.SignedIn {
+		return nil, modelFetchError{cause: need.Remedy(agent + "@" + account)}
 	}
 	return a.fetchACPModelCatalog(agent, spec)
-}
-
-// signInToRefresh is the one sentence a signed-out catalog gets: what is missing, and the exact
-// command that fixes it.
-func signInToRefresh(agent string) string {
-	return fmt.Sprintf("Sign in to %s to refresh its models: coop login %s", titleName(agent), agent)
 }
 
 // fetchACPModelCatalog launches one inner ACP box, asks for a fresh session's advertised models,
@@ -214,14 +209,14 @@ func (a *app) fetchACPModelCatalog(agent string, catalog agents.ModelCatalogSpec
 	stderr := &tailBuffer{max: 16 << 10}
 	probe, target, err := a.admitModelProbe(launchCtx, agent, repo, stderr)
 	if err != nil {
-		return nil, modelProbeFailure(agent, err, stderr.String())
+		return nil, modelProbeFailure(target, err, stderr.String())
 	}
 	defer probe.acpCapture.Close()
 	ctx, cancel := context.WithCancel(launchCtx)
 	defer cancel()
 	child, err := probe.spawnBox(ctx, self, []string{"acp", agent}, superID, nil, target, "", true, stderr, forkspace.ExecutionRoleProbe)
 	if err != nil {
-		return nil, modelProbeFailure(agent, err, stderr.String())
+		return nil, modelProbeFailure(target, err, stderr.String())
 	}
 	result, fetchErr := acpModelHandshake(ctx, child, repo, catalog)
 	if fetchErr != nil && child.WaitDone != nil {
@@ -239,7 +234,7 @@ func (a *app) fetchACPModelCatalog(agent string, catalog agents.ModelCatalogSpec
 	// registry can momentarily see the other's record vanish mid-scan. Blaming a provider for
 	// that would be a lie, and a record left behind is swept by any later run.
 	if fetchErr != nil {
-		return nil, modelProbeFailure(agent, errors.Join(fetchErr, cleanupErr), stderr.String())
+		return nil, modelProbeFailure(target, errors.Join(fetchErr, cleanupErr), stderr.String())
 	}
 	models := parseACPModelResult(agent, result)
 	if len(models) == 0 {
@@ -309,17 +304,17 @@ func (w *modelSetupOutput) Write(p []byte) (int, error) {
 
 // Only fixed remedies leave the private stderr collector. Provider output and RPC payloads can
 // contain credentials, even when wrapped in an otherwise useful setup error.
-func modelProbeFailure(agent string, err error, stderr string) error {
-	cause := safeModelProbeCause(agent, err.Error()+"\n"+stderr)
+func modelProbeFailure(target agents.Target, err error, stderr string) error {
+	cause := safeModelProbeCause(target, err.Error()+"\n"+stderr)
 	if errors.Is(err, box.ErrNetworkSetupFailed) {
 		cause = "Filtered networking setup failed; run coop net setup for details."
 	} else if cause == "" {
-		cause = modelFetchCause(agent, err)
+		cause = modelFetchCause(target.Provider, err)
 	}
 	return modelFetchError{cause: cause, err: err}
 }
 
-func safeModelProbeCause(agent, text string) string {
+func safeModelProbeCause(target agents.Target, text string) string {
 	text = strings.ToLower(text)
 	switch {
 	case strings.Contains(text, "review it: coop approve"):
@@ -348,10 +343,10 @@ func safeModelProbeCause(agent, text string) string {
 		return "A container mount could not be checked; stop the container that holds it, then retry."
 	case strings.Contains(text, "legacy native credential writer is busy"), strings.Contains(text, "credential home is mounted by a running or restartable container"):
 		return "An existing session is using this account; finish it before retrying."
-	case strings.Contains(text, "needs host sign-in or renewal"):
-		return signInToRefresh(agent)
-	case strings.Contains(text, "coop login"):
-		return signInToRefresh(agent)
+	case strings.Contains(text, "needs host sign-in or renewal"), strings.Contains(text, "coop login"):
+		// A probe starts only for an account that looked signed in, so the sign-in it hit is a saved
+		// one that stopped working.
+		return agents.SignInAgain.Remedy(target.Provider + "@" + target.Account())
 	case strings.Contains(text, "native route refused"):
 		return "The credential broker refused a provider request."
 	}

@@ -418,7 +418,11 @@ func claudeUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 	var err error
 	if input.Current != nil {
 		var files map[string][]byte
-		_, files, err = input.Current(ctx, deadline)
+		// A renewal that failed is not proof of a dead sign-in: a refused grant is recorded with the
+		// account, and the caller reads that record instead of this error.
+		if _, files, err = input.Current(ctx, deadline); err != nil {
+			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+		}
 		data = files[".credentials.json"]
 	} else {
 		if err := renewClaudeCredential(input.ProfileDir, deadline); err != nil {
@@ -595,7 +599,7 @@ staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
 }
 
 func (claudeAgent) ModelCatalog() ModelCatalogSpec {
-	return ModelCatalogSpec{ParseACP: func(raw json.RawMessage) []Model {
+	return ModelCatalogSpec{Aliases: claudeAliases, ParseACP: func(raw json.RawMessage) []Model {
 		var doc acpModelCatalog
 		if json.Unmarshal(raw, &doc) != nil {
 			return nil
@@ -756,10 +760,12 @@ func (claudeAgent) UpdateControls() UpdateControls {
 	return UpdateControls{Env: []string{"DISABLE_UPDATES=1"}}
 }
 
-// Models are the stable Claude Code aliases (each resolves to that family's current
-// model), plus full ids as examples. Illustrative — any id the CLI accepts works.
+// claudeAliases are the stable Claude Code aliases; each resolves to that family's current model.
+var claudeAliases = []string{"fable", "opus", "sonnet", "haiku"}
+
+// Models are the aliases plus full ids as examples. Illustrative — any id the CLI accepts works.
 func (claudeAgent) Models() []string {
-	return []string{"fable", "opus", "sonnet", "haiku", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"}
+	return append(slices.Clone(claudeAliases), "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5")
 }
 
 // ExampleModel: the alias people recognize, and the one coop's examples have always used.

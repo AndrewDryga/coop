@@ -61,6 +61,52 @@ func LoginCommand(target string) string {
 	return "coop login " + target
 }
 
+// SignIn is what an account still needs before Coop can run it. box.ProfileSignIn decides it from
+// local state alone, and every command words it through Label and Remedy, so coop credentials,
+// models, usage and a launch never describe one account two ways. A saved sign-in that can no
+// longer work has expired for good, is damaged, or was refused by the provider.
+type SignIn uint8
+
+const (
+	SignedIn    SignIn = iota // ready now, or renewable on use
+	NotSignedIn               // nothing is saved for the account
+	SignInAgain               // a saved sign-in that can no longer work
+)
+
+// Label is the state as the credentials listing shows it.
+func (s SignIn) Label() string {
+	switch s {
+	case NotSignedIn:
+		return "Not signed in"
+	case SignInAgain:
+		return "Sign in again"
+	}
+	return ""
+}
+
+// Action is the step that fixes the state: the heading its login command sits under.
+func (s SignIn) Action() string {
+	if s == SignInAgain {
+		return "Sign in again"
+	}
+	return "Sign in"
+}
+
+// Remedy is the one line a command prints for an account in this state: the action, then the exact
+// login that fixes it.
+func (s SignIn) Remedy(target string) string { return s.Action() + ": " + LoginCommand(target) }
+
+// SignInError is an account a command could not use until it is signed in. Its message is the
+// account's Remedy; Err keeps the failure that showed it.
+type SignInError struct {
+	Need   SignIn
+	Target string // provider@account
+	Err    error
+}
+
+func (e *SignInError) Error() string { return e.Need.Remedy(e.Target) }
+func (e *SignInError) Unwrap() error { return e.Err }
+
 // DisplayTarget keeps credential diagnostics one-line and terminal-safe even if a legacy profile
 // directory or hand-written preset contains control characters.
 func DisplayTarget(target string) string {

@@ -118,7 +118,9 @@ func nativeAccountReady(cfg *config.Config, ag agents.Agent, account string, now
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	record, exists, err := readNativeAccount(ctx, cfg, ag, account)
-	if !exists || err != nil || record.Revoked {
+	// A grant the provider refused still inspects as renewable, so its refusal is checked first.
+	if !exists || err != nil || record.Revoked ||
+		refusedIn(filepath.Join(cfg.NativeAuthorityConfig().ConfigDir, ag.Name(), "credentials", account), record) {
 		return false, exists
 	}
 	state, err := ag.NativeCredentials().Inspect(record.Artifacts, now)
@@ -279,7 +281,7 @@ func removeNativeAuthority(ctx context.Context, cfg *config.Config, provider, ac
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if name != accountRenewalName && name != accountRetryName && name != "cutover.json" && !strings.HasPrefix(name, "recovery-") && !strings.HasPrefix(name, ".private-") && !strings.HasPrefix(name, ".authority-") && !strings.HasPrefix(name, ".renewal-") {
+		if name != accountRenewalName && name != accountRetryName && name != accountRefusalName && name != "cutover.json" && !strings.HasPrefix(name, "recovery-") && !strings.HasPrefix(name, ".private-") && !strings.HasPrefix(name, ".authority-") && !strings.HasPrefix(name, ".renewal-") {
 			continue
 		}
 		if err := os.Remove(filepath.Join(root.path, name)); err != nil {

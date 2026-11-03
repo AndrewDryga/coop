@@ -1,0 +1,11 @@
+Grok
+  grok-4.7 · grok-4.7-build-fast · grok-4.6 · grok-4.5
+  ⚠ Could not refresh. Showing the list saved yesterday
+
+      Sign in again: coop login grok@default
+
+Start Grok with a model
+  → coop grok:grok-4.7
+
+Set models for presets and loops
+  → coop help models

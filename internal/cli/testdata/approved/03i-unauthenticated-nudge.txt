@@ -1,4 +1,4 @@
 
 ⚠ Codex is not signed in
 
-  Sign in: coop login codex
+  Sign in: coop login codex@default

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/randid"
 )
@@ -18,9 +19,19 @@ import (
 const (
 	accountRenewalName = "renewal.json"
 	accountRetryName   = "retry.json"
+	accountRefusalName = "refused.json"
 )
 
 var errAccountRenewalUncertain = errors.New("an interrupted credential renewal could not be finished; run coop login")
+
+// accountRefusal is the provider refusing the saved grant of one record (agents.ErrRenewalRefused),
+// which only a new sign-in fixes. Every command reads it to say so without asking the provider, and
+// renewal reads it to stop sending that grant. It names the record it was written for, so any
+// publication ends it: a sign-in, or an earlier renewal's kept answer completing.
+type accountRefusal struct {
+	Epoch    uint64 `json:"epoch"`
+	Revision uint64 `json:"revision"`
+}
 
 // accountRetry is the last renewal exchange that failed for a passing reason, At in Unix milliseconds.
 // Every run on the account waits Delay milliseconds after it, so the runs take turns asking the
@@ -61,6 +72,10 @@ func renewAccountAuthority(ctx context.Context, cfg *config.Config, spec account
 	if current == nil || current.Revoked {
 		return current, false, errors.New("account needs host sign-in")
 	}
+	// The provider already refused this record's grant, and sending it again cannot help.
+	if refusedIn(root.path, current) {
+		return current, false, agents.ErrRenewalRefused
+	}
 	if err := ctx.Err(); err != nil {
 		return current, false, err
 	}
@@ -100,8 +115,13 @@ func renewAccountAuthority(ctx context.Context, cfg *config.Config, spec account
 		// failed exchange never leaves the account waiting for a sign-in it does not need.
 		settled, err := root.settleRenewal(spec, account, current)
 		err = errors.Join(err, readinessErr)
-		if settled == current && renewalRetryable(err) {
-			root.waitAfterFailure(current)
+		if settled == current {
+			switch {
+			case renewalRetryable(err):
+				root.waitAfterFailure(current)
+			case errors.Is(readinessErr, agents.ErrRenewalRefused):
+				root.recordRefusal(current)
+			}
 		}
 		return settled, settled != current, err
 	}
@@ -148,6 +168,23 @@ func (root *accountAuthorityRoot) waitAfterFailure(current *accountAuthority) {
 	if err == nil {
 		_ = writeAccountPrivate(root, accountRetryName, data)
 	}
+}
+
+// recordRefusal notes that the provider refused current's grant. Like waitAfterFailure it is
+// best-effort: without the note, the account is only found dead at its next renewal, as before.
+func (root *accountAuthorityRoot) recordRefusal(current *accountAuthority) {
+	data, err := json.Marshal(accountRefusal{Epoch: current.Epoch, Revision: current.Revision})
+	if err == nil {
+		_ = writeAccountPrivate(root, accountRefusalName, data)
+	}
+}
+
+// refusedIn reports whether the account folder dir records the provider refusing record's own
+// grant. A plain read, like the other host-only custody records: only Coop writes the folder.
+func refusedIn(dir string, record *accountAuthority) bool {
+	var refusal accountRefusal
+	ok, err := config.ReadRecord(filepath.Join(dir, accountRefusalName), &refusal)
+	return err == nil && ok && refusal.Epoch == record.Epoch && refusal.Revision == record.Revision
 }
 
 func (root *accountAuthorityRoot) readRenewal() (*accountRenewal, error) {

@@ -531,7 +531,10 @@ func codexUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, er
 	var state NativeCredentialState
 	var err error
 	if input.Current != nil {
-		state, _, err = input.Current(ctx, deadline)
+		// As Claude's: a refused grant is recorded with the account, not inferred from this error.
+		if state, _, err = input.Current(ctx, deadline); err != nil {
+			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+		}
 	} else {
 		if err := renewCodexCredential(input.ProfileDir, deadline); err != nil {
 			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")

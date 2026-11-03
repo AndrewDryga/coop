@@ -85,6 +85,11 @@ func planNativeAccounts(ctx context.Context, cfg *config.Config, rt runtime.Runt
 			deadline := time.Now().Add(nativeRenewalDeadline)
 			record, err = renewNativeAccount(ctx, cfg, ag, account, deadline, deadline)
 			if err != nil {
+				// A refused grant is recorded by now, so an account that needs a sign-in says so in
+				// the words coop credentials uses for it.
+				if need := ProfileSignIn(cfg, provider, account, time.Now()); need != agents.SignedIn {
+					return nil, &agents.SignInError{Need: need, Target: provider + "@" + account, Err: err}
+				}
 				return nil, fmt.Errorf("prepare %s account %q: %w", provider, account, err)
 			}
 		}

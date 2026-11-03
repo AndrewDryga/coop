@@ -154,8 +154,9 @@ func (a *app) cmdUsage(args []string) (int, error) {
 			}
 			quotaCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			if !box.ProfileAuthed(a.cfg, row.provider, row.account) {
-				row.quotaErr = agents.ErrUsageSignIn
+			login := row.provider + "@" + row.account
+			if need := box.ProfileSignIn(a.cfg, row.provider, row.account, time.Now()); need != agents.SignedIn {
+				row.quotaErr = &agents.SignInError{Need: need, Target: login}
 				return
 			}
 			input, err := box.UsageQuotaAuthority(a.cfg, row.provider, row.account)
@@ -174,6 +175,15 @@ func (a *app) cmdUsage(args []string) (int, error) {
 				return box.ReadUsageQuotaNative(nativeCtx, a.cfg, rt, ag, row.account, command)
 			}
 			row.quota, row.quotaErr = ag.Usage().Quota(quotaCtx, input)
+			// The lookup's renewal may have just recorded that the provider refused this sign-in, so
+			// the local answer decides again. A quota service that refuses the access means the same.
+			if row.quotaErr != nil {
+				if need := box.ProfileSignIn(a.cfg, row.provider, row.account, time.Now()); need != agents.SignedIn {
+					row.quotaErr = &agents.SignInError{Need: need, Target: login, Err: row.quotaErr}
+				} else if errors.Is(row.quotaErr, agents.ErrUsageSignIn) {
+					row.quotaErr = &agents.SignInError{Need: agents.SignInAgain, Target: login, Err: row.quotaErr}
+				}
+			}
 		}()
 	}
 	wg.Wait()
@@ -574,12 +584,15 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			} else {
 				line("  ", header)
 			}
-			if row.quotaErr != nil {
+			var signIn *agents.SignInError
+			switch {
+			case errors.As(row.quotaErr, &signIn):
+				// The account's sign-in remedy, in the words and command coop credentials shows.
+				fact("Limits", "unavailable")
+				fact("", signIn.Error())
+			case row.quotaErr != nil:
 				fact("Limits", "unavailable · "+agents.DisplayTarget(row.quotaErr.Error()))
-				if errors.Is(row.quotaErr, agents.ErrUsageSignIn) {
-					fact("", "Run: "+agents.LoginCommand(name+"@"+row.account))
-				}
-			} else if usageLimitsUnknown(row, buckets) {
+			case usageLimitsUnknown(row, buckets):
 				fact("Limits", "unavailable")
 			}
 			shownResets := make(map[int64]bool)

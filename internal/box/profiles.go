@@ -95,6 +95,27 @@ func ProfileCredentialReady(cfg *config.Config, agent, profile string, now time.
 	return ag.StoredCredentialStatus(cfg.AgentProfileDir(agent, profile), now) != agents.StoredCredentialReauthRequired
 }
 
+// ProfileSignIn is what an account needs before it can run, judged from local state alone, so it
+// is the one answer coop credentials, the model menu, coop usage and a launch all give. A saved
+// sign-in that cannot run needs a new one: a native record that is damaged, can no longer renew,
+// or whose grant the provider refused at its last renewal, and a marker its adapter says needs
+// another login. An account with nothing saved needs its first.
+func ProfileSignIn(cfg *config.Config, agent, profile string, now time.Time) agents.SignIn {
+	if ProfileCredentialReady(cfg, agent, profile, now) {
+		return agents.SignedIn
+	}
+	ag, ok := agents.Get(agent)
+	if !ok {
+		return agents.NotSignedIn
+	}
+	profileDir := cfg.AgentProfileDir(agent, profile)
+	if _, native := nativeAccountReady(cfg, ag, profile, now); native || ProfileAuthed(cfg, agent, profile) ||
+		profileMarkerPresent(ag, profileDir) && ag.StoredCredentialStatus(profileDir, now) == agents.StoredCredentialReauthRequired {
+		return agents.SignInAgain
+	}
+	return agents.NotSignedIn
+}
+
 func anyCredentialEnvPresent(keys []string, present map[string]bool) bool {
 	for _, key := range keys {
 		if present[key] {

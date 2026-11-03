@@ -154,11 +154,12 @@ func titleName(s string) string {
 }
 
 // modelChoices are the ids to offer for a cached catalog, and whether they came from it: the
-// fetched list while it is still safe to present as this agent's own, else the release-bundled
-// examples. Pure, so the caller can reuse the cache it already read.
+// fetched list while it is still safe to present as this agent's own (by the aliases people type,
+// where the agent has them), else the release-bundled examples. Pure, so the caller can reuse the
+// cache it already read.
 func modelChoices(mc modelsCache, ag agents.Agent, now time.Time) ([]string, bool) {
 	if ids := mc.ids(); len(ids) > 0 && mc.usable(now) {
-		return ids, true
+		return ag.ModelCatalog().Listed(ids), true
 	}
 	return ag.Models(), false
 }

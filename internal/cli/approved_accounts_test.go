@@ -122,9 +122,7 @@ func TestApprovedAccountInputErrors(t *testing.T) {
 // The unauthenticated heads-up is a WARNING, not a refusal: the launch carries on, and only a run
 // that truly needs an account refuses (03i-provider-needs-account above).
 func TestApprovedUnauthenticatedNudge(t *testing.T) {
-	out := captureStderr(t, func() {
-		warnRows("Codex is not signed in", [2]string{"Sign in:", "coop login codex"})
-	})
+	out := captureStderr(t, func() { warnSignIn("Codex", agents.NotSignedIn, "codex@default") })
 	assertApprovedOutput(t, "03i-unauthenticated-nudge", out)
 	// It is TTY-only: a piped run (this test) must print nothing at all.
 	quiet := captureStderr(t, func() { (&app{cfg: freshConfig(t)}).nudgeIfUnauthed("codex") })
@@ -164,6 +162,23 @@ func TestApprovedCredentialViews(t *testing.T) {
 			}
 		})
 		assertApprovedOutput(t, "07-credentials-issues", out)
+	})
+
+	// Logins that can no longer work (expired with nothing to renew them, as a grant the provider
+	// refused reads too), beside a healthy default: each says so once, with its exact login, and the
+	// default is marked once.
+	t.Run("07-credentials-sign-in-again", func(t *testing.T) {
+		cfg := freshConfig(t)
+		writeAccount(t, cfg, "claude", "personal", claudeReadyCredential)
+		writeAccount(t, cfg, "claude", "personal_backup", claudeExpiredCredential)
+		setDefault(t, cfg, "claude", "personal")
+		writeAccount(t, cfg, "grok", "default", grokProfileCredential("2020-01-01T00:00:00Z", ""))
+		out := captureStdout(t, func() {
+			if code, err := (&app{cfg: cfg}).cmdCredentials(nil); code != 0 || err != nil {
+				t.Fatalf("cmdCredentials = (%d, %v)", code, err)
+			}
+		})
+		assertApprovedOutput(t, "07-credentials-sign-in-again", out)
 	})
 
 	t.Run("07-credential-default", func(t *testing.T) {
@@ -452,6 +467,28 @@ func TestApprovedModelMenus(t *testing.T) {
 		assertApprovedOutput(t, "12-models-examples", out)
 	})
 
+	// The account the catalog is read with needs a new sign-in: the cause is the one coop credentials
+	// gives that account, produced by the real refresh and kept for the retry window.
+	t.Run("12-models-sign-in-again", func(t *testing.T) {
+		narrow(t)
+		cfg := freshConfig(t)
+		writeAccount(t, cfg, "grok", "default", grokProfileCredential("2020-01-01T00:00:00Z", ""))
+		_, err := (&app{cfg: cfg}).fetchModelCatalog("grok")
+		writeModelsCacheFixture(t, cfg, "grok", modelsCache{
+			Models:       modelList("grok-4.7", "grok-4.7-build-fast", "grok-4.6", "grok-4.5"),
+			FetchedAt:    time.Now().Add(-30 * time.Hour),
+			AttemptedAt:  time.Now().Add(-5 * time.Minute),
+			AttemptError: modelFetchCause("grok", err),
+		})
+		a := &app{cfg: cfg, acpModels: noFetch(t)}
+		out := captureStdout(t, func() {
+			if code, err := a.cmdModels([]string{"grok"}); code != 0 || err != nil {
+				t.Fatalf("cmdModels = (%d, %v)", code, err)
+			}
+		})
+		assertApprovedOutput(t, "12-models-sign-in-again", out)
+	})
+
 	t.Run("12-models-default", func(t *testing.T) {
 		narrow(t)
 		t.Setenv("COOP_CLAUDE_MODEL", "fable")
@@ -473,10 +510,12 @@ func TestApprovedModelMenus(t *testing.T) {
 // ---- fixtures ---------------------------------------------------------------------------------
 
 // A codex marker with a refresh token reads as a usable login; claude's wants an access token plus
-// its own refresh token. Both are inert test values, not credentials.
+// its own refresh token, and one that expired with no refresh token needs a new sign-in. All are
+// inert test values, not credentials.
 const (
-	codexReadyCredential  = `{"tokens":{"refresh_token":"r"}}`
-	claudeReadyCredential = `{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":4102444800000,"scopes":["user:inference"]}}`
+	codexReadyCredential    = `{"tokens":{"refresh_token":"r"}}`
+	claudeReadyCredential   = `{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":4102444800000,"scopes":["user:inference"]}}`
+	claudeExpiredCredential = `{"claudeAiOauth":{"accessToken":"a","expiresAt":1,"scopes":["user:inference"]}}`
 )
 
 // writeAccount gives agent a stored account whose marker file holds body.

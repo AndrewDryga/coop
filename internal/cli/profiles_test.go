@@ -102,7 +102,7 @@ func TestCredentialsListingSaysWhenAccountsCannotBeListed(t *testing.T) {
 	claude, rest, _ := strings.Cut(rest, "\nCodex\n")
 	codex, rest, _ := strings.Cut(rest, "\nGemini\n")
 	gemini, _, _ := strings.Cut(rest, "\nGrok\n")
-	if want := "    work   refreshed just now\n\n  ⚠ Could not list every Claude account\n    open " + claudeCredentials + ": permission denied\n"; claude != want {
+	if want := "  work   refreshed just now\n\n  ⚠ Could not list every Claude account\n    open " + claudeCredentials + ": permission denied\n"; claude != want {
 		t.Errorf("Claude block = %q, want %q", claude, want)
 	}
 	if want := "  ⚠ Could not list every Codex account\n    open " + codexProfiles + ": permission denied\n"; codex != want {
@@ -357,30 +357,30 @@ func TestProfileStateRenewable(t *testing.T) {
 	}
 	// Expired access token (expiresAt in the past) but a refresh token present → signed in.
 	write("renew", `{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1,"scopes":["user:inference"]}}`)
-	if issue := a.profileIssue("claude", "renew"); issue != "" {
+	if issue := signInLabel(a.cfg, "claude", "renew"); issue != "" {
 		t.Errorf("expired-but-renewable = %q, want no issue", issue)
 	}
 	// Expired access token, no refresh token → genuinely needs a re-login.
 	write("dead", `{"claudeAiOauth":{"accessToken":"a","expiresAt":1,"scopes":["user:inference"]}}`)
-	if issue := a.profileIssue("claude", "dead"); issue != "Sign in again" {
+	if issue := signInLabel(a.cfg, "claude", "dead"); issue != "Sign in again" {
 		t.Errorf("expired-no-refresh = %q, want \"Sign in again\"", issue)
 	}
 	// A projected/stripped OAuth marker has no token or refresh authority. Presence alone must not
 	// claim it is signed in, or live verification sends the operator toward the wrong diagnosis.
 	write("stripped", `{"claudeAiOauth":{"expiresAt":0,"scopes":["user:inference"]}}`)
-	if issue := a.profileIssue("claude", "stripped"); issue != "Sign in again" {
+	if issue := signInLabel(a.cfg, "claude", "stripped"); issue != "Sign in again" {
 		t.Errorf("stripped = %q, want \"Sign in again\"", issue)
 	}
 	write("future-no-access", `{"claudeAiOauth":{"expiresAt":4102444800000,"scopes":["user:inference"]}}`)
-	if issue := a.profileIssue("claude", "future-no-access"); issue != "Sign in again" {
+	if issue := signInLabel(a.cfg, "claude", "future-no-access"); issue != "Sign in again" {
 		t.Errorf("future-no-access = %q, want \"Sign in again\"", issue)
 	}
 	write("malformed", `{`)
-	if issue := a.profileIssue("claude", "malformed"); issue != "Sign in again" {
+	if issue := signInLabel(a.cfg, "claude", "malformed"); issue != "Sign in again" {
 		t.Errorf("malformed = %q, want \"Sign in again\"", issue)
 	}
 	// No credential at all → not signed in.
-	if issue := a.profileIssue("claude", "ghost"); issue != "Not signed in" {
+	if issue := signInLabel(a.cfg, "claude", "ghost"); issue != "Not signed in" {
 		t.Errorf("missing credential = %q, want \"Not signed in\"", issue)
 	}
 }
@@ -391,7 +391,7 @@ func TestProfileStateEnvOnlyDoesNotRequireRelogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile := cfg.DefaultProfileOf("claude")
-	if issue := (&app{cfg: cfg}).profileIssue("claude", profile); issue != "" {
+	if issue := signInLabel(cfg, "claude", profile); issue != "" {
 		t.Errorf("env-only Claude = %q, want no issue", issue)
 	}
 }
@@ -410,7 +410,7 @@ func TestGeminiNamedNativeAPIKeyRequiresPortableLogin(t *testing.T) {
 	}
 
 	a := &app{cfg: cfg}
-	if issue := a.profileIssue("gemini", "personal2"); issue != "Sign in again" {
+	if issue := signInLabel(a.cfg, "gemini", "personal2"); issue != "Sign in again" {
 		t.Fatalf("native stored Gemini API key issue = %q, want Sign in again", issue)
 	}
 	out := captureStdout(t, func() {
@@ -433,13 +433,13 @@ func TestProfileStateExpiredGrok(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if issue := (&app{cfg: cfg}).profileIssue("grok", "default"); issue != "Sign in again" {
+	if issue := signInLabel(cfg, "grok", "default"); issue != "Sign in again" {
 		t.Errorf("expired Grok = %q, want \"Sign in again\"", issue)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(grokProfileCredential("2020-01-01T00:00:00Z", "refresh")), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if issue := (&app{cfg: cfg}).profileIssue("grok", "default"); issue != "" {
+	if issue := signInLabel(cfg, "grok", "default"); issue != "" {
 		t.Errorf("refreshable Grok = %q, want no issue", issue)
 	}
 }
@@ -465,14 +465,46 @@ func TestCredentialOutputOffersReloginForInvalidMarker(t *testing.T) {
 	}
 }
 
+// One account that needs a new sign-in reads the same in every command that meets it: the credentials
+// listing, the model menu's refresh, coop usage and a launch's heads-up all give the state the
+// listing gives, with its exact login, and none asks a provider or a runtime to find out. A grant the
+// provider refused reads the same (box.ProfileSignIn); this one simply expired with nothing to renew it.
+func TestSignInStateReadsTheSameInEveryCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("NO_COLOR", "1")
+	cfg := freshConfig(t)
+	cfg.RuntimeName = "must-not-run"
+	writeAccount(t, cfg, "grok", "default", grokProfileCredential("2020-01-01T00:00:00Z", ""))
+	a := &app{cfg: cfg}
+	const remedy = "Sign in again: coop login grok@default"
+
+	// The listing's row, with its login under the warning's text (2 + "default" + 3 + "⚠ ").
+	listing := captureStdout(t, func() { _, _ = a.cmdCredentials([]string{"grok"}) })
+	if !strings.Contains(listing, "\n  default   ⚠ Sign in again  default\n"+strings.Repeat(" ", 14)+"coop login grok@default\n") {
+		t.Errorf("credentials:\n%s", listing)
+	}
+	if _, err := a.fetchModelCatalog("grok"); modelFetchCause("grok", err) != remedy {
+		t.Errorf("models refresh cause = %q, want %q", modelFetchCause("grok", err), remedy)
+	}
+	if usage := captureStdout(t, func() { _, _ = a.cmdUsage([]string{"grok"}) }); !strings.Contains(usage, remedy) {
+		t.Errorf("usage:\n%s", usage)
+	}
+	if launch := captureStderr(t, func() { _ = a.selectRunProfile("grok", "default") }); !strings.Contains(launch, "\n  "+remedy+"\n") {
+		t.Errorf("launch heads-up:\n%s", launch)
+	}
+	if a.rtSet {
+		t.Error("a sign-in check initialized the container runtime")
+	}
+}
+
 func grokProfileCredential(expiresAt, refresh string) string {
 	return fmt.Sprintf(`{"issuer::id":{"key":"access","refresh_token":%q,"expires_at":%q,"auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-07-16T01:00:00Z"}}`, refresh, expiresAt)
 }
 
 // The listing is a human overview, not a status ledger: being listed says an account is usable,
 // so a healthy row carries no status word — only when it was last refreshed. The default is
-// marked twice on purpose (a leading accent and an explicit `default`), and every `default`
-// starts at the same column across ALL agent blocks, so the eye can run down it.
+// marked once, by an explicit `default` (an accent beside it said the same thing twice), and every
+// `default` starts at the same column across ALL agent blocks, so the eye can run down it.
 func TestCredentialsListingIsAnOverviewNotALedger(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	for _, p := range []string{"personal", "backup"} {
@@ -498,7 +530,7 @@ func TestCredentialsListingIsAnOverviewNotALedger(t *testing.T) {
 	if !strings.HasPrefix(out, "Accounts available to Coop\n") {
 		t.Errorf("listing does not open with its title:\n%s", out)
 	}
-	for _, unwanted := range []string{"rotated ", "(default)", "✓"} {
+	for _, unwanted := range []string{"rotated ", "(default)", "✓", "*"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("healthy listing still carries %q:\n%s", unwanted, out)
 		}
@@ -510,9 +542,9 @@ func TestCredentialsListingIsAnOverviewNotALedger(t *testing.T) {
 	}
 	var defaults, issue, remedy int
 	for _, line := range strings.Split(out, "\n") {
-		if strings.HasSuffix(line, "default") && strings.Contains(line, "*") {
+		if strings.HasSuffix(line, "  default") {
 			defaults++
-			if got := strings.Index(line, "default"); got != strings.Index(firstDefaultLine(out), "default") {
+			if got := strings.LastIndex(line, "default"); got != strings.LastIndex(firstDefaultLine(out), "default") {
 				t.Errorf("`default` starts at a different column than the first block's:\n%s", out)
 			}
 		}
@@ -534,11 +566,16 @@ func TestCredentialsListingIsAnOverviewNotALedger(t *testing.T) {
 // firstDefaultLine is the first row carrying the `default` tag, for the column comparison above.
 func firstDefaultLine(out string) string {
 	for _, line := range strings.Split(out, "\n") {
-		if strings.HasSuffix(line, "default") && strings.Contains(line, "*") {
+		if strings.HasSuffix(line, "  default") {
 			return line
 		}
 	}
 	return ""
+}
+
+// signInLabel is how the credentials listing labels an account's state: "" when it can run.
+func signInLabel(cfg *config.Config, agent, account string) string {
+	return box.ProfileSignIn(cfg, agent, account, time.Now()).Label()
 }
 
 // The human durations are the ones a person says out loud; the compressed form stays where a

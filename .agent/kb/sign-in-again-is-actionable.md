@@ -1,17 +1,37 @@
 ---
 name: sign-in-again-is-actionable
-description: refreshable OAuth stays usable; "Sign in again" means the stored login cannot recover — run the coop login it names
+description: refreshable OAuth stays usable; "Sign in again" means the stored login cannot recover (a provider-refused grant included) and every command words it the same — run the coop login it names
 subsystem: credentials
-sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/box/profiles.go, internal/cli/profiles.go, internal/cli/rotation.go, internal/sessionsvc/acp.go]
-updated: 2026-10-17
+sources: [internal/agent/agent.go, internal/agent/target.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/box/profiles.go, internal/box/account_renewal.go, internal/box/native_account.go, internal/box/native_broker.go, internal/cli/profiles.go, internal/cli/commands.go, internal/cli/modelscache.go, internal/cli/usage.go, internal/cli/rotation.go, internal/sessionsvc/acp.go]
+updated: 2026-11-03
 ---
 `coop credentials` lists an account whose OAuth access token has expired but whose refresh authority
-is valid as healthy: the provider CLI renews it on use, so the row carries no warning. A marker that
-is malformed, stripped, missing required scopes or routing metadata, or both expired and
-nonrenewable reads `⚠ Sign in again` (an account that never signed in reads `⚠ Not signed in`), with
-the `coop login <agent>@<account>` remedy beside it (`profileIssue` in internal/cli/profiles.go).
-That flag is an actionable failure, not the old expiry false alarm; run the displayed `coop login`
-remedy rather than trying a provider request first.
+is valid as healthy: Coop renews it on use, so the row carries no warning. A marker or canonical
+record that is malformed, stripped, missing required scopes or routing metadata, or both expired and
+nonrenewable reads `⚠ Sign in again`, as does an account whose grant the provider refused at its last
+renewal (an account that never signed in reads `⚠ Not signed in`), with the
+`coop login <agent>@<account>` remedy beside it. That flag is an actionable failure, not the old
+expiry false alarm; run the displayed `coop login` remedy rather than trying a provider request first.
+
+One local answer, worded once. `box.ProfileSignIn` decides the state from local files alone and
+`agents.SignIn` words it: `Label` for the listing, `Remedy` for one line
+(`Sign in again: coop login grok@default`). The listing and detail view, the model menu's refresh
+cause (`fetchModelCatalog`, `safeModelProbeCause`), `coop usage`'s Limits row, the launch heads-ups
+(`nudgeIfUnauthed`, `selectRunProfile`, a new default) and a launch refused in `planNativeAccounts`
+(what an editor's warm box prints) all use it. The quota adapters say only `credential refresh
+unavailable` for a failed renewal, and `coop usage` asks `ProfileSignIn` again after its lookup.
+Rotation's repair errors classify with it but keep their own sentence, and the ACP control's
+in-editor `Sign in to <target> on the host` notices are separate.
+
+The refusal record. A canonical record whose grant the provider refused (`agents.ErrRenewalRefused`:
+OAuth `invalid_grant`, Codex's `refresh_token_*`) still inspects as renewable, so
+`renewAccountAuthority` writes `refused.json` (the record's epoch and revision) beside the account,
+under its lock. `nativeAccountReady` reads a matching one as not ready, so presence, readiness,
+rotation, the ACP selector and the warm pool drop the account, and later renewals return the refusal
+without asking the provider. A publication (a new `coop login`, a kept answer that completes) moves
+the revision and ends it; `coop credentials … rm` deletes it. A refusal is learned only when
+something renews (a launch, a warm box, `coop usage`), so a login that died since its last use still
+lists as healthy until then: `coop credentials` never asks a provider.
 
 The provider adapter owns this distinction through `StoredCredentialStatus`. Claude, Codex, and
 Grok validate their native OAuth records; Gemini retains opaque presence behavior. Env-only
@@ -29,6 +49,12 @@ A healthy row's `refreshed <age>` reads the marker mtime through `box.ProfileTok
 behind provider expiries.
 
 ## Changelog
+- 2026-11-03 — one expired Grok login read four ways (healthy in the listing, three different
+  sign-in sentences in models, usage and an ACP warm box). Added the refusal record and
+  `box.ProfileSignIn`/`agents.SignIn` (replacing `profileIssue`, `signInLabel`, `signInToRefresh`);
+  a not-ready canonical account now reads `Sign in again`, not `Not signed in`. Swept every caller
+  of `ProfileAuthed` that tells a person to sign in: models, usage, both launch heads-ups and
+  rotation's repair now use it; help, init and peer checks keep presence.
 - 2026-10-17 — renamed from credentials-expired-is-a-false-alarm, whose name said the opposite of
   the body: the flag is actionable. The listing's labels are now `⚠ Sign in again`/`⚠ Not signed in`
   and a healthy row's column is `refreshed <age>`, not `rotated` (9f5b033c); verified against

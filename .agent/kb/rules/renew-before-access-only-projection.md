@@ -3,8 +3,8 @@ name: renew-before-access-only-projection
 description: refreshable credentials renew in one canonical host authority before and during brokered runs
 scope: security
 sources: [internal/agent/agent.go, internal/agent/native_credentials.go, internal/agent/codex.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/account_renewal.go, internal/box/native_broker.go, internal/sessionsvc/acp.go]
-check: "go test ./internal/box -run 'TestAccountRenewalPersistsIntentResponseAndShortGrant|TestAccountRenewalCompletesAKeptAnswerWithoutTheProvider|TestAccountRenewalRetriesAfterAnExchangeThatKeptNothing|TestAccountRenewalUnusableKeptAnswerRefuses|TestNativeRunPublishesGuardOnlyExpiringAccess|TestNativeHostSignInRecoversUncertainRenewal|TestNativeBroker|TestNativeRenewalKeepsAnAccessItCannotRenewUntilTheDeadline'"
-updated: 2026-10-17
+check: "go test ./internal/box -run 'TestAccountRenewalPersistsIntentResponseAndShortGrant|TestAccountRenewalCompletesAKeptAnswerWithoutTheProvider|TestAccountRenewalRetriesAfterAnExchangeThatKeptNothing|TestAccountRenewalUnusableKeptAnswerRefuses|TestNativeRunPublishesGuardOnlyExpiringAccess|TestNativeHostSignInRecoversUncertainRenewal|TestNativeBroker|TestNativeRenewalKeepsAnAccessItCannotRenewUntilTheDeadline|TestRefusedGrantNeedsANewSignInUntilOneIsMade'"
+updated: 2026-11-03
 ---
 
 # Renew credentials in one canonical host authority
@@ -42,13 +42,20 @@ retried. The ticks in between only read the account, so they never ask the provi
 stays busy revokes about 2 minutes after the last locked read, since only a read sees a sign-in or
 removal. A refused grant, an unusable kept answer, an epoch change, an expired access and any
 unclassified error revoke at once. Never retry a refused grant, and never serve an expired access
-just because it is still `Ready`.
+just because it is still `Ready`. A refusal is recorded beside the account (`refused.json`, naming
+the record's epoch and revision), so later runs and commands do not send that grant again either:
+the account reads as needing a sign-in until one publishes a newer record.
 
 Pre-cutover quota inspection may still renew the original legacy store under the same writer
 fences as cutover. It must never fork that authority, overlap canonical service, or fall back from
 a revoked canonical account. This narrow maintenance path is not a coding-home projection.
 
 ## Changelog
+- 2026-11-03 — a refused grant was forgotten when its run ended, so every later launch, warm box
+  and `coop usage` sent it again and `coop credentials` called the account healthy. The refusal is
+  now recorded under the account lock and `renewAccountAuthority` returns it without the provider;
+  TestRefusedGrantNeedsANewSignInUntilOneIsMade joins the check. Swept the other renewal callers
+  (broker ticks, remote preparation, quota reads): each goes through the same function.
 - 2026-10-17 — a running box starts renewing 10 minutes ahead (native_broker.go `nativeRenewalLead`),
   separate from the 2-minute deadline the adapters check (`nativeRenewalDeadline`;
   native_account.go `renewNativeAccount(renewBy, deadline)`). Launch, remote preparation and quota

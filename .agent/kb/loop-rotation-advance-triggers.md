@@ -3,14 +3,16 @@ name: loop-rotation-advance-triggers
 description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); known-invalid credentials never become rungs
 subsystem: loop
 sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/ladder/acp.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/loop/streamjson_providers.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/agent/ratelimit.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/box/auth.go, internal/box/profiles.go, docs/agents.md, docs/loop.md]
-updated: 2026-10-17
+updated: 2026-11-03
 ---
 A loop's rotation starts from credential presence and then applies
 `box.ProfileCredentialReady`. A native marker that its adapter classifies as
-`StoredCredentialReauthRequired` is omitted before the provider launches; ready or refreshable
+`StoredCredentialReauthRequired` is omitted before the provider launches, and so is an account
+whose grant the provider refused at an earlier renewal (its recorded refusal); ready or refreshable
 markers remain eligible. Env-backed credentials and markers whose adapter returns `Unknown` retain
 presence behavior because Coop cannot safely prove them dead. `coop credentials` uses the same
-predicate, so a credential it flags `Sign in again` cannot simultaneously become a rotation rung.
+predicate, so a credential it flags `Sign in again` cannot simultaneously become a rotation rung,
+and an empty ladder's repair advice classifies its accounts with the same `box.ProfileSignIn`.
 See [[credential-presence-is-adapter-declared]] and [[sign-in-again-is-actionable]].
 
 Two triggers advance the rotation, and their lifetimes differ — don't reach for one map to hold
@@ -69,6 +71,9 @@ the loop decoder says `authentication required`, the ACP auth check reads a stru
 `grok_errors`.
 
 ## Changelog
+- 2026-11-03 — a provider-refused grant is recorded and leaves the rotation before launch; the
+  empty-ladder repair classifies with `box.ProfileSignIn`, so a refused canonical account is named
+  for re-login instead of dropped from a fan-out's advice. `profileIssue` (below) is gone.
 - 2026-10-17 — the credentials listing's label is `Sign in again` now (`profileIssue` in
   internal/cli/profiles.go), and the linked card is renamed sign-in-again-is-actionable.
 - 2026-10-15 — the wrappers' `grep -E` now renders from the Go pattern strings; its hand-kept copy

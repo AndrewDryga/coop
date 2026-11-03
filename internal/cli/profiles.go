@@ -74,24 +74,22 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 			continue
 		}
 		for _, row := range block.rows {
-			// The leading accent makes the try-first account scannable; the explicit `default`
-			// in the fixed third column explains the accent without a legend. Neither is a
-			// success mark, so neither is green.
-			mark := "  "
+			// The default is marked once, by the word in the fixed last column: it needs no
+			// legend, and it is not a success mark, so it is not green.
 			tag := ""
 			if row.isDefault {
-				mark, tag = pal.Cyan("*")+" ", pal.Dim("default")
+				tag = pal.Dim("default")
 			}
 			fact := padRight(row.fact, factW)
 			if row.issue {
 				fact = pal.Yellow(fact)
 			}
-			line := fmt.Sprintf("  %s%s   %s  %s", mark, padRight(row.profile, profileW), fact, tag)
+			line := fmt.Sprintf("  %s   %s  %s", padRight(row.profile, profileW), fact, tag)
 			fmt.Println(strings.TrimRight(line, " ")) // a row with no tag ends at its last word
 			if row.remedy != "" {
 				// Aligned under the warning's TEXT, not under its glyph, so the remedy reads as
 				// that row's own continuation.
-				fmt.Printf("%s%s\n", strings.Repeat(" ", 4+profileW+3+2), pal.Cyan(row.remedy))
+				fmt.Printf("%s%s\n", strings.Repeat(" ", 2+profileW+3+2), pal.Cyan(row.remedy))
 			}
 		}
 		// Surface a dangling default: the marked (or built-in) default points at an account that
@@ -169,9 +167,9 @@ func (a *app) accountBlock(agent string) accountBlock {
 	}
 	for _, p := range profiles {
 		row := accountRow{profile: p, isDefault: p == def}
-		switch issue := a.profileIssue(agent, p); {
-		case issue != "":
-			row.fact, row.issue, row.remedy = "⚠ "+issue, true, agents.LoginCommand(agent+"@"+p)
+		switch need := box.ProfileSignIn(a.cfg, agent, p, time.Now()); {
+		case need != agents.SignedIn:
+			row.fact, row.issue, row.remedy = "⚠ "+need.Label(), true, agents.LoginCommand(agent+"@"+p)
 		case a.envBackedAccount(agent, p):
 			// An env key has no token file to date; saying when it was "refreshed" would be
 			// inventing an mtime, so name the authority instead.
@@ -182,24 +180,6 @@ func (a *app) accountBlock(agent string) accountBlock {
 		block.rows = append(block.rows, row)
 	}
 	return block
-}
-
-// profileIssue reports what is wrong with a stored account, as the short sentence the listing and
-// the detail view both print — "" when nothing is. Presence is enough for opaque stores and env
-// keys; adapters that can inspect their native OAuth marker reject malformed, stripped, or expired
-// credentials while accepting refreshable ones, so a renewable expiry is never called unusable.
-func (a *app) profileIssue(agent, p string) string {
-	switch {
-	case !box.ProfileAuthed(a.cfg, agent, p):
-		if ag, ok := agents.Get(agent); ok && box.ProfileMarkerPresent(a.cfg, agent, p) &&
-			ag.StoredCredentialStatus(a.cfg.AgentProfileDir(agent, p), time.Now()) == agents.StoredCredentialReauthRequired {
-			return "Sign in again"
-		}
-		return "Not signed in"
-	case !box.ProfileCredentialReady(a.cfg, agent, p, time.Now()):
-		return "Sign in again"
-	}
-	return ""
 }
 
 // envBackedAccount reports whether this account's authority is the env file rather than a stored
@@ -298,16 +278,16 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 	name := titleName(agent)
 	isDefault := profile == a.cfg.DefaultProfileOf(agent)
 	env := a.envBackedAccount(agent, profile)
-	issue := a.profileIssue(agent, profile)
+	need := box.ProfileSignIn(a.cfg, agent, profile, time.Now())
 	login := agents.LoginCommand(agent + "@" + profile)
 
 	switch {
-	case issue != "":
+	case need != agents.SignedIn:
 		// A broken account cannot answer "which account will be used", so it leads with the
 		// problem and the exact login that fixes it.
-		fmt.Println(pal.Yellow("⚠ " + issue))
+		fmt.Println(pal.Yellow("⚠ " + need.Label()))
 		fmt.Println()
-		fmt.Println(pal.Bold(signInLabel(issue)))
+		fmt.Println(pal.Bold(need.Action() + ":"))
 		fmt.Printf("  %s\n\n", pal.Cyan(login))
 	case env:
 		fmt.Printf("%s uses this account's configured environment key.\n\n", name)
@@ -323,7 +303,7 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 	}
 	// An env-backed account is refreshed by editing the env file, so offering `coop login` for it
 	// would name the wrong mechanism; a broken one already printed its login above.
-	if issue == "" && !env {
+	if need == agents.SignedIn && !env {
 		fmt.Printf("\n%s\n", pal.Bold("Sign in again:"))
 		fmt.Printf("  %s\n", pal.Cyan(login))
 	}
@@ -332,15 +312,6 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 		fmt.Printf("  %s\n", pal.Cyan("coop credentials "+agent))
 	}
 	return 0, nil
-}
-
-// signInLabel keeps the detail view's action heading in the listing's vocabulary: an account that
-// never had a login says "Sign in", one whose stored login went bad says "Sign in again".
-func signInLabel(issue string) string {
-	if issue == "Not signed in" {
-		return "Sign in:"
-	}
-	return "Sign in again:"
 }
 
 // setProfileDefault marks <account> as <agent>'s default, so a run with no @account uses it. It
@@ -361,11 +332,20 @@ func (a *app) setProfileDefault(agent, name string) (int, error) {
 		return -1, err
 	}
 	ui.OK("%s will use %s by default", titleName(agent), name)
-	if issue := a.profileIssue(agent, name); issue != "" {
-		warnRows(fmt.Sprintf("%s is %s", name, strings.ToLower(issue)),
-			[2]string{signInLabel(issue), agents.LoginCommand(agent + "@" + name)})
+	if need := box.ProfileSignIn(a.cfg, agent, name, time.Now()); need != agents.SignedIn {
+		warnSignIn(name, need, agent+"@"+name)
 	}
 	return 0, nil
+}
+
+// warnSignIn is the heads-up a command gives about an account it is about to use that needs a
+// sign-in: what is wrong, then the exact login, in the words coop credentials uses for that state.
+func warnSignIn(subject string, need agents.SignIn, target string) {
+	headline := subject + " is not signed in"
+	if need == agents.SignInAgain {
+		headline = subject + "'s saved sign-in no longer works"
+	}
+	warnRows(headline, [2]string{need.Action() + ":", agents.LoginCommand(target)})
 }
 
 // warnRows prints a heads-up in the shared refusal's COLUMN shape — a leading blank line, the ⚠

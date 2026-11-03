@@ -12,6 +12,13 @@
   `serve.ports` entry as a clickable localhost link under one short title. Filtered sessions
   and Gemini and Grok threads get the links too.
 
+- **One sign-in status for every account.** When a provider refuses an account's saved sign-in,
+  Coop remembers it. `coop credentials` marks that account `Sign in again` with its exact
+  `coop login <agent>@<account>` command, and `coop models`, `coop usage`, launches and editor
+  sessions say the same thing instead of trying the dead login again. A new sign-in clears it.
+  The listing marks the default account once, and `coop models` lists Claude's Fable family as
+  `fable`, like its other aliases.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up

@@ -21,6 +21,29 @@ func TestModelCatalogDescriptors(t *testing.T) {
 	}
 }
 
+// Claude's adapter lists most families by alias but Fable by its full id; the menu lists every
+// family by the alias people type. A family the catalog already names by alias keeps its other ids,
+// as does a variant such as opus[1m], and a provider without aliases lists its catalog unchanged.
+func TestModelCatalogListsFamiliesByAlias(t *testing.T) {
+	claude, _ := Get("claude")
+	for _, tc := range []struct{ ids, want []string }{
+		{[]string{"sonnet", "claude-fable-5-1", "opus", "haiku"}, []string{"sonnet", "fable", "opus", "haiku"}},
+		{[]string{"opus[1m]", "claude-fable-5-1", "claude-fable-5", "opus", "claude-opus-4-8"},
+			[]string{"opus[1m]", "fable", "claude-fable-5", "opus", "claude-opus-4-8"}},
+	} {
+		if got := claude.ModelCatalog().Listed(tc.ids); !slices.Equal(got, tc.want) {
+			t.Errorf("Listed(%v) = %v, want %v", tc.ids, got, tc.want)
+		}
+	}
+	if !slices.Equal(claude.Models()[:4], claude.ModelCatalog().Aliases) {
+		t.Errorf("the bundled examples do not lead with the aliases: %v", claude.Models())
+	}
+	grok, _ := Get("grok")
+	if ids := []string{"grok-4.7", "grok-4.5"}; !slices.Equal(grok.ModelCatalog().Listed(ids), ids) {
+		t.Error("a provider without aliases had its catalog rewritten")
+	}
+}
+
 func TestGrokCatalogRequiresAdvertisedExternalHelper(t *testing.T) {
 	for _, test := range []struct {
 		name, raw string

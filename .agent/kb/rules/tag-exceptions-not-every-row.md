@@ -4,7 +4,7 @@ description: "tag only the exceptional row; explain the scheme once in a dim cap
 scope: cli-output
 sources: [internal/cli/models.go, internal/cli/profiles.go]
 check: "none"
-updated: 2026-09-27
+updated: 2026-11-03
 ---
 
 # Tag the exception row, not every row
@@ -24,7 +24,8 @@ the eye on the signal.
 
 **How to apply:**
 - Pick the exceptional state (default, pinned, blocked, could-not-refresh) and tag only
-  those rows, after the content — like the credentials list's single `default`.
+  those rows, after the content — like the credentials list's single `default`. Mark it
+  once: an accent beside the tag says the same thing twice.
 - Say what untagged rows mean once, in a dim caption under the list — or make the tag a
   short sentence that carries its own meaning — never a marker repeated per row.
 - Compute the name-column width once from plain rendered labels and pass it to every block
@@ -38,6 +39,9 @@ the eye on the signal.
 See also [[no-color-in-width-fields]], [[command-output-tiers]], [[help-output-style]].
 
 ## Changelog
+- 2026-11-03 — the owner found the credentials listing marking its default twice (a leading `*`
+  and the `default` tag); the `*` is gone and the rows start at the two-space indent. Swept the
+  internal/cli renderers for a second default marker: only this listing had one.
 - 2026-09-27 — removed current-tense references to obsolete test-only `colWidth` after
   rechecking the live credentials/menu renderers; the shared-width rule remains.
 - 2026-09-11 — the reviewed copy split that self-explaining tag in two: the row says WHICH list is

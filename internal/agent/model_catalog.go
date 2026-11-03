@@ -1,6 +1,10 @@
 package agent
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"slices"
+	"strings"
+)
 
 // Model is a native CLI model id and its optional human-readable name.
 type Model struct {
@@ -16,6 +20,26 @@ type ModelCatalogSpec struct {
 	ParseACP    func(json.RawMessage) []Model
 	// ACPAuthMethod selects only a noninteractive broker bootstrap proven by initialize.
 	ACPAuthMethod func(json.RawMessage) (string, error)
+	// Aliases are family names the CLI resolves to that family's current model (Claude's opus).
+	Aliases []string
+}
+
+// Listed is a catalog's ids as a menu offers them. A catalog can name one family by its alias and
+// another only by a full id (Claude's adapter lists sonnet but claude-fable-5-1), so an id of a
+// family whose alias the catalog lacks reads as that alias too. One id per family takes it; any
+// other keeps its full id.
+func (s ModelCatalogSpec) Listed(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		for _, alias := range s.Aliases {
+			if slices.Contains(strings.Split(id, "-"), alias) && !slices.Contains(ids, alias) && !slices.Contains(out, alias) {
+				id = alias
+				break
+			}
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // Preserve complete session-result decoding for forced discovery, including

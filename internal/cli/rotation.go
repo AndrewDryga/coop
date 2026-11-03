@@ -76,16 +76,13 @@ func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target
 	}
 	var repairs []repair // selected or fan-out credentials whose exact login fixes an empty ladder
 	recordRepair := func(agent, account string, pinned bool) {
-		if box.ProfileCredentialReady(cfg, agent, account, time.Now()) {
-			return
-		}
-		present := box.ProfileAuthed(cfg, agent, account)
-		if !present && !pinned {
+		need := box.ProfileSignIn(cfg, agent, account, time.Now())
+		if need == agents.SignedIn || need == agents.NotSignedIn && !pinned {
 			return
 		}
 		target := agent + "@" + account
 		if !slices.ContainsFunc(repairs, func(r repair) bool { return r.target == target }) {
-			repairs = append(repairs, repair{target: target, relogin: present})
+			repairs = append(repairs, repair{target: target, relogin: need == agents.SignInAgain})
 		}
 	}
 	for _, e := range rungs {

@@ -116,7 +116,7 @@ func TestGrokModelDiscoveryNeverUsesHostLogin(t *testing.T) {
 		t.Fatal(cache)
 	}
 	a.acpModels = nil
-	if _, err := a.fetchModelCatalog("grok"); modelFetchCause("grok", err) != signInToRefresh("grok") {
+	if _, err := a.fetchModelCatalog("grok"); modelFetchCause("grok", err) != "Sign in: coop login grok@work" {
 		t.Fatalf("signed-out cause: %v", err)
 	}
 	if _, err := os.Stat(called); !os.IsNotExist(err) {

@@ -71,6 +71,11 @@ func TestModelProbeAdmissionPreservesPolicyAndIsolation(t *testing.T) {
 	}
 }
 
+// claudeWork is the account the probes below run on.
+var claudeWork = agents.Target{Provider: "claude", Accounts: []string{"work"}}
+
+// A sign-in the probe hits names the probe's own account, in the words coop credentials uses. The
+// "Sign in again" detail is what the probe's box prints when the provider refuses the saved sign-in.
 func TestModelProbeFailuresAreSafeAndUseful(t *testing.T) {
 	const secret = "SECRET-CANARY-token-value"
 	for _, tc := range []struct{ detail, want string }{
@@ -86,10 +91,11 @@ func TestModelProbeFailuresAreSafeAndUseful(t *testing.T) {
 		{"canonical credential file must be owner-private with one link " + secret, "Credential storage failed a safety check; preserve it for host recovery."},
 		{"legacy native credential writer is busy " + secret, "An existing session is using this account; finish it before retrying."},
 		{"a container mounts /mnt/" + secret + ", which cannot be resolved on this computer, so Coop cannot rule out that it holds this saved sign-in", "A container mount could not be checked; stop the container that holds it, then retry."},
-		{"native account needs host sign-in or renewal " + secret, "Sign in to Claude to refresh its models: coop login claude"},
+		{"native account needs host sign-in or renewal " + secret, "Sign in again: coop login claude@work"},
+		{"Sign in again: coop login claude@work " + secret, "Sign in again: coop login claude@work"},
 		{secret + "\x1b[31m", "The model probe closed before answering."},
 	} {
-		cause := modelFetchCause("claude", modelProbeFailure("claude", io.EOF, tc.detail))
+		cause := modelFetchCause("claude", modelProbeFailure(claudeWork, io.EOF, tc.detail))
 		if cause != tc.want || strings.Contains(cause, secret) || strings.ContainsAny(cause, "\n\x1b") {
 			t.Errorf("cause = %q, want %q", cause, tc.want)
 		}
@@ -97,10 +103,10 @@ func TestModelProbeFailuresAreSafeAndUseful(t *testing.T) {
 	if got := modelFetchCause("claude", errors.New(secret)); got != "The model request failed." {
 		t.Fatal(got)
 	}
-	if got := modelFetchCause("claude", modelProbeFailure("claude", fmt.Errorf("setup: %w", box.ErrNetworkSetupFailed), secret)); got != "Filtered networking setup failed; run coop net setup for details." {
+	if got := modelFetchCause("claude", modelProbeFailure(claudeWork, fmt.Errorf("setup: %w", box.ErrNetworkSetupFailed), secret)); got != "Filtered networking setup failed; run coop net setup for details." {
 		t.Fatal(got)
 	}
-	if got := modelFetchCause("claude", modelProbeFailure("claude", context.DeadlineExceeded, secret)); got != "The model request timed out." {
+	if got := modelFetchCause("claude", modelProbeFailure(claudeWork, context.DeadlineExceeded, secret)); got != "The model request timed out." {
 		t.Fatal(got)
 	}
 	buffer := &tailBuffer{max: 16 << 10}
@@ -144,7 +150,7 @@ func TestModelProbeChildExitCollectsLateStderr(t *testing.T) {
 	case <-time.After(wait.Deadline):
 		t.Fatal("child exit did not complete stderr collection")
 	}
-	if got := modelFetchCause("claude", modelProbeFailure("claude", err, stderr.String())); got != "The Coop box image is not built: coop build" {
+	if got := modelFetchCause("claude", modelProbeFailure(claudeWork, err, stderr.String())); got != "The Coop box image is not built: coop build" {
 		t.Fatal(got)
 	}
 }

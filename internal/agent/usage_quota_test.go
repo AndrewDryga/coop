@@ -113,6 +113,24 @@ func TestUsageClaudeModernLimitsReplaceCompatibilityWindows(t *testing.T) {
 	}
 }
 
+// A renewal that failed is no verdict on the sign-in: a refused grant is recorded with the account,
+// and coop usage reads that record. So every adapter says only that the refresh failed, and an
+// outage never reads as "sign in again".
+func TestUsageQuotaFailedRenewalIsNotASignInVerdict(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	failed := func(context.Context, time.Time) (NativeCredentialState, map[string][]byte, error) {
+		return NativeCredentialState{}, nil, ErrRenewalUnavailable
+	}
+	for name, quota := range map[string]func(context.Context, UsageQuotaInput) (UsageQuota, error){
+		"claude": claudeUsageQuota, "codex": codexUsageQuota, "grok": grokUsageQuota,
+	} {
+		if _, err := quota(ctx, UsageQuotaInput{Current: failed}); err == nil || errors.Is(err, ErrUsageSignIn) {
+			t.Errorf("%s: a failed renewal = %v, want a refresh failure, not a sign-in verdict", name, err)
+		}
+	}
+}
+
 func TestUsageQuotaHTTPFailureBoundary(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
