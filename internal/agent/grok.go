@@ -436,7 +436,12 @@ func (raw grokQuotaResponse) quota() UsageQuota {
 	return out
 }
 
-func (grokAgent) Scaffold() ScaffoldSpec { return ScaffoldSpec{} }
+// Scaffold: the pinned 1.0.44 client reads a project's AGENTS.md itself (InstructionFile) and its
+// skills from <repo>/.grok/skills, so a selected Grok gets that link to the shared source, as Codex
+// does. Both are project scope, which this client loads only in a trusted folder (BoxEnv).
+func (grokAgent) Scaffold() ScaffoldSpec {
+	return ScaffoldSpec{Project: ScaffoldLayout{Dir: ".grok"}}
+}
 
 func (grokAgent) ReviewOutput(raw string, _ ReviewOutputContract) (string, bool) { return raw, true }
 func (grokAgent) ReviewFooterLine(string) bool                                   { return false }
@@ -449,7 +454,8 @@ func (grokAgent) Name() string { return "grok" }
 // SkillsCapable: the pinned 1.0.44 client discovers skills natively from ~/.grok/skills/<name>/
 // SKILL.md — the directory Coop's shared projection already targets (~/.<agent>/skills) — and lists
 // them in `grok inspect`. Project-scope .grok/skills outranks user scope in its own precedence, so a
-// repository's own skills still win over the projected copy.
+// repository's own skills still win over the projected copy; that scope needs the folder trust
+// BoxEnv turns off.
 func (grokAgent) SkillsCapable() bool { return true }
 func (grokAgent) DisplayName() string { return "Grok" }
 func (grokAgent) Vendor() string      { return "xAI" }
@@ -874,13 +880,19 @@ func (grokAgent) ACPRateLimitSignals() []ACPSignal {
 // selection asks for a fresh session, which the ACP controller handles by restarting at this target.
 func (grokAgent) ACPSessionSettings(Target) []ACPSessionSetting { return nil }
 
-// BoxEnv: grok reads its config + auth from ~/.grok, where coop mounts its profile. The one
-// variable is the client's telemetry switch. Left on, the pinned 1.0.44 client looks up
-// api.mixpanel.com and grok.com dozens of times per prompt, and api.x.ai too — 128 blocked lookups
-// in one filtered run, a burst alert every time, and detail the record had to drop — and with it
-// off it looks up none of them and answers the same.
+// BoxEnv: grok reads its config + auth from ~/.grok, where coop mounts its profile. The telemetry
+// switch is off: left on, the pinned 1.0.44 client looks up api.mixpanel.com and grok.com dozens
+// of times per prompt, and api.x.ai too — 128 blocked lookups in one filtered run, a burst alert
+// every time, and detail the record had to drop — and with it off it looks up none of them and
+// answers the same.
+//
+// Folder trust is off too, as it is for Gemini and pre-answered for Claude and Codex: the box is
+// the sandbox. The client loads the project's AGENTS.md and .grok/skills (with its MCP, LSP and
+// hooks) only after `--trust` or an interactive grant, which a headless run never gives; untrusted,
+// `grok inspect` lists none of them. Its embedded docs say GROK_FOLDER_TRUST=0 ungates them all,
+// and with it `grok inspect` lists both.
 func (a grokAgent) BoxEnv(string) []string {
-	return append([]string{"GROK_TELEMETRY_ENABLED=false"}, a.UpdateControls().Env...)
+	return append([]string{"GROK_TELEMETRY_ENABLED=false", "GROK_FOLDER_TRUST=0"}, a.UpdateControls().Env...)
 }
 
 func (grokAgent) HomeFallbacks() []HomeFallback { return nil }

@@ -1880,7 +1880,7 @@ Without options, Coop detects what it can and asks before initializing Git,
 adding formatting checks, or adding Postgres or Redis.
 
 OPTIONS
-  --agents <list>       set up Claude, Codex, Gemini, or all
+  --agents <list>       set up Claude, Codex, Gemini, Grok, or all
                         default: agents you are signed in to
 
   --services [<list>]   add Postgres, Redis, or both

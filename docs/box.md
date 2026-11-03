@@ -253,10 +253,10 @@ co:op's fixed client base, as described above. An agent box needs the following:
 
 1. It runs as a non-root user. Claude Code refuses `--dangerously-skip-permissions` as root.
 2. That user's home is `/home/node`. Coop mounts the selected provider folders from `agents/`
-   at `$HOME/.claude`, `$HOME/.codex` and `$HOME/.gemini`. On a different base, set
-   `COOP_HOME_IN_BOX=/home/<user>`.
-3. `claude`, `codex` and `gemini` are on `PATH` (so it needs Node), plus the ACP adapters if you
-   want `coop acp`.
+   at `$HOME/.claude`, `$HOME/.codex`, `$HOME/.gemini` and `$HOME/.grok`. On a different base,
+   set `COOP_HOME_IN_BOX=/home/<user>`.
+3. `claude`, `codex`, `gemini` and `grok` are on `PATH` (the first three need Node), plus the ACP
+   adapters if you want `coop acp`. Grok's ACP server is the `grok` binary itself.
 4. It runs `git config --system --add safe.directory '*'` so Git can use the repository files
    owned by your host user. They normally appear at the repo's real path; new remote sessions
    use `/workspace` inside their private boxes.
@@ -273,6 +273,8 @@ FROM <your-language-base>
 RUN <install your toolchain> \
  && npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.62.0 \
       @agentclientprotocol/claude-agent-acp@0.84.0 @agentclientprotocol/codex-acp@2.0.1 \
+ && curl -fsSL "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-$(uname -m).gz" \
+      | gunzip > /usr/local/bin/grok && chmod 755 /usr/local/bin/grok \
  && git config --system --add safe.directory '*'
 ARG COOP_BOX_UID=1000
 ARG COOP_BOX_GID=1000
@@ -344,6 +346,8 @@ top:
 FROM your-devcontainer-image          # the team's source of truth for the env
 RUN npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.62.0 \
       @agentclientprotocol/claude-agent-acp@0.84.0 @agentclientprotocol/codex-acp@2.0.1 \
+ && curl -fsSL "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-$(uname -m).gz" \
+      | gunzip > /usr/local/bin/grok && chmod 755 /usr/local/bin/grok \
  && git config --system --add safe.directory '*'
 USER <the devcontainer's non-root user>
 # If that user's home isn't /home/node, run with COOP_HOME_IN_BOX=/home/<user>.

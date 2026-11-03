@@ -1115,9 +1115,10 @@ func TestParseExplicitList(t *testing.T) {
 		{name: "services normalized and de-duplicated", option: initServices, in: "Redis, POSTGRES redis", want: []string{"redis", "postgres"}},
 		{name: "unknown service", option: initServices, in: "postgres,mongo", wantErr: `Invalid value "mongo" for "--services" in "coop init"`},
 		{name: "none is standalone", option: initServices, in: "postgres,none", wantErr: `Value "none" must be used alone for "--services" in "coop init"`},
-		{name: "agents all", option: initAgentsOption(), in: "ALL", want: []string{"claude", "codex", "gemini"}},
+		{name: "agents all", option: initAgentsOption(), in: "ALL", want: []string{"claude", "codex", "gemini", "grok"}},
+		{name: "agents grok", option: initAgentsOption(), in: "grok", want: []string{"grok"}},
 		{name: "agents normalized and de-duplicated", option: initAgentsOption(), in: "Codex claude,codex", want: []string{"codex", "claude"}},
-		{name: "unknown agent", option: initAgentsOption(), in: "claude,grok", wantErr: `Invalid value "grok" for "--agents" in "coop init"`},
+		{name: "unknown agent", option: initAgentsOption(), in: "claude,cursor", wantErr: `Invalid value "cursor" for "--agents" in "coop init"`},
 		{name: "all is standalone", option: initAgentsOption(), in: "all,codex", wantErr: `Value "all" must be used alone for "--agents" in "coop init"`},
 	}
 	for _, tc := range cases {
@@ -1232,7 +1233,7 @@ func TestInitActions(t *testing.T) {
 }
 
 // The collapsed result names only the agents this project selected, and the vendor each of them
-// may reach — never all three in a single-agent project.
+// may reach — never every agent in a single-agent project.
 func TestInitResultSentences(t *testing.T) {
 	cases := []struct {
 		agents        []string
@@ -1245,6 +1246,11 @@ func TestInitResultSentences(t *testing.T) {
 			[]string{"claude", "codex", "gemini"},
 			"Claude, Codex, and Gemini share instructions, skills, and one task queue.",
 			"Claude can reach Anthropic, Codex can reach OpenAI, and Gemini can reach Google.",
+		},
+		{
+			[]string{"claude", "codex", "gemini", "grok"},
+			"Claude, Codex, Gemini, and Grok share instructions, skills, and one task queue.",
+			"Claude can reach Anthropic, Codex can reach OpenAI, Gemini can reach Google, and Grok can reach xAI.",
 		},
 	}
 	for _, c := range cases {
@@ -1532,7 +1538,7 @@ func TestInitRejectsUnknownExplicitNamesBeforeWrites(t *testing.T) {
 		want string
 	}{
 		{name: "service", args: []string{"--services", "postgres,mongo"}, want: "Choose postgres, redis, or none."},
-		{name: "agent", args: []string{"--agents", "claude,grok"}, want: "Choose claude, codex, gemini, or all."},
+		{name: "agent", args: []string{"--agents", "claude,cursor"}, want: "Choose claude, codex, gemini, grok, or all."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := t.TempDir()

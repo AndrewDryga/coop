@@ -1123,6 +1123,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		"-e", "CODEX_SQLITE_HOME=/home/node/.codex-state", // every agent's BoxEnv is exported (inert here)
 		"-e", "GEMINI_TELEMETRY_ENABLED=false",
 		"-e", "GROK_TELEMETRY_ENABLED=false",
+		"-e", "GROK_FOLDER_TRUST=0",
 		"-e", "GROK_DISABLE_AUTOUPDATER=1",
 		"-e", "COOP_CONFIG_PUBLICATION=",
 		"--label", "coop=box",
@@ -1168,6 +1169,7 @@ func TestAssembleArgsFullLaunchGolden(t *testing.T) {
 		"-e", "CODEX_SQLITE_HOME=/home/node/.codex-state",
 		"-e", "GEMINI_TELEMETRY_ENABLED=false",
 		"-e", "GROK_TELEMETRY_ENABLED=false",
+		"-e", "GROK_FOLDER_TRUST=0",
 		"-e", "GROK_DISABLE_AUTOUPDATER=1",
 		"-e", "COOP_CONSULT_TIMEOUT=30",
 		"-v", "/tmp/i:/home/node/.codex/AGENTS.md:ro",
@@ -1324,6 +1326,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mustContain("-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "-e", "DISABLE_UPDATES=1")
 	mustContain("-e", "GEMINI_TELEMETRY_ENABLED=false")
 	mustContain("-e", "GROK_TELEMETRY_ENABLED=false")
+	mustContain("-e", "GROK_FOLDER_TRUST=0")
 	mustContain("-e", "GROK_DISABLE_AUTOUPDATER=1")
 	mustContain("--env-file", filepath.Join(dir, "env"))
 	mustContain("-v", filepath.Join(dir, "INSTRUCTIONS.md")+":/home/node/.claude/CLAUDE.md:ro")

@@ -312,4 +312,25 @@ func TestDocsExamplesPinTheQualifiedClients(t *testing.T) {
 	if examples == 0 {
 		t.Fatal("found no npm install -g example in docs/box.md")
 	}
+	// Grok's client is a native download, not an npm package, and every example installs it too.
+	var grok string
+	for _, client := range QualifiedClients() {
+		if name, version, _ := strings.Cut(client, " "); name == "grok" {
+			grok = version
+		}
+	}
+	downloads := 0
+	for i, line := range lines {
+		_, rest, ok := strings.Cut(line, "/cli/grok-")
+		if !ok {
+			continue
+		}
+		if version, _, _ := strings.Cut(rest, "-linux-"); grok == "" || version != grok {
+			t.Errorf("docs/box.md:%d downloads grok %s, want the qualified %s", i+1, version, grok)
+		}
+		downloads++
+	}
+	if downloads != examples {
+		t.Errorf("docs/box.md has %d client examples but %d grok downloads", examples, downloads)
+	}
 }

@@ -76,6 +76,7 @@ Sign in with `coop login`:
 coop login claude     # interactive login; credentials stay in host-only storage
 coop login codex      # device-code login (the box has no browser for an OAuth redirect)
 coop login gemini     # hidden API-key prompt; stored outside the mounted Gemini home
+coop login grok       # device-code login, like Codex
 ```
 
 ### API keys
@@ -137,7 +138,8 @@ API keys from the shared env file or the host's account store.
 ### First run
 
 On the first run, co:op answers the provider's setup prompts inside the box: Claude's theme,
-folder-trust and bypass warnings, Codex's "trust this directory?", and Gemini's folder trust.
+folder-trust and bypass warnings, Codex's "trust this directory?", and Gemini's and Grok's folder
+trust. Grok reads the project's `AGENTS.md` and `.grok/skills` only in a trusted folder.
 You do not need to repeat this setup after signing in. Coop treats the mounted repository as
 trusted inside the container, where the box provides the sandbox.
 
@@ -351,8 +353,8 @@ start, has invalid configuration or cannot sign in; Coop skips it for the rest o
 A timeout or too much output ends the call with an error and does not trigger another paid
 attempt on a fallback target. Follow-up consultations use the target that last succeeded.
 
-`coop-consult` manages session IDs for you. It generates IDs for Claude and Gemini, and reads
-Codex's ID from its JSON output.
+`coop-consult` manages session IDs for you. It generates IDs for Claude, Gemini and Grok, and
+reads Codex's ID from its JSON output.
 
 ### Limits
 
@@ -574,8 +576,9 @@ guidance to use across repositories that have no local override.
 
 ### Skills and the .agent/ folder
 
-`coop init` creates the agent directories (`.claude/`, `.codex/`, `.gemini/`) only for agents
-you are signed in to. You can choose them explicitly with `--agents claude,codex`, or use `all`.
+`coop init` creates the agent directories (`.claude/`, `.codex/`, `.gemini/`, `.grok/`) only for
+agents you are signed in to. You can choose them explicitly with `--agents claude,codex`, or use
+`all`.
 
 You can delete an agent's directory from a repo that does not use it. If you later run that
 agent in a box, co:op copies the workflow skills from `.agent/skills` into `~/.<agent>/skills`

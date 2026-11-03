@@ -417,7 +417,7 @@ func TestDockerfileTemplatesTrustAnyWorktree(t *testing.T) {
 func TestInit(t *testing.T) {
 	repo := t.TempDir()
 	logged, err := captureScaffoldStderr(t, func() error {
-		_, err := Init(repo, "", nil, []string{"claude", "codex", "gemini"})
+		_, err := Init(repo, "", nil, []string{"claude", "codex", "gemini", "grok"})
 		return err
 	})
 	if err != nil {
@@ -504,9 +504,15 @@ func TestInit(t *testing.T) {
 		}
 	}
 	// Every agent's skills dir symlinks to the one canonical .agent/skills.
-	for _, rel := range []string{".claude/skills", ".codex/skills", ".gemini/skills"} {
+	for _, rel := range []string{".claude/skills", ".codex/skills", ".gemini/skills", ".grok/skills"} {
 		if target, err := os.Readlink(filepath.Join(repo, rel)); err != nil || target != "../.agent/skills" {
 			t.Errorf("%s should symlink to ../.agent/skills, got %q (%v)", rel, target, err)
+		}
+	}
+	// Codex and Grok read AGENTS.md itself, so neither gets an instruction file of its own.
+	for _, rel := range []string{"CODEX.md", "GROK.md", ".grok/AGENTS.md"} {
+		if _, err := os.Lstat(filepath.Join(repo, rel)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s was scaffolded beside the AGENTS.md its agent reads: %v", rel, err)
 		}
 	}
 

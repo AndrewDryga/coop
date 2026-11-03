@@ -112,9 +112,9 @@ selected [agent directories](docs/agents.md#instructions). It configures the age
 in to, so sign in first.
 
 Each agent starts with its own "don't stop to ask" flag on (`--dangerously-skip-permissions`,
-`--dangerously-bypass-approvals-and-sandbox`, `--yolo`). An agent that goes off the rails works on
-the repo you gave it, which you can restore from Git, and the rest of your computer stays out of
-reach. Anything after the agent's name goes to the agent, so `coop claude --continue` resumes
+`--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--permission-mode bypassPermissions`).
+An agent that goes off the rails works on the repo you gave it, which you can restore from Git,
+and the rest of your computer stays out of reach. Anything after the agent's name goes to the agent, so `coop claude --continue` resumes
 Claude's last session in the box. Codex is the exception: its `-p` picks a profile, so run a
 one-shot prompt with `coop codex exec "…"`.
 

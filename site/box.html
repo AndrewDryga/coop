@@ -296,10 +296,10 @@ co:op&#39;s fixed client base, as described above. An agent box needs the follow
 <ol>
 <li>It runs as a non-root user. Claude Code refuses <code>--dangerously-skip-permissions</code> as root.</li>
 <li>That user&#39;s home is <code>/home/node</code>. Coop mounts the selected provider folders from <code>agents/</code>
-at <code>$HOME/.claude</code>, <code>$HOME/.codex</code> and <code>$HOME/.gemini</code>. On a different base, set
-<code>COOP_HOME_IN_BOX=/home/&lt;user&gt;</code>.</li>
-<li><code>claude</code>, <code>codex</code> and <code>gemini</code> are on <code>PATH</code> (so it needs Node), plus the ACP adapters if you
-want <code>coop acp</code>.</li>
+at <code>$HOME/.claude</code>, <code>$HOME/.codex</code>, <code>$HOME/.gemini</code> and <code>$HOME/.grok</code>. On a different base,
+set <code>COOP_HOME_IN_BOX=/home/&lt;user&gt;</code>.</li>
+<li><code>claude</code>, <code>codex</code>, <code>gemini</code> and <code>grok</code> are on <code>PATH</code> (the first three need Node), plus the ACP
+adapters if you want <code>coop acp</code>. Grok&#39;s ACP server is the <code>grok</code> binary itself.</li>
 <li>It runs <code>git config --system --add safe.directory &#39;*&#39;</code> so Git can use the repository files
 owned by your host user. They normally appear at the repo&#39;s real path; new remote sessions
 use <code>/workspace</code> inside their private boxes.</li>
@@ -313,6 +313,8 @@ its user to match. Managed images on Docker Desktop for macOS keep UID/GID 1000.
 RUN &lt;install your toolchain&gt; \
  &amp;&amp; npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.62.0 \
       @agentclientprotocol/claude-agent-acp@0.84.0 @agentclientprotocol/codex-acp@2.0.1 \
+ &amp;&amp; curl -fsSL &#34;https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-$(uname -m).gz&#34; \
+      | gunzip &gt; /usr/local/bin/grok &amp;&amp; chmod 755 /usr/local/bin/grok \
  &amp;&amp; git config --system --add safe.directory &#39;*&#39;
 ARG COOP_BOX_UID=1000
 ARG COOP_BOX_GID=1000
@@ -368,6 +370,8 @@ top:</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">Dockerfile</p><pre class="code" role="region" aria-label="Reusing a devcontainer code example" tabindex="0" data-copy-source=""><code class="language-dockerfile">FROM your-devcontainer-image          # the team&#39;s source of truth for the env
 RUN npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.62.0 \
       @agentclientprotocol/claude-agent-acp@0.84.0 @agentclientprotocol/codex-acp@2.0.1 \
+ &amp;&amp; curl -fsSL &#34;https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-$(uname -m).gz&#34; \
+      | gunzip &gt; /usr/local/bin/grok &amp;&amp; chmod 755 /usr/local/bin/grok \
  &amp;&amp; git config --system --add safe.directory &#39;*&#39;
 USER &lt;the devcontainer&#39;s non-root user&gt;
 # If that user&#39;s home isn&#39;t /home/node, run with COOP_HOME_IN_BOX=/home/&lt;user&gt;.
