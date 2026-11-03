@@ -1,8 +1,8 @@
 ---
 name: in-box-task-channel
-description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
+description: a loop work box or an interactive agent box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
-sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go]
+sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go, internal/tasks/session_claim.go, internal/cli/session_tasks.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/boxsweep.go, internal/box/sweep.go]
 updated: 2026-11-03
 ---
 
@@ -15,7 +15,63 @@ internal/loop/review.go). The host catches a hand move after the run instead: a 
 moved to done without holding its lease goes back to `10_in_progress/`
 (`rejectUnownedCompletions` in internal/tasks/audit.go). The coop binary is still absent from the
 box (doctor still asserts it) — the server is the ONLY host control surface a box gets, and it
-exposes eight verbs, nothing shell/exec/file.
+exposes eight verbs (ten in an interactive session, below), nothing shell/exec/file.
+
+**Interactive sessions get the same server, with nothing assigned.** An editor's `coop acp` inner
+child and a `coop <agent>` box in a plain checkout whose project has a task queue set `TaskTools`
+from `sessionTaskTools` (internal/cli/session_tasks.go). `Authority.Session` names the host process
+the session's claims bind to: the ACP supervisor (the inner child's parent under
+`COOP_ACP_SUPERVISOR`; its start token survives the exec a reload does, so claims outlive provider
+switches, refreshes and child restarts) or the `coop <agent>` process. Fork sessions, controller
+jobs, sign-in, `coop run -- <cmd>` and `coop shell` get nothing. A session server adds `tasks_claim`
+and `tasks_release` — a loop box still lists exactly the eight, doctor's contract — and its
+initialize instructions say the coop CLI is absent and these tools are how task state changes; the
+box briefing gains a `# Tasks` note whenever a box serves task tools.
+
+- One rule for every box, loop or session (`boxClaimRefusal` in internal/tasks/session_claim.go): a
+  box changes, claims or releases only a task that is unclaimed, its own session's, or claimed by a
+  process that provably stopped. A fork assignment, a person's claim and any other live claim
+  refuse it, so `coop tasks claim --force` at a terminal stops a session at once; a loop box owns
+  no claim, so every live claim keeps it off. `underLease` checks before the per-call lease and
+  again once it holds it, and complete and block judge the claim under the locks they take
+  (`CompleteBoxTask`, `BlockBoxTask`): a session claim needs that same lease authority, so a claim
+  that lands after the first check still wins. Host `coop tasks claim` takes no flock, so a host
+  claim racing a box write is the one window left.
+- `tasks.ClaimSessionTask` holds the lease-authority flock and the owner lock, moves todo → in
+  progress FIRST and writes the human-claim record second: a crash leaves an unclaimed in-progress
+  task the loop resumes, never a todo task held by a claim nothing releases. It also refuses
+  blocked and done tasks, a leased task, and a task halfway through a person's unblock (an
+  `UnblockPending` audit record, on which no lease could start). `tasks_list`/`tasks_get` show a
+  session who holds each live task (`claim`: `yours` or the owner's label).
+- The loop re-reads a candidate's claim once it holds the lease (`releaseClaimedLease` in
+  internal/tasks/audit.go; `beforeCandidateLease` is the test seam into that window), so a claim
+  that lands while the loop is choosing wins. An owner record the loop cannot read is skipped with
+  a warning instead of stopping every loop start — a box could otherwise break the loop by
+  damaging the identity of a task it claimed.
+- A session claim ends with its process: the queue shows the owner stopped and
+  `coop loop --preflight` releases it. There is no per-session claim limit — a box can already
+  hand-move the whole queue.
+
+A write to a done task that is not the iteration's assigned one is refused (`underLease`): its
+per-call lease would clear the completion receipt, and the loop's completion audit would then read
+the task as an unowned completion and reopen it.
+
+**A killed run's channel volume is removed by name or swept.** A run closes its channel on the way
+out, but a killed one leaves the volume, while its helper exits with its client on stdin EOF. Every
+replaced ACP child is killed (open and offline children are SIGKILLed), so the editor supervisor
+names each child's volume (`COOP_ACP_TASK_CHANNEL`, checked by `box.ValidTaskChannelVolume`,
+`RunSpec.TaskChannelVolume`) and removes it by that name once the child is gone, off the switch
+path and retrying while the helper still mounts it (`removeACPTaskChannel`) — on any runtime,
+Apple's included. The supervisor waits for those removals before its final reap and before a
+reload's exec, either of which would otherwise end one mid-retry. For the rest — a closed terminal, a SIGKILLed loop — the volume is labeled
+`coop.host` with the run's supervisor label, the box's own, and `box.ReapOrphanTaskChannels`
+removes this workspace's volumes whose supervisor is provably dead: in the orphan sweep (loop,
+fork, build) and in the ACP supervisor's start and exit reaps. A volume still mounted is refused
+and left for a later sweep, and an unlabeled one is never touched; Apple's runtime has no label
+inspection, so there the sweep does nothing. A channel that cannot start fails the launch, in an
+editor as any child startup failure does (the proxy's respawn limit, the cause in the agent log); a
+session whose tools cannot be set up (a bad `COOP_TASKS`, an unreadable claimant) starts without
+them and warns.
 
 Helper stdout is a caller-owned os.Pipe, not Cmd.StdoutPipe: background Cmd.Wait may reap before
 the caller reads the final frames and must not close that reader. The parent closes its write
@@ -168,6 +224,16 @@ an empty folder so the repository's own Dockerfile is not picked, then runs the 
 chose daily over every push, since the image takes minutes and many downloads to build.
 
 ## Changelog
+- 2026-11-03 — interactive agent sessions (`coop acp`, `coop <agent>`) get the task tools plus
+  `tasks_claim`/`tasks_release`, claims bound to the session's host process; session writes respect
+  other live claims; done tasks refuse non-assigned writes; the loop re-checks a claim after it
+  leases; channel volumes carry `coop.host` and dead runs' volumes are swept. A design critic found
+  the volume leak, the receipt-clearing late write, the adoption race and the record-before-move
+  phantom claim before landing. An independent review then found that loop boxes and person claims
+  still let a box close another's task, that the check ran before the lock, that Apple runs leaked
+  every volume, the pending-unblock claim and the unreadable-record loop stop. All are fixed: one
+  `boxClaimRefusal` rule for every box, checked under the lock, a supervisor-named volume
+  (task 2026-11-03-let-coop-acp-and-coop-run-agents-change-task-sta).
 - 2026-11-03 — `tasks_complete` refuses a blocked task (it had moved one to done past its open
   decision); `coop tasks claim` refuses blocked and done tasks the same way.
 - 2026-11-03 — `coop tasks done --force` is host-only; `tasks_complete` stays strict (task

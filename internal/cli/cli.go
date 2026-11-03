@@ -16,6 +16,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -68,6 +69,7 @@ type app struct {
 	acpAccountBindings  map[string]acpAccountBinding                 // filtered child-only account/default handoff, checked against its reloaded preset before mounts
 	acpResume           *acpctl.ResumeState                          // consumed once before admission; restored by the supervisor afterward
 	acpChildren         acpChildGroups                               // the process groups of the inner ACP children this process started (removeACPServices)
+	acpTaskChannels     sync.WaitGroup                               // removals of killed children's task-channel volumes still running (removeACPTaskChannel)
 	beforeSignRefUpdate func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
 	acpModels           func(agent string) ([]agents.Model, error)   // test seam for account-scoped model refresh; nil → a real ACP box
 	acpSupervise        func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor

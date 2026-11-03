@@ -674,24 +674,11 @@ func claimTaskOwnerRecord(root, id string, opts claimOptions) (string, error) {
 	if !ok {
 		return "", errors.New("task changed before its claim could be recorded")
 	}
-	instance, err := EnsureTaskInstance(root, item)
+	record, err := humanClaimRecord(root, item, opts.actor)
 	if err != nil {
 		return "", err
 	}
-	user, host := taskOwnerIdentity()
-	return replaced, lock.Write(TaskOwnerRecord{
-		Version:    taskOwnershipRecordVersion,
-		TaskID:     id,
-		Kind:       TaskOwnerHuman,
-		Task:       &instance,
-		Source:     taskOwnerSourceInteractiveClaim,
-		User:       user,
-		Host:       host,
-		ClaimedAt:  time.Now(),
-		Actor:      opts.actor.Label,
-		ActorPID:   opts.actor.PID,
-		ActorStart: opts.actor.StartToken,
-	})
+	return replaced, lock.Write(record)
 }
 
 // claimedBy names the actor a claim bound to, for the result's "Claimed by:" row. A claim at a
@@ -970,67 +957,24 @@ func releaseStateRemedy(state string) string {
 var errTaskChangedBeforeRelease = errors.New("task changed before it could be returned to todo")
 
 // ReleaseTrustedTask returns a live task to 00_todo/ under host task authority — the release
-// counterpart of BlockTrustedTask, and deliberately the same shape. It stands down an own lease
-// helper, takes the authority flock, and holds it together with the owner lock through re-resolving
-// the exact task instance, the move, and clearing the claim, so a fork assignment cannot appear
-// after a stale precheck and be stranded in todo. The claim is held ACROSS the move and dropped
-// only afterwards: a crash in between leaves the task in todo still claimed, which an identical
-// retry finishes. A fork-owned task, a task another controller leases, and a claim held by another
-// live process are refused — release gives up YOUR claim; it never overrides someone else's, never
-// stops a box, and never clears a fork assignment.
+// counterpart of BlockTrustedTask, and deliberately the same shape (releaseUnderAuthority). It
+// stands down an own lease helper first. A fork-owned task, a task another controller leases, and a
+// claim held by another live process are refused — release gives up YOUR claim; it never overrides
+// someone else's, never stops a box, and never clears a fork assignment.
 func ReleaseTrustedTask(root string, t Item, actor ClaimActor) error {
 	if _, err := stopOwnLeaseHolder(root, t, actor); err != nil {
 		return err
 	}
-	authority, err := lockLeaseAuthority(root, t.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
-	if err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return fmt.Errorf("task %s is %w", t.ID, ErrTaskLeased)
+	return releaseUnderAuthority(root, t, func(record TaskOwnerRecord) error {
+		if !competingClaim(record, actor) {
+			return nil
 		}
-		return err
-	}
-	ownerLock, err := lockTaskOwner(root, t.ID)
-	if err != nil {
-		return errors.Join(err, unlockLeaseFile(authority))
-	}
-	current, ok, err := CurrentTask(root, t.ID)
-	if err != nil {
-		return errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
-	}
-	if !ok || current.State != t.State || current.Dir != t.Dir {
-		return errors.Join(errTaskChangedBeforeRelease, ownerLock.Close(), unlockLeaseFile(authority))
-	}
-	record, owned, err := ownerLock.Read()
-	if err != nil {
-		return errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
-	}
-	if owned && record.Kind == TaskOwnerFork {
-		return errors.Join(
-			fmt.Errorf("%w: cannot release %s while it is %s", ErrTaskSandboxOwned, t.ID, TaskOwnerLabel(record)),
-			ownerLock.Close(), unlockLeaseFile(authority),
-		)
-	}
-	if owned && competingClaim(record, actor) {
 		running := "which is still running"
 		if claimantElsewhere(record) {
 			running = "which Coop cannot check from here — take it over: coop tasks claim --force " + t.ID
 		}
-		return errors.Join(
-			fmt.Errorf("%w: %s is %s, %s", errTaskClaimedByOther, t.ID, TaskOwnerLabel(record), running),
-			ownerLock.Close(), unlockLeaseFile(authority),
-		)
-	}
-	if current.State != StateTodo {
-		if err := MoveTaskDir(root, current, StateTodo); err != nil {
-			return errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
-		}
-	}
-	if owned {
-		if err := removeTaskOwnerRecordFile(root, t.ID); err != nil {
-			return errors.Join(fmt.Errorf("task %s is now in todo, but clearing your claim failed: %w", t.ID, err), ownerLock.Close(), unlockLeaseFile(authority))
-		}
-	}
-	return errors.Join(ownerLock.Close(), unlockLeaseFile(authority))
+		return fmt.Errorf("%w: %s is %s, %s", errTaskClaimedByOther, t.ID, TaskOwnerLabel(record), running)
+	})
 }
 
 // trustedCompletionError draws a refused completion. A forced call's retry keeps --force; the
@@ -1892,6 +1836,12 @@ var errTaskChangedBeforeBlock = errors.New("task changed before it could be bloc
 // precheck and become stranded in blocked. Shared by `coop tasks block` and the in-box task
 // channel; a task another controller leases is refused with errTaskLeasedElsewhere.
 func BlockTrustedTask(root string, t Item, actor ClaimActor) error {
+	return blockTrustedTask(root, t, actor, nil)
+}
+
+// blockTrustedTask is BlockTrustedTask with refuse, when set, judging an existing owner record under
+// the owner lock; a box's tools refuse a task someone else holds (BlockBoxTask).
+func blockTrustedTask(root string, t Item, actor ClaimActor, refuse func(TaskOwnerRecord) error) error {
 	if _, err := stopOwnLeaseHolder(root, t, actor); err != nil {
 		return err
 	}
@@ -1922,6 +1872,11 @@ func BlockTrustedTask(root string, t Item, actor ClaimActor) error {
 			fmt.Errorf("%w: cannot block %s while it is %s", ErrTaskSandboxOwned, t.ID, TaskOwnerLabel(record)),
 			ownerLock.Close(), unlockLeaseFile(authority),
 		)
+	}
+	if owned && refuse != nil {
+		if err := refuse(record); err != nil {
+			return errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
+		}
 	}
 	if current.State != StateBlocked {
 		if err := MoveTaskDir(root, current, StateBlocked); err != nil {

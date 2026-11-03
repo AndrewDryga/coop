@@ -51,8 +51,9 @@ credential-projection failures before the ACP child starts. Missing and server-e
 remain intentionally inert; malformed or ambiguous active configuration never degrades into a
 tool-free answer.
 
-`mcp.BindTaskTools` is a second coop-owned binding beside `BindControllerTools`: for a loop work box
-it merges the reserved `coop-tasks` STDIO server
+`mcp.BindTaskTools` is a second coop-owned binding beside `BindControllerTools`: for a box that
+serves task tools — a loop work box, or an interactive agent session in a project with a task queue
+— it merges the reserved `coop-tasks` STDIO server
 (`{"command":"socat","args":["STDIO","UNIX-CONNECT:/coop/tasks/mcp.sock"]}`) into the same
 validated snapshot before the per-run artifact is written, so every projection — claude
 `--mcp-config`, codex TOML, gemini settings, ACP `session/new` — carries it unchanged. Unlike
@@ -203,6 +204,7 @@ including `${...}` syntax; Codex does not run a second expansion after the share
 Native Codex TOML still owns its distinct exact-reference restriction.
 
 ## Changelog
+- 2026-11-03 — `coop acp` and `coop <agent>` sessions bind `coop-tasks` too (see [[in-box-task-channel]]); the projection itself is unchanged.
 - 2026-11-03 — reproduced Zed Emisar startup refusal from editor stdio/shared HTTP name collision;
   shared authority now wins across sources, with same-source conflict refusal, safe warning, saved
   editor params and fresh replay projection preserved. Verified proxy regression and live handshake.

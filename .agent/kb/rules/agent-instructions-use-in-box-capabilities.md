@@ -2,9 +2,9 @@
 name: agent-instructions-use-in-box-capabilities
 description: "agent-facing instructions name in-box capabilities, never host-side lifecycle commands"
 scope: agent-workflow
-sources: [AGENTS.md, internal/scaffold/scaffold.go, .agent/skills/review-board/SKILL.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, internal/scaffold/templates/skills/review-board/SKILL.md, internal/scaffold/templates/skills/work/SKILL.md, internal/scaffold/templates/skills/sweep/SKILL.md]
+sources: [AGENTS.md, internal/scaffold/templates/AGENTS.md, internal/scaffold/scaffold.go, .agent/skills/review-board/SKILL.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, internal/scaffold/templates/skills/review-board/SKILL.md, internal/scaffold/templates/skills/work/SKILL.md, internal/scaffold/templates/skills/sweep/SKILL.md]
 check: "none"
-updated: 2026-10-17
+updated: 2026-11-03
 ---
 
 # Agent-facing instructions use in-box capabilities only
@@ -29,6 +29,9 @@ human/operator layer; the boxed agent should use only its runtime's native tools
 - Naming a host-side command in order to PROHIBIT it is fine (AGENTS.md's hands-off
   destroyers list does exactly this): the rule bars recommending host commands as
   capabilities, not mentioning them as bans — a ban wastes no turns.
+- A box that serves coop's task tools (a loop work box, an interactive `coop acp` or `coop <agent>`
+  box) changes task state through them: name `tasks_claim`/`tasks_complete`/`tasks_block`/
+  `tasks_release` first, then `coop` on `PATH`, then the folder move for a box with neither.
 - If a native capability may not exist, phrase it as "if your runtime has it" and require
   the closest safe fallback instead of inventing slash commands or APIs.
 - A workflow skill that can run on the host or in a box uses an explicitly supplied proposal route
@@ -36,6 +39,10 @@ human/operator layer; the boxed agent should use only its runtime's native tools
   falls back to the self-contained task-folder operation available in the box.
 
 ## Changelog
+- 2026-11-03 — interactive boxes gained the task tools. Swept AGENTS.md, its scaffold copy and both
+  copies of the sweep skill: each now names the box's `coop-tasks` tools before the `PATH` check and
+  the folder fallback. The work and review-board skills already route discovered work through "the
+  proposal route supplied by the current run" (`tasks_propose`), so they needed no change.
 - 2026-10-17 — the 2026-08-09 entry names AGENTS.md's "Hands-off destroyers" bullet instead of a
   line number.
 - 2026-09-03 — swept `review-board`, `work`, and `sweep` plus their scaffold copies. Removed their

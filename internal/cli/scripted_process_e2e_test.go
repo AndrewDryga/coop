@@ -234,23 +234,25 @@ func readProcessTrace(t *testing.T, path string) []*processTrace {
 // One box run's whole trace: four runtime invocations (image probe, daemon probe, the daemon named
 // again at the box's start, run), the parsed run contract, provider start and exit, and the
 // runtime's exit. A command that reaps orphaned boxes on its way in (loop, fork, build) adds exactly
-// two runtime `ps` listings (boxes, then a dead run's own project services) and one `network`
-// listing. A loop WORK box adds its task channel on top (box/taskchannel.go): the run-private
-// volume is created, coop's helper container is started on it, the host checks the volume's
-// backing exposure before launch, and the volume is removed after the box — four more runtime
-// invocations.
+// two runtime `ps` listings (boxes, then a dead run's own project services), one `volume` listing
+// (dead runs' task channels) and one `network` listing. A box that serves task tools — a loop WORK box, or an agent session in a project with a
+// task queue — adds its task channel on top (box/taskchannel.go): the run-private volume is
+// created, coop's helper container is started on it, the host checks the volume's backing exposure
+// before launch, and the volume is removed after the box — four more runtime invocations.
 type traceShape int
 
 const (
 	noOrphanBoxSweep  traceShape = iota // a direct provider run makes no runtime call of its own before `run`
 	sweepsOrphanBoxes                   // this command reaps orphaned boxes and networks before it starts
 	loopWorkBox                         // sweeps, then carries the task channel around the box run
+	sessionTaskBox                      // a direct provider run that carries the task channel around its box
 )
 
 const (
-	directTraceEvents   = 8
-	sweptTraceEvents    = directTraceEvents + 3
-	loopWorkTraceEvents = sweptTraceEvents + 4
+	directTraceEvents      = 8
+	sweptTraceEvents       = directTraceEvents + 4
+	loopWorkTraceEvents    = sweptTraceEvents + 4
+	sessionTaskTraceEvents = directTraceEvents + 4
 )
 
 func (s traceShape) events() int {
@@ -259,9 +261,17 @@ func (s traceShape) events() int {
 		return sweptTraceEvents
 	case loopWorkBox:
 		return loopWorkTraceEvents
+	case sessionTaskBox:
+		return sessionTaskTraceEvents
 	}
 	return directTraceEvents
 }
+
+// sweeps reports whether this shape's command reaps orphaned boxes on its way in.
+func (s traceShape) sweeps() bool { return s == sweepsOrphanBoxes || s == loopWorkBox }
+
+// servesTasks reports whether this shape's box carries the task channel.
+func (s traceShape) servesTasks() bool { return s == loopWorkBox || s == sessionTaskBox }
 
 func assertSequentialTrace(t *testing.T, trace []*processTrace, want int) {
 	t.Helper()
@@ -287,16 +297,16 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape t
 		}
 	}
 	wantPrefix := [][]string{{"image", "inspect", "fixture-image"}}
-	if shape != noOrphanBoxSweep {
+	if shape.sweeps() {
 		// The orphan sweep, before the box work begins: label-filtered container listings for boxes and
-		// for a dead run's own project services, then one for the compose networks a dead session
-		// leaves holding a subnet.
-		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"}, []string{"ps", "<validated>"}, []string{"network", "<validated>"})
+		// for a dead run's own project services, the task-channel volumes dead runs left, then one for
+		// the compose networks a dead session leaves holding a subnet.
+		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"}, []string{"ps", "<validated>"}, []string{"volume", "<validated>"}, []string{"network", "<validated>"})
 	}
 	// The daemon probe also names the daemon, which the run records for the daily temp sweep.
 	wantPrefix = append(wantPrefix, []string{"info", "--format", "{{.ID}}"})
 	wantSuffix := [][]string{}
-	if shape == loopWorkBox {
+	if shape.servesTasks() {
 		// The task channel brackets the box: its volume and helper come up first (the box must
 		// find the socket listening), and the volume goes once the box is gone.
 		wantPrefix = append(wantPrefix, []string{"volume", "<validated>"}, []string{"run", "<task-channel>"}, []string{"volume", "<validated>"})

@@ -324,6 +324,9 @@ func CompleteTrustedTask(project, root string, task Item) error {
 type completionOptions struct {
 	force bool       // close even though the checklist is empty or still open
 	actor ClaimActor // who ran it, named in the log note a forced close leaves
+	// refuse, when set, judges the task's owner record while the lease authority is held: a box's
+	// tools refuse a task someone else holds (CompleteBoxTask).
+	refuse func(TaskOwnerRecord) error
 }
 
 func completeTrustedTask(project, root string, task Item, opts completionOptions) (_ *IncompleteChecklistError, retErr error) {
@@ -353,6 +356,15 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 	// transition through its generation-bound journal.
 	if err := refuseForkTaskOwner(root, task.ID, "complete"); err != nil {
 		return nil, err
+	}
+	if opts.refuse != nil {
+		if record, owned, err := ReadTaskOwnerRecord(root, task.ID); err != nil {
+			return nil, err
+		} else if owned {
+			if err := opts.refuse(record); err != nil {
+				return nil, err
+			}
+		}
 	}
 	current, ok, err := CurrentTask(root, task.ID)
 	if err != nil {
@@ -3184,7 +3196,13 @@ const maxLeaseRescans = 3
 func skipOwnedCandidate(root, id string, noted map[string]bool) (bool, error) {
 	rec, ok, err := ReadTaskOwnerRecord(root, id)
 	if err != nil {
-		return false, fmt.Errorf("read owner record for task %s: %w", id, err)
+		// A claim nobody can read is still a claim: skip the task rather than stop the whole loop,
+		// which a box could otherwise do on purpose by damaging the identity of a task it claimed.
+		if !noted[id] {
+			noted[id] = true
+			ui.Warn("%s has an owner record Coop cannot read (%v) — the loop will not adopt it", id, err)
+		}
+		return true, nil
 	}
 	if !ok {
 		return false, nil
@@ -3199,6 +3217,25 @@ func skipOwnedCandidate(root, id string, noted map[string]bool) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// beforeCandidateLease, when a test sets it, runs between a candidate's claim check and its lease:
+// the window releaseClaimedLease closes.
+var beforeCandidateLease func(QueuedTask)
+
+// releaseClaimedLease re-reads a just-leased candidate's claim. The read before the lease is only a
+// cheap filter: a box session claims under this same lease authority, so a claim that landed while
+// the loop was choosing is visible once the loop holds the lease, and it wins — the loop lets go.
+func releaseClaimedLease(candidate QueuedTask, lease *TaskLease, noted map[string]bool, busy *TaskLeaseSummary) (bool, error) {
+	claimed, err := skipOwnedCandidate(candidate.Root, candidate.Item.ID, noted)
+	if err != nil || !claimed {
+		if err != nil {
+			err = errors.Join(err, lease.Release())
+		}
+		return false, err
+	}
+	busy.Owned++
+	return true, lease.Release()
 }
 
 // assignLoopTaskOnly scopes assignment to the current task in a limited run. Counts still cover the
@@ -3243,6 +3280,9 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 				busy.Owned++
 				continue
 			}
+			if beforeCandidateLease != nil {
+				beforeCandidateLease(candidate)
+			}
 			lease, observed, err := TryTaskLease(candidate.Root, candidate.Item, owner)
 			if errors.Is(err, errLeaseCandidateGone) {
 				changed = true
@@ -3253,6 +3293,11 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 			}
 			if lease == nil {
 				busy.add(observed)
+				continue
+			}
+			if claimed, err := releaseClaimedLease(candidate, lease, noted, &busy); err != nil {
+				return TaskAssignment{}, err
+			} else if claimed {
 				continue
 			}
 			return TaskAssignment{
@@ -3270,6 +3315,9 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 				busy.Owned++
 				continue
 			}
+			if beforeCandidateLease != nil {
+				beforeCandidateLease(candidate)
+			}
 			lease, observed, err := TryTaskLease(candidate.Root, candidate.Item, owner)
 			if errors.Is(err, errLeaseCandidateGone) {
 				changed = true
@@ -3280,6 +3328,11 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 			}
 			if lease == nil {
 				busy.add(observed)
+				continue
+			}
+			if claimed, err := releaseClaimedLease(candidate, lease, noted, &busy); err != nil {
+				return TaskAssignment{}, err
+			} else if claimed {
 				continue
 			}
 			if err := MoveTaskDir(candidate.Root, candidate.Item, StateInProgress); err != nil {

@@ -737,7 +737,7 @@ func assertLoopAttemptContracts(t *testing.T, suite *directProcessSuite, trace [
 			t.Fatalf("provider %s has no streaming loop command", provider)
 		}
 		if attempt.Stage == "work" {
-			argv = loopWorkArgv(provider, argv)
+			argv = taskToolsArgv(provider, argv)
 		}
 		wantArgv := processTraceArgv(argv)
 		run := runs[i].Run

@@ -2887,9 +2887,10 @@ func TestOwnerRecordFailurePaths(t *testing.T) {
 		}
 	})
 
-	t.Run("a corrupt owner record fails the scan closed instead of adopting", func(t *testing.T) {
+	t.Run("a corrupt owner record keeps its task out of the scan without stopping it", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), ".agent", "tasks")
 		writeTaskFile(t, filepath.Join(root, StateInProgress, "corrupt-owner", "task.md"), "# Corrupt\n")
+		writeTaskFile(t, filepath.Join(root, StateTodo, "healthy", "task.md"), "# Healthy\n")
 		name, err := taskOwnerRecordName(root, "corrupt-owner")
 		if err != nil {
 			t.Fatal(err)
@@ -2903,9 +2904,13 @@ func TestOwnerRecordFailurePaths(t *testing.T) {
 		}
 		_ = registry.Close()
 
-		if _, err := assignLoopTask([]string{root}, testLeaseOwner()); err == nil {
-			t.Fatal("a corrupt owner record must fail the scan closed, not silently adopt the task")
+		// Nobody can tell who owns it, so it is never adopted; a box that damaged the identity of a
+		// task it claimed must not stop the loop's other work either.
+		assignment, err := assignLoopTask([]string{root}, testLeaseOwner())
+		if err != nil || assignment.Task.Item.ID != "healthy" {
+			t.Fatalf("assignment = %+v, %v; want the healthy task adopted and the corrupt one left alone", assignment.Task.Item, err)
 		}
+		_ = assignment.Lease.Release()
 	})
 
 	t.Run("a claim that loses its move race leaves no orphan record", func(t *testing.T) {

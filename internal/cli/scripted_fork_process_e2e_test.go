@@ -545,7 +545,7 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	if !forkLoopStreaming {
 		t.Fatalf("provider %s has no streaming loop command", provider)
 	}
-	assertForkProcessContract(t, suite, firstForkRunTrace(trace), ws, provider, account, loopWorkArgv(provider, forkLoopArgv), model, effort)
+	assertForkProcessContract(t, suite, firstForkRunTrace(trace), ws, provider, account, taskToolsArgv(provider, forkLoopArgv), model, effort)
 
 	result, trace = suite.run(t, []string{"fork", "merge", name}, processScenario(provider, nil, 0, ""))
 	if result.Err != nil || result.ExitCode != 1 || len(trace) != 0 || !pathExists(ws) || !pathExists(canonicalTask) {

@@ -109,7 +109,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 					t.Fatalf("provider %s has no streaming loop command", provider)
 				}
 				// A loop start reaps boxes an earlier, killed coop left behind before adding its own.
-				assertDirectRunContract(t, suite, trace, provider, "work", loopWorkArgv(provider, argv), model, effort, loopWorkBox)
+				assertDirectRunContract(t, suite, trace, provider, "work", taskToolsArgv(provider, argv), model, effort, loopWorkBox)
 				assertNoLoopServePublication(t, trace)
 				assertLoopProcessResult(t, suite, provider, taskID, model, effort, "work", iterationHead, 1, false)
 				for _, event := range trace {
@@ -586,12 +586,12 @@ func seedLoopProcessTaskIn(t *testing.T, repo, state, id string) {
 	}
 }
 
-// loopWorkArgv is the argv a loop WORK box actually runs: the iteration command plus what the
-// box appends because coop binds its task tools into the MCP snapshot for a work iteration
-// (mcp.BindTaskTools) — claude's adapter names that file on its command line, the others read it
-// from a mounted config file and add nothing. Review, between and preflight boxes get no task
-// tools, so their argv is the bare iteration command.
-func loopWorkArgv(provider string, argv []string) []string {
+// taskToolsArgv is the argv a box that serves task tools actually runs — a loop WORK box, or an
+// agent session in a project with a task queue: its command plus what the box appends because coop
+// binds its task tools into the MCP snapshot (mcp.BindTaskTools) — claude's adapter names that file
+// on its command line, the others read it from a mounted config file and add nothing. Review,
+// between and preflight boxes get no task tools, so their argv is the bare iteration command.
+func taskToolsArgv(provider string, argv []string) []string {
 	ag, ok := agents.Get(provider)
 	if !ok {
 		return argv

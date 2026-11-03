@@ -212,6 +212,9 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 		spec.ForkGeneration = string(forkIdentity.Generation)
 		spec.ForkOwner = forkctl.ForkContainerOwner(activityRepo, forkIdentity.Name, forkIdentity.Generation)
 	}
+	if claimant, ok := sessionTaskClaimant(spec); ok {
+		spec.TaskTools = a.sessionTaskTools(repo, agent, claimant)
+	}
 	// Network admission runs on the HOST, before any container: it resolves this
 	// launch's posture and, for filtered mode, freezes the policy the gateway
 	// will enforce. An open or offline run gets a nil capture and proceeds

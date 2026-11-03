@@ -115,6 +115,12 @@ volume)
 	case "$2" in
 	ls)
 		shift 2
+		format=
+		previous=
+		for arg do
+			[ "$previous" = --format ] && format=$arg
+			previous=$arg
+		done
 		for f in "$COOP_TEST_VOLUMES"/*; do
 			[ -e "$f" ] || continue
 			match=1
@@ -126,7 +132,17 @@ volume)
 					;;
 				esac
 			done
-			[ "$match" = 1 ] && printf '%s\n' "$(basename "$f")"
+			[ "$match" = 1 ] || continue
+			if [ -z "$format" ]; then
+				printf '%s\n' "$(basename "$f")"
+				continue
+			fi
+			# The name, then each label the format names, as one JSON array — as for ps.
+			line="[\"$(basename "$f")\""
+			for name in $(printf '%s' "$format" | grep -o '.Label "[^"]*"' | sed 's/^.Label "//; s/"$//'); do
+				line="$line,\"$(sed -n "s/.*\"$name\":\"\([^\"]*\)\".*/\1/p" "$f")\""
+			done
+			printf '%s]\n' "$line"
 		done
 		;;
 	rm)

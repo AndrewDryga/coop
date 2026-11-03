@@ -2,14 +2,16 @@
 name: task-state-is-the-folder
 description: a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
 subsystem: tasks
-sources: [internal/tasks/dir.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/tasks/projection.go, internal/cli/context.go]
-updated: 2026-09-22
+sources: [internal/tasks/dir.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/tasks/projection.go, internal/cli/context.go, internal/cli/session_tasks.go]
+updated: 2026-11-03
 ---
 A task is a folder, and its STATE is which directory it sits in: `00_todo/` `10_in_progress/`
 `50_blocked/` `99_done/` (the numeric prefix only sorts `ls` in lifecycle order). Moving the folder
 IS the state change — there is no status field.
 
-The trap: inside a box `coop` isn't installed, so an agent moves folders itself — and a bare
+Inside a box `coop` isn't installed. A loop work box and an interactive agent box in a plain
+checkout change state through the box's `coop-tasks` tools instead ([[in-box-task-channel]]); a
+box without them (a fork session) moves folders itself. The trap there: a bare
 `mv 00_todo/x 10_in_progress/` when `10_in_progress/` does NOT exist does not error; POSIX `mv`
 silently RENAMES the task folder to a file called `10_in_progress`, corrupting the queue.
 `ScaffoldStateDirs` (`internal/tasks/dir.go`) pre-creates all four state dirs precisely so a queue
@@ -34,6 +36,9 @@ argument boundaries before extracting queue flags, then resolves task metadata b
 Git status; task paths still append last so route reasons and scope ordering stay stable.
 
 ## Changelog
+- 2026-11-03 — interactive agent boxes (`coop acp`, `coop <agent>`) now get the task tools too, so a
+  hand move is only the fallback of a box without them (task
+  2026-11-03-let-coop-acp-and-coop-run-agents-change-task-sta).
 - 2026-09-22 — corrected release's lifecycle description against `tasksFolderRelease`: it returns
   active work to todo, preserves handoff notes, and refuses competing live claims and sandbox owners.
 - 2026-09-05 — shared context task identity resolution and repeatable selectors; regressed

@@ -72,6 +72,8 @@ func (a *app) collectOrphanBoxes(repo string) loop.Preparation {
 	result.RemovedBoxes = sweep(func(ctx context.Context) (int, error) { return box.ReapOrphanBoxes(ctx, a.rt, repo) })
 	// A killed loop's or session's own Compose services go before the networks they hold.
 	result.RemovedServices = sweep(func(ctx context.Context) (int, error) { return box.ReapOrphanServices(ctx, a.rt, repo) })
+	// A dead run's task channel is an empty volume: housekeeping nobody needs to hear about.
+	sweep(func(ctx context.Context) (int, error) { return box.ReapOrphanTaskChannels(ctx, a.rt, repo) })
 	sweep(func(ctx context.Context) (int, error) { return box.RecoverFilesystemAdmissions(ctx, a.rt, repo) })
 	// Networks are not scoped to a repo — a coop project's leftover network from ANY workspace
 	// eats one of Docker's ~31 subnets — so one pass per process covers them all.

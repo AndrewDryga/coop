@@ -28,12 +28,14 @@ Build *to* them, then *check the diff against them*.
 - Set the runtime's persistent goal/tracker when it exists: do not stop until every scoped task is
   committed and archived or properly blocked, and both `00_todo/` and `10_in_progress/` are empty.
 - Read `AGENTS.md` in full (the gate **and** the contract), `.agent/tasks/README.md`,
-  and every `.agent/kb/rules/*.md` (the taste KB). If `coop` is on PATH, run `coop tasks`; otherwise
-  inspect the queue state directories directly to announce the open `00_todo/` count.
+  and every `.agent/kb/rules/*.md` (the taste KB). In a box that offers the `coop-tasks` tools, call
+  `tasks_list`; if `coop` is on PATH, run `coop tasks`; otherwise inspect the queue state directories
+  directly to announce the open `00_todo/` count.
 
 ## 2. The loop — claim the next task, repeat until 00_todo/ and 10_in_progress/ are empty
-1. **Claim** — if `coop` is on PATH, run `coop tasks claim <id>`; otherwise move the task folder
-   from `00_todo/` to the existing `10_in_progress/` directory yourself. Do this *first*, so a
+1. **Claim** — in a box with the `coop-tasks` tools, call `tasks_claim`; if `coop` is on PATH, run
+   `coop tasks claim <id>`; otherwise move the task folder from `00_todo/` to the existing
+   `10_in_progress/` directory yourself. Do this *first*, so a
    parallel agent won't grab it. For a task already in `10_in_progress/`, read its `state.md`,
    `log.md`, claim and current diff. Resume your continuing assignment; reconcile an older claim
    with the user's current direction. Do not take over a separate worker's active task.
@@ -55,12 +57,14 @@ Build *to* them, then *check the diff against them*.
 5. **Commit** — one focused commit for this task; keep `log.md` (the *what + why*) current.
 6. **Final snapshot** — after the commit, refresh `state.md` in `10_in_progress/`: preserve the
    useful summary and traps, set `Status` to `complete`, and set `Next action` to `none`.
-7. **Done** — as the final filesystem action, if `coop` is on PATH run `coop tasks done <id>`;
-   otherwise move the task folder to the existing `99_done/` directory yourself. A finished task
+7. **Done** — as the final filesystem action, call `tasks_complete` in a box with the `coop-tasks`
+   tools, or run `coop tasks done <id>` when `coop` is on PATH; otherwise move the task folder to the
+   existing `99_done/` directory yourself. A finished task
    is **moved**, never deleted — leave it in `99_done/`; never run
    `coop tasks rm` (pruning the archive is the human's call). Blocked instead? Fill in
    `decision.md` (question · why it is blocked · options · recommendation), then use `coop tasks block <id>` when
-   available or move the folder to the existing `50_blocked/` directory yourself.
+   available or move the folder to the existing `50_blocked/` directory yourself; the box's
+   `tasks_block` takes those four and does both.
 8. Spot unrelated work? Use the proposal route supplied by the current run when there is one.
    Otherwise capture ready work in `00_todo/`: use `coop tasks add` when `coop` is on `PATH`, or
    create a self-contained task folder there. Only genuinely large or unscoped work goes to

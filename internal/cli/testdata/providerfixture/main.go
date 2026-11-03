@@ -423,6 +423,12 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 		// create call is a simulated socket handshake, so no volume is exposed on the host.
 		return runtimeCommand{Kind: "volume-ls"}, nil
 	}
+	// The orphan sweep lists coop's task-channel volumes with their owner label
+	// (box.ReapOrphanTaskChannels). The fixture keeps none past its run, so it answers with none.
+	if len(args) == 6 && args[0] == "volume" && args[1] == "ls" && args[2] == "--filter" &&
+		args[3] == "label=coop=task-channel" && args[4] == "--format" && args[5] == `[{{json .Name}},{{json (.Label "coop.host")}}]` {
+		return runtimeCommand{Kind: "volume-ls"}, nil
+	}
 	if len(args) > 1 && args[0] == "volume" {
 		if (args[1] != "create" && args[1] != "rm") || len(args) < 3 {
 			return runtimeCommand{}, fmt.Errorf("unsupported volume command %q", strings.Join(args, " "))

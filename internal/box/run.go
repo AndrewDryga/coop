@@ -251,8 +251,12 @@ type RunSpec struct {
 	// box mounts the channel's socket read-only, and, with Homes, the `coop-tasks` MCP server is
 	// bound into every provider projection. The loop sets it for a work iteration; nil everywhere
 	// else means nothing is mounted or bound.
-	TaskTools  TaskToolServer
-	taskVolume string // the channel's run-private volume name, chosen by Run
+	TaskTools TaskToolServer
+	// TaskChannelVolume, when set, names the channel's volume instead of a fresh one: an editor's
+	// supervisor names each child's, so it can remove the volume of a child it had to kill, which
+	// could not close its own channel. It must be a name NewTaskChannelVolume makes.
+	TaskChannelVolume string
+	taskVolume        string // the channel's run-private volume name, chosen by Run
 	// cachePrivate maps each cache subdirectory a scoped agent keeps per-project data in to this
 	// run's empty stand-in for it (cachePrivateDirs); Run creates them.
 	cachePrivate map[string]string
@@ -767,7 +771,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 	if spec.TaskTools != nil {
-		volume := taskChannelVolume()
+		volume := NewTaskChannelVolume()
+		if spec.TaskChannelVolume != "" {
+			if !ValidTaskChannelVolume(spec.TaskChannelVolume) {
+				return -1, fmt.Errorf("task channel: %q is not a task-channel volume name", spec.TaskChannelVolume)
+			}
+			volume = spec.TaskChannelVolume
+		}
 		spec.taskVolume = volume
 		if spec.Homes {
 			// Bound before the snapshot artifact is written below, so every provider projection —
@@ -1114,12 +1124,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// Whatever a box may reach is fully known before it starts, so the launch
 	// instructions say it. An agent that learns its own boundary by being
 	// refused burns a turn and reports policy as a broken tool or a dead host.
-	networkNote := ""
+	boxNotes := ""
 	if filtered != nil {
-		networkNote = networkInstructionNote(filtered.policy)
+		boxNotes = networkInstructionNote(filtered.policy)
 		if len(brokerPlan.routesOrNil()) != 0 {
-			networkNote += "\nYour provider API keys stay outside this box: each provider's API is reachable only through Coop's session-bound credential broker."
+			boxNotes += "\nYour provider API keys stay outside this box: each provider's API is reachable only through Coop's session-bound credential broker."
 		}
+	}
+	if spec.TaskTools != nil {
+		boxNotes += taskToolsInstructionNote
 	}
 
 	// A single empty read-only file shadows every secret file; a single empty read-only
@@ -1270,7 +1283,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	var consultMounts []extraMount
 	consultWired := false
 	if spec.Homes && spec.ConsultLead != "" {
-		content, file, wired, ok, err := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers), networkNote, filtered != nil)
+		content, file, wired, ok, err := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers), boxNotes, filtered != nil)
 		if err != nil {
 			return -1, fmt.Errorf("assemble lead instruction for %s: %w", spec.ConsultLead, err)
 		}
@@ -1318,7 +1331,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// override if present, else the shared INSTRUCTIONS.md), mounted at its native global path
 	// — so it never burns a turn rediscovering the box. The consult lead is handled above, with its
 	// augmented file.
-	plan, err := instructionPlan(cfg, spec, networkNote, filtered != nil)
+	plan, err := instructionPlan(cfg, spec, boxNotes, filtered != nil)
 	if err != nil {
 		return -1, err
 	}
@@ -1436,7 +1449,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if channelCtx == nil {
 			channelCtx = context.Background()
 		}
-		channel, err = startTaskChannel(channelCtx, rt, spec.Image, spec.taskVolume, spec.RunID, spec.TaskTools, script)
+		owner := supervisorLabelValue(supervisorScope(spec), os.Getpid())
+		channel, err = startTaskChannel(channelCtx, rt, spec.Image, spec.taskVolume, spec.RunID, owner, spec.TaskTools, script)
 		if err != nil {
 			return -1, err
 		}
@@ -2579,7 +2593,7 @@ You run inside a coop container: a Debian box that IS your sandbox and security 
 // agentBaseInstructions is what an agent receives as its global instructions: the always-on
 // box environment note, followed by the user's instructions — a per-agent override if present,
 // else the shared INSTRUCTIONS.md. Consult and preset routing augment this; they do not replace it.
-func agentBaseInstructions(cfg *config.Config, agent, file, network string, filtered bool) (string, error) {
+func agentBaseInstructions(cfg *config.Config, agent, file, notes string, filtered bool) (string, error) {
 	user := ""
 	home, err := cfg.AgentSettingsDir(agent)
 	if err != nil {
@@ -2601,9 +2615,9 @@ func agentBaseInstructions(cfg *config.Config, agent, file, network string, filt
 		}
 	}
 	if strings.TrimSpace(user) == "" {
-		return boxEnvNote(filtered) + network, nil
+		return boxEnvNote(filtered) + notes, nil
 	}
-	return boxEnvNote(filtered) + network + "\n" + user, nil
+	return boxEnvNote(filtered) + notes + "\n" + user, nil
 }
 
 const maxInstructionFileBytes = 1 << 20
@@ -2829,7 +2843,7 @@ func synthHomeFallbackMounts(repo, homeInBox, artifactParent string, agentNames 
 // note plus the user's instructions (per agentBaseInstructions). The consult lead is excluded —
 // it gets its augmented file instead. Pure (no temp files / mounts),
 // so the selection and content are unit-testable; Run writes + mounts the result.
-func instructionPlan(cfg *config.Config, spec RunSpec, network string, filtered bool) ([]instructionItem, error) {
+func instructionPlan(cfg *config.Config, spec RunSpec, notes string, filtered bool) ([]instructionItem, error) {
 	if !spec.Homes || spec.Login {
 		return nil, nil
 	}
@@ -2839,7 +2853,7 @@ func instructionPlan(cfg *config.Config, spec RunSpec, network string, filtered 
 			continue
 		}
 		if file := instructionFile(agent); file != "" {
-			content, err := agentBaseInstructions(cfg, agent, file, network, filtered)
+			content, err := agentBaseInstructions(cfg, agent, file, notes, filtered)
 			if err != nil {
 				return nil, err
 			}
@@ -2971,12 +2985,12 @@ func assembleAgentsDir(parent string, gen []genFile) (string, error) {
 // reports whether coop-consult is reachable through either a preset role or an explicit peer.
 // ok is false only when the agent has no native instruction file. Pure, so the "no named peer
 // still mounts the base" invariant is unit-tested without a container.
-func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, peers []string, network string, filtered bool) (content, file string, wired, ok bool, err error) {
+func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, peers []string, notes string, filtered bool) (content, file string, wired, ok bool, err error) {
 	file = instructionFile(lead)
 	if file == "" {
 		return "", "", false, false, nil
 	}
-	base, err := agentBaseInstructions(cfg, lead, file, network, filtered)
+	base, err := agentBaseInstructions(cfg, lead, file, notes, filtered)
 	if err != nil {
 		return "", "", false, false, err
 	}

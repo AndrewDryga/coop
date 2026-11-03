@@ -29,10 +29,14 @@ type tool struct {
 	name, description string
 	schema            map[string]any
 	run               func(s *Server, ctx context.Context, args json.RawMessage) *toolResult
+	// session marks a tool only an interactive session (Authority.Session) is offered: a loop box
+	// works the task its iteration assigned, so it never claims or releases one.
+	session bool
 }
 
 // toolTable is THE tool set, in the order tools/list presents it. Adding a tool here is the whole
-// change; doctor asserts the box sees exactly these names and nothing shell-, exec-, or file-shaped.
+// change; doctor asserts a loop box sees exactly the non-session names and nothing shell-, exec-,
+// or file-shaped.
 var toolTable = []tool{
 	{
 		name:        "tasks_list",
@@ -48,6 +52,13 @@ var toolTable = []tool{
 		description: "Read one task: its task.md, state.md, log.md, and decision.md (when present), plus its folder path for tmp/ and artifacts/.",
 		schema:      object(map[string]any{"id": idProp()}, "id"),
 		run:         (*Server).get,
+	},
+	{
+		name:        "tasks_claim",
+		description: "Claim a task before you work on it: a todo task moves into 10_in_progress/ and this session becomes its owner, so a coop loop or another session leaves it alone until you complete, block or release it, or this session ends. Claiming a task already in progress makes it yours when nobody else holds it. Refused when another live process holds or claims the task; a blocked task waits for a human's answer, and a done task stays archived.",
+		schema:      object(map[string]any{"id": idProp()}, "id"),
+		run:         (*Server).claim,
+		session:     true,
 	},
 	{
 		name:        "tasks_update_state",
@@ -94,6 +105,13 @@ var toolTable = []tool{
 			"recommendation": textProp("The option best for the product in the long term, and why.", true, blockLimit),
 		}, "id", "question", "why", "options", "recommendation"),
 		run: (*Server).block,
+	},
+	{
+		name:        "tasks_release",
+		description: "Hand back a task you claimed and will not finish in this session: it returns to 00_todo/ with its notes, so a coop loop or another session can take it. Refused when another live process holds or claims the task.",
+		schema:      object(map[string]any{"id": idProp()}, "id"),
+		run:         (*Server).release,
+		session:     true,
 	},
 	{
 		name:        "tasks_set_subtasks",
@@ -182,27 +200,44 @@ func withMinProperties(schema map[string]any, count int) map[string]any {
 	return schema
 }
 
-// ToolNames lists the tool set in presentation order — the fixed contract doctor asserts.
-func ToolNames() []string {
-	names := make([]string, len(toolTable))
-	for i, t := range toolTable {
-		names[i] = t.name
+// ToolNames lists a loop box's tool set in presentation order — the fixed contract doctor asserts.
+func ToolNames() []string { return names(offeredTools(false)) }
+
+// offeredTools is the tool set a server offers, in presentation order: the loop's eight, plus the
+// claim and release pair an interactive session works its own tasks with.
+func offeredTools(session bool) []tool {
+	out := make([]tool, 0, len(toolTable))
+	for _, t := range toolTable {
+		if !t.session || session {
+			out = append(out, t)
+		}
 	}
-	return names
+	return out
 }
 
-func toolNames() string { return strings.Join(ToolNames(), ", ") }
+func (s *Server) tools() []tool { return offeredTools(s.authority.Session != nil) }
 
-func toolDescriptors() []map[string]any {
-	out := make([]map[string]any, 0, len(toolTable))
-	for _, t := range toolTable {
+func names(tools []tool) []string {
+	out := make([]string, len(tools))
+	for i, t := range tools {
+		out[i] = t.name
+	}
+	return out
+}
+
+func (s *Server) toolNames() string { return strings.Join(names(s.tools()), ", ") }
+
+func (s *Server) toolDescriptors() []map[string]any {
+	tools := s.tools()
+	out := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
 		out = append(out, map[string]any{"name": t.name, "description": t.description, "inputSchema": t.schema})
 	}
 	return out
 }
 
-func toolByName(name string) (tool, bool) {
-	for _, t := range toolTable {
+func (s *Server) toolByName(name string) (tool, bool) {
+	for _, t := range s.tools() {
 		if t.name == name {
 			return t, true
 		}
@@ -329,13 +364,20 @@ func (s *Server) locate(id string) (located, *toolResult) {
 
 // underLease runs mutate on a task that is not the assigned one: it leases the task for the call
 // and releases it after. A task another live process holds is refused before anything is touched;
-// the assigned task runs under the launching iteration's own lease and never leases twice.
+// the assigned task runs under the launching iteration's own lease and never leases twice. A done
+// task is final: a lease taken on it would clear the receipt that marks its completion accepted.
 func (s *Server) underLease(loc located, verb string, mutate func() error) *toolResult {
 	if loc.item.ID == s.authority.Assigned {
 		if err := mutate(); err != nil {
 			return refusal(fmt.Sprintf("%s %s: %v", verb, loc.item.ID, err))
 		}
 		return nil
+	}
+	if loc.item.State == tasks.StateDone {
+		return refusal(fmt.Sprintf("%s is done and its folder is final — %s refused", loc.item.ID, verb))
+	}
+	if r := s.boxWriteRefusal(loc, verb); r != nil {
+		return r
 	}
 	lease, observed, err := tasks.TryTaskLease(loc.root, loc.item, s.authority.Owner)
 	if err != nil {
@@ -344,12 +386,38 @@ func (s *Server) underLease(loc located, verb string, mutate func() error) *tool
 	if lease == nil {
 		return heldRefusal(loc.item.ID, verb, observed.String())
 	}
+	// A box session claims under the lease authority this lease now holds, so a claim that landed
+	// after the first check is visible here, and no new one can land until the write is done.
+	if r := s.boxWriteRefusal(loc, verb); r != nil {
+		if releaseErr := lease.Release(); releaseErr != nil {
+			return refusal(fmt.Sprintf("%s %s: %v", verb, loc.item.ID, releaseErr))
+		}
+		return r
+	}
 	err = mutate()
 	if releaseErr := lease.Release(); releaseErr != nil {
 		err = errors.Join(err, releaseErr)
 	}
 	if err != nil {
 		return refusal(fmt.Sprintf("%s %s: %v", verb, loc.item.ID, err))
+	}
+	return nil
+}
+
+// boxActor is whose claims count as this box's own: the interactive session's, or nobody's in a
+// loop box, which works its assignment under the iteration's lease and owns no claim.
+func (s *Server) boxActor() tasks.ClaimActor {
+	if s.authority.Session != nil {
+		return *s.authority.Session
+	}
+	return tasks.ClaimActor{}
+}
+
+// boxWriteRefusal keeps the box off a task someone else holds — a live claim, a person's claim or a
+// fork's assignment (tasks.BoxWriteRefusal) — with a reason it can relay to the person.
+func (s *Server) boxWriteRefusal(loc located, verb string) *toolResult {
+	if err := tasks.BoxWriteRefusal(loc.root, loc.item.ID, s.boxActor()); err != nil {
+		return refusal(fmt.Sprintf("%s %s refused: %v — leave it to its owner, who can release it", verb, loc.item.ID, err))
 	}
 	return nil
 }
@@ -369,16 +437,26 @@ type listedTask struct {
 	} `json:"subtasks"`
 	Assigned    bool `json:"assigned,omitempty"`
 	HasDecision bool `json:"has_decision,omitempty"`
+	// Claim, in an interactive session, says who holds a live task: "yours" for the session's own
+	// claim, else its owner, so the agent finds its work again after a provider switch.
+	Claim string `json:"claim,omitempty"`
 }
 
-func listed(root string, item tasks.Item, assigned string) listedTask {
+func (s *Server) listed(root string, item tasks.Item) listedTask {
 	out := listedTask{ID: item.ID, Title: item.Title, State: tasks.StateLabel(item.State), Queue: root,
-		Assigned: item.ID == assigned, HasDecision: item.HasDecision}
+		Assigned: item.ID == s.authority.Assigned, HasDecision: item.HasDecision}
 	out.Subtasks.Total = len(item.Subtasks)
 	for _, done := range item.Subtasks {
 		if done {
 			out.Subtasks.Done++
 		}
+	}
+	if s.authority.Session != nil && (item.State == tasks.StateTodo || item.State == tasks.StateInProgress) {
+		claim, err := tasks.SessionClaimLabel(root, item.ID, *s.authority.Session)
+		if err != nil {
+			claim = "unknown: its claim record cannot be read"
+		}
+		out.Claim = claim
 	}
 	return out
 }
@@ -426,7 +504,7 @@ func (s *Server) list(_ context.Context, args json.RawMessage) *toolResult {
 				continue
 			}
 			matched++
-			summary := listed(root, item, s.authority.Assigned)
+			summary := s.listed(root, item)
 			if query != "" {
 				// Even a match beyond the returned prefix needs a useful refusal
 				// if no narrower query could ever return its whole summary.
@@ -483,11 +561,15 @@ func (s *Server) get(_ context.Context, args json.RawMessage) *toolResult {
 	if err != nil {
 		return refusal(fmt.Sprintf("read task %s: %v", loc.item.ID, err))
 	}
-	summary := listed(loc.root, loc.item, s.authority.Assigned)
-	return jsonResult(map[string]any{
+	summary := s.listed(loc.root, loc.item)
+	result := map[string]any{
 		"id": summary.ID, "title": summary.Title, "state": summary.State, "queue": summary.Queue,
 		"dir": loc.item.Dir, "subtasks": summary.Subtasks, "assigned": summary.Assigned, "files": files,
-	})
+	}
+	if summary.Claim != "" {
+		result["claim"] = summary.Claim
+	}
+	return jsonResult(result)
 }
 
 func (s *Server) updateState(_ context.Context, args json.RawMessage) *toolResult {
@@ -629,12 +711,20 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		return refusal(fmt.Sprintf("%s is blocked on a decision for a human, who returns it to todo with `coop tasks unblock %s` — leave it alone", loc.item.ID, loc.item.ID))
 	}
 	if loc.item.ID != s.authority.Assigned {
+		if claim.NoChange() && s.authority.Session != nil {
+			// Host completion checks no commit, so a session closes a no-change task plainly.
+			return refusal("outcome closes a loop's assigned task; in this session, record the reason and evidence with tasks_append_log, then call tasks_complete without outcome")
+		}
 		if claim.NoChange() {
 			return refusal("no-change completion is available only for the assigned task")
 		}
+		if r := s.boxWriteRefusal(loc, "complete"); r != nil {
+			return r
+		}
 		// Another task: the host's own trusted completion — its lease, receipt, and normalization —
-		// so the loop's completion audit sees a controller-owned move, not an unowned one.
-		if err := tasks.CompleteTrustedTask(s.authority.Workspace, loc.root, loc.item); err != nil {
+		// so the loop's completion audit sees a controller-owned move, not an unowned one. It judges
+		// the claim again under that lease, where no new claim can land.
+		if err := tasks.CompleteBoxTask(s.authority.Workspace, loc.root, loc.item, s.boxActor()); err != nil {
 			if errors.Is(err, tasks.ErrTaskLeased) {
 				return heldRefusal(loc.item.ID, "complete", "leased")
 			}
@@ -724,7 +814,10 @@ func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {
 		return refusal(err.Error())
 	}
 	if loc.item.ID != s.authority.Assigned {
-		if err := tasks.BlockTrustedTask(loc.root, loc.item, tasks.ClaimActor{}); err != nil {
+		if r := s.boxWriteRefusal(loc, "block"); r != nil {
+			return r
+		}
+		if err := tasks.BlockBoxTask(loc.root, loc.item, s.boxActor()); err != nil {
 			if errors.Is(err, tasks.ErrTaskLeased) {
 				return heldRefusal(loc.item.ID, "block", "leased")
 			}
@@ -747,6 +840,68 @@ func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {
 		result += fmt.Sprintf(". It had been answered (%q); that decision is kept in its log.md", earlier)
 	}
 	return textResult(result)
+}
+
+// claim and release are an interactive session's own lifecycle: it has no task assigned, so it
+// claims the one it works and hands back one it will not finish. Both run on the host's task
+// authority (tasks.ClaimSessionTask, tasks.ReleaseSessionTask), bound to the session's process.
+func (s *Server) claim(_ context.Context, args json.RawMessage) *toolResult {
+	var in struct {
+		ID string `json:"id"`
+	}
+	if r := decodeArgs(args, &in); r != nil {
+		return r
+	}
+	loc, r := s.locate(in.ID)
+	if r != nil {
+		return r
+	}
+	replaced, err := tasks.ClaimSessionTask(loc.root, loc.item, *s.authority.Session)
+	if err != nil {
+		if errors.Is(err, tasks.ErrTaskLeased) {
+			return heldRefusal(loc.item.ID, "claim", "leased")
+		}
+		return refusal(fmt.Sprintf("claim %s: %v", loc.item.ID, err))
+	}
+	result := fmt.Sprintf("%s is claimed by this session, in %s/ — keep its files current as you work, then finish with tasks_complete, tasks_block or tasks_release", loc.item.ID, tasks.StateInProgress)
+	if replaced != "" {
+		result += fmt.Sprintf(". Its previous owner had stopped (%s)", replaced)
+	}
+	return textResult(result)
+}
+
+func (s *Server) release(_ context.Context, args json.RawMessage) *toolResult {
+	var in struct {
+		ID string `json:"id"`
+	}
+	if r := decodeArgs(args, &in); r != nil {
+		return r
+	}
+	loc, r := s.locate(in.ID)
+	if r != nil {
+		return r
+	}
+	switch loc.item.State {
+	case tasks.StateTodo:
+		// Only an unclaimed todo task is already handed back; a claim on one is still a claim to give up.
+		if _, owned, err := tasks.ReadTaskOwnerRecord(loc.root, loc.item.ID); err != nil {
+			return refusal(fmt.Sprintf("release %s: %v", loc.item.ID, err))
+		} else if !owned {
+			return textResult(fmt.Sprintf("%s is already in %s/ with no claim", loc.item.ID, tasks.StateTodo))
+		}
+	case tasks.StateInProgress:
+	case tasks.StateBlocked:
+		return refusal(fmt.Sprintf("%s is blocked on a decision only a human can answer; nothing to release", loc.item.ID))
+	default:
+		return refusal(fmt.Sprintf("%s is done; completed work stays in the archive", loc.item.ID))
+	}
+	if err := tasks.ReleaseSessionTask(loc.root, loc.item, *s.authority.Session); err != nil {
+		if errors.Is(err, tasks.ErrTaskLeased) {
+			return heldRefusal(loc.item.ID, "release", "leased")
+		}
+		return refusal(fmt.Sprintf("release %s: %v", loc.item.ID, err))
+	}
+	return textResult(fmt.Sprintf("%s returned to %s/ with its notes; this session no longer owns it", loc.item.ID, tasks.StateTodo))
 }
 
 func (s *Server) setSubtasks(_ context.Context, args json.RawMessage) *toolResult {

@@ -352,6 +352,13 @@ func (a *app) cmdACP(args []string) (int, error) {
 		spec.ForkGeneration = string(forkIdentity.Generation)
 		spec.ForkOwner = forkctl.ForkContainerOwner(activityRepo, forkIdentity.Name, forkIdentity.Generation)
 	}
+	if claimant, ok := sessionTaskClaimant(spec); ok {
+		spec.TaskTools = a.sessionTaskTools(repo, tool, claimant)
+		// The supervisor named this child's channel volume, so it can remove it if it kills us.
+		if name := os.Getenv(acpTaskChannelEnv); spec.TaskTools != nil && box.ValidTaskChannelVolume(name) {
+			spec.TaskChannelVolume = name
+		}
+	}
 	// This child's network authority arrives from the supervisor that started it,
 	// as a reference it must prove against the owner-private store. A child
 	// admits nothing: an approval that lands mid-session cannot widen it — the
@@ -679,7 +686,9 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		// Sweep any box still labelled with THIS superID before exec — a warm spawn that was mid-flight
 		// (reap only stops boxes already parked) would otherwise reparent to init and never be reaped
 		// (the re-exec'd process uses a fresh superID). Safe here: Run already stopped the active box
-		// and no new box is spawned until after exec, so nothing we need is swept.
+		// and no new box is spawned until after exec, so nothing we need is swept. The exec would
+		// also end any task-channel removal still running, so it finishes first.
+		a.acpTaskChannels.Wait()
 		sweepErr := a.reapACPBoxes(superID)
 		warning, prior := acpReloadAfterCleanup(superID, sweepErr)
 		if warning != "" {
@@ -708,6 +717,9 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// just-spawned next box, which shares the id, fork-bombing the supervisor on the first resume.)
 	// The session's project services go after its boxes, which hold their network, and stay when a
 	// box could not be removed: the start sweep takes them once this supervisor is gone.
+	// A child stopped just now may still be removing its task-channel volume; exiting would orphan
+	// it, so wait (each removal is bounded) before the final sweep.
+	a.acpTaskChannels.Wait()
 	cleanupErr := a.reapACPBoxes(superID)
 	if cleanupErr == nil {
 		a.removeACPServices(repo, superID)
@@ -745,6 +757,8 @@ func (a *app) reapACPBoxes(superID string) error {
 	if err != nil {
 		return err
 	}
+	// Best effort, like the per-child sweep: a volume still mounted waits for the next one.
+	_, _ = box.ReapOrphanTaskChannels(ctx, a.rt, repo)
 	return forkspace.RemoveDeadExecutionsBySource(authorityRepo, superID)
 }
 
@@ -1016,7 +1030,7 @@ func cleanACPChildEnv(env []string) []string {
 		switch key {
 		// The network capture is minted per child by this supervisor. An inherited
 		// one names a snapshot this session never admitted, so it never rides in.
-		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", "COOP_ACP_MCP_ID", box.SessionMCPHandoffEnv, acpAccountBindingsEnv,
+		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", "COOP_ACP_MCP_ID", acpTaskChannelEnv, box.SessionMCPHandoffEnv, acpAccountBindingsEnv,
 			box.SessionNetworkCaptureEnv:
 			continue
 		}
@@ -1122,8 +1136,9 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	if len(activityRoles) > 0 && activityRoles[0] != "" {
 		activityRole = activityRoles[0]
 	}
+	taskVolume := box.NewTaskChannelVolume()
 	env := append(cleanACPChildEnv(os.Environ()), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID,
-		"COOP_ACP_ACTIVITY_ROLE="+string(activityRole))
+		"COOP_ACP_ACTIVITY_ROLE="+string(activityRole), acpTaskChannelEnv+"="+taskVolume)
 	// Admission marks the resolved mode explicit; an unadmitted caller must not invent open.
 	if a.cfg.Explicit("COOP_EGRESS") {
 		env = append(env, "COOP_EGRESS="+a.cfg.Egress)
@@ -1253,6 +1268,15 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			if groupGone && runtimeGone && activityRepo != "" {
 				_ = forkspace.RemoveDeadExecutionsBySource(activityRepo, superID)
 			}
+			// A killed child cannot close its task channel; its helper exits with its client. Off the
+			// switch path, so the replacement child starts without waiting for it.
+			if groupGone {
+				a.acpTaskChannels.Add(1)
+				go func() {
+					defer a.acpTaskChannels.Done()
+					a.removeACPTaskChannel(taskVolume)
+				}()
+			}
 			if cidDir != "" {
 				os.RemoveAll(cidDir)
 			}
@@ -1282,6 +1306,31 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		}
 	}
 	return child, nil
+}
+
+// acpTaskChannelEnv names the task-channel volume the supervisor chose for a child.
+const acpTaskChannelEnv = "COOP_ACP_TASK_CHANNEL"
+
+// acpTaskChannelRemovalTimeout bounds removeACPTaskChannel: a helper exits within moments of its
+// client, and the orphan sweeps judge anything still left after this.
+const acpTaskChannelRemovalTimeout = 15 * time.Second
+
+// removeACPTaskChannel removes a stopped child's task-channel volume by the name this supervisor gave
+// it, retrying while the child's helper still mounts it. A child that served no task tools, or a
+// filtered one that closed its own channel on SIGTERM, left nothing, and this returns at once.
+func (a *app) removeACPTaskChannel(volume string) {
+	ctx, cancel := context.WithTimeout(context.Background(), acpTaskChannelRemovalTimeout)
+	defer cancel()
+	for a.rt.Silent("volume", "inspect", volume) {
+		if a.rt.RemoveVolume(ctx, volume) == nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 
 // The tool handoff identifies one editor child without changing runtime/service ownership

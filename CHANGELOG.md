@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Editor and terminal agents manage their own tasks.** Agents in `coop acp` and `coop <agent>`
+  boxes now get Coop's task tools, as loop agents do. They claim a task, keep its notes current,
+  complete it, block it on your decision or hand it back, all without the coop command. A claim
+  belongs to the session, so `coop loop` leaves that task alone until the session finishes with it
+  or ends.
+
 - **Only approve file exposure deliberately.** Ordinary `coop approve` no longer asks to
   expose hidden files that eBPF protects. Mount fallback still refuses unapproved exposure;
   use `coop approve --case-exposure` to review and remember those exact paths.

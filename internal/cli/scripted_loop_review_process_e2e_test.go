@@ -1740,7 +1740,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			t.Fatalf("review attempt %d provider %q has no streaming command", i, target.Provider)
 		}
 		if attempt.Stage == "work" {
-			argv = loopWorkArgv(target.Provider, argv)
+			argv = taskToolsArgv(target.Provider, argv)
 		}
 		wantArgv := processTraceArgv(argv)
 		startArgv := starts[i].Argv

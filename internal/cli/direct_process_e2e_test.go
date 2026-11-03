@@ -439,9 +439,10 @@ func assertDirectSuccess(t *testing.T, result procharness.Result, provider, mark
 	}
 }
 
-// assertDirectRunContract pins one box run end to end. sweep says whether the command reaps orphaned
-// boxes on its way in (a loop start does; a direct provider run does not) — the only legitimate
-// difference in the runtime calls these commands make, so any OTHER extra call still fails here.
+// assertDirectRunContract pins one box run end to end. shape says whether the command reaps orphaned
+// boxes on its way in (a loop start does; a direct provider run does not) and whether its box serves
+// task tools — the only legitimate differences in the runtime calls these commands make, so any
+// OTHER extra call still fails here.
 func assertDirectRunContract(t *testing.T, suite *directProcessSuite, trace []*processTrace, provider, account string, argv []string, model, effort string, shape traceShape) {
 	t.Helper()
 	assertSequentialTrace(t, trace, shape.events())
@@ -458,7 +459,7 @@ func assertDirectRunContract(t *testing.T, suite *directProcessSuite, trace []*p
 	if run.Run.Network != "none" || len(run.Run.EnvFiles) != 1 || !recordedFixturePath(run.Run.EnvFiles[0]) {
 		t.Fatalf("scoped runtime network/env files = %q/%q", run.Run.Network, run.Run.EnvFiles)
 	}
-	if shape == noOrphanBoxSweep && (run.Run.Interactive || run.Run.TTY || !reflect.DeepEqual(boxLabelsWithoutDynamicAuthorities(t, run.Run.Labels, provider), []string{"coop=box"})) {
+	if !shape.sweeps() && (run.Run.Interactive || run.Run.TTY || !reflect.DeepEqual(boxLabelsWithoutDynamicAuthorities(t, run.Run.Labels, provider), []string{"coop=box"})) {
 		t.Fatalf("direct headless runtime labels/interactive/tty = %q/%v/%v", run.Run.Labels, run.Run.Interactive, run.Run.TTY)
 	}
 	assertProcessMounts(t, suite.layout, provider, account, run.Run.Mounts)

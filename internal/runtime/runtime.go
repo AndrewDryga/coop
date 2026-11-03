@@ -693,6 +693,19 @@ func (r Runtime) RemoveNetwork(ctx context.Context, id string) error {
 	return nil
 }
 
+// RemoveVolume removes one named volume. The runtime refuses one a container still mounts, and that
+// refusal is returned.
+func (r Runtime) RemoveVolume(ctx context.Context, name string) error {
+	out, err := contextCommand(ctx, r.Name, "volume", "rm", name).CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("run: %s volume rm %s: %w", r.Name, name, commandOutputError(err, out))
+	}
+	return nil
+}
+
 // RunningContainerIDsByLabel returns the ids of running containers carrying key=value. A real
 // no-match is an empty slice with a nil error; runtime query failures remain distinguishable.
 func (r Runtime) RunningContainerIDsByLabel(ctx context.Context, key, value string) ([]string, error) {
@@ -1031,6 +1044,54 @@ func (r Runtime) RemoveVolumesByLabel(ctx context.Context, key, value string) (i
 		n++
 	}
 	return n, nil
+}
+
+// Volume is a named volume with the labels a caller asked for.
+type Volume struct {
+	Name   string
+	Labels map[string]string
+}
+
+// VolumeLabels lists every volume labeled key (=value, when value is set), each with the named
+// labels it carries — the volume counterpart of ContainerLabels.
+func (r Runtime) VolumeLabels(ctx context.Context, key, value string, names ...string) ([]Volume, error) {
+	if r.kind() == runtimeAppleContainer {
+		return nil, errors.New("label inspection is unsupported by Apple container")
+	}
+	fields := []string{"{{json .Name}}"}
+	for _, name := range names {
+		fields = append(fields, `{{json (.Label "`+name+`")}}`)
+	}
+	filter := "label=" + key
+	if value != "" {
+		filter += "=" + value
+	}
+	args := []string{"volume", "ls", "--filter", filter, "--format", "[" + strings.Join(fields, ",") + "]"}
+	out, err := contextCommand(ctx, r.Name, args...).Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, nil))
+	}
+	var volumes []Volume
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var values []string
+		if err := json.Unmarshal([]byte(line), &values); err != nil || len(values) != len(names)+1 || values[0] == "" {
+			return nil, fmt.Errorf("unreadable volume listing from %s volume ls", r.Name)
+		}
+		labels := make(map[string]string, len(names))
+		for i, name := range names {
+			if values[i+1] != "" {
+				labels[name] = values[i+1]
+			}
+		}
+		volumes = append(volumes, Volume{Name: values[0], Labels: labels})
+	}
+	return volumes, nil
 }
 
 func runtimeRemovalInProgress(output []byte) bool {

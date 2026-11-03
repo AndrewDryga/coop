@@ -42,8 +42,8 @@ func (echoServer) Serve(ctx context.Context, rw io.ReadWriter) error {
 }
 
 func TestTaskChannelVolumeIsDistinctPerRun(t *testing.T) {
-	a := taskChannelVolume()
-	b := taskChannelVolume()
+	a := NewTaskChannelVolume()
+	b := NewTaskChannelVolume()
 	if a == b || !strings.HasPrefix(a, "coop-tasks-") || len(a) != len("coop-tasks-")+16 {
 		t.Fatalf("volumes = %q %q", a, b)
 	}
@@ -139,8 +139,8 @@ func TestTaskChannelServesTheBoxAndTearsDownAfterTheRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	volume := taskChannelVolume()
-	channel, err := startTaskChannel(context.Background(), rt, "coop-box", volume, "run-1", echoServer{}, script)
+	volume := NewTaskChannelVolume()
+	channel, err := startTaskChannel(context.Background(), rt, "coop-box", volume, "run-1", "", echoServer{}, script)
 	if err != nil {
 		t.Fatalf("startTaskChannel: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestTaskChannelFailsClosedWhenTheHelperDies(t *testing.T) {
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := startTaskChannel(context.Background(), runtime.Runtime{Name: script}, "img", "coop-tasks-dead", "", echoServer{}, filepath.Join(dir, "mux.js"))
+	_, err := startTaskChannel(context.Background(), runtime.Runtime{Name: script}, "img", "coop-tasks-dead", "", "", echoServer{}, filepath.Join(dir, "mux.js"))
 	if err == nil || !strings.Contains(err.Error(), "helper exited before its socket was ready") || !strings.Contains(err.Error(), "no such image") {
 		t.Fatalf("err = %v", err)
 	}

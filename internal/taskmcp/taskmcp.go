@@ -71,6 +71,11 @@ type Authority struct {
 	ProposalOutbox string
 	// Owner identifies the leases the server takes on tasks other than Assigned.
 	Owner tasks.TaskLeaseOwner
+	// Session, when set, makes this the server of an interactive session — an editor's `coop acp`
+	// box or a `coop <agent>` box — rather than a loop iteration: nothing is assigned, the agent
+	// claims and releases its own tasks (tasks_claim, tasks_release), and those claims bind to this
+	// actor, the host process serving the session, so they end with it.
+	Session *tasks.ClaimActor
 }
 
 // CompletionClaim tells the host whether normal implementation work or an explicit no-change
@@ -114,6 +119,14 @@ func New(authority Authority) (*Server, error) {
 	}
 	if !filepath.IsAbs(authority.Workspace) {
 		return nil, errors.New("task tools need the absolute workspace folder the box mounts")
+	}
+	if session := authority.Session; session != nil {
+		if authority.Assigned != "" || authority.ProposalOutbox != "" {
+			return nil, errors.New("an interactive session's task tools take no assigned task and no fork outbox")
+		}
+		if !session.Bound() {
+			return nil, errors.New("an interactive session's task tools need the process its claims bind to")
+		}
 	}
 	paths := slices.Clone(authority.QueueRoots)
 	if authority.ProposalOutbox != "" {
@@ -272,7 +285,7 @@ func (s *Server) handle(ctx context.Context, line []byte) *response {
 	case "ping":
 		return resultResponse(req.ID, map[string]any{})
 	case "tools/list":
-		return resultResponse(req.ID, map[string]any{"tools": toolDescriptors()})
+		return resultResponse(req.ID, map[string]any{"tools": s.toolDescriptors()})
 	case "tools/call":
 		result, err := s.call(ctx, req.Params)
 		if err != nil {
@@ -314,12 +327,23 @@ func (s *Server) initialize(params json.RawMessage) map[string]any {
 		"protocolVersion": version,
 		"capabilities":    map[string]any{"tools": map[string]any{}},
 		"serverInfo":      map[string]any{"name": ServerName, "version": serverVersion},
-		"instructions":    serverInstructions,
+		"instructions":    s.instructions(),
 	}
 }
 
-// serverInstructions is what a client shows its model about this server.
-const serverInstructions = "coop's task queue for this box. tasks_list / tasks_get read any task; tasks_update_state, tasks_append_log, tasks_set_subtasks keep the assigned task's files current; tasks_complete and tasks_block move it out of 10_in_progress; tasks_propose files newly discovered work. A mutation on a task another live process holds is refused."
+func (s *Server) instructions() string {
+	if s.authority.Session != nil {
+		return sessionInstructions
+	}
+	return serverInstructions
+}
+
+// serverInstructions and sessionInstructions are what a client shows its model about this server,
+// in a loop box and in an interactive session.
+const (
+	serverInstructions  = "coop's task queue for this box. tasks_list / tasks_get read any task; tasks_update_state, tasks_append_log, tasks_set_subtasks keep the assigned task's files current; tasks_complete and tasks_block move it out of 10_in_progress; tasks_propose files newly discovered work. A mutation on a task another live process holds or claims is refused."
+	sessionInstructions = "coop's task queue for this session. The coop CLI is not installed in this box: change task state through these tools, never by moving task folders. tasks_list / tasks_get read any task. tasks_claim a task before you work on it — it moves to 10_in_progress, owned by this session, so a coop loop leaves it alone. Keep its files current with tasks_update_state, tasks_append_log and tasks_set_subtasks; finish with tasks_complete, park a human decision with tasks_block, or hand it back with tasks_release. tasks_propose files newly discovered work. A change to a task someone else holds or claims is refused."
+)
 
 // toolResult is the MCP tools/call result shape: text content, flagged as an error when the tool
 // refused or failed so the model reads the reason instead of a protocol fault.
@@ -357,9 +381,9 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (*toolResult,
 	if err := json.Unmarshal(params, &call); err != nil || call.Name == "" {
 		return nil, &rpcError{Code: codeInvalidParams, Message: "tools/call needs a tool name"}
 	}
-	t, ok := toolByName(call.Name)
+	t, ok := s.toolByName(call.Name)
 	if !ok {
-		return nil, &rpcError{Code: codeInvalidParams, Message: fmt.Sprintf("unknown tool %q — this socket serves only: %s", call.Name, toolNames())}
+		return nil, &rpcError{Code: codeInvalidParams, Message: fmt.Sprintf("unknown tool %q — this socket serves only: %s", call.Name, s.toolNames())}
 	}
 	if len(call.Arguments) == 0 {
 		call.Arguments = json.RawMessage("{}")
