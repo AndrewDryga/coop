@@ -58,6 +58,39 @@ type checkError struct{ err error }
 func (e checkError) Error() string { return e.err.Error() }
 func (e checkError) Unwrap() error { return e.err }
 
+// releaseSourceMissing is GitHub answering 404 Not Found for the latest release: nothing is
+// published at the address this build asks. Waiting does not change that answer; a current build
+// from the installer, which asks the right address, does.
+type releaseSourceMissing struct{ url string }
+
+func (e *releaseSourceMissing) Error() string { return "GitHub returned 404 Not Found for " + e.url }
+
+// reinstallCommand is the documented installer, which always fetches the current official build.
+const reinstallCommand = "curl -fsSL https://coop.dryga.com/install.sh | sh"
+
+// releaseCheckReason is the cause a failed release lookup prints, plus the action that fixes it
+// when waiting will not: a missing release source names the address asked and how to reinstall.
+// Any other failure (offline, a rate limit, a GitHub outage) may pass, so its fix is left to the
+// caller, which knows what to retry.
+func releaseCheckReason(err error) (reason, fix string) {
+	var missing *releaseSourceMissing
+	if errors.As(err, &missing) {
+		return "The release source was not found (GitHub returned 404 Not Found):\n" + missing.url,
+			"Reinstall Coop with: " + reinstallCommand
+	}
+	return sentence(firstLine(err)), ""
+}
+
+// releaseCheckFailure reports a release lookup that failed, with retry as the command to run
+// again when the failure may pass.
+func releaseCheckFailure(err error, retry string) error {
+	reason, fix := releaseCheckReason(err)
+	if fix == "" {
+		fix = "Try " + retry + " again later."
+	}
+	return reported("Could not check for a Coop update", reason, fix)
+}
+
 // normalizeVersion drops a leading "v" and surrounding space so the ldflags
 // version ("2.7.2") and a GitHub tag ("v2.7.2") compare equal.
 func normalizeVersion(v string) string {
@@ -76,6 +109,9 @@ func latestReleaseTag() (string, error) {
 		return "", fmt.Errorf("could not reach GitHub: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", &releaseSourceMissing{url: githubLatestURL}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("GitHub returned %s", resp.Status)
 	}

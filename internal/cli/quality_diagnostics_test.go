@@ -19,6 +19,8 @@ func TestSelfUpdateFailureGuidance(t *testing.T) {
 		unchanged bool
 	}{
 		{"check", fmt.Errorf("check: %w", checkError{err: errors.New("offline")}), "again later", false},
+		{"missing release source", checkError{err: &releaseSourceMissing{url: "https://api.example/releases/latest"}},
+			"https://api.example/releases/latest\n\n  Reinstall Coop with: " + reinstallCommand, false},
 		{"download", &installFailure{reason: "download failed", unchanged: true}, "download a fresh copy", true},
 		{"replace", &installFailure{reason: "binary could not be replaced", unchanged: true}, "tool that installed it", false},
 		{"after replacement", &installFailure{reason: "rebuild failed"}, "tool that installed it", false},
@@ -29,6 +31,10 @@ func TestSelfUpdateFailureGuidance(t *testing.T) {
 			out := captureStderr(t, func() { err = selfUpdateFailure(test.err, "coop update --self-only") })
 			if !errors.Is(err, ui.ErrReported) || !strings.Contains(out, test.want) || strings.Contains(out, "installed binary was not changed") != test.unchanged {
 				t.Fatalf("guidance: %v\n%s", err, out)
+			}
+			// Only a failure that can pass with time is worth retrying later.
+			if test.name == "missing release source" && strings.Contains(out, "again later") {
+				t.Fatalf("a missing release source was called transient:\n%s", out)
 			}
 		})
 	}

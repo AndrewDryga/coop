@@ -120,6 +120,9 @@ func TestApprovedUpdateCheck(t *testing.T) {
 				builtBy: "v8.9.0", definition: "stale"}},
 		{fixture: "33k-check-lookup-failed", version: "9.0.0", status: http.StatusForbidden, code: 1},
 		{fixture: "33l-check-invalid-release", version: "9.0.0", latest: `{"tag_name":"not-a-version"}`, code: 1},
+		// A 404 does not pass with time: the address this build asks has no release. Retrying
+		// later is the wrong advice; the installer fetches a build that asks the right address.
+		{fixture: "33m-check-release-source-missing", version: "9.0.0", status: http.StatusNotFound, code: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
@@ -132,6 +135,8 @@ func TestApprovedUpdateCheck(t *testing.T) {
 			if code != tc.code {
 				t.Errorf("exit = %d, want %d", code, tc.code)
 			}
+			// The transcript names the address a released build asks, not this test's server.
+			out = strings.ReplaceAll(out, githubLatestURL, "https://api.github.com/repos/AndrewDryga/coop/releases/latest")
 			assertApprovedOutput(t, tc.fixture, normalizeImage(cfg, out))
 		})
 	}

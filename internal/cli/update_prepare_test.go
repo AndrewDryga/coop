@@ -112,6 +112,25 @@ func TestUpdateBoxUsesTheEffectiveNetworkMode(t *testing.T) {
 	}
 }
 
+// A full update that finds no release source still updates the box, and says how to get a build
+// that finds its releases instead of suggesting the same lookup later.
+func TestUpdateNamesAMissingReleaseSourceAndContinues(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Cleanup(stub(&Version, "2.7.2"))
+	releaseAPI(t, "", http.StatusNotFound)
+	exe := filepath.Join(t.TempDir(), "coop")
+	mustWrite(t, exe, "installed coop")
+	t.Cleanup(stub(&executablePath, func() (string, error) { return exe, nil }))
+	cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box"}
+	a := &app{cfg: cfg, rt: buildShim{daemonUp: true}.build(t), rtSet: true}
+	var code int
+	out := captureTerminal(t, func() { code, _ = a.cmdUpdate(nil) })
+	if code != 0 || !strings.Contains(out, "Reinstall Coop with: "+reinstallCommand+"\n  Continuing with the box update.") ||
+		strings.Contains(out, "again later") || !strings.Contains(out, "Box image updated") {
+		t.Fatalf("update with a missing release source = %d:\n%s", code, out)
+	}
+}
+
 func TestUpdateCheckDoesNotReportOrdinaryImageForFilteredProject(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Cleanup(stub(&Version, "2.7.2"))

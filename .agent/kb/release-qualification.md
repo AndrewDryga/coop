@@ -2,8 +2,8 @@
 name: release-qualification
 description: "tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity"
 subsystem: release
-sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/releasenotes/main.go, .github/release-notes.md, release_test.go]
-updated: 2026-10-17
+sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/releasenotes/main.go, .github/release-notes.md, release_test.go, internal/cli/help.go, internal/cli/selfupdate.go]
+updated: 2026-11-03
 ---
 
 Release `ci` locally calls ci.yml from the event commit; its Make-owned broad checks, Docker
@@ -42,7 +42,19 @@ must not mutate the tag or protection during build/publication. Local fixture te
 hosted CI, signing or publication succeeded. Test refs/remotes are confined to temporary
 filesystem repositories.
 
+Before tagging, check that the addresses the binary prints or fetches resolve: the help's links,
+the release API `coop update` asks and the installer its errors name. A broken one ships in every
+install, and a binary cannot repair its own release source. This exits non-zero on any failure:
+
+    grep -ohE 'https://[A-Za-z0-9._~:/?#@%+=&-]+' internal/cli/help.go internal/cli/selfupdate.go |
+      grep -vE 'example|/releases/download/$' | sort -u |
+      xargs -n1 curl -fsSL -o /dev/null --max-time 20 -w '%{http_code} %{url}\n'
+
+A repository's first release has no `releases/latest` until it is published; check it again then.
+
 ## Changelog
+- 2026-11-03 — added the pre-tag address check after `coop update --check` met a 404 from a moved
+  release source; all 5 addresses on main answered 200, and a missing repository fails it.
 - 2026-10-17 — isolated release Git queries and moved remote authority into workflow context;
   hostile origin, sshCommand and URL-rewrite regression preserves tag identity checks.
 - 2026-10-17 — the published body is `.github/release-notes.md`'s section, not the CHANGELOG

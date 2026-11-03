@@ -21,6 +21,8 @@ each time — this is the contract; follow it.
   unchanged local broad proof. The exact-tag release workflow still runs all free CI checks.
 - The gate is free and deterministic. Live-provider suites run on demand and are not release
   permission; do not request a waiver or run paid models to finalize a version.
+- Run the address check in `.agent/kb/release-qualification.md`: every help link and update
+  address the binary carries must resolve, or each install ships it broken.
 - Identify the latest published, non-draft, non-prerelease version with
   `gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt` before comparing
   changes. A local or failed tag is not a published release.

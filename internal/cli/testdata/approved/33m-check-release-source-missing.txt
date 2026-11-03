@@ -1,0 +1,6 @@
+✗ Could not check for a Coop update
+
+      The release source was not found (GitHub returned 404 Not Found):
+      https://api.github.com/repos/AndrewDryga/coop/releases/latest
+
+  Reinstall Coop with: curl -fsSL https://coop.dryga.com/install.sh | sh

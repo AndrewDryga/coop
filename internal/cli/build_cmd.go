@@ -299,8 +299,12 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 		case selfOnly:
 			return 1, selfUpdateFailure(err, "coop update --self-only")
 		case errors.As(err, &soft):
-			warnBlock("Could not check for a newer Coop release", sentence(firstLine(err)),
-				"Continuing with the box update.")
+			reason, fix := releaseCheckReason(err)
+			actions := []string{"Continuing with the box update."}
+			if fix != "" {
+				actions = append([]string{fix}, actions...)
+			}
+			warnBlock("Could not check for a newer Coop release", reason, actions...)
 			ui.Note("")
 		default:
 			failBlock("Could not update the Coop binary", sentence(firstLine(err)),
@@ -399,8 +403,7 @@ func reportSelfUpdate(result selfUpdateResult) {
 func selfUpdateFailure(err error, retry string) error {
 	var soft checkError
 	if errors.As(err, &soft) {
-		return reported("Could not check for a Coop update", sentence(firstLine(err)),
-			"Try "+retry+" again later.")
+		return releaseCheckFailure(err, retry)
 	}
 	actions := []string{"Update Coop with the tool that installed it."}
 	var hard *installFailure
@@ -484,8 +487,7 @@ func (a *app) cmdUpdateCheck() (int, error) {
 	cur := resolveVersion()
 	latest, err := latestReleaseTag()
 	if err != nil {
-		return 1, reported("Could not check for a Coop update", sentence(firstLine(err)),
-			"Try coop update --check again later.")
+		return 1, releaseCheckFailure(err, "coop update --check")
 	}
 	c, l := normalizeVersion(cur), normalizeVersion(latest)
 	updateAvailable := false
