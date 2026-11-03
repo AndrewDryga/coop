@@ -273,6 +273,8 @@ func recoverLeftovers(ctx context.Context, evidence *networkstate.Evidence, reco
 		out.Skipped = "the runtime at " + record.Endpoint + " is a different daemon than the one this run used"
 		return record
 	}
+	var lateErr error
+	lateChecked := false
 	for _, role := range networkRecoveryOrder {
 		resource := recoveredResource(record, role)
 		if resource.Role == "" || resource.State == "gone" {
@@ -283,6 +285,24 @@ func recoverLeftovers(ctx context.Context, evidence *networkstate.Evidence, reco
 			out.Unverified = "container"
 			out.countPending(resource.Kind)
 			continue
+		}
+		if resource.Kind == "volume" {
+			if !lateChecked {
+				lateChecked = true
+				lateErr = removeLateContainers(ctx, docker, record, out)
+				if lateErr != nil && !errors.Is(lateErr, runtime.ErrDockerOwnership) {
+					out.Failures = appendError(out.Failures, lateErr)
+				}
+			}
+			if lateErr != nil {
+				if errors.Is(lateErr, runtime.ErrDockerOwnership) {
+					// One of the run's container names is held with labels the run did not set.
+					out.Unverified = "container"
+				}
+				out.Pending = append(out.Pending, role+" (a container that could still use it is not proved gone)")
+				out.countPending(resource.Kind)
+				continue
+			}
 		}
 		next, outcome, err := recoverResource(ctx, evidence, docker, record, resource)
 		record = next
@@ -307,6 +327,35 @@ func recoverLeftovers(ctx context.Context, evidence *networkstate.Evidence, reco
 		}
 	}
 	return record
+}
+
+// removeLateContainers looks up, by the run's names and labels, each container the record calls gone,
+// and removes any that is there anyway. Docker can finish a create after its client gave up: a launch
+// whose controller create timed out under load recorded the controller gone, Docker created it a
+// moment later, and every pass then failed to remove the ipc volume it held. So a pass checks the
+// runtime, not the record, before it removes a volume.
+func removeLateContainers(ctx context.Context, docker recoverDocker, record networkstate.Execution, out *NetworkRecovery) error {
+	for _, resource := range record.Resources {
+		if resource.Kind != "container" || resource.State != "gone" {
+			continue
+		}
+		ref := networkResourceRef(record, resource.Role)
+		value, present, err := docker.InspectContainer(ctx, ref)
+		if err == nil && present {
+			ref.ID = value.ID
+			if err = docker.StopContainer(ctx, ref, 0); err == nil {
+				err = docker.RemoveContainer(ctx, ref)
+			}
+			if err == nil {
+				out.Removed = append(out.Removed, resource.Role)
+				out.countRemoved(resource.Kind)
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("%s: %w", resource.Role, err)
+		}
+	}
+	return nil
 }
 
 func recoveredResource(record networkstate.Execution, role string) networkstate.Resource {

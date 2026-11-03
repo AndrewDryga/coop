@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 
@@ -65,7 +66,8 @@ func (f *filteredExecution) cleanupWithFilesystem(workload string, retire func()
 						f.confirmGone(evidence, role, ref)
 					}
 				}
-				contained[role] = err == nil
+				// An unfinished create's container may still appear and hold the volumes.
+				contained[role] = err == nil && (present || !f.createUnfinished(role))
 				result = errors.Join(result, err)
 				cancel()
 			}
@@ -304,9 +306,18 @@ func (f *filteredExecution) removeResource(evidence *networkstate.Evidence, role
 	defer cancel()
 	switch {
 	case resource.Kind != "container":
+		if f.createUnfinished(role) {
+			if _, present, err := f.docker.InspectVolume(ctx, ref); err != nil {
+				return err
+			} else if !present {
+				return unfinishedCreateError(role, resource.Kind)
+			}
+		}
 		if err := f.docker.RemoveVolume(ctx, ref); err != nil {
 			return err
 		}
+	case ref.ID == "" && f.createUnfinished(role):
+		return unfinishedCreateError(role, resource.Kind)
 	case ref.ID != "":
 		// Force removal remains available after a failed graceful stop.
 		stopCtx, stop := context.WithTimeout(context.Background(), filteredControlTimeout)
@@ -326,6 +337,14 @@ func (f *filteredExecution) removeResource(evidence *networkstate.Evidence, role
 	return f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
 		return evidence.ConfirmResourceGone(ctx, r.ID, r.Revision, r.DaemonID, role, ref.Name)
 	})
+}
+
+// unfinishedCreateError is cleanup not finding a resource whose create Coop stopped waiting for.
+// Docker can still finish that create, so the record keeps the resource open, its volumes stay
+// with it, and recovery removes whatever Docker made once this process has exited: before a later
+// filtered run starts, or when the person runs coop net recover.
+func unfinishedCreateError(role, kind string) error {
+	return fmt.Errorf("Docker was still creating this run's %s %s when Coop stopped waiting, so Coop cannot confirm it is gone. A later filtered run removes it first, or run coop net recover", role, kind)
 }
 
 // teardown is the filtered launch's own ending, lifted out of Run so it has ONE implementation.

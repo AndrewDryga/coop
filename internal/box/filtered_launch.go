@@ -85,6 +85,24 @@ func sameFailure(ctx context.Context, a, b error) bool {
 	return interrupted != nil && errors.Is(a, interrupted) && errors.Is(b, interrupted)
 }
 
+// markUnfinished records that role's create request may have reached the daemon without an answer,
+// as when its client timed out under load. Docker can still finish such a create afterwards, so until
+// cleanup or recovery finds the resource by name and removes it, not finding it proves nothing.
+func (f *filteredExecution) markUnfinished(role string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.unfinished == nil {
+		f.unfinished = map[string]bool{}
+	}
+	f.unfinished[role] = true
+}
+
+func (f *filteredExecution) createUnfinished(role string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.unfinished[role]
+}
+
 func (f *filteredExecution) createVolume(ctx context.Context, role string) error {
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
@@ -92,6 +110,9 @@ func (f *filteredExecution) createVolume(ctx context.Context, role string) error
 		return err
 	}
 	if _, err := f.docker.CreateVolume(ctx, f.createRef(role)); err != nil {
+		if !errors.Is(err, runtime.ErrDockerCreateNotAttempted) {
+			f.markUnfinished(role)
+		}
 		return err
 	}
 	// A volume made just as the caller gave up still stops the launch; cleanup finds it by name.
@@ -99,7 +120,8 @@ func (f *filteredExecution) createVolume(ctx context.Context, role string) error
 }
 
 // createContainer creates role's container under the run's fixed name and labels. Cleanup and
-// recovery find it by that name whatever this call's outcome, so nothing is recorded first.
+// recovery find it by that name whatever this call's outcome, so nothing is recorded first; a create
+// with no outcome is only marked unfinished in memory, so cleanup does not take its absence as proof.
 func (f *filteredExecution) createContainer(ctx context.Context, role, image string, options, command []string) error {
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
@@ -118,6 +140,7 @@ func (f *filteredExecution) createContainer(ctx context.Context, role, image str
 		if errors.Is(createErr, runtime.ErrDockerCreateNotAttempted) {
 			return createErr
 		}
+		f.markUnfinished(role)
 		return errors.Join(createErr, errors.New("network container creation outcome is unknown"))
 	}
 	f.mu.Lock()

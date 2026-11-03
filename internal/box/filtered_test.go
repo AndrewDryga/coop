@@ -63,6 +63,19 @@ type filteredDaemonFixture struct {
 	created                                map[string]time.Time // by container name; one without an entry is never stale
 	prunes                                 []string             // every PruneContainers call, "<label> older than <age>"
 	pruneErr                               error
+	// The ambiguous role's create reports no outcome, as a client that timed out does; Docker
+	// finishes it, into these, only when the test calls finishLateCreates.
+	lateContainers map[string]runtime.DockerContainer
+	lateVolumes    map[string]runtime.DockerVolume
+}
+
+// finishLateCreates is Docker completing the creates whose clients had already given up.
+func (d *filteredDaemonFixture) finishLateCreates() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	maps.Copy(d.containers, d.lateContainers)
+	maps.Copy(d.volumes, d.lateVolumes)
+	d.lateContainers, d.lateVolumes = nil, nil
 }
 
 func (d *filteredDaemonFixture) ConnectNetwork(_ context.Context, network string, ref runtime.DockerRef, aliases ...string) error {
@@ -291,6 +304,13 @@ func (d *filteredDaemonFixture) CreateVolume(_ context.Context, ref runtime.Dock
 		return runtime.DockerVolume{}, runtime.ErrDockerCreateNotAttempted
 	}
 	value := runtime.DockerVolume{Name: ref.Name, Driver: "local", Labels: ref.Labels}
+	if faultSelects(d.ambiguous, role) {
+		if d.lateVolumes == nil {
+			d.lateVolumes = map[string]runtime.DockerVolume{}
+		}
+		d.lateVolumes[ref.Name] = value
+		return runtime.DockerVolume{}, context.DeadlineExceeded
+	}
 	d.volumes[ref.Name] = value
 	return value, nil
 }
@@ -322,6 +342,14 @@ func (d *filteredDaemonFixture) RemoveVolume(_ context.Context, ref runtime.Dock
 	if faultSelects(d.refuseRemoval, role) {
 		return errors.New("fixture removal unknown")
 	}
+	// Docker refuses to remove a volume any container still has, running or not.
+	for _, container := range d.containers {
+		for _, mount := range container.Mounts {
+			if mount.Type == "volume" && mount.Name == ref.Name {
+				return errors.New("fixture volume is in use")
+			}
+		}
+	}
 	delete(d.volumes, ref.Name)
 	return nil
 }
@@ -333,9 +361,6 @@ func (d *filteredDaemonFixture) CreateContainer(_ context.Context, spec runtime.
 	d.log = append(d.log, "create:"+role)
 	if faultSelects(d.notAttempted, role) {
 		return "", runtime.ErrDockerCreateNotAttempted
-	}
-	if faultSelects(d.ambiguous, role) {
-		return "", errors.New("fixture ambiguous create")
 	}
 	hash := sha256.Sum256([]byte(spec.Ref.Name))
 	id := hex.EncodeToString(hash[:])
@@ -386,6 +411,13 @@ func (d *filteredDaemonFixture) CreateContainer(_ context.Context, spec runtime.
 			dest, constraints, _ := strings.Cut(spec.Options[i], ":")
 			v.Tmpfs[dest] = constraints
 		}
+	}
+	if faultSelects(d.ambiguous, role) {
+		if d.lateContainers == nil {
+			d.lateContainers = map[string]runtime.DockerContainer{}
+		}
+		d.lateContainers[spec.Ref.Name] = v
+		return "", context.DeadlineExceeded
 	}
 	d.containers[spec.Ref.Name] = v
 	if d.created == nil {

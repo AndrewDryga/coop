@@ -419,6 +419,91 @@ func TestRecoverNetworkRunsProvesAbsenceAndKeepsFailuresPending(t *testing.T) {
 	})
 }
 
+// Docker can finish a create after its client gave up. Under load a filtered launch's controller
+// create timed out, cleanup found no controller and recorded it gone, and Docker created it a moment
+// later, holding the ipc volume that recovery then failed to remove on every pass. A create with no
+// known outcome is possibly present: cleanup leaves it, and the volumes it could hold, open in the
+// record, and recovery removes whatever Docker finished.
+func TestFilteredCreateThatFinishesAfterItsTimeoutIsRemovedLater(t *testing.T) {
+	for _, role := range []string{"controller", "guard", "ipc"} {
+		t.Run(role, func(t *testing.T) {
+			f, d := filteredFixture(t)
+			d.ambiguous = role
+			if _, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard); !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("launch = %v, want the create's timeout", err)
+			}
+			if _, err := f.cleanup("launch_failed"); err == nil || !strings.Contains(err.Error(), "still creating this run's "+role) {
+				t.Fatalf("cleanup = %v, want it to say the %s may still appear", err, role)
+			}
+			record, err := f.store.Execution(f.record.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state := recoveredResource(record, role).State; state != "planned" {
+				t.Fatalf("cleanup recorded the %s %s before anything proved it absent", role, state)
+			}
+			if record.Receipt == nil || record.Receipt.Cleanup != "pending" {
+				t.Fatalf("receipt = %+v, want cleanup pending", record.Receipt)
+			}
+
+			d.finishLateCreates()
+			departSupervisor(t, f.store, f.record.ID)
+			evidence, err := networkstate.OpenEvidence(f.store.Path(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = evidence.Close() })
+			connect := func(context.Context, string) (recoverDocker, string, error) { return d, "fixture-daemon", nil }
+			results, err := recoverNetworkRuns(context.Background(), evidence, f.record.ID, connect)
+			if err != nil || len(results) != 1 || len(results[0].Failures) != 0 || len(results[0].Pending) != 0 || !slices.Contains(results[0].Removed, role) {
+				t.Fatalf("recovery = %+v, %v; want the late %s removed and nothing pending", results, err, role)
+			}
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			if len(d.containers) != 0 || len(d.volumes) != 0 {
+				t.Fatalf("recovery left %d container(s) and %d volume(s)", len(d.containers), len(d.volumes))
+			}
+		})
+	}
+}
+
+// A record written by a cleanup that took a timed-out create's absence as proof names the controller
+// gone while Docker holds it and the ipc volume it mounts. Recovery looks every container up by the
+// run's names and labels before it removes a volume, so it removes the controller, then the volume.
+func TestRecoverNetworkRunsRemovesAContainerItsRecordCallsGone(t *testing.T) {
+	f, d, evidence, connect := recoveryFixture(t)
+	ctx := context.Background()
+	d.mu.Lock()
+	for _, role := range []string{"agent", "guard"} {
+		delete(d.containers, networkResourceRef(f.record, role).Name)
+	}
+	delete(d.volumes, networkResourceRef(f.record, "observations").Name)
+	d.mu.Unlock()
+	for _, role := range []string{"agent", "guard", "controller", "observations"} {
+		record, err := evidence.Execution(f.record.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, record.DaemonID, role, networkResourceRef(record, role).Name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	departSupervisor(t, f.store, f.record.ID)
+	results, err := recoverNetworkRuns(ctx, evidence, f.record.ID, connect)
+	if err != nil || len(results) != 1 {
+		t.Fatalf("recovery = %+v, %v", results, err)
+	}
+	if result := results[0]; len(result.Failures) != 0 || len(result.Pending) != 0 || !slices.Equal(result.Removed, []string{"controller", "ipc"}) ||
+		result.RemovedContainers != 1 || result.RemovedVolumes != 1 {
+		t.Fatalf("recovery = %+v, want the controller removed and then the volume it held", result)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.containers) != 0 || len(d.volumes) != 0 {
+		t.Fatalf("recovery left %d container(s) and %d volume(s)", len(d.containers), len(d.volumes))
+	}
+}
+
 // Recovery removes on the daemon the run recorded, and only there: another
 // daemon answering that endpoint owns different containers with the same names.
 func TestRecoverNetworkRunsRefusesAnotherDaemon(t *testing.T) {
