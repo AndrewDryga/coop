@@ -60,7 +60,7 @@ after upgrading Docker or co:op, or when troubleshooting network setup:
       ✓ the cloud metadata address is blocked
       ✓ DNS does not resolve unapproved domains
 
-    ✓ All 5 checks passed — this host is ready for filtered runs
+    ✓ All 5 checks passed. This host is ready for filtered runs
 
 If a check fails, co:op shows the error and the checks that passed before it. Later checks are
 not reported as passed. The output ends with `✗ this host is not ready for filtered runs`
@@ -173,8 +173,6 @@ grant is not. Custom provider base URLs are refused.
 Offline runs receive no provider keys and do not start a broker. Online provider runs need
 Docker with an ordinary bridge or a project services network. Host networking, arbitrary joins
 to another container's network, and Apple's `container` runtime do not support this setup.
-Native read-only/bare runs support only Claude. Remote restricted jobs cannot use filtered
-networking.
 
 ## A client's own downloads
 
@@ -458,9 +456,9 @@ a clean run. `--json` includes every field.
 At the end of an interactive filtered run, co:op finalizes the network record and prints the
 same report on stderr. It appears under `Networking stats:`, with each destination's
 totals on its own row. The report follows the agent's output without a tool prefix. First,
-co:op says why the box stopped: `The Coop box has stopped — main process exited with status 0`,
-or `— interrupted by Ctrl-C` when a signal reached `coop`. It does not infer an interruption
-from the exit status alone.
+co:op says why the box stopped, as in `The Coop box has stopped: main process exited with status
+0.` When Ctrl-C reached `coop`, the reason is `interrupted by Ctrl-C`. It does not infer an
+interruption from the exit status alone.
 
 The sections shown before the agent starts also have no prefix: `Protecting secrets`,
 `Configuring network access` with each provider's endpoints, `Applied N approved network rules`

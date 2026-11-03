@@ -594,8 +594,8 @@ fallback list and can switch providers or accounts when the current target reach
 <li>the per-user global directory <code>~/.config/coop/presets/</code>, which <code>COOP_PRESETS_DIR</code> overrides</li>
 </ol>
 <p>A global preset such as <code>frontier</code> works across repositories without symlinks. If a repository
-has a preset with the same name, Coop uses that copy alone; it does not merge the two. <code>coop presets</code>
-marks presets from the global directory as <code>(global)</code>. <code>coop presets init</code> creates presets in the
+has a preset with the same name, Coop uses that copy alone; it does not merge the two. The SOURCE
+column of <code>coop presets</code> says <code>project</code> or <code>global</code>. <code>coop presets init</code> creates presets in the
 repository. To create a global preset, write it in the global directory yourself.</p>
 <h3 id="what-coop-generates">What co:op generates</h3>
 <p>Coop reads the YAML and tells the lead which roles are available, when to use them and how to

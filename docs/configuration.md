@@ -188,13 +188,15 @@ Commands use these exit codes so CI and scripts can check the result without par
 | `0` | Success. |
 | `1` | A failure, or findings, like `coop check-secrets` on a hit. |
 | `2` | A usage error: an unknown command or flag, or bad arguments. |
-| `3` | `coop loop` only: it stopped with a task blocked on a human decision. |
+| `3` | `coop loop` stopped with a task blocked on a human decision. `coop sessions check` found data this build would convert. `coop sessions quiescence` found queued or running work. |
+| `4` | `coop sessions check` only: this build can't use the session data. |
 | `130` | `coop loop` only: Ctrl-C interrupted it before the final verdict. |
 
 If final verification is enabled and fails, `coop loop` keeps the completed work and exits with
 a nonzero code. It uses `1` unless the outcome is blocked work only, which takes precedence.
 An intentional `--max-tasks N` pause exits successfully but leaves final review pending. See
-[the loop's exit codes](loop.md#exit-codes).
+[the loop's exit codes](loop.md#exit-codes) and
+[upgrading a worker](session-api.md#upgrading-a-worker) for `coop sessions check`.
 
 ## JSON output
 

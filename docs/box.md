@@ -69,8 +69,8 @@ containers retain protection for a later restart. Coop removes kernel state only
 admission's consumers are gone. After a VM reboot, the launch and healthcheck guards refuse to run
 image code with an old admission; start the service through Coop to obtain fresh protection.
 
-Templates (`*.example`, `*.sample`, `*.template`) stay visible. The defaults are compiled into
-co:op (`internal/shadowpath/shadowpath.go`).
+Templates (`*.example`, `*.sample`, `*.template`) stay visible. The default patterns are built
+into co:op.
 
 ### Your own paths: .coopignore
 
@@ -606,10 +606,15 @@ port links on stderr.
 ## Keeping the box current
 
 ```bash
-coop update              # self-update coop, then rebuild the image fresh
+coop update              # self-update coop, then prepare this project's box image
 coop update --self-only  # just upgrade the coop binary
-coop update --box-only   # just rebuild the image (the old behavior)
+coop update --box-only   # just prepare this project's box image
 ```
+
+`coop update` prepares the image for the project's network mode, using the definitions of the
+co:op version it installed. A filtered project, the default, keeps co:op's pinned client base. An
+open or offline project gets fresh OS packages. See
+[stable and fresh rebuilds](#stable-and-fresh-rebuilds).
 
 If GitHub has a newer release, `coop update` downloads its versioned archive and checksum,
 verifies the archive and replaces the `coop` binary in one atomic operation. The running process
@@ -618,10 +623,10 @@ can finish safely; the new binary takes effect on your next `coop` run.
 When the binary is not replaced:
 
 - A dev or source build, or a binary that is already current or newer, skips the self-update with a
-  note and still rebuilds the image.
+  note and still prepares the image.
 - If `coop` is installed somewhere it cannot write (a package-manager prefix), the self-update
   fails with an error that tells you to update co:op with the tool that installed it. `coop update`
-  still rebuilds the image, then exits 1. `coop update --self-only` stops at the error.
+  still prepares the image, then exits 1. `coop update --self-only` stops at the error.
 
 ### A newer co:op repairs its own box
 
@@ -643,9 +648,8 @@ so they do not trigger this repair.
 | Command | Base image | Result |
 | --- | --- | --- |
 | `coop build` (stable) | fixed to a specific image digest | rebuilding uses the same OS and runtime |
-| `coop update` (fresh) | uses the current `node:24-slim` image and rebuilds with `--pull --no-cache` | updates the OS packages and runtime to the newest available versions |
-
-To change the pinned base for future builds, update `pinnedNodeImage` in `internal/box/image.go`.
+| `coop update`, filtered project | co:op's pinned client base | the OS and runtime change only with a co:op release |
+| `coop update`, open or offline project (fresh) | uses the current `node:24-slim` image and rebuilds with `--pull --no-cache` | updates the OS packages and runtime to the newest available versions |
 
 ### Agent clients
 

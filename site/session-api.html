@@ -616,7 +616,9 @@ it leaves it out of the next hello. The controller can distinguish an unsupporte
 export from a supported report with no observed activity.</p>
 <p>Worker protocol v2 reports supported features, runtime capacity and optional disk measurements.
 It does not distribute lists of policies or repositories. Each controller job specifies its own
-exact code and execution settings, which cannot change after submission.</p>
+exact code and execution settings, which cannot change after submission. The shared
+<a href="https://github.com/AndrewDryga/coop/blob/main/testdata/protocol/coop-worker-v2.json" target="_blank" rel="nofollow noopener">protocol fixture</a> shows one worker poll and the
+controller&#39;s reply.</p>
 <h3 id="sessions">Sessions</h3>
 <p>Your controller creates <code>create-session.json</code> with these fields:</p>
 <ul>
@@ -625,9 +627,8 @@ exact code and execution settings, which cannot change after submission.</p>
 <li><code>expected_job_digest</code>: the SHA-256 digest of the job&#39;s canonical representation.</li>
 <li><code>controller_tools</code> (optional): connects the session to your controller&#39;s authenticated tool endpoint.</li>
 </ul>
-<p>For exact fields and validation, see the shared
-<a href="https://github.com/AndrewDryga/coop/blob/main/testdata/protocol/coop-worker-v2.json" target="_blank" rel="nofollow noopener">protocol fixture</a> and the
-<a href="https://github.com/AndrewDryga/coop/blob/main/internal/workerproto/job.go" target="_blank" rel="nofollow noopener">JobSpec definition</a>.</p>
+<p>co:op refuses a job that is missing a required field, has an unknown field or would change when
+co:op normalizes it. The error is <code>invalid_request</code>, and its detail names the problem.</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Sessions code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
   -H &#39;Content-Type: application/json&#39; \
   -H &#39;Idempotency-Key: controller:create:01J...&#39; \
@@ -693,9 +694,13 @@ variables added for the check. There is no local policy name, policy catalog, se
 selector or worker JSON file.</p>
 <p>Send version-2 jobs only to workers that report <code>job-setup:2</code>. A new connector can still be
 connected to an old daemon, so the connector checks the running daemon before reporting support.
-Test your JobSpec encoder against the shared digest examples in <code>internal/workerproto/job_test.go</code>.
 Remote reviews use the submitted job&#39;s check, not the worker&#39;s <code>COOP_GATE</code> or the repository&#39;s
 <code>gate:</code>.</p>
+<p>co:op computes the job digest itself. It writes the job&#39;s JSON the way Go&#39;s <code>encoding/json</code>
+does: no extra whitespace, object keys in sorted order, and <code>&amp;</code>, <code>&lt;</code> and <code>&gt;</code> inside strings
+escaped as <code>\u0026</code>, <code>\u003c</code> and <code>\u003e</code>. The digest is the SHA-256 of those bytes, in
+lowercase hex. If it differs from <code>expected_job_digest</code>, co:op refuses the session with
+<code>invalid_request</code>.</p>
 <p>co:op does not fill in missing execution settings for v1 jobs. Historical sessions and
 evidence stay readable, but their turns, reviews and interrupted creates can&#39;t run until
 they are resubmitted as v2 jobs.</p>

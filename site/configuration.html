@@ -457,7 +457,11 @@ matches them against paths in the fork&#39;s own tree.</p>
 </tr>
 <tr>
 <td><code>3</code></td>
-<td><code>coop loop</code> only: it stopped with a task blocked on a human decision.</td>
+<td><code>coop loop</code> stopped with a task blocked on a human decision. <code>coop sessions check</code> found data this build would convert. <code>coop sessions quiescence</code> found queued or running work.</td>
+</tr>
+<tr>
+<td><code>4</code></td>
+<td><code>coop sessions check</code> only: this build can&#39;t use the session data.</td>
 </tr>
 <tr>
 <td><code>130</code></td>
@@ -468,7 +472,8 @@ matches them against paths in the fork&#39;s own tree.</p>
 <p>If final verification is enabled and fails, <code>coop loop</code> keeps the completed work and exits with
 a nonzero code. It uses <code>1</code> unless the outcome is blocked work only, which takes precedence.
 An intentional <code>--max-tasks N</code> pause exits successfully but leaves final review pending. See
-<a href="loop.html#exit-codes">the loop&#39;s exit codes</a>.</p>
+<a href="loop.html#exit-codes">the loop&#39;s exit codes</a> and
+<a href="session-api.html#upgrading-a-worker">upgrading a worker</a> for <code>coop sessions check</code>.</p>
 </section><section class="doc-section reference-section" id="json-output"><h2>JSON output</h2>
 <p>Most commands that change state report success or failure through exit codes rather than
 <code>--json</code>. Read-only commands offer JSON when other tools need the current state. The two main

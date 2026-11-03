@@ -488,8 +488,8 @@ Coop looks for presets in these locations, using the repository copy first:
 2. the per-user global directory `~/.config/coop/presets/`, which `COOP_PRESETS_DIR` overrides
 
 A global preset such as `frontier` works across repositories without symlinks. If a repository
-has a preset with the same name, Coop uses that copy alone; it does not merge the two. `coop presets`
-marks presets from the global directory as `(global)`. `coop presets init` creates presets in the
+has a preset with the same name, Coop uses that copy alone; it does not merge the two. The SOURCE
+column of `coop presets` says `project` or `global`. `coop presets init` creates presets in the
 repository. To create a global preset, write it in the global directory yourself.
 
 ### What co:op generates

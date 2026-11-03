@@ -143,8 +143,8 @@ exits, access to the protected share is denied until the workload is retired. St
 containers retain protection for a later restart. Coop removes kernel state only after all of that
 admission&#39;s consumers are gone. After a VM reboot, the launch and healthcheck guards refuse to run
 image code with an old admission; start the service through Coop to obtain fresh protection.</p>
-<p>Templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code>) stay visible. The defaults are compiled into
-co:op (<code>internal/shadowpath/shadowpath.go</code>).</p>
+<p>Templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code>) stay visible. The default patterns are built
+into co:op.</p>
 <h3 id="your-own-paths-coopignore">Your own paths: .coopignore</h3>
 <p>Add a <code>.coopignore</code> at the repo root to hide your own paths:</p>
 <div class="reference-code-frame"><pre class="code" role="region" aria-label="Your own paths: .coopignore code example" tabindex="0"><code class="language-gitignore"># a file name, matched at any depth
@@ -584,20 +584,24 @@ workspace&#39;s assigned URL for configuration and discovery.</li>
 stays the same, so run the server again.</li>
 </ul>
 </section><section class="doc-section reference-section" id="keeping-the-box-current"><h2>Keeping the box current</h2>
-<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Keeping the box current code example" tabindex="0"><code class="language-bash">coop update              # self-update coop, then rebuild the image fresh
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Keeping the box current code example" tabindex="0"><code class="language-bash">coop update              # self-update coop, then prepare this project&#39;s box image
 coop update --self-only  # just upgrade the coop binary
-coop update --box-only   # just rebuild the image (the old behavior)
+coop update --box-only   # just prepare this project&#39;s box image
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><code>coop update</code> prepares the image for the project&#39;s network mode, using the definitions of the
+co:op version it installed. A filtered project, the default, keeps co:op&#39;s pinned client base. An
+open or offline project gets fresh OS packages. See
+<a href="#stable-and-fresh-rebuilds">stable and fresh rebuilds</a>.</p>
 <p>If GitHub has a newer release, <code>coop update</code> downloads its versioned archive and checksum,
 verifies the archive and replaces the <code>coop</code> binary in one atomic operation. The running process
 can finish safely; the new binary takes effect on your next <code>coop</code> run.</p>
 <p>When the binary is not replaced:</p>
 <ul>
 <li>A dev or source build, or a binary that is already current or newer, skips the self-update with a
-note and still rebuilds the image.</li>
+note and still prepares the image.</li>
 <li>If <code>coop</code> is installed somewhere it cannot write (a package-manager prefix), the self-update
 fails with an error that tells you to update co:op with the tool that installed it. <code>coop update</code>
-still rebuilds the image, then exits 1. <code>coop update --self-only</code> stops at the error.</li>
+still prepares the image, then exits 1. <code>coop update --self-only</code> stops at the error.</li>
 </ul>
 <h3 id="a-newer-coop-repairs-its-own-box">A newer co:op repairs its own box</h3>
 <p>If your installed co:op uses a different box definition from the current shared image, the next
@@ -629,13 +633,17 @@ start before you repeat the same command.</li>
 <td>rebuilding uses the same OS and runtime</td>
 </tr>
 <tr>
-<td><code>coop update</code> (fresh)</td>
+<td><code>coop update</code>, filtered project</td>
+<td>co:op&#39;s pinned client base</td>
+<td>the OS and runtime change only with a co:op release</td>
+</tr>
+<tr>
+<td><code>coop update</code>, open or offline project (fresh)</td>
 <td>uses the current <code>node:24-slim</code> image and rebuilds with <code>--pull --no-cache</code></td>
 <td>updates the OS packages and runtime to the newest available versions</td>
 </tr>
 </tbody>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>To change the pinned base for future builds, update <code>pinnedNodeImage</code> in <code>internal/box/image.go</code>.</p>
 <h3 id="agent-clients">Agent clients</h3>
 <p>All standard co:op boxes use the same fixed versions of the agent CLIs and ACP adapters,
 including plain runs, filtered runs, loops, presets and editor sessions. These are the versions

@@ -137,7 +137,7 @@ Checking filtered access:
   ✓ the cloud metadata address is blocked
   ✓ DNS does not resolve unapproved domains
 
-✓ All 5 checks passed — this host is ready for filtered runs
+✓ All 5 checks passed. This host is ready for filtered runs
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
 <p>If a check fails, co:op shows the error and the checks that passed before it. Later checks are
 not reported as passed. The output ends with <code>✗ this host is not ready for filtered runs</code>
@@ -312,9 +312,7 @@ Plain native Gemini OAuth credentials are supported; an encrypted-only cache wit
 grant is not. Custom provider base URLs are refused.</p>
 <p>Offline runs receive no provider keys and do not start a broker. Online provider runs need
 Docker with an ordinary bridge or a project services network. Host networking, arbitrary joins
-to another container&#39;s network, and Apple&#39;s <code>container</code> runtime do not support this setup.
-Native read-only/bare runs support only Claude. Remote restricted jobs cannot use filtered
-networking.</p>
+to another container&#39;s network, and Apple&#39;s <code>container</code> runtime do not support this setup.</p>
 </section><section class="doc-section reference-section" id="a-clients-own-downloads"><h2>A client&#39;s own downloads</h2>
 <p>A client may need to download public files as well as call its model API. These downloads also
 go through co:op, without using your account credentials. For example, Codex fetches its curated
@@ -616,9 +614,8 @@ a clean run. <code>--json</code> includes every field.</p>
 <p>At the end of an interactive filtered run, co:op finalizes the network record and prints the
 same report on stderr. It appears under <code>Networking stats:</code>, with each destination&#39;s
 totals on its own row. The report follows the agent&#39;s output without a tool prefix. First,
-co:op says why the box stopped: <code>The Coop box has stopped — main process exited with status 0</code>,
-or <code>— interrupted by Ctrl-C</code> when a signal reached <code>coop</code>. It does not infer an interruption
-from the exit status alone.</p>
+co:op says why the box stopped, as in <code>The Coop box has stopped: main process exited with status 0.</code> When Ctrl-C reached <code>coop</code>, the reason is <code>interrupted by Ctrl-C</code>. It does not infer an
+interruption from the exit status alone.</p>
 <p>The sections shown before the agent starts also have no prefix: <code>Protecting secrets</code>,
 <code>Configuring network access</code> with each provider&#39;s endpoints, <code>Applied N approved network rules</code>
 and the configured MCP servers, then <code>✓ Everything else blocked</code> and <code>Starting &lt;agent&gt;</code>.</p>

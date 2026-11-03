@@ -575,7 +575,9 @@ export from a supported report with no observed activity.
 
 Worker protocol v2 reports supported features, runtime capacity and optional disk measurements.
 It does not distribute lists of policies or repositories. Each controller job specifies its own
-exact code and execution settings, which cannot change after submission.
+exact code and execution settings, which cannot change after submission. The shared
+[protocol fixture](../testdata/protocol/coop-worker-v2.json) shows one worker poll and the
+controller's reply.
 
 ### Sessions
 
@@ -586,9 +588,8 @@ Your controller creates `create-session.json` with these fields:
 - `expected_job_digest`: the SHA-256 digest of the job's canonical representation.
 - `controller_tools` (optional): connects the session to your controller's authenticated tool endpoint.
 
-For exact fields and validation, see the shared
-[protocol fixture](../testdata/protocol/coop-worker-v2.json) and the
-[JobSpec definition](../internal/workerproto/job.go).
+co:op refuses a job that is missing a required field, has an unknown field or would change when
+co:op normalizes it. The error is `invalid_request`, and its detail names the problem.
 
 ```bash
 curl --unix-socket "$SOCKET" \
@@ -646,9 +647,14 @@ selector or worker JSON file.
 
 Send version-2 jobs only to workers that report `job-setup:2`. A new connector can still be
 connected to an old daemon, so the connector checks the running daemon before reporting support.
-Test your JobSpec encoder against the shared digest examples in `internal/workerproto/job_test.go`.
 Remote reviews use the submitted job's check, not the worker's `COOP_GATE` or the repository's
 `gate:`.
+
+co:op computes the job digest itself. It writes the job's JSON the way Go's `encoding/json`
+does: no extra whitespace, object keys in sorted order, and `&`, `<` and `>` inside strings
+escaped as `\u0026`, `\u003c` and `\u003e`. The digest is the SHA-256 of those bytes, in
+lowercase hex. If it differs from `expected_job_digest`, co:op refuses the session with
+`invalid_request`.
 
 co:op does not fill in missing execution settings for v1 jobs. Historical sessions and
 evidence stay readable, but their turns, reviews and interrupted creates can't run until

@@ -251,7 +251,7 @@ box:
         <p>In filtered mode, those services run on a private network with no direct internet access. Their HTTPS requests pass through the filter. If you change a service’s definition, review and approve it again.</p>
         <p><code>coop up</code> prints the service names from Compose when they are ready. If it cannot read the service list, it starts nothing and reports the problem.</p>
         <p>Agents can change data in services they can reach, so use disposable development databases. Deleting their volumes cannot be undone; co:op asks you to confirm first.</p>
-        <p><code>coop update</code> updates co:op and rebuilds the box with fresh system packages. To rebuild only the box, use <code>coop update --box-only</code>. Use <code>coop build</code> for a rebuild from the pinned base, or <code>coop build --egress filtered</code> for a filtered project. These commands keep the agent versions fixed to those checked for your co:op release.</p>
+        <p><code>coop update</code> updates co:op and prepares the box for the project’s network mode. A filtered project, the default, keeps co:op’s pinned client base. Open and offline projects get fresh system packages. To update only the box, use <code>coop update --box-only</code>. Use <code>coop build</code> to rebuild from the pinned base. These commands keep the agent versions fixed to those checked for your co:op release.</p>
       </section>
 
       <section class="doc-section" id="credentials">

@@ -115,9 +115,13 @@ in to, so sign in first.
 Each agent starts with its own "don't stop to ask" flag on (`--dangerously-skip-permissions`,
 `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--permission-mode bypassPermissions`).
 An agent that goes off the rails works on the repo you gave it, which you can restore from Git,
-and the rest of your computer stays out of reach. Anything after the agent's name goes to the agent, so `coop claude --continue` resumes
-Claude's last session in the box. Codex is the exception: its `-p` picks a profile, so run a
-one-shot prompt with `coop codex exec "…"`.
+and the rest of your computer stays out of reach. Arguments after the agent's name go to the
+agent, so `coop claude --continue` resumes Claude's last session in the box. Codex is the
+exception: its `-p` picks a profile, so run a one-shot prompt with `coop codex exec "…"`.
+
+co:op answers `--help`, `-h` and a leading `help` or `login` itself, and takes its own options
+such as `--peer` and `--egress`. Put `--` before them to pass them to the agent, as in
+`coop claude -- --help`.
 
 Other ways in:
 
@@ -141,7 +145,9 @@ coop run -- npm test                          # any command in the box
 - There are no Git credentials inside. The agent commits in your name, and you decide what leaves
   your computer.
 
-`coop doctor` checks all of this against the real box on your computer. Read more in
+`coop doctor` checks secret hiding, host access, credential isolation and offline networking
+against the real box on your computer. `coop net setup` checks that this computer can enforce
+filtered networking, and the first filtered run does that check for you. Read more in
 [the guide](https://coop.dryga.com/docs.html#sandbox), [the box](docs/box.md) and
 [networking](docs/networking.md).
 
@@ -194,10 +200,11 @@ this computer. Optional [provider reports](docs/usage-reports.md) show API spend
 
 ## Your project's tools and services
 
-If your repo pins versions in `.tool-versions`, `coop init` builds them into the box's image. For
-anything more, describe the image in `.agent/Dockerfile`. Postgres, Redis and anything else in your
-Compose file run beside the box, each in its own container. With filtered networking they share a
-private network with no direct internet. `coop up` starts them, `coop down` stops them and keeps their data, and
+If your repo pins versions in `.tool-versions`, `coop init` writes an `.agent/Dockerfile` that
+installs them, and `coop build` builds it into the box's image. For anything more, edit or write
+`.agent/Dockerfile` yourself. Postgres, Redis and anything else in your Compose file run beside
+the box, each in its own container. With filtered networking they share a private network with
+no direct internet. `coop up` starts them, `coop down` stops them and keeps their data, and
 `coop down --delete-volumes` also deletes their data.
 
 See [the box](docs/box.md).
