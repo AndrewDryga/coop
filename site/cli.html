@@ -1479,14 +1479,20 @@ EXAMPLES
        coop net check &lt;ip&gt; --run &lt;run&gt; --icmp
 
 OPTIONS
-  --run &lt;run&gt;               use that run&#39;s rules
-  --port &lt;n&gt;                choose a port; defaults to the URL&#39;s port or 443
-  --protocol &lt;tls|tcp|udp&gt;  choose the connection type
-  --icmp                    check an ICMP echo request to an IP address
-  --json                    print the answer for scripts
+  --run &lt;run&gt;           use that run&#39;s rules
+  --port &lt;n&gt;            choose a port; defaults to the URL&#39;s port or 443
+  --protocol &lt;tcp|udp&gt;  choose the connection type for an IP address
+  --icmp                check an ICMP echo request to an IP address
+  --json                print the answer for scripts
 
   Without --run, checks this project&#39;s approved access for a new run.
   Hostnames use TLS. IP addresses require a recorded run and connection type.
+
+EXIT STATUS
+  0  the rules allow the connection
+  1  the check could not finish
+  2  invalid arguments
+  3  the rules block the connection, or new runs need approval first
 
 EXAMPLES
   coop net check https://example.com
@@ -1498,6 +1504,8 @@ OPTIONS
 
   Without --run, finds the newest matching block in this project&#39;s runs.
   Shows a rule you can copy when the record proves the remote address and port.
+  A blocked DNS lookup records no port, so it shows TLS on port 443 as the
+  likely fix.
   An exact event ID can replace the host when --run is supplied.
 
 EXAMPLES
@@ -1546,7 +1554,8 @@ Restore approval:
 Requires Docker to be running.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-net-recover-clean-up-interrupted-network-runs"><h2>coop net recover: clean up interrupted network runs</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net recover: clean up interrupted network runs code example" tabindex="0"><code>Usage: coop net recover [&lt;run&gt;]
 
   Removes containers and temporary volumes left by an interrupted run.
-  Without an ID, checks every run waiting for cleanup on this host.
+  Without an ID, checks every run waiting for cleanup on this host and
+  reports the ones it cleaned up or could not.
   Running boxes and resources Coop cannot safely identify are left alone.
 
   Coop normally retries this cleanup automatically.

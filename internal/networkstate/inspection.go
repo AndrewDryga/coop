@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkview"
 )
 
@@ -46,6 +47,21 @@ type Inspection struct {
 	ReadAt               time.Time                  `json:"read_at"`
 	Current              *CurrentNetwork            `json:"current"`
 	Cleanup              string                     `json:"cleanup_outcome"`
+	// AddressRules is the rule each raw AddressGrants row counted against, by grant ID, from this
+	// run's own captured policy, so a person reads a destination instead of a keyed ID. Only a view
+	// that includes destinations has it, and it never crosses a wire: a rule names a destination
+	// as surely as its address does.
+	AddressRules map[string]egress.Rule `json:"-"`
+}
+
+// AddressRules maps each grant of a captured policy to its rule: the names raw traffic rows are
+// counted against. A launcher that holds its run's policy names its rows the same way.
+func AddressRules(policy egress.Snapshot) map[string]egress.Rule {
+	out := make(map[string]egress.Rule, len(policy.Grants))
+	for _, grant := range policy.Grants {
+		out[grant.ID] = grant.Rule
+	}
+	return out
 }
 
 // Inspect projects retained evidence at the caller's read time. It reads no
@@ -59,7 +75,16 @@ func (e *Evidence) Inspect(id string, now time.Time, exportDestinations bool) (I
 	if err != nil {
 		return Inspection{}, err
 	}
-	return inspect(record, now, exportDestinations)
+	out, err := inspect(record, now, exportDestinations)
+	if err != nil || !exportDestinations || len(record.Snapshot.AddressGrants) == 0 {
+		return out, err
+	}
+	// Naming is a courtesy, never a decision: a policy copy that retention removed, or one that
+	// does not verify, leaves the rows under their keyed IDs rather than failing the read.
+	if policy, err := e.recordedPolicy(record); err == nil {
+		out.AddressRules = AddressRules(policy)
+	}
+	return out, nil
 }
 
 // InspectExecution is Inspect for a record the caller already holds — the

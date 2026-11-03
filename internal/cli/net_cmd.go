@@ -143,6 +143,11 @@ func (a *app) cmdNetRecover(args []string) (int, error) {
 	if err != nil && !errors.As(err, &unreadable) {
 		return 1, err
 	}
+	if runID == "" {
+		// A run whose own coop still owns it, here or on another computer, is that process's to
+		// clean up, so an unnamed pass does not list it: it reports what it cleaned or could not.
+		results = slices.DeleteFunc(results, func(result box.NetworkRecovery) bool { return result.Live })
+	}
 	if len(results) == 0 && unreadable == nil {
 		ui.Note("No interrupted network runs need cleanup.")
 		return 0, nil
@@ -382,7 +387,7 @@ func writeNetAccess(w io.Writer, p ui.Palette, access box.NetworkAccess) {
 	if access.Mode == egress.Filtered && access.Approval != nil && len(access.Approval.Envelope) != 0 {
 		fmt.Fprintf(w, "\n%s\n", p.Bold(p.Cyan("APPROVED NETWORK RULES")))
 		for _, rule := range access.Approval.Envelope {
-			fmt.Fprintf(w, "  %s\n", netRuleText(rule))
+			fmt.Fprintf(w, "  %s\n", networkreport.RuleText(rule))
 		}
 	}
 	fmt.Fprintf(w, "\nFor more details see:\n  %s\n", p.Cyan("coop help net"))
@@ -487,13 +492,13 @@ func netRuleDiffRows(approved, add, remove []egress.Rule, labels netRuleLabels) 
 			if skip != nil && skip(rule) {
 				continue
 			}
-			rows = append(rows, netRuleRow{marker: marker, text: netRuleText(rule), label: label})
+			rows = append(rows, netRuleRow{marker: marker, text: networkreport.RuleText(rule), label: label})
 		}
 		slices.SortStableFunc(rows, func(x, y netRuleRow) int { return strings.Compare(x.text, y.text) })
 		return rows
 	}
 	retained := group(approved, " ", labels.retained, func(rule egress.Rule) bool {
-		return slices.ContainsFunc(remove, func(r egress.Rule) bool { return netRuleText(r) == netRuleText(rule) })
+		return slices.ContainsFunc(remove, func(r egress.Rule) bool { return networkreport.RuleText(r) == networkreport.RuleText(rule) })
 	})
 	rows := append(retained, group(add, "+", labels.added, nil)...)
 	return append(rows, group(remove, "-", labels.removed, nil)...)
@@ -539,41 +544,6 @@ func netRuleLegend(p ui.Palette, rows []netRuleRow) string {
 		return ""
 	}
 	return " " + p.Dim("("+strings.Join(keys, ", ")+")")
-}
-
-// netRuleText renders a rule the way a destination row reads — the name or
-// address, its ports, and the transport — so what a run reached and what a
-// project may reach look like the same thing.
-func netRuleText(rule egress.Rule) string {
-	var target string
-	switch {
-	case rule.To.Domain != "":
-		target = rule.To.Domain
-	case rule.To.IP != "":
-		target = rule.To.IP
-	case rule.To.CIDR != "":
-		target = rule.To.CIDR
-	case rule.To.Service != "":
-		target = "service " + rule.To.Service
-	case rule.To.Provider != "":
-		target = rule.To.Provider + " provider access"
-		if len(rule.To.Features) != 0 {
-			target += " (" + strings.Join(rule.To.Features, ", ") + ")"
-		}
-		return target
-	default:
-		target = "(no remote address)"
-	}
-	if len(rule.Ports) != 0 {
-		target += ":" + netPortList(rule.Ports)
-	}
-	if rule.Protocol != "" {
-		target += " · " + networkreport.TransportLabel(rule.Protocol)
-	}
-	if len(rule.Types) != 0 {
-		target += " " + strings.Join(rule.Types, ",")
-	}
-	return target
 }
 
 // ------------------------------------------------------------------ runs ----

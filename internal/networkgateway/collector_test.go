@@ -290,6 +290,50 @@ func TestBlockedDirectSocketIsSampledPolicyEvidenceNotExternalTraffic(t *testing
 	}
 }
 
+// A direct connection to an address this run's resolver answered for one name is that name on a
+// port or transport no rule allows — `curl http://example.com` where only TLS is approved — so the
+// refusal carries the name a person asks `coop net blocked` about. An address two names share, or
+// one the resolver never answered, stays an address: the record cannot say which name was meant.
+func TestBlockedDirectSocketNamesTheHostTheRunResolved(t *testing.T) {
+	c, now := collectorFixture(t)
+	answer := func(name string, failed bool, addresses ...string) {
+		resolution := Resolution{Name: name, Expires: now.Add(time.Minute)}
+		for _, address := range addresses {
+			resolution.Addresses = append(resolution.Addresses, netip.MustParseAddr(address))
+		}
+		entry := cacheEntry{resolution: resolution}
+		if failed {
+			entry.err = Failure("dns_answer_invalid")
+		}
+		c.resolver.cache[name] = entry
+	}
+	answer("example.com", false, "104.20.22.154", "104.20.23.154")
+	answer("shared-a.example.com", false, "198.51.100.7")
+	answer("shared-b.example.com", false, "198.51.100.7")
+	answer("broken.example.com", true, "203.0.113.9")
+	inode := uint64(40)
+	attempt := func(peer string) networkview.Denial {
+		t.Helper()
+		inode++
+		row := SocketRow{UID: 1000, Inode: inode, State: "connecting", Tuple: SocketTuple{Local: netip.MustParseAddrPort("172.17.0.2:32000"), Peer: netip.MustParseAddrPort(peer)}}
+		publishFixture(c, *now, []SocketRow{row})
+		denials := c.Snapshot().Denials
+		return denials[len(denials)-1]
+	}
+	named := attempt("104.20.23.154:80")
+	if named.Name != "example.com" || named.Peer != "104.20.23.154:80" || named.Port == nil || *named.Port != 80 || named.Candidate != nil {
+		t.Fatalf("an attempt at an address the run resolved = %#v; want example.com, its observed peer and no draft", named)
+	}
+	for _, peer := range []string{"198.51.100.7:80", "203.0.113.9:80", "192.0.2.1:80"} {
+		if got := attempt(peer); got.Name != "" {
+			t.Errorf("%s was attributed to %q", peer, got.Name)
+		}
+	}
+	if private, _ := json.Marshal(c.Snapshot().Project(false)); strings.Contains(string(private), "example.com") {
+		t.Fatal("an attributed name leaked through a projection that withholds destinations")
+	}
+}
+
 func TestUnknownOpenAgentSocketOrUnavailableEnforcerIsNotCalledBlocked(t *testing.T) {
 	for _, scenario := range []string{"open", "unavailable"} {
 		t.Run(scenario, func(t *testing.T) {

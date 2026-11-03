@@ -840,9 +840,12 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 				if protectedSocketPeer(row.Tuple.Peer.Addr(), c.resolver.protected) {
 					reason = "protected_destination"
 				}
+				// An address this run's resolver answered for one name is that name on a port or
+				// transport no rule allows (plain HTTP to a TLS-only name), which is what a person
+				// looks the refusal up by. The observed peer stays the evidence beside it.
 				c.denials = append(c.denials, networkview.Denial{ID: c.opaque("socket-attempt", fmt.Sprintf("%s/%s/%d/%d/%d", row.Tuple.Local, row.Tuple.Peer, row.UID, row.Inode, c.inventorySequence)),
 					Source: "socket-inventory", Sequence: c.inventorySequence, Basis: "observed-socket-and-captured-policy", Kind: "direct_tcp_attempt", Reason: reason, Peer: row.Tuple.Peer.String(), Port: &port,
-					DestinationID: c.opaque("peer", row.Tuple.Peer.String()), At: s.AsOf})
+					Name: c.resolver.NameFor(row.Tuple.Peer.Addr()), DestinationID: c.opaque("peer", row.Tuple.Peer.String()), At: s.AsOf})
 				if len(c.denials) > MaxDenialDetails {
 					c.denials = c.denials[1:]
 					c.loseDetail()

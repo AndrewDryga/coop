@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -101,7 +102,7 @@ func WriteRun(w io.Writer, p ui.Palette, view View, inspection networkstate.Insp
 		}
 	}
 	writeOtherEndpoints(w, p, observed)
-	writeRawTraffic(w, observed)
+	writeRawTraffic(w, inspection)
 	writeWarnings(w, p, runExceptions(p, view, inspection))
 	fmt.Fprintf(w, "\n%s\n", p.Dim("Full details: coop net inspect "+view.ID+" --json"))
 }
@@ -290,11 +291,13 @@ func writeOtherEndpoints(w io.Writer, p ui.Palette, observed networkview.Snapsho
 
 // writeRawTraffic shows what each raw rule carried. AddressGrants is per-RULE
 // kernel accounting, not a host list: the filter counts what a grant passed
-// without recording which address inside a CIDR it went to, so no destination
-// is shown and a grant that carried nothing gets no row.
-func writeRawTraffic(w io.Writer, observed networkview.Snapshot) {
+// without recording which address inside a CIDR it went to, so a row names the
+// rule as it reads in the project file — never a host inside it — and a grant
+// that carried nothing gets no row. Only a rule the run's policy no longer
+// names falls back to its keyed ID.
+func writeRawTraffic(w io.Writer, inspection networkstate.Inspection) {
 	var grants []networkview.AddressGrantObservation
-	for _, grant := range observed.AddressGrants {
+	for _, grant := range inspection.Observed.AddressGrants {
 		if grant.Packets != 0 || grant.Bytes != 0 {
 			grants = append(grants, grant)
 		}
@@ -302,10 +305,53 @@ func writeRawTraffic(w io.Writer, observed networkview.Snapshot) {
 	if len(grants) == 0 {
 		return
 	}
-	fmt.Fprintln(w, "\n  Raw traffic — counted per rule, no destination is recorded")
+	fmt.Fprintln(w, "\n  Raw traffic — counted per rule, not per remote address")
 	for _, grant := range grants {
-		fmt.Fprintf(w, "    rule %s · %s · %s\n", ShortID(grant.RuleID), Plural(uint64(grant.Packets), "packet"), ui.Bytes(uint64(grant.Bytes)))
+		label := "rule " + ShortID(grant.RuleID)
+		if rule, ok := inspection.AddressRules[grant.RuleID]; ok {
+			label = RuleText(rule)
+		}
+		fmt.Fprintf(w, "    %s · %s · %s\n", label, Plural(uint64(grant.Packets), "packet"), ui.Bytes(uint64(grant.Bytes)))
 	}
+}
+
+// RuleText renders a rule the way a destination row reads — the name or
+// address, its ports, and the transport — so what a run reached, what a
+// project may reach and what a raw row counted against look like the same thing.
+func RuleText(rule egress.Rule) string {
+	var target string
+	switch {
+	case rule.To.Domain != "":
+		target = rule.To.Domain
+	case rule.To.IP != "":
+		target = rule.To.IP
+	case rule.To.CIDR != "":
+		target = rule.To.CIDR
+	case rule.To.Service != "":
+		target = "service " + rule.To.Service
+	case rule.To.Provider != "":
+		target = rule.To.Provider + " provider access"
+		if len(rule.To.Features) != 0 {
+			target += " (" + strings.Join(rule.To.Features, ", ") + ")"
+		}
+		return target
+	default:
+		target = "(no remote address)"
+	}
+	if len(rule.Ports) != 0 {
+		ports := make([]string, 0, len(rule.Ports))
+		for _, port := range rule.Ports {
+			ports = append(ports, strconv.Itoa(port))
+		}
+		target += ":" + strings.Join(ports, ",")
+	}
+	if rule.Protocol != "" {
+		target += " · " + TransportLabel(rule.Protocol)
+	}
+	if len(rule.Types) != 0 {
+		target += " " + strings.Join(rule.Types, ",")
+	}
+	return target
 }
 
 // WorkloadDestinations groups every proven workload connection by the
@@ -647,7 +693,13 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 	for _, group := range groups {
 		out.rows = append(out.rows, times(group.Label, group.Count))
 	}
-	if len(groups) != 0 && packets != 0 {
+	switch {
+	case len(groups) == 0 || packets == 0:
+	case slices.ContainsFunc(remote, func(denial networkview.Denial) bool { return denial.Kind == "direct_tcp_attempt" }):
+		// The filter counted a direct connection's own packets too, so beside its row the count
+		// is a total: calling it packets with no address recorded would contradict the row above.
+		out.rows = append(out.rows, Plural(packets, "packet")+" "+was(int(min(packets, 2)))+" dropped in all, direct connections included")
+	default:
 		out.rows = append(out.rows, Plural(packets, "raw packet")+" "+was(int(min(packets, 2)))+" blocked with no remote address recorded")
 	}
 	// The action names the thing a human recognizes. Approval guidance is

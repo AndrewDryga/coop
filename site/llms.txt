@@ -1705,14 +1705,20 @@ Usage: coop net check <url-or-host> [<options>]
        coop net check <ip> --run <run> --icmp
 
 OPTIONS
-  --run <run>               use that run's rules
-  --port <n>                choose a port; defaults to the URL's port or 443
-  --protocol <tls|tcp|udp>  choose the connection type
-  --icmp                    check an ICMP echo request to an IP address
-  --json                    print the answer for scripts
+  --run <run>           use that run's rules
+  --port <n>            choose a port; defaults to the URL's port or 443
+  --protocol <tcp|udp>  choose the connection type for an IP address
+  --icmp                check an ICMP echo request to an IP address
+  --json                print the answer for scripts
 
   Without --run, checks this project's approved access for a new run.
   Hostnames use TLS. IP addresses require a recorded run and connection type.
+
+EXIT STATUS
+  0  the rules allow the connection
+  1  the check could not finish
+  2  invalid arguments
+  3  the rules block the connection, or new runs need approval first
 
 EXAMPLES
   coop net check https://example.com
@@ -1730,6 +1736,8 @@ OPTIONS
 
   Without --run, finds the newest matching block in this project's runs.
   Shows a rule you can copy when the record proves the remote address and port.
+  A blocked DNS lookup records no port, so it shows TLS on port 443 as the
+  likely fix.
   An exact event ID can replace the host when --run is supplied.
 
 EXAMPLES
@@ -1808,7 +1816,8 @@ coop net recover: clean up interrupted network runs
 Usage: coop net recover [<run>]
 
   Removes containers and temporary volumes left by an interrupted run.
-  Without an ID, checks every run waiting for cleanup on this host.
+  Without an ID, checks every run waiting for cleanup on this host and
+  reports the ones it cleaned up or could not.
   Running boxes and resources Coop cannot safely identify are left alone.
 
   Coop normally retries this cleanup automatically.

@@ -225,6 +225,26 @@ func (r *Resolver) Resolve(ctx context.Context, name string) (Resolution, error)
 	}
 }
 
+// NameFor is the one name this resolver answered with address, while that answer is still
+// cached, expired or not: a client may dial an answer past its TTL. It is attribution for evidence,
+// never admission. Two names behind one address (a CDN) name nothing, because nothing records which
+// of them a direct connection meant.
+func (r *Resolver) NameFor(address netip.Addr) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	name := ""
+	for _, entry := range r.cache {
+		if entry.err != nil || !slices.Contains(entry.resolution.Addresses, address) {
+			continue
+		}
+		if name != "" && name != entry.resolution.Name {
+			return ""
+		}
+		name = entry.resolution.Name
+	}
+	return name
+}
+
 // resolverRolloverPause is how long a lookup waits after an answer that arrived already expired
 // before asking again.
 var resolverRolloverPause = time.Second

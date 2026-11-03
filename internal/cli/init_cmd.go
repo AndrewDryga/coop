@@ -18,6 +18,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/networkreport"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/scaffold"
@@ -541,7 +542,7 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 		ui.Note("")
 		ui.OK("%s added to %s", plural(len(rules.Added), "Network rule"), project.File)
 		for _, rule := range rules.Added {
-			ui.Note("  %s", netRuleText(serviceEgressRule(rule)))
+			ui.Note("  %s", networkreport.RuleText(serviceEgressRule(rule)))
 		}
 	case len(rules.Unplaced) > 0:
 		verb, these := "need", "these"

@@ -17,6 +17,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkreport"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 )
@@ -501,7 +502,7 @@ func TestInitServicesNeedOneApproval(t *testing.T) {
 		{To: egress.Destination{Service: "redis"}, Protocol: "tcp", Ports: []int{6379}},
 	} {
 		if !slices.ContainsFunc(access.Approval.Envelope, func(got egress.Rule) bool { return reflect.DeepEqual(got, want) }) {
-			t.Errorf("the approval does not grant %s: %+v", netRuleText(want), access.Approval.Envelope)
+			t.Errorf("the approval does not grant %s: %+v", networkreport.RuleText(want), access.Approval.Envelope)
 		}
 	}
 }

@@ -46,6 +46,11 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-11-03 — networkreport imports egress: `coop net inspect` and a box's network summary name a
+  raw traffic row by its rule (`10.42.8.0/24:5432 · TCP`) instead of a keyed ID, so the one renderer
+  of a rule as a destination row reads (`RuleText`, formerly cli's `netRuleText`) moved down to
+  where both views can use it. egress imports only safetext, so no cycle forms; no presentation
+  edge is added.
 - 2026-11-03 — acpctl imports the safetext leaf: an editor thread's start message repeats names
   Coop did not write (accounts, presets, services, approved domains) and shows the characters that
   would hide or reorder them escaped, judged by the same `safetext.Hidden` the terminal uses,

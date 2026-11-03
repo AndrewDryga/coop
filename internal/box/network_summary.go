@@ -249,6 +249,9 @@ func (f *filteredExecution) printRun() {
 		ui.Warn("network run %s: %v — 'coop net inspect %s' reads the record", networkreport.ShortID(f.record.ID), err, networkreport.ShortID(f.record.ID))
 		return
 	}
+	// The supervisor ran this policy, so its raw rows are named from it, as `coop net inspect` names
+	// them from the stored copy.
+	inspection.AddressRules = networkstate.AddressRules(f.policy)
 	// One blank line separates the stop sentence from the stats block.
 	fmt.Fprintln(os.Stderr)
 	networkreport.WriteRun(os.Stderr, ui.For(os.Stderr), networkreport.View{ID: f.record.ID, Inline: true}, inspection)

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -112,6 +114,64 @@ func TestCurrentCheckAnswersForANewRun(t *testing.T) {
 	}
 }
 
+// A check's exit status is its answer, so a script needs no prose: 0 when the rules allow the
+// connection, 3 when they block it or new runs wait for approval. 1 stays "the check could not
+// finish" and 2 rejected input, as everywhere else; --json and --run answer the same way.
+func TestNetCheckExitStatusIsTheAnswer(t *testing.T) {
+	store := netHostFixture(t)
+	cfg := freshConfig(t)
+	project, err := filepath.EvalSymlinks(cfg.RepoOverride)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.RepoOverride = project
+	a := &app{cfg: cfg}
+	check := func(args ...string) (int, string) {
+		t.Helper()
+		code := -1
+		out := captureStdout(t, func() {
+			var err error
+			if code, err = a.netDiagnostic("check", args); err != nil {
+				t.Errorf("coop net check %v = (%d, %v)", args, code, err)
+			}
+		})
+		return code, out
+	}
+	for _, tc := range []struct {
+		args []string
+		code int
+		want string
+	}{
+		{[]string{"api.anthropic.com"}, 0, "✓ api.anthropic.com:443 is allowed"},
+		{[]string{"example.com"}, 3, "✗ example.com:443 is blocked"},
+		{[]string{"example.com", "--json"}, 3, `"allowed_by_policy":false`},
+	} {
+		if code, out := check(tc.args...); code != tc.code || !strings.Contains(out, tc.want) {
+			t.Errorf("coop net check %v exited %d, want %d:\n%s", tc.args, code, tc.code, out)
+		}
+	}
+	run := netSealRun(t, store, netRecordRun(t, store, project))
+	if code, out := check("example.com", "--run", run.ID[:8]); code != 3 || !strings.Contains(out, "was blocked") {
+		t.Errorf("a check against a run that blocked it exited %d:\n%s", code, out)
+	}
+	if err := os.MkdirAll(filepath.Join(project, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".agent", "project.yaml"),
+		[]byte("box:\n  egress_rules:\n    - to: {domain: docs.example.com}\n      protocol: tls\n      ports: [443]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := check("api.anthropic.com"); code != 3 || !strings.Contains(out, "New runs need your approval") {
+		t.Errorf("a check while approval is pending exited %d:\n%s", code, out)
+	}
+	if code, err := a.netDiagnostic("check", []string{"example.com", "--port", "0"}); code != 2 || err == nil {
+		t.Errorf("rejected input = (%d, %v), want exit 2", code, err)
+	}
+	if allowed, blocked := netCheckExit(true), netCheckExit(false); allowed != 0 || blocked != 3 {
+		t.Errorf("netCheckExit = %d allowed, %d blocked", allowed, blocked)
+	}
+}
+
 // Acceptance: a historical check names the run whose frozen rules answered.
 func TestHistoricalCheckNamesTheRunAndStops(t *testing.T) {
 	allowed := networkstate.PolicyExplanation{RunID: netTestRun, Domain: "example.com", Protocol: "tls", Port: 443, Allowed: true, Reason: "rule_allowed",
@@ -190,8 +250,10 @@ func TestExplainNamesTheOriginatingService(t *testing.T) {
 
 // The refusal classes mean different things and must not be blurred: a boundary
 // no rule can cross, a failure that was no refusal, and evidence too thin to
-// name a transport. None of them fabricates YAML, and only the last one says
-// there is nothing to copy — saying it over a protected address would imply the
+// name a transport. None of them fabricates YAML. A lookup refused because no
+// rule names the host gets one draft, labelled as the likely fix because a
+// lookup records no port; anything else that names no port says there is
+// nothing to copy — saying it over a protected address would imply the
 // destination should be allowed.
 func TestExplainNeverFabricatesARuleFromThinEvidence(t *testing.T) {
 	render := func(kind, reason string, truncated bool) string {
@@ -218,7 +280,7 @@ func TestExplainNeverFabricatesARuleFromThinEvidence(t *testing.T) {
 		{kind: "tls_denied", reason: "tls_name_missing", want: networkstate.DiagnosticReason("tls_name_missing")},
 		{kind: "tls_denied", reason: "upstream_unreachable", want: notRefused},
 		{kind: "tls_denied", reason: "observation_unavailable", want: "Coop could not record enough information to explain this attempt."},
-		{kind: "dns_denied", reason: "unapproved_name", want: "No approved rule allowed this DNS lookup.", thin: true},
+		{kind: "dns_denied", reason: "dns_name_invalid", want: networkstate.DiagnosticReason("dns_name_invalid"), thin: true},
 	} {
 		got := render(tc.kind, tc.reason, false)
 		if !strings.Contains(got, tc.want) {
@@ -230,6 +292,14 @@ func TestExplainNeverFabricatesARuleFromThinEvidence(t *testing.T) {
 		if thin := strings.Contains(got, tooThin); thin != tc.thin {
 			t.Errorf("%s said %q: %v, want %v\n%s", tc.reason, tooThin, thin, tc.thin, got)
 		}
+	}
+	// The one draft a port-less record earns: the lookup proves the name and that no rule named it,
+	// so TLS on 443 is offered as the likely fix, never as what the record proved.
+	likely := render("dns_denied", "unapproved_name", false)
+	if want := "No approved rule allowed this DNS lookup.\n\nLikely fix: most programs look up a name to connect over HTTPS on port 443.\n" +
+		"If this one did, add this rule under box.egress_rules in .agent/project.yaml:\n\n" +
+		"  - to: {domain: \"example.org\"}\n    protocol: tls\n    ports: [443]\n\nThen run:\n  coop approve\n"; !strings.HasSuffix(likely, want) {
+		t.Errorf("a refused lookup did not offer the likely fix:\n%s\nwant to end with:\n%s", likely, want)
 	}
 	// A run that kept only part of its detail says so, so a cause that is not
 	// here does not read as proof that nothing else was blocked.
@@ -319,6 +389,35 @@ func TestExplainChoosesThisProjectsNewestBlockingRunAndGroupsRepeats(t *testing.
 	if code, err := outside.netDiagnostic("blocked", []string{"example.org"}); code != 1 || err == nil ||
 		!strings.Contains(err.Error(), "Could not select a network run") {
 		t.Errorf("blocked outside a project = (%d, %v)", code, err)
+	}
+}
+
+// A direct connection the run's resolver attributed to a name — `curl http://example.com` where only
+// TLS was approved — is found by that name. The address it was seen going to stays beside it, so the
+// attribution never reads as a connection made by name, and the cause says why an approved name was
+// still blocked. The record proves no rule a hostname could carry, so none is drafted.
+func TestBlockedFindsADirectConnectionByTheNameTheRunResolved(t *testing.T) {
+	store := netHostFixture(t)
+	project := netFixtureProject(t)
+	port := 80
+	direct := networkview.Denial{ID: strings.Repeat("d7", 16), Source: "socket-inventory", Basis: "observed-socket-and-captured-policy",
+		Sequence: 1, Kind: "direct_tcp_attempt", Reason: "fixed_egress_policy", Name: "example.com", Peer: "104.20.23.154:80",
+		Port: &port, At: time.Date(2026, 9, 10, 16, 3, 0, 0, time.UTC)}
+	netSealRun(t, store, netRecordRun(t, store, project), direct)
+	a := &app{cfg: &config.Config{RepoOverride: project}}
+	got := captureStdout(t, func() {
+		if code, err := a.netDiagnostic("blocked", []string{"example.com"}); code != 0 || err != nil {
+			t.Fatalf("coop net blocked example.com = (%d, %v)", code, err)
+		}
+	})
+	for _, want := range []string{"example.com:80 was blocked\n", " · address 104.20.23.154\n",
+		"\nNo approved rule allowed this direct connection. A rule for a hostname covers TLS only.\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("blocked lost %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "- to:") || strings.Contains(got, "No recorded block") {
+		t.Errorf("an attributed direct connection was missed or drafted a rule:\n%s", got)
 	}
 }
 

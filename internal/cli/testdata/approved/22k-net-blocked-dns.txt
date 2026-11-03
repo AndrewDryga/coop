@@ -3,4 +3,12 @@ registry.npmjs.org was blocked
 
 No approved rule allowed this DNS lookup. It happened 4 times.
 
-The record has no connection type or port to use in a rule.
+Likely fix: most programs look up a name to connect over HTTPS on port 443.
+If this one did, add this rule under box.egress_rules in .agent/project.yaml:
+
+  - to: {domain: "registry.npmjs.org"}
+    protocol: tls
+    ports: [443]
+
+Then run:
+  coop approve

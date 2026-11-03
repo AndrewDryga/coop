@@ -191,7 +191,7 @@ func netCheckQuery(opts netDiagnosticOptions) (netDiagnosticOptions, error) {
 	if opts.policy.Protocol != "" && opts.policy.Protocol != "tls" {
 		return opts, &ui.UsageError{
 			Headline: fmt.Sprintf("Cannot check %q as %s", opts.query, strings.ToUpper(opts.policy.Protocol)),
-			Cause:    "A hostname is checked as TLS; --protocol tcp|udp and --icmp apply to an IP address.",
+			Cause:    "A hostname is checked as TLS. --protocol tcp|udp and --icmp apply to an IP address.",
 			Rows:     [][2]string{{"Example:", "coop net check " + opts.query}, {"Help:", "coop help net check"}},
 		}
 	}
@@ -283,11 +283,26 @@ func (a *app) netDiagnostic(verb string, args []string) (int, error) {
 			return 1, netRunErr(runID, err)
 		}
 		if opts.json {
-			return 0, netWriteJSON(os.Stdout, result)
+			err = netWriteJSON(os.Stdout, result)
+		} else {
+			err = netRender(os.Stdout, func(b *bytes.Buffer) { writeNetHistoricalCheck(b, p, result) })
 		}
-		return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetHistoricalCheck(b, p, result) })
+		if err != nil {
+			return 1, err
+		}
+		return netCheckExit(result.Allowed), nil
 	}
 	return a.netExplain(evidence, page, opts)
+}
+
+// netCheckExit is a check's answer as its exit status, documented on its help page: 0 when the
+// rules allow the connection, 3 when they block it or new runs wait for approval. 1 stays "the
+// check could not finish" and 2 rejected input, so a script can tell a refusal from a failure.
+func netCheckExit(allowed bool) int {
+	if allowed {
+		return 0
+	}
+	return 3
 }
 
 // ----------------------------------------------------------------- check ----
@@ -333,12 +348,17 @@ func (a *app) netCheckCurrent(opts netDiagnosticOptions) (int, error) {
 	}
 	answer := netCurrentCheck(access, opts.policy.Domain, opts.policy.Port, bundles)
 	if opts.json {
-		return 0, netWriteJSON(os.Stdout, netCheckJSON{Version: networkview.Version, Kind: "current", Host: opts.policy.Domain,
+		err = netWriteJSON(os.Stdout, netCheckJSON{Version: networkview.Version, Kind: "current", Host: opts.policy.Domain,
 			Port: opts.policy.Port, Protocol: "tls", Allowed: answer.Allowed, Pending: answer.Pending, Agents: answer.Agents,
 			Verdict: answer.Verdict, Cause: answer.Cause})
+	} else {
+		p := ui.For(os.Stdout)
+		err = netRender(os.Stdout, func(b *bytes.Buffer) { writeNetCheck(b, p, answer) })
 	}
-	p := ui.For(os.Stdout)
-	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetCheck(b, p, answer) })
+	if err != nil {
+		return 1, err
+	}
+	return netCheckExit(answer.Allowed), nil
 }
 
 type netCheckAnswer struct {
@@ -659,6 +679,11 @@ func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation n
 	if len(explanation.Causes) == 1 && first.Service != "" {
 		detail += " · service " + first.Service
 	}
+	// A name beside a recorded peer is the run's own lookup attributing a direct connection: the
+	// address it was seen going to stays on screen, so it never reads as a connection made by name.
+	if host, _, ok := networkreport.SplitPeer(first.Peer); ok && len(explanation.Causes) == 1 && first.Name != "" {
+		detail += " · address " + host
+	}
 	fmt.Fprintf(w, "  %s\n", p.Dim(detail))
 	var candidate *networkview.Candidate
 	if len(explanation.Causes) == 1 {
@@ -691,9 +716,30 @@ func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation n
 		fmt.Fprintf(w, "\nAdd this rule under box.egress_rules in .agent/project.yaml:\n\n%s\nThen run:\n  %s\n", netRuleYAML(candidate.Rule), p.Cyan("coop approve"))
 		return
 	}
+	if rule, ok := netLikelyRule(explanation); ok {
+		fmt.Fprintf(w, "\nLikely fix: most programs look up a name to connect over HTTPS on port 443.\n"+
+			"If this one did, add this rule under box.egress_rules in .agent/project.yaml:\n\n%s\nThen run:\n  %s\n", netRuleYAML(rule), p.Cyan("coop approve"))
+		return
+	}
 	if reason := netNoDraftReason(first); reason != "" {
 		fmt.Fprintf(w, "\n%s\n", reason)
 	}
+}
+
+// netLikelyRule is the one draft a port-less record earns. A lookup refused only because no rule
+// names the host proves the name, not the port, so TLS on 443 — what most lookups are for — is
+// offered as the likely fix rather than as something the record proved. Any other cause beside it
+// (a protected answer, a connection on a known port) leaves the decision to that evidence.
+func netLikelyRule(explanation netExplanation) (egress.Rule, bool) {
+	name := ""
+	for _, cause := range explanation.Causes {
+		event := cause.Explanation.Event
+		if event.Kind != "dns_denied" || event.Reason != "unapproved_name" || event.Name == "" || name != "" && event.Name != name {
+			return egress.Rule{}, false
+		}
+		name = event.Name
+	}
+	return egress.Rule{To: egress.Destination{Domain: name}, Protocol: "tls", Ports: []int{443}}, name != ""
 }
 
 // netBlockedCause is the sentence one refusal reads as. The retained reason
@@ -719,6 +765,16 @@ func netBlockedCause(explanation networkstate.EventExplanation, grouped bool) st
 		return "No approved rule allowed this TLS connection."
 	case "protected_destination", "unsafe_dns_answer":
 		return "This address is protected. Project rules cannot allow it."
+	case "fixed_egress_policy":
+		// A direct connection skips the gateway: plain TCP to an address, which a rule for the
+		// name it resolved from never covers. That is the surprise when the name is approved.
+		if grouped {
+			return "No approved rule allowed the direct connection."
+		}
+		if event.Name != "" {
+			return "No approved rule allowed this direct connection. A rule for a hostname covers TLS only."
+		}
+		return "No approved rule allowed this direct connection."
 	case "tls_ech_unsupported":
 		return "This connection uses encrypted TLS names, which filtered networking does not support."
 	case "upstream_unreachable":

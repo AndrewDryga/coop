@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -60,6 +61,58 @@ func inventory(t *testing.T, s *Store) map[string]inspectionFileState {
 		state[entry.Name()] = inspectionFileState{info.Mode(), info.ModTime(), info.Size(), digest}
 	}
 	return state
+}
+
+// A raw traffic row is counted per rule. An inspection that includes destinations names each rule
+// from the run's own captured policy, so a person reads 10.42.8.0/24:5432 instead of a keyed ID.
+// One that withholds destinations names nothing, the name never reaches JSON, and a policy copy
+// that is gone leaves the rows unnamed instead of failing the read.
+func TestInspectionNamesRawRulesFromTheRunsOwnPolicy(t *testing.T) {
+	s := openStore(t)
+	project := t.TempDir()
+	mode := egress.Filtered
+	raw := egress.Rule{To: egress.Destination{CIDR: "10.42.8.0/24"}, Protocol: "tcp", Ports: []int{5432}}
+	policy, err := s.Admit(project, Admission{InvocationMode: &mode,
+		Operator: []egress.Input{{Rules: []egress.Rule{raw}, Origin: egress.Origin{Kind: "operator", Name: "rules-file"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policy.Grants) != 1 {
+		t.Fatalf("the fixture policy has %d grants, want the one raw rule", len(policy.Grants))
+	}
+	grant := policy.Grants[0]
+	ctx := context.Background()
+	record, err := executionSmoke(t, s).CreateExecution(ctx, ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
+		Runtime: "docker", DaemonID: "fixture-daemon", Endpoint: "unix:///fixture.sock", GatewayImage: "sha256:" + strings.Repeat("a", 64), ClientImage: "sha256:" + strings.Repeat("b", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := record.Snapshot
+	snapshot.Sequence, snapshot.Availability = 1, "available"
+	snapshot.AddressGrants = []networkview.AddressGrantObservation{{RuleID: grant.ID, Packets: 3, Bytes: 180}}
+	if record, err = s.AcceptSnapshot(ctx, record.ID, record.Revision, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	evidence := fixtureEvidence(t, s)
+	named, err := evidence.Inspect(record.ID, time.Now(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := named.AddressRules[grant.ID]; !ok || !reflect.DeepEqual(got, grant.Rule) {
+		t.Fatalf("the raw rule was not named from the run's policy: %+v", named.AddressRules)
+	}
+	if data, err := json.Marshal(named); err != nil || strings.Contains(string(data), "10.42.8.0") {
+		t.Fatalf("the rule's destination reached JSON: %v\n%s", err, data)
+	}
+	if withheld, err := evidence.Inspect(record.ID, time.Now(), false); err != nil || withheld.AddressRules != nil {
+		t.Fatalf("a view that withholds destinations named rules: %+v, %v", withheld.AddressRules, err)
+	}
+	if err := os.Remove(filepath.Join(s.Path(), "snapshot-"+policy.Fingerprint+".json")); err != nil {
+		t.Fatal(err)
+	}
+	if gone, err := evidence.Inspect(record.ID, time.Now(), true); err != nil || gone.AddressRules != nil {
+		t.Fatalf("a run whose policy copy is gone = %+v, %v; want the rows unnamed and the read intact", gone.AddressRules, err)
+	}
 }
 
 func TestInspectionAgesObservationsWithoutInflatingRetainedEvidence(t *testing.T) {

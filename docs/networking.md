@@ -473,13 +473,22 @@ and the configured MCP servers, then `✓ Everything else blocked` and `Starting
   finds this project's newest run that blocked that host, groups its blocked attempts by cause
   and counts repeats. Use `--run <run>` to choose a run. With `--run`, you can supply an exact
   event ID instead of a host.
+- A blocked DNS lookup does not record which port the program wanted. `coop net blocked` shows
+  a rule for TLS on port 443, labelled as the likely fix, because that is what most lookups are
+  for.
+- A direct connection to an address the run looked up, such as `http://` to a name approved only
+  for TLS, is listed under that name with the address beside it, so `coop net blocked <host>`
+  finds it. An address that two looked-up names share stays an address.
 - For raw traffic, the kernel counts packets and bytes for each approved address rule. These
-  appear under `Raw traffic` in `coop net inspect` and as `address_grants` in `--json`. Individual
-  hosts within a CIDR are not recorded or shown.
+  appear under `Raw traffic` in `coop net inspect`, each row named by its rule, such as
+  `10.42.8.0/24:5432 · TCP`, and as `address_grants` in `--json`. Individual hosts within a CIDR
+  are not recorded or shown.
 - For blocked raw packets, the filter counts how many it drops without recording their
   destinations. The report therefore shows a count
   (`N raw packets were blocked with no remote address recorded`). There is no destination
-  record for `coop net blocked` to open.
+  record for `coop net blocked` to open. When the report also lists a direct connection, whose
+  packets are part of that count, it reads `N packets were dropped in all, direct connections
+  included`.
 - An unmeasured metric appears as UNKNOWN, never zero. A total is also UNKNOWN if any part of
   it was not measured.
 - Only traffic co:op can identify as coming from the workload appears as `Allowed`. co:op's
@@ -511,7 +520,9 @@ run record. An editor session that starts no box for 90 days may need to be star
 `coop net check <url-or-host>` tells you whether the rules would allow a normal new run in this
 project to reach a destination. It gives one answer and one reason, based on the approved project
 rules and each agent's provider access. Use `--run <run>` to check the rules a recorded run
-started with instead. Neither check sends network traffic.
+started with instead. Neither check sends network traffic. The exit status is the answer: 0
+when the rules allow the connection, 3 when they block it or new runs need approval first, 1
+when the check could not finish and 2 for invalid arguments.
 
 To check an IP address, also specify `--protocol tcp|udp --port <n>` (or `--icmp`) and a run.
 An address alone does not specify a transport, and the answer must account for that run's
@@ -665,6 +676,10 @@ To recover runs now:
 
     coop net recover           # settle every pending run now
     coop net recover <run>     # settle one run now
+
+Without a run, `coop net recover` reports only the runs it cleaned up or could not. A run whose
+own `coop` is still running, in this project or another, is that process's to clean up and is not
+listed. Name the run to see why it was left alone.
 
 When `coop net recover` cannot finish a run, it prints
 `⚠ Cleanup incomplete for network run <run>`, followed by the causes and what to do next. An

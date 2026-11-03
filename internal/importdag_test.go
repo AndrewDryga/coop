@@ -63,7 +63,7 @@ var allowedEdges = map[string][]string{
 	"loopcfg":               {"agent", "safefile"},
 	"mcp":                   nil,
 	"networkgateway":        {"egress", "networkview", "randid", "safefile"},
-	"networkreport":         {"networkstate", "networkview", "ui"},
+	"networkreport":         {"egress", "networkstate", "networkview", "ui"},
 	"networkstate":          {"egress", "fsidentity", "networkview", "processidentity", "randid"},
 	"networkview":           {"egress"},
 	"preset":                {"agent", "safefile", "shadowpath"},

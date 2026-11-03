@@ -556,6 +556,25 @@ func TestRunHelpShowsAMinimalRulesFile(t *testing.T) {
 	}
 }
 
+// coop net check answers through its exit status too, so its page documents every code it returns,
+// and its options name the connection types its usage lines show.
+func TestNetCheckHelpDocumentsItsExitStatus(t *testing.T) {
+	page := commandHelp["net check"]
+	for _, want := range []string{
+		"coop net check <ip> --run <run> --protocol <tcp|udp> --port <n>",
+		"  --protocol <tcp|udp>  choose the connection type for an IP address",
+		"EXIT STATUS\n  0  the rules allow the connection\n  1  the check could not finish\n  2  invalid arguments\n" +
+			"  3  the rules block the connection, or new runs need approval first",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("coop help net check lost %q:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, "tls|tcp|udp") {
+		t.Errorf("coop help net check offers a connection type its usage does not:\n%s", page)
+	}
+}
+
 // helpRequested stops at `--`: a flag after it is passthrough to the agent, so `coop claude --
 // --help` runs the agent's --help, not coop's page.
 func TestHelpRequestedStopsAtDashDash(t *testing.T) {

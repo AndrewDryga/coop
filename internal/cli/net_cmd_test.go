@@ -362,21 +362,28 @@ func TestInspectKeepsNonWorkloadRowsOutOfAllowed(t *testing.T) {
 
 // Acceptance: raw grant traffic is per-rule kernel accounting, shown apart from
 // destinations and only when a grant carried something — no host is invented
-// inside a CIDR.
+// inside a CIDR. A row names its rule the way the project file reads it; only a
+// rule the run's policy no longer names keeps its keyed ID.
 func TestInspectShowsRawTrafficPerRuleWithoutInventingHosts(t *testing.T) {
 	inspection := netTestClean()
 	inspection.Observed.AddressGrants = []networkview.AddressGrantObservation{
 		{RuleID: "aaaa1111bbbb2222cccc3333dddd4444", Packets: 12, Bytes: 9000},
 		{RuleID: "eeee5555ffff6666aaaa7777bbbb8888"},
+		{RuleID: "9999aaaabbbbccccddddeeeeffff0000", Packets: 1, Bytes: 84},
+	}
+	inspection.AddressRules = map[string]egress.Rule{
+		"aaaa1111bbbb2222cccc3333dddd4444": {To: egress.Destination{CIDR: "10.42.8.0/24"}, Protocol: "tcp", Ports: []int{5432}},
+		"eeee5555ffff6666aaaa7777bbbb8888": {To: egress.Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}},
 	}
 	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
-	want := "\n  Raw traffic — counted per rule, no destination is recorded\n" +
-		"    rule aaaa1111 · 12 packets · 9.0 KB\n" +
+	want := "\n  Raw traffic — counted per rule, not per remote address\n" +
+		"    10.42.8.0/24:5432 · TCP · 12 packets · 9.0 KB\n" +
+		"    rule 9999aaaa · 1 packet · 84 B\n" +
 		"\nFull details:"
 	if !strings.Contains(got, want) {
 		t.Errorf("raw traffic block:\n%s\nwant to contain:\n%s", got, want)
 	}
-	if strings.Contains(got, "eeee5555") {
+	if strings.Contains(got, "eeee5555") || strings.Contains(got, "service db") {
 		t.Errorf("a grant that carried nothing got a row:\n%s", got)
 	}
 	inspection.Observed.AddressGrants = nil
@@ -418,7 +425,9 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 		"  raw.githubusercontent.com · DNS ×2\n" +
 		"  raw.githubusercontent.com · DNS — a protected address\n" +
 		"  203.0.113.5:8443 · direct connection — no rule allows that protocol and port\n" +
-		"  3 raw packets were blocked with no remote address recorded\n" +
+		// The kernel counted the direct connection's own packets, so beside its row the count is a
+		// total, never a second set that recorded no address.
+		"  3 packets were dropped in all, direct connections included\n" +
 		"To see why: coop net blocked raw.githubusercontent.com --run e644f07a\n" +
 		"\nFull details:"
 	if !strings.Contains(got, want) {
@@ -1390,7 +1399,7 @@ func TestRunOutcomeSaysWhatHappenedInWords(t *testing.T) {
 	}
 }
 
-func TestNetRuleTextReadsLikeADestination(t *testing.T) {
+func TestRuleTextReadsLikeADestination(t *testing.T) {
 	for want, rule := range map[string]egress.Rule{
 		"(no remote address)":             {},
 		"docs.example.com:443,8443 · TLS": {To: egress.Destination{Domain: "docs.example.com"}, Protocol: "tls", Ports: []int{443, 8443}},
@@ -1398,8 +1407,8 @@ func TestNetRuleTextReadsLikeADestination(t *testing.T) {
 		"10.42.8.12 · icmp echo-request":  {To: egress.Destination{IP: "10.42.8.12"}, Protocol: "icmp", Types: []string{"echo-request"}},
 		"service db:5432 · TCP":           {To: egress.Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}},
 	} {
-		if got := netRuleText(rule); got != want {
-			t.Errorf("netRuleText = %q, want %q", got, want)
+		if got := networkreport.RuleText(rule); got != want {
+			t.Errorf("RuleText = %q, want %q", got, want)
 		}
 	}
 }
@@ -1481,6 +1490,47 @@ func TestNetEventBoundRefusesAnOversizedView(t *testing.T) {
 	}
 	if err := netEventBound(10); err != nil {
 		t.Errorf("netEventBound(10) = %v", err)
+	}
+}
+
+// Without an ID, recover reports the runs it cleaned or could not clean. A run whose own coop still
+// owns it — any project's, on this computer or another — is that process's job, not news: listing it
+// as "left alone" read like a failure nobody could act on. Named, the same run still says why.
+func TestNetRecoverReportsOnlyWhatItCleanedOrCouldNot(t *testing.T) {
+	store := netHostFixture(t)
+	settled := netCleanUpWithoutSeal(t, store, netRecordRun(t, store, netFixtureProject(t)))
+	live := netCleanUpWithoutSeal(t, store, netRecordRun(t, store, netFixtureProject(t)))
+	elsewhere := netCleanUpWithoutSeal(t, store, netRecordRun(t, store, netFixtureProject(t)))
+	liveResult := box.NetworkRecovery{RunID: live.ID, Live: true, Skipped: "its supervisor (pid 42) is still running or its identity is uncertain"}
+	elsewhereResult := box.NetworkRecovery{RunID: elsewhere.ID, Live: true, Elsewhere: true,
+		Skipped: "it was started on another computer or container, and only the Coop there can tell whether it is still running"}
+	a := &app{cfg: &config.Config{RuntimeName: "definitely-not-a-runtime"}}
+	recover := func(args ...string) (int, string, string) {
+		t.Helper()
+		var code int
+		var err error
+		var stdout string
+		stderr := captureStderr(t, func() { stdout = captureStdout(t, func() { code, err = a.cmdNetRecover(args) }) })
+		if err != nil {
+			t.Fatalf("coop net recover %v = (%d, %v)", args, code, err)
+		}
+		return code, stdout, stderr
+	}
+
+	stubRecoverNetworkRuns(t, []box.NetworkRecovery{liveResult, {RunID: settled.ID, Sealed: true}, elsewhereResult}, nil)
+	code, stdout, _ := recover()
+	if want := "Network run " + networkreport.ShortID(settled.ID) + " is already cleaned up.\n  Wrote its final record.\n"; code != 0 || stdout != want {
+		t.Errorf("recover = %d:\n%s\nwant only the run it settled:\n%s", code, stdout, want)
+	}
+
+	stubRecoverNetworkRuns(t, []box.NetworkRecovery{liveResult, elsewhereResult}, nil)
+	if code, stdout, stderr := recover(); code != 0 || stdout != "" || stderr != "No interrupted network runs need cleanup.\n" {
+		t.Errorf("a pass that only met live runs = %d, %q, %q", code, stdout, stderr)
+	}
+
+	stubRecoverNetworkRuns(t, []box.NetworkRecovery{liveResult}, nil)
+	if code, stdout, _ := recover(networkreport.ShortID(live.ID)); code != 0 || !strings.Contains(stdout, "was left alone") {
+		t.Errorf("a named live run did not say why it was left alone = %d:\n%s", code, stdout)
 	}
 }
 

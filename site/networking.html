@@ -635,13 +635,21 @@ transferred bytes. It also saves an event when it blocks a name. <code>coop net 
 finds this project&#39;s newest run that blocked that host, groups its blocked attempts by cause
 and counts repeats. Use <code>--run &lt;run&gt;</code> to choose a run. With <code>--run</code>, you can supply an exact
 event ID instead of a host.</li>
+<li>A blocked DNS lookup does not record which port the program wanted. <code>coop net blocked</code> shows
+a rule for TLS on port 443, labelled as the likely fix, because that is what most lookups are
+for.</li>
+<li>A direct connection to an address the run looked up, such as <code>http://</code> to a name approved only
+for TLS, is listed under that name with the address beside it, so <code>coop net blocked &lt;host&gt;</code>
+finds it. An address that two looked-up names share stays an address.</li>
 <li>For raw traffic, the kernel counts packets and bytes for each approved address rule. These
-appear under <code>Raw traffic</code> in <code>coop net inspect</code> and as <code>address_grants</code> in <code>--json</code>. Individual
-hosts within a CIDR are not recorded or shown.</li>
+appear under <code>Raw traffic</code> in <code>coop net inspect</code>, each row named by its rule, such as
+<code>10.42.8.0/24:5432 · TCP</code>, and as <code>address_grants</code> in <code>--json</code>. Individual hosts within a CIDR
+are not recorded or shown.</li>
 <li>For blocked raw packets, the filter counts how many it drops without recording their
 destinations. The report therefore shows a count
 (<code>N raw packets were blocked with no remote address recorded</code>). There is no destination
-record for <code>coop net blocked</code> to open.</li>
+record for <code>coop net blocked</code> to open. When the report also lists a direct connection, whose
+packets are part of that count, it reads <code>N packets were dropped in all, direct connections included</code>.</li>
 <li>An unmeasured metric appears as UNKNOWN, never zero. A total is also UNKNOWN if any part of
 it was not measured.</li>
 <li>Only traffic co:op can identify as coming from the workload appears as <code>Allowed</code>. co:op&#39;s
@@ -668,7 +676,9 @@ run record. An editor session that starts no box for 90 days may need to be star
 <p><code>coop net check &lt;url-or-host&gt;</code> tells you whether the rules would allow a normal new run in this
 project to reach a destination. It gives one answer and one reason, based on the approved project
 rules and each agent&#39;s provider access. Use <code>--run &lt;run&gt;</code> to check the rules a recorded run
-started with instead. Neither check sends network traffic.</p>
+started with instead. Neither check sends network traffic. The exit status is the answer: 0
+when the rules allow the connection, 3 when they block it or new runs need approval first, 1
+when the check could not finish and 2 for invalid arguments.</p>
 <p>To check an IP address, also specify <code>--protocol tcp|udp --port &lt;n&gt;</code> (or <code>--icmp</code>) and a run.
 An address alone does not specify a transport, and the answer must account for that run&#39;s
 protected ranges.</p>
@@ -790,6 +800,9 @@ do next. co:op retries automatically.</p>
 <div class="reference-code-frame"><pre class="code" role="region" aria-label="When a run is interrupted code example" tabindex="0"><code>coop net recover           # settle every pending run now
 coop net recover &lt;run&gt;     # settle one run now
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Without a run, <code>coop net recover</code> reports only the runs it cleaned up or could not. A run whose
+own <code>coop</code> is still running, in this project or another, is that process&#39;s to clean up and is not
+listed. Name the run to see why it was left alone.</p>
 <p>When <code>coop net recover</code> cannot finish a run, it prints
 <code>⚠ Cleanup incomplete for network run &lt;run&gt;</code>, followed by the causes and what to do next. An
 unreadable run record does not stop recovery of the others. co:op attempts recovery for every
