@@ -620,7 +620,14 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 	if code, ok := helpForPreset(cmd, cfg); ok {
 		return code, nil
 	}
-	return 2, unknownCommandErr(path[:1], asHelp)
+	// `coop help presets` promises that `coop help <name>` explains a preset, so a name that is no
+	// command, agent or preset, and no near miss of one, also says where the presets are listed.
+	guess := nearestTopLevel(cmd)
+	refusal := ui.UnknownCommandPath(path[:1], guess, asHelp)
+	if guess == "" {
+		refusal.Rows = append(refusal.Rows, [2]string{"See your presets:", "coop presets"})
+	}
+	return 2, refusal
 }
 
 // familyVerbs returns a command family's real subcommand list — from the family's OWN registry,
@@ -647,7 +654,12 @@ func familyVerbs(cmd string) ([]string, bool) {
 // command (a bare token would read like a rejected shell command) and correcting a likely typo
 // against coop's commands and registered agents.
 func unknownCommandErr(path []string, asHelp bool) error {
-	candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
-	guess, _ := nearestCommand(path[len(path)-1], candidates)
-	return ui.UnknownCommandPath(path, guess, asHelp)
+	return ui.UnknownCommandPath(path, nearestTopLevel(path[len(path)-1]), asHelp)
+}
+
+// nearestTopLevel is the command or registered agent a mistyped top-level word most likely meant,
+// or "" when none is close.
+func nearestTopLevel(word string) string {
+	guess, _ := nearestCommand(word, append(append([]string{}, topLevelCommands...), agents.Names()...))
+	return guess
 }

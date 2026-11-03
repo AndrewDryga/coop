@@ -142,6 +142,12 @@ func TestApprovedInputErrors(t *testing.T) {
 			code, err := helpForPath([]string{"doctro"}, freshConfig(t), true)
 			return codeErr(t, code, err)
 		}},
+		// `coop help presets` says `coop help <name>` explains a preset, so a name that is no
+		// command, agent or preset points at the preset list as well as the commands.
+		{"03a-unknown-help-topic-no-suggestion", func(t *testing.T) error {
+			code, err := helpForPath([]string{"frontier"}, freshConfig(t), true)
+			return codeErr(t, code, err)
+		}},
 		{"03b-unknown-subcommand-suggestion", func(t *testing.T) error {
 			code, err := cmdTasksFolder("", queue(t), []string{"watxh"})
 			return codeErr(t, code, err)

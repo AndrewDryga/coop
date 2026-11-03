@@ -17,6 +17,10 @@
   belongs to the session, so `coop loop` leaves that task alone until the session finishes with it
   or ends.
 
+- **Help pages share one layout.** Every `coop help` page now fits an 80-column terminal, keeps
+  its columns aligned and lists options before examples. `coop help <name>` for a name that is
+  not a command, agent or preset now also points at `coop presets`.
+
 - **Only approve file exposure deliberately.** Ordinary `coop approve` no longer asks to
   expose hidden files that eBPF protects. Mount fallback still refuses unapproved exposure;
   use `coop approve --case-exposure` to review and remember those exact paths.

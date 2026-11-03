@@ -30,7 +30,7 @@ TASKS: each task is a folder in .agent/tasks/
   coop tasks add "<title>"          add a task
   coop tasks decisions              show tasks waiting for your decision
   coop backlog                      save ideas for later
-  coop context [<path>...]          show which instructions and docs apply to selected files
+  coop context [<path>...]          show instructions and docs for your files
 
 LOOPS: work through tasks automatically; configure the steps in .agent/loop.yaml
   coop loop [<agent|preset>]        work through the project's task queue
@@ -58,7 +58,7 @@ SERVICES: databases and other services defined in .agent/compose.yml
 SECURITY & ISOLATION: control access, check isolation, and protect secrets
   coop doctor                       check that the box's isolation works
   coop approve                      review and approve requested project access
-  coop net                          show and manage this project's network access
+  coop net                          manage this project's network access
   coop check-secrets                check project files for exposed secrets
   coop sign                         sign unpushed commits with your host key
 
@@ -70,9 +70,9 @@ SETUP & MAINTENANCE: set up projects and manage Coop on this machine
 
 INTEGRATIONS: use Coop with other tools and your shell
   coop help acp                     connect Coop to your editor
-  coop help sessions                let other applications start and manage agents
+  coop help sessions                let other apps start and manage agents
   coop help prompt                  add Coop status to your shell prompt or tmux
   coop help completion              enable tab completion in Bash or Zsh
 
 Help and examples: coop help <command>
-Documentation: https://coop.dryga.com
+Documentation:     https://coop.dryga.com

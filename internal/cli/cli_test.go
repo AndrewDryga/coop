@@ -428,7 +428,7 @@ func TestForkHelpTemplate(t *testing.T) {
 		t.Errorf("fork help missing a Usage line:\n%s", s)
 	}
 	// The page ends with its own next step, so it never gets the generic all-commands footer.
-	if !strings.HasSuffix(strings.TrimRight(s, "\n"), "Command options: coop help fork <command>") {
+	if !strings.HasSuffix(strings.TrimRight(s, "\n"), "Command options:          coop help fork <command>") {
 		t.Errorf("fork help should end with its own pointer:\n%s", s)
 	}
 }

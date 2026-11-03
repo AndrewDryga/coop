@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -128,7 +130,7 @@ func TestAllHelpAvoidsMiddleDots(t *testing.T) {
 	for name, help := range commandHelp {
 		pages[name] = help
 	}
-	// The prompt page's EXAMPLE quotes `coop prompt`'s own one-line output, whose segments are
+	// The prompt page's EXAMPLE OUTPUT quotes `coop prompt`'s own one-line output, whose segments are
 	// separated by ·. help-output-style keeps an embedded runtime example in its real formatting;
 	// the rule is about not joining separate command explanations with middle dots.
 	delete(pages, "prompt")
@@ -139,18 +141,17 @@ func TestAllHelpAvoidsMiddleDots(t *testing.T) {
 	}
 }
 
-// menuWidth is the widest line the APPROVED menu contains (the coop context row, and the title
-// with a long version). It is the budget, not a target: a new row that pushes past it changes the
-// approved layout and needs the same decision the copy did.
-const menuWidth = 92
+// helpWidth is the widest line a help page may print: a stock 80-column terminal, where a longer
+// line wraps through the middle of a table.
+const helpWidth = 80
 
-// No menu line may exceed the approved width, or the two-column layout wraps on a stock terminal.
-// Uses a no-services project and no signed-in agent — the widest static shape.
+// The live menu keeps to the same width as the reference pages. Uses a no-services project and no
+// signed-in agent, which adds the GET STARTED rows.
 func TestHelpTextWidth(t *testing.T) {
 	out := helpText(&config.Config{RepoOverride: t.TempDir(), ConfigDir: "/c", BoxHome: "/b"})
 	for _, line := range strings.Split(out, "\n") {
-		if n := len([]rune(line)); n > menuWidth {
-			t.Errorf("menu line exceeds %d cols (%d): %q", menuWidth, n, line)
+		if n := len([]rune(line)); n > helpWidth {
+			t.Errorf("menu line exceeds %d cols (%d): %q", helpWidth, n, line)
 		}
 	}
 }
@@ -203,87 +204,204 @@ func TestHelpRowsAlign(t *testing.T) {
 	}
 }
 
-// Within each blank-line-separated group of an OPTIONS block, every option's description and every
-// continuation line start in one column, at least two spaces past the option. A byte-pinned copy
-// keeps whatever drift it was captured with (a help fixture once kept a one-column drift on the
-// ACP page for as long as nobody looked), so this reads the help sources themselves.
-func TestHelpOptionRowsAlign(t *testing.T) {
-	pages := map[string]string{"run": runHelp, "fork": forkHelpText("")}
-	for _, name := range agents.Names() {
-		pages["agent "+name] = agentHelp(name)
+// referenceHelpPages is every page the manual prints, keyed by its `coop help` path, plus the menu
+// it opens with (key ""). These are the reference forms, so their bytes do not depend on the host.
+// The checks below read these sources rather than a byte-pinned copy, which keeps whatever drift it
+// was captured with: a fixture once pinned a one-column drift on the ACP page for months.
+func referenceHelpPages() map[string]string {
+	pages := map[string]string{"": renderHelp(&config.Config{}, true)}
+	for _, name := range manualOrder {
+		pages[name] = manualPage(name)
 	}
-	for name, help := range commandHelp {
-		pages[name] = help
-	}
-	for name, help := range pages {
-		var groups [][]string
-		var group []string
-		inOptions := false
-		end := func() {
-			if len(group) > 0 {
-				groups = append(groups, group)
+	return pages
+}
+
+// No help line is wider than a stock terminal.
+func TestHelpPagesFitTheTerminal(t *testing.T) {
+	for name, page := range referenceHelpPages() {
+		for _, line := range strings.Split(page, "\n") {
+			if n := utf8.RuneCountInString(line); n > helpWidth {
+				t.Errorf("coop help %s: a line is %d columns, over %d:\n%s", name, n, helpWidth, line)
 			}
-			group = nil
-		}
-		for _, line := range strings.Split(help, "\n") {
-			switch {
-			case line != "" && !strings.HasPrefix(line, " "): // a heading starts or ends a block
-				end()
-				inOptions = strings.HasSuffix(line, "OPTIONS")
-			case !inOptions:
-			case strings.TrimSpace(line) == "":
-				end()
-			default:
-				group = append(group, line)
-			}
-		}
-		end()
-		for _, g := range groups {
-			checkOptionGroup(t, name, g)
 		}
 	}
 }
 
-// checkOptionGroup checks one group of option rows. A group with no two-space gap anywhere is
-// prose that happens to open with a flag ("--force does not bypass those checks."), not a table.
-func checkOptionGroup(t *testing.T, page string, group []string) {
-	t.Helper()
-	descAt := func(line string) int { // where an option row's description starts, or -1
-		gap := strings.Index(line[2:], "  ")
-		if !strings.HasPrefix(line, "  -") || gap < 0 {
-			return -1
-		}
-		rest := line[2+gap:]
-		return 2 + gap + len(rest) - len(strings.TrimLeft(rest, " "))
-	}
-	table := false
-	for _, line := range group {
-		table = table || descAt(line) >= 0
-	}
-	if !table {
-		return
-	}
-	column := 0
-	for _, line := range group {
-		col := -1
-		switch {
-		case strings.HasPrefix(line, "  -"):
-			if col = descAt(line); col < 0 {
-				t.Errorf("%s help: an option row needs two spaces before its description:\n%s", page, line)
-				continue
+// Every two-column table on every page (commands, options, values, exit statuses) starts its
+// second column in one place, and a wrapped description continues in that column. Stacked labeled
+// pointers ("Start again: coop up") are a table too: their commands share one column.
+func TestHelpColumnsAlign(t *testing.T) {
+	for name, page := range referenceHelpPages() {
+		for _, block := range strings.Split(page, "\n\n") {
+			lines := strings.Split(strings.Trim(block, "\n"), "\n")
+			for _, problem := range helpTableProblems(lines) {
+				t.Errorf("coop help %s: %s:\n%s", name, problem, block)
 			}
-		case strings.HasPrefix(line, "   "): // a description's continuation line
-			col = len(line) - len(strings.TrimLeft(line, " "))
-		default:
+		}
+	}
+}
+
+// Every page has one shape: the title, the Usage label, UPPERCASE section headings with their
+// content indented directly beneath them, OPTIONS before EXAMPLES before EXIT STATUS, and closing
+// pointers at column zero after the last section. Nothing else starts at column zero.
+func TestHelpPagesShareOneLayout(t *testing.T) {
+	for name, page := range referenceHelpPages() {
+		for _, problem := range helpLayoutProblems(page) {
+			t.Errorf("coop help %s: %s", name, problem)
+		}
+	}
+}
+
+// helpPointer is a labeled next step, "Start again: coop up": a capitalized label, a colon, then
+// the command or link it names. Group 2 is where that command starts.
+var helpPointer = regexp.MustCompile(`^( *)[A-Z][^:]*: +(coop |https://)`)
+
+func helpIndent(line string) int { return len(line) - len(strings.TrimLeft(line, " ")) }
+
+// helpPointerColumn is where a pointer's command starts, in runes.
+func helpPointerColumn(line string) int {
+	m := helpPointer.FindStringSubmatchIndex(line)
+	return utf8.RuneCountInString(line[:m[4]])
+}
+
+// helpSecondColumn is where a table row's second column starts, in runes: past the first run of
+// two or more spaces after the row's first cell. It is -1 for a line with no such gap: prose, or a
+// lone command.
+func helpSecondColumn(line string) int {
+	r := []rune(line)
+	for i := helpIndent(line); i+1 < len(r); i++ {
+		if r[i] != ' ' || r[i+1] != ' ' {
 			continue
 		}
-		if column == 0 {
-			column = col
-		} else if col != column {
-			t.Errorf("%s help: option text starts at column %d, not %d like the rows above it:\n%s",
-				page, col, column, strings.Join(group, "\n"))
+		for i < len(r) && r[i] == ' ' {
+			i++
+		}
+		if i == len(r) {
+			return -1
+		}
+		return i
+	}
+	return -1
+}
+
+// helpTableProblems checks one blank-line-separated block. Lines at one indent with two or more
+// gapped rows form a table: every line at that indent must be a row, every row's second column
+// must start in one place, and a deeper line before that column is a misaligned continuation.
+func helpTableProblems(block []string) []string {
+	var problems []string
+	for i := 0; i < len(block); {
+		j := i + 1
+		for j < len(block) && helpPointer.MatchString(block[i]) && helpPointer.MatchString(block[j]) &&
+			helpIndent(block[j]) == helpIndent(block[i]) {
+			j++
+		}
+		for _, line := range block[i+1 : j] {
+			if got, want := helpPointerColumn(line), helpPointerColumn(block[i]); got != want {
+				problems = append(problems, fmt.Sprintf("%q starts its command at column %d, not %d like the line above",
+					strings.TrimSpace(line), got, want))
+			}
+		}
+		i = j
+	}
+	levels := map[int][]string{}
+	for _, line := range block {
+		if !helpPointer.MatchString(line) {
+			levels[helpIndent(line)] = append(levels[helpIndent(line)], line)
 		}
 	}
+	for indent, lines := range levels {
+		column, rows := -1, 0
+		for _, line := range lines {
+			if c := helpSecondColumn(line); c >= 0 {
+				rows++
+				if column < 0 {
+					column = c
+				}
+			}
+		}
+		if rows < 2 {
+			continue
+		}
+		for _, line := range lines {
+			switch c := helpSecondColumn(line); {
+			case c < 0:
+				problems = append(problems, fmt.Sprintf("table row %q has no two-space gap before its description", strings.TrimSpace(line)))
+			case c != column:
+				problems = append(problems, fmt.Sprintf("table row %q starts its description at column %d, not %d",
+					strings.TrimSpace(line), c, column))
+			}
+		}
+		for _, line := range block {
+			if in := helpIndent(line); in > indent && in < column && strings.TrimSpace(line) != "" {
+				problems = append(problems, fmt.Sprintf("continuation %q starts at column %d, not %d",
+					strings.TrimSpace(line), in, column))
+			}
+		}
+	}
+	return problems
+}
+
+// helpHeading reports whether a column-zero line is a section heading: UPPERCASE words, optionally
+// followed by a colon and a short explanation ("CONFIGURE STEPS: .agent/loop.yaml").
+func helpHeading(line string) bool {
+	name, _, _ := strings.Cut(line, ": ")
+	return line != "" && line[0] >= 'A' && line[0] <= 'Z' && strings.ToUpper(name) == name
+}
+
+// helpLabel reports whether lines[i] is a "Label:" whose commands follow it, indented.
+func helpLabel(lines []string, i int) bool {
+	return strings.HasSuffix(lines[i], ":") && i+1 < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i+1]), "coop ")
+}
+
+func helpLayoutProblems(page string) []string {
+	var problems []string
+	lines := strings.Split(page, "\n")
+	var headings []string
+	closing := false                  // a closing pointer was seen: only pointers may follow
+	for i := 1; i < len(lines); i++ { // lines[0] is the title
+		line := lines[i]
+		switch {
+		case line == "" || strings.HasPrefix(line, " "), strings.HasPrefix(line, "Usage:"):
+		case helpHeading(line):
+			name, _, _ := strings.Cut(line, ": ")
+			switch {
+			case closing:
+				problems = append(problems, fmt.Sprintf("heading %q follows the closing pointers", line))
+			case name == "EXAMPLE":
+				problems = append(problems, "the heading is EXAMPLES, even over one example")
+			case i+1 == len(lines) || lines[i+1] == "":
+				problems = append(problems, fmt.Sprintf("heading %q needs its content directly beneath it", line))
+			}
+			headings = append(headings, name)
+		case helpPointer.MatchString(line) || helpLabel(lines, i):
+			if !closing && lines[i-1] != "" {
+				problems = append(problems, fmt.Sprintf("a blank line separates the closing pointers from the last section:\n%s\n%s", lines[i-1], line))
+			}
+			closing = true
+		default:
+			problems = append(problems, fmt.Sprintf("prose at column zero; indent it under its section:\n%s", line))
+		}
+	}
+	if examples := slices.Index(headings, "EXAMPLES"); examples >= 0 {
+		for i, h := range headings {
+			if (strings.HasSuffix(h, "OPTIONS") && i > examples) || (h == "EXIT STATUS" && i < examples) {
+				problems = append(problems, fmt.Sprintf("sections run %v; OPTIONS come before EXAMPLES, and EXIT STATUS after", headings))
+				break
+			}
+		}
+	}
+	// The page's closing pointers start at column zero: indented under the last section, they read
+	// as part of it.
+	last := lines
+	if i := strings.LastIndex(page, "\n\n"); i >= 0 {
+		last = strings.Split(page[i+2:], "\n")
+	}
+	for i, line := range last {
+		if helpIndent(line) > 0 && (helpPointer.MatchString(line) || helpLabel(last, i)) {
+			problems = append(problems, fmt.Sprintf("closing pointer %q belongs at column zero, after the last section", strings.TrimSpace(line)))
+		}
+	}
+	return problems
 }
 
 // RenderManual is the single source for `coop help --all`, docs/cli.md, and site/llms.txt — it must

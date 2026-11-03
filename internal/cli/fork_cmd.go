@@ -87,7 +87,8 @@ MANAGE
   rm <name>      delete a fork
 
 SESSION OPTIONS
-  --isolated      create independent Git storage and require reviewed publication
+  --isolated      create independent Git storage and require reviewed
+                  publication
   -c, --continue  continue the last session (default when reopening)
   --new           start a new conversation in the existing fork
   --fresh         delete the fork and its service data, then recreate it
@@ -101,7 +102,7 @@ SESSION OPTIONS
 
 NETWORK OPTIONS
   --egress <mode>        internet access: filtered (default), open or offline
-  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
+  --allow-domain <name>  allow TLS to this exact domain on port 443; repeatable
   --egress-rules <file>  add this file's network rules for the run
 
 LOOP OPTIONS
@@ -118,8 +119,8 @@ EDITOR INTEGRATION
   coop fork <name> acp  use an existing fork from an ACP editor
   See coop help fork <name> acp for its options.
 
-  Model and account syntax: coop help models
-  Command options: coop help fork <command>`)
+Model and account syntax: coop help models
+Command options:          coop help fork <command>`)
 	return b.String()
 }
 

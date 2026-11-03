@@ -4,7 +4,7 @@ description: "UPPERCASE help headings, aligned command rows, practical prose and
 scope: cli-output
 sources: [internal/cli/help.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go, tools/gendocs/main.go]
 check: "none"
-updated: 2026-10-15
+updated: 2026-11-03
 ---
 
 # Help output: consistent headings, useful commands, practical guidance
@@ -37,6 +37,14 @@ updated: 2026-10-15
   topic or appending an unrelated all-commands footer to a self-contained guide.
 - Keep indexes plain and scannable. Runtime output examples embedded in help retain their
   actual status formatting; do not rewrite an example merely because runtime stats use `·`.
+- Every page has one shape: the title, `Usage:`, an optional intro indented two spaces, OPTIONS,
+  EXAMPLES (plural even over one example), the deeper sections, EXIT STATUS, then the closing
+  pointers (`Start again: coop up`, `For more details see:`) at column zero after a blank line.
+  A heading's content starts on the next line, indented. Nothing else starts at column zero:
+  indentation shows what a line belongs to.
+- Every line fits 80 columns. Every two-column table aligns its second column, a wrapped
+  description continues in that column, and stacked pointers align their commands. Rewrap a
+  paragraph rather than leaving a one-word tail.
 
 **Why:** consistent structure lets new users scan without learning a different style for each
 page. Help needs to explain what to do, not expose the implementation. Complete examples prevent
@@ -48,11 +56,21 @@ the full manual must be assembled from the same pages, not a second command regi
 `make docs-check` pins every page's bytes through the generated `docs/cli.md`: review a page's
 wording in that diff, and do not copy the page into a fixture under `testdata/approved`. A page
 never ends in a newline (TestManualPagesEndWithoutANewline): `coop help` adds the one it prints.
-Existing TestHelpRowsAlign, TestHelpOptionRowsAlign, TestHelpTextAligned, TestAllHelpAvoidsMiddleDots and
-TestCLIConformance cover portions of the historical rules, not this entire contract. Expand
-their relevant coverage during implementation; `check: none` remains honest until that lands.
+TestHelpPagesFitTheTerminal, TestHelpColumnsAlign and TestHelpPagesShareOneLayout read every
+manual page and the reference menu for the width, table and page-shape bullets above;
+TestHelpRowsAlign, TestHelpTextAligned, TestAllHelpAvoidsMiddleDots and TestCLIConformance
+cover older parts. The editorial bullets (practical prose, grouping by job, discoverability)
+still ride on review, so `check: none` stays.
 
 ## Changelog
+- 2026-11-03 — a manual test of every page found a broken WORK column on the tasks page, a
+  misaligned sessions row, EXAMPLES before OPTIONS on nine pages, EXAMPLE beside EXAMPLES, init's
+  bullets and net's how-to at column zero, closing pointers indented into the last section, and
+  lines up to 92 columns. Added the page-shape and width bullets and three tests that read every
+  manual page (they replace TestHelpOptionRowsAlign, which checked OPTIONS blocks only). Swept
+  the menu and 85 pages: fixed every hit, moved column-zero prose under its section or into an
+  intro, and shortened the menu's three rows past 80 columns (its four approved transcripts
+  follow).
 - 2026-10-15 — deleted the 73 help-page fixtures in `internal/cli/testdata/approved` (maintenance
   audit decision 3.6d). Each was a byte-exact copy of one `docs/cli.md` section, compared with
   the same help.go string the manual renders, and `make docs-check` already fails when that

@@ -132,7 +132,7 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	row("coop tasks add \"<title>\"", "add a task")
 	row("coop tasks decisions", "show tasks waiting for your decision")
 	row("coop backlog", "save ideas for later")
-	row("coop context [<path>...]", "show which instructions and docs apply to selected files")
+	row("coop context [<path>...]", "show instructions and docs for your files")
 
 	group("LOOPS", "work through tasks automatically; configure the steps in .agent/loop.yaml")
 	row("coop loop [<agent|preset>]", "work through the project's task queue")
@@ -173,7 +173,7 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	group("SECURITY & ISOLATION", "control access, check isolation, and protect secrets")
 	row("coop doctor", "check that the box's isolation works")
 	row("coop approve", "review and approve requested project access")
-	row("coop net", "show and manage this project's network access")
+	row("coop net", "manage this project's network access")
 	row("coop check-secrets", "check project files for exposed secrets")
 	row("coop sign", "sign unpushed commits with your host key")
 
@@ -185,12 +185,12 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 
 	group("INTEGRATIONS", "use Coop with other tools and your shell")
 	row("coop help acp", "connect Coop to your editor")
-	row("coop help sessions", "let other applications start and manage agents")
+	row("coop help sessions", "let other apps start and manage agents")
 	row("coop help prompt", "add Coop status to your shell prompt or tmux")
 	row("coop help completion", "enable tab completion in Bash or Zsh")
 
 	// The closing actions belong to no section, so they start at column zero.
-	fmt.Fprint(&b, "\nHelp and examples: coop help <command>\nDocumentation: https://coop.dryga.com\n")
+	fmt.Fprint(&b, "\nHelp and examples: coop help <command>\nDocumentation:     https://coop.dryga.com\n")
 	return b.String()
 }
 
@@ -301,11 +301,6 @@ const runHelp = `coop run: run a command in the box
 Usage:
   coop run [options] -- <command> [<args>...]
 
-EXAMPLES
-  coop run -- npm test
-  coop run --egress open -- curl https://example.com
-  coop run --egress offline -- git status
-
 OPTIONS
   --egress <mode>        choose filtered, open, or offline
   --allow-domain <host>  allow TLS access to this host on port 443
@@ -313,6 +308,11 @@ OPTIONS
   --egress-rules <path>  add the network rules in a file
 
   Put Coop options before --. Everything after it belongs to your command.
+
+EXAMPLES
+  coop run -- npm test
+  coop run --egress open -- curl https://example.com
+  coop run --egress offline -- git status
 
 NETWORK ACCESS
   filtered  allow traffic permitted by approved network rules (default)
@@ -363,7 +363,6 @@ func agentHelp(name string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "coop %s: run %s in the box\n\n", name, title)
 	fmt.Fprintf(&b, "Usage:\n  coop %s[@<account>] [options] [-- <%s-args>...]\n\n", target, name)
-	fmt.Fprintf(&b, "EXAMPLES\n  coop %s\n  coop %s\n  coop %s\n  coop %s -- --help\n\n", name, example, account, name)
 
 	b.WriteString("OPTIONS\n")
 	b.WriteString(helpRows([][2]string{
@@ -374,9 +373,11 @@ func agentHelp(name string) string {
 	b.WriteString("\nNETWORK OPTIONS\n")
 	b.WriteString(helpRows([][2]string{
 		{"--egress <mode>", "internet access: filtered (default), open or offline"},
-		{"--allow-domain <name>", "allow this exact domain over TLS on port 443; repeat to add more"},
+		{"--allow-domain <name>", "allow TLS to this exact domain on port 443; repeatable"},
 		{"--egress-rules <file>", "add this file's network rules for the run"},
 	}, 2))
+
+	fmt.Fprintf(&b, "\nEXAMPLES\n  coop %s\n  coop %s\n  coop %s\n  coop %s -- --help\n", name, example, account, name)
 
 	b.WriteString("\nMODELS AND ACCOUNTS\n")
 	b.WriteString(helpRows([][2]string{
@@ -432,24 +433,20 @@ var commandHelp = map[string]string{
 Usage: coop sessions <command>
 
 COMMANDS
-  connect  connect this machine to a controller
-  doctor   check whether the local service is ready
-  check    see whether this build can use the session data as it is
+  connect     connect this machine to a controller
+  doctor      check whether the local service is ready
+  check       see whether this build can use the session data as it is
   quiescence  inspect queued and running work before a restart
-  compact  back up session data and reduce its disk usage
+  compact     back up session data and reduce its disk usage
 
 CONNECT THIS MACHINE
-  coop sessions connect --controller https://controller.example --token-file /path/to/token
+  coop sessions connect --controller https://controller.example \
+    --token-file /path/to/token
 
   The controller supplies each session's code, context, and execution settings.
   Leave this command running; it starts the local service automatically.
 
-COMMAND HELP
-  coop help sessions connect
-  coop help sessions doctor
-  coop help sessions check
-  coop help sessions compact
-  coop help sessions quiescence`,
+Command options: coop help sessions <command>`,
 
 	"sessions connect": `coop sessions connect: run a worker for a remote controller
 
@@ -459,7 +456,7 @@ OPTIONS
   --controller <https-url>  controller to trust and connect to
   --token-file <path>       enrollment token (only needed on first connection)
   --state <path>            private worker data directory
-  --ca-file <path>          CA bundle for a controller using private TLS certificates
+  --ca-file <path>          CA bundle for a controller's private TLS certificate
 
 DEFAULT STORAGE
   ~/.local/state/coop/sessions
@@ -479,34 +476,34 @@ RUNNING
 Usage:
   coop sessions doctor [options]
 
+  The command succeeds when the service responds and is ready for sessions.
+
 OPTIONS
   --socket <path>  check this Unix socket
   --json           print the result as JSON
 
 EXAMPLES
   coop sessions doctor
-  coop sessions doctor --socket /path/to/control.sock
-
-  The command succeeds when the service responds and is ready for sessions.`,
+  coop sessions doctor --socket /path/to/control.sock`,
 
 	"sessions check": `coop sessions check: see whether this build can use the session data as it is
 
 Usage:
   coop sessions check [--state <path>]
 
+OPTIONS
+  --state <path>  check this session-data directory
+
 EXAMPLES
   coop sessions check
   coop sessions check --state /var/lib/coop/sessions
-
-OPTIONS
-  --state <path>  check this session-data directory
 
 BEFORE UPGRADING A WORKER
   Stop the session service, then run this command with the new coop build.
   It reads the session data and changes nothing.
 
 EXIT STATUS
-  0  this build uses the data as it is, or the service started but holds none yet
+  0  this build uses the data as it is, or a started service holds none yet
   1  the check could not finish: the service is still running, there is no
      session data at the path, or some data can't be read
   2  invalid arguments
@@ -533,8 +530,8 @@ BEFORE RESTARTING A WORKER
   from a candidate container image: this also prevents sidecar writes if the
   service stops during inspection.
   Zero counts mean no durable work remains; retain graceful service shutdown
-  to finish any runtime cleanup. Dormant uncertain create and discard receipts remain
-  unresolved and does not count as running work.
+  to finish any runtime cleanup. Dormant uncertain create and discard
+  receipts remain unresolved and do not count as running work.
 
 EXIT STATUS
   0  no queued or running work remains in the session store
@@ -554,7 +551,7 @@ OPTIONS
   --backup <path>  save a verified database backup to a new file
   --state <path>   use this session-data directory
 
-EXAMPLE
+EXAMPLES
   coop sessions compact --backup /path/to/session-backup.sqlite
 
 BEFORE RUNNING
@@ -571,12 +568,12 @@ DEFAULT SESSION DATA
 Usage:
   coop sign [--from <ref>]
 
+OPTIONS
+  --from <ref>   sign commits after this Git reference
+
 EXAMPLES
   coop sign
   coop sign --from origin/main
-
-OPTIONS
-  --from <ref>   sign commits after this Git reference
 
 HOW IT WORKS
   By default, Coop signs commits after the branch's upstream reference.
@@ -602,7 +599,7 @@ OUTPUT
   Shows task counts, forks, running fork loops, and an unsigned-commit marker.
   Empty counts are omitted. When there is nothing to show, it prints nothing.
 
-EXAMPLE
+EXAMPLE OUTPUT
   2 todo · 1 in progress · 1 blocked · 3 forks (2 running) · unsigned commit
 
 TMUX
@@ -617,16 +614,16 @@ SHELL PROMPTS
 Usage:
   coop shell [options]
 
-EXAMPLES
-  coop shell
-  coop shell --egress open
-  coop shell --egress offline
-
 OPTIONS
   --egress <mode>        choose filtered, open, or offline
   --allow-domain <host>  allow TLS access to this host on port 443
                          repeat to allow more hosts
   --egress-rules <path>  add the network rules in a file
+
+EXAMPLES
+  coop shell
+  coop shell --egress open
+  coop shell --egress offline
 
 USING THE SHELL
   The shell opens in your project inside the box.
@@ -659,8 +656,8 @@ ACCOUNTS
   Without @account, signs in to the agent's default account.
   Use a name such as @work to keep a separate login.
 
-  Show accounts: coop credentials
-  Start an agent: coop claude`,
+Show accounts:  coop credentials
+Start an agent: coop claude`,
 
 	"usage": `coop usage: show limits and a 30-day API estimate
 
@@ -676,21 +673,23 @@ EXAMPLES
   resets and reported expiry dates when the provider supplies them.
   Checking usage never redeems a reset. Credits use provider units, not dollars.
   Σ≈$.../30d is the 30-day API estimate, priced at standard API token rates,
-  including subscription activity. It reads local Coop account/editor history and
-  native CLI history on this computer, not web/mobile activity or other devices.
-  Native history uses the normal Claude, Codex, Gemini and Grok homes plus their
-  supported home overrides. Copied requests count once. A current login does not
-  identify an old request's account; unmatched records show as Unassigned local usage.
+  including subscription activity. It reads local Coop account/editor history
+  and native CLI history on this computer, not web/mobile activity or other
+  devices. Native history uses the normal Claude, Codex, Gemini and Grok homes
+  plus their supported home overrides. Copied requests count once. A current
+  login does not identify an old request's account; unmatched records show as
+  Unassigned local usage.
   Parsed token records are cached in Coop's host configuration folder, under
   usage-cache. The first check reads full history; later checks reuse unchanged
   files. Changed files are read again. The cache contains no conversation text.
   A finished check of every provider removes the records of deleted files.
-  Select provider@credential to see which history is included and how it is priced.
-  Editor history that cannot be matched to an account is listed separately.
-  Subtotals and Total sum the selected providers' recorded estimates,
-  including shared editor history once. Incomplete coverage is marked partial;
-  missing or unpriced history is not treated as zero. Totals are not bills.
-  Saved Coop turn summaries are unpriced and excluded from native-history totals.
+  Select provider@credential to see which history is included and how it is
+  priced. Editor history that cannot be matched to an account is listed
+  separately. Subtotals and Total sum the selected providers' recorded
+  estimates, including shared editor history once. Incomplete coverage is
+  marked partial; missing or unpriced history is not treated as zero. Totals
+  are not bills. Saved Coop turn summaries are unpriced and excluded from
+  native-history totals.
 
   Coop's host-managed accounts use host-only credentials for limit checks,
   without a model prompt.
@@ -711,36 +710,39 @@ PROVIDER REPORTS
     "reports": [
       {"provider": "codex", "name": "work", "organization": "org-example",
        "key_env": "COOP_REPORT_OPENAI_KEY"},
-      {"provider": "claude", "name": "work", "key_env": "COOP_REPORT_CLAUDE_KEY"}
+      {"provider": "claude", "name": "work",
+       "key_env": "COOP_REPORT_CLAUDE_KEY"}
     ]
   }
 
-  codex needs an OpenAI organization Admin API key; organization selects its scope.
-  claude needs an Anthropic organization Admin API key; Priority Tier is excluded.
-  grok needs a separate xAI Management API key and a team field with its team ID.
-  Each provider supports one source. name labels the source; it is not a saved login.
-  Reports cover 30 completed UTC days and show the dates, scope and check time.
-  Providers may report late or revise amounts. Unsupported currencies, denied access,
-  malformed or truncated reports show unavailable, not zero. Incomplete scope is partial.
-  Provider selection filters reports; provider@credential never requests an org report.
-  Personal subscription activity is not covered by these API billing sources.
+  codex needs an OpenAI organization Admin API key; organization selects its
+  scope. claude needs an Anthropic organization Admin API key; Priority Tier is
+  excluded. grok needs a separate xAI Management API key and a team field with
+  its team ID. Each provider supports one source. name labels the source; it is
+  not a saved login. Reports cover 30 completed UTC days and show the dates,
+  scope and check time. Providers may report late or revise amounts.
+  Unsupported currencies, denied access, malformed or truncated reports show
+  unavailable, not zero. Incomplete scope is partial. Provider selection
+  filters reports; provider@credential never requests an org report. Personal
+  subscription activity is not covered by these API billing sources.
 
   Gemini reports use a Google standard billing export, not a Gemini CLI login.
-  Configure provider gemini, name, project, billing_table (project.dataset.table),
-  sku_ids (only Gemini/Vertex API SKU IDs), location, gcloud_account (email), and
-  maximum_bytes_billed (1 to 1073741824). Host gcloud must be signed in to that
-  account, with query and export-read permissions. The fixed query reads only the
-  selected project/SKUs, includes credits and accepts USD billing only. It can incur
-  BigQuery charges up to your byte limit. Export gaps and unlisted SKUs stay partial;
-  no matching rows means unknown coverage, not zero spend.
-  Setup and examples: https://github.com/AndrewDryga/coop/blob/main/docs/usage-reports.md
+  Configure provider gemini, name, project, billing_table
+  (project.dataset.table), sku_ids (only Gemini/Vertex API SKU IDs), location,
+  gcloud_account (email), and maximum_bytes_billed (1 to 1073741824). Host
+  gcloud must be signed in to that account, with query and export-read
+  permissions. The fixed query reads only the selected project/SKUs, includes
+  credits and accepts USD billing only. It can incur BigQuery charges up to
+  your byte limit. Export gaps and unlisted SKUs stay partial; no matching rows
+  means unknown coverage, not zero spend.
+  Setup and examples: https://coop.dryga.com/usage-reports.html
 
 EXIT STATUS
-  0  at least one usable history, quota or configured report; failures stay visible
+  0  any usable history, quota or configured report; failures stay visible
   1  no usable history, quota or configured report
   2  invalid selector or arguments
 
-  Credentials: coop credentials`,
+Credentials: coop credentials`,
 	"credentials": `coop credentials: show and manage your agent accounts
 
 Usage:
@@ -755,8 +757,9 @@ USE AN ACCOUNT
   coop login claude@work
 
   The default account is marked with *.
-  Account removal options: coop help credentials rm
-  Models and automatic rotation: coop help models`,
+
+Account removal options:       coop help credentials rm
+Models and automatic rotation: coop help models`,
 
 	"credentials default": `coop credentials <agent> <account> default: choose the default account
 
@@ -764,10 +767,10 @@ Usage: coop credentials <agent> <account> default
 
   New runs try this account first. Add @account to use only one account.
 
-EXAMPLE
+EXAMPLES
   coop credentials codex work default
 
-  Accounts: coop credentials codex`,
+Accounts: coop credentials codex`,
 
 	"credentials rm": `coop credentials <agent> <account> rm: remove a saved account
 
@@ -780,18 +783,18 @@ OPTIONS
   Account-independent editor conversations are kept.
   Choose another default before removing the current default account.
 
-EXAMPLE
+EXAMPLES
   coop credentials codex old-work rm`,
 
 	"credentials account": `coop credentials <agent> <account>: show an account
 
 Usage: coop credentials <agent> <account>
 
-EXAMPLE
+EXAMPLES
   coop credentials codex personal
 
-  Use by default: coop help credentials default
-  Remove account: coop help credentials rm`,
+Use by default: coop help credentials default
+Remove account: coop help credentials rm`,
 
 	"models": `coop models: list models available to each agent
 
@@ -813,7 +816,7 @@ USE A MODEL
   You can use any model accepted by the agent, even if it is not listed.
 
 SET REASONING EFFORT
-  Add /effort after the model, or directly after the agent to use its default model.
+  Add /effort after the model, or after the agent to keep its default model.
 
   coop codex:gpt-6-astra/high
   coop codex/high
@@ -843,9 +846,9 @@ AUTOMATIC ROTATION
   coop loop claude:opus
   coop loop claude:opus@work
 
-  For more details:
-    coop help presets
-    coop help loop`,
+For more details see:
+  coop help presets
+  coop help loop`,
 
 	"acp": `coop acp: connect your editor to an agent running in a Coop box
 
@@ -899,10 +902,9 @@ TROUBLESHOOTING
   After replacing the Coop binary, send SIGHUP to the specific ACP process
   to reload it. SIGINT and SIGTERM stop it.
 
-RELATED HELP
+For more details see:
   coop help models
   coop help presets
-For more details see:
   coop help net`,
 
 	"presets init": `coop presets init: create a preset you can edit
@@ -920,7 +922,7 @@ EXAMPLES
   coop presets init
   coop presets init review
 
-  Learn how presets work: coop help presets`,
+Learn how presets work: coop help presets`,
 
 	"presets": `coop presets: configure multiple models and providers to work together
 
@@ -935,13 +937,12 @@ CREATE A PRESET
   coop presets init review
 
 RUN A PRESET
-  coop frontier               start an interactive session with the lead agent
-  coop loop frontier          work through tasks with this preset
-  coop acp frontier           use this preset in your editor
-  coop fork risky frontier --loop
+  coop frontier                    start the lead agent interactively
+  coop loop frontier               work through tasks with this preset
+  coop acp frontier                use this preset in your editor
+  coop fork risky frontier --loop  work through tasks in a fork
 
 HOW TO DEFINE A PRESET
-
   A preset is a YAML file that defines:
   - One lead agent.
   - Optional roles for focused work.
@@ -960,7 +961,7 @@ HOW TO DEFINE A PRESET
     mode:    controls how a role works
                native    runs inside the lead agent's session
                consult   provides read-only advice from another agent
-               delegate  edits files for the lead; never commits; runs one at a time
+               delegate  edits files for the lead, one at a time; never commits
 
     when:    tells the lead when to use a role
 
@@ -982,14 +983,14 @@ HOW TO DEFINE A PRESET
 Usage: coop tasks [--tasks <path>]... [<command>]
 
 WORK
-  ls             list tasks (also the default)
-  add "<title>"  create a task
-  claim <id>     start working on a task
-  release <id>   return a task to todo with its handoff notes
-  block <id>     ask for a decision before continuing
-  unblock <id> ["<answer>"] record a decision and return the task to todo
-  park <id> ["<reason>"]   keep a blocked task in the backlog for later
-  done <id>                move completed work to the archive
+  ls                         list tasks (also the default)
+  add "<title>"              create a task
+  claim <id>                 start working on a task
+  release <id>               return a task to todo with its handoff notes
+  block <id>                 ask for a decision before continuing
+  unblock <id> ["<answer>"]  record a decision and return the task to todo
+  park <id> ["<reason>"]     keep a blocked task in the backlog for later
+  done <id>                  move completed work to the archive
 
 REVIEW
   watch           watch task progress
@@ -1042,7 +1043,7 @@ PROJECTS
   With subprojects, coop tasks add uses the subproject you run it in.
   Elsewhere, choose one with --project <name>.
 
-  Command options: coop help tasks <command>`,
+Command options: coop help tasks <command>`,
 
 	"tasks ls": `coop tasks ls: list tasks and their progress
 
@@ -1078,8 +1079,8 @@ OPTIONS
 
   New tasks use the task.md Template in the selected queue's README.md,
   including its checklist. Each subproject uses its own README.md.
-  --subtask replaces the <…> step placeholder and keeps the default checklist items.
-  Without the text options, Coop creates a template for you to fill in.
+  --subtask replaces the <…> step placeholder and keeps the default checklist
+  items. Without the text options, Coop creates a template for you to fill in.
   If you use any text option, include --context, --acceptance and --approach.
   Repeat a text option to add another paragraph.
 
@@ -1114,19 +1115,21 @@ EXAMPLES
   coop tasks claim login-retries
   coop tasks claim login-retries --as codex --pid 812
 
-  Hand it back: coop tasks release <id>`,
+Hand it back: coop tasks release <id>`,
 
 	"tasks release": `coop tasks release: return a task to the queue for another agent
 
 Usage: coop tasks release <id> [--tasks <path>]...
 
-Before releasing, update state.md with the work completed, checks run, and
-the next steps. Include anything another agent needs to continue where you left off.
+  Before releasing, update state.md with the work completed, checks run, and
+  the next steps. Include anything another agent needs to continue where you
+  left off.
 
-Returns the task to todo and removes your claim. Progress and handoff notes are kept.
-A task being worked on by another process or assigned to a fork cannot be released.
+  Returns the task to todo and removes your claim. Progress and handoff notes
+  are kept. A task being worked on by another process or assigned to a fork
+  cannot be released.
 
-EXAMPLE
+EXAMPLES
   coop tasks release login-retries`,
 
 	"tasks lease": `coop tasks lease: reserve a task while work is running
@@ -1140,7 +1143,7 @@ OPTIONS
 
   Claim the task first. Other loops skip it while this reservation is held.
   Without a command, Coop follows your agent's process or the task's claimant.
-  Without a process to follow, it waits until the task moves or you press Ctrl-C.
+  With no process to follow, it waits until the task moves or you press Ctrl-C.
 
 EXAMPLES
   coop tasks lease login-retries -- make check
@@ -1153,12 +1156,13 @@ Usage: coop tasks block <id> [--tasks <path>]... [options]
 OPTIONS
   --question <text>        ask the question that needs an answer, on one line
   --why <text>             say what happened and why the task cannot go on
-  --option <text>          describe a choice and its tradeoff; repeat for more choices
+  --option <text>          describe a choice and its tradeoff; repeat for
+                           more choices
   --recommendation <text>  recommend a choice and explain why
 
-Without these options, creates decision.md for you to fill in.
-If you use any of them, include a question, why, at least one option, and a recommendation.
-Existing answers and decision notes are never overwritten.
+  Without these options, creates decision.md for you to fill in.
+  If you use any of them, include a question, why, at least one option, and a
+  recommendation. Existing answers and decision notes are never overwritten.
 
 FOR AI AGENTS
   coop tasks block choose-storage \
@@ -1178,10 +1182,10 @@ Usage: coop tasks unblock <id> ["<answer>"] [--tasks <path>]...
   Provide your answer here, or fill in Resolution in decision.md first.
   Coop keeps the decision with the task so the next agent can continue.
 
-EXAMPLE
+EXAMPLES
   coop tasks unblock login-retries "Return to sign-in after the first failure."
 
-  Questions waiting for you: coop tasks decisions -i`,
+Questions waiting for you: coop tasks decisions -i`,
 
 	"tasks park": `coop tasks park: keep a blocked task in the backlog for later
 
@@ -1192,10 +1196,10 @@ Usage: coop tasks park <id> ["<reason>"] [--tasks <path>]...
   Your reason is saved in the task's log.
   coop backlog promote brings it back, blocked while its decision is open.
 
-EXAMPLE
+EXAMPLES
   coop tasks park choose-storage "Not this quarter."
 
-  Questions waiting for you: coop tasks decisions -i`,
+Questions waiting for you: coop tasks decisions -i`,
 
 	"tasks done": `coop tasks done: move completed work to the archive
 
@@ -1214,14 +1218,14 @@ OPTIONS
   the checklist as it is and notes what was open in the task's log.
   Agents never use it.
 
-EXAMPLE
+EXAMPLES
   coop tasks done login-retries`,
 
 	"tasks path": `coop tasks path: print a task's folder path
 
 Usage: coop tasks path <id> [--tasks <path>]...
 
-EXAMPLE
+EXAMPLES
   coop tasks path login-retries`,
 
 	"tasks queues": `coop tasks queues: print task queue paths
@@ -1230,7 +1234,7 @@ Usage: coop tasks queues [--tasks <path>]...
 
   Prints one absolute path per line. By default, includes the project's queues.
 
-EXAMPLE
+EXAMPLES
   coop tasks queues`,
 
 	"tasks decisions": `coop tasks decisions: show questions waiting for your answer
@@ -1254,7 +1258,7 @@ Usage: coop tasks lint [--tasks <path>]...
   works such a task: its agent fills the text in first.
   Returns a nonzero exit status when it finds a problem.
 
-EXAMPLE
+EXAMPLES
   coop tasks lint`,
 
 	"tasks rm": `coop tasks rm: permanently delete task folders
@@ -1306,7 +1310,7 @@ EXAMPLES
   coop backlog add "Redesign account permissions"
   coop backlog promote account-permissions
 
-  Command options: coop help backlog <command>`,
+Command options: coop help backlog <command>`,
 
 	"backlog ls": `coop backlog ls: list saved ideas
 
@@ -1315,7 +1319,7 @@ Usage: coop backlog ls [--tasks <path>]...
   By default, includes every configured project queue.
   Repeat --tasks to select several queues.
 
-EXAMPLE
+EXAMPLES
   coop backlog ls --tasks web/.agent/tasks`,
 
 	"backlog add": `coop backlog add: save an idea for later
@@ -1347,7 +1351,7 @@ Usage: coop backlog promote <id> [--tasks <path>]...
   The task becomes todo, where an agent or loop can pick it up.
   A parked task with an open decision comes back blocked, with its question.
 
-EXAMPLE
+EXAMPLES
   coop backlog promote account-permissions`,
 
 	"backlog rm": `coop backlog rm: permanently delete a saved idea
@@ -1359,7 +1363,7 @@ OPTIONS
 
   Deletes the idea's folder, including its notes and saved files.
 
-EXAMPLE
+EXAMPLES
   coop backlog rm account-permissions`,
 
 	"fork acp": `coop fork <name> acp: use an existing fork from an ACP editor
@@ -1383,8 +1387,8 @@ EXAMPLES
   coop fork myfork acp
   coop fork myfork acp claude:opus
 
-  Create the fork first: coop fork myfork claude
-  Editor setup: coop help acp`,
+Create the fork first: coop fork myfork claude
+Editor setup:          coop help acp`,
 
 	"fork ls": `coop fork ls: show forks and their progress
 
@@ -1395,7 +1399,7 @@ OPTIONS
 
   Shows each fork's agent, activity, tasks, changes and reported cost.
 
-EXAMPLE
+EXAMPLES
   coop fork ls`,
 
 	"fork review": `coop fork review: inspect a fork before merging
@@ -1417,13 +1421,14 @@ OPTIONS
   Coop reviews an isolated fork's saved private commits even when your main
   checkout has uncommitted changes. --open and COOP_REVIEW_CMD use a saved
   private preview, separate from the agent's workspace.
-  Preview edits are never merged. Remove the preview when finished.
+  Preview edits are never merged. Coop prints the preview folders; delete
+  them when you finish.
 
 EXAMPLES
   coop fork review myfork
   coop fork review myfork --stat --gate
 
-  Merge after review: coop fork merge myfork`,
+Merge after review: coop fork merge myfork`,
 
 	"fork merge": `coop fork merge: bring a fork's commits into your current branch
 
@@ -1436,15 +1441,15 @@ OPTIONS
   -y, --yes    confirm merging and removal without prompting
 
   Review the diff first. Your working tree must be clean and the fork stopped.
-  Coop rebases the commits, runs configured project checks and merges the result.
-  --force does not bypass those checks.
+  Coop rebases the commits, runs configured project checks and merges the
+  result. --force does not bypass those checks.
 
   For isolated forks, --force cannot bypass risky-file or nested-Git policy.
   Coop saves the exact changes to merge before updating your checkout. If the
-  merge is interrupted, keep its journal and saved private files, then rerun merge.
-  If the checkout is only partly updated or changed by another process, Coop
-  stops for recovery. Do not reset, stash, delete an index.lock you cannot
-  identify, or recreate or remove the fork.
+  merge is interrupted, keep its journal and saved private files, then rerun
+  merge. If the checkout is only partly updated or changed by another process,
+  Coop stops for recovery. Do not reset, stash, delete an index.lock you
+  cannot identify, or recreate or remove the fork.
 
   After merging, Coop asks before deleting a clean fork. With --all, one prompt
   covers the batch and removal. Forks with uncommitted work are kept.
@@ -1502,7 +1507,7 @@ EXAMPLES
 
 Usage: coop fork path <name>
 
-EXAMPLE
+EXAMPLES
   coop fork path myfork`,
 
 	"fork open": `coop fork open: open a fork in your editor
@@ -1511,7 +1516,7 @@ Usage: coop fork open <name>
 
   Uses COOP_EDITOR, your global Git editor or an available editor.
 
-EXAMPLE
+EXAMPLES
   coop fork open myfork`,
 
 	"context": `coop context: show the instructions relevant to your work
@@ -1526,12 +1531,12 @@ OPTIONS
   --json          print the selection for scripts
 
   Coop includes shared agent instructions and any matching context routes.
-  Use paths relative to the repository. Inside a subproject, its path is included.
-  You can combine explicit paths, --changed and --task.
+  Use paths relative to the repository. Inside a subproject, its path is
+  included. You can combine explicit paths, --changed and --task.
   Choose either --rendered or --json for the output format.
 
 EXAMPLES
-  coop context internal/cli/help.go
+  coop context web/src/app.ts
   coop context --changed
   coop context --task login-retries --rendered
 
@@ -1547,8 +1552,9 @@ CONFIGURE ROUTES: .agent/project.yaml
 
 Usage: coop check-secrets [--include-ignored]
 
-Checks tracked and untracked files, plus Coop's task files and notes.
-Possible secrets are reported by file and line; their values stay hidden.
+  Checks tracked and untracked files, plus Coop's task files and notes.
+  Possible secrets are reported by file and line; their values stay hidden.
+  Returns a nonzero status if possible secrets remain or the scan cannot finish.
 
 OPTIONS
   --include-ignored  also check other Git-ignored files the box can read
@@ -1557,27 +1563,20 @@ FALSE POSITIVES
   Add the entries printed by a scan to .coopsecretsignore in your project root.
   Each entry needs a reason. You can edit many entries together in that file.
 
-  IDs stay the same when line numbers change. A changed value or file path is checked again.
-  Remove an entry to check that finding again.
+  IDs stay the same when line numbers change. A changed value or file path is
+  checked again. Remove an entry to check that finding again.
 
   .coopsecretsignore skips exact findings in this check.
-  .coopignore hides files from the box. They do different jobs.
-
-Returns a nonzero status if possible secrets remain or the scan cannot finish.`,
+  .coopignore hides files from the box. They do different jobs.`,
 
 	"loop": `coop loop: let agents work through your task queue
 
 Usage: coop loop [<target|preset>] [<options>]
 
 HOW IT WORKS
-  A fresh agent works on each task, then a final review checks the completed work.
-  The review can reopen tasks. Coop continues until the work passes review or
-  needs your decision.
-
-EXAMPLES
-  coop loop claude
-  coop loop frontier
-  coop loop codex --max-tasks 1
+  A fresh agent works on each task, then a final review checks the completed
+  work. The review can reopen tasks. Coop continues until the work passes
+  review or needs your decision.
 
 OPTIONS
   --tasks <path>         choose a task queue; repeat for more queues
@@ -1585,19 +1584,25 @@ OPTIONS
   --review-task <id>     add a completed task with a valid completion record
                          to the final review; repeat to add more
   --max-tasks <n>        pause after N tasks finish or become blocked
-  --preflight            resolve answered decisions and release stale claims first
+  --preflight            before starting, resolve answered decisions and
+                         release stale claims
   --no-preflight         skip that preparation
   --no-mcp               run without configured MCP servers
-  --debug-on-fail        open a box shell after a failure, then retry when you exit
+  --debug-on-fail        open a box shell after a failure; retry when you exit
   --egress <mode>        internet access: filtered (default), open or offline
-  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
+  --allow-domain <name>  allow TLS to this exact domain on port 443; repeatable
   --egress-rules <file>  add this file's network rules for the run
 
   --max-tasks pauses before the final review. The limit must be positive.
   --debug-on-fail opens a shell only when running in a terminal.
 
+EXAMPLES
+  coop loop claude
+  coop loop frontier
+  coop loop codex --max-tasks 1
+
 STOP AND CONTINUE
-  Press Ctrl-C to finish the current task attempt and its required review, then stop.
+  Press Ctrl-C to finish the current attempt and its required review, then stop.
   Press it again to stop immediately. Run the same command to continue.
   For a background fork loop: coop fork stop <name>
 
@@ -1621,13 +1626,13 @@ CONFIGURE STEPS: .agent/loop.yaml
     verify     enabled, agent, prompt, writes
 
   agent: accepts a list of targets or presets. See coop help models.
-  writes: tasks keeps reviews read-only; repo lets the reviewer edit source files.
+  writes: tasks keeps reviews read-only; repo lets reviewers edit source files.
   Between and verify require a prompt when enabled.
   mcp: false disables MCP servers for every step.
 
 NETWORK ACCESS
-  The run's approved access covers its work and review agents for the entire loop.
-  See coop help net for rules and approvals.
+  The run's approved access covers its work and review agents for the entire
+  loop. See coop help net for rules and approvals.
 
 EXIT STATUS
   0    review and enabled final checks passed, or the task limit was reached
@@ -1642,31 +1647,32 @@ EXIT STATUS
 Usage:
   coop up
 
-Starts services from .agent/compose.yml and waits for them to be ready.
-Uses the Compose path configured in .agent/project.yaml when different.
-Agents reach each service by its Compose name. Starting again is safe.
+  Starts services from .agent/compose.yml and waits for them to be ready.
+  Uses the Compose path configured in .agent/project.yaml when different.
+  Agents reach each service by its Compose name. Starting again is safe.
 
-If an agent is changing this checkout, Coop waits for a safe launch window.
-Running development and loop stacks remain isolated after startup.
-Requires Docker with Compose support.
-Repository binds cannot relabel host files or change mount propagation.
-Read-only sessions require each bind source to exist before startup.
+  If an agent is changing this checkout, Coop waits for a safe launch window.
+  Running development and loop stacks remain isolated after startup.
+  Requires Docker with Compose support.
+  Repository binds cannot relabel host files or change mount propagation.
+  Read-only sessions require each bind source to exist before startup.
 
-If a service asks to read a secret file through a read-only bind, Coop asks
-at a terminal before allowing it. Otherwise the file stays hidden.
-Secret directories and writable binds stay hidden. Approval applies to
-this repository's exact Compose file and the service's local Docker image ID.
-If either changes, run coop up at a terminal to review it again; an unchanged
-approval never follows a moved image tag. A missing approved image stops startup.
+  If a service asks to read a secret file through a read-only bind, Coop asks
+  at a terminal before allowing it. Otherwise the file stays hidden.
+  Secret directories and writable binds stay hidden. Approval applies to
+  this repository's exact Compose file and the service's local Docker image ID.
+  If either changes, run coop up at a terminal to review it again; an unchanged
+  approval never follows a moved image tag.
+  A missing approved image stops startup.
 
-External or custom-named Docker volumes can contain data outside this project.
-At a terminal, Coop names each actual volume, its read-only/read-write access,
-which service attaches it, and the selected Docker daemon before asking.
-Only plain local volumes are supported; a missing custom volume is created
-after approval. A daemon, volume, or image replacement requires fresh review.
-Declining stops startup. Automatic, filtered, and non-terminal starts refuse
-these volumes even after approval.
-Previously saved service-file approvals need one fresh review after upgrading.
+  External or custom-named Docker volumes can contain data outside this project.
+  At a terminal, Coop names each actual volume, its read-only/read-write
+  access, which service attaches it, and the selected Docker daemon before
+  asking. Only plain local volumes are supported; a missing custom volume is
+  created after approval. A daemon, volume, or image replacement requires fresh
+  review. Declining stops startup. Automatic, filtered, and non-terminal starts
+  refuse these volumes even after approval.
+  Previously saved service-file approvals need one fresh review after upgrading.
 
 Add services:  coop init --services
 Stop services: coop down`,
@@ -1675,43 +1681,36 @@ Stop services: coop down`,
 
 Usage: coop down [--delete-volumes] [--yes]
 
-Stops and removes this project's Compose containers and networks.
-Stored data is kept unless you use --delete-volumes.
-Uses .agent/compose.yml, or the configured Compose path.
+  Stops and removes this project's Compose containers and networks.
+  Stored data is kept unless you use --delete-volumes.
+  Uses .agent/compose.yml, or the configured Compose path.
 
 OPTIONS
   --delete-volumes  also permanently delete service volumes and their data
   -y, --yes         skip the volume-deletion confirmation
 
-Coop names the volumes before asking; press Enter to cancel.
-Without a terminal, deletion requires --yes.
-External volumes and files mounted from the project are kept.
+  Coop names the volumes before asking; press Enter to cancel.
+  Without a terminal, deletion requires --yes.
+  External volumes and files mounted from the project are kept.
 
 Start again: coop up`,
 
 	"init": `coop init: set up Coop in this project
 
-Usage:
-  coop init
-  coop init [--stack asdf] [--services [<service,...>]] [--agents <agent,...>|all]
+Usage: coop init [<options>]
+
+  You can run coop init again at any time.
+  Coop keeps your existing project files and adds anything missing.
 
 COOP SETS UP
-
-- Shared instructions and skills for all your AI agents.
-
-- A file-based task system. Agents can pick up work, save progress, and hand
-  it to another agent or session.
-
-- Commit checks. Coop verifies formatting for the languages it detects or
-  you choose.
-
-- Project settings for sandboxed runs, including filtered internet access.
-
-- An optional starter Docker Compose file for supporting services; you can
-  extend it with anything else your project needs.
-
-Without options, Coop detects what it can and asks before initializing Git,
-adding formatting checks, or adding Postgres or Redis.
+  - Shared instructions and skills for all your AI agents.
+  - A file-based task system. Agents can pick up work, save progress, and hand
+    it to another agent or session.
+  - Commit checks. Coop verifies formatting for the languages it detects or
+    you choose.
+  - Project settings for sandboxed runs, including filtered internet access.
+  - An optional starter Docker Compose file for supporting services; you can
+    extend it with anything else your project needs.
 
 OPTIONS
   --agents <list>       set up Claude, Codex, Gemini, Grok, or all
@@ -1721,13 +1720,16 @@ OPTIONS
 
   --stack asdf          install tools from .tool-versions in the Coop box
 
-You can run coop init again at any time.
-Coop keeps your existing project files and adds anything missing.`,
+  Without options, Coop detects what it can and asks before initializing Git,
+  adding formatting checks, or adding Postgres or Redis.`,
 
 	"eval": `coop eval: check whether a model, preset or loop change helped
 
-Run repeatable tasks, grade the work independently, then compare before and after.
-Real runs use your provider account and may spend credits. A preview spends none.
+Usage: coop eval <command>
+
+  Run repeatable tasks, grade the work independently, then compare before and
+  after. Real runs use your provider account and may spend credits. A preview
+  spends none.
 
 TRY IT
   1. Preview three small coding tasks; nothing launches:
@@ -1738,21 +1740,22 @@ TRY IT
      coop eval inspect
 
 RUN AND COMPARE
-  coop eval run <suite> <target|preset>...  run a suite; a real run needs --timeout
-  coop eval runs                            find runs, configurations and outcomes
-  coop eval inspect [<run-id>]              read results and causes; latest by default
-  coop eval compare <before-id> <after-id>  compare two recorded runs without spending
+  coop eval run <suite> <target|preset>...  run a suite; --timeout for real runs
+  coop eval runs                            find runs and their outcomes
+  coop eval inspect [<run-id>]              read a run's results and causes
+  coop eval compare <before-id> <after-id>  compare two runs without spending
+
+  Change your model, preset, loop recipe or Coop build, run the same suite
+  again, then use the two IDs from coop eval runs. Errors are not model-quality
+  failures; inspect their causes before rerunning. Incomplete grading has no
+  definitive winner.
 
 CHOOSE A SUITE
   coop eval ls                              list the shipped starter suites
   coop eval init <dir>                      create an editable custom suite
 
   core   Three single-agent tasks. Use provider targets, not presets.
-  queue  A real loop over ten tasks. Use targets or presets; allow hours, not minutes.
-
-Change your model, preset, loop recipe or Coop build, run the same suite again,
-then use the two IDs from coop eval runs. Errors are not model-quality failures;
-inspect their causes before rerunning. Incomplete grading has no definitive winner.
+  queue  A real loop over ten tasks that takes hours. Use targets or presets.
 
 For options and prerequisites see:
   coop help eval run
@@ -1761,36 +1764,47 @@ Guide: https://coop.dryga.com/docs.html#evals`,
 
 Usage: coop eval run <suite> <target|preset>... --timeout <duration> [<options>]
 
-Each target or preset is a separate configuration, not a fallback. Targets use
-provider[:model][/effort][@account]. Presets need a loop suite such as queue;
-core and other single-agent suites accept targets only.
+  Each target or preset is a separate configuration, not a fallback. Targets
+  use provider[:model][/effort][@account]. Presets need a loop suite such as
+  queue; core and other single-agent suites accept targets only.
 
 OPTIONS
-  --timeout <duration>  time limit, including preparation and grading; required to run
+  --timeout <duration>  time limit, including preparation and grading;
+                        required to run
   --dry-run             print the plan without launching containers or providers
   --repeat <n>          trials per case and configuration (default: 1)
   --jobs <n>            concurrent trials (default: 1)
   --loop-config <path>  use this loop recipe instead of the loop suite's recipe
 
+EXAMPLES
+  coop eval run core codex --timeout 35m --dry-run
+  coop eval run core codex:gpt-6.1-sol codex:gpt-6.1-sol/xhigh --timeout 70m
+  coop eval run queue frontier --timeout 2h
+  coop eval run queue frontier --loop-config .agent/loop.yaml --dry-run
+  coop eval run ./evals/my-suite/suite.yaml codex --repeat 3 --timeout 60m
+
 BEFORE A REAL RUN
   Sign in with coop login <agent>. Have a working container runtime and the
-  current Coop box image. If the image is missing, run coop build --egress open
-  in a directory without a project Dockerfile. Building may download dependencies.
-  A dry run validates the plan, not credentials, runtime or image readiness.
+  current Coop box image. If the image is missing, run coop build --egress
+  open in a directory without a project Dockerfile. Building may download
+  dependencies. A dry run validates the plan, not credentials, runtime or
+  image readiness.
 
-  cloc is optional. Install it for change-size figures; grading and verdicts still
-  work when it is unavailable, and the result labels the missing measurement.
+  cloc is optional. Install it for change-size figures; grading and verdicts
+  still work when it is unavailable, and the result labels the missing
+  measurement.
 
   Only a real run requires --timeout. It limits time, not spending.
   The timer starts when the command starts and stops preparation, trials and
-  grading. After it expires, Coop still tries to clean up and save the final record.
-  More configurations or repetitions mean more paid work. Each case also has its
-  own timeout in suite.yaml; raising the total budget does not raise that limit.
+  grading. After it expires, Coop still tries to clean up and save the final
+  record. More configurations or repetitions mean more paid work. Each case
+  also has its own timeout in suite.yaml; raising the total budget does not
+  raise that limit.
 
 CUSTOM RUNTIME PROFILES
-  Agent cases may name a clean external profile, /app workdir, agent_timeout and
-  verifier_timeout in suite.yaml. Explicitly build the profile on the host with
-  coop build --egress filtered first. Evaluations do not build profiles
+  Agent cases may name a clean external profile, /app workdir, agent_timeout
+  and verifier_timeout in suite.yaml. Explicitly build the profile on the host
+  with coop build --egress filtered first. Evaluations do not build profiles
   automatically, and loop cases cannot use them.
   Fixed limits: 1 CPU, 2 GiB memory, 128 PIDs. Candidates have filtered access
   only to provider endpoints; grading runs offline. The declared 10 GiB storage
@@ -1799,35 +1813,32 @@ CUSTOM RUNTIME PROFILES
   Image and platform details shown by a dry run are provisional.
   See https://coop.dryga.com/evals.html for profile setup.
 
-EXAMPLES
-  coop eval run core codex --timeout 35m --dry-run
-  coop eval run core codex:gpt-6.1-sol codex:gpt-6.1-sol/xhigh --timeout 70m
-  coop eval run queue frontier --timeout 2h
-  coop eval run queue frontier --loop-config .agent/loop.yaml --timeout 2h --dry-run
-  coop eval run ./evals/my-suite/suite.yaml codex --repeat 3 --timeout 60m
+TRIAL ISOLATION
+  Each trial gets a private workspace with no source history. The hidden
+  verifier is never mounted for the model. Grading runs afterwards in a
+  separate container without credentials or network. Operator MCP servers and
+  COOP_RUN_ARGS are omitted from trials; use Coop-managed logins rather than
+  runtime args for credentials. Normal native web search/fetch are disabled,
+  including Coop-managed peers and roles. Terminal and file tools remain
+  available. This disables the clients' normal tools; it does not block custom
+  authenticated provider requests a model might construct. Normal runs are
+  unchanged.
 
-Each trial gets a private workspace with no source history. The hidden verifier
-is never mounted for the model. Grading runs afterwards in a separate container
-without credentials or network. Operator MCP servers and COOP_RUN_ARGS are
-omitted from trials; use Coop-managed logins rather than runtime args for credentials.
-Normal native web search/fetch are disabled, including Coop-managed peers and roles.
-Terminal and file tools remain available. This disables the clients' normal tools;
-it does not block custom authenticated provider requests a model might construct.
-Normal runs are unchanged.
-
-After the final run record is saved, exit 0 means every trial received a graded pass/fail
-verdict, even if some failed. Incomplete coverage exits 1; the run record and
-diagnostics remain available through coop eval inspect. A dry run exits 0 after
-previewing the plan without running trials.
+EXIT STATUS
+  After the final run record is saved, exit 0 means every trial received a
+  graded pass/fail verdict, even if some failed. Incomplete coverage exits 1;
+  the run record and diagnostics remain available through coop eval inspect.
+  A dry run exits 0 after previewing the plan without running trials.
 
 Read the result: coop eval inspect`,
 	"eval runs": `coop eval runs: find recorded evaluation results
 
 Usage: coop eval runs
 
-Shows newest first: run ID, suite, configurations, passes, grading coverage and
-nonzero failure counts. A run without a final summary may be running or interrupted.
-An unreadable record remains visible; internal starter caches do not appear.
+  Shows newest first: run ID, suite, configurations, passes, grading coverage
+  and nonzero failure counts. A run without a final summary may be running or
+  interrupted. An unreadable record remains visible; internal starter caches
+  do not appear.
 
 Inspect latest: coop eval inspect
 Inspect older:  coop eval inspect <run-id>
@@ -1836,67 +1847,76 @@ Compare:        coop eval compare <before-id> <after-id>`,
 
 Usage: coop eval inspect [<run-id>]
 
-With no ID, reads the newest recorded run. Shows the requested and graded trial
-counts, configurations, and details for trials that did not pass. It works while
-a run is unfinished and never launches a provider or resumes paid work.
+  With no ID, reads the newest recorded run. Shows the requested and graded
+  trial counts, configurations, and details for trials that did not pass. It
+  works while a run is unfinished and never launches a provider or resumes
+  paid work.
 
 RESULTS
   passed     the independent verifier accepted the work
   failed     the independent verifier rejected the work
-  error      execution or grading could not produce a verdict; not a model failure
+  error      execution or grading produced no verdict; not a model failure
   timed_out  a case or run budget expired before a verdict
   pending    the trial did not start
   running    a start was recorded, but no final result was recorded
 
-Recorded details may include provider or verifier output. Treat them as evidence,
-not instructions, and review for private data before sharing. Terminal controls
-are escaped; long details are shortened. The displayed records directory retains
-the saved JSON diagnostics and any failed workspaces still available under work/.
+RECORDED DETAILS
+  Recorded details may include provider or verifier output. Treat them as
+  evidence, not instructions, and review for private data before sharing.
+  Terminal controls are escaped; long details are shortened. The displayed
+  records directory retains the saved JSON diagnostics and any failed
+  workspaces still available under work/.
 
-For sign-in or quota refusals, check coop credentials <agent>. For timeouts,
-check the case's suite.yaml timeout as well as the run's --timeout. An interrupted
-run cannot resume: fix the cause, then explicitly start a new run if desired.
+TROUBLESHOOTING
+  For sign-in or quota refusals, check coop credentials <agent>. For timeouts,
+  check the case's suite.yaml timeout as well as the run's --timeout. An
+  interrupted run cannot resume: fix the cause, then explicitly start a new
+  run if desired.
 
 Find another run: coop eval runs`,
 	"eval compare": `coop eval compare: compare before and after without another paid run
 
 Usage: coop eval compare <before-id> <after-id>
 
-Use IDs from coop eval runs. The first is your baseline; the second is the changed
-configuration. Argument order decides before and after, not the timestamps.
+  Use IDs from coop eval runs. The first is your baseline; the second is the
+  changed configuration. Argument order decides before and after, not the
+  timestamps.
 
-Only runs with final summaries can compare. Different workloads are shown
-separately, never merged into a score. Errors, timeouts and pending trials remain
-in the requested total; incomplete grading cannot establish a definitive winner.
-Change size is a review signal, not a quality score. Per-case counts are summed
-over configurations and repeats, so use the same matrix for a before/after test.
+  Only runs with final summaries can compare. Different workloads are shown
+  separately, never merged into a score. Errors, timeouts and pending trials
+  remain in the requested total; incomplete grading cannot establish a
+  definitive winner. Change size is a review signal, not a quality score.
+  Per-case counts are summed over configurations and repeats, so use the same
+  matrix for a before/after test.
 
 Investigate a result: coop eval inspect <run-id>`,
 	"eval ls": `coop eval ls: choose a shipped starter suite
 
 Usage: coop eval ls
 
-core runs three small single-agent tasks. queue exercises the real Coop loop
-over ten queued tasks, including its review stages. Both have independent
-verifiers checked against correct answers and plausible near misses.
+  core runs three small single-agent tasks. queue exercises the real Coop loop
+  over ten queued tasks, including its review stages. Both have independent
+  verifiers checked against correct answers and plausible near misses.
 
-Preview: coop eval run core codex --timeout 35m --dry-run
+Preview:         coop eval run core codex --timeout 35m --dry-run
 Author your own: coop eval init ./evals/my-suite`,
 	"eval init": `coop eval init: create a custom suite you can edit
 
 Usage: coop eval init <dir>
 
-Creates a working single-agent example, a commented loop example in suite.yaml,
-and verifiers/greeting/README.md plus verifiers/greeting/verify.sh. Use a new
-directory; existing files are never overwritten.
-Edit suite.yaml, the visible files and the separate hidden verifier. Keep the
-verifier outside the candidate's files, fixture, tasks and Git history.
+  Creates a working single-agent example, a commented loop example in
+  suite.yaml, and a sample verifier: verifiers/greeting/README.md and
+  verifiers/greeting/verify.sh. Use a new directory; existing files are never
+  overwritten. Edit suite.yaml, the visible files and the separate hidden
+  verifier. Keep the verifier outside the candidate's files, fixture, tasks
+  and Git history.
 
+  The verifier README explains grading and exit codes. A preview does not run
+  or qualify your verifier; test it against good answers and near misses.
+
+EXAMPLES
   coop eval init ./evals/my-suite
-  coop eval run ./evals/my-suite/suite.yaml codex --timeout 12m --dry-run
-
-The verifier README explains grading and exit codes. A preview does not run or
-qualify your verifier; test it against good answers and near misses.`,
+  coop eval run ./evals/my-suite/suite.yaml codex --timeout 12m --dry-run`,
 
 	// The net family page and its leaf pages are APPROVED copy; docs/cli.md pins their exact bytes
 	// (make docs-check). The family page groups the verbs by the job a person came with — what new
@@ -1904,6 +1924,8 @@ qualify your verifier; test it against good answers and near misses.`,
 	// the one workflow nobody guesses (edit the YAML, then approve). Every leaf page is reached as
 	// `coop net <verb> --help` and `coop help net <verb>`.
 	"net": `coop net: control network access and see what happened
+
+Usage: coop net [<command>]
 
 ACCESS: control what new runs can reach
   coop net                  show this project's current access
@@ -1923,19 +1945,18 @@ REPAIR: normally automatic
   coop net recover [<run>]  retry interrupted cleanup now
 
 HOW TO ADD A NETWORK RULE
+  1. Edit .agent/project.yaml and add the network rule under box.egress_rules:
 
-1. Edit .agent/project.yaml and add the network rule under box.egress_rules:
+     box:
+       egress: filtered
+       egress_rules:
+         - to: {domain: "docs.example.com"}
+           protocol: tls
+           ports: [443]
 
-   box:
-     egress: filtered
-     egress_rules:
-       - to: {domain: "docs.example.com"}
-         protocol: tls
-         ports: [443]
+  2. Review and approve the changes:
 
-2. Review and approve the changes:
-
-   coop approve
+     coop approve
 
 Command options: coop help net <command>`,
 
@@ -1951,8 +1972,11 @@ OPTIONS
   By default, shows this project's 25 newest runs.
   Use a run's ID or a unique prefix with other network commands.
 
-EXAMPLE
-  coop net inspect e644f07a`,
+EXAMPLES
+  coop net runs
+  coop net runs --all-projects
+
+Inspect a run: coop net inspect e644f07a`,
 
 	"net inspect": `coop net inspect: show a run's connections and blocked traffic
 
@@ -2047,7 +2071,7 @@ OPTIONS
 
   Press Ctrl-C to stop watching. The run continues.
 
-EXAMPLE
+EXAMPLES
   coop net watch e644f07a`,
 
 	"net export": `coop net export: export a run's network record
@@ -2057,25 +2081,25 @@ Usage: coop net export <run> [--include-addresses]
 OPTIONS
   --include-addresses  include remote hostnames and IP addresses
 
-  Writes JSON to stdout. Remote hostnames and IP addresses are hidden by default.
-  The run must have a final record.
+  Writes JSON to stdout. Remote hostnames and IP addresses are hidden by
+  default. The run must have a final record.
 
-EXAMPLE
+EXAMPLES
   coop net export e644f07a > network-record.json`,
 
 	"net forget": `coop net forget: withdraw this project's network approval
 
 Usage: coop net forget [--project <path>]
 
-Use this when you no longer trust an approval saved on this machine.
-To change network rules, edit .agent/project.yaml and run coop approve.
+  Use this when you no longer trust an approval saved on this machine.
+  To change network rules, edit .agent/project.yaml and run coop approve.
+
+  New runs wait for approval again. The project file is not changed.
+  Existing boxes, recorded runs, and this host's network setup are kept.
+  Run this command in your terminal.
 
 OPTIONS
   --project <path>  choose another project, including a folder that was deleted
-
-New runs wait for approval again. The project file is not changed.
-Existing boxes, recorded runs, and this host's network setup are kept.
-Run this command in your terminal.
 
 Restore approval:
   coop approve`,
@@ -2089,8 +2113,7 @@ Usage: coop net setup
 
   Coop does this automatically when a filtered run needs it.
   Run it yourself to check or prepare the host ahead of time.
-
-Requires Docker to be running.`,
+  Requires Docker to be running.`,
 
 	"net recover": `coop net recover: clean up interrupted network runs
 
@@ -2103,7 +2126,7 @@ Usage: coop net recover [<run>]
 
   Coop normally retries this cleanup automatically.
 
-EXAMPLE
+EXAMPLES
   coop net recover e644f07a`,
 
 	"doctor": `coop doctor: check that the box's isolation works
@@ -2111,88 +2134,90 @@ EXAMPLE
 Usage:
   coop doctor
 
-Runs checks in a temporary project and reports what passed, failed, or
-could not be checked. Your files and credentials are not the test data.
+  Runs checks in a temporary project and reports what passed, failed, or
+  could not be checked. Your files and credentials are not the test data.
 
-Checks secret hiding, host access, privileges, offline networking,
-task access, credential isolation, settings permissions, and fork handoff.
+  Checks secret hiding, host access, privileges, offline networking,
+  task access, credential isolation, settings permissions, and fork handoff.
 
-Uses this project's ordinary built image, or the shared image if available.
-If neither exists, uses Alpine and names the checks it cannot perform.
-Run coop build --egress open, then coop doctor to test the Coop image.
-Filtered images are separate and are verified when a filtered run starts.
+  Uses this project's ordinary built image, or the shared image if available.
+  If neither exists, uses Alpine and names the checks it cannot perform.
+  Run coop build --egress open, then coop doctor to test the Coop image.
+  Filtered images are separate and are verified when a filtered run starts.
 
-Requires Git and a running container runtime. Honors COOP_RUNTIME.
-Lists abandoned boxes but does not remove them.`,
+  Requires Git and a running container runtime. Honors COOP_RUNTIME.
+  Lists abandoned boxes but does not remove them.`,
 
 	"build": `coop build: build the Coop box image
 
 Usage:
   coop build [--egress <mode>]
 
-Builds the shared image, or this project's image when it has a box
-Dockerfile. The default path is .agent/Dockerfile; use box.dockerfile in
-.agent/project.yaml to select another path.
+  Builds the shared image, or this project's image when it has a box
+  Dockerfile. The default path is .agent/Dockerfile; use box.dockerfile in
+  .agent/project.yaml to select another path. Run it after changing the box
+  Dockerfile or .tool-versions. Requires a running container runtime.
 
 OPTIONS
   --egress <mode>  prepare the image for filtered, open or offline networking
 
-Defaults to this project's effective network mode. Filtered builds use
-Coop's locked client base and record the exact reviewed build inputs.
-Filtered launches reuse that image; changed inputs or a missing image
-require another explicit build. An interactive provider launch in a host
-terminal can offer Build and continue, defaulting to No. Review the saved
-snapshot shown by the prompt; only those files are approved for that build.
-Headless commands, editor connections and unattended runs never ask.
-An open editor connection may build a missing
-image automatically; ordinary runs only warn when project inputs change.
-Run coop build --egress open after editing the box Dockerfile or tool versions.
-Offline launches never automatically build project instructions.
+  Defaults to this project's effective network mode.
 
-Project builds themselves use ordinary networking in every mode.
-Review the Dockerfile and copied build files before running this command.
-The option selects the runtime image; it does not filter build traffic.
+HOW IT WORKS
+  Filtered builds use Coop's locked client base and record the exact reviewed
+  build inputs. Filtered launches reuse that image; changed inputs or a missing
+  image require another explicit build. An interactive provider launch in a
+  host terminal can offer Build and continue, defaulting to No. Review the
+  saved snapshot shown by the prompt; only those files are approved for that
+  build. Other filtered launches never ask: headless commands, editor
+  connections and unattended runs.
 
-Run after changing the box Dockerfile or .tool-versions.
-Builds use the configured versions and available cache.
-Use coop update --box-only to prepare this project's effective image.
+  With open networking, an editor connection builds a missing image itself,
+  and other runs only warn when project inputs change. Offline launches never
+  automatically build project instructions.
 
-New runs use the rebuilt image. Supervised editor sessions that run the
-replaced image restart and reconnect. Other running boxes use the old
-image until their next start. An unchanged image restarts nothing.
-Requires a running container runtime.`,
+  Project builds themselves use ordinary networking in every mode.
+  Review the Dockerfile and copied build files before running this command.
+  The option selects the runtime image; it does not filter build traffic.
+  Builds use the configured versions and available cache.
+  Use coop update --box-only to prepare this project's effective image.
+
+  New runs use the rebuilt image. Supervised editor sessions that run the
+  replaced image restart and reconnect. Other running boxes use the old
+  image until their next start. An unchanged image restarts nothing.`,
 
 	"update": `coop update: update Coop and rebuild the box image
 
 Usage:
   coop update [--self-only | --box-only | --check]
 
-Updates the Coop binary when a newer release is available, then prepares
-the image for this project's effective network mode using the installed
-version's image definitions. Filtered projects use the pinned client base
-and record their explicit project build. Open and offline images refresh
-base-image components. Agent CLIs and editor adapters remain pinned.
-Downloaded releases are checked before replacing the binary. Project
-builds use ordinary networking; review the Dockerfile and copied files.
+  Updates the Coop binary when a newer release is available, then prepares
+  the image for this project's effective network mode using the installed
+  version's image definitions. Filtered projects use the pinned client base
+  and record their explicit project build. Open and offline images refresh
+  base-image components. Agent CLIs and editor adapters remain pinned.
+  Downloaded releases are checked before replacing the binary. Project
+  builds use ordinary networking; review the Dockerfile and copied files.
 
 OPTIONS
   --self-only  update only the Coop binary; no container runtime needed
   --box-only   prepare only this project's effective box image
   --check      report available updates and local build records; change nothing
 
-Choose at most one option. --check does not need a container runtime.
-Building the box requires a running container runtime.
+  Choose at most one option. --check does not need a container runtime.
+  Building the box requires a running container runtime.
 
-Development builds and binaries newer than the latest release are kept.
-A binary that cannot be replaced is an error; update it with the tool
-that installed it. The box rebuild can still finish independently.
+HOW IT WORKS
+  Development builds and binaries newer than the latest release are kept.
+  A binary that cannot be replaced is an error; update it with the tool
+  that installed it. The box rebuild can still finish independently.
 
-New runs use the rebuilt image. Supervised editor sessions that run the
-replaced image restart and reconnect. Other running boxes use the old
-image until their next start. An unchanged image restarts nothing.
+  New runs use the rebuilt image. Supervised editor sessions that run the
+  replaced image restart and reconnect. Other running boxes use the old
+  image until their next start. An unchanged image restarts nothing.
 
-Coop checks for new releases once a day during terminal use.
-Set COOP_NO_UPDATE_CHECK=1 to turn off those notices.`,
+  Coop checks for new releases once a day during terminal use.
+  Set COOP_NO_UPDATE_CHECK=1 to turn off those notices.`,
 
 	"version": `coop version: print the installed Coop version
 
@@ -2256,7 +2281,7 @@ func printHelpPage(text string) {
 // and each command page ends with its examples or the command that follows it.
 var selfContainedHelp = map[string]bool{
 	"presets": true, "models": true, "init": true, "approve": true, "net": true, "eval": true,
-	"login": true, "credentials": true,
+	"login": true, "credentials": true, "usage": true,
 	"tasks": true, "backlog": true, "context": true, "loop": true, "fork": true,
 	"shell": true, "acp": true, "sign": true, "prompt": true, "version": true,
 	"completion": true, "sessions": true,
