@@ -344,7 +344,7 @@ func (f *filteredExecution) removeResource(evidence *networkstate.Evidence, role
 // with it, and recovery removes whatever Docker made once this process has exited: before a later
 // filtered run starts, or when the person runs coop net recover.
 func unfinishedCreateError(role, kind string) error {
-	return fmt.Errorf("Docker was still creating this run's %s %s when Coop stopped waiting, so Coop cannot confirm it is gone. A later filtered run removes it first, or run coop net recover", role, kind)
+	return fmt.Errorf("docker was still creating this run's %s %s when Coop stopped waiting, so Coop cannot confirm it is gone. A later filtered run removes it first, or run coop net recover", role, kind)
 }
 
 // teardown is the filtered launch's own ending, lifted out of Run so it has ONE implementation.

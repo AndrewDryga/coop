@@ -2,7 +2,7 @@
 name: worker-storage-accounting
 description: the worker measures allocated blocks and charges a hardlinked baseline once, stages a discard by renaming before deleting, and closes allocation on used-byte watermarks with a free-byte reserve underneath
 subsystem: worker
-sources: [internal/forkspace/usage.go, internal/forkspace/state_root.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/companion_snapshot_gc.go, internal/workerconnector/job_source_reuse.go, internal/sessionsvc/checkpoint_storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
+sources: [internal/forkspace/usage.go, internal/forkspace/quota_linux.go, internal/forkspace/state_root.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/companion_snapshot_gc.go, internal/workerconnector/job_source_reuse.go, internal/sessionsvc/checkpoint_storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
 updated: 2026-11-03
 ---
 
@@ -43,6 +43,18 @@ their separate pressure guard requires readable free-space measurements for both
 workspace volumes, reserves the known incoming copies, and cancels growing work at the reserve.
 This is not a filesystem quota. Restore recovery allocates new custody too, so it waits for space
 while retaining its exact body and execution fence; cleanup remains possible inside the reserve.
+
+**A Btrfs subvolume quota can be smaller than statfs reports.** Linux identifies the containing
+subvolume with read-only `FS_INFO` and `INO_LOOKUP` ioctls, then reads its direct qgroup's sysfs
+counters. `MeasureFilesystem` constrains capacity and free bytes by each enabled referenced or
+exclusive limit, including pending data/metadata reservations, without losing physical disk
+pressure. The syscall and sysfs interfaces work without privileges; no privileged tree search or
+provider-specific snapshot is required. An absent direct qgroup adds no limit; malformed or
+unreadable constrained counters return an error rather than the backing disk's larger free count.
+It does not infer ancestor qgroup relationships: a deployment relying on this measurement sets a
+direct quota on the worker's containing subvolume. On OrbStack, use Docker's overlay2 driver:
+Docker's Btrfs driver creates separate child subvolumes whose writable layers escape that direct
+machine quota. The live migration proof exercised both layer and named-volume ENOSPC paths.
 
 **Unknown is never zero.** An unreadable subtree, an unattributable directory, or a scan past its
 bounds sets `Usage.Unknown`, which becomes `totals.unknown` and publishes
@@ -92,6 +104,8 @@ file only after EEXIST, preserving no-follow flags and real disappearance errors
 legacy-record migration locks and local Git excludes share this operation; no retry masks I/O loss.
 
 ## Changelog
+- 2026-11-03 — documented quota-aware Linux Btrfs space measurement and the tested overlay2
+  requirement for keeping all container writes inside an OrbStack machine quota.
 - 2026-11-03 — documented immutable readonly primary payload sharing, private generation-anchor
   accounting and unknown-receipt custody; named the current workspace creation owner and the
   exclusive-create lock operation that avoids Darwin first-creation races.
