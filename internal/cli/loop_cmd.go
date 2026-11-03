@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -39,15 +40,17 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, pr
 	if err != nil {
 		return agents.Target{}, false, "", false, preflight, false, 0, err
 	}
+	preflightOption := "" // the first of --preflight and --no-preflight given; the other contradicts it
 	for i := 0; i < len(rest); i++ {
 		x := rest[i]
 		switch x {
 		case "--debug-on-fail":
 			debugOnFail = true
-		case "--preflight":
-			preflight = true
-		case "--no-preflight":
-			preflight = false
+		case "--preflight", "--no-preflight":
+			if preflightOption != "" && preflightOption != x {
+				return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, ui.ConflictingOptions(preflightOption, x, loopCommand)
+			}
+			preflightOption, preflight = x, x == "--preflight"
 		case "--no-mcp":
 			noMCP = true
 		case "--max-tasks":
@@ -150,6 +153,9 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	if code, err := resolveReviewTasks(repo, queues, reviewTasks, flags); err != nil {
+		return code, err
+	}
 	// The rotation ladder: the positional target (its model + account ladder) wins; else the
 	// loop.yaml work.agent ladder; else the preset lead's ladder; else the default (agent model
 	// across all signed-in accounts). expandLadder turns it into concrete one-account rungs.
@@ -192,6 +198,46 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		Continue:    loopContinueCommand(t, hasTarget, presetName, flags),
 		Network:     a.network.admission(),
 	})
+}
+
+// resolveReviewTasks checks every --review-task ID before the loop prepares anything: each must
+// name one completed task in the selected queues. The loop's import still checks the task's
+// completion record and commit; this turns a mistyped ID into an input error instead of a failure
+// after the run has started.
+func resolveReviewTasks(repo string, queues, ids, taskFlags []string) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	found := map[string][]tasks.Item{}
+	for _, queue := range queues {
+		items, err := tasks.ReadTaskTree(filepath.Join(repo, queue))
+		if err != nil {
+			return 1, err
+		}
+		for _, item := range items {
+			found[item.ID] = append(found[item.ID], item)
+		}
+	}
+	for _, id := range ids {
+		switch matches := found[id]; {
+		case len(matches) > 1:
+			return 2, &ui.UsageError{
+				Headline: fmt.Sprintf("Task %q is in more than one task queue", id),
+				Cause:    "Choose its queue with --tasks <path>.",
+				Rows:     [][2]string{{"Help:", ui.HelpCommand(loopCommand)}},
+			}
+		case len(matches) == 0 || matches[0].State != tasks.StateDone:
+			listing := "coop tasks ls --done --all"
+			for _, queue := range taskFlags {
+				listing += " --tasks " + shellWord(queue)
+			}
+			return 2, &ui.UsageError{
+				Headline: fmt.Sprintf("No completed task matches %q", id),
+				Rows:     [][2]string{{"See completed tasks:", listing}, {"Help:", ui.HelpCommand(loopCommand)}},
+			}
+		}
+	}
+	return 0, nil
 }
 
 // loopContinueCommand is the command that resumes this run, for the reports that tell the reader

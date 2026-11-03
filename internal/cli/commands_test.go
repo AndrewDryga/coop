@@ -116,6 +116,10 @@ func TestParseLoopArgs(t *testing.T) {
 		{args: []string{"codex", "--preflight"}, wantAgent: "codex", wantPreflight: true},
 		{def: true, wantPreflight: true},                                    // preflight.enabled default
 		{args: []string{"--no-preflight"}, def: true, wantPreflight: false}, // flag overrides default-on
+		// The two preflight options contradict each other in either order; repeating one is harmless.
+		{args: []string{"--no-preflight", "--preflight"}, wantErr: true},
+		{args: []string{"--preflight", "--no-preflight"}, def: true, wantErr: true},
+		{args: []string{"--preflight", "--preflight"}, wantPreflight: true},
 		// --no-mcp: this run's boxes mount no MCP (the committed form is loop.yaml mcp: false).
 		{args: []string{"--no-mcp"}, wantNoMCP: true},
 		{args: []string{"claude", "--no-mcp", "--preflight"}, wantAgent: "claude", wantPreflight: true, wantNoMCP: true},
@@ -150,6 +154,76 @@ func TestParseLoopArgs(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Contradictory preflight options are rejected input, not a silent last-one-wins.
+func TestLoopRejectsContradictoryPreflightOptions(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}}
+	code, err := a.cmdLoop([]string{"claude", "--no-preflight", "--preflight"})
+	want := "\n✗ Cannot combine \"--no-preflight\" and \"--preflight\" in \"coop loop\"\n\n  Help: coop help loop\n"
+	if code != 2 || err == nil {
+		t.Fatalf("contradictory preflight options = (%d, %v), want exit 2", code, err)
+	}
+	if got := usageBlock(t, err); got != want {
+		t.Fatalf("refusal =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// --review-task names a completed task. An ID that names none is input to correct before the loop
+// prepares anything, and the refusal shows how to list what can be named, in the selected queues.
+func TestLoopResolvesReviewTasksBeforeStarting(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+	signInCred(t, cfg, "claude", "default")
+	for _, task := range []struct{ queue, state, id string }{
+		{".agent/tasks", tasks.StateDone, "2026-11-01-shipped"},
+		{".agent/tasks", tasks.StateInProgress, "2026-11-02-open"},
+		{"web/.agent/tasks", tasks.StateDone, "2026-11-01-shipped"},
+	} {
+		dir := filepath.Join(cfg.RepoOverride, task.queue, task.state, task.id)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte("# "+task.id+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refused := func(id, listing string) string {
+		return "\n✗ No completed task matches \"" + id + "\"\n\n" +
+			"  See completed tasks: " + listing + "\n" +
+			"  Help:                coop help loop\n"
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"unknown", []string{"claude", "--review-task", "nosuch"}, refused("nosuch", "coop tasks ls --done --all")},
+		{"unfinished", []string{"claude", "--review-task", "2026-11-02-open"}, refused("2026-11-02-open", "coop tasks ls --done --all")},
+		{"selected queue", []string{"claude", "--tasks", ".agent/tasks", "--review-task", "nosuch"},
+			refused("nosuch", "coop tasks ls --done --all --tasks .agent/tasks")},
+		{"in two queues", []string{"claude", "--tasks", ".agent/tasks", "--tasks", "web/.agent/tasks", "--review-task", "2026-11-01-shipped"},
+			"\n✗ Task \"2026-11-01-shipped\" is in more than one task queue\n\n      Choose its queue with --tasks <path>.\n\n  Help: coop help loop\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, err := (&app{cfg: cfg}).cmdLoop(tc.args)
+			if code != 2 || err == nil {
+				t.Fatalf("cmdLoop(%q) = (%d, %v), want exit 2", tc.args, code, err)
+			}
+			if got := usageBlock(t, err); got != tc.want {
+				t.Fatalf("refusal =\n%q\nwant\n%q", got, tc.want)
+			}
+		})
+	}
+	t.Run("completed", func(t *testing.T) {
+		// A deterministic later prerequisite proves the ID passed without detecting a host runtime.
+		if err := os.WriteFile(filepath.Join(cfg.RepoOverride, ".agent", "project.yaml"), []byte("review_task_sentinel: true\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := (&app{cfg: cfg}).cmdLoop([]string{"claude", "--tasks", ".agent/tasks", "--review-task", "2026-11-01-shipped"})
+		if err == nil || !strings.Contains(err.Error(), "review_task_sentinel") {
+			t.Fatalf("a completed task did not pass validation: %v", err)
+		}
+	})
 }
 
 func TestLoopContinueCommandPreservesExplicitQueues(t *testing.T) {

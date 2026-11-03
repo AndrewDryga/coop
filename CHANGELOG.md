@@ -24,6 +24,10 @@
   start the agent at all, for example over a credential, mount, network approval or image
   problem, the loop now stops at the first attempt and shows why instead of retrying five times.
 
+- **Catch loop option mistakes before the loop starts.** `coop loop` now refuses `--preflight`
+  together with `--no-preflight` instead of using the last one. An unknown `--review-task` ID is
+  reported before any preparation, with the command that lists completed tasks.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up
