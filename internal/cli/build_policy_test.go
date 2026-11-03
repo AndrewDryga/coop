@@ -110,7 +110,7 @@ func TestBuildModeGrammar(t *testing.T) {
 		t.Fatalf("default must resolve project posture, not force open: %v / %v", mode, err)
 	}
 	for _, want := range []egress.Mode{egress.Open, egress.Filtered, egress.None} {
-		for _, args := range [][]string{{"--egress", string(want)}, {"--egress=" + string(want)}} {
+		for _, args := range [][]string{{"--egress", want.Word()}, {"--egress=" + want.Word()}} {
 			mode, err := parseBuildMode(args)
 			if err != nil || mode == nil || *mode != want {
 				t.Fatalf("%v: %v / %v", args, mode, err)
@@ -118,17 +118,22 @@ func TestBuildModeGrammar(t *testing.T) {
 		}
 	}
 	for _, args := range [][]string{
-		{"--egress"}, {"--egress", "Filtered"}, {"--egress", "open", "--egress", "none"},
+		{"--egress"}, {"--egress", "Filtered"}, {"--egress", "open", "--egress", "offline"}, {"--egress", "none"},
 		{"--allow-domain", "example.com"}, {"--egress-rules", "policy.yaml"}, {"extra"}, {"--"},
 	} {
 		if _, err := parseBuildMode(args); err == nil {
 			t.Errorf("accepted unsupported build arguments: %v", args)
 		}
 	}
+	// The internal spelling is refused like any typo, and the refusal names the word to use.
+	_, err = parseBuildMode([]string{"--egress", "none"})
+	if usage := asUsage(err); usage == nil || !strings.Contains(usage.Cause, "offline") {
+		t.Errorf("--egress none refusal = %v, want one naming offline", err)
+	}
 }
 
 func TestExplicitBuildFailureKeepsItsMode(t *testing.T) {
-	for _, mode := range []string{"open", "none"} {
+	for _, mode := range []string{"open", "offline"} { // the retry repeats the word the person typed
 		t.Run(mode, func(t *testing.T) {
 			cfg := projectBoxConfig(t, true)
 			cfg.Egress = "filtered"

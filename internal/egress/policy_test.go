@@ -122,6 +122,25 @@ func TestRulePresenceAndASCII(t *testing.T) {
 	}
 }
 
+// A person says offline; records and the session API keep the internal none, which a person can
+// no longer type. Every word ParseWord accepts must come back from Word unchanged.
+func TestPeopleSpellTheNoNetworkModeOffline(t *testing.T) {
+	for word, want := range map[string]Mode{"filtered": Filtered, "open": Open, "offline": None} {
+		got, err := ParseWord(word)
+		if err != nil || got != want || got.Word() != word {
+			t.Errorf("ParseWord(%q) = %q, %v; Word() = %q", word, got, err, got.Word())
+		}
+	}
+	for _, word := range []string{"none", "None", "Offline", " offline", "", "closed"} {
+		if got, err := ParseWord(word); err == nil || !strings.Contains(err.Error(), "offline") {
+			t.Errorf("ParseWord(%q) = %q, %v; want a refusal naming offline", word, got, err)
+		}
+	}
+	if _, err := ParseMode("offline"); err == nil {
+		t.Error("ParseMode accepted offline; stored records and the session API spell it none")
+	}
+}
+
 func TestDecisionAPIsRejectInvalidModesEvenWithGrants(t *testing.T) {
 	s, err := Compile("test", Filtered, []Input{{Rules: []Rule{tlsRule("example.com"), {To: Destination{IP: "10.0.0.1"}, Protocol: "tcp", Ports: []int{443}}}, Origin: Origin{Kind: "operator"}}}, nil, false, ownerKey())
 	if err != nil {

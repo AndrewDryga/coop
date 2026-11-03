@@ -227,10 +227,10 @@ Documentation: https://coop.dryga.com</code></pre><p class="reference-scroll-hin
 EXAMPLES
   coop run -- npm test
   coop run -- curl https://example.com
-  coop run --egress none -- git status
+  coop run --egress offline -- git status
 
 OPTIONS
-  --egress &lt;mode&gt;        choose filtered, open, or none
+  --egress &lt;mode&gt;        choose filtered, open, or offline
   --allow-domain &lt;host&gt;  allow TLS access to this host on port 443
                          repeat to allow more hosts
   --egress-rules &lt;path&gt;  load network rules from a file
@@ -240,7 +240,7 @@ OPTIONS
 NETWORK ACCESS
   filtered  allow traffic permitted by approved network rules
   open      allow unrestricted internet access
-  none      block internet access
+  offline   block internet access
 
 For more details see:
   coop help net</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-shell-open-a-shell-in-the-box"><h2>coop shell: open a shell in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop shell: open a shell in the box code example" tabindex="0"><code>Usage:
@@ -248,10 +248,10 @@ For more details see:
 
 EXAMPLES
   coop shell
-  coop shell --egress none
+  coop shell --egress offline
 
 OPTIONS
-  --egress &lt;mode&gt;        choose filtered, open, or none
+  --egress &lt;mode&gt;        choose filtered, open, or offline
   --allow-domain &lt;host&gt;  allow TLS access to this host on port 443
                          repeat to allow more hosts
   --egress-rules &lt;path&gt;  load network rules from a file
@@ -263,7 +263,7 @@ USING THE SHELL
 NETWORK ACCESS
   filtered  allow traffic permitted by approved network rules
   open      allow unrestricted internet access
-  none      block internet access
+  offline   block internet access
 
 For more details see:
   coop help net</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-claude-run-claude-in-the-box"><h2>coop claude: run Claude in the box</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop claude: run Claude in the box code example" tabindex="0"><code>Usage:
@@ -280,7 +280,7 @@ OPTIONS
   --               pass all remaining arguments directly to Claude
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --egress &lt;mode&gt;        internet access: filtered, open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -304,7 +304,7 @@ OPTIONS
   --               pass all remaining arguments directly to Codex
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --egress &lt;mode&gt;        internet access: filtered, open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -328,7 +328,7 @@ OPTIONS
   --               pass all remaining arguments directly to Gemini
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --egress &lt;mode&gt;        internet access: filtered, open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -352,7 +352,7 @@ OPTIONS
   --               pass all remaining arguments directly to Grok
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --egress &lt;mode&gt;        internet access: filtered, open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeat to add more
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -950,7 +950,7 @@ OPTIONS
   --no-preflight         skip that preparation
   --no-mcp               run without configured MCP servers
   --debug-on-fail        open a box shell after a failure, then retry when you exit
-  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --egress &lt;mode&gt;        internet access: filtered, open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeatable
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -1184,7 +1184,7 @@ SESSION OPTIONS
   Review isolated work with coop fork review; --force cannot bypass its policy.
 
 NETWORK OPTIONS
-  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --egress &lt;mode&gt;        internet access: filtered, open or offline
   --allow-domain &lt;name&gt;  allow this exact domain over TLS on port 443; repeatable
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the run
 
@@ -1207,7 +1207,7 @@ EDITOR INTEGRATION
 
 OPTIONS
   --peer &lt;target&gt;        start with read-only peer agents; repeatable
-  --egress &lt;mode&gt;        internet access: filtered, open or none
+  --egress &lt;mode&gt;        internet access: filtered, open or offline
   --allow-domain &lt;name&gt;  allow exact TLS access on port 443; repeatable
   --egress-rules &lt;file&gt;  add this file&#39;s network rules for the session
 
@@ -1609,7 +1609,7 @@ Dockerfile. The default path is .agent/Dockerfile; use box.dockerfile in
 .agent/project.yaml to select another path.
 
 OPTIONS
-  --egress &lt;mode&gt;  prepare the image for filtered, open or none networking
+  --egress &lt;mode&gt;  prepare the image for filtered, open or offline networking
 
 Defaults to this project&#39;s effective network mode. Filtered builds use
 Coop&#39;s locked client base and record the exact reviewed build inputs.
@@ -1689,7 +1689,7 @@ OPTIONS
   --peer &lt;agent&gt;         start a peer provider for read-only advice
                          repeat to add more peers
 
-  --egress &lt;mode&gt;        choose filtered, open, or none
+  --egress &lt;mode&gt;        choose filtered, open, or offline
   --allow-domain &lt;host&gt;  allow TLS access to this host on port 443
                          repeat to allow more hosts
   --egress-rules &lt;path&gt;  load network rules from a file

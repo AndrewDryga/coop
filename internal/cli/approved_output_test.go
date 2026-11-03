@@ -198,7 +198,7 @@ func TestApprovedInputErrors(t *testing.T) {
 			return codeErr(t, code, err)
 		}},
 		{"03h-repeated-option", func(*testing.T) error {
-			_, _, err := extractNetworkFlags("coop claude", []string{"--egress", "open", "--egress", "none"})
+			_, _, err := extractNetworkFlags("coop claude", []string{"--egress", "open", "--egress", "offline"})
 			return err
 		}},
 	}

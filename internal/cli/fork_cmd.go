@@ -100,7 +100,7 @@ SESSION OPTIONS
   Review isolated work with coop fork review; --force cannot bypass its policy.
 
 NETWORK OPTIONS
-  --egress <mode>        internet access: filtered, open or none
+  --egress <mode>        internet access: filtered, open or offline
   --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
   --egress-rules <file>  add this file's network rules for the run
 

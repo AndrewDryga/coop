@@ -108,12 +108,13 @@ func networkChildEnvironment(bound session.Session, runID string) ([]string, err
 		return nil, errors.New("session controller job identity is invalid")
 	}
 	env := []string{box.ControllerJobEnv + "=" + bound.JobDigest}
-	mode := bound.NetworkMode
-	if _, err := egress.ParseMode(mode); err != nil {
+	mode, err := egress.ParseMode(bound.NetworkMode)
+	if err != nil {
 		return nil, fmt.Errorf("session network mode: %w", err)
 	}
-	env = append(env, "COOP_EGRESS="+mode)
-	if mode != string(egress.Filtered) {
+	// The row keeps the wire spelling; the child loads COOP_EGRESS as a person writes it.
+	env = append(env, "COOP_EGRESS="+mode.Word())
+	if mode != egress.Filtered {
 		return env, nil
 	}
 	capture, err := box.SessionNetworkCapture{

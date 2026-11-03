@@ -20,7 +20,7 @@ func TestScriptedACPOneOffOfflineOverridesAmbientOpen(t *testing.T) {
 	buildTestBinary(t, root, coopBin, ".")
 	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")
 	entry, guardedRuntime := filepath.Join(tmp, "offline-coop"), filepath.Join(tmp, "offline-runtime")
-	if err := os.WriteFile(entry, []byte(fmt.Sprintf("#!/bin/sh\nexec %q \"$@\" --egress none\n", coopBin)), 0o700); err != nil {
+	if err := os.WriteFile(entry, []byte(fmt.Sprintf("#!/bin/sh\nexec %q \"$@\" --egress offline\n", coopBin)), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	guard := fmt.Sprintf(`#!/bin/sh

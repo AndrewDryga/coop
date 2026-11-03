@@ -383,7 +383,7 @@ values for supported servers. Servers the helper cannot handle use the same fall
 
 #### Offline runs
 
-An offline run (`--egress none`) omits all remote MCP servers because it cannot reach them,
+An offline run (`--egress offline`) omits all remote MCP servers because it cannot reach them,
 and reports this at launch. Local command servers still work. Tokens for the omitted remote
 servers stay outside the box.
 

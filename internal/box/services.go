@@ -665,7 +665,7 @@ func DescribeLiveBoxes(live []forkspace.ExecutionObservation) string {
 
 // autoUpServices reports whether box.Run should auto-start sibling services before launching a
 // box: the COOP_AUTO_UP toggle is on (default), the box joins the services network (so it could
-// reach them), it isn't offline (COOP_EGRESS=none, where there's nothing to reach), and the
+// reach them), it isn't offline (COOP_EGRESS=offline, where there's nothing to reach), and the
 // runtime supports compose — Apple `container` does not. Not for a retry reusing its
 // already-prepared stack, a reviewer inspecting a worker's evidence, or a model probe, which only
 // asks the agent for its model list and whose private project would outlive it. The caller checks

@@ -1950,7 +1950,7 @@ func TestControllerJobReviewsKeepEachSavedNetworkMode(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("COOP_GATE", "true")
-	t.Setenv("COOP_EGRESS", "none")
+	t.Setenv("COOP_EGRESS", "offline")
 	repo := initRepo(t)
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)

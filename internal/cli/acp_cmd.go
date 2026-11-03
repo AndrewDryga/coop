@@ -1141,7 +1141,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		"COOP_ACP_ACTIVITY_ROLE="+string(activityRole), acpTaskChannelEnv+"="+taskVolume)
 	// Admission marks the resolved mode explicit; an unadmitted caller must not invent open.
 	if a.cfg.Explicit("COOP_EGRESS") {
-		env = append(env, "COOP_EGRESS="+a.cfg.Egress)
+		env = append(env, "COOP_EGRESS="+egress.Mode(a.cfg.Egress).Word()) // the child parses the person's word
 	}
 	// Read once: this child proves exactly one policy even if a refresh adopts another meanwhile.
 	admitted := a.currentACPCapture()

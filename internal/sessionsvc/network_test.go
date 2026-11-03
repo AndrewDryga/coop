@@ -129,9 +129,9 @@ func TestNetworkChildEnvironmentCarriesOnlyAFrozenPosture(t *testing.T) {
 		t.Fatalf("open session env = %v, err %v", env, err)
 	}
 	offline := open
-	offline.NetworkMode = "none"
+	offline.NetworkMode = "none" // the session row keeps the wire spelling
 	env, err := networkChildEnvironment(offline, "session-abc")
-	if err != nil || len(env) != 2 || env[1] != "COOP_EGRESS=none" {
+	if err != nil || len(env) != 2 || env[1] != "COOP_EGRESS=offline" { // the child parses the person's word
 		t.Fatalf("offline session env = %v, err %v", env, err)
 	}
 	filtered := session.Session{

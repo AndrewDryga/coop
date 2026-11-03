@@ -2405,7 +2405,7 @@ func sessionACPChildEnvironment(
 			"COOP_MEMORY":       cfg.Memory,
 			"COOP_CPUS":         cfg.CPUs,
 			"COOP_PIDS":         cfg.Pids,
-			"COOP_EGRESS":       cfg.Egress,
+			"COOP_EGRESS":       egress.Mode(cfg.Egress).Word(), // the child parses the person's word, not the internal none
 		}
 		for _, key := range []string{
 			"COOP_BASE_IMAGE", "COOP_WORKDIR", "COOP_HOME_IN_BOX", "COOP_IMAGE",

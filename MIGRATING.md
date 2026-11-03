@@ -1,5 +1,15 @@
 # Migrating
 
+## Unreleased: the no-network mode is called offline
+
+The command line and `COOP_EGRESS` now say `offline`, as `.agent/project.yaml` already did.
+`none` is refused with a message that names `offline`.
+
+- Replace `--egress none` with `--egress offline` in scripts, aliases and editor agent settings
+  (for example `["acp", "--egress", "offline"]`).
+- Replace `COOP_EGRESS=none` with `COOP_EGRESS=offline` in your environment and `coop.conf`.
+- Controller JobSpec documents and the session API keep `none` for their offline mode.
+
 ## v12.0.0: network records are renamed
 
 Coop now names each project's network records by the project's folder, not with the key in

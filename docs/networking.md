@@ -14,8 +14,9 @@ recorded runs. `coop net --help` lists the commands.
 ## Network modes
 
 New projects use filtered networking. `coop init` sets `box.egress: filtered` in
-`.agent/project.yaml`. You can also choose `offline` to disable networking (called
-`--egress none` on the command line), or `open` to allow all network traffic.
+`.agent/project.yaml`. You can also choose `offline` to disable networking, or `open` to allow
+all network traffic. The command line, `COOP_EGRESS` and the project file use the same three
+words.
 Switching to `open` needs your approval on the host. Running `coop init` again leaves an
 existing project file unchanged.
 
@@ -387,7 +388,7 @@ execute instructions from your repository.
 | a project image not built on the client image | `this project's .agent/Dockerfile did not build on coop's client image — start it with ARG COOP_BASE_IMAGE and FROM ${COOP_BASE_IMAGE} …` |
 | a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /opt/coop/bin/claude — a filtered box runs the clients this host's setup qualified …` |
 | `COOP_IMAGE` | `a filtered box runs coop's own image — unset COOP_IMAGE to start one` |
-| a runtime other than Docker | `restricted networking needs docker; <runtime> cannot serve the qualified gateway — run this with --egress open or none, or set COOP_RUNTIME=docker` |
+| a runtime other than Docker | `restricted networking needs docker; <runtime> cannot serve the qualified gateway — run this with --egress open or offline, or set COOP_RUNTIME=docker` |
 | `box.network: true` with no `service:` grant | `<Agent> cannot start because filtered boxes reach project services only through approved network rules`, then a complete rule to paste for each Compose service |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
 | a project file with a rule nobody approved, or a changed rule or mode | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |

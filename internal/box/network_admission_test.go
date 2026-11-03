@@ -94,11 +94,11 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 	}{
 		"built-in default":             {want: "open"},
 		"project request":              {projectYAML: "box:\n  egress: offline\n", want: "none"},
-		"host preference over repo":    {explicitEnv: "none", projectYAML: "box:\n  egress: open\n", want: "none"},
+		"host preference over repo":    {explicitEnv: "offline", projectYAML: "box:\n  egress: open\n", want: "none"},
 		"remembered over host":         {remembered: true, explicitEnv: "open", want: "filtered"},
 		"remembered survives deletion": {remembered: true, want: "filtered"},
 		"invocation over remembered":   {remembered: true, invocation: &open, want: "open"},
-		"invocation over preference":   {explicitEnv: "none", invocation: &open, want: "open"},
+		"invocation over preference":   {explicitEnv: "offline", invocation: &open, want: "open"},
 		"lone allow-domain implies":    {domains: []string{"example.com"}, want: "filtered"},
 		"explicit none":                {invocation: &none, want: "none"},
 		// A file that asks for more than a human approved is a pending review,
@@ -242,7 +242,7 @@ func TestAdmitNetworkRefusesARuntimeThatCannotServeFiltered(t *testing.T) {
 	if err == nil {
 		t.Fatal("a runtime without the gateway was admitted")
 	}
-	for _, want := range []string{"needs docker", "container", "--egress open or none", "COOP_RUNTIME=docker"} {
+	for _, want := range []string{"needs docker", "container", "--egress open or offline", "COOP_RUNTIME=docker"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal %q does not name %q", err, want)
 		}

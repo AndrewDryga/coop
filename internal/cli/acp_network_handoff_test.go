@@ -21,11 +21,13 @@ func TestACPChildrenKeepAdmittedNetworkMode(t *testing.T) {
 		name, mode, ambient, expected string
 		inheritProject, probeOnly     bool
 	}{
-		{"offline-with-no-ambient-setting", "none", "", "none", false, false},
-		{"offline-overrides-ambient-open", "none", "open", "none", false, false},
-		{"explicit-open-overrides-ambient-offline", "open", "none", "open", false, false},
+		// mode is the resolved internal value; ambient and expected are COOP_EGRESS as a person writes
+		// it, because the child loads it through config like any other setting.
+		{"offline-with-no-ambient-setting", "none", "", "offline", false, false},
+		{"offline-overrides-ambient-open", "none", "open", "offline", false, false},
+		{"explicit-open-overrides-ambient-offline", "open", "offline", "open", false, false},
 		{"standalone-probe-inherits-project-policy", "open", "", "UNSET", true, true},
-		{"standalone-probe-keeps-explicit-offline", "none", "none", "none", false, true},
+		{"standalone-probe-keeps-explicit-offline", "none", "offline", "offline", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("COOP_EGRESS", tc.ambient)

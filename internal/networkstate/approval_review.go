@@ -70,7 +70,7 @@ func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egre
 		return ApprovalReview{}, nil, err
 	}
 	if mode != egress.Filtered && len(rules) != 0 {
-		return ApprovalReview{}, nil, errors.New("remove box.egress_rules from .agent/project.yaml before approving open or none — rules only apply in filtered mode")
+		return ApprovalReview{}, nil, errors.New("remove box.egress_rules from .agent/project.yaml before approving open or offline — rules only apply in filtered mode")
 	}
 	selected, err := egress.SelectedBundles(bundles)
 	if err != nil {

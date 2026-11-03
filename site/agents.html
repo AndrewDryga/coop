@@ -184,8 +184,8 @@ repositories separate does not protect those local files from the agent or limit
 spend with the provider.</p>
 <p>The provider folders Coop mounts do not give the agent access to another repository&#39;s provider
 files. Open networking still lets it send traffic to any destination. Use filtered networking
-to restrict destinations, or <code>COOP_EGRESS=none</code> to turn networking off. Offline runs receive no
-provider credentials.</p>
+to restrict destinations, or <code>COOP_EGRESS=offline</code> to turn networking off. Offline runs receive
+no provider credentials.</p>
 <p>Manage shared accounts on the host with <code>coop login</code> and <code>coop credentials … rm</code>. Do not use a
 provider&#39;s own login or logout command inside a coding box. If local authentication files no
 longer match the expected account state, Coop stops the next launch and keeps the files so you

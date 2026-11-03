@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -29,7 +30,7 @@ func TestAutomaticProjectBuildRequiresOpenNetworking(t *testing.T) {
 				if err != nil || statErr != nil {
 					t.Fatalf("open automatic build did not run: %v / %v", err, statErr)
 				}
-			} else if err == nil || !strings.Contains(err.Error(), "coop build --egress "+mode) || !errors.Is(statErr, fs.ErrNotExist) {
+			} else if err == nil || !strings.Contains(err.Error(), "coop build --egress "+egress.Mode(mode).Word()) || !errors.Is(statErr, fs.ErrNotExist) {
 				t.Fatalf("restricted automatic build: %v / builder marker %v", err, statErr)
 			}
 		})

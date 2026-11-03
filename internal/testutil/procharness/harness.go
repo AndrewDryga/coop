@@ -109,7 +109,7 @@ func Environment(layout Layout, extra map[string]string) ([]string, error) {
 		"COOP_CONF": layout.Conf, "COOP_CONFIG_DIR": layout.Config,
 		"COOP_MCP_FILE": filepath.Join(layout.Config, "missing-mcp.json"), "COOP_REPO": layout.Repo,
 		"COOP_HOMES": "0", "COOP_NETWORK": "0", "COOP_AUTO_UP": "0", "COOP_CACHE": "0",
-		"COOP_CAFFEINATE": "0", "COOP_EGRESS": "none", "COOP_NO_UPDATE_CHECK": "1",
+		"COOP_CAFFEINATE": "0", "COOP_EGRESS": "offline", "COOP_NO_UPDATE_CHECK": "1",
 		"COOP_RUN_ARGS": "", "COOP_MEMORY": "", "COOP_CPUS": "",
 	}
 	allowed := map[string]bool{

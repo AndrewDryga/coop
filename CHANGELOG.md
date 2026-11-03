@@ -49,6 +49,11 @@
   closes a task whose checklist is unfinished, without editing it. The task's log notes what was
   open. It refuses to run without a terminal, which keeps agents from using it.
 
+- **The no-network mode is called offline everywhere.** `--egress offline` and
+  `COOP_EGRESS=offline` now match `box.egress: offline` in `.agent/project.yaml`, and help,
+  messages and completion use the same word. The old `none` is refused with a message that names
+  `offline`, so update scripts, editor settings and `coop.conf` that used it.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up

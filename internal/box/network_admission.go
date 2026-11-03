@@ -230,7 +230,7 @@ func checkFilteredRuntime(rt runtime.Runtime) error {
 	if rt.SupportsFilteredNetwork() {
 		return nil
 	}
-	return fmt.Errorf("restricted networking needs docker; %s cannot serve the qualified gateway — run this with --egress open or none, or set COOP_RUNTIME=docker", filepath.Base(rt.Name))
+	return fmt.Errorf("restricted networking needs docker; %s cannot serve the qualified gateway — run this with --egress open or offline, or set COOP_RUNTIME=docker", filepath.Base(rt.Name))
 }
 
 // checkFilteredSupport refuses a combination this release cannot enforce, before

@@ -42,6 +42,8 @@ const (
 	Filtered Mode = "filtered"
 )
 
+// ParseMode reads a stored or wire mode: snapshots, approvals, execution records and the session
+// API keep the internal spelling, none. What a person types goes through ParseWord.
 func ParseMode(value string) (Mode, error) {
 	switch Mode(value) {
 	case Open, None, Filtered:
@@ -49,6 +51,28 @@ func ParseMode(value string) (Mode, error) {
 	default:
 		return "", errors.New("egress must be open, none or filtered")
 	}
+}
+
+// ParseWord reads a mode as a person writes it — --egress, COOP_EGRESS and .agent/project.yaml all
+// say offline for no network. The internal none is not one of the words: there is no alias.
+func ParseWord(value string) (Mode, error) {
+	switch value {
+	case string(Filtered), string(Open):
+		return Mode(value), nil
+	case "offline":
+		return None, nil
+	default:
+		return "", errors.New("choose filtered, open or offline")
+	}
+}
+
+// Word is the mode as a person writes it, the inverse of ParseWord: what help, messages and a
+// child process's own --egress or COOP_EGRESS carry.
+func (m Mode) Word() string {
+	if m == None {
+		return "offline"
+	}
+	return string(m)
 }
 
 type Destination struct {

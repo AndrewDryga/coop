@@ -272,7 +272,7 @@ func TestTypedConfigValuesFromEnvironment(t *testing.T) {
 		{"timeout unlimited", "COOP_CONSULT_TIMEOUT", "0", func(c *Config) bool { return c.ConsultTimeout == "" }},
 		{"timeout bounded minimum", "COOP_CONSULT_TIMEOUT", "1", func(c *Config) bool { return c.ConsultTimeout == "1" }},
 		{"timeout bounded", "COOP_CONSULT_TIMEOUT", " 86400 ", func(c *Config) bool { return c.ConsultTimeout == "86400" }},
-		{"egress", "COOP_EGRESS", " none ", func(c *Config) bool { return c.Egress == "none" }},
+		{"egress", "COOP_EGRESS", " offline ", func(c *Config) bool { return c.Egress == "none" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clearAgentEnv(t)
@@ -294,7 +294,7 @@ func TestTypedConfigValuesFromFile(t *testing.T) {
 		"COOP_ACP_CARRY_TOKENS=42",
 		"COOP_PIDS=0",
 		"COOP_CONSULT_TIMEOUT=10",
-		"COOP_EGRESS=none",
+		"COOP_EGRESS=offline",
 		"",
 	}, "\n"))
 	t.Setenv("COOP_CONF", path)
@@ -796,10 +796,11 @@ func TestParseEgress(t *testing.T) {
 	}{
 		{"open", "open", false},
 		{"filtered", "filtered", false},
-		{"none", "none", false},
+		{"offline", "none", false}, // the person's word; the rest of coop keeps the internal none
 		{" open ", "open", false},
-		{"\tnone\n", "none", false},
-		{"None", "", true},
+		{"\toffline\n", "none", false},
+		{"none", "", true}, // the internal spelling is not an alias
+		{"Offline", "", true},
 		{"Filtered", "", true},
 		{"off", "", true},
 		{"", "", true},
@@ -808,15 +809,22 @@ func TestParseEgress(t *testing.T) {
 		if got != tc.want || (err != nil) != tc.wantErr {
 			t.Errorf("parseEgress(%q) = (%q,%v), want (%q, err=%v)", tc.in, got, err, tc.want, tc.wantErr)
 		}
+		if err != nil && !strings.Contains(err.Error(), "offline") {
+			t.Errorf("parseEgress(%q) refusal %q does not name offline", tc.in, err)
+		}
 	}
 }
 
 func TestLoadRejectsInvalidEgress(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("COOP_EGRESS", "None") // a typo of "none"
+	t.Setenv("COOP_EGRESS", "Offline") // a typo of "offline"
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "COOP_EGRESS") {
 		t.Fatalf("Load typo'd COOP_EGRESS error = %v, want a named error", err)
+	}
+	t.Setenv("COOP_EGRESS", "none") // the internal spelling: refused, and the refusal names offline
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "COOP_EGRESS") || !strings.Contains(err.Error(), "offline") {
+		t.Fatalf("Load COOP_EGRESS=none error = %v, want a refusal naming offline", err)
 	}
 	t.Setenv("COOP_EGRESS", "open")
 	if c := mustLoad(t); c.Egress != "open" {

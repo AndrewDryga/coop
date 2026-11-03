@@ -246,7 +246,7 @@ func TestControllerJobCreatesWithoutLocalPolicyAndReplaysAfterRestart(t *testing
 		t.Fatalf("controller job session = %+v", created)
 	}
 	childEnv, err := networkChildEnvironment(created, "turn-one")
-	if err != nil || len(childEnv) != 2 || childEnv[0] != "COOP_CONTROLLER_JOB="+digest || childEnv[1] != "COOP_EGRESS=none" {
+	if err != nil || len(childEnv) != 2 || childEnv[0] != "COOP_CONTROLLER_JOB="+digest || childEnv[1] != "COOP_EGRESS=offline" {
 		t.Fatalf("controller child environment = %v, %v", childEnv, err)
 	}
 	stored, err := service.store.GetSession(context.Background(), created.ID)

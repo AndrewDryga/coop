@@ -162,7 +162,7 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 		doctorCheckPids(host, results["PIDS"], hardened, a.cfg.Pids)
 	}
 
-	// Egress fails closed: a run is asked for a network (Network:true) but with COOP_EGRESS=none;
+	// Egress fails closed: a run is asked for a network (Network:true) but with COOP_EGRESS=offline;
 	// the box must still come up with only loopback, proving the toggle cuts outbound regardless.
 	doctorCheckEgress(offline, a, fixture, img)
 
@@ -410,8 +410,8 @@ func doctorCheckPids(s *doctorSection, pids string, hardened bool, configured st
 	}
 }
 
-// doctorCheckEgress proves COOP_EGRESS=none cuts the box off the network even when a run asks for
-// one. It runs a box with Egress forced to none and Network requested, and checks only loopback
+// doctorCheckEgress proves COOP_EGRESS=offline cuts the box off the network even when a run asks for
+// one. It runs a box with Egress forced to offline and Network requested, and checks only loopback
 // came up — reliable offline, since --network none leaves just `lo` with no host connectivity.
 func doctorCheckEgress(s *doctorSection, a *app, fixture, img string) {
 	offlineCfg := *a.cfg

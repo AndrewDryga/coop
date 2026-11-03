@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -36,9 +37,28 @@ func TestExtractNetworkFlagsPreservesPresenceAndSeparator(t *testing.T) {
 	}
 }
 
+// Every launch says offline for no network — the word .agent/project.yaml and COOP_EGRESS use.
+// The internal none is refused like a typo, and the refusal names the word to use instead.
+func TestEgressFlagSaysOffline(t *testing.T) {
+	flags, _, err := extractNetworkFlags("coop run", []string{"--egress", "offline"})
+	if err != nil || flags.Mode == nil || *flags.Mode != egress.None {
+		t.Fatalf("--egress offline = %#v, %v; want the internal none", flags, err)
+	}
+	forwarded, err := flags.args()
+	if err != nil || !slices.Equal(forwarded, []string{"--egress", "offline"}) {
+		t.Fatalf("forwarded = %q, %v; a re-executed worker must parse what the person typed", forwarded, err)
+	}
+	for _, args := range [][]string{{"--egress", "none"}, {"--egress=none"}} {
+		_, _, err := extractNetworkFlags("coop run", args)
+		if usage := asUsage(err); usage == nil || !strings.Contains(usage.Cause, "offline") {
+			t.Errorf("%q refusal = %v, want one naming offline", args, err)
+		}
+	}
+}
+
 func TestExtractNetworkFlagsRejectsAmbiguousInput(t *testing.T) {
 	for _, args := range [][]string{
-		{"--egress"}, {"--egress="}, {"--egress", "--allow-domain", "example.com"}, {"--egress", "Filtered"},
+		{"--egress"}, {"--egress="}, {"--egress", "--allow-domain", "example.com"}, {"--egress", "Filtered"}, {"--egress", "none"},
 		{"--egress=open", "--egress=open"}, {"--egress-rules=a", "--egress-rules=b"},
 		{"--allow-domain", "https://example.com"}, {"--allow-domain", "*.example.com"}, {"--allow-domain", "1.1.1.1"},
 		{"--allow-domain="}, {"--egress-rules"}, {"--egress-rules="},

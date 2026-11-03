@@ -100,8 +100,9 @@ handles API-key and subscription accounts behind the packet filter; it does not 
 recorded runs. <code>coop net --help</code> lists the commands.</p>
 </section><section class="doc-section reference-section" id="network-modes"><h2>Network modes</h2>
 <p>New projects use filtered networking. <code>coop init</code> sets <code>box.egress: filtered</code> in
-<code>.agent/project.yaml</code>. You can also choose <code>offline</code> to disable networking (called
-<code>--egress none</code> on the command line), or <code>open</code> to allow all network traffic.
+<code>.agent/project.yaml</code>. You can also choose <code>offline</code> to disable networking, or <code>open</code> to allow
+all network traffic. The command line, <code>COOP_EGRESS</code> and the project file use the same three
+words.
 Switching to <code>open</code> needs your approval on the host. Running <code>coop init</code> again leaves an
 existing project file unchanged.</p>
 </section><section class="doc-section reference-section" id="setting-up-a-host"><h2>Setting up a host</h2>
@@ -538,7 +539,7 @@ execute instructions from your repository.</p>
 </tr>
 <tr>
 <td>a runtime other than Docker</td>
-<td><code>restricted networking needs docker; &lt;runtime&gt; cannot serve the qualified gateway — run this with --egress open or none, or set COOP_RUNTIME=docker</code></td>
+<td><code>restricted networking needs docker; &lt;runtime&gt; cannot serve the qualified gateway — run this with --egress open or offline, or set COOP_RUNTIME=docker</code></td>
 </tr>
 <tr>
 <td><code>box.network: true</code> with no <code>service:</code> grant</td>

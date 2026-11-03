@@ -3354,7 +3354,7 @@ func TestSessionACPChildEnvironmentForwardsOnlyResolvedBoxSettings(t *testing.T)
 	}
 	t.Setenv("COOP_CONF", conf)
 	t.Setenv("COOP_CONFIG_DIR", t.TempDir())
-	t.Setenv("COOP_EGRESS", "none")
+	t.Setenv("COOP_EGRESS", "offline")
 	t.Setenv("COOP_MEMORY", "2g")
 	t.Setenv("COOP_RUN_ARGS", "--privileged")
 	t.Setenv("OPENAI_API_KEY", "ambient-secret")
@@ -3379,7 +3379,7 @@ func TestSessionACPChildEnvironmentForwardsOnlyResolvedBoxSettings(t *testing.T)
 		"COOP_CONFIG_DIR":                   "/private",
 		"COOP_HOMES":                        "1",
 		"COOP_RUNTIME":                      "docker",
-		"COOP_EGRESS":                       "none",
+		"COOP_EGRESS":                       "offline", // the child loads it through config like a person's setting
 		"COOP_MEMORY":                       "2g",
 		"COOP_SESSION_REPOSITORY_READ_ONLY": "1",
 	} {

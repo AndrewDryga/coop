@@ -847,7 +847,7 @@ func startScriptedACPArgs(t *testing.T, coopBin, fixtureBin, repo, tmp, plan str
 		"COOP_AUTO_UP":           "0",
 		"COOP_CACHE":             "0",
 		"COOP_CAFFEINATE":        "0",
-		"COOP_EGRESS":            "none",
+		"COOP_EGRESS":            "offline",
 		"COOP_ACP_WARM":          "0",
 		"COOP_NO_UPDATE_CHECK":   "1",
 		"COOP_ACP_FIXTURE_PLAN":  plan,

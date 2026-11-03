@@ -44,7 +44,7 @@ func TestAutoUpServices(t *testing.T) {
 		{"defaults: on, networked, online, docker", true, true, "open", "docker", false, false, false, true},
 		{"COOP_AUTO_UP=0 opts out", false, true, "open", "docker", false, false, false, false},
 		{"no services network (COOP_NETWORK=0)", true, false, "open", "docker", false, false, false, false},
-		{"offline box (COOP_EGRESS=none)", true, true, "none", "docker", false, false, false, false},
+		{"offline box (COOP_EGRESS=offline)", true, true, "none", "docker", false, false, false, false},
 		{"Apple container has no compose", true, true, "open", "container", false, false, false, false},
 		{"read-only retry reuses prepared services", true, true, "open", "docker", true, false, false, false},
 		{"reviewer inspects worker evidence without starting services", true, true, "open", "docker", false, true, false, false},

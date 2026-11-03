@@ -31,7 +31,7 @@ func (a *app) cmdBuild(args []string) (int, error) {
 	}
 	retry := "coop build"
 	if mode != nil {
-		retry += " --egress " + string(*mode)
+		retry += " --egress " + mode.Word()
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -125,9 +125,9 @@ func parseBuildMode(args []string) (*egress.Mode, error) {
 		if mode != nil {
 			return nil, ui.RepeatedOption("--egress", "coop build")
 		}
-		parsed, err := egress.ParseMode(value)
+		parsed, err := egress.ParseWord(value)
 		if err != nil {
-			return nil, ui.InvalidOptionValue(value, "--egress", "coop build", "Choose filtered, open or none.", "coop build --egress filtered")
+			return nil, ui.InvalidOptionValue(value, "--egress", "coop build", "Choose filtered, open or offline.", "coop build --egress filtered")
 		}
 		mode = &parsed
 		i += count

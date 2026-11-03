@@ -16,6 +16,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -512,7 +513,8 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 	// The CLI announces a build in the approved words (cli.announceBuild), so this legacy entry —
 	// used by an automatic rebuild inside a fork or loop launch — says only the plain fact, once.
 	if plan.Project && cfg.Egress != "" && cfg.Egress != "open" {
-		return fmt.Errorf("%s networking does not automatically build project instructions — review %s and its copied build files, then run 'coop build --egress %s' on the host; project builds use ordinary networking", cfg.Egress, plan.Dockerfile, cfg.Egress)
+		mode := egress.Mode(cfg.Egress).Word()
+		return fmt.Errorf("%s networking does not automatically build project instructions — review %s and its copied build files, then run 'coop build --egress %s' on the host; project builds use ordinary networking", mode, plan.Dockerfile, mode)
 	}
 	if !plan.Project {
 		ui.Note("building %s (shared base)", cfg.BaseImage)

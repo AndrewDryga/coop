@@ -38,7 +38,7 @@ Choose one of these values for `COOP_EGRESS`:
 
 - `open` allows full outbound traffic. This is the default.
 - `filtered` allows the AI provider and domains you have approved.
-- `none` disables the box's network (`--network none`). The box cannot send the repo, secrets
+- `offline` disables the box's network (`--network none`). The box cannot send the repo, secrets
   or credentials over the network. Installs and model API calls stop working too, so you must
   choose this setting explicitly.
 

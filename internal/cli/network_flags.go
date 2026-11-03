@@ -42,10 +42,10 @@ func extractNetworkFlags(command string, args []string) (networkFlags, []string,
 				if flags.Mode != nil {
 					return networkFlags{}, nil, ui.RepeatedOption("--egress", command)
 				}
-				mode, err := egress.ParseMode(value)
+				mode, err := egress.ParseWord(value)
 				if err != nil {
 					return networkFlags{}, nil, ui.InvalidOptionValue(value, "--egress", command,
-						"Choose filtered, open or none.", command+" --egress filtered")
+						"Choose filtered, open or offline.", command+" --egress filtered")
 				}
 				flags.Mode = &mode
 			case "--allow-domain":
@@ -89,7 +89,7 @@ func (f networkFlags) admission() box.NetworkAdmission {
 func (f networkFlags) args() ([]string, error) {
 	var out []string
 	if f.Mode != nil {
-		out = append(out, "--egress", string(*f.Mode))
+		out = append(out, "--egress", f.Mode.Word())
 	}
 	for _, domain := range f.Domains {
 		out = append(out, "--allow-domain", domain)

@@ -66,7 +66,7 @@ type Config struct {
 	// COOP_ALLOW_CASE_EXPOSED_SECRETS — start a box even when a hidden file's name is too long to
 	// cover under every letter case on a disk that ignores case (default off: refuse)
 	AllowCaseExposedSecrets bool
-	Egress                  string // COOP_EGRESS — open, filtered (host-qualified), or none
+	Egress                  string // COOP_EGRESS — filtered (host-qualified), open, or offline, held as the internal "none"
 
 	ConsultTimeout string // COOP_CONSULT_TIMEOUT — per-peer coop-consult timeout in seconds (empty/0 = unlimited)
 
@@ -1171,12 +1171,17 @@ func parsePids(value string) (string, error) {
 	return strconv.Itoa(n), nil
 }
 
+// parseEgress reads COOP_EGRESS as a person writes it. They say offline; the rest of coop keeps the
+// internal none (egress.None, which this leaf package cannot import), and none is not an alias.
 func parseEgress(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value != "open" && value != "filtered" && value != "none" {
-		return "", advice("Use open, filtered or none.")
+	switch value = strings.TrimSpace(value); value {
+	case "open", "filtered":
+		return value, nil
+	case "offline":
+		return "none", nil
+	default:
+		return "", advice("Use filtered, open or offline.")
 	}
-	return value, nil
 }
 
 func parseConsultTimeout(value string) (string, error) {

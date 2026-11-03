@@ -89,6 +89,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [list-verb-ls](list-verb-ls.md) — listing subcommands are `ls`, the only spelling (no `list` alias in v3)
 - [destructive-verb-rm](destructive-verb-rm.md) — destructive subcommands are `rm`, the only spelling (no `remove` alias in v3)
 - [credentials-not-profiles](credentials-not-profiles.md) — a stored account is publicly a "credential"; "profile" is retired, not aliased
+- [offline-not-none](offline-not-none.md) — the no-network mode is publicly "offline" on the flag, in COOP_EGRESS and in project.yaml; "none" is internal only and refused
 - [usage-placeholder-style](usage-placeholder-style.md) — usage metavariables use angle brackets and stable names; optionality stays outside the placeholder
 - [bare-subcommand-shows-help](bare-subcommand-shows-help.md) — a bare group prints help or its default view, never an empty-token error
 - [bare-flag-routes-to-default-view](bare-flag-routes-to-default-view.md) — a leading flag where a subcommand goes routes to the group's default listing

@@ -480,6 +480,33 @@ func TestCurrentDocsDoNotAdvertiseRetiredContracts(t *testing.T) {
 	}
 }
 
+// A person spells the no-network mode offline on every surface; none is internal only and the
+// parsers refuse it, so no page may teach it (.agent/kb/rules/offline-not-none.md). The generated
+// docs/cli.md follows the manual, so the manual stands for it.
+func TestHelpSpellsTheNoNetworkModeOffline(t *testing.T) {
+	surfaces := map[string]string{"CLI manual": RenderManual(&config.Config{})}
+	for _, path := range []string{"README.md", "docs/agents.md", "docs/box.md", "docs/configuration.md",
+		"docs/integrations.md", "docs/loop.md", "docs/networking.md"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		surfaces[path] = string(data)
+	}
+	for name, surface := range surfaces {
+		for _, retired := range []string{"--egress none", "--egress=none", "EGRESS=none", "egress: none", "open or none", "open, or none"} {
+			if strings.Contains(surface, retired) {
+				t.Errorf("%s teaches the retired %q; the word is offline", name, retired)
+			}
+		}
+	}
+	for _, example := range []string{"coop run --egress offline", "coop shell --egress offline", "filtered, open or offline"} {
+		if !strings.Contains(surfaces["CLI manual"], example) {
+			t.Errorf("the CLI manual lost %q", example)
+		}
+	}
+}
+
 // helpRequested stops at `--`: a flag after it is passthrough to the agent, so `coop claude --
 // --help` runs the agent's --help, not coop's page.
 func TestHelpRequestedStopsAtDashDash(t *testing.T) {
