@@ -2,8 +2,8 @@
 name: worker-storage-accounting
 description: the worker measures allocated blocks and charges a hardlinked baseline once, stages a discard by renaming before deleting, and closes allocation on used-byte watermarks with a free-byte reserve underneath
 subsystem: worker
-sources: [internal/forkspace/usage.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/checkpoint_storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
-updated: 2026-11-02
+sources: [internal/forkspace/usage.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/companion_snapshot_gc.go, internal/workerconnector/job_source_reuse.go, internal/sessionsvc/checkpoint_storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
+updated: 2026-11-03
 ---
 
 A worker accounts for its own disk so a control plane can bound workspace growth. Four things about
@@ -76,3 +76,18 @@ The same bounded maintenance pass runs before a new allocation at the low waterm
 twice the reserve, outside allocation locks. It invalidates measured totals after any successful
 reclamation, including when a later inventory fails. Git checks honor a 30-second context; removing
 one already-proven tree uses filesystem removal and cannot itself be interrupted mid-call.
+
+**Source staging has its own early gate.** Connector staging precedes session admission, so a
+new source checks free bytes before grants, downloads and checkout materialization. It waits at
+twice the default emergency reserve; an unreadable measurement also waits. Already-verified
+staged hits still work. The journal keeps the original command pending with the bounded source
+retry schedule and no terminal failure receipt. It resumes automatically after capacity returns.
+Fresh source receipts retain their own remote verification and metadata; matching authorized
+checkout/LFS payloads share immutable inodes only after both trees have been verified. This saves
+retained space but does not remove the transient space used by a fresh checkout.
+
+Snapshot reclamation reads bounded rotating ownership records and immediately attempts eligible
+entries; it does not recursively measure every cache before deleting the first one. Sealing records
+allocated bytes as a warm-cache budget hint. A sweep carries that hint across bounded passes;
+it is not a recovered-byte claim. Actual telemetry still deduplicates current inode allocations.
+The cursor advances before a slow/held entry, so one entry cannot starve all following cleanup.

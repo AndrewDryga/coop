@@ -93,7 +93,7 @@ var allowedEdges = map[string][]string{
 	"testutil/wait":         nil,
 	"testutil/workertls":    nil,
 	"ui":                    {"safetext"},
-	"workerconnector":       {"config", "forkspace", "secretscan", "workerproto"},
+	"workerconnector":       {"config", "forkspace", "safefile", "secretscan", "workerproto"},
 	"workerproto":           {"session"},
 }
 

@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-10-28
+updated: 2026-11-03
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,10 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-11-03 — workerconnector imports the existing safefile leaf for bounded, no-follow reads
+  of private source receipts before optional immutable-payload reuse. This shares descriptor-relative
+  regular-file and size checks with other host-state readers instead of duplicating security-sensitive
+  filesystem code. safefile has no internal dependencies, so no cycle or presentation edge is added.
 - 2026-11-01 — added leaf `fsfilter`, release-source package `fsimage -> runtime`,
   and `box -> fsfilter, fsimage`. Filesystem policy has no host authority; the
   image package consumes the existing bound Docker builder. Both launch paths

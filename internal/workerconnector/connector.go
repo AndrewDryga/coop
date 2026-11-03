@@ -232,7 +232,7 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 			delete(pending, done.job.command.CommandID)
 			// A command still waiting on its first download was reported when the wait began;
 			// every later try that finds the download running says nothing new.
-			stillWaiting := waits.waiting(done.job.command.CommandID) && errors.Is(done.err, errJobSourceDownloading)
+			stillWaiting := waits.waiting(done.job.command.CommandID) && sourcePreparationWaiting(done.err)
 			waits.settled(done.job.command.CommandID, done.err, c.now())
 			if done.job.readOnly {
 				readsActive--

@@ -366,6 +366,13 @@ func runSessionCheck(state string) (int, error) {
 	if err == nil {
 		records, err = workerconnector.CheckJournal(connectorJournalDir(state))
 	}
+	if err == nil {
+		var snapshots sessionsvc.CompanionSnapshotCheck
+		snapshots, err = sessionsvc.CheckCompanionSnapshots(state)
+		records = append(records, workerconnector.RecordCheck{Noun: "companion snapshot receipt",
+			Version: snapshots.Version, Current: snapshots.Current, Newer: snapshots.Newer,
+			Older: snapshots.Older, Damaged: snapshots.Damaged})
+	}
 	if err != nil {
 		return 1, ui.CommandFailed("Could not check session data", upperFirstSentence(sessionsvc.BoundedDetail(err.Error())))
 	}

@@ -2,8 +2,8 @@
 name: session-companions-own-git-metadata
 description: companion boxes mount only the pinned workspace, so each snapshot must own usable Git metadata rather than point back to its source checkout
 subsystem: sessions
-sources: [internal/sessionsvc/companion.go, internal/sessionsvc/job_tree.go, internal/forkspace/git.go, internal/forkspace/lfs.go, internal/forkspace/lfs_status.go, internal/sessionsvc/service.go, internal/cli/fork_cmd.go, internal/box/run.go]
-updated: 2026-10-17
+sources: [internal/sessionsvc/companion.go, internal/sessionsvc/companion_snapshot.go, internal/sessionsvc/companion_snapshot_gc.go, internal/sessionsvc/job_tree.go, internal/forkspace/git.go, internal/forkspace/lfs.go, internal/forkspace/lfs_status.go, internal/sessionsvc/service.go, internal/cli/fork_cmd.go, internal/box/run.go]
+updated: 2026-11-03
 ---
 
 # Session companions own their Git metadata
@@ -70,7 +70,33 @@ Passing their environment into `GitCommandWithEnv` would replace that index with
 index: an inspection's `read-tree` would then overwrite staged work. Regression tests compare the
 model's index bytes before and after inspection, including staged edits and hidden index flags.
 
+Current companion creation first materializes a versioned immutable cache entry under
+`<state>/companion-snapshots`. Its key includes the authenticated worker identity's public
+controller/workspace namespace, the controller-scoped repository identity, selected commit and
+submodule descriptors. Freshness timestamps stay in each source receipt and do not duplicate
+content. A missing enrollment identity uses the local state-root namespace for local sessions.
+A worker identity file from another controller is refused by the connector before enrollment;
+explicit re-enrollment also changes this cache namespace.
+
+The cache is copied independently from the mutable source with the checks above. Per-session
+projections share only sealed working-tree, object and LFS payload inodes. Each owns its index,
+HEAD, config and refs, and every model/service mount remains read-only. Writable primary forks
+never use these links. Session paths and frozen network authority remain unchanged. The kernel's
+hardlinks are durable references: cache eviction cannot remove bytes a session still holds, and
+closing one session only releases its own references. Private cache projection stages are never
+mounted; reuse/GC removes an interrupted stage under the same snapshot lock.
+
+Cache GC keeps referenced or unproven entries, considers unused entries after an hour and evicts
+unreferenced entries sooner under pressure or above the disposable-byte budget. A directory-bound
+versioned receipt plus a durable eviction marker makes interrupted deletion resumable. GC atomically
+retires the authenticated directory out of the reusable key namespace and syncs its parent before
+removing payloads. It removes ownership last; a crash after that can leave only an empty directory,
+which nonrecursive removal can reclaim without authority over unknown contents. An individual
+entry whose ownership/cleanliness proof exceeds the 30-second pass remains retained and reported;
+the rotating cursor prevents it from starving other entries. Session history and old independent companion copies keep their existing custody and cleanup rules.
+
 ## Changelog
+- 2026-11-03 — share verified immutable companion payloads while keeping per-session metadata, mounts and custody; bounded cache reclamation uses durable filesystem references.
 - 2026-10-17 — dropped the run.go line numbers after `companionRepositoryMounts`, which the sentence
   already names (re-verified its `/coop/repositories/<alias>` read-only bind in
   internal/box/run.go).

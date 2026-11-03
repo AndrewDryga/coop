@@ -27,8 +27,8 @@ const (
 )
 
 // companionPrepareParallelism bounds how many companion repositories one
-// session creation prepares at once. Each is a full local clone and checkout:
-// one after another, sixteen of them held a session's creation for six minutes
+// session creation prepares at once. A cache miss materializes a full clone and
+// checkout; previously sixteen sequential copies held session creation for six minutes
 // on a colima worker before the agent could start (2026-10-15).
 const companionPrepareParallelism = 4
 
@@ -158,7 +158,7 @@ func ensureSessionCompanionContext(
 		return session.CompanionRepository{}, fmt.Errorf("inspect companion workspace: %w", statErr)
 	}
 	if created {
-		if err := createSessionCompanionContext(ctx, binding); err != nil {
+		if err := createCachedSessionCompanion(ctx, stateRoot, binding); err != nil {
 			return session.CompanionRepository{}, err
 		}
 		return binding, nil

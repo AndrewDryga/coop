@@ -63,6 +63,7 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 
 | State | Where | Current | Oldest read | Older versions today | Converting build |
 |---|---|---|---|---|---|
+| Companion snapshot receipt | `<state>/companion-snapshots/<key>/receipt.json` | 1 | 1 | none exist | none |
 | Session database schema | `<state>/session.sqlite` | 26 | 1 | converted when the service opens the store | builds using schema 26 |
 | Turn retry receipts | rows in `<state>/session.sqlite` | 1 | unversioned | read in place | `coop sessions compact` (v10.1.2 and later) |
 | Worker command receipts | `<state>/connector/commands/` | 1 | 1 | none exist | none |

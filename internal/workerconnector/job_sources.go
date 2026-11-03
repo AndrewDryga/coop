@@ -29,6 +29,8 @@ var ErrJobSourceIntegrity = errors.New("job source identity or working tree does
 // running in the background: the command is tried again on its next delivery.
 var errJobSourceDownloading = errors.New("a repository the job needs is still being fetched")
 
+var errJobSourceStorage = errors.New("repository staging is waiting for disk space")
+
 // errJobSourceStagingStarted is errJobSourceDownloading for a copy this try began staging in the
 // background (backgroundStaging); stageCreateJobSources gives those a moment to finish.
 var errJobSourceStagingStarted = fmt.Errorf("%w: staging started", errJobSourceDownloading)
@@ -81,9 +83,14 @@ type JobSourceStager interface {
 }
 
 type privateJobSourceStager struct {
+	// Production always measures before allocating new staging bytes. Fixtures
+	// that construct the private struct directly may supply deterministic space.
+	storageMeasure func(string) (forkspace.Filesystem, error)
+
 	transport JobSourceTransport
 	stateRoot string
 	// Tests substitute a local Git remote; production always derives github.com from the job.
+	storageForTest          func(string) (forkspace.Filesystem, error)
 	remoteForTest           string
 	lfsEndpointForTest      string
 	submoduleRemotesForTest map[string]string
@@ -108,7 +115,7 @@ func NewJobSourceStager(transport JobSourceTransport, stateRoot string) (*privat
 	if transport == nil || !filepath.IsAbs(stateRoot) {
 		return nil, errors.New("job source stager needs a transport and absolute private state root")
 	}
-	return &privateJobSourceStager{transport: transport, stateRoot: stateRoot, backgroundFirstDownload: true, backgroundStaging: true}, nil
+	return &privateJobSourceStager{transport: transport, stateRoot: stateRoot, storageMeasure: forkspace.MeasureFilesystem, backgroundFirstDownload: true, backgroundStaging: true}, nil
 }
 
 func (e *Executor) stageCreateJobSources(ctx context.Context, body []byte) error {
@@ -179,6 +186,8 @@ func (e *Executor) stageJobSources(ctx context.Context, jobRef string, sources [
 		err := e.jobSourceStager.Stage(ctx, jobRef, source)
 		switch {
 		case err == nil:
+		case errors.Is(err, errJobSourceStorage):
+			return nil, false, fmt.Errorf("%w: %w", errArtifactTransfer, err)
 		case errors.Is(err, errJobSourceDownloading):
 			pending = append(pending, source)
 			started = started || errors.Is(err, errJobSourceStagingStarted)
@@ -228,6 +237,9 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 		}
 		return configureSourceGitIdentity(ctx, filepath.Join(final, "repository"))
 	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := s.checkSourceStorage(); err != nil {
 		return err
 	}
 	seed := previousStagedRepository(parent, key, source.RepositoryIdentity())
@@ -306,6 +318,9 @@ func (s *privateJobSourceStager) stagedInBackground(final string) (bool, error) 
 // publishes it at final.
 func (s *privateJobSourceStager) stageCopy(ctx context.Context, jobRef string, source workerproto.JobSource,
 	parent, final, seed, remote, protocol, token string) error {
+	if err := s.checkSourceStorage(); err != nil {
+		return err
+	}
 	temporary, err := os.MkdirTemp(parent, ".source-")
 	if err != nil {
 		return err
@@ -345,6 +360,9 @@ func (s *privateJobSourceStager) stageCopy(ctx context.Context, jobRef string, s
 		return err
 	}
 	if err := verifySourceRepository(ctx, filepath.Join(temporary, "repository"), source); err != nil {
+		return err
+	}
+	if err := reuseStagedSourcePayloads(ctx, s.stateRoot, seed, repository, source); err != nil {
 		return err
 	}
 	document, err := json.Marshal(source)
@@ -445,6 +463,9 @@ func (s *privateJobSourceStager) stillDownloading(parent string, source workerpr
 // a large history, minutes before its first object: a quiet fetch receives nothing then, and
 // git's low-speed limit gives up on it.
 func (s *privateJobSourceStager) downloadHistory(ctx context.Context, parent, final, remote, protocol, token string, source workerproto.JobSource) error {
+	if err := s.checkSourceStorage(); err != nil {
+		return err
+	}
 	ctx, err := withSourceCredentials(ctx, s.stateRoot)
 	if err != nil {
 		return err

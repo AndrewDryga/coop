@@ -563,6 +563,23 @@ session data that contains credentials without reading those credentials.</p>
 <p>Forks can share Git objects with their source checkout through hard links. Storage totals count
 the space that deleting the content would actually free. Shared repository data is counted once
 in <code>totals.baseline_shared_bytes</code>, rather than once for every fork.</p>
+<p>Read-only companion repositories reuse a verified immutable snapshot for the same authorized
+repository and pinned revision. Sessions keep separate Git configuration, indexes and outputs,
+while sharing unchanged source files, Git objects and LFS payloads. Controller/workspace and
+repository bindings keep private caches separate. Writable primary workspaces remain independent.
+The same shared-byte accounting counts a payload once across all sessions using it.</p>
+<p>An unused companion snapshot becomes eligible for cleanup after an hour. Under storage pressure
+or above the disposable-byte budget, cleanup can evict it sooner. A snapshot referenced by a
+session remains; closing one session cannot invalidate another session&#39;s files. Cleanup retains
+and reports an entry when its ownership and cleanliness cannot be proved within the 30-second
+pass, then advances to other entries on following passes. Large or slow entries can therefore
+remain retained. Interrupted creation and eviction resume through private ownership records.
+<code>coop sessions check</code> also checks their format before an upgrade.</p>
+<p>New source downloads and checkouts wait before allocating when free storage reaches twice the
+default reserve. Verified source cache hits continue working. This wait keeps the same durable
+worker command and resumes when space returns; it does not consume a model attempt. Fresh source
+receipts also reuse matching verified checkout and LFS payloads, while retaining separate Git
+metadata and their exact source-resolution evidence.</p>
 <p>An incomplete measurement reports <code>totals.unknown</code> and sets <code>storage.unattributed_bytes</code>
 to <code>null</code>. This means unknown, never zero. To avoid scanning the full tree for every request,
 co:op measures it at most once per <code>budget.measure_seconds</code>.

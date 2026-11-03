@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// A command whose job source is still being fetched in the background (errJobSourceDownloading):
+// A command whose job source waits for storage or is still being fetched in the background:
 // a repository's first download, its whole history, or a new copy that outlasted
 // stagingInForeground. It has no result yet, so the controller delivers it again on every poll,
 // and staging it again only finds the fetch still running. A tenant repository's 45-minute first
@@ -28,7 +28,7 @@ type firstDownloadWait struct {
 	delay     time.Duration
 }
 
-// waiting reports whether a command's last try found its first download still running.
+// waiting reports whether a command is waiting for source preparation.
 func (w *firstDownloadWaits) waiting(commandID string) bool {
 	_, ok := w.waits[commandID]
 	return ok
@@ -40,7 +40,7 @@ func (w *firstDownloadWaits) held(commandID string, now time.Time) bool {
 	return ok && now.Before(wait.notBefore)
 }
 
-// settled records what a command's try came to. A source still downloading holds the command
+// settled records what a command's try came to. A source waiting for capacity or download holds the command
 // for twice its last delay; any other outcome ends its wait. A wait whose command was not
 // delivered again well after its delay ended belongs to a command the controller stopped
 // delivering, and is dropped.
@@ -50,7 +50,7 @@ func (w *firstDownloadWaits) settled(commandID string, err error, now time.Time)
 			delete(w.waits, id)
 		}
 	}
-	if !errors.Is(err, errJobSourceDownloading) {
+	if !sourcePreparationWaiting(err) {
 		delete(w.waits, commandID)
 		return
 	}
@@ -62,4 +62,9 @@ func (w *firstDownloadWaits) settled(commandID string, err error, now time.Time)
 		w.waits = make(map[string]firstDownloadWait)
 	}
 	w.waits[commandID] = firstDownloadWait{notBefore: now.Add(delay), delay: delay}
+}
+
+// Both waits keep the same journal command pending and its lease renewed.
+func sourcePreparationWaiting(err error) bool {
+	return errors.Is(err, errJobSourceDownloading) || errors.Is(err, errJobSourceStorage)
 }

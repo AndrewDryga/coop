@@ -218,6 +218,7 @@ type StorageReport struct {
 type StorageReclaim struct {
 	StagedPurged          int      `json:"staged_purged"`
 	SourcesPruned         int      `json:"sources_pruned"`
+	SnapshotsPruned       int      `json:"snapshots_pruned"`
 	CompanionsReclaimed   int      `json:"companions_reclaimed"`
 	CompanionStagesPurged int      `json:"companion_stages_purged"`
 	Problems              []string `json:"problems"`
@@ -298,6 +299,7 @@ type storageAccountant struct {
 	mu                   sync.Mutex
 	measureMu            sync.Mutex
 	reclaimMu            sync.Mutex
+	snapshotSweep        companionSnapshotSweep
 	companionCursor      int
 	companionStageCursor int
 	companionStageFirst  bool
@@ -774,9 +776,10 @@ func (s *Service) measurePrivateState(scan *forkspace.UsageScan, report *Storage
 		report.Roots = append(report.Roots, root)
 	}
 	for name, into := range map[string]*int64{
-		"acp":          &report.Totals.PrivateStateBytes,
-		"output":       &report.Totals.PrivateStateBytes,
-		"repositories": &report.Totals.CompanionBytes,
+		"acp":                 &report.Totals.PrivateStateBytes,
+		"output":              &report.Totals.PrivateStateBytes,
+		"repositories":        &report.Totals.CompanionBytes,
+		companionSnapshotRoot: &report.Totals.CompanionBytes,
 		// Stages may contain unknown or replaced trees. Until GC proves their
 		// receipt, conservatively retain their bytes as companion storage.
 		companionDiscardRoot:    &report.Totals.CompanionBytes,
@@ -868,7 +871,7 @@ func (s *Service) ReclaimStorage(ctx context.Context) (StorageReclaim, error) {
 	limits := s.storageLimitsSnapshot()
 	result := StorageReclaim{}
 	defer func() {
-		if result.CompanionsReclaimed > 0 || result.CompanionStagesPurged > 0 || result.StagedPurged > 0 || result.SourcesPruned > 0 {
+		if result.CompanionsReclaimed > 0 || result.CompanionStagesPurged > 0 || result.StagedPurged > 0 || result.SourcesPruned > 0 || result.SnapshotsPruned > 0 {
 			s.storage.mu.Lock()
 			s.storage.report = nil
 			s.storage.mu.Unlock()
@@ -876,6 +879,7 @@ func (s *Service) ReclaimStorage(ctx context.Context) (StorageReclaim, error) {
 	}()
 	s.reclaimReviewStages(ctx, limits, &result)
 	s.reclaimClosedCompanions(ctx, sessions, &result)
+	s.reclaimCompanionSnapshots(ctx, &result)
 	repositories, err := s.storageRepositories(sessions)
 	if err != nil {
 		return result, err
