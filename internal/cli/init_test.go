@@ -777,3 +777,39 @@ func TestInitFixMatchesTheRefusal(t *testing.T) {
 		}
 	}
 }
+
+// On an initialized project, --services together with --agents or --stack must still add the
+// services: the re-init those options ask for writes nothing it would clobber, so it alone could
+// never add a service or its network rule.
+func TestInitServicesWithOtherOptionsStillAddServices(t *testing.T) {
+	for _, extra := range [][]string{{"--agents", "claude"}, {"--stack", "asdf"}} {
+		t.Run(extra[0], func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			t.Setenv(box.ServiceStateRootEnv, t.TempDir())
+			hermeticGit(t)
+			repo := t.TempDir()
+			gitInit(t, repo)
+			if extra[0] == "--stack" {
+				if err := os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("nodejs 22.11.0\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a := initAppOnDocker(repo, t.TempDir())
+			for _, args := range [][]string{nil, append([]string{"--services", "postgres"}, extra...)} {
+				captureStderr(t, func() {
+					if code, err := a.cmdInit(args); code != 0 || err != nil {
+						t.Fatalf("coop init %v = (%d, %v)", args, code, err)
+					}
+				})
+			}
+			compose, err := os.ReadFile(filepath.Join(repo, ".agent", "compose.yml"))
+			if err != nil || !strings.Contains(string(compose), "postgres") {
+				t.Fatalf("--services postgres %s added no service (err %v):\n%s", extra[0], err, compose)
+			}
+			access, err := box.ProjectNetworkAccess(t.Context(), a.cfg, repo)
+			if err != nil || access.Pending == nil {
+				t.Fatalf("--services postgres %s asked for no service access (err %v)", extra[0], err)
+			}
+		})
+	}
+}

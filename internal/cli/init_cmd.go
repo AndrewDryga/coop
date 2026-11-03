@@ -176,8 +176,17 @@ func (a *app) cmdInit(args []string) (int, error) {
 	}
 	// `coop init --services` on its own is a request to ADD services to a project that already
 	// exists. It writes nothing else, asks nothing else, and starts nothing.
-	if servicesSet && stack == "" && !agentsSet && scaffold.Initialized(repo) {
+	addToProject := servicesSet && scaffold.Initialized(repo)
+	if addToProject && stack == "" && !agentsSet {
 		return a.addServices(repo, services, servicesChooser)
+	}
+	// With --stack or --agents as well, the re-init below honors those, but every write it makes
+	// is no-clobber, so it could never add a service: the services are added afterwards, exactly
+	// as --services alone adds them. --services none has nothing to add.
+	addServicesAfter := addToProject && (len(services) > 0 || servicesChooser)
+	requestedServices := services
+	if addServicesAfter {
+		services = nil
 	}
 	// A re-init asks nothing. Every scaffold write is no-clobber, so on an already-initialized repo
 	// an answer to either prompt below could not take effect — and `coop init` is run from inside a
@@ -359,6 +368,10 @@ func (a *app) cmdInit(args []string) (int, error) {
 		g.print()
 	}
 	a.netPendingNotice(repo) // only when this project asks for network access nobody approved
+	if addServicesAfter {
+		ui.Note("")
+		return a.addServices(repo, requestedServices, servicesChooser)
+	}
 	return 0, nil
 }
 
