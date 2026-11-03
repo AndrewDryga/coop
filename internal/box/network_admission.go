@@ -175,7 +175,7 @@ func checkRuleFlags(spec RunSpec, options NetworkAdmission, mode egress.Mode) er
 		adds = "add"
 	}
 	named := strings.Join(flags, " and ")
-	return fmt.Errorf("%s cannot start because %s only %s to filtered access, and this run is %s\n\n  Use --egress filtered, or leave out %s.",
+	return fmt.Errorf("%s cannot start because %s only %s to filtered access, and this run is %s\n\n  Use --egress filtered, or leave out %s",
 		networkLaunchName(spec), named, adds, mode.Word(), named)
 }
 
