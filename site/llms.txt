@@ -477,6 +477,10 @@ Usage: coop presets init [<name>]
   Creates the frontier template in .agent/presets/.
   The default name is frontier. Existing presets are left unchanged.
 
+  A name uses lowercase letters, digits, '.', '_' and '-', and starts with a
+  letter or digit. It cannot be a Coop command or an agent name, because
+  coop <name> runs those instead.
+
 EXAMPLES
   coop presets init
   coop presets init review

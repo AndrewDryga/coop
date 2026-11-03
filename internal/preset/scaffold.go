@@ -14,7 +14,7 @@ import (
 // A failed scaffold removes what it created.
 func Scaffold(repo, name string) (_ string, err error) {
 	if !ValidName(name) {
-		return "", fmt.Errorf("invalid preset name %q — a preset is a folder name under %s/ (lowercase, no '/', '..', or leading '-')", name, Dir)
+		return "", fmt.Errorf("%q is not a usable preset name. %s", name, NameRule)
 	}
 	dir := filepath.Join(filepath.FromSlash(Dir), name)
 	files := scaffoldFiles(name)

@@ -364,13 +364,14 @@ func TestScaffold(t *testing.T) {
 			t.Errorf("template header should name the preset (%q):\n%s", hint, data)
 		}
 	}
-	// Never clobbers; validates the name.
+	// Never clobbers; validates the name. Names Coop runs as something else (its commands, the
+	// agents, `coop presets ls`) are the CLI's to refuse: TestCmdPresetsInitRefusesNamesThatCanNeverRun.
 	if _, err := Scaffold(repo, "frontier"); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("re-scaffold should refuse: %v", err)
 	}
-	for _, bad := range []string{"", "init", "ls", "../evil", "-x"} {
-		if _, err := Scaffold(t.TempDir(), bad); err == nil {
-			t.Errorf("Scaffold(%q) should refuse the name", bad)
+	for _, bad := range []string{"", "../evil", "-x", "Frontier", "bad name"} {
+		if _, err := Scaffold(t.TempDir(), bad); err == nil || !strings.Contains(err.Error(), NameRule) {
+			t.Errorf("Scaffold(%q) = %v, want the name rule", bad, err)
 		}
 	}
 }
@@ -584,12 +585,29 @@ func TestGlobalPresets(t *testing.T) {
 	}
 }
 
-// A preset is a folder name a box can create in the project, so a name with a control character
-// is never a preset: shown as one, it would carry the character to the person's terminal.
-func TestValidNameRefusesControlCharacters(t *testing.T) {
+// A preset runs as `coop <name>`, so its name is a word a shell passes through unquoted and the
+// who-runs slot never reads as a target or an option. It is also a folder name a box can create,
+// so a control character never makes one: shown as a preset, it would reach the person's terminal.
+func TestValidNameIsTheDocumentedCharacterSet(t *testing.T) {
 	for name, want := range map[string]bool{
 		"frontier":      true,
-		"café-team":     true,
+		"my-team":       true,
+		"team_2":        true,
+		"v2.review":     true,
+		"9lives":        true,
+		"":              false,
+		".":             false,
+		"..":            false,
+		".hidden":       false,
+		"_private":      false,
+		"-flag":         false,
+		"Frontier":      false,
+		"bad name!":     false,
+		"café-team":     false,
+		"codex:fast":    false, // target syntax: the who-runs slot reads it as a model
+		"team@work":     false, // target syntax: an account
+		"a/b":           false,
+		`a\b`:           false,
 		"team\x1b[2J":   false,
 		"team\x07":      false,
 		"team\nfake":    false,
@@ -599,6 +617,12 @@ func TestValidNameRefusesControlCharacters(t *testing.T) {
 	} {
 		if got := ValidName(name); got != want {
 			t.Errorf("ValidName(%q) = %t, want %t", name, got, want)
+		}
+	}
+	// The refusal states the rule ValidName enforces: every character class it accepts is named.
+	for _, part := range []string{"lowercase letters", "digits", "'.'", "'_'", "'-'", "start with a letter or digit"} {
+		if !strings.Contains(NameRule, part) {
+			t.Errorf("NameRule %q does not mention %s", NameRule, part)
 		}
 	}
 }

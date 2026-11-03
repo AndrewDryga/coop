@@ -16,8 +16,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/safefile"
@@ -246,16 +244,26 @@ func (e *LoadError) Error() string {
 
 func (e *LoadError) Is(target error) bool { return target == ErrNotFound && e.NotFound }
 
-// ValidName reports whether name can be a preset: a single folder-name segment, not a
-// verb of the presets command itself (a preset named "init" could never be shown), and no
-// control character, which a folder a box created could carry to the person's terminal.
+// NameRule is the rule ValidName enforces, as the sentence a refusal shows.
+const NameRule = "A preset name uses lowercase letters, digits, '.', '_' and '-', and must start with a letter or digit."
+
+// ValidName reports whether name follows NameRule. A preset runs as `coop <name>`, so its name is
+// a word a shell passes through unquoted and the who-runs slot never reads as a target (':', '/',
+// '@') or an option. It is also a folder a box can create, so a control character never passes.
+// The CLI also refuses Coop's command and agent names, which dispatch tries before any preset.
 func ValidName(name string) bool {
-	switch name {
-	case "", ".", "..", "init", "ls":
+	if name == "" {
 		return false
 	}
-	return utf8.ValidString(name) && !strings.ContainsAny(name, "/\\") && !strings.HasPrefix(name, "-") &&
-		strings.IndexFunc(name, unicode.IsControl) < 0
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case i > 0 && (r == '.' || r == '_' || r == '-'):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Load reads and validates a named preset's preset.yaml — the repo's .agent/presets/
@@ -267,7 +275,8 @@ func Load(repo, globalDir, name string) (*Preset, error) {
 	if !ValidName(name) {
 		return nil, &LoadError{Name: name, NotFound: true, Detail: []string{
 			fmt.Sprintf("%q is not a usable preset name.", name),
-			fmt.Sprintf("A preset is a folder name under %s/.", Dir),
+			NameRule,
+			"Rename its folder to use this preset.",
 		}}
 	}
 	source, err := openPresetSource(repo, globalDir, name)

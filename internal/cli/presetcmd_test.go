@@ -478,3 +478,96 @@ func TestPresetDetailEscapesWhatThePresetNames(t *testing.T) {
 		}
 	}
 }
+
+// A preset runs as `coop <name>`, and dispatch tries Coop's own commands and then the agents
+// first, so a preset under one of those names could never start; a name outside the preset
+// character set would need shell quoting the printed "coop <name>" hint does not have. presets
+// init refuses every such name with the reason, exits 2 and creates nothing.
+func TestCmdPresetsInitRefusesNamesThatCanNeverRun(t *testing.T) {
+	taken := append(append([]string{"ls"}, topLevelCommands...), agents.Names()...)
+	for _, name := range append(taken, "bad name!", "Frontier", "codex:fast", "caf\u00E9-team", "_x") {
+		t.Run(name, func(t *testing.T) {
+			repo := t.TempDir()
+			a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+			var code int
+			var err error
+			out := captureStderr(t, func() { code, err = a.cmdPresets([]string{"init", name}) })
+			usage := asUsage(err)
+			if code != 2 || usage == nil || usage.Headline != `Cannot name a preset "`+name+`"` || usage.Cause == "" {
+				t.Fatalf("presets init %q = (%d, %v), want the refusal block", name, code, err)
+			}
+			if strings.Contains(out, "Created preset") {
+				t.Errorf("a refused name announced success:\n%s", out)
+			}
+			if _, statErr := os.Stat(filepath.Join(repo, ".agent")); !os.IsNotExist(statErr) {
+				t.Errorf("a refused name created .agent: %v", statErr)
+			}
+		})
+	}
+	for name, want := range map[string]string{
+		"claude":    `"claude" is also an agent, so coop claude starts that agent instead.`,
+		"tasks":     `"tasks" is also a Coop command, so coop tasks runs that command instead.`,
+		"init":      `"init" is also a Coop command, so coop init runs that command instead.`,
+		"ls":        `"ls" is also a presets command word, so coop presets ls never shows this preset.`,
+		"bad name!": preset.NameRule,
+	} {
+		_, err := (&app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}).cmdPresets([]string{"init", name})
+		if usage := asUsage(err); usage == nil || usage.Cause != want {
+			t.Errorf("presets init %q gave %v; want the cause %q", name, err, want)
+		}
+	}
+}
+
+// A preset that already carries such a name (made before the refusal, or by hand) is not offered
+// as a runnable row: coop presets gives it its own block naming the folder to rename, the example
+// row offers a preset that really starts, and a name outside the character set says which
+// characters a preset name uses.
+func TestCmdPresetsFlagsPresetsThatCannotStart(t *testing.T) {
+	cfg := freshConfig(t)
+	for _, name := range []string{"claude", "tasks", "Team", "review"} {
+		writePresetFile(t, cfg.RepoOverride, name, "lead: {agent: codex}\n")
+	}
+	out := captureStdout(t, func() {
+		if code, err := (&app{cfg: cfg}).cmdPresets(nil); code != 0 || err != nil {
+			t.Fatalf("cmdPresets() = (%d, %v)", code, err)
+		}
+	})
+	for _, want := range []string{
+		"PRESET  FIRST LEAD MODEL  ROLES  SOURCE\nreview  codex             none   project\n",
+		"claude\n  \u26A0 Rename this preset\n\n      .agent/presets/claude\n      \"claude\" is also an agent, so coop claude starts that agent instead.\n",
+		"tasks\n  \u26A0 Rename this preset\n\n      .agent/presets/tasks\n      \"tasks\" is also a Coop command, so coop tasks runs that command instead.\n",
+		"Team\n  \u2717 Could not load this preset\n\n      \"Team\" is not a usable preset name.\n      " + preset.NameRule + "\n      Rename its folder to use this preset.\n",
+		"coop review          start the lead agent with its team",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("listing lacks %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"claude    codex", "tasks     codex", "coop claude  ", "coop presets claude"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("listing offers a preset that cannot start (%q):\n%s", unwanted, out)
+		}
+	}
+}
+
+// The preset page and the manual answer "how do I run this", so a preset whose name Coop runs as
+// something else never claims `coop <name>` starts it: the page says to rename it instead, and the
+// manual, which lists what this project can run, leaves it out.
+func TestPresetPagesNeverOfferANameThatRunsSomethingElse(t *testing.T) {
+	cfg := freshConfig(t)
+	writePresetFile(t, cfg.RepoOverride, "claude", "lead: {agent: codex}\n")
+	writePresetFile(t, cfg.RepoOverride, "review", "lead: {agent: codex}\n")
+	page := captureStdout(t, func() {
+		if code, err := (&app{cfg: cfg}).cmdPresets([]string{"claude"}); code != 0 || err != nil {
+			t.Fatalf("presets claude = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(page, "RUN IT\n  \"claude\" is also an agent, so coop claude starts that agent instead.\n  Rename its folder to use this preset.\n") ||
+		strings.Contains(page, "coop loop claude") {
+		t.Errorf("the page for a preset named after an agent offers commands that start the agent:\n%s", page)
+	}
+	manual := presetManualPages(cfg)
+	if strings.Contains(manual, "claude:") || !strings.Contains(manual, "review:") {
+		t.Errorf("the manual should list review and leave out the preset coop claude never starts:\n%s", manual)
+	}
+}

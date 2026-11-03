@@ -91,6 +91,8 @@ leaves your home folder and SSH keys unmounted. For an overview, see
 <a href="https://coop.dryga.com/docs.html#sandbox">the sandbox</a>, <a href="https://coop.dryga.com/docs.html#secrets">hiding
 secrets</a> and <a href="https://coop.dryga.com/docs.html#toolchain">toolchain and
 services</a>.</p>
+<p><code>coop run</code> and <code>coop shell</code> pass piped or redirected input to the command, just as on your host:
+<code>printf &#39;a\nb\n&#39; | coop run -- wc -l</code> prints 2.</p>
 </section><section class="doc-section reference-section" id="hiding-secrets"><h2>Hiding secrets</h2>
 <p>co:op hides files and directories whose names look like secrets, including <code>.env</code>, <code>*.tfvars</code>,
 <code>*.pem</code>, <code>secrets/</code> and <code>.ssh</code>:</p>

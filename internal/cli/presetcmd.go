@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -60,6 +61,8 @@ func (a *app) listPresets(repo string) (int, error) {
 	type row struct{ name, lead, roles, source string }
 	var rows []row
 	var broken []*preset.LoadError
+	type takenPreset struct{ name, dir, why string }
+	var taken []takenPreset
 	for _, name := range names {
 		source := "project"
 		if preset.Origin(repo, globalDir, name) {
@@ -73,6 +76,12 @@ func (a *app) listPresets(repo string) (int, error) {
 				continue
 			}
 			return -1, err
+		}
+		// A preset under a name Coop runs as something else is no row to pick from: offering it would
+		// hand the reader a command that starts the agent or command instead.
+		if why := presetNameTaken(name); why != "" {
+			taken = append(taken, takenPreset{name, p.Dir, why})
+			continue
 		}
 		// A box can name a project preset's folder and write its preset.yaml, whose model names
 		// the target parser lets through as they are, so both cells are escaped; the widths below
@@ -109,6 +118,13 @@ func (a *app) listPresets(repo string) (int, error) {
 		for _, line := range le.Detail {
 			fmt.Printf("      %s\n", ui.SafeInline(line))
 		}
+	}
+	// A taken name is a valid folder name that loaded, so it is plain text; the folder can be global.
+	for _, t := range taken {
+		fmt.Printf("\n%s\n", pal.Bold(t.name))
+		fmt.Printf("  %s\n\n", pal.Yellow("⚠ Rename this preset"))
+		fmt.Printf("      %s\n", ui.SafeInline(presetDisplayPath(repo, t.dir)))
+		fmt.Printf("      %s\n", t.why)
 	}
 	// The hint names a preset coop presets <name> can show: a name that cannot be a preset has no
 	// more to show than its line above.
@@ -176,6 +192,17 @@ func (a *app) presetsInit(repo string, args []string) (int, error) {
 	case len(args) == 1:
 		name = args[0]
 	}
+	problem := preset.NameRule
+	if preset.ValidName(name) {
+		problem = presetNameTaken(name)
+	}
+	if problem != "" {
+		return 2, &ui.UsageError{
+			Headline: fmt.Sprintf("Cannot name a preset %q", name),
+			Cause:    problem,
+			Rows:     [][2]string{{"Example:", "coop presets init review"}, {"Help:", "coop help presets init"}},
+		}
+	}
 	path, err := preset.Scaffold(repo, name)
 	if err != nil {
 		return 2, presetCreateErr(name, err)
@@ -185,6 +212,22 @@ func (a *app) presetsInit(repo string, args []string) (int, error) {
 	ui.Note("\nEdit the preset template: %s", presetDisplayPath(repo, path))
 	ui.Note("\nTo run it, use:\n  %s", pal.Cyan("coop "+name))
 	return 0, nil
+}
+
+// presetNameTaken says why a preset called name could never be used by that name, or "" when it
+// can: dispatch tries Coop's own commands and then the agents before any preset, and
+// `coop presets ls` answers with a pointer instead of showing one. Every name it answers for is a
+// plain word, so the sentence quotes it as it is.
+func presetNameTaken(name string) string {
+	switch {
+	case slices.Contains(topLevelCommands, name):
+		return fmt.Sprintf("%q is also a Coop command, so coop %s runs that command instead.", name, name)
+	case agents.Valid(name):
+		return fmt.Sprintf("%q is also an agent, so coop %s starts that agent instead.", name, name)
+	case name == "ls":
+		return `"ls" is also a presets command word, so coop presets ls never shows this preset.`
+	}
+	return ""
 }
 
 // presetCreateErr refuses a create that could not publish. An existing COMPLETE preset is a
@@ -310,8 +353,8 @@ func helpForPreset(name string, cfg *config.Config) (code int, ok bool) {
 // terminal. A preset IS a runnable command here (`coop frontier`), so leaving it out of the manual
 // would make a real command undiscoverable; it stays OUT of RenderManual because a project's
 // presets are its own state, and docs/cli.md documents the tool, not this repo. A preset that no
-// longer loads is skipped rather than reported: the manual answers "what can I run", and
-// `coop presets <name>` is where a broken one explains itself.
+// longer loads, or whose name Coop runs as something else, is skipped rather than reported: the
+// manual answers "what can I run", and `coop presets` is where such a preset explains itself.
 func presetManualPages(cfg *config.Config) string {
 	repo, err := box.ResolveRepo(cfg.RepoOverride)
 	if err != nil {
@@ -321,7 +364,7 @@ func presetManualPages(cfg *config.Config) string {
 	var b strings.Builder
 	for _, name := range preset.List(repo, globalDir) {
 		p, err := preset.Load(repo, globalDir, name)
-		if err != nil {
+		if err != nil || presetNameTaken(name) != "" {
 			continue
 		}
 		page := strings.TrimRight(presetDetail(p, repo, ui.Palette{}), "\n")
@@ -351,17 +394,11 @@ func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
 	fmt.Fprintf(&b, "%s\n\n", pal.Bold(name+": "+safe(presetSummary(p))))
 
 	fmt.Fprintf(&b, "%s\n", pal.Bold("RUN IT"))
-	runs := [][2]string{
-		{"coop " + name, "start an interactive session with the lead agent"},
-		{"coop loop " + name, "work through tasks with this preset"},
-		{"coop acp " + name, "use this preset in your editor"},
-	}
-	w := 0
-	for _, r := range runs {
-		w = max(w, utf8.RuneCountInString(r[0]))
-	}
-	for _, r := range runs {
-		fmt.Fprintf(&b, "  %s  %s\n", pal.Cyan(padRight(r[0], w)), r[1])
+	if why := presetNameTaken(p.Name); why != "" {
+		// Under a name Coop runs as something else, the run commands would start that instead.
+		fmt.Fprintf(&b, "  %s\n  Rename its folder to use this preset.\n", why)
+	} else {
+		fmt.Fprint(&b, presetRunRows(name, pal))
 	}
 
 	lead := "LEAD MODEL"
@@ -429,6 +466,24 @@ func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
 		b.WriteString(" " + pal.Dim("(global)"))
 	}
 	fmt.Fprintf(&b, "\n\nFor a guide to creating and using presets:\n  coop help presets\n")
+	return b.String()
+}
+
+// presetRunRows are the commands that start the preset name (already escaped), aligned.
+func presetRunRows(name string, pal ui.Palette) string {
+	runs := [][2]string{
+		{"coop " + name, "start an interactive session with the lead agent"},
+		{"coop loop " + name, "work through tasks with this preset"},
+		{"coop acp " + name, "use this preset in your editor"},
+	}
+	w := 0
+	for _, r := range runs {
+		w = max(w, utf8.RuneCountInString(r[0]))
+	}
+	var b strings.Builder
+	for _, r := range runs {
+		fmt.Fprintf(&b, "  %s  %s\n", pal.Cyan(padRight(r[0], w)), r[1])
+	}
 	return b.String()
 }
 
