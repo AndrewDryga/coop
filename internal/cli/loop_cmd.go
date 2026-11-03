@@ -181,6 +181,9 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
 		return -1, err
 	}
+	if err := loop.RequireHead(repo); err != nil {
+		return 1, err
+	}
 	if err := a.ensureRuntime(); err != nil {
 		return -1, err
 	}

@@ -168,6 +168,24 @@ func TestLoopRejectsContradictoryPreflightOptions(t *testing.T) {
 	}
 }
 
+// A loop outside Git refuses before it prepares anything: the runtime here is one that does not
+// exist, so reaching the runtime check first would report that instead of the folder's problem.
+func TestLoopChecksForGitBeforePreparing(t *testing.T) {
+	hermeticGit(t)
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), RuntimeName: "coop-test-missing-runtime"}
+	signInCred(t, cfg, "claude", "default")
+	a := &app{cfg: cfg}
+	var code int
+	var err error
+	out := captureStderr(t, func() { code, err = a.cmdLoop([]string{"claude", "--no-preflight"}) })
+	if code != 1 || err == nil {
+		t.Fatalf("loop outside Git = (%d, %v), want exit 1", code, err)
+	}
+	if !strings.Contains(out, "This folder is not a Git repository.") {
+		t.Fatalf("loop outside Git did not name the folder's problem first:\n%s\nerr: %v", out, err)
+	}
+}
+
 // --review-task names a completed task. An ID that names none is input to correct before the loop
 // prepares anything, and the refusal shows how to list what can be named, in the selected queues.
 func TestLoopResolvesReviewTasksBeforeStarting(t *testing.T) {
@@ -1891,8 +1909,13 @@ func TestLoopReportsUsageBeforeRuntimeDiscovery(t *testing.T) {
 	if err := os.Remove(filepath.Join(repo, ".agent", "loop.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	// Valid usage on a signed-in account still needs the runtime before any box work.
-	signed := a()
+	// Valid usage on a signed-in account still needs the runtime before any box work. The loop checks
+	// the repository's own HEAD first, so this step runs in a repository with a commit.
+	committed, _ := gitrepo.NewCommitted(t)
+	if err := tasks.ScaffoldStateDirs(filepath.Join(committed, tasks.TasksRoot)); err != nil {
+		t.Fatal(err)
+	}
+	signed := &app{cfg: &config.Config{RuntimeName: "coop-no-such-runtime-xyz", ConfigDir: t.TempDir(), RepoOverride: committed}}
 	signInCred(t, signed.cfg, "codex", signed.cfg.DefaultProfileOf("codex"))
 	if code, err := signed.dispatch([]string{"loop", "codex"}); code == 2 || err == nil || !strings.Contains(err.Error(), "runtime") {
 		t.Errorf("coop loop codex with no runtime = (%d, %v); want the runtime error once usage is valid", code, err)
