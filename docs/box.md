@@ -10,7 +10,10 @@ secrets](https://coop.dryga.com/docs.html#secrets) and [toolchain and
 services](https://coop.dryga.com/docs.html#toolchain).
 
 `coop run` and `coop shell` pass piped or redirected input to the command, just as on your host:
-`printf 'a\nb\n' | coop run -- wc -l` prints 2.
+`printf 'a\nb\n' | coop run -- wc -l` prints 2. As with `docker run -i` or `ssh`, that input is
+read as soon as the box starts, even if the command never reads it. In a shell `while read` loop,
+give each `coop run` its own input, as in `coop run -- make test < /dev/null`, or it takes the
+lines meant for the loop.
 
 ## Hiding secrets
 

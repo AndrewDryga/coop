@@ -79,6 +79,9 @@ coop login gemini     # hidden API-key prompt; stored outside the mounted Gemini
 coop login grok       # device-code login, like Codex
 ```
 
+`coop claude login` does the same as `coop login claude`, and `coop claude@work login` signs in
+to the `work` account.
+
 ### API keys
 
 Supported API keys work with both open and filtered Docker networking. Put a key in the shared

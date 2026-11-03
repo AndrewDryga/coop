@@ -65,6 +65,8 @@ get powers such as `CAP_DAC_OVERRIDE`, `CAP_NET_RAW` or `CAP_MKNOD`.
 | `COOP_<AGENT>_CMD`, like `COOP_CLAUDE_CMD` | the autonomous default | Overrides an agent's base command. |
 | `COOP_<AGENT>_MODEL`, like `COOP_CLAUDE_MODEL` | the CLI's default | The agent-wide default model, everywhere that agent runs. See [picking models](agents.md#picking-models). |
 | `COOP_CONSULT_TIMEOUT` | `0` (unlimited) | How long `coop-consult` waits for each peer, in seconds. See below. |
+| `COOP_CONSULT_STREAM_LIMIT` | `0` (unlimited) | The most output, in bytes, `coop-consult` accepts from a peer's reply or diagnostics. A larger reply is discarded. The box reads it, so set it in `agents/env`. See [limits](agents.md#limits). |
+| `COOP_PRESETS_DIR` | `~/.config/coop/presets` | The folder for global presets. See [where presets live](agents.md#where-presets-live). |
 | `COOP_MCP_FILE` | `~/.config/coop/agents/mcp.json` | The file that defines MCP servers. It must be a regular file of at most 4 MiB, outside any directory co:op mounts in full. |
 | `COOP_SHELL` | `bash` | The shell `coop shell` opens. |
 | `COOP_NO_UPDATE_CHECK` | off | Set it to opt out of the once-a-day "a newer coop/box is available" check. |
@@ -87,6 +89,8 @@ working, that answer is lost and needs a retry.
 | `COOP_TASKS` | derived | Chooses the task queue directories for `coop tasks` and the loop. Separate multiple paths with spaces. If unset, co:op uses the queues listed in `.agent/project.yaml` for a [monorepo](loop.md#monorepos), or `.agent/tasks` otherwise. `--tasks` replaces this choice for one run; it does not add to it. |
 | `COOP_CAFFEINATE` | `1` | On a Mac, uses `caffeinate` to prevent idle sleep while the loop runs. The protection ends with the loop. `0` or `false` turns it off. |
 | `COOP_ACP_WARM` | `1` | Environment only. Keeps a box ready for each other signed-in editor ACP provider. Switching to that provider's default model then skips box startup. Set `0` or `false` to save memory. |
+| `COOP_ACP_CARRY_TOKENS` | `200000` | How much of an editor conversation, in tokens of about 4 bytes, co:op carries to a new provider when you switch. The oldest messages are dropped first. |
+| `COOP_ACP_TRACE` | unset | Environment only. Set it to any value in the editor's agent environment to record each `coop acp` server's traffic. See [tracing a session](integrations.md#tracing-a-session). |
 | `COOP_SPINNER` | `1` | Environment only. Animates the five-column Box Run beside progress bars and the one-column Corner Run (`◰ ◳ ◲ ◱`) in task rows. Set `0` or `false` to freeze them and stop frequent loop-screen redraws, for example when debugging or recording the terminal. |
 | `COOP_STREAM_TRACE` | off | Set it to persist each streaming loop attempt's raw provider JSONL and rendered output under `.agent/runs/<run>.streams/`. |
 
@@ -121,8 +125,8 @@ The default file is optional. If you set `COOP_CONF`, the chosen file must exist
 read it, the error names the path. If a setting is malformed, duplicated, retired or unknown,
 the error names the path and line. An environment override does not let a broken file pass.
 
-`COOP_CONF`, `NO_COLOR`, `COOP_ACP_WARM` and `COOP_SPINNER` are process-environment controls, so
-you can't set them inside `coop.conf`.
+`COOP_CONF`, `NO_COLOR`, `COOP_ACP_WARM`, `COOP_ACP_TRACE` and `COOP_SPINNER` are
+process-environment controls, so you can't set them inside `coop.conf`.
 
 Optional [provider usage reports](usage-reports.md) use a separate host-only
 `~/.config/coop/usage-reports.json`. Their API spend is never added to local usage estimates.
@@ -136,9 +140,11 @@ Reporting keys belong in host environment variables, not `coop.conf`, project fi
 |---|---|
 | `subprojects:` | A monorepo's members. See [monorepos](loop.md#monorepos). |
 | `serve:` | The dev server ports co:op publishes. See [the dev server in your browser](box.md#dev-servers-in-your-browser). |
-| `box:` | The box policy: egress and [`egress_rules:`](networking.md), resource caps, `auto_up` and `network`. |
+| `box:` | The box policy: the [`dockerfile` and `compose` paths](box.md#your-own-image-agentdockerfile), [`env` defaults](box.md#box-only-environment-boxenv), egress and [`egress_rules:`](networking.md), resource caps (`memory`, `cpus`, `pids`), `auto_up` and `network`. |
+| `services:` | `require_real_files:`, the hidden files your services need to read. Listing a file grants no access. See [secret files in services](box.md#secret-files-in-services). |
 | `gate:` | The merge gate. |
 | `gate_sources:` | Exact project-specific paths that receive protected loop review. |
+| `review:` | Services and environment for review checks only. See [review checks](#review-checks). |
 | `context:` | The routes for [path-routed context](#path-routed-context). |
 
 Explicit `COOP_*` settings in your environment or `coop.conf` override `box:` and `gate:`.
@@ -148,6 +154,22 @@ restrictions but cannot relax them on its own:
 - `egress` can pin `filtered` or `offline`.
 - `open` is a request that a human approves with `coop approve`.
 - `no_new_privileges` isn't settable here.
+
+### Review checks
+
+`review:` applies only to the check that `coop fork review --gate` or a controller review runs:
+
+```yaml
+review:
+  compose: .agent/review-compose.yml  # services the check needs, such as a test database
+  env:
+    DATABASE_URL: postgres://postgres:test@db:5432/app_test
+```
+
+`review.env` values are literal strings, set only in the check's box. Names beginning with `COOP_`
+are reserved. A controller review with open networking starts the services in `review.compose`
+before the check, then removes them and their volumes. `coop fork review --gate` does not start
+them.
 
 ## Path-routed context
 

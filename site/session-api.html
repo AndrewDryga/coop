@@ -1329,8 +1329,10 @@ local fork merges.</p>
 runs, the exact saved network permissions. It ignores the repository&#39;s <code>box:</code> settings and the
 worker&#39;s runtime arguments, environment file and MCP configuration. It uses the saved work
 environment plus check-only overrides, with the same CPU, memory and process limits as model
-turns. It also uses the same worker-configured image, or locked filtered client image, as the
-turns. It never builds or uses an image from the job repository&#39;s Dockerfile.</p>
+turns. It also applies the candidate&#39;s <a href="configuration.html#review-checks"><code>review:</code> settings</a>.
+Where the job and <code>review.env</code> set the same variable, the job&#39;s value wins. The check uses the
+same worker-configured image, or locked filtered client image, as the turns. It never builds or
+uses an image from the job repository&#39;s Dockerfile.</p>
 <p>The check can create ignored build files in its temporary checkout. If it changes the reviewed
 source, the result cannot be published. Publication is also blocked when no check is configured,
 the check fails or cannot start.</p>

@@ -1230,8 +1230,10 @@ The check runs in an isolated container using the session's saved network mode a
 runs, the exact saved network permissions. It ignores the repository's `box:` settings and the
 worker's runtime arguments, environment file and MCP configuration. It uses the saved work
 environment plus check-only overrides, with the same CPU, memory and process limits as model
-turns. It also uses the same worker-configured image, or locked filtered client image, as the
-turns. It never builds or uses an image from the job repository's Dockerfile.
+turns. It also applies the candidate's [`review:` settings](configuration.md#review-checks).
+Where the job and `review.env` set the same variable, the job's value wins. The check uses the
+same worker-configured image, or locked filtered client image, as the turns. It never builds or
+uses an image from the job repository's Dockerfile.
 
 The check can create ignored build files in its temporary checkout. If it changes the reviewed
 source, the result cannot be published. Publication is also blocked when no check is configured,
