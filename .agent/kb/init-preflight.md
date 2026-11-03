@@ -20,6 +20,11 @@ of at most 1 MiB that may be a link inside the project; one coop cannot read tha
 scaffolding only after Init succeeds. First-run prompts remain CLI-owned and precede Init; this
 preflight does not introduce a second CLI validation implementation.
 
+Without a terminal the CLI refuses two runs before anything is written: a bare `--services`
+chooser nobody can answer (exit 2, as on an initialized project), and a folder outside Git
+(`forkspace.RepositoryRoot`, exit 1), since nothing init sets up can run there and nobody can be
+asked whether to create the repository. At a terminal Git is offered as before.
+
 Additive `init --services` edits (the Compose file, then the service rules a filtered project.yaml
 asks for, `AddServiceRules`), subproject registration in project.yaml and Coop's stanzas in the
 root `.gitignore` share one reader and one staged replacement (temporary file, then rename). The
@@ -122,6 +127,11 @@ yaml's `TypeError` entries and the paths of `fs.PathError` and `os.LinkError` �
 put in a key or a file name stays on its line.
 
 ## Changelog
+- 2026-11-03 — outside Git and without a terminal, init refuses before writing (it used to create
+  the project and report success), and a bare `--services` there is refused instead of read as
+  "none"; at a terminal the fresh-project chooser now opens. Pinned by
+  TestApprovedInitWithoutATerminal (13d), TestInitServicesSpellingsWithoutTerminal and
+  TestInitBareServicesOpensTheChooser (task 2026-11-03-diagnose-folders-that-are-not-git-repositories-c).
 - 2026-11-03 — `coop init --services` on a filtered project also asks for each catalog service's
   `to: {service: …}` rule in project.yaml (`AddServiceRules`, the same reader and staged rename):
   it fills the template's untouched commented example or joins a real `egress_rules` list, and

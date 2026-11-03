@@ -27,7 +27,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
-	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
@@ -1435,6 +1434,25 @@ func TestStrictFlagParsing(t *testing.T) {
 	}
 }
 
+// A bare --services on a fresh project opens the same chooser it opens on an initialized one; it
+// used to count as an answer of "none" and skip the question.
+func TestInitBareServicesOpensTheChooser(t *testing.T) {
+	hermeticGit(t)
+	repo := t.TempDir()
+	gitInit(t, repo)
+	a, _ := initApp(t, repo)
+	signIn(t, a, "codex")
+	typedAnswers(t, "", "postgres") // no language, then the service
+	var code int
+	out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services"})) })
+	if code != 0 || !strings.Contains(out, "Services (space-separated, or press Enter for none): postgres") {
+		t.Fatalf("bare --services on a fresh project = %d, want the chooser:\n%s", code, out)
+	}
+	if data, err := os.ReadFile(filepath.Join(repo, ".agent", "compose.yml")); err != nil || !strings.Contains(string(data), "image: postgres:") {
+		t.Errorf("the chosen service was not added: %v\n%s", err, data)
+	}
+}
+
 func TestInitServicesSpellingsWithoutTerminal(t *testing.T) {
 	stdin, err := os.Open(os.DevNull)
 	if err != nil {
@@ -1453,6 +1471,8 @@ func TestInitServicesSpellingsWithoutTerminal(t *testing.T) {
 				}
 				a := initAppOnDocker(repo, cfgDir)
 				if initialized {
+					hermeticGit(t)
+					gitInit(t, repo)
 					captureStderr(t, func() {
 						if code, err := a.cmdInit(nil); code != 0 || err != nil {
 							t.Fatalf("fixture init = (%d, %v)", code, err)
@@ -1463,17 +1483,8 @@ func TestInitServicesSpellingsWithoutTerminal(t *testing.T) {
 				var code int
 				var callErr error
 				captureStderr(t, func() { code, callErr = a.cmdInit([]string{flag}) })
-				if !initialized && flag == "--services" {
-					if code != 0 || callErr != nil || !scaffold.Initialized(repo) || !fileExists(a.cfg.MCPFile) {
-						t.Fatalf("bare services did not initialize its explicit fixture: (%d, %v)", code, callErr)
-					}
-					for _, rel := range []string{".git", ".agent/compose.yml"} {
-						if pathExists(filepath.Join(repo, rel)) {
-							t.Errorf("nonterminal init unexpectedly created %s", rel)
-						}
-					}
-					return
-				}
+				// A bare --services is the chooser on a fresh folder too: nobody can answer it, so it
+				// is refused before init sets anything up rather than read as "no services".
 				if code != 2 || callErr == nil {
 					t.Fatalf("refusal = (%d, %v), want (2, error)", code, callErr)
 				}

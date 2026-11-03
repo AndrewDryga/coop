@@ -17,6 +17,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/scaffold"
@@ -215,13 +216,28 @@ func (a *app) cmdInit(args []string) (int, error) {
 		return 1, initFailed("Could not update .gitignore", sentence(firstLine(err)), initFix(err),
 			"No files were changed.")
 	}
+	// One reader for every question this run may ask (askTerminal says why). Nobody can answer a
+	// bare --services chooser without a terminal, so it is refused rather than read as "none".
+	ask, atTerminal := askTerminal()
+	if servicesChooser && !atTerminal {
+		return 2, servicesNeedATerminal()
+	}
+	// Outside Git nothing Coop sets up can be used: the loop, forks and commit checks all need a
+	// repository. A terminal is asked whether to create one; without a terminal nobody can answer,
+	// so init stops before it writes anything instead of reporting a project nothing can run.
+	if _, inGit, err := forkspace.RepositoryRoot(repo); err == nil && !inGit && !atTerminal {
+		return 1, initFailed("This folder is not a Git repository",
+			"Coop uses Git for tasks, forks, and commit checks.",
+			"Run git init, then coop init again.",
+			"No files were changed.")
+	}
 	// Detect the repo's stack(s) for the commit gate; if nothing's detected and we're at a
 	// terminal, ask rather than guess — coop never imposes a check the repo doesn't use.
 	langs := scaffold.DetectStacks(repo)
 	if !already {
 		ui.Note("Setting up Coop")
 	}
-	if ask, ok := askTerminal(); !already && ok {
+	if !already && atTerminal {
 		// Git first, and only with an explicit yes: the tracked hooks below need a repo to point
 		// core.hooksPath at, and a piped/declining run must never have one created behind its back.
 		if !pathExists(filepath.Join(repo, ".git")) {
@@ -233,8 +249,8 @@ func (a *app) cmdInit(args []string) (int, error) {
 			langs = promptGateLangs(ask)
 		}
 		// Sibling services (db/redis) are opt-in — coop doesn't add a compose file a project may
-		// not want. Ask at a terminal unless --services already said.
-		if !servicesSet {
+		// not want. Ask at a terminal unless --services named them; a bare --services asks too.
+		if !servicesSet || servicesChooser {
 			services = promptServices(ask)
 		}
 	}
@@ -431,9 +447,7 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 	if chooser {
 		ask, ok := askTerminal()
 		if !ok {
-			return 2, reported("Choosing services requires a terminal", "",
-				"Example: coop init --services postgres,redis",
-				"Help:    coop help init")
+			return 2, servicesNeedATerminal()
 		}
 		ui.Note("Add services")
 		services = promptExactTokens(ask, []string{
@@ -548,6 +562,14 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 		ui.Note("  %s %s", ui.Cyan("→"), command)
 	}
 	return 0, nil
+}
+
+// servicesNeedATerminal refuses the bare --services chooser where nobody can answer it, and names
+// the form that works without a terminal.
+func servicesNeedATerminal() error {
+	return reported("Choosing services requires a terminal", "",
+		"Example: coop init --services postgres,redis",
+		"Help:    coop help init")
 }
 
 // serviceEgressRule is the rule coop init asked for, in the form coop net and coop approve show.

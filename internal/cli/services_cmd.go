@@ -373,6 +373,21 @@ func (d *distinctLines) flush() {
 // retired -v/--volumes spelling is not in it: it is gone, not hidden.
 var downOptions = []string{"--delete-volumes", "--yes"}
 
+// servicesLeft reports whether this project's development stack still has something only its
+// Compose file can stop: a running container, or with --delete-volumes a stored volume. A runtime
+// that cannot answer counts as yes, so a failed question never reads as nothing to do.
+func (a *app) servicesLeft(repo string, volumes bool) bool {
+	running, err := box.DevelopmentServicesRunning(context.Background(), a.rt, repo)
+	if err != nil || running {
+		return true
+	}
+	if !volumes {
+		return false
+	}
+	left, err := box.ServiceVolumes(a.rt, repo, io.Discard)
+	return err != nil || len(left) > 0
+}
+
 func (a *app) cmdDown(args []string) (int, error) {
 	// Validate flags before any runtime/compose work, so a typo fails clearly here instead of
 	// later as an unrelated "no .agent/compose.yml".
@@ -403,6 +418,13 @@ func (a *app) cmdDown(args []string) (int, error) {
 	}
 	file := box.ComposeFileAt(repo, p.ComposeRel())
 	if file == "" {
+		// A project that never added services has no default Compose file, and stopping nothing
+		// succeeds. A box.compose path that is missing, or services still running from a file that
+		// is gone, need the file back: only it can stop them.
+		if p.Box.Compose == "" && !a.servicesLeft(repo, deleteVolumes) {
+			ui.Note("No services to stop: %s does not exist.", p.ComposeRel())
+			return 0, nil
+		}
 		return 1, reported("Could not stop services",
 			fmt.Sprintf("%s does not exist.", p.ComposeRel()),
 			"Restore the Compose file, then run coop down again.")

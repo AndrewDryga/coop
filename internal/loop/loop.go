@@ -639,8 +639,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// repo the loop cannot bookkeep against. Stop before the first box starts.
 	prevHead, headErr := forkspace.GitOutErr(repo, "rev-parse", "HEAD")
 	if headErr != nil {
-		ui.Failure("Could not start the loop",
-			"This repository has no readable Git commit yet.\nCommit the initial project files, then start the loop again.")
+		ui.Failure("Could not start the loop", noHeadCause(repo))
 		return 1, ui.Reported(fmt.Errorf("read HEAD of %s: %w", repo, headErr))
 	}
 	loopStartHead := prevHead // for the end-of-run signing sweep (catches any straggler cycle)

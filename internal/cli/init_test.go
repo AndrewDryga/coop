@@ -97,20 +97,28 @@ func TestAskGitInit(t *testing.T) {
 	}
 }
 
-// A run with no terminal asks nothing, creates no .git behind the user's back, and still says
-// exactly what would finish setup. The result is one outcome, not the file-by-file ledger.
+// A run with no terminal asks nothing. Outside Git it refuses before it writes a file and creates
+// no .git behind the user's back, naming the step that fixes it; in a repository the result is one
+// outcome, not the file-by-file ledger.
 func TestInitWithoutTerminalAsksNothingAndNamesTheMissingStep(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	hermeticGit(t)
 	dir, cfgDir := t.TempDir(), t.TempDir()
 	a := initAppOnDocker(dir, cfgDir)
+	args := []string{"--services", "none", "--agents", "claude,codex"}
+	if code, err := a.cmdInit(args); code != 1 || err == nil ||
+		!strings.Contains(err.Error(), "This folder is not a Git repository") || !strings.Contains(err.Error(), "Run git init, then coop init again.") {
+		t.Fatalf("cmdInit outside Git = (%d, %v), want the not-a-repository refusal", code, err)
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Fatalf("a refused init wrote into the folder, a .git included: %v, %v", entries, err)
+	}
+	gitInit(t, dir)
 	out := captureStderr(t, func() {
-		if code, err := a.cmdInit([]string{"--services", "none", "--agents", "claude,codex"}); code != 0 || err != nil {
+		if code, err := a.cmdInit(args); code != 0 || err != nil {
 			t.Fatalf("cmdInit = (%d, %v)", code, err)
 		}
 	})
-	if pathExists(filepath.Join(dir, ".git")) {
-		t.Error("a non-interactive init created a Git repository nobody asked for")
-	}
 	for _, want := range []string{
 		"Setting up Coop",
 		"✓ Coop project created",
@@ -118,9 +126,6 @@ func TestInitWithoutTerminalAsksNothingAndNamesTheMissingStep(t *testing.T) {
 		"Network access is filtered.",
 		"Claude can reach Anthropic and Codex can reach OpenAI.",
 		"Other network traffic is blocked until you approve rules allowing it.",
-		"Finish setup",
-		"→ git init",
-		"→ coop init",
 		"Verify the sandbox\n  → coop doctor",
 	} {
 		if !strings.Contains(out, want) {
@@ -128,7 +133,7 @@ func TestInitWithoutTerminalAsksNothingAndNamesTheMissingStep(t *testing.T) {
 		}
 	}
 	for _, absent := range []string{
-		"Initialize Git here?", "Languages", "Services (",
+		"Initialize Git here?", "Languages", "Services (", "Finish setup",
 		"wrote AGENTS.md", "linked CLAUDE.md", "added skill", "updated .gitignore", "commit gate:",
 		"coop net setup", "kept ",
 		dir, // the working directory is not echoed as a header; only actionable paths appear
@@ -218,7 +223,9 @@ func TestInitWarnsWhenTheRuntimeCannotFilter(t *testing.T) {
 	}{{"container", true}, {"docker", false}} {
 		t.Run(tc.runtime, func(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			hermeticGit(t)
 			dir, cfgDir := t.TempDir(), t.TempDir()
+			gitInit(t, dir)
 			a := &app{cfg: &config.Config{RepoOverride: dir, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")},
 				rt: runtime.Runtime{Name: tc.runtime}, rtSet: true}
 			out := captureStderr(t, func() {
@@ -259,8 +266,11 @@ func TestInitDetectsTheRuntimeWhenNoneIsChosen(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			t.Setenv("PATH", bin)
+			// The repository is made before PATH loses git; init then finds no git to set hooks with.
+			hermeticGit(t)
 			dir, cfgDir := t.TempDir(), t.TempDir()
+			gitInit(t, dir)
+			t.Setenv("PATH", bin)
 			a := &app{cfg: &config.Config{RepoOverride: dir, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
 			out := captureStderr(t, func() {
 				if code, err := a.cmdInit([]string{"--services", "none", "--agents", "claude"}); code != 0 || err != nil {

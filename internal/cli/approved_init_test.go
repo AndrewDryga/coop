@@ -267,15 +267,20 @@ func gitInit(t *testing.T, repo string) {
 
 // A project with no Git, no detectable language and nobody signed in: coop writes what it can,
 // says what a filtered box may reach, and lists only the jobs this project's real state needs.
+// Outside Git, with nobody at a terminal to ask whether to create the repository, init sets up
+// nothing a loop, a fork or a commit check could use, so it refuses before it writes a file.
 func TestApprovedInitWithoutATerminal(t *testing.T) {
 	repo := t.TempDir()
 	a, normalize := initApp(t, repo)
 	var code int
 	out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
-	if code != 0 {
-		t.Fatalf("cmdInit = %d:\n%s", code, out)
+	if code != 1 {
+		t.Fatalf("cmdInit outside Git without a terminal = %d, want 1:\n%s", code, out)
 	}
 	assertApprovedOutput(t, "13d-init-no-terminal", normalize(out))
+	if entries, err := os.ReadDir(repo); err != nil || len(entries) != 0 {
+		t.Errorf("a refused init wrote into the folder: %v, %v", entries, err)
+	}
 }
 
 func TestApprovedReinit(t *testing.T) {
@@ -686,13 +691,13 @@ func customComposeProject(t *testing.T, compose string) string {
 }
 
 // initializedProject is a project coop has already set up, which is the only state the additive
-// service operation applies to.
+// service operation applies to. It is a Git repository, since init without a terminal refuses to
+// set up a folder outside one.
 func initializedProject(t *testing.T) string {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+	hermeticGit(t)
 	repo := t.TempDir()
+	gitInit(t, repo)
 	a, _ := initApp(t, repo)
 	if code, err := a.cmdInit(nil); code != 0 || err != nil {
 		t.Fatalf("init = (%d, %v)", code, err)

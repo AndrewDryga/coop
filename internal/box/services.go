@@ -511,6 +511,14 @@ func ServiceVolumes(rt runtime.Runtime, workspace string, stderr io.Writer) ([]S
 	return ServiceVolumesForOwner(rt, workspace, "", stderr)
 }
 
+// DevelopmentServicesRunning reports whether a container of the workspace's development stack is
+// running, found by its Compose project label rather than its file. Only that file can stop the
+// stack, so coop down says there is nothing to stop only when this is false.
+func DevelopmentServicesRunning(ctx context.Context, rt runtime.Runtime, workspace string) (bool, error) {
+	ids, err := rt.RunningContainerIDsByLabel(ctx, composeProjectLabel, ComposeProjectFor(workspace, ""))
+	return len(ids) > 0, err
+}
+
 // ServiceVolumesForOwner lists only one development or logical-run stack's volumes.
 func ServiceVolumesForOwner(rt runtime.Runtime, workspace, owner string, stderr io.Writer) ([]ServiceVolume, error) {
 	project := ComposeProjectFor(workspace, owner)

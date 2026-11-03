@@ -777,6 +777,24 @@ func TestSignUnpushedIgnoresLocalSSHDefaultKeyCommand(t *testing.T) {
 	}
 }
 
+// Outside Git there is nothing to sign: coop sign says so, and where to run it, instead of
+// reporting a missing upstream for a branch that cannot exist.
+func TestCmdSignOutsideGitNamesTheFolder(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}}
+	code, err := a.cmdSign(nil)
+	if code != 1 || err == nil {
+		t.Fatalf("coop sign outside Git = (%d, %v), want a refusal", code, err)
+	}
+	for _, want := range []string{"Could not sign commits", "This folder is not a Git repository.", "Run coop sign inside the repository whose commits you want to sign."} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "upstream") {
+		t.Errorf("refusal still blames a missing upstream: %q", err)
+	}
+}
+
 func TestCmdSignRejectsEmptyFromBeforeRepositoryAccess(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: filepath.Join(t.TempDir(), "missing")}}
 	for _, args := range [][]string{{"--from"}, {"--from", ""}, {"--from", "--help"}} {

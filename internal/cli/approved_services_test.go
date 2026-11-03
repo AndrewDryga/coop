@@ -32,6 +32,7 @@ type composeShim struct {
 	downExit   int
 	downSays   string
 	volExit    int
+	running    []string // the container IDs a running-container label query returns
 }
 
 func (s composeShim) build(t *testing.T) runtime.Runtime {
@@ -61,6 +62,11 @@ func (s composeShim) build(t *testing.T) runtime.Runtime {
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\ncase \"$*\" in\n")
 	script.WriteString("  info) exit 0 ;;\n")
+	script.WriteString("  \"ps -q\"*)\n")
+	for _, id := range s.running {
+		script.WriteString("    printf '%s\\n' '" + id + "'\n")
+	}
+	script.WriteString("    ;;\n")
 	script.WriteString("  *\"volume inspect\"*) for last; do :; done; printf '{\"Name\":\"%s\",\"Driver\":\"local\",\"Scope\":\"local\",\"Mountpoint\":\"/var/lib/docker/volumes/%s/_data\",\"CreatedAt\":\"2026-01-01T00:00:00Z\",\"Options\":{}}\\n' \"$last\" \"$last\" ;;\n")
 	script.WriteString("  *\"config --services\"*)\n")
 	for _, name := range s.services {
@@ -379,14 +385,49 @@ func TestApprovedServiceStop(t *testing.T) {
 		assertApprovedSession(t, "29e-delete-volumes-declined", normalizeProject(t, repo, out))
 	})
 
+	// A Compose path the project configured, now missing, is a broken setting: only that file can
+	// stop what it started.
 	t.Run("29c-compose-path-missing", func(t *testing.T) {
-		a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}, rt: composeShim{}.build(t), rtSet: true}
+		repo := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("box:\n  compose: infra/dev-compose.yml\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: composeShim{}.build(t), rtSet: true}
 		var code int
 		out := captureTerminal(t, func() { code, _ = a.cmdDown(nil) })
 		if code != 1 {
 			t.Errorf("a missing Compose file exited %d, want 1", code)
 		}
 		assertApprovedOutput(t, "29c-compose-path-missing", out)
+	})
+
+	// A project that never added services has nothing to stop, and saying so is a success. With
+	// services still running from a file that is gone, the file is the only way to stop them.
+	t.Run("29l-no-services", func(t *testing.T) {
+		for _, args := range [][]string{nil, {"--delete-volumes", "--yes"}} {
+			a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}, rt: composeShim{}.build(t), rtSet: true}
+			var code int
+			var err error
+			out := captureTerminal(t, func() { code, err = a.cmdDown(args) })
+			if code != 0 || err != nil {
+				t.Fatalf("coop down %v with no services = (%d, %v):\n%s", args, code, err, out)
+			}
+			assertApprovedOutput(t, "29l-no-services", out)
+		}
+		for name, shim := range map[string]composeShim{
+			"a running service": {running: []string{"0f1e2d3c4b5a"}},
+			"a stored volume":   {volumes: []string{"atlas_pgdata"}},
+		} {
+			a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}, rt: shim.build(t), rtSet: true}
+			var code int
+			out := captureTerminal(t, func() { code, _ = a.cmdDown([]string{"--delete-volumes", "--yes"}) })
+			if code != 1 || !strings.Contains(out, "Restore the Compose file, then run coop down again.") {
+				t.Errorf("%s left without its Compose file: exit %d, want the restore refusal:\n%s", name, code, out)
+			}
+		}
 	})
 
 	// Without a terminal nobody can answer, so a deletion that was not explicitly confirmed is

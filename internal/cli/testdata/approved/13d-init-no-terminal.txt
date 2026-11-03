@@ -1,21 +1,7 @@
-Setting up Coop
 
-✓ Coop project created
-  Instructions, skills, and one task queue are ready for any agent.
+✗ This folder is not a Git repository
 
-Network access is filtered.
-Other network traffic is blocked until you approve rules allowing it.
+      Coop uses Git for tasks, forks, and commit checks.
 
-Finish setup: Coop needs a Git repository
-  → git init
-  → coop init
-
-Sign in to an agent
-  → coop login claude
-
-Verify the sandbox
-  → coop doctor
-
-Start working
-  → coop tasks add "Describe your first task"
-  → coop loop claude
+  Run git init, then coop init again.
+  No files were changed.

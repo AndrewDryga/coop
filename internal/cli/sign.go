@@ -330,6 +330,13 @@ func (a *app) cmdSign(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	// Outside Git there is nothing to sign, and the missing upstream the range check would report
+	// next sends the reader looking for a branch that cannot exist.
+	if _, inGit, err := forkspace.RepositoryRoot(repo); err == nil && !inGit {
+		return 1, ui.CommandFailed("Could not sign commits", "This folder is not a Git repository.",
+			[2]string{"", "Run coop sign inside the repository whose commits you want to sign."},
+			[2]string{"Help:", "coop help sign"})
+	}
 	base, err := signBase(repo, from)
 	if err != nil {
 		return 1, err

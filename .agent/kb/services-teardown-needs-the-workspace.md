@@ -3,7 +3,7 @@ name: services-teardown-needs-the-workspace
 description: sibling-service teardown is driven by the workspace's own compose file, so stopping services after deleting the workspace is a silent no-op
 subsystem: box/services
 sources: [internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/box/services.go, internal/box/repo.go, internal/forkctl/rm.go, internal/forkspace/create.go]
-updated: 2026-10-10
+updated: 2026-11-03
 ---
 Sibling services are brought up per box (`box.Run` → `startServicesFileContext`) and are deliberately
 **not** brought down when a box exits: the stack is idempotent and reused across iterations, so a
@@ -54,6 +54,10 @@ inspection and non-forced removal honor that same endpoint/daemon. In-use networ
 data volumes remain; inspection/removal failures stay errors rather than false stop success.
 
 ## Changelog
+- 2026-11-03 — `coop down` with no default Compose file says "No services to stop" and exits 0
+  only when `box.DevelopmentServicesRunning` (a label query, not the file) finds nothing running,
+  and with --delete-volumes no stored volume; otherwise it still asks for the file back, the one
+  thing that can stop them. A missing `box.compose` path stays an error (29c, 29l).
 - 2026-10-10 — actual ordinary down left an empty filtered override network. Reused project-scoped
   unused-network cleanup and pinned its runtime operations to the frozen teardown daemon; verified
   failed-before cleanup/context regressions, running/stopped attachment preservation and failure paths.
